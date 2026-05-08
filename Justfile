@@ -1,3 +1,5 @@
+mod client "editors/code"
+
 test:
     cargo nextest run --workspace
 
@@ -26,16 +28,4 @@ check-test-targets:
     cargo check --manifest-path test_targets/bench_fixtures/synthetic_def_map_heavy/Cargo.toml --workspace --locked
     cargo check --manifest-path test_targets/bench_fixtures/synthetic_body_heavy/Cargo.toml --workspace --locked
 
-build-client:
-    npm --prefix editors/code ci
-    npm --prefix editors/code run compile
-
-check-client:
-    npm --prefix editors/code run check
-    npm --prefix editors/code run check:unit
-    npm --prefix editors/code run check:test
-
-test-client:
-    npm --prefix editors/code run test
-
-pr-ready: test lint deny check-test-targets build-client check-client
+pr-ready: test lint deny check-test-targets client::pr-ready

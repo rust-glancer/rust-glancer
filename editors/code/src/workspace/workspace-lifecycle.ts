@@ -32,8 +32,7 @@ export function resolveWorkspaceIdentity(input: WorkspaceIdentityInput): Workspa
   return {
     workspaceKey: input.cargoRootUri,
     ownerKey: input.containingFolderUri ?? input.cargoRootUri,
-    configResourceUri:
-      input.configResourceUri ?? input.containingFolderUri ?? input.cargoRootUri,
+    configResourceUri: input.configResourceUri ?? input.containingFolderUri ?? input.cargoRootUri,
   };
 }
 

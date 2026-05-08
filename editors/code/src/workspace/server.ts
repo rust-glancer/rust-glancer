@@ -81,7 +81,9 @@ export namespace ResolvedServer {
       });
 
       child.on("exit", (code, signal) => {
-        output.appendLine(`server exited with code ${code ?? "null"} and signal ${signal ?? "null"}`);
+        output.appendLine(
+          `server exited with code ${code ?? "null"} and signal ${signal ?? "null"}`,
+        );
       });
 
       return Promise.resolve(child);

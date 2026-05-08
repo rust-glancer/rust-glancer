@@ -1,0 +1,23 @@
+build:
+    npm run compile
+
+fmt:
+    npm run fmt
+
+lint:
+    npm run fmt:check
+    npm run lint
+    npm run check
+    npm run check:unit
+    npm run check:test
+
+test:
+    npm run test
+
+test-unit:
+    npm run test:unit
+
+test-e2e:
+    npm run test:e2e
+
+pr-ready: lint build test

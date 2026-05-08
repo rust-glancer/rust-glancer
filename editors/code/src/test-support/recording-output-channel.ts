@@ -38,10 +38,7 @@ export class RecordingOutputChannel implements vscode.OutputChannel {
 
   public show(preserveFocus?: boolean): void;
   public show(column?: vscode.ViewColumn, preserveFocus?: boolean): void;
-  public show(
-    columnOrPreserveFocus?: vscode.ViewColumn | boolean,
-    preserveFocus?: boolean,
-  ): void {
+  public show(columnOrPreserveFocus?: vscode.ViewColumn | boolean, preserveFocus?: boolean): void {
     if (typeof columnOrPreserveFocus === "number") {
       this.inner.show(columnOrPreserveFocus, preserveFocus);
     } else {

@@ -6,6 +6,10 @@ out/**
 out-unit/**
 .vscode/**
 .vscode-test.mjs
+.prettierignore
+.prettierrc.json
+eslint.config.mjs
+Justfile
 tsconfig.json
 tsconfig.test.json
 tsconfig.unit.json

@@ -67,9 +67,7 @@ export class ClientManager implements vscode.Disposable {
 
     // If every opened folder resolves to the same Cargo root, start that shared client eagerly.
     const cargoFolders = await this.workspaceResolver.workspaceFolders();
-    const uniqueCargoRoots = new Set(
-      cargoFolders.map((workspace) => workspace.workspaceKey),
-    );
+    const uniqueCargoRoots = new Set(cargoFolders.map((workspace) => workspace.workspaceKey));
     if (uniqueCargoRoots.size === 1) {
       for (const workspace of cargoFolders) {
         await this.ensureClientForWorkspace(workspace);
@@ -80,7 +78,9 @@ export class ClientManager implements vscode.Disposable {
 
     // Ambiguous windows wait for a Rust file to become active before starting a server.
     if (cargoFolders.length === 0) {
-      this.output.appendLine("no Cargo workspace folder found; rust-glancer server was not started");
+      this.output.appendLine(
+        "no Cargo workspace folder found; rust-glancer server was not started",
+      );
       this.status.stopped("no Cargo workspace folder");
     } else {
       this.output.appendLine(

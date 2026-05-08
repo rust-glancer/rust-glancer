@@ -54,7 +54,12 @@ export class StatusView implements vscode.Disposable {
   }
 
   public indexing(details: StatusDetails = this.details): void {
-    this.showState("indexing", "$(sync~spin) Rust Glancer: indexing", "Indexing workspace", details);
+    this.showState(
+      "indexing",
+      "$(sync~spin) Rust Glancer: indexing",
+      "Indexing workspace",
+      details,
+    );
   }
 
   public ready(details: StatusDetails = this.details): void {
@@ -62,7 +67,12 @@ export class StatusView implements vscode.Disposable {
   }
 
   public stale(details: StatusDetails = this.details): void {
-    this.showState("stale", "$(warning) Rust Glancer: stale until save", "Stale until save", details);
+    this.showState(
+      "stale",
+      "$(warning) Rust Glancer: stale until save",
+      "Stale until save",
+      details,
+    );
   }
 
   public checkRunning(command: string | undefined, details: StatusDetails = this.details): void {
@@ -85,7 +95,12 @@ export class StatusView implements vscode.Disposable {
   }
 
   public stopped(reason: string, details: StatusDetails = this.details): void {
-    this.showState("stopped", "$(circle-slash) Rust Glancer: stopped", `Stopped: ${reason}`, details);
+    this.showState(
+      "stopped",
+      "$(circle-slash) Rust Glancer: stopped",
+      `Stopped: ${reason}`,
+      details,
+    );
   }
 
   public failed(reason: string, details: StatusDetails = this.details): void {

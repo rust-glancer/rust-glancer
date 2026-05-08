@@ -4,13 +4,7 @@
     "rootDir": ".",
     "outDir": "out",
     "sourceMap": true,
-    "types": [
-      "mocha",
-      "node",
-      "vscode"
-    ]
+    "types": ["mocha", "node", "vscode"]
   },
-  "include": [
-    "test"
-  ]
+  "include": ["test"]
 }

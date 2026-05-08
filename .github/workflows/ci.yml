@@ -53,6 +53,10 @@ jobs:
           cache-dependency-path: editors/code/package-lock.json
       - name: Install client dependencies
         run: npm ci
+      - name: Check client formatting
+        run: npm run fmt:check
+      - name: Lint client
+        run: npm run lint
       - name: Check client
         run: npm run check
       - name: Check client tests

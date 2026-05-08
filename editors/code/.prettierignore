@@ -1,0 +1,7 @@
+dist
+node_modules
+out
+out-unit
+.vscode-test
+package-lock.json
+*.map

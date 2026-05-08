@@ -64,9 +64,7 @@ export class ClientStatus {
     this.resetCheck();
     this.failureReason = undefined;
     this.details = details;
-    this.show("starting", "$(sync~spin) Rust Glancer: starting", () =>
-      this.view.starting(details),
-    );
+    this.show("starting", "$(sync~spin) Rust Glancer: starting", () => this.view.starting(details));
   }
 
   public ready(details: StatusDetails): void {
@@ -190,11 +188,7 @@ export class ClientStatus {
     };
   }
 
-  private show(
-    state: StatusSnapshot["state"],
-    text: string,
-    render: () => void,
-  ): void {
+  private show(state: StatusSnapshot["state"], text: string, render: () => void): void {
     this.currentStatus = {
       state,
       text,

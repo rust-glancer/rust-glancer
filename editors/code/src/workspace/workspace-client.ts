@@ -245,11 +245,7 @@ export class WorkspaceClient implements vscode.Disposable {
     return {
       ...hoverMiddleware(() => this.client, this.output),
       handleWorkDoneProgress: (token, params, next) => {
-        this.clientStatus.handleWorkDoneProgress(
-          token,
-          params,
-          this.isActiveRustDocumentDirty(),
-        );
+        this.clientStatus.handleWorkDoneProgress(token, params, this.isActiveRustDocumentDirty());
         next(token, params);
       },
     };

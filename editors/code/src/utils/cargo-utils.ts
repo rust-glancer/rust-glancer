@@ -16,14 +16,7 @@ import * as path from "node:path";
 export async function cargoWorkspaceManifest(manifestPath: string): Promise<string> {
   const output = await execFileText(
     "cargo",
-    [
-      "locate-project",
-      "--workspace",
-      "--message-format",
-      "plain",
-      "--manifest-path",
-      manifestPath,
-    ],
+    ["locate-project", "--workspace", "--message-format", "plain", "--manifest-path", manifestPath],
     path.dirname(manifestPath),
   );
   const resolvedManifest = output.trim();

@@ -53,9 +53,19 @@ run the same command under a virtual display such as `xvfb-run`.
 For faster CI checks that do not launch VS Code:
 
 ```text
+npm run fmt:check
+npm run lint
 npm run check
 npm run check:test
 npm run check:unit
+```
+
+The same checks are available through the client Justfile:
+
+```text
+just lint
+# From the repository root:
+just client lint
 ```
 
 ## Useful Settings

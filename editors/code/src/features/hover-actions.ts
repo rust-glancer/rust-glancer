@@ -118,7 +118,8 @@ function appendGoToTypeAction(
   hover: vscode.Hover,
   locations: readonly SerializedLocation[],
 ): vscode.Hover {
-  const label = locations.length === 1 ? "Go to type" : `Go to ${locations.length} type definitions`;
+  const label =
+    locations.length === 1 ? "Go to type" : `Go to ${locations.length} type definitions`;
   const args = encodeURIComponent(JSON.stringify([locations]));
   const action = new vscode.MarkdownString(
     `[${label}](command:${EXTENSION_COMMANDS.goToTypeFromHover}?${args})`,

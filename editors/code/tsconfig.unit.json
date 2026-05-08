@@ -4,12 +4,7 @@
     "rootDir": ".",
     "outDir": "out-unit",
     "sourceMap": true,
-    "types": [
-      "node"
-    ]
+    "types": ["node"]
   },
-  "include": [
-    "unit",
-    "src/workspace/workspace-lifecycle.ts"
-  ]
+  "include": ["unit", "src/workspace/workspace-lifecycle.ts"]
 }

@@ -151,6 +151,10 @@
     "compile": "npm run check && esbuild ./src/extension.ts --bundle --external:vscode --format=cjs --platform=node --target=node18 --sourcemap --outfile=dist/extension.js",
     "compile:test": "tsc -p tsconfig.test.json",
     "compile:unit": "tsc -p tsconfig.unit.json",
+    "fmt": "prettier --write \"**/*.{json,md,ts,js,mjs}\"",
+    "fmt:check": "prettier --check \"**/*.{json,md,ts,js,mjs}\"",
+    "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" \"unit/**/*.ts\"",
+    "lint:fix": "npm run lint -- --fix",
     "test": "npm run test:unit && npm run test:e2e",
     "test:e2e": "npm run compile && npm run compile:test && cargo build --release -p rust-glancer && RUST_GLANCER_EXTENSION_TEST=1 __RUST_GLANCER_SERVER=\"$(pwd)/../../target/release/rust-glancer\" vscode-test",
     "test:unit": "node -e \"require('node:fs').rmSync('out-unit', { recursive: true, force: true })\" && npm run compile:unit && node --test out-unit/unit/*.test.js",
@@ -161,12 +165,16 @@
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/mocha": "^10.0.10",
     "@types/node": "^20.11.30",
     "@types/vscode": "^1.88.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.28.0",
-    "typescript": "^5.4.5"
+    "eslint": "^10.3.0",
+    "prettier": "^3.8.3",
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.59.2"
   }
 }

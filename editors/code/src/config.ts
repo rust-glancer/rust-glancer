@@ -55,7 +55,10 @@ export namespace ExtensionConfig {
     const checkOnStartup = config.get<boolean>("checkOnStartup", false);
     const checkOnSave = config.get<boolean>("checkOnSave", false);
     const checkCommand = config.get<string>("check.command", "check");
-    const checkArguments = config.get<unknown[]>("check.arguments", ["--workspace", "--all-targets"]);
+    const checkArguments = config.get<unknown[]>("check.arguments", [
+      "--workspace",
+      "--all-targets",
+    ]);
 
     return {
       serverPath: normalizeOptionalString(serverPath),
