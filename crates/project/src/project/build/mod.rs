@@ -1,5 +1,6 @@
 //! Fresh project construction.
 
+mod cache_probe;
 mod phases;
 
 use anyhow::Context as _;
@@ -9,11 +10,25 @@ use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::{
     BuildProcessMemory, BuildProfile, PackageResidencyPlan, PackageResidencyPolicy,
-    cache::{PackageCacheStore, WorkspaceCachePlan, integration},
+    cache::{PackageCacheStore, WorkspaceCachePlan},
     profile::{BuildProfiler, ProcessMemorySampler},
 };
 
-use super::{Project, state::ProjectState};
+use super::{Project, offloading::ResidencyApplication, state::ProjectState};
+
+/// Controls whether a fresh project build can seed offloadable packages from cache artifacts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StartupCacheLoad {
+    Disabled,
+    #[default]
+    Enabled,
+}
+
+impl StartupCacheLoad {
+    pub(crate) fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
 
 /// Result of building a project, optionally including build-time profiling data.
 pub struct ProjectBuild {
@@ -42,6 +57,7 @@ pub struct ProjectBuilder {
     body_ir_policy: BodyIrBuildPolicy,
     profile_build_timing: bool,
     package_residency_policy: PackageResidencyPolicy,
+    startup_cache_load: StartupCacheLoad,
     measure_retained_memory: bool,
     process_memory_sampler: Option<ProcessMemorySampler>,
 }
@@ -54,6 +70,7 @@ impl ProjectBuilder {
             body_ir_policy: BodyIrBuildPolicy::default(),
             profile_build_timing: false,
             package_residency_policy: PackageResidencyPolicy::default(),
+            startup_cache_load: StartupCacheLoad::default(),
             measure_retained_memory: false,
             process_memory_sampler: None,
         }
@@ -76,6 +93,11 @@ impl ProjectBuilder {
 
     pub fn package_residency_policy(mut self, policy: PackageResidencyPolicy) -> Self {
         self.package_residency_policy = policy;
+        self
+    }
+
+    pub fn startup_cache_load(mut self, load: StartupCacheLoad) -> Self {
+        self.startup_cache_load = load;
         self
     }
 
@@ -106,10 +128,12 @@ impl ProjectBuilder {
             self.cargo_metadata_config,
             self.body_ir_policy,
             self.package_residency_policy,
+            self.startup_cache_load,
             &mut profiler,
         )
         .context("while attempting to build resident analysis project")?;
-        integration::apply_residency(&mut state)
+        ResidencyApplication::fresh(&mut state)
+            .apply()
             .context("while attempting to apply package cache residency")?;
 
         let process_memory = profiler.sample_process_memory();
@@ -134,18 +158,28 @@ pub(crate) fn build_resident_state(
     cargo_metadata_config: CargoMetadataConfig,
     body_ir_policy: BodyIrBuildPolicy,
     package_residency_policy: PackageResidencyPolicy,
+    startup_cache_load: StartupCacheLoad,
     profiler: &mut BuildProfiler,
 ) -> anyhow::Result<ProjectState> {
-    let phases = phases::build(&workspace, body_ir_policy, profiler)?;
     let package_residency = PackageResidencyPlan::build(&workspace, package_residency_policy);
     let cache_plan = WorkspaceCachePlan::build(&workspace);
     let cache_store = PackageCacheStore::for_workspace(&workspace, &cache_plan);
+    let phases = phases::build(
+        &workspace,
+        body_ir_policy,
+        &package_residency,
+        &cache_plan,
+        &cache_store,
+        startup_cache_load,
+        profiler,
+    )?;
 
     Ok(ProjectState {
         workspace,
         cargo_metadata_config,
         cache_plan,
         cache_store,
+        package_source_fingerprints: phases.package_source_fingerprints,
         body_ir_policy,
         package_residency_policy,
         package_residency,

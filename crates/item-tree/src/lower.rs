@@ -116,7 +116,7 @@ impl<'db> PackageLowering<'db> {
             (
                 syntax.items().collect::<Vec<_>>(),
                 Documentation::inner_from_ast(&syntax),
-                parsed_file.line_index().clone(),
+                parsed_file.line_index()?.clone(),
                 ModuleFileContext::from_definition_file(parsed_file.path()),
             )
         };

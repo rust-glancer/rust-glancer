@@ -4,10 +4,12 @@ mod project;
 mod residency;
 
 pub use self::{
-    profile::{BuildCheckpoint, BuildProcessMemory, BuildProfile, ProcessMemorySampler},
+    profile::{
+        BuildCheckpoint, BuildProcessMemory, BuildProfile, CacheProbeProfile, ProcessMemorySampler,
+    },
     project::{
         AnalysisChangeSummary, ChangedFile, FileContext, Project, ProjectBuild, ProjectBuilder,
-        ProjectSnapshot, ProjectStats, SavedFileChange,
+        ProjectSnapshot, ProjectStats, SavedFileChange, StartupCacheLoad,
     },
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
 };

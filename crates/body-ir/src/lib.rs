@@ -72,7 +72,8 @@ impl BodyIrBuildPolicy {
         }
     }
 
-    pub(crate) fn should_lower_package(&self, package: &rg_parse::Package) -> bool {
+    /// Returns whether eager body lowering should produce bodies for this parsed package.
+    pub fn should_lower_package(&self, package: &rg_parse::Package) -> bool {
         match self.package_scope {
             BodyIrPackageScope::WorkspacePackages => package.is_workspace_member(),
             BodyIrPackageScope::AllPackages => true,

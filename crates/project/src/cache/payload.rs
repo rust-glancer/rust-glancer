@@ -5,6 +5,7 @@
 
 use rg_body_ir::BodyIrPackageBundle;
 use rg_def_map::DefMapPackageBundle;
+use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::SemanticIrPackageBundle;
 
 use super::header::PackageCacheHeader;
@@ -36,6 +37,7 @@ impl PackageCacheArtifact {
 /// Retained package data stored together to avoid mismatched phase fragments.
 #[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub struct PackageCachePayload {
+    pub parse: PackageParseSnapshot,
     pub def_map: DefMapPackageBundle,
     pub semantic_ir: SemanticIrPackageBundle,
     pub body_ir: PackageCacheBodyIrState,
@@ -43,11 +45,13 @@ pub struct PackageCachePayload {
 
 impl PackageCachePayload {
     pub fn new(
+        parse: PackageParseSnapshot,
         def_map: DefMapPackageBundle,
         semantic_ir: SemanticIrPackageBundle,
         body_ir: PackageCacheBodyIrState,
     ) -> Self {
         Self {
+            parse,
             def_map,
             semantic_ir,
             body_ir,

@@ -3,10 +3,12 @@ use std::mem;
 use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::{
-    Package, PackageFileRef, ParseDb, Position, Span, Target, TargetId, TextSpan,
-    file::{FileDb, FileId, ParsedFileData},
+    Package, PackageFileRef, PackageParseSnapshot, ParseDb, Position, Span, Target, TargetId,
+    TextSpan,
+    file::{FileDb, FileId, LineIndexState, ParsedFileData, ParsedFilePath, ParsedFileSnapshot},
     span::{
-        LineCharRange, LineColumnSpan, LineIndex, LineIndexStorage, LineInfo, LineUtf16Metrics,
+        LineCharRange, LineColumnSpan, LineIndex, LineIndexSnapshot, LineIndexStorage, LineInfo,
+        LineUtf16Metrics,
     },
 };
 
@@ -59,6 +61,24 @@ impl MemorySize for ParsedFileData {
     }
 }
 
+impl MemorySize for ParsedFileSnapshot {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        record_fields!(recorder, self, path, line_index);
+    }
+}
+
+impl MemorySize for ParsedFilePath {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        self.0.record_memory_children(recorder);
+    }
+}
+
+impl MemorySize for PackageParseSnapshot {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        record_fields!(recorder, self, files, target_root_files);
+    }
+}
+
 impl MemorySize for FileId {
     fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
 }
@@ -100,6 +120,29 @@ impl MemorySize for Position {
 }
 
 impl MemorySize for LineIndex {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        record_fields!(recorder, self, lines, non_ascii_lines, non_ascii_ranges,);
+    }
+}
+
+impl MemorySize for LineIndexState {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Resident(line_index) => recorder.scope("resident", |recorder| {
+                line_index.record_memory_children(recorder);
+            }),
+            Self::Offloaded(line_index) => {
+                if let Some(line_index) = line_index.get() {
+                    recorder.scope("loaded", |recorder| {
+                        line_index.record_memory_children(recorder);
+                    });
+                }
+            }
+        }
+    }
+}
+
+impl MemorySize for LineIndexSnapshot {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         record_fields!(recorder, self, lines, non_ascii_lines, non_ascii_ranges,);
     }

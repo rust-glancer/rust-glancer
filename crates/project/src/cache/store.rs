@@ -47,7 +47,7 @@ pub(crate) enum PackageCacheReadError {
 }
 
 impl PackageCacheReadError {
-    pub(super) fn into_package_store_error(
+    pub(crate) fn into_package_store_error(
         self,
         slot: rg_workspace::PackageSlot,
     ) -> PackageStoreError {
@@ -206,7 +206,32 @@ impl PackageCacheStore {
         &self,
         header: &PackageCacheHeader,
     ) -> Result<Option<PackageCacheArtifact>, PackageCacheReadError> {
-        let path = self.package_artifact_path(&header.package);
+        let artifact = self.read_artifact_for_package(&header.package)?;
+        let Some(artifact) = artifact else {
+            return Ok(None);
+        };
+
+        if artifact.header != *header {
+            let path = self.package_artifact_path(&header.package);
+            return Err(PackageCacheReadError::Malformed {
+                source: MalformedCacheError::HeaderMismatch {
+                    path,
+                    actual_slot: artifact.header.package.package.0,
+                    actual_name: artifact.header.package.name,
+                    expected_slot: header.package.package.0,
+                    expected_name: header.package.name.clone(),
+                },
+            });
+        }
+
+        Ok(Some(artifact))
+    }
+
+    pub(crate) fn read_artifact_for_package(
+        &self,
+        package: &CachedPackage,
+    ) -> Result<Option<PackageCacheArtifact>, PackageCacheReadError> {
+        let path = self.package_artifact_path(package);
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -222,14 +247,14 @@ impl PackageCacheStore {
             }
         })?;
 
-        if artifact.header != *header {
+        if artifact.header.package != *package {
             return Err(PackageCacheReadError::Malformed {
                 source: MalformedCacheError::HeaderMismatch {
                     path,
                     actual_slot: artifact.header.package.package.0,
                     actual_name: artifact.header.package.name,
-                    expected_slot: header.package.package.0,
-                    expected_name: header.package.name.clone(),
+                    expected_slot: package.package.0,
+                    expected_name: package.name.clone(),
                 },
             });
         }

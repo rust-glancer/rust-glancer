@@ -1,18 +1,20 @@
+use std::path::Path;
+
 use rg_analysis::Analysis;
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
-use rg_def_map::DefMapDb;
+use rg_def_map::{DefMapDb, PackageSlot, TargetRef};
 use rg_package_store::{PackageStoreError, PackageSubset};
-use rg_parse::ParseDb;
+use rg_parse::{FileId, ParseDb};
 use rg_semantic_ir::SemanticIrDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::{
     PackageResidencyPlan, PackageResidencyPolicy,
-    cache::{PackageCacheStore, WorkspaceCachePlan},
+    cache::{Fingerprint, PackageCacheStore, WorkspaceCachePlan},
 };
 
-use super::{inventory::ProjectInventory, stats::ProjectStats, txn::ProjectReadTxn};
+use super::{stats::ProjectStats, txn::ProjectReadTxn};
 
 /// Fully built project pipeline state.
 #[derive(Debug, Clone)]
@@ -21,6 +23,7 @@ pub(crate) struct ProjectState {
     pub(crate) cargo_metadata_config: CargoMetadataConfig,
     pub(crate) cache_plan: WorkspaceCachePlan,
     pub(crate) cache_store: PackageCacheStore,
+    pub(crate) package_source_fingerprints: Vec<Option<Fingerprint>>,
     pub(crate) body_ir_policy: BodyIrBuildPolicy,
     pub(crate) package_residency_policy: PackageResidencyPolicy,
     pub(crate) package_residency: PackageResidencyPlan,
@@ -45,11 +48,6 @@ impl ProjectState {
     /// Returns the parse database built for this project.
     pub(crate) fn parse_db(&self) -> &ParseDb {
         &self.parse
-    }
-
-    /// Returns residency-independent package, target, and parsed-file metadata.
-    pub(crate) fn inventory(&self) -> ProjectInventory<'_> {
-        ProjectInventory::new(&self.workspace, &self.parse)
     }
 
     /// Returns coarse status counters without exposing raw phase databases.
@@ -78,6 +76,56 @@ impl ProjectState {
         Analysis::new(txn.analysis())
     }
 
+    /// Iterates over non-sysroot package slots from the current Cargo graph.
+    ///
+    /// Phase payloads may be offloaded, but package slots remain the stable ids that connect
+    /// workspace metadata, parse metadata, and user-visible change summaries.
+    pub(crate) fn non_sysroot_package_slots(&self) -> impl Iterator<Item = PackageSlot> + '_ {
+        self.workspace
+            .packages()
+            .iter()
+            .zip(self.parse.packages())
+            .enumerate()
+            .filter(|(_, (package, _))| !package.origin.is_sysroot())
+            .map(|(package_idx, _)| PackageSlot(package_idx))
+    }
+
+    /// Returns all targets declared by the given package slot.
+    pub(crate) fn target_refs_for_package(&self, package: PackageSlot) -> Vec<TargetRef> {
+        let Some(parsed_package) = self.parse.package(package.0) else {
+            return Vec::new();
+        };
+
+        parsed_package
+            .targets()
+            .iter()
+            .map(|target| TargetRef {
+                package,
+                target: target.id,
+            })
+            .collect()
+    }
+
+    /// Returns all parsed files matching a canonical filesystem path.
+    pub(crate) fn file_refs_for_path(&self, canonical_path: &Path) -> Vec<ProjectFileRef> {
+        let mut files = Vec::new();
+
+        for (package_idx, parsed_package) in self.parse.packages().iter().enumerate() {
+            for parsed_file in parsed_package.parsed_files() {
+                if parsed_file.path() != canonical_path {
+                    continue;
+                }
+
+                files.push(ProjectFileRef {
+                    package: PackageSlot(package_idx),
+                    file: parsed_file.file_id(),
+                });
+            }
+        }
+
+        files
+    }
+
     pub(crate) fn is_recoverable_cache_load_failure(error: &anyhow::Error) -> bool {
         error.chain().any(|cause| {
             matches!(
@@ -86,4 +134,11 @@ impl ProjectState {
             )
         })
     }
+}
+
+/// One package-local parsed file in the project graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ProjectFileRef {
+    pub(crate) package: PackageSlot,
+    pub(crate) file: FileId,
 }

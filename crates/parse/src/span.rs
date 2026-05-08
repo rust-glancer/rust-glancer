@@ -157,6 +157,22 @@ impl LineIndex {
         }
     }
 
+    pub fn to_snapshot(&self) -> LineIndexSnapshot {
+        LineIndexSnapshot {
+            lines: self.lines.as_slice().to_vec(),
+            non_ascii_lines: self.non_ascii_lines.as_slice().to_vec(),
+            non_ascii_ranges: self.non_ascii_ranges.as_slice().to_vec(),
+        }
+    }
+
+    pub fn from_snapshot(snapshot: LineIndexSnapshot) -> Self {
+        Self {
+            lines: LineIndexStorage::Owned(snapshot.lines),
+            non_ascii_lines: LineIndexStorage::Owned(snapshot.non_ascii_lines),
+            non_ascii_ranges: LineIndexStorage::Owned(snapshot.non_ascii_ranges),
+        }
+    }
+
     /// Converts a byte offset into a zero-based line/column position.
     pub fn position(&self, offset: u32) -> Position {
         let offset = usize::try_from(offset).expect("offset should fit into usize");
@@ -298,6 +314,13 @@ impl LineIndex {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct LineIndexSnapshot {
+    pub(crate) lines: Vec<LineInfo>,
+    pub(crate) non_ascii_lines: Vec<LineUtf16Metrics>,
+    pub(crate) non_ascii_ranges: Vec<LineCharRange>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum LineIndexStorage<T> {
     Owned(Vec<T>),
@@ -382,14 +405,14 @@ struct PackedLineIndexRanges {
 }
 
 /// Per-line byte facts needed for offset conversion.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub(crate) struct LineInfo {
     pub(crate) start: u32,
     pub(crate) byte_len: u32,
 }
 
 /// Sparse per-line mapping between UTF-8 byte columns and UTF-16 code-unit columns.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub(crate) struct LineUtf16Metrics {
     pub(crate) line: u32,
     pub(crate) utf16_len: u32,
@@ -490,7 +513,7 @@ impl LineUtf16Metrics {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
 pub(crate) struct LineCharRange {
     pub(crate) byte_start: u32,
     pub(crate) byte_end: u32,

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use rg_project::PackageResidencyPolicy;
+use rg_project::{PackageResidencyPolicy, StartupCacheLoad};
 
 mod analyze;
 mod runtime;
@@ -26,6 +26,9 @@ enum Command {
         profile: bool,
         #[clap(short, long)]
         memory: bool,
+        /// Load matching offloadable packages from existing cache artifacts during indexing.
+        #[clap(short, long)]
+        load: bool,
         /// Which packages should remain resident after analysis is built.
         #[clap(long = "package-residency", value_enum, default_value = "all-resident")]
         package_residency: CliPackageResidencyPolicy,
@@ -46,9 +49,21 @@ fn main() -> anyhow::Result<()> {
             path,
             profile,
             memory,
+            load,
             package_residency,
             target,
-        } => analyze::analyze(path, profile, memory, package_residency.into(), target),
+        } => analyze::analyze(
+            path,
+            profile,
+            memory,
+            if load {
+                StartupCacheLoad::Enabled
+            } else {
+                StartupCacheLoad::Disabled
+            },
+            package_residency.into(),
+            target,
+        ),
         Command::Lsp => rg_lsp::run_stdio_with_memory_control(runtime::memory_control()),
     }
 }

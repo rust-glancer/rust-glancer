@@ -1,7 +1,7 @@
 // TODO: This file is unreasonably messy, to be cleaned up
 
 use rg_memsize::{MemoryRecord, MemoryRecorder, MemorySize};
-use rg_project::{BuildProfile, Project};
+use rg_project::{BuildProfile, CacheProbeProfile, Project};
 
 pub(super) const TOP_MEMORY_ROWS: usize = 12;
 
@@ -130,6 +130,58 @@ pub(super) fn print_build_profile(profile: &BuildProfile, purge: Option<&Allocat
             "after allocator purge",
         );
     }
+
+    if let Some(cache_probe) = profile.cache_probe() {
+        print_cache_probe_profile(cache_probe);
+    }
+}
+
+fn print_cache_probe_profile(profile: &CacheProbeProfile) {
+    println!();
+    println!("cache probe:");
+    println!(
+        "  packages: {} total, {} resident, {} offloadable",
+        profile.package_count, profile.resident_count, profile.offloadable_count,
+    );
+    println!(
+        "  result: {} hits, {} misses",
+        profile.hit_count,
+        profile.miss_count(),
+    );
+
+    if profile.miss_count() > 0 {
+        println!("  miss reasons:");
+        for (label, count) in [
+            ("missing artifact", profile.missing_artifact_count),
+            ("artifact read error", profile.artifact_read_error_count),
+            ("source mismatch", profile.source_mismatch_count),
+            ("source fingerprint error", profile.source_error_count),
+            (
+                "body IR policy mismatch",
+                profile.body_ir_policy_mismatch_count,
+            ),
+            ("parse restore error", profile.restore_error_count),
+            ("unplanned package", profile.unplanned_package_count),
+        ] {
+            if count > 0 {
+                println!("    {count:>6}  {label}");
+            }
+        }
+    }
+
+    println!("  timings:");
+    println!(
+        "    {:>10}  artifact read",
+        format_duration(profile.artifact_read_elapsed),
+    );
+    println!(
+        "    {:>10}  source fingerprint",
+        format_duration(profile.source_fingerprint_elapsed),
+    );
+    println!(
+        "    {:>10}  parse restore",
+        format_duration(profile.parse_restore_elapsed),
+    );
 }
 
 pub(super) fn print_allocator_stats(stats: rg_lsp::AllocatorStats) {

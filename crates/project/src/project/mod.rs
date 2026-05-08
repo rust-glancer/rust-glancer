@@ -1,6 +1,7 @@
 mod build;
-mod inventory;
+pub(crate) mod loading;
 mod memsize;
+pub(crate) mod offloading;
 mod snapshot;
 pub(crate) mod state;
 mod stats;
@@ -19,7 +20,7 @@ use self::state::ProjectState;
 use crate::residency::PackageResidencyPlan;
 
 pub use self::{
-    build::{ProjectBuild, ProjectBuilder},
+    build::{ProjectBuild, ProjectBuilder, StartupCacheLoad},
     snapshot::ProjectSnapshot,
     stats::ProjectStats,
 };
@@ -70,7 +71,7 @@ impl Project {
 
     /// Rebuilds the project from source and rewrites offloadable package cache artifacts.
     pub fn recover_after_cache_load_failure(&mut self) -> anyhow::Result<()> {
-        crate::cache::integration::recover_residency_after_cache_load_failure(&mut self.state)
+        offloading::ResidencyApplication::failure_recovery(&mut self.state)
             .context("while attempting to recover analysis project after package cache load failed")
     }
 

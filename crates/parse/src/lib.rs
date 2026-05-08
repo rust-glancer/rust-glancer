@@ -10,8 +10,8 @@ mod tests;
 
 pub use self::{
     db::{PackageFileRef, ParseDb},
-    file::{FileId, ParsedFile},
-    package::Package,
-    span::{LineColumnSpan, LineIndex, Position, Span, TextSpan},
+    file::{FileId, ParsedFile, ParsedFileSnapshot},
+    package::{Package, PackageParseSnapshot},
+    span::{LineColumnSpan, LineIndex, LineIndexSnapshot, Position, Span, TextSpan},
     target::{Target, TargetId},
 };

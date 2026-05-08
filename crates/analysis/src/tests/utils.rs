@@ -1029,7 +1029,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 .expect("span package should exist while rendering analysis query")
                 .parsed_file(file_id)
                 .expect("span file should exist while rendering analysis query")
-                .line_index(),
+                .line_index()
+                .expect("span file line index should load while rendering analysis query"),
         );
         format!(
             "{}:{}-{}:{}",
@@ -1258,7 +1259,8 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
                 .expect("span package should exist while rendering analysis symbol")
                 .parsed_file(file_id)
                 .expect("span file should exist while rendering analysis symbol")
-                .line_index(),
+                .line_index()
+                .expect("span file line index should load while rendering analysis symbol"),
         );
         format!(
             "{}:{}-{}:{}",

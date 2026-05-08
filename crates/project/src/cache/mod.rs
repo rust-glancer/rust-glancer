@@ -15,7 +15,6 @@ mod cached;
 mod codec;
 mod fingerprint;
 mod header;
-pub(super) mod integration;
 mod payload;
 mod plan;
 mod store;

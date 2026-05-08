@@ -306,7 +306,8 @@ impl<'a> TargetLowering<'a> {
                 .parse_package
                 .parsed_file(file_id)
                 .expect("function source file should exist while lowering body")
-                .line_index();
+                .line_index()
+                .with_context(|| format!("while attempting to load line index for {file_id:?}"))?;
             let source = source_for(file_id, ast_fn.syntax());
             let body = FunctionBodyLowering::new(
                 function_ref,

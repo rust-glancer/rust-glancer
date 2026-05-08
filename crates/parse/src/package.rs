@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Context as _;
 use rg_arena::Arena;
 
-use crate::{FileId, LineIndex, ParsedFile, Target, TargetId, file::FileDb};
+use crate::{FileId, LineIndex, ParsedFile, ParsedFileSnapshot, Target, TargetId, file::FileDb};
 use rg_workspace::{PackageId, PackageOrigin, TargetKind};
 
 /// Parsed package, including package-local files and target entrypoints.
@@ -78,6 +78,10 @@ impl Package {
         self.files.collect_line_indexes(indexes);
     }
 
+    pub(crate) fn offload_line_indexes(&mut self) {
+        self.files.offload_line_indexes();
+    }
+
     /// Returns the cached parsed file for a previously known `FileId`.
     pub fn parsed_file(&self, file_id: FileId) -> Option<ParsedFile<'_>> {
         self.files.parsed_file(file_id)
@@ -86,6 +90,43 @@ impl Package {
     /// Iterates over all files parsed for this package.
     pub fn parsed_files(&self) -> impl Iterator<Item = ParsedFile<'_>> {
         self.files.parsed_files()
+    }
+
+    /// Captures the package file table after all module discovery for cache-backed startup.
+    pub fn parse_snapshot(&self) -> anyhow::Result<PackageParseSnapshot> {
+        Ok(PackageParseSnapshot {
+            files: self.files.parse_snapshot()?,
+            target_root_files: self.targets.iter().map(|target| target.root_file).collect(),
+        })
+    }
+
+    /// Replaces root-only parse metadata with the file table saved in a package artifact.
+    ///
+    /// The artifact keeps the same package and target slots as the current workspace graph. Once
+    /// that shape is checked, restoring the file table is enough for cached phase payloads to keep
+    /// using their original file ids.
+    pub fn apply_parse_snapshot(&mut self, snapshot: PackageParseSnapshot) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            snapshot.target_root_files.len() == self.targets.len(),
+            "parse snapshot has {} target roots but package has {} targets",
+            snapshot.target_root_files.len(),
+            self.targets.len(),
+        );
+        for root_file in &snapshot.target_root_files {
+            anyhow::ensure!(
+                root_file.0 < snapshot.files.len(),
+                "parse snapshot root file {:?} is outside {} files",
+                root_file,
+                snapshot.files.len(),
+            );
+        }
+
+        self.files = FileDb::from_parse_snapshot(snapshot.files);
+        for (target, root_file) in self.targets.iter_mut().zip(snapshot.target_root_files) {
+            target.root_file = root_file;
+        }
+
+        Ok(())
     }
 
     /// Returns the path associated with a file id, if the id is valid.
@@ -154,5 +195,32 @@ impl Package {
             files,
             targets: parsed_targets,
         })
+    }
+}
+
+/// Serializable parse metadata for one package artifact.
+///
+/// The file vector is intentionally package-local and ordered by `FileId`; cached item/semantic
+/// payloads can only be reused if those ids keep pointing at the same paths and line indexes.
+#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+pub struct PackageParseSnapshot {
+    pub(crate) files: Vec<ParsedFileSnapshot>,
+    pub(crate) target_root_files: Vec<FileId>,
+}
+
+impl PackageParseSnapshot {
+    pub fn empty() -> Self {
+        Self {
+            files: Vec::new(),
+            target_root_files: Vec::new(),
+        }
+    }
+
+    pub fn files(&self) -> &[ParsedFileSnapshot] {
+        &self.files
+    }
+
+    pub fn target_root_count(&self) -> usize {
+        self.target_root_files.len()
     }
 }

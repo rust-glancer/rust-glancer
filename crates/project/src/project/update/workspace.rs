@@ -44,14 +44,12 @@ pub(super) fn rebuild_workspace_graph(
     let mut affected_packages = Vec::new();
     let mut changed_targets = Vec::new();
 
-    // The rebuilt project has already restored its package residency, so raw phase databases may
-    // be empty under aggressive offloading. Inventory stays resident and carries the stable package
-    // and target ids needed for a change summary.
-    let inventory = project.state.inventory();
-    for package in inventory.non_sysroot_packages() {
-        let package_slot = package.slot();
+    // The rebuilt project has already restored its package residency, so payload-heavy phase
+    // databases may be empty under aggressive offloading. ProjectState keeps the small graph
+    // metadata that change summaries need resident.
+    for package_slot in project.state.non_sysroot_package_slots() {
         affected_packages.push(package_slot);
-        changed_targets.extend(inventory.target_refs_for_package(package_slot));
+        changed_targets.extend(project.state.target_refs_for_package(package_slot));
     }
 
     Ok(AnalysisChangeSummary {
@@ -66,10 +64,9 @@ fn changed_source_files_for_saved_paths(
     changes: &[SavedFileChange],
 ) -> Vec<ChangedFile> {
     let mut changed_files = Vec::new();
-    let inventory = project.state.inventory();
 
     for change in changes {
-        for file in inventory.file_refs_for_path(&change.path) {
+        for file in project.state.file_refs_for_path(&change.path) {
             let changed_file = ChangedFile {
                 package: file.package,
                 file: file.file,

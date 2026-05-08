@@ -185,7 +185,8 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                 self.package
                     .parsed_file(item.file_id)
                     .expect("item file should exist while rendering source span")
-                    .line_index(),
+                    .line_index()
+                    .expect("item file line index should load while rendering source span"),
             );
             line.push_str(&format!(
                 " [{} {}:{}-{}:{} ({}..{})]",

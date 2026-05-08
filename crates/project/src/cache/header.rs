@@ -6,7 +6,7 @@
 
 use rkyv::{Archive, Deserialize, Serialize};
 
-use super::cached::CachedPackage;
+use super::{cached::CachedPackage, fingerprint::Fingerprint};
 
 /// Current on-disk package artifact schema.
 pub const CURRENT_PACKAGE_CACHE_SCHEMA_VERSION: PackageCacheSchemaVersion =
@@ -20,13 +20,15 @@ pub struct PackageCacheSchemaVersion(pub u32);
 pub struct PackageCacheHeader {
     pub schema_version: PackageCacheSchemaVersion,
     pub package: CachedPackage,
+    pub source_fingerprint: Fingerprint,
 }
 
 impl PackageCacheHeader {
-    pub fn new(package: CachedPackage) -> Self {
+    pub fn new(package: CachedPackage, source_fingerprint: Fingerprint) -> Self {
         Self {
             schema_version: CURRENT_PACKAGE_CACHE_SCHEMA_VERSION,
             package,
+            source_fingerprint,
         }
     }
 }

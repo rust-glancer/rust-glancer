@@ -2,7 +2,7 @@ use std::{path::PathBuf, time::Instant};
 
 use anyhow::Context as _;
 use rg_lsp::MemoryControl as _;
-use rg_project::{BuildProcessMemory, PackageResidencyPolicy, Project};
+use rg_project::{BuildProcessMemory, PackageResidencyPolicy, Project, StartupCacheLoad};
 use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
 
 mod fmt;
@@ -12,6 +12,7 @@ pub(super) fn analyze(
     path: PathBuf,
     profile: bool,
     include_memory: bool,
+    startup_cache_load: StartupCacheLoad,
     package_residency_policy: PackageResidencyPolicy,
     target: Option<String>,
 ) -> anyhow::Result<()> {
@@ -47,6 +48,7 @@ pub(super) fn analyze(
     let builder = Project::builder(workspace)
         .cargo_metadata_config(cargo_metadata_config)
         .package_residency_policy(package_residency_policy)
+        .startup_cache_load(startup_cache_load)
         .profile_build_timing(profile || include_memory);
     let builder = if include_memory {
         builder

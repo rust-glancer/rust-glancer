@@ -3,9 +3,7 @@
 use rg_analysis::AnalysisReadTxn;
 use rg_package_store::PackageSubset;
 
-use crate::cache::integration;
-
-use super::{state::ProjectState, subset};
+use super::{loading::PackageReadLoaders, state::ProjectState, subset};
 
 /// Read transaction for project-level query APIs.
 ///
@@ -26,7 +24,7 @@ impl<'a> ProjectReadTxn<'a> {
         project: &'a ProjectState,
         subset: &PackageSubset,
     ) -> anyhow::Result<Self> {
-        let loaders = integration::package_read_loaders(project);
+        let loaders = PackageReadLoaders::new(project);
 
         Ok(Self {
             analysis: AnalysisReadTxn::from_phase_txns(

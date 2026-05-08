@@ -186,7 +186,7 @@ pub struct Dep;
 #[test]
 fn roundtrips_package_cache_header_codec() {
     utils::check_cache_header_codec(expect![[r#"
-        encoded header bytes 272
+        encoded header bytes 304
         706174682b66696c653a2f2f2f776f726b73706163652361707040302e312e30
         2f776f726b73706163652f436172676f2e746f6d6c2f776f726b73706163652f
         7372632f6c69622e72732f776f726b73706163652f7372632f6d61696e2e7273
@@ -195,10 +195,12 @@ fn roundtrips_package_cache_header_codec() {
         653a2f2f2f776f726b73706163652f6465702364657040302e312e30a4000000
         dcffffff646570ffffffffff0100000001000000000000000700000000000000
         a000000020ffffff617070ffffffffff00030000950000002cffffff64ffffff
-        02000000b8ffffff0100000000000000
+        02000000b8ffffff010000000000000007070707070707070707070707070707
+        07070707070707070707070707070707
 
         decoded header
         schema 1
+        source fingerprint 0707070707070707070707070707070707070707070707070707070707070707
         package #7 app
         id path+file:///workspace#app@0.1.0
         source workspace
@@ -220,13 +222,17 @@ fn roundtrips_minimal_package_cache_artifact_codec() {
         2e302f776f726b73706163652f436172676f2e746f6d6c000000000000000000
         01000000000000000700000000000000a2000000b0ffffffffffffffffffffff
         0003000095000000beffffffccffffff00000000c4ffffff0000000000000000
-        ffffffffffffffffb0ffffff00000000a8ffffff00000000a0ffffff00000000
-        0000000094ffffff
+        0707070707070707070707070707070707070707070707070707070707070707
+        98ffffff0000000090ffffff00000000ffffffffffffffff80ffffff00000000
+        78ffffff0000000070ffffff000000000000000064ffffff
 
         decoded artifact
         schema 1
+        source fingerprint 0707070707070707070707070707070707070707070707070707070707070707
         package #7 
         header targets 0
+        parse files 0
+        parse target roots 0
         def-map package  targets 0
         semantic IR targets 0
         body IR built targets 0
@@ -250,8 +256,11 @@ pub struct App;
             encoded artifact has bytes true
             decoded artifact
             schema 1
+            source fingerprint 5cb07c1684eeeb2c51a750cf465c7cd8f62d74e2e1dbdace0df9b4481058d206
             package #0 app
             header targets 1
+            parse files 1
+            parse target roots 1
             def-map package app targets 1
             semantic IR targets 1
             body IR built targets 1
@@ -388,4 +397,58 @@ fn main() {}
             - struct DepType @ dep[lib]
         "#]],
     );
+}
+
+#[test]
+fn startup_indexing_uses_matching_offloaded_package_artifacts() {
+    utils::check_startup_cache_uses_matching_artifact(expect![[r#"
+        startup artifact-backed indexing
+        dep resident false
+        old symbols 1
+        new symbols 0
+    "#]]);
+}
+
+#[test]
+fn artifact_snapshot_source_fingerprint_matches_discovered_package_sources() {
+    utils::check_artifact_snapshot_source_fingerprint_matches_package_sources(expect![[r#"
+        artifact snapshot source fingerprint
+        package dep
+        parse files 2
+        matches true
+    "#]]);
+}
+
+#[test]
+fn startup_cache_profile_reports_probe_hits() {
+    utils::check_startup_cache_probe_profile(expect![[r#"
+        startup cache probe profile
+        packages 2
+        resident 1
+        offloadable 1
+        hits 1
+        misses 0
+    "#]]);
+}
+
+#[test]
+fn startup_indexing_rejects_artifacts_when_body_ir_policy_needs_more_bodies() {
+    utils::check_startup_cache_rejects_body_ir_policy_mismatch(expect![[r#"
+        startup body IR policy mismatch
+        hits 0
+        misses 1
+        body policy mismatches 1
+        body IR target statuses
+        - target 0 built
+    "#]]);
+}
+
+#[test]
+fn startup_indexing_rejects_artifacts_when_out_of_line_modules_change() {
+    utils::check_startup_cache_rejects_stale_out_of_line_module(expect![[r#"
+        startup stale out-of-line module
+        dep resident false
+        old symbols 0
+        new symbols 1
+    "#]]);
 }

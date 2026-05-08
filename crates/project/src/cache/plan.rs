@@ -6,6 +6,7 @@
 
 use std::path::Path;
 
+use rg_parse::{PackageParseSnapshot, ParseDb};
 use rg_workspace::{PackageSlot, WorkspaceMetadata};
 
 use super::{
@@ -74,9 +75,79 @@ impl WorkspaceCachePlan {
         self.packages.get(package.0)
     }
 
-    /// Builds an artifact header for one package bundle.
-    pub fn artifact_header(&self, package: PackageSlot) -> Option<PackageCacheHeader> {
-        Some(PackageCacheHeader::new(self.package(package)?.clone()))
+    /// Computes source fingerprints for all parsed packages in slot order.
+    ///
+    /// Package identities deliberately ignore source text so graph-equivalent saves reuse artifact
+    /// paths. These fingerprints are the second half of validation: a cache hit must match both
+    /// the Cargo graph and the current source snapshot.
+    pub fn source_fingerprints(
+        &self,
+        workspace_root: &Path,
+        parse: &ParseDb,
+    ) -> anyhow::Result<Vec<Option<Fingerprint>>> {
+        parse
+            .packages()
+            .iter()
+            .enumerate()
+            .map(|(package_idx, package)| {
+                if self.package(PackageSlot(package_idx)).is_none() {
+                    return Ok(None);
+                }
+
+                fingerprint::FingerprintBuilder::package_source(workspace_root, package).map(Some)
+            })
+            .collect()
+    }
+
+    /// Refreshes source fingerprints for selected parsed packages.
+    pub fn refresh_source_fingerprints(
+        &self,
+        workspace_root: &Path,
+        parse: &ParseDb,
+        fingerprints: &mut [Option<Fingerprint>],
+        packages: &[PackageSlot],
+    ) -> anyhow::Result<()> {
+        for package in packages {
+            let Some(slot) = fingerprints.get_mut(package.0) else {
+                continue;
+            };
+            let Some(parse_package) = parse.package(package.0) else {
+                *slot = None;
+                continue;
+            };
+            if self.package(*package).is_none() {
+                *slot = None;
+                continue;
+            }
+
+            *slot = Some(fingerprint::FingerprintBuilder::package_source(
+                workspace_root,
+                parse_package,
+            )?);
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn snapshot_source_fingerprint(
+        workspace_root: &Path,
+        package: &CachedPackage,
+        snapshot: &PackageParseSnapshot,
+    ) -> anyhow::Result<Fingerprint> {
+        fingerprint::FingerprintBuilder::package_source_snapshot(workspace_root, package, snapshot)
+    }
+
+    /// Builds an artifact header for one package bundle and source snapshot.
+    pub fn artifact_header(
+        &self,
+        package: PackageSlot,
+        source_fingerprints: &[Option<Fingerprint>],
+    ) -> Option<PackageCacheHeader> {
+        let source_fingerprint = source_fingerprints.get(package.0).copied().flatten()?;
+        Some(PackageCacheHeader::new(
+            self.package(package)?.clone(),
+            source_fingerprint,
+        ))
     }
 
     /// Returns the cache generation fingerprint for this workspace graph.

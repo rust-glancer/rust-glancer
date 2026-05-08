@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::Context as _;
 
-use crate::{FileId, LineIndex, Package};
+use crate::{FileId, LineIndex, Package, PackageParseSnapshot};
 
 /// Parsed project metadata, packages, and source files.
 #[derive(Debug, Clone)]
@@ -81,6 +81,18 @@ impl ParseDb {
         self.packages.get_mut(package_slot)
     }
 
+    /// Restores package-local file ids and source maps from a validated package artifact.
+    pub fn apply_package_parse_snapshot(
+        &mut self,
+        package_slot: usize,
+        snapshot: PackageParseSnapshot,
+    ) -> anyhow::Result<()> {
+        let package = self
+            .package_mut(package_slot)
+            .with_context(|| format!("while attempting to fetch parsed package {package_slot}"))?;
+        package.apply_parse_snapshot(snapshot)
+    }
+
     /// Returns whether a canonical path is already known to any parsed package.
     pub fn contains_file_path(&self, file_path: &Path) -> bool {
         self.packages
@@ -123,6 +135,16 @@ impl ParseDb {
         }
 
         LineIndex::pack_many(indexes.as_mut_slice());
+    }
+
+    /// Drops retained line indexes for packages whose source maps are backed by source files.
+    pub fn offload_line_indexes_for_packages(&mut self, packages: &[usize]) {
+        for package_slot in packages {
+            let Some(package) = self.packages.get_mut(*package_slot) else {
+                continue;
+            };
+            package.offload_line_indexes();
+        }
     }
 
     /// Reparses a saved file for every parsed package that already owns `file_path`.

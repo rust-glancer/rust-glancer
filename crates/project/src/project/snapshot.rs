@@ -8,9 +8,7 @@ use rg_def_map::{PackageSlot, TargetRef};
 use rg_parse::ParseDb;
 use rg_parse::{FileId, LineIndex};
 
-use super::{
-    FileContext, inventory::ProjectInventory, state::ProjectState, stats::ProjectStats, subset,
-};
+use super::{FileContext, state::ProjectState, stats::ProjectStats, subset};
 
 /// Immutable project view used to answer LSP-shaped queries.
 #[derive(Debug, Clone, Copy)]
@@ -61,11 +59,7 @@ impl<'a> ProjectSnapshot<'a> {
             .parse_db()
             .package(package.0)?
             .parsed_file(file)
-            .map(|file| file.line_index())
-    }
-
-    pub(crate) fn inventory(&self) -> ProjectInventory<'a> {
-        self.state.inventory()
+            .and_then(|file| file.line_index().ok())
     }
 
     pub fn stats(&self) -> ProjectStats {
@@ -91,7 +85,7 @@ impl<'a> ProjectSnapshot<'a> {
         let canonical_path = path
             .canonicalize()
             .with_context(|| format!("while attempting to canonicalize {}", path.display()))?;
-        let candidates = self.inventory().file_refs_for_path(&canonical_path);
+        let candidates = self.state.file_refs_for_path(&canonical_path);
 
         let package_slots = candidates
             .iter()

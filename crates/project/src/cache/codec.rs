@@ -86,6 +86,14 @@ impl PackageCacheCodec {
 
         // These checks reject cache files whose retained phases can no longer address the same
         // package/target slots. Deeper semantic invalidation stays a project-level decision.
+        if artifact.payload.parse.target_root_count() != target_count {
+            anyhow::bail!(
+                "package cache artifact has {} parse targets but header has {} targets",
+                artifact.payload.parse.target_root_count(),
+                target_count,
+            );
+        }
+
         if artifact.payload.def_map.package().package_name() != package.name {
             anyhow::bail!(
                 "package cache artifact belongs to def-map package `{}`, expected `{}`",

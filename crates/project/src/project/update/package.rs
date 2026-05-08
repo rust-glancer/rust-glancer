@@ -6,9 +6,11 @@ use rg_def_map::PackageSlot;
 use rg_item_tree::ItemTreeDb;
 
 use crate::{
-    cache::integration,
     profile::BuildProfiler,
-    project::{build, state::ProjectState, subset},
+    project::{
+        StartupCacheLoad, build, loading::PackageReadLoaders, offloading::ResidencyApplication,
+        state::ProjectState, subset,
+    },
 };
 
 pub(super) fn rebuild_packages(
@@ -22,7 +24,7 @@ pub(super) fn rebuild_packages(
     match try_rebuild_packages(state, packages) {
         Ok(()) => Ok(()),
         Err(error) if ProjectState::is_recoverable_cache_load_failure(&error) => {
-            integration::recover_residency_after_cache_load_failure(state).with_context(|| {
+            ResidencyApplication::failure_recovery(state).with_context(|| {
                 format!(
                     "while attempting to recover analysis project after package cache load failed during package rebuild: {error}",
                 )
@@ -37,7 +39,7 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     // should stay offloaded so save handling does not recreate full-project spikes.
     let rebuild_subset =
         subset::rebuild_packages_with_visible_dependencies(&state.workspace, packages);
-    let loaders = integration::package_read_loaders(state);
+    let loaders = PackageReadLoaders::new(state);
     let old_def_map_txn = state
         .def_map
         .read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
@@ -100,7 +102,8 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     state.semantic_ir = semantic_ir;
     state.body_ir = body_ir;
     state.names.shrink_to_fit();
-    integration::restore_residency_after_rebuild(state, packages)
+    ResidencyApplication::restore(state, packages)
+        .apply()
         .context("while attempting to apply package cache residency after package rebuild")?;
 
     Ok(())
@@ -118,6 +121,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
         cargo_metadata_config,
         body_ir_policy,
         package_residency_policy,
+        StartupCacheLoad::Disabled,
         &mut profiler,
     )
     .context("while attempting to rebuild resident analysis project")?;

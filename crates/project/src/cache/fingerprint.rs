@@ -5,15 +5,24 @@
 
 use std::{fmt, path::Path};
 
+use anyhow::Context as _;
+
 use super::{CachedDependency, CachedPackage, CachedPackageId, CachedTarget, WorkspaceCachePlan};
 
 /// Stable BLAKE3 fingerprint used by cache keys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 pub struct Fingerprint([u8; 32]);
 
 impl Fingerprint {
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+
+    #[cfg(test)]
+    pub(super) fn from_stable_bytes(bytes: [u8; 32]) -> Self {
+        Self(bytes)
     }
 }
 
@@ -76,6 +85,67 @@ impl FingerprintBuilder {
         }
 
         builder.finalize()
+    }
+
+    pub(super) fn package_source(
+        workspace_root: &Path,
+        package: &rg_parse::Package,
+    ) -> anyhow::Result<Fingerprint> {
+        let mut builder = Self::new("package-source");
+        let mut files = package.parsed_files().collect::<Vec<_>>();
+        files.sort_by(|left, right| left.path().cmp(right.path()));
+
+        // Package artifacts retain semantic analysis for a saved source snapshot. Cargo metadata
+        // chooses the artifact path, while this fingerprint rejects stale bytes after source-only
+        // edits that keep the package graph unchanged.
+        builder.package_id(
+            "package.id",
+            workspace_root,
+            &CachedPackageId::from_workspace(package.id()),
+        );
+        builder.usize("files.len", files.len());
+        for file in files {
+            builder.path("file.path", workspace_root, file.path());
+            let source = std::fs::read(file.path()).with_context(|| {
+                format!(
+                    "while attempting to read {} for package cache source fingerprint",
+                    file.path().display(),
+                )
+            })?;
+            builder.bytes("file.source", &source);
+        }
+
+        Ok(builder.finalize())
+    }
+
+    pub(super) fn package_source_snapshot(
+        workspace_root: &Path,
+        package: &CachedPackage,
+        snapshot: &rg_parse::PackageParseSnapshot,
+    ) -> anyhow::Result<Fingerprint> {
+        let mut builder = Self::new("package-source");
+        let mut files = snapshot.files().iter().collect::<Vec<_>>();
+        files.sort_by(|left, right| left.path().cmp(right.path()));
+
+        builder.package_id("package.id", workspace_root, &package.package_id);
+        builder.usize("files.len", files.len());
+
+        // The artifact manifest is the authoritative file set for cache validation. Fresh parse
+        // metadata initially knows only target roots, so using it here would miss edits in
+        // out-of-line modules and incorrectly accept stale analysis payloads. Keep the same stable
+        // path ordering as fresh source fingerprints so equivalent file sets hash identically.
+        for file in files {
+            builder.path("file.path", workspace_root, file.path());
+            let source = std::fs::read(file.path()).with_context(|| {
+                format!(
+                    "while attempting to read {} for package cache source fingerprint",
+                    file.path().display(),
+                )
+            })?;
+            builder.bytes("file.source", &source);
+        }
+
+        Ok(builder.finalize())
     }
 
     fn new(domain: &str) -> Self {

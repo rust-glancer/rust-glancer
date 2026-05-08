@@ -1059,7 +1059,8 @@ impl TargetBodyIrSnapshot<'_> {
                 .expect("source package should exist while rendering body IR source")
                 .parsed_file(source.file_id)
                 .expect("source file should exist while rendering body IR source")
-                .line_index(),
+                .line_index()
+                .expect("source file line index should load while rendering body IR source"),
         );
         format!(
             "{}:{}-{}:{}",

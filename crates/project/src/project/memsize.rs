@@ -2,9 +2,9 @@ use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::cache::{
     CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot, CachedPackageSource,
-    CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, PackageCacheArtifact,
-    PackageCacheBodyIrState, PackageCacheHeader, PackageCachePayload, PackageCacheSchemaVersion,
-    WorkspaceCachePlan,
+    CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, Fingerprint,
+    PackageCacheArtifact, PackageCacheBodyIrState, PackageCacheHeader, PackageCachePayload,
+    PackageCacheSchemaVersion, WorkspaceCachePlan,
 };
 use crate::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
 
@@ -30,6 +30,7 @@ impl MemorySize for ProjectState {
             workspace,
             cargo_metadata_config,
             cache_plan,
+            package_source_fingerprints,
             body_ir_policy,
             package_residency_policy,
             package_residency,
@@ -123,7 +124,7 @@ impl MemorySize for CachedDependency {
 
 impl MemorySize for PackageCacheHeader {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, schema_version, package);
+        record_fields!(recorder, self, schema_version, package, source_fingerprint);
     }
 }
 
@@ -131,6 +132,10 @@ impl MemorySize for PackageCacheSchemaVersion {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         self.0.record_memory_children(recorder);
     }
+}
+
+impl MemorySize for Fingerprint {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
 }
 
 impl MemorySize for PackageCacheBodyIrState {
@@ -152,7 +157,7 @@ impl MemorySize for PackageCacheArtifact {
 
 impl MemorySize for PackageCachePayload {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, def_map, semantic_ir, body_ir);
+        record_fields!(recorder, self, parse, def_map, semantic_ir, body_ir);
     }
 }
 
