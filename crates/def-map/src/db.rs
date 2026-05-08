@@ -49,9 +49,15 @@ impl DefMapDb {
     }
 
     pub(crate) fn from_packages(packages: Vec<Package>) -> Self {
-        Self {
-            packages: PackageStore::from_vec(packages),
-        }
+        Self::from_package_store(PackageStore::from_vec(packages))
+    }
+
+    /// Builds a def-map database from an already shaped package store.
+    ///
+    /// Fresh builds use `from_packages`, while startup cache loading can construct resident and
+    /// offloaded package slots directly once it has validated the workspace snapshot.
+    pub fn from_package_store(packages: PackageStore<Package>) -> Self {
+        Self { packages }
     }
 
     pub(crate) fn mutator(&mut self) -> DefMapDbMutator<'_> {

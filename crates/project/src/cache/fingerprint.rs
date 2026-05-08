@@ -5,7 +5,7 @@
 
 use std::{fmt, path::Path};
 
-use super::{CachedDependency, CachedPackage, CachedPackageId, CachedTarget, CachedWorkspace};
+use super::{CachedDependency, CachedPackage, CachedPackageId, CachedTarget, WorkspaceCachePlan};
 
 /// Stable BLAKE3 fingerprint used by cache keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -34,12 +34,12 @@ pub(super) struct FingerprintBuilder {
 impl FingerprintBuilder {
     pub(super) fn workspace_graph(
         workspace_root: &Path,
-        cached_workspace: &CachedWorkspace,
+        cache_plan: &WorkspaceCachePlan,
     ) -> Fingerprint {
         let mut builder = Self::new("workspace-graph");
 
-        builder.usize("packages.len", cached_workspace.packages.len());
-        for package in &cached_workspace.packages {
+        builder.usize("packages.len", cache_plan.packages.len());
+        for package in &cache_plan.packages {
             builder.bytes(
                 "package.identity",
                 Self::package_identity(workspace_root, package).as_bytes(),

@@ -54,9 +54,15 @@ impl BodyIrDb {
     }
 
     pub(crate) fn from_packages(packages: Vec<PackageBodies>) -> Self {
-        Self {
-            packages: PackageStore::from_vec(packages),
-        }
+        Self::from_package_store(PackageStore::from_vec(packages))
+    }
+
+    /// Builds a Body IR database from an already shaped package store.
+    ///
+    /// Startup cache loading will validate package artifacts before deciding which slots stay
+    /// resident and which slots remain lazy; the database should only need to own that final store.
+    pub fn from_package_store(packages: PackageStore<PackageBodies>) -> Self {
+        Self { packages }
     }
 
     pub(crate) fn mutator(&mut self) -> BodyIrDbMutator<'_> {

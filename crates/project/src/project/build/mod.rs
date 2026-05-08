@@ -9,7 +9,7 @@ use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::{
     BuildProcessMemory, BuildProfile, PackageResidencyPlan, PackageResidencyPolicy,
-    cache::{CachedWorkspace, PackageCacheStore, integration},
+    cache::{PackageCacheStore, WorkspaceCachePlan, integration},
     profile::{BuildProfiler, ProcessMemorySampler},
 };
 
@@ -138,13 +138,13 @@ pub(crate) fn build_resident_state(
 ) -> anyhow::Result<ProjectState> {
     let phases = phases::build(&workspace, body_ir_policy, profiler)?;
     let package_residency = PackageResidencyPlan::build(&workspace, package_residency_policy);
-    let cached_workspace = CachedWorkspace::build(&workspace, &phases.parse);
-    let cache_store = PackageCacheStore::for_workspace(&workspace, &cached_workspace);
+    let cache_plan = WorkspaceCachePlan::build(&workspace);
+    let cache_store = PackageCacheStore::for_workspace(&workspace, &cache_plan);
 
     Ok(ProjectState {
         workspace,
         cargo_metadata_config,
-        cached_workspace,
+        cache_plan,
         cache_store,
         body_ir_policy,
         package_residency_policy,

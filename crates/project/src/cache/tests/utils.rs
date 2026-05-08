@@ -13,19 +13,18 @@ use test_fixture::fixture_crate;
 
 use crate::cache::{
     CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot, CachedPackageSource,
-    CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, CachedWorkspace,
-    PackageCacheArtifact, PackageCacheBodyIrState, PackageCacheCodec, PackageCacheHeader,
-    PackageCachePayload, PackageCacheStore,
+    CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, PackageCacheArtifact,
+    PackageCacheBodyIrState, PackageCacheCodec, PackageCacheHeader, PackageCachePayload,
+    PackageCacheStore, WorkspaceCachePlan,
 };
 use crate::{PackageResidencyPolicy, Project, project::state::ProjectState};
 
-pub(super) fn check_cached_workspace(fixture: &str, expect: Expect) {
+pub(super) fn check_cache_plan(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
-    let parse = rg_parse::ParseDb::build(&workspace).expect("fixture parse db should build");
-    let cached_workspace = CachedWorkspace::build(&workspace, &parse);
-    let actual = render_cached_workspace(&workspace, &cached_workspace);
+    let cache_plan = WorkspaceCachePlan::build(&workspace);
+    let actual = render_cache_plan(&workspace, &cache_plan);
 
     expect.assert_eq(&format!("{}\n", actual.trim_end()));
 }
@@ -34,17 +33,16 @@ pub(super) fn check_cache_store_paths(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should normalize");
-    let parse = rg_parse::ParseDb::build(&workspace).expect("fixture parse db should build");
-    let cached_workspace = CachedWorkspace::build(&workspace, &parse);
+    let cache_plan = WorkspaceCachePlan::build(&workspace);
 
     let mut dump = String::new();
     render_cache_store(
         "workspace target",
         &workspace,
-        &cached_workspace,
+        &cache_plan,
         &PackageCacheStore::for_workspace_with_target_dir(
             &workspace,
-            &cached_workspace,
+            &cache_plan,
             workspace.workspace_root().join("target"),
         ),
         &mut dump,
@@ -53,10 +51,10 @@ pub(super) fn check_cache_store_paths(fixture: &str, expect: Expect) {
     render_cache_store(
         "custom target",
         &workspace,
-        &cached_workspace,
+        &cache_plan,
         &PackageCacheStore::for_workspace_with_target_dir(
             &workspace,
-            &cached_workspace,
+            &cache_plan,
             PathBuf::from("custom-target"),
         ),
         &mut dump,
@@ -159,11 +157,8 @@ pub(super) fn check_fixture_cache_artifact_codec(fixture: &str, expect: Expect) 
         .build()
         .expect("fixture project should build")
         .into_project();
-    let artifact = package_artifact_from_project(
-        &project.state.cached_workspace,
-        &project.state,
-        PackageSlot(0),
-    );
+    let artifact =
+        package_artifact_from_project(&project.state.cache_plan, &project.state, PackageSlot(0));
 
     let bytes = PackageCacheCodec::encode_artifact(&artifact)
         .expect("package cache artifact should serialize");
@@ -191,14 +186,11 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
         .build()
         .expect("fixture project should build")
         .into_project();
-    let artifact = package_artifact_from_project(
-        &project.state.cached_workspace,
-        &project.state,
-        PackageSlot(0),
-    );
+    let artifact =
+        package_artifact_from_project(&project.state.cache_plan, &project.state, PackageSlot(0));
     let store = PackageCacheStore::for_workspace_with_target_dir(
         project.workspace(),
-        &project.state.cached_workspace,
+        &project.state.cache_plan,
         project.workspace().workspace_root().join("target"),
     );
     let path = store.package_artifact_path(&artifact.header.package);
@@ -278,14 +270,11 @@ pub(super) fn check_cache_store_generation_cleanup(fixture: &str, expect: Expect
         .build()
         .expect("fixture project should build")
         .into_project();
-    let artifact = package_artifact_from_project(
-        &project.state.cached_workspace,
-        &project.state,
-        PackageSlot(0),
-    );
+    let artifact =
+        package_artifact_from_project(&project.state.cache_plan, &project.state, PackageSlot(0));
     let store = PackageCacheStore::for_workspace_with_target_dir(
         project.workspace(),
-        &project.state.cached_workspace,
+        &project.state.cache_plan,
         project.workspace().workspace_root().join("target"),
     );
     let current_artifact = store.package_artifact_path(&artifact.header.package);
@@ -387,13 +376,13 @@ pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
 }
 
 fn package_artifact_from_project(
-    cached_workspace: &CachedWorkspace,
+    cache_plan: &WorkspaceCachePlan,
     project: &ProjectState,
     package: PackageSlot,
 ) -> PackageCacheArtifact {
-    let header = cached_workspace
+    let header = cache_plan
         .artifact_header(package)
-        .expect("cached fixture package should have an artifact header");
+        .expect("cache-planned fixture package should have an artifact header");
     let def_map = project
         .def_map
         .resident_package(package)
@@ -431,16 +420,13 @@ fn package_slot_by_name(parse: &rg_parse::ParseDb, package_name: &str) -> Packag
         .unwrap_or_else(|| panic!("fixture package {package_name} should be parsed"))
 }
 
-fn render_cached_workspace(
-    workspace: &WorkspaceMetadata,
-    cached_workspace: &CachedWorkspace,
-) -> String {
+fn render_cache_plan(workspace: &WorkspaceMetadata, cache_plan: &WorkspaceCachePlan) -> String {
     let mut dump = String::new();
-    writeln!(&mut dump, "cached workspace").expect("string writes should not fail");
+    writeln!(&mut dump, "workspace cache plan").expect("string writes should not fail");
 
-    for package in cached_workspace.packages() {
+    for package in cache_plan.packages() {
         writeln!(&mut dump).expect("string writes should not fail");
-        render_package(workspace, cached_workspace, package, &mut dump);
+        render_package(workspace, cache_plan, package, &mut dump);
     }
 
     dump
@@ -449,7 +435,7 @@ fn render_cached_workspace(
 fn render_cache_store(
     label: &str,
     workspace: &WorkspaceMetadata,
-    cached_workspace: &CachedWorkspace,
+    cache_plan: &WorkspaceCachePlan,
     store: &PackageCacheStore,
     dump: &mut String,
 ) {
@@ -462,7 +448,7 @@ fn render_cache_store(
     .expect("string writes should not fail");
     writeln!(dump, "artifacts").expect("string writes should not fail");
 
-    for package in cached_workspace.packages() {
+    for package in cache_plan.packages() {
         writeln!(
             dump,
             "- #{} {} {}",
@@ -482,13 +468,13 @@ fn render_cache_store(
 
 fn render_package(
     workspace: &WorkspaceMetadata,
-    cached_workspace: &CachedWorkspace,
+    cache_plan: &WorkspaceCachePlan,
     package: &CachedPackage,
     dump: &mut String,
 ) {
     // The header is rendered together with the cached package because artifact metadata is the
     // unit future cache readers will validate before loading any package payload.
-    let header = cached_workspace
+    let header = cache_plan
         .artifact_header(
             package
                 .package
@@ -516,7 +502,7 @@ fn render_package(
     .expect("string writes should not fail");
 
     render_targets(workspace, package, dump);
-    render_dependencies(workspace, cached_workspace, package, dump);
+    render_dependencies(workspace, cache_plan, package, dump);
 }
 
 fn render_header(label: &str, header: &PackageCacheHeader, dump: &mut String) {
@@ -626,7 +612,7 @@ fn render_targets(workspace: &WorkspaceMetadata, package: &CachedPackage, dump: 
 
 fn render_dependencies(
     workspace: &WorkspaceMetadata,
-    cached_workspace: &CachedWorkspace,
+    cache_plan: &WorkspaceCachePlan,
     package: &CachedPackage,
     dump: &mut String,
 ) {
@@ -644,7 +630,7 @@ fn render_dependencies(
             dump,
             "- {} -> {} {}",
             dependency.name,
-            render_dependency_package(workspace, cached_workspace, &dependency.package_id),
+            render_dependency_package(workspace, cache_plan, &dependency.package_id),
             render_dependency_kinds(dependency),
         )
         .expect("string writes should not fail");
@@ -653,10 +639,10 @@ fn render_dependencies(
 
 fn render_dependency_package(
     workspace: &WorkspaceMetadata,
-    cached_workspace: &CachedWorkspace,
+    cache_plan: &WorkspaceCachePlan,
     package_id: &CachedPackageId,
 ) -> String {
-    cached_workspace
+    cache_plan
         .packages()
         .iter()
         .find(|package| &package.package_id == package_id)

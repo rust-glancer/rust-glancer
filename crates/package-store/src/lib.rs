@@ -176,9 +176,16 @@ pub struct PackageStore<T> {
 impl<T> PackageStore<T> {
     /// Freezes freshly built package payloads into the retained store.
     pub fn from_vec(packages: Vec<T>) -> Self {
-        Self {
-            packages: packages.into_iter().map(PackageEntry::resident).collect(),
-        }
+        Self::from_entries(packages.into_iter().map(PackageEntry::resident).collect())
+    }
+
+    /// Builds a store from explicit resident/offloaded package entries.
+    ///
+    /// Fresh builds usually start from `from_vec` and then offload selected slots after durable
+    /// artifacts are written. Startup-cache loading already knows the final residency decision, so
+    /// it can build the same logical store shape without first materializing every package.
+    pub fn from_entries(packages: Vec<PackageEntry<T>>) -> Self {
+        Self { packages }
     }
 
     pub fn len(&self) -> usize {
@@ -284,13 +291,15 @@ impl<T> PackageStore<T> {
 }
 
 impl<T> PackageEntry<T> {
-    fn resident(package: T) -> Self {
+    /// Creates an immediately available package payload.
+    pub fn resident(package: T) -> Self {
         Self {
             state: PackageEntryState::Resident(Arc::new(package)),
         }
     }
 
-    fn offloaded() -> Self {
+    /// Creates a package slot that must be materialized through the read transaction loader.
+    pub fn offloaded() -> Self {
         Self {
             state: PackageEntryState::Offloaded,
         }
@@ -357,7 +366,9 @@ mod tests {
 
     use rg_workspace::PackageSlot;
 
-    use crate::{LoadPackage, PackageLoader, PackageStore, PackageStoreError, PackageSubset};
+    use crate::{
+        LoadPackage, PackageEntry, PackageLoader, PackageStore, PackageStoreError, PackageSubset,
+    };
 
     #[derive(Debug)]
     struct TestLoader {
@@ -502,6 +513,29 @@ mod tests {
             "dependency",
         );
         assert_eq!(loader.loads.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn explicit_entries_can_start_with_offloaded_slots() {
+        let store = PackageStore::from_entries(vec![
+            PackageEntry::resident("workspace"),
+            PackageEntry::offloaded(),
+            PackageEntry::resident("local"),
+        ]);
+
+        let entries = store
+            .raw_entries_with_slots()
+            .map(|(slot, entry)| (slot.0, entry.as_resident().copied(), entry.is_offloaded()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            entries,
+            vec![
+                (0, Some("workspace"), false),
+                (1, None, true),
+                (2, Some("local"), false),
+            ],
+        );
     }
 
     #[test]

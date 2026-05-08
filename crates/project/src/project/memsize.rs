@@ -2,9 +2,9 @@ use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::cache::{
     CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot, CachedPackageSource,
-    CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, CachedWorkspace,
-    PackageCacheArtifact, PackageCacheBodyIrState, PackageCacheHeader, PackageCachePayload,
-    PackageCacheSchemaVersion,
+    CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, PackageCacheArtifact,
+    PackageCacheBodyIrState, PackageCacheHeader, PackageCachePayload, PackageCacheSchemaVersion,
+    WorkspaceCachePlan,
 };
 use crate::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
 
@@ -29,7 +29,7 @@ impl MemorySize for ProjectState {
             self,
             workspace,
             cargo_metadata_config,
-            cached_workspace,
+            cache_plan,
             body_ir_policy,
             package_residency_policy,
             package_residency,
@@ -42,7 +42,7 @@ impl MemorySize for ProjectState {
     }
 }
 
-impl MemorySize for CachedWorkspace {
+impl MemorySize for WorkspaceCachePlan {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         recorder.scope("packages", |recorder| {
             self.packages.record_memory_children(recorder);

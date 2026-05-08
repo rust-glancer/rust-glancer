@@ -24,6 +24,24 @@ pub struct Package {
 }
 
 impl Package {
+    /// Returns the target set that rust-glancer analyzes for one Cargo package.
+    ///
+    /// Workspace packages keep all user-facing targets, while dependencies keep only their library
+    /// target. This selection must stay shared by parse construction and cache planning, because
+    /// package artifacts are keyed by the targets that actually appear in analysis payloads.
+    pub fn analyzed_targets(package: &rg_workspace::Package) -> Vec<rg_workspace::Target> {
+        if package.is_workspace_member {
+            return package.targets.clone();
+        }
+
+        package
+            .targets
+            .iter()
+            .filter(|target| matches!(target.kind, TargetKind::Lib))
+            .cloned()
+            .collect()
+    }
+
     /// Parses a package-local source file, or returns its existing file id if it is already cached.
     pub fn parse_file(&mut self, file_path: &Path) -> anyhow::Result<FileId> {
         self.files.get_or_parse_file(file_path)
@@ -107,22 +125,10 @@ impl Package {
 
     /// Parses package targets and their root files.
     pub(super) fn build(package: &rg_workspace::Package) -> anyhow::Result<Self> {
-        // Outside of the workspace being analyzed, we only keep the library target.
-        let targets = if package.is_workspace_member {
-            package.targets.clone()
-        } else {
-            package
-                .targets
-                .iter()
-                .filter(|target| matches!(target.kind, TargetKind::Lib))
-                .cloned()
-                .collect()
-        };
-
         let mut files = FileDb::default();
         let mut parsed_targets = Arena::new();
 
-        for target in targets {
+        for target in Self::analyzed_targets(package) {
             let target_id = parsed_targets.next_id();
             let root_file = files.get_or_parse_file(&target.src_path).with_context(|| {
                 format!(

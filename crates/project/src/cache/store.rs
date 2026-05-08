@@ -17,8 +17,8 @@ use rg_package_store::{MalformedCacheError, PackageStoreError};
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
-    CachedPackage, CachedWorkspace, Fingerprint, PackageCacheArtifact, PackageCacheCodec,
-    PackageCacheHeader,
+    CachedPackage, Fingerprint, PackageCacheArtifact, PackageCacheCodec, PackageCacheHeader,
+    WorkspaceCachePlan,
 };
 
 const CACHE_DIR_NAME: &str = "rust_glancer";
@@ -84,21 +84,18 @@ impl std::error::Error for PackageCacheReadError {
 
 impl PackageCacheStore {
     /// Plans cache paths for a workspace using Cargo's target directory convention.
-    pub fn for_workspace(
-        workspace: &WorkspaceMetadata,
-        cached_workspace: &CachedWorkspace,
-    ) -> Self {
+    pub fn for_workspace(workspace: &WorkspaceMetadata, cache_plan: &WorkspaceCachePlan) -> Self {
         let target_dir = std::env::var_os("CARGO_TARGET_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|| workspace.workspace_root().join("target"));
 
-        Self::for_workspace_with_target_dir(workspace, cached_workspace, target_dir)
+        Self::for_workspace_with_target_dir(workspace, cache_plan, target_dir)
     }
 
     /// Plans cache paths under an explicit Cargo target directory.
     pub(super) fn for_workspace_with_target_dir(
         workspace: &WorkspaceMetadata,
-        cached_workspace: &CachedWorkspace,
+        cache_plan: &WorkspaceCachePlan,
         target_dir: impl Into<PathBuf>,
     ) -> Self {
         let workspace_name = workspace
@@ -109,7 +106,7 @@ impl PackageCacheStore {
         Self {
             workspace_root: workspace.workspace_root().to_path_buf(),
             root: target_dir.into().join(CACHE_DIR_NAME).join(workspace_name),
-            generation: cached_workspace.fingerprint(workspace.workspace_root()),
+            generation: cache_plan.fingerprint(workspace.workspace_root()),
         }
     }
 

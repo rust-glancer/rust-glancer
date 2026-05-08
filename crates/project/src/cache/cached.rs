@@ -1,6 +1,6 @@
-//! Cached workspace/package metadata.
+//! Cache-schema workspace/package metadata.
 //!
-//! These types are the serializable schema for the cached workspace view. They intentionally copy
+//! These types are the serializable schema for the workspace cache plan. They intentionally copy
 //! the subset of workspace metadata that affects artifact selection instead of retaining
 //! Cargo/workspace transport types in the cache format.
 

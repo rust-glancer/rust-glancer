@@ -16,8 +16,8 @@ use rg_semantic_ir::{PackageIr, SemanticIrPackageBundle};
 use crate::{
     PackageResidency,
     cache::{
-        CachedWorkspace, PackageCacheArtifact, PackageCacheBodyIrState, PackageCachePayload,
-        PackageCacheStore,
+        PackageCacheArtifact, PackageCacheBodyIrState, PackageCachePayload, PackageCacheStore,
+        WorkspaceCachePlan,
     },
     project::state::ProjectState,
 };
@@ -245,7 +245,7 @@ pub(crate) fn package_read_loaders(project: &ProjectState) -> PackageReadLoaders
 /// Shared request cache for package artifacts read by the phase-specific loaders.
 #[derive(Debug)]
 struct PackageBundleLoader {
-    cached_workspace: CachedWorkspace,
+    cache_plan: WorkspaceCachePlan,
     cache_store: PackageCacheStore,
     bundles: Vec<OnceLock<Arc<LoadedPackageBundle>>>,
 }
@@ -254,7 +254,7 @@ impl PackageBundleLoader {
     fn new(project: &ProjectState) -> Self {
         let package_count = project.workspace.packages().len();
         Self {
-            cached_workspace: project.cached_workspace.clone(),
+            cache_plan: project.cache_plan.clone(),
             cache_store: project.cache_store.clone(),
             bundles: (0..package_count).map(|_| OnceLock::new()).collect(),
         }
@@ -303,10 +303,10 @@ impl PackageBundleLoader {
         &self,
         package: PackageSlot,
     ) -> Result<PackageCacheArtifact, PackageStoreError> {
-        let Some(header) = self.cached_workspace.artifact_header(package) else {
+        let Some(header) = self.cache_plan.artifact_header(package) else {
             return Err(PackageStoreError::stale_package(
                 package,
-                "workspace cache graph has no package header",
+                "workspace cache plan has no package header",
             ));
         };
 
@@ -363,7 +363,7 @@ fn artifact_from_project(
     package: PackageSlot,
 ) -> anyhow::Result<PackageCacheArtifact> {
     let header = project
-        .cached_workspace
+        .cache_plan
         .artifact_header(package)
         .with_context(|| {
             format!(

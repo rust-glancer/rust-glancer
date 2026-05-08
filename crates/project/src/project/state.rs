@@ -9,7 +9,7 @@ use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::{
     PackageResidencyPlan, PackageResidencyPolicy,
-    cache::{CachedWorkspace, PackageCacheStore},
+    cache::{PackageCacheStore, WorkspaceCachePlan},
 };
 
 use super::{inventory::ProjectInventory, stats::ProjectStats, txn::ProjectReadTxn};
@@ -19,7 +19,7 @@ use super::{inventory::ProjectInventory, stats::ProjectStats, txn::ProjectReadTx
 pub(crate) struct ProjectState {
     pub(crate) workspace: WorkspaceMetadata,
     pub(crate) cargo_metadata_config: CargoMetadataConfig,
-    pub(crate) cached_workspace: CachedWorkspace,
+    pub(crate) cache_plan: WorkspaceCachePlan,
     pub(crate) cache_store: PackageCacheStore,
     pub(crate) body_ir_policy: BodyIrBuildPolicy,
     pub(crate) package_residency_policy: PackageResidencyPolicy,

@@ -50,9 +50,15 @@ impl SemanticIrDb {
     }
 
     pub(crate) fn from_packages(packages: Vec<PackageIr>) -> Self {
-        Self {
-            packages: PackageStore::from_vec(packages),
-        }
+        Self::from_package_store(PackageStore::from_vec(packages))
+    }
+
+    /// Builds a semantic IR database from an already shaped package store.
+    ///
+    /// This keeps cache-loading code from reaching into the database internals while still letting
+    /// it preserve the same resident/offloaded slot layout used by normal package residency.
+    pub fn from_package_store(packages: PackageStore<PackageIr>) -> Self {
+        Self { packages }
     }
 
     pub(crate) fn mutator(&mut self) -> SemanticIrDbMutator<'_> {

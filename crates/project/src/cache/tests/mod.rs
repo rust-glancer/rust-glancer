@@ -4,7 +4,7 @@ use expect_test::expect;
 
 #[test]
 fn plans_cache_artifacts_from_analyzed_targets() {
-    utils::check_cached_workspace(
+    utils::check_cache_plan(
         r#"
 //- /Cargo.toml
 [package]
@@ -80,7 +80,7 @@ edition = "2018"
 pub struct DevHelper;
 "#,
         expect![[r#"
-            cached workspace
+            workspace cache plan
 
             package #0 app
             schema 1

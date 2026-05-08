@@ -29,7 +29,7 @@ pub use self::{
     fingerprint::Fingerprint,
     header::{CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, PackageCacheHeader, PackageCacheSchemaVersion},
     payload::{PackageCacheArtifact, PackageCacheBodyIrState, PackageCachePayload},
-    plan::CachedWorkspace,
+    plan::WorkspaceCachePlan,
     store::PackageCacheStore,
 };
 
