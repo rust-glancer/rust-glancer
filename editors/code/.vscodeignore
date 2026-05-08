@@ -1,9 +1,12 @@
 node_modules/**
 src/**
 test/**
+unit/**
 out/**
+out-unit/**
 .vscode/**
 .vscode-test.mjs
 tsconfig.json
 tsconfig.test.json
+tsconfig.unit.json
 *.map

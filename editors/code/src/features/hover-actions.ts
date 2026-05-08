@@ -1,3 +1,9 @@
+/**
+ * Adds rust-glancer-specific actions to VS Code hover results.
+ *
+ * The language server provides type-definition data through standard LSP requests; this feature
+ * turns that data into safe command links so users can jump from hover text to the underlying type.
+ */
 import * as vscode from "vscode";
 import {
   TypeDefinitionRequest,
@@ -9,7 +15,7 @@ import {
   type TypeDefinitionParams,
 } from "vscode-languageclient/node";
 
-import { EXTENSION_COMMANDS } from "./commands";
+import { EXTENSION_COMMANDS } from "../commands";
 
 interface SerializedLocation {
   readonly uri: string;

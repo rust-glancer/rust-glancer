@@ -57,6 +57,8 @@ jobs:
         run: npm run check
       - name: Check client tests
         run: npm run check:test
+      - name: Check client unit tests
+        run: npm run check:unit
       - name: Run client smoke test
         run: xvfb-run -a npm run test
 

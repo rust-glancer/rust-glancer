@@ -1,3 +1,9 @@
+/**
+ * Small Cargo command adapters used by the VS Code client.
+ *
+ * These utilities keep subprocess details and Cargo-specific error handling away from workspace
+ * resolution, which only needs the resulting manifest path.
+ */
 import { execFile } from "node:child_process";
 import * as path from "node:path";
 

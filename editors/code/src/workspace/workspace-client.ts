@@ -1,3 +1,10 @@
+/**
+ * Owns one VS Code language-client instance for one resolved Cargo workspace root.
+ *
+ * This module is the boundary between extension orchestration and the LSP client process: it starts
+ * and stops the server, forwards reindex requests, wires middleware, and maintains per-client
+ * status state.
+ */
 import * as vscode from "vscode";
 import * as path from "node:path";
 import {
@@ -8,39 +15,39 @@ import {
   Trace,
 } from "vscode-languageclient/node";
 
-import { SERVER_COMMANDS } from "./commands";
-import { ExtensionConfig, type TraceSetting } from "./config";
-import { ClientStatus, type ClientStatusSnapshot } from "./client_status";
-import { hoverMiddleware } from "./hover_actions";
-import { isRustFile } from "./lsp-utils";
+import { SERVER_COMMANDS } from "../commands";
+import { ExtensionConfig, type TraceSetting } from "../config";
+import { ClientStatus, type ClientStatusSnapshot } from "../status/client-status";
+import { hoverMiddleware } from "../features/hover-actions";
+import { isRustFile } from "../utils/lsp-utils";
 import { ResolvedServer } from "./server";
-import { StatusView } from "./status";
+import { StatusView } from "../status/status-view";
+import { WorkspaceOwners } from "./workspace-lifecycle";
 
 export interface WorkspaceClientSnapshot extends ClientStatusSnapshot {
   readonly workspaceRoot: string;
   readonly workspaceUri: string;
+  readonly ownerKeys: string[];
   readonly hasClient: boolean;
 }
 
-/**
- * Owns one language-client/server pair for one resolved Cargo workspace root.
- *
- * The rust-glancer server remains intentionally single-root. Multi-root VS Code support is built
- * by running several isolated clients and routing user commands to the active Cargo project.
- */
 export class WorkspaceClient implements vscode.Disposable {
   private client: LanguageClient | undefined;
   private clientState: vscode.Disposable | undefined;
   private readonly clientStatus: ClientStatus;
+  private readonly owners: WorkspaceOwners;
 
   public constructor(
     private readonly extensionPath: string,
     private readonly output: vscode.OutputChannel,
     private readonly status: StatusView,
     private readonly workspaceFolder: vscode.WorkspaceFolder,
+    private configResource: vscode.Uri,
+    ownerKey: string,
     private readonly isActive: () => boolean,
   ) {
     this.clientStatus = new ClientStatus(status, isActive);
+    this.owners = new WorkspaceOwners(ownerKey);
   }
 
   public workspaceKey(): string {
@@ -59,6 +66,26 @@ export class WorkspaceClient implements vscode.Disposable {
     return this.client !== undefined;
   }
 
+  public addOwner(ownerKey: string): void {
+    this.owners.add(ownerKey);
+  }
+
+  public useConfigResource(configResource: vscode.Uri): void {
+    this.configResource = configResource;
+  }
+
+  public removeOwner(ownerKey: string): void {
+    this.owners.delete(ownerKey);
+  }
+
+  public hasNoOwners(): boolean {
+    return this.owners.isEmpty();
+  }
+
+  public ownerKeys(): string[] {
+    return this.owners.snapshot();
+  }
+
   public containsDocument(document: vscode.TextDocument): boolean {
     if (!isRustFile(document)) {
       return false;
@@ -73,7 +100,7 @@ export class WorkspaceClient implements vscode.Disposable {
       return;
     }
 
-    const config = ExtensionConfig.read(this.workspaceFolder.uri);
+    const config = ExtensionConfig.read(this.configResource);
     const server = ResolvedServer.discover(config, this.workspaceFolder, this.extensionPath);
     const statusDetails = {
       workspaceRoot: this.workspaceFolder.uri.fsPath,
@@ -204,6 +231,7 @@ export class WorkspaceClient implements vscode.Disposable {
     return {
       workspaceRoot: this.workspaceRoot(),
       workspaceUri: this.workspaceKey(),
+      ownerKeys: this.ownerKeys(),
       hasClient: this.client !== undefined,
       ...status,
     };

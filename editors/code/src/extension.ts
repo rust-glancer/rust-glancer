@@ -1,10 +1,16 @@
+/**
+ * VS Code extension entrypoint.
+ *
+ * This module creates the shared UI objects, registers commands, exposes test-only hooks, and
+ * hands runtime coordination to `ClientManager` during activation/deactivation.
+ */
 import * as vscode from "vscode";
 
 import { ClientManager } from "./client";
 import { EXTENSION_COMMANDS } from "./commands";
-import { registerHoverActionCommands } from "./hover_actions";
-import { RecordingOutputChannel } from "./output";
-import { StatusView } from "./status";
+import { registerHoverActionCommands } from "./features/hover-actions";
+import { StatusView } from "./status/status-view";
+import { RecordingOutputChannel } from "./test-support/recording-output-channel";
 
 let manager: ClientManager | undefined;
 

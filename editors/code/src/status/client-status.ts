@@ -1,3 +1,10 @@
+/**
+ * Decides which per-client state should be rendered in the shared status view.
+ *
+ * A workspace client can be starting, indexing, stale, checking, failed, or ready based on several
+ * independent event streams. This module merges those signals and delegates the final rendering to
+ * `StatusView` only when the client is currently visible.
+ */
 import {
   type ProgressToken,
   type WorkDoneProgressBegin,
@@ -5,7 +12,7 @@ import {
   type WorkDoneProgressReport,
 } from "vscode-languageclient/node";
 
-import { StatusView, type StatusDetails, type StatusSnapshot } from "./status";
+import { StatusView, type StatusDetails, type StatusSnapshot } from "./status-view";
 
 const CARGO_DIAGNOSTICS_PROGRESS_TITLE = "Cargo diagnostics";
 

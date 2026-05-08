@@ -1,12 +1,11 @@
+/**
+ * Test support for observing extension output without changing production behavior.
+ *
+ * Extension-host tests cannot read a normal VS Code output channel, so this wrapper records a
+ * bounded text snapshot while still forwarding every call to the real UI channel.
+ */
 import * as vscode from "vscode";
 
-/**
- * Test-only output wrapper that keeps a bounded copy of recent extension logs.
- *
- * VS Code's output channel is not directly readable from extension-host tests. This wrapper lets a
- * failed smoke test include the Rust Glancer output in the assertion message without changing how
- * production users see the channel.
- */
 export class RecordingOutputChannel implements vscode.OutputChannel {
   private readonly lines: string[] = [];
 

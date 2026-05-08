@@ -1,10 +1,16 @@
+/**
+ * Resolves and launches the rust-glancer language-server process for a workspace client.
+ *
+ * This module chooses between explicit settings, test overrides, development checkouts, and PATH,
+ * then converts that decision into `vscode-languageclient` server options.
+ */
 import { spawn, type ChildProcess } from "child_process";
 import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import type { ServerOptions } from "vscode-languageclient/node";
 
-import type { ExtensionConfig } from "./config";
+import type { ExtensionConfig } from "../config";
 
 const SERVER_ENV_OVERRIDE = "__RUST_GLANCER_SERVER";
 const PURGE_MEMORY_AFTER_BUILD_ENV = "RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD";

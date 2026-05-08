@@ -32,6 +32,7 @@ build-client:
 
 check-client:
     npm --prefix editors/code run check
+    npm --prefix editors/code run check:unit
     npm --prefix editors/code run check:test
 
 test-client:

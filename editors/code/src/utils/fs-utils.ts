@@ -1,3 +1,9 @@
+/**
+ * Filesystem helpers that need VS Code's workspace filesystem API.
+ *
+ * The extension uses these helpers when it must respect VS Code URI handling while still doing
+ * path-based Cargo discovery and containment checks.
+ */
 import * as path from "node:path";
 import * as vscode from "vscode";
 

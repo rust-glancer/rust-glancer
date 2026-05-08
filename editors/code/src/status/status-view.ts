@@ -1,6 +1,13 @@
+/**
+ * Renders rust-glancer's global status-bar item.
+ *
+ * This module knows how status states should look in VS Code: text, tooltip contents, background
+ * color, command wiring, and plain snapshots for tests. It does not decide which workspace state
+ * should be displayed.
+ */
 import * as vscode from "vscode";
 
-import { EXTENSION_COMMANDS } from "./commands";
+import { EXTENSION_COMMANDS } from "../commands";
 
 export interface StatusDetails {
   readonly workspaceRoot?: string;

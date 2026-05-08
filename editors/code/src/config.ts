@@ -1,3 +1,10 @@
+/**
+ * Reads and normalizes user-facing VS Code settings into runtime configuration.
+ *
+ * The rest of the extension should consume these typed values instead of repeatedly touching
+ * `workspace.getConfiguration`, especially for resource-scoped settings selected by a document or
+ * owner folder.
+ */
 import * as vscode from "vscode";
 
 export type TraceSetting = "off" | "messages" | "verbose";

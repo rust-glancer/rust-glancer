@@ -30,10 +30,16 @@ To force a specific server binary, set:
 
 ## Testing
 
+Run the unit tests:
+
+```text
+npm run test:unit
+```
+
 Run the extension-host smoke test:
 
 ```text
-npm run test
+npm run test:e2e
 ```
 
 This builds the real `rust-glancer` release binary, opens
@@ -49,6 +55,7 @@ For faster CI checks that do not launch VS Code:
 ```text
 npm run check
 npm run check:test
+npm run check:unit
 ```
 
 ## Useful Settings
