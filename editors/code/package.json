@@ -16,6 +16,7 @@
     "onLanguage:rust",
     "workspaceContains:Cargo.toml",
     "onCommand:rust-glancer.restartServer",
+    "onCommand:rust-glancer.stopServer",
     "onCommand:rust-glancer.reindexWorkspace"
   ],
   "contributes": {
@@ -36,6 +37,10 @@
       {
         "command": "rust-glancer.restartServer",
         "title": "Rust Glancer: Restart Server"
+      },
+      {
+        "command": "rust-glancer.stopServer",
+        "title": "Rust Glancer: Stop Server"
       },
       {
         "command": "rust-glancer.reindexWorkspace",

@@ -34,8 +34,8 @@ export interface CheckConfig {
 }
 
 export namespace ExtensionConfig {
-  export function read(): ExtensionConfig {
-    const config = vscode.workspace.getConfiguration("rust-glancer");
+  export function read(resource?: vscode.Uri): ExtensionConfig {
+    const config = vscode.workspace.getConfiguration("rust-glancer", resource);
     const serverPath = config.get<string | null>("server.path", null);
     const extraEnv = config.get<Record<string, unknown>>("server.extraEnv", {});
     const purgeMemoryAfterBuild = config.get<boolean>("server.purgeMemoryAfterBuild", true);

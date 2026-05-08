@@ -73,13 +73,46 @@ pub(crate) fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
     uri.to_file_path().map(|path| path.into_owned())
 }
 
-#[allow(deprecated)]
+// `root_uri` is deprecated in favor of `workspace_folders`, but the deprecation note says to use
+// `workspace_folders` when possible. That is not really possible with this server's current
+// single-root shape: the VS Code extension starts one client per Cargo root, and `root_uri` carries
+// that selected root while `workspace_folders` can still contain every folder in the window.
+#[expect(deprecated)]
 fn workspace_root(params: &InitializeParams) -> Option<PathBuf> {
     params
-        .workspace_folders
+        .root_uri
         .as_ref()
-        .and_then(|folders| folders.first())
-        .and_then(|folder| uri_to_path(&folder.uri))
-        .or_else(|| params.root_uri.as_ref().and_then(uri_to_path))
+        .and_then(uri_to_path)
+        .or_else(|| {
+            params
+                .workspace_folders
+                .as_ref()
+                .and_then(|folders| folders.first())
+                .and_then(|folder| uri_to_path(&folder.uri))
+        })
         .or_else(|| params.root_path.as_ref().map(PathBuf::from))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, str::FromStr as _};
+
+    use tower_lsp_server::ls_types::{InitializeParams, Uri, WorkspaceFolder};
+
+    use super::workspace_root;
+
+    #[test]
+    #[expect(deprecated)]
+    fn workspace_root_prefers_client_root_uri_over_workspace_folder_list() {
+        let params = InitializeParams {
+            root_uri: Some(Uri::from_str("file:///selected").expect("test URI should parse")),
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: Uri::from_str("file:///first-folder").expect("test URI should parse"),
+                name: "first-folder".to_string(),
+            }]),
+            ..Default::default()
+        };
+
+        assert_eq!(workspace_root(&params), Some(PathBuf::from("/selected")));
+    }
 }

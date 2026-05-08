@@ -14,6 +14,7 @@ export interface ClientStatusSnapshot {
   readonly checkRunning: boolean;
   readonly checkFailed: boolean;
   readonly checkCommand: string | undefined;
+  readonly failureReason: string | undefined;
   readonly status: StatusSnapshot;
   readonly details: StatusDetails | undefined;
 }
@@ -30,9 +31,18 @@ export class ClientStatus {
   private checkRunning = false;
   private checkFailed = false;
   private checkCommand: string | undefined;
+  private failureReason: string | undefined;
+  private currentStatus: StatusSnapshot = {
+    state: "created",
+    text: "",
+    details: {},
+  };
   private readonly checkProgressTokens = new Set<ProgressToken>();
 
-  public constructor(private readonly view: StatusView) {}
+  public constructor(
+    private readonly view: StatusView,
+    private readonly shouldRender: () => boolean = () => true,
+  ) {}
 
   public isRunning(): boolean {
     return this.running;
@@ -45,14 +55,18 @@ export class ClientStatus {
   public starting(details: StatusDetails): void {
     this.running = false;
     this.resetCheck();
+    this.failureReason = undefined;
     this.details = details;
-    this.view.starting(details);
+    this.show("starting", "$(sync~spin) Rust Glancer: starting", () =>
+      this.view.starting(details),
+    );
   }
 
   public ready(details: StatusDetails): void {
     this.running = true;
+    this.failureReason = undefined;
     this.details = details;
-    this.view.ready(details);
+    this.show("ready", "$(check) Rust Glancer: ready", () => this.view.ready(details));
   }
 
   public indexing(): void {
@@ -60,21 +74,29 @@ export class ClientStatus {
       return;
     }
 
-    this.view.indexing(this.details);
+    this.show("indexing", "$(sync~spin) Rust Glancer: indexing", () =>
+      this.view.indexing(this.details),
+    );
   }
 
   public stopped(reason: string, details: StatusDetails | undefined = this.details): void {
     this.running = false;
     this.resetCheck();
+    this.failureReason = undefined;
     this.details = details;
-    this.view.stopped(reason, details ?? {});
+    this.show("stopped", "$(circle-slash) Rust Glancer: stopped", () =>
+      this.view.stopped(reason, details ?? {}),
+    );
   }
 
   public failed(reason: string, details: StatusDetails | undefined = this.details): void {
     this.running = false;
     this.resetCheck();
+    this.failureReason = reason;
     this.details = details;
-    this.view.failed(reason, details ?? {});
+    this.show("failed", "$(error) Rust Glancer: failed", () =>
+      this.view.failed(reason, details ?? {}),
+    );
   }
 
   public operationFailed(reason: string): void {
@@ -83,7 +105,10 @@ export class ClientStatus {
     }
 
     // A failed request is user-visible, but it does not necessarily mean the LSP client stopped.
-    this.view.failed(reason, this.details);
+    this.failureReason = reason;
+    this.show("failed", "$(error) Rust Glancer: failed", () =>
+      this.view.failed(reason, this.details ?? {}),
+    );
   }
 
   public refresh(isActiveRustDocumentDirty: boolean): void {
@@ -94,13 +119,19 @@ export class ClientStatus {
     // Dirty buffers are shown first because the last published analysis no longer describes
     // the file the user is looking at. Cargo diagnostics remain visible once the editor is clean.
     if (isActiveRustDocumentDirty) {
-      this.view.stale(this.details);
+      this.show("stale", "$(warning) Rust Glancer: stale until save", () =>
+        this.view.stale(this.details),
+      );
     } else if (this.checkRunning) {
-      this.view.checkRunning(this.checkCommand, this.details);
+      this.show("check-running", "$(sync~spin) Rust Glancer: cargo check running", () =>
+        this.view.checkRunning(this.checkCommand, this.details),
+      );
     } else if (this.checkFailed) {
-      this.view.checkFailed(this.details);
+      this.show("check-failed", "$(error) Rust Glancer: cargo check failed", () =>
+        this.view.checkFailed(this.details),
+      );
     } else {
-      this.view.ready(this.details);
+      this.show("ready", "$(check) Rust Glancer: ready", () => this.view.ready(this.details));
     }
   }
 
@@ -143,9 +174,28 @@ export class ClientStatus {
       checkRunning: this.checkRunning,
       checkFailed: this.checkFailed,
       checkCommand: this.checkCommand,
-      status: this.view.snapshot(),
+      failureReason: this.failureReason,
+      status: {
+        ...this.currentStatus,
+        details: { ...this.currentStatus.details },
+      },
       details: this.currentDetails(),
     };
+  }
+
+  private show(
+    state: StatusSnapshot["state"],
+    text: string,
+    render: () => void,
+  ): void {
+    this.currentStatus = {
+      state,
+      text,
+      details: this.details === undefined ? {} : { ...this.details },
+    };
+    if (this.shouldRender()) {
+      render();
+    }
   }
 
   private resetCheck(): void {
