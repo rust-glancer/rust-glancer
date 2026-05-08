@@ -12,3 +12,4 @@ description.workspace = true
 
 [dependencies]
 cargo_metadata.workspace = true
+tempfile.workspace = true

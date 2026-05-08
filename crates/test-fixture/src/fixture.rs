@@ -1,11 +1,6 @@
-use std::{
-    collections::BTreeMap,
-    fs, io,
-    path::PathBuf,
-    process,
-    sync::atomic::{AtomicU64, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::{collections::BTreeMap, fs, path::PathBuf};
+
+use tempfile::TempDir;
 
 const CURSOR_MARKER_NAME: &str = "0";
 
@@ -277,7 +272,7 @@ pub struct FixtureMarker {
 /// them only need a tiny crate with one or two files. This helper lets those tests define the
 /// exact crate layout they need without depending on the larger checked-in fixture projects.
 pub struct CrateFixture {
-    root: PathBuf,
+    root: TempDir,
 }
 
 impl CrateFixture {
@@ -338,7 +333,7 @@ impl CrateFixture {
     }
 
     fn write_file(&self, relative_path: &str, contents: &str) {
-        let path = self.root.join(relative_path);
+        let path = self.root.path().join(relative_path);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).expect("fixture directories should be created");
         }
@@ -347,7 +342,7 @@ impl CrateFixture {
 
     /// Resolves a relative path within the fixture root.
     pub fn path(&self, relative_path: &str) -> PathBuf {
-        self.root.join(relative_path)
+        self.root.path().join(relative_path)
     }
 
     /// Loads cargo metadata for the fixture crate.
@@ -373,41 +368,11 @@ impl CrateFixture {
         self.path("Cargo.toml")
     }
 
-    fn create_root_directory() -> PathBuf {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-
-        let base = std::env::temp_dir().join("rust-glancer-test-fixtures");
-        fs::create_dir_all(&base).expect("fixture base directory should be created");
-
-        for _ in 0..32 {
-            let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system clock should be after unix epoch")
-                .as_nanos();
-            let root = base.join(format!("crate-{}-{timestamp}-{sequence}", process::id()));
-
-            match fs::create_dir(&root) {
-                Ok(()) => return root,
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
-                Err(err) => panic!("fixture root directory should be created: {err}"),
-            }
-        }
-
-        panic!("fixture root directory should be unique");
-    }
-}
-
-impl Drop for CrateFixture {
-    fn drop(&mut self) {
-        if let Err(err) = fs::remove_dir_all(&self.root) {
-            if err.kind() != io::ErrorKind::NotFound {
-                panic!(
-                    "fixture root directory should be removed on drop: {}",
-                    self.root.display()
-                );
-            }
-        }
+    fn create_root_directory() -> TempDir {
+        tempfile::Builder::new()
+            .prefix("rust-glancer-test-fixture-")
+            .tempdir()
+            .expect("fixture root directory should be created")
     }
 }
 
