@@ -7,10 +7,7 @@ use std::{
 use ra_syntax::{Edition, Parse as SyntaxParse, SourceFile};
 use rg_arena::Arena;
 
-use crate::{
-    error::ParseError,
-    span::{LineIndex, Span},
-};
+use crate::span::{LineIndex, Span};
 
 /// Stable identifier for a parsed source file inside `FileDb`.
 #[derive(
@@ -33,14 +30,12 @@ impl rg_arena::ArenaId for FileId {
 pub(crate) struct ParsedFileData {
     /// Canonical filesystem path for this source file.
     pub(crate) path: PathBuf,
-    /// Parse diagnostics produced while parsing the file.
-    pub(crate) parse_errors: Vec<ParseError>,
     /// Line-start index used to convert byte offsets into line/column coordinates.
     pub(crate) line_index: LineIndex,
     /// Green-backed Rust parse result produced by `ra_syntax`.
     ///
     /// This is retained only while AST-consuming phases are lowering. Query-time state keeps
-    /// paths, parse errors, and line indexes, but can evict parse trees to keep memory bounded.
+    /// paths and line indexes, but can evict parse trees to keep memory bounded.
     ///
     /// `ra_syntax::SourceFile` is a traversal cursor over this immutable green tree. Keeping the
     /// parse result lets each AST-consuming phase create a fresh local cursor instead of sharing
@@ -72,11 +67,6 @@ impl<'a> ParsedFile<'a> {
     /// Returns the canonical path for this parsed source file.
     pub fn path(&self) -> &'a Path {
         self.data.path.as_path()
-    }
-
-    /// Returns parser diagnostics produced for this source file.
-    pub fn parse_errors(&self) -> &'a [ParseError] {
-        &self.data.parse_errors
     }
 
     /// Returns the line index used for byte-offset to line/column conversion.
@@ -126,12 +116,9 @@ impl FileDb {
 
         let source = Self::read_source(&canonical_file_path)?;
 
-        let file_id = self.parsed_files.next_id();
-        self.parsed_files.alloc(Self::parse_source(
-            file_id,
-            canonical_file_path.clone(),
-            &source,
-        ));
+        let file_id = self
+            .parsed_files
+            .alloc(Self::parse_source(canonical_file_path.clone(), &source));
         self.file_ids_by_path.insert(canonical_file_path, file_id);
 
         Ok(file_id)
@@ -147,7 +134,7 @@ impl FileDb {
         };
 
         let source = Self::read_source(file_path)?;
-        self.parsed_files[file_id] = Self::parse_source(file_id, file_path.to_path_buf(), &source);
+        self.parsed_files[file_id] = Self::parse_source(file_path.to_path_buf(), &source);
         Ok(Some(file_id))
     }
 
@@ -162,7 +149,7 @@ impl FileDb {
 
         let source = Self::read_source(&parsed_file.path)?;
         let path = parsed_file.path.clone();
-        self.parsed_files[file_id] = Self::parse_source(file_id, path, &source);
+        self.parsed_files[file_id] = Self::parse_source(path, &source);
         Ok(())
     }
 
@@ -213,22 +200,12 @@ impl FileDb {
             .with_context(|| format!("while attempting to read {}", file_path.display()))
     }
 
-    fn parse_source(file_id: FileId, path: PathBuf, source: &str) -> ParsedFileData {
+    fn parse_source(path: PathBuf, source: &str) -> ParsedFileData {
         let line_index = LineIndex::new(source);
         let parsed_file = SourceFile::parse(source, Edition::CURRENT);
-        let parse_errors = parsed_file
-            .errors()
-            .into_iter()
-            .map(|error| ParseError {
-                file_id,
-                message: error.to_string(),
-                span: Span::from_text_range(error.range()),
-            })
-            .collect();
 
         ParsedFileData {
             path,
-            parse_errors,
             line_index,
             syntax: Some(parsed_file),
         }
@@ -237,10 +214,6 @@ impl FileDb {
 
 impl ParsedFileData {
     fn shrink_to_fit(&mut self) {
-        self.parse_errors.shrink_to_fit();
-        for error in &mut self.parse_errors {
-            error.shrink_to_fit();
-        }
         self.line_index.shrink_to_fit();
     }
 }

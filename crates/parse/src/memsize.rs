@@ -3,7 +3,7 @@ use std::mem;
 use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::{
-    Package, PackageFileRef, ParseDb, ParseError, Position, Span, Target, TargetId, TextSpan,
+    Package, PackageFileRef, ParseDb, Position, Span, Target, TargetId, TextSpan,
     file::{FileDb, FileId, ParsedFileData},
     span::{
         LineCharRange, LineColumnSpan, LineIndex, LineIndexStorage, LineInfo, LineUtf16Metrics,
@@ -55,7 +55,7 @@ impl MemorySize for FileDb {
 
 impl MemorySize for ParsedFileData {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, path, parse_errors, line_index, syntax);
+        record_fields!(recorder, self, path, line_index, syntax);
     }
 }
 
@@ -70,12 +70,6 @@ impl MemorySize for TargetId {
 impl MemorySize for Target {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         record_fields!(recorder, self, id, name, kind, src_path, root_file);
-    }
-}
-
-impl MemorySize for ParseError {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, file_id, message, span);
     }
 }
 

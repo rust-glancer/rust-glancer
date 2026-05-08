@@ -307,6 +307,49 @@ pub struct App;
 }
 
 #[test]
+fn residency_policy_controls_package_artifact_writes() {
+    utils::check_residency_policy_controls_artifact_writes(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub struct AppBefore;
+pub fn use_dep(_: dep::Dep) {}
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Dep;
+"#,
+        expect![[r#"
+            artifact writes by residency policy
+            all-resident
+            - app artifact false
+            - dep artifact false
+
+            workspace-resident
+            - app artifact false
+            - dep artifact true
+
+            all-offloadable
+            - app artifact true
+            - dep artifact true
+        "#]],
+    );
+}
+
+#[test]
 fn lazy_loads_offloaded_packages_for_queries() {
     utils::check_offloaded_dependency_query(
         r#"

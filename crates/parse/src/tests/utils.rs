@@ -96,13 +96,8 @@ impl<'a> ProjectParseSnapshot<'a> {
         let mut files = package.parsed_files().collect::<Vec<_>>();
         files.sort_by(|left, right| left.path().cmp(right.path()));
         for file in files {
-            writeln!(
-                dump,
-                "- {} (errors: {})",
-                self.path_label(file.path()),
-                file.parse_errors().len(),
-            )
-            .expect("string writes should not fail");
+            writeln!(dump, "- {}", self.path_label(file.path()))
+                .expect("string writes should not fail");
         }
     }
 

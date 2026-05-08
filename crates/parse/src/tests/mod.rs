@@ -72,15 +72,15 @@ fn dumps_workspace_packages_targets_and_dependencies() {
             - app-cli [bin] -> app/src/main.rs
             - smoke [test] -> app/tests/smoke.rs
             files
-            - app/src/lib.rs (errors: 0)
-            - app/src/main.rs (errors: 0)
-            - app/tests/smoke.rs (errors: 0)
+            - app/src/lib.rs
+            - app/src/main.rs
+            - app/tests/smoke.rs
 
             package helper [dependency]
             targets
             - helper [lib] -> helper/src/lib.rs
             files
-            - helper/src/lib.rs (errors: 0)
+            - helper/src/lib.rs
         "#]],
     );
 }
@@ -114,7 +114,7 @@ fn parses_shared_files_once_across_targets() {
             - shared_root [lib] -> src/shared.rs
             - shared-bin [bin] -> src/shared.rs
             files
-            - src/shared.rs (errors: 0)
+            - src/shared.rs
         "#]],
     );
 }

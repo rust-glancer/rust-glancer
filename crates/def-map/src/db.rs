@@ -54,8 +54,8 @@ impl DefMapDb {
 
     /// Builds a def-map database from an already shaped package store.
     ///
-    /// Fresh builds use `from_packages`, while startup cache loading can construct resident and
-    /// offloaded package slots directly once it has validated the workspace snapshot.
+    /// Fresh builds use `from_packages`, while artifact-backed loading can construct resident and
+    /// offloaded package slots directly after validating the workspace snapshot.
     pub fn from_package_store(packages: PackageStore<Package>) -> Self {
         Self { packages }
     }

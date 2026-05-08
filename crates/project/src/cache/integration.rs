@@ -22,7 +22,7 @@ use crate::{
     project::state::ProjectState,
 };
 
-/// Writes and offloads every package selected by the current residency policy.
+/// Writes durable backing artifacts and offloads packages selected by the current policy.
 pub(crate) fn apply_residency(project: &mut ProjectState) -> anyhow::Result<()> {
     let packages = (0..project.workspace.packages().len())
         .map(PackageSlot)
@@ -93,6 +93,8 @@ fn write_and_offload_packages(
             project.package_residency.package(*package) == Some(PackageResidency::Offloadable)
         })
         .collect::<Vec<_>>();
+    // Cache artifacts are the durable backing store for offloadable packages. Resident packages
+    // stay in memory and should not pay serialization/write cost until policy asks for it.
     write_package_artifacts(project, &packages_to_offload)?;
 
     let mut offloaded_packages = Vec::new();

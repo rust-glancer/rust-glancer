@@ -16,9 +16,8 @@ use super::{
 
 /// Cache-schema plan for the package artifacts belonging to one workspace graph.
 ///
-/// This is not the persisted startup-cache manifest. It is the deterministic, in-memory view used
-/// to name package artifacts and reject artifacts whose package/target graph no longer matches the
-/// current Cargo metadata snapshot.
+/// This is the deterministic, in-memory view used to name package artifacts and reject artifacts
+/// whose package/target graph no longer matches the current Cargo metadata snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceCachePlan {
     pub(crate) packages: Vec<CachedPackage>,
@@ -30,7 +29,7 @@ impl WorkspaceCachePlan {
     /// Cargo metadata can list dependency examples, tests, benches, and binaries that we do not
     /// parse for non-workspace packages. The target list follows `rg_parse::Package` target
     /// selection, which keeps package-artifact identities aligned with fresh builds and future
-    /// startup-cache restores.
+    /// artifact-backed restores.
     pub fn build(workspace: &WorkspaceMetadata) -> Self {
         let packages = workspace
             .packages()

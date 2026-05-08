@@ -195,6 +195,9 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     );
     let path = store.package_artifact_path(&artifact.header.package);
 
+    store
+        .invalidate_workspace_cache()
+        .expect("fixture cache namespace should start empty for direct store I/O");
     let missing_before_write = store
         .read_artifact(&artifact.header)
         .expect("missing package cache artifact should not fail")
@@ -316,6 +319,38 @@ pub(super) fn check_cache_store_generation_cleanup(fixture: &str, expect: Expect
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
 
+pub(super) fn check_residency_policy_controls_artifact_writes(fixture: &str, expect: Expect) {
+    let fixture = fixture_crate(fixture);
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should normalize");
+
+    let mut dump = String::new();
+    writeln!(&mut dump, "artifact writes by residency policy")
+        .expect("string writes should not fail");
+    render_artifact_existence_for_policy(
+        "all-resident",
+        &workspace,
+        PackageResidencyPolicy::AllResident,
+        &mut dump,
+    );
+    writeln!(&mut dump).expect("string writes should not fail");
+    render_artifact_existence_for_policy(
+        "workspace-resident",
+        &workspace,
+        PackageResidencyPolicy::WorkspaceResident,
+        &mut dump,
+    );
+    writeln!(&mut dump).expect("string writes should not fail");
+    render_artifact_existence_for_policy(
+        "all-offloadable",
+        &workspace,
+        PackageResidencyPolicy::AllOffloadable,
+        &mut dump,
+    );
+
+    expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
 pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
@@ -418,6 +453,51 @@ fn package_slot_by_name(parse: &rg_parse::ParseDb, package_name: &str) -> Packag
             (package.package_name() == package_name).then_some(PackageSlot(idx))
         })
         .unwrap_or_else(|| panic!("fixture package {package_name} should be parsed"))
+}
+
+fn package_cache_artifact_exists(project: &Project, package_name: &str) -> bool {
+    let package = package_slot_by_name(project.snapshot().parse_db(), package_name);
+    let header = project
+        .state
+        .cache_plan
+        .artifact_header(package)
+        .expect("fixture package should have a cache artifact header");
+
+    project
+        .state
+        .cache_store
+        .package_artifact_path(&header.package)
+        .exists()
+}
+
+fn render_artifact_existence_for_policy(
+    label: &str,
+    workspace: &WorkspaceMetadata,
+    policy: PackageResidencyPolicy,
+    dump: &mut String,
+) {
+    let project = Project::builder(workspace.clone())
+        .package_residency_policy(policy)
+        .build()
+        .unwrap_or_else(|error| panic!("{label} fixture project should build: {error:#}"))
+        .into_project();
+
+    writeln!(dump, "{label}").expect("string writes should not fail");
+    for package in project.snapshot().parse_db().packages() {
+        writeln!(
+            dump,
+            "- {} artifact {}",
+            package.package_name(),
+            package_cache_artifact_exists(&project, package.package_name()),
+        )
+        .expect("string writes should not fail");
+    }
+
+    project
+        .state
+        .cache_store
+        .invalidate_workspace_cache()
+        .unwrap_or_else(|error| panic!("{label} fixture cache namespace should clean up: {error}"));
 }
 
 fn render_cache_plan(workspace: &WorkspaceMetadata, cache_plan: &WorkspaceCachePlan) -> String {
