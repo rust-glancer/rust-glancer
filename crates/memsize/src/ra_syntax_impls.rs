@@ -6,17 +6,7 @@ use crate::{MemoryRecorder, MemorySize};
 
 const GREEN_CHILD_BYTES: usize = mem::size_of::<usize>() * 2;
 
-macro_rules! impl_leaf_memory_size {
-    ($($ty:ty),+ $(,)?) => {
-        $(
-            impl MemorySize for $ty {
-                fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-            }
-        )+
-    };
-}
-
-impl_leaf_memory_size!(
+crate::impl_memory_size_leaf!(
     ra_syntax::Edition,
     ra_syntax::SyntaxKind,
     ra_syntax::TextRange,

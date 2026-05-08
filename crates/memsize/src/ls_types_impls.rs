@@ -2,25 +2,7 @@ use std::mem;
 
 use crate::{MemoryRecorder, MemorySize};
 
-macro_rules! impl_leaf_memory_size {
-    ($($ty:ty),+ $(,)?) => {
-        $(
-            impl MemorySize for $ty {
-                fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-            }
-        )+
-    };
-}
-
-macro_rules! record_field {
-    ($recorder:expr, $owner:expr, $field:ident) => {
-        $recorder.scope(stringify!($field), |recorder| {
-            $owner.$field.record_memory_children(recorder)
-        });
-    };
-}
-
-impl_leaf_memory_size!(
+crate::impl_memory_size_leaf!(
     ls_types::CompletionItemKind,
     ls_types::CompletionItemTag,
     ls_types::DiagnosticSeverity,
@@ -34,6 +16,36 @@ impl_leaf_memory_size!(
     ls_types::SymbolKind,
     ls_types::SymbolTag,
 );
+
+crate::impl_memory_size_children! {
+    ls_types::Range => start, end;
+    ls_types::Location => uri, range;
+    ls_types::LocationLink => origin_selection_range, target_uri, target_range,
+        target_selection_range;
+    ls_types::Diagnostic => range, severity, code, code_description, source, message,
+        related_information, tags, data;
+    ls_types::CodeDescription => href;
+    ls_types::DiagnosticRelatedInformation => location, message;
+    ls_types::Command => title, command, arguments;
+    ls_types::TextEdit => range, new_text;
+    ls_types::DocumentSymbol => name, detail, kind, tags, #[allow(deprecated)] deprecated, range,
+        selection_range, children;
+    ls_types::SymbolInformation => name, kind, tags, #[allow(deprecated)] deprecated, location,
+        container_name;
+    ls_types::WorkspaceLocation => uri;
+    ls_types::WorkspaceSymbol => name, kind, tags, container_name, location, data;
+    ls_types::InsertReplaceEdit => new_text, insert, replace;
+    ls_types::CompletionItemLabelDetails => detail, description;
+    ls_types::CompletionItem => label, label_details, kind, detail, documentation, deprecated,
+        preselect, sort_text, filter_text, insert_text, insert_text_format, insert_text_mode,
+        text_edit, additional_text_edits, command, commit_characters, data, tags;
+    ls_types::LanguageString => language, value;
+    ls_types::MarkupContent => kind, value;
+    ls_types::Hover => contents, range;
+    ls_types::InlayHint => position, label, kind, text_edits, tooltip, padding_left, padding_right,
+        data;
+    ls_types::InlayHintLabelPart => value, tooltip, location, command;
+}
 
 impl<A, B> MemorySize for ls_types::OneOf<A, B>
 where
@@ -103,118 +115,6 @@ impl MemorySize for ls_types::Uri {
     }
 }
 
-impl MemorySize for ls_types::Range {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, start);
-        record_field!(recorder, self, end);
-    }
-}
-
-impl MemorySize for ls_types::Location {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, uri);
-        record_field!(recorder, self, range);
-    }
-}
-
-impl MemorySize for ls_types::LocationLink {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, origin_selection_range);
-        record_field!(recorder, self, target_uri);
-        record_field!(recorder, self, target_range);
-        record_field!(recorder, self, target_selection_range);
-    }
-}
-
-impl MemorySize for ls_types::Diagnostic {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, range);
-        record_field!(recorder, self, severity);
-        record_field!(recorder, self, code);
-        record_field!(recorder, self, code_description);
-        record_field!(recorder, self, source);
-        record_field!(recorder, self, message);
-        record_field!(recorder, self, related_information);
-        record_field!(recorder, self, tags);
-        record_field!(recorder, self, data);
-    }
-}
-
-impl MemorySize for ls_types::CodeDescription {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, href);
-    }
-}
-
-impl MemorySize for ls_types::DiagnosticRelatedInformation {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, location);
-        record_field!(recorder, self, message);
-    }
-}
-
-impl MemorySize for ls_types::Command {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, title);
-        record_field!(recorder, self, command);
-        record_field!(recorder, self, arguments);
-    }
-}
-
-impl MemorySize for ls_types::TextEdit {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, range);
-        record_field!(recorder, self, new_text);
-    }
-}
-
-impl MemorySize for ls_types::DocumentSymbol {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, name);
-        record_field!(recorder, self, detail);
-        record_field!(recorder, self, kind);
-        record_field!(recorder, self, tags);
-        #[allow(deprecated)]
-        {
-            record_field!(recorder, self, deprecated);
-        }
-        record_field!(recorder, self, range);
-        record_field!(recorder, self, selection_range);
-        record_field!(recorder, self, children);
-    }
-}
-
-impl MemorySize for ls_types::SymbolInformation {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, name);
-        record_field!(recorder, self, kind);
-        record_field!(recorder, self, tags);
-        #[allow(deprecated)]
-        {
-            record_field!(recorder, self, deprecated);
-        }
-        record_field!(recorder, self, location);
-        record_field!(recorder, self, container_name);
-    }
-}
-
-impl MemorySize for ls_types::WorkspaceLocation {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, uri);
-    }
-}
-
-impl MemorySize for ls_types::WorkspaceSymbol {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, name);
-        record_field!(recorder, self, kind);
-        record_field!(recorder, self, tags);
-        record_field!(recorder, self, container_name);
-        record_field!(recorder, self, location);
-        record_field!(recorder, self, data);
-    }
-}
-
 impl MemorySize for ls_types::WorkspaceSymbolResponse {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
@@ -227,14 +127,6 @@ impl MemorySize for ls_types::WorkspaceSymbolResponse {
                 });
             }
         }
-    }
-}
-
-impl MemorySize for ls_types::InsertReplaceEdit {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, new_text);
-        record_field!(recorder, self, insert);
-        record_field!(recorder, self, replace);
     }
 }
 
@@ -253,36 +145,6 @@ impl MemorySize for ls_types::CompletionTextEdit {
     }
 }
 
-impl MemorySize for ls_types::CompletionItemLabelDetails {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, detail);
-        record_field!(recorder, self, description);
-    }
-}
-
-impl MemorySize for ls_types::CompletionItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, label);
-        record_field!(recorder, self, label_details);
-        record_field!(recorder, self, kind);
-        record_field!(recorder, self, detail);
-        record_field!(recorder, self, documentation);
-        record_field!(recorder, self, deprecated);
-        record_field!(recorder, self, preselect);
-        record_field!(recorder, self, sort_text);
-        record_field!(recorder, self, filter_text);
-        record_field!(recorder, self, insert_text);
-        record_field!(recorder, self, insert_text_format);
-        record_field!(recorder, self, insert_text_mode);
-        record_field!(recorder, self, text_edit);
-        record_field!(recorder, self, additional_text_edits);
-        record_field!(recorder, self, command);
-        record_field!(recorder, self, commit_characters);
-        record_field!(recorder, self, data);
-        record_field!(recorder, self, tags);
-    }
-}
-
 impl MemorySize for ls_types::Documentation {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
@@ -293,13 +155,6 @@ impl MemorySize for ls_types::Documentation {
                 recorder.scope("markup", |recorder| markup.record_memory_children(recorder));
             }
         }
-    }
-}
-
-impl MemorySize for ls_types::LanguageString {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, language);
-        record_field!(recorder, self, value);
     }
 }
 
@@ -318,20 +173,6 @@ impl MemorySize for ls_types::MarkedString {
     }
 }
 
-impl MemorySize for ls_types::MarkupContent {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, kind);
-        record_field!(recorder, self, value);
-    }
-}
-
-impl MemorySize for ls_types::Hover {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, contents);
-        record_field!(recorder, self, range);
-    }
-}
-
 impl MemorySize for ls_types::HoverContents {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
@@ -345,19 +186,6 @@ impl MemorySize for ls_types::HoverContents {
                 recorder.scope("markup", |recorder| markup.record_memory_children(recorder));
             }
         }
-    }
-}
-
-impl MemorySize for ls_types::InlayHint {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, position);
-        record_field!(recorder, self, label);
-        record_field!(recorder, self, kind);
-        record_field!(recorder, self, text_edits);
-        record_field!(recorder, self, tooltip);
-        record_field!(recorder, self, padding_left);
-        record_field!(recorder, self, padding_right);
-        record_field!(recorder, self, data);
     }
 }
 
@@ -384,15 +212,6 @@ impl MemorySize for ls_types::InlayHintTooltip {
                 recorder.scope("markup", |recorder| markup.record_memory_children(recorder));
             }
         }
-    }
-}
-
-impl MemorySize for ls_types::InlayHintLabelPart {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_field!(recorder, self, value);
-        record_field!(recorder, self, tooltip);
-        record_field!(recorder, self, location);
-        record_field!(recorder, self, command);
     }
 }
 

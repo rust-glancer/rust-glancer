@@ -10,88 +10,41 @@ use crate::{
     item::{ConstParamData, FunctionQualifiers, LifetimeParamData, TypeParamData},
 };
 
-macro_rules! record_fields {
-    ($recorder:expr, $owner:expr, $($field:ident),+ $(,)?) => {
-        $(
-            $recorder.scope(stringify!($field), |recorder| {
-                $owner.$field.record_memory_children(recorder);
-            });
-        )+
-    };
-}
+rg_memsize::impl_memory_size_leaf!(ItemTreeId, ParamKind, Mutability, UseImportKind, ItemTag);
 
-impl MemorySize for ItemTreeDb {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        recorder.scope("packages", |recorder| {
-            self.packages.record_memory_children(recorder);
-        });
-    }
-}
-
-impl MemorySize for Package {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, files, target_roots);
-    }
-}
-
-impl MemorySize for crate::FileTree {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, file, docs, top_level, items);
-    }
-}
-
-impl MemorySize for TargetRoot {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, target, root_file);
-    }
-}
-
-impl MemorySize for ItemTreeId {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for ItemTreeRef {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, file_id, item);
-    }
-}
-
-impl MemorySize for ItemNode {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(
-            recorder, self, kind, name, name_span, visibility, docs, file_id, span,
-        );
-    }
-}
-
-impl MemorySize for Documentation {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        self.text.record_memory_children(recorder);
-    }
-}
-
-impl MemorySize for GenericParams {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, lifetimes, types, consts, where_predicates,);
-    }
-}
-
-impl MemorySize for LifetimeParamData {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, name, bounds);
-    }
-}
-
-impl MemorySize for TypeParamData {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, name, bounds, default);
-    }
-}
-
-impl MemorySize for ConstParamData {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, name, ty, default);
-    }
+rg_memsize::impl_memory_size_children! {
+    ItemTreeDb => packages;
+    Package => files, target_roots;
+    crate::FileTree => file, docs, top_level, items;
+    TargetRoot => target, root_file;
+    ItemTreeRef => file_id, item;
+    ItemNode => kind, name, name_span, visibility, docs, file_id, span;
+    Documentation => text;
+    GenericParams => lifetimes, types, consts, where_predicates;
+    LifetimeParamData => name, bounds;
+    TypeParamData => name, bounds, default;
+    ConstParamData => name, ty, default;
+    FunctionItem => generics, params, ret_ty, qualifiers;
+    FunctionQualifiers => is_async, is_const, is_unsafe;
+    ParamItem => pat, ty, kind;
+    StructItem => generics, fields;
+    UnionItem => generics, fields;
+    EnumItem => generics, variants;
+    EnumVariantItem => name, span, name_span, docs, fields;
+    FieldItem => key, visibility, ty, span, docs;
+    TraitItem => generics, super_traits, items, is_unsafe;
+    ImplItem => generics, trait_ref, self_ty, items, is_unsafe;
+    TypeAliasItem => generics, bounds, aliased_ty;
+    ConstItem => generics, ty;
+    StaticItem => ty, mutability;
+    TypePath => absolute, segments;
+    TypePathSegment => name, args, span;
+    ExternCrateItem => name, alias;
+    UseItem => imports;
+    UseImport => kind, path, alias;
+    UsePath => absolute, segments;
+    UsePathSegment => kind, span;
+    ModuleItem => inner_docs, source;
 }
 
 impl MemorySize for WherePredicate {
@@ -112,52 +65,6 @@ impl MemorySize for WherePredicate {
     }
 }
 
-impl MemorySize for FunctionItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, generics, params, ret_ty, qualifiers);
-    }
-}
-
-impl MemorySize for FunctionQualifiers {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, is_async, is_const, is_unsafe);
-    }
-}
-
-impl MemorySize for ParamItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, pat, ty, kind);
-    }
-}
-
-impl MemorySize for ParamKind {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for StructItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, generics, fields);
-    }
-}
-
-impl MemorySize for UnionItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, generics, fields);
-    }
-}
-
-impl MemorySize for EnumItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, generics, variants);
-    }
-}
-
-impl MemorySize for EnumVariantItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, name, span, name_span, docs, fields);
-    }
-}
-
 impl MemorySize for FieldList {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
@@ -167,50 +74,12 @@ impl MemorySize for FieldList {
     }
 }
 
-impl MemorySize for FieldItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, key, visibility, ty, span, docs);
-    }
-}
-
 impl MemorySize for FieldKey {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
             Self::Named(name) => name.record_memory_children(recorder),
             Self::Tuple(index) => index.record_memory_children(recorder),
         }
-    }
-}
-
-impl MemorySize for TraitItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, generics, super_traits, items, is_unsafe,);
-    }
-}
-
-impl MemorySize for ImplItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(
-            recorder, self, generics, trait_ref, self_ty, items, is_unsafe,
-        );
-    }
-}
-
-impl MemorySize for TypeAliasItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, generics, bounds, aliased_ty);
-    }
-}
-
-impl MemorySize for ConstItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, generics, ty);
-    }
-}
-
-impl MemorySize for StaticItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, ty, mutability);
     }
 }
 
@@ -256,22 +125,6 @@ impl MemorySize for TypeRef {
     }
 }
 
-impl MemorySize for Mutability {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for TypePath {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, absolute, segments);
-    }
-}
-
-impl MemorySize for TypePathSegment {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, name, args, span);
-    }
-}
-
 impl MemorySize for GenericArg {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
@@ -298,30 +151,6 @@ impl MemorySize for TypeBound {
     }
 }
 
-impl MemorySize for ExternCrateItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, name, alias);
-    }
-}
-
-impl MemorySize for UseItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        recorder.scope("imports", |recorder| {
-            self.imports.record_memory_children(recorder);
-        });
-    }
-}
-
-impl MemorySize for UseImport {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, kind, path, alias);
-    }
-}
-
-impl MemorySize for UseImportKind {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
 impl MemorySize for ImportAlias {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
@@ -331,18 +160,6 @@ impl MemorySize for ImportAlias {
                 recorder.scope("span", |recorder| span.record_memory_children(recorder));
             }
         }
-    }
-}
-
-impl MemorySize for UsePath {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, absolute, segments);
-    }
-}
-
-impl MemorySize for UsePathSegment {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, kind, span);
     }
 }
 
@@ -372,16 +189,6 @@ impl MemorySize for ItemKind {
             Self::Union(item) => item.record_memory_children(recorder),
             Self::Use(item) => item.record_memory_children(recorder),
         }
-    }
-}
-
-impl MemorySize for ItemTag {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for ModuleItem {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, inner_docs, source);
     }
 }
 
