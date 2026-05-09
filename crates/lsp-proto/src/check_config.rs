@@ -1,12 +1,12 @@
 use ls_types::LSPAny;
 
-/// Cargo diagnostics configuration sent by the VS Code client during initialization.
+/// Cargo diagnostics configuration sent by the LSP client during initialization.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckConfig {
-    pub(crate) on_startup: bool,
-    pub(crate) on_save: bool,
-    pub(crate) command: String,
-    pub(crate) arguments: Vec<String>,
+    pub on_startup: bool,
+    pub on_save: bool,
+    pub command: String,
+    pub arguments: Vec<String>,
 }
 
 impl CheckConfig {
@@ -63,7 +63,7 @@ impl CheckConfig {
         })
     }
 
-    pub(crate) fn user_facing_command(&self) -> String {
+    pub fn user_facing_command(&self) -> String {
         let mut parts = vec![
             "cargo".to_string(),
             self.command.clone(),
@@ -119,8 +119,9 @@ impl Default for CheckConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::CheckConfig;
     use ls_types::LSPAny;
+
+    use super::CheckConfig;
 
     #[test]
     fn defaults_to_disabled_cargo_check() {

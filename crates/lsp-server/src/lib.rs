@@ -1,7 +1,12 @@
+//! LSP server orchestration for Rust Glancer.
+//!
+//! This crate adapts the editor-facing LSP transport to Rust Glancer's engine protocol. It owns
+//! server capabilities, request routing, client notification forwarding, and stdio startup, while
+//! keeping analysis implementation details behind engine interfaces.
+
 mod backend;
 mod capabilities;
 mod commands;
-mod config;
 mod methods;
 mod run;
 

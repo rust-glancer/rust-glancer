@@ -1,6 +1,7 @@
 use ls_types::NumberOrString;
+use rg_lsp_proto::EngineEvent;
 
-use crate::{EngineEvent, events::EngineEventSink};
+use crate::events::EngineEventSink;
 
 /// Small wrapper around LSP work-done progress for cargo diagnostics.
 ///

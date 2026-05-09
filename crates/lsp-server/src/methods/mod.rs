@@ -5,9 +5,9 @@ use tower_lsp_server::{
     ls_types::*,
 };
 
-use rg_lsp_engine::CheckConfig;
+use rg_lsp_proto::{AnalysisConfig, CheckConfig};
 
-use crate::{backend::ServerContext, capabilities, config::AnalysisConfig};
+use crate::{backend::ServerContext, capabilities};
 
 pub(crate) mod text_document;
 pub(crate) mod workspace;

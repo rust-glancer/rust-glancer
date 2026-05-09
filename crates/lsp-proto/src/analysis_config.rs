@@ -1,16 +1,16 @@
+use ls_types::LSPAny;
 use rg_project::PackageResidencyPolicy;
 use rg_workspace::CargoMetadataConfig;
-use tower_lsp_server::ls_types::LSPAny;
 
 /// Analysis configuration sent by the LSP client during initialization.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct AnalysisConfig {
-    pub(crate) package_residency_policy: PackageResidencyPolicy,
-    pub(crate) cargo_metadata_config: CargoMetadataConfig,
+pub struct AnalysisConfig {
+    pub package_residency_policy: PackageResidencyPolicy,
+    pub cargo_metadata_config: CargoMetadataConfig,
 }
 
 impl AnalysisConfig {
-    pub(crate) fn from_initialization_options(options: Option<&LSPAny>) -> Self {
+    pub fn from_initialization_options(options: Option<&LSPAny>) -> Self {
         let default = Self::default();
         let package_residency_policy = options
             .and_then(LSPAny::as_object)
@@ -56,9 +56,9 @@ impl Default for AnalysisConfig {
 
 #[cfg(test)]
 mod tests {
+    use ls_types::LSPAny;
     use rg_project::PackageResidencyPolicy;
     use rg_workspace::CargoMetadataTarget;
-    use tower_lsp_server::ls_types::LSPAny;
 
     use super::AnalysisConfig;
 

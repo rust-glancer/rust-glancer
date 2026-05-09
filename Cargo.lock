@@ -1089,6 +1089,7 @@ dependencies = [
  "ls-types",
  "rg_analysis",
  "rg_def_map",
+ "rg_lsp_proto",
  "rg_parse",
  "rg_project",
  "rg_workspace",
@@ -1097,13 +1098,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rg_lsp_proto"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ls-types",
+ "rg_project",
+ "rg_workspace",
+]
+
+[[package]]
 name = "rg_lsp_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "rg_lsp_engine",
- "rg_project",
- "rg_workspace",
+ "rg_lsp_proto",
  "tokio",
  "tower-lsp-server",
  "tracing",

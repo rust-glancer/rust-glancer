@@ -9,12 +9,12 @@
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
 use ls_types::ProgressToken;
+use rg_lsp_proto::CheckConfig;
 use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{documents::DocumentStore, events::EngineEventSink};
 
 mod command;
-mod config;
 mod diagnostics;
 mod progress;
 mod publish;
@@ -24,8 +24,6 @@ use self::{
     progress::{CheckProgress, ProgressFinish},
     task::CheckTaskContext,
 };
-
-pub use self::config::CheckConfig;
 
 /// Launches Cargo diagnostics independently from the synchronous analysis engine.
 #[derive(Clone, Debug)]

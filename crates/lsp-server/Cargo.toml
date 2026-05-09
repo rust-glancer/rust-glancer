@@ -13,8 +13,7 @@ description.workspace = true
 [dependencies]
 anyhow.workspace = true
 rg_lsp_engine.workspace = true
-rg_project.workspace = true
-rg_workspace.workspace = true
+rg_lsp_proto.workspace = true
 tokio = { workspace = true, features = ["io-std", "macros", "process", "rt-multi-thread", "sync"] }
 tower-lsp-server.workspace = true
 tracing.workspace = true

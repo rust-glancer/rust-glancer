@@ -1,8 +1,9 @@
 use std::{collections::BTreeSet, path::PathBuf};
 
 use ls_types::Diagnostic;
+use rg_lsp_proto::EngineEvent;
 
-use crate::{EngineEvent, documents::DocumentStore, events::EngineEventSink};
+use crate::{documents::DocumentStore, events::EngineEventSink};
 
 use super::diagnostics::CheckDiagnostics;
 

@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
-use rg_lsp_engine::{
-    EngineEvent, EngineEventReceiver, EngineEventSink, EngineLogLevel, EngineServiceHandle,
-    InProcessEngineService, MemoryControl,
-};
+use rg_lsp_engine::{EngineEventReceiver, EngineEventSink, InProcessEngineService, MemoryControl};
+use rg_lsp_proto::{EngineEvent, EngineLogLevel, EngineServiceHandle};
 use tower_lsp_server::{
     Client, LanguageServer,
     jsonrpc::Result,

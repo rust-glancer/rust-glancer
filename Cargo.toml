@@ -3,6 +3,7 @@ members = [
   "crates/rust-glancer",
   "crates/lsp-server",
   "crates/workspace",
+  "crates/lsp-proto",
   "crates/parse",
   "crates/item-tree",
   "crates/def-map",
@@ -67,6 +68,7 @@ tikv-jemalloc-sys = "0.6.1"
 ra_syntax = { package = "syntax", git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca"}
 
 rg_lsp_server = { path = "crates/lsp-server" }
+rg_lsp_proto = { path = "crates/lsp-proto" }
 rg_workspace = { path = "crates/workspace" }
 rg_parse = { path = "crates/parse" }
 rg_item_tree = { path = "crates/item-tree" }
