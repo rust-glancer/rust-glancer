@@ -11,24 +11,51 @@ use crate::{
 };
 use rg_memsize::{MemoryRecorder, MemorySize};
 
-macro_rules! record_fields {
-    ($recorder:expr, $owner:expr, $($field:ident),+ $(,)?) => {
-        $(
-            $recorder.scope(stringify!($field), |recorder| {
-                $owner.$field.record_memory_children(recorder);
-            });
-        )+
-    };
-}
+rg_memsize::impl_memory_size_leaf!(
+    crate::BodyIrPackageScope,
+    TargetBodiesStatus,
+    ExprWrapperKind,
+    LiteralKind,
+    BodyItemKind,
+    BindingKind,
+    BodyId,
+    BodyItemId,
+    BodyImplId,
+    BodyFunctionId,
+    ExprId,
+    PatId,
+    StmtId,
+    BindingId,
+    ScopeId,
+);
 
-macro_rules! impl_leaf_memory_size {
-    ($($ty:ty),+ $(,)?) => {
-        $(
-            impl MemorySize for $ty {
-                fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-            }
-        )+
-    };
+rg_memsize::impl_memory_size_children! {
+    BodyIrBuildPolicy => package_scope;
+    PackageBodies => targets;
+    TargetBodies => status, function_bodies, bodies;
+    BodyData => owner, owner_module, source, param_scope, root_expr, params, scopes,
+        local_items, local_impls, local_functions, bindings, pats, statements, exprs;
+    BodySource => file_id, span;
+    ScopeData => parent, local_items, local_impls, bindings;
+    ExprData => source, scope, visible_bindings, kind, resolution, ty;
+    MatchArmData => pat, scope, expr;
+    BodyPath => path, segment_spans;
+    BodyLocalNominalTy => item, args;
+    BodyNominalTy => def, args;
+    BodyItemData => source, name_source, scope, kind, name, docs, generics, fields;
+    BodyImplData => source, scope, generics, trait_ref, self_ty, self_item, functions;
+    BodyFunctionData => source, name_source, owner, name, docs, declaration;
+    PatData => source, kind;
+    RecordPatField => key, pat;
+    BindingData => source, scope, kind, name, annotation, ty;
+    StmtData => source, kind;
+    BodyRef => target, body;
+    BodyItemRef => body, item;
+    BodyFieldRef => item, index;
+    BodyFunctionRef => body, function;
+    BodyIrStats => target_count, built_target_count, skipped_target_count, body_count,
+        scope_count, local_item_count, local_impl_count, local_function_count, binding_count,
+        statement_count, expression_count;
 }
 
 impl MemorySize for BodyIrDb {
@@ -44,86 +71,6 @@ impl MemorySize for BodyIrPackageBundle {
         recorder.scope("package", |recorder| {
             self.package().record_memory_children(recorder);
         });
-    }
-}
-
-impl MemorySize for BodyIrBuildPolicy {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        recorder.scope("package_scope", |recorder| {
-            self.package_scope.record_memory_children(recorder);
-        });
-    }
-}
-
-impl MemorySize for crate::BodyIrPackageScope {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for PackageBodies {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        recorder.scope("targets", |recorder| {
-            self.targets.record_memory_children(recorder);
-        });
-    }
-}
-
-impl MemorySize for TargetBodies {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, status, function_bodies, bodies);
-    }
-}
-
-impl MemorySize for TargetBodiesStatus {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for BodyData {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(
-            recorder,
-            self,
-            owner,
-            owner_module,
-            source,
-            param_scope,
-            root_expr,
-            params,
-            scopes,
-            local_items,
-            local_impls,
-            local_functions,
-            bindings,
-            pats,
-            statements,
-            exprs,
-        );
-    }
-}
-
-impl MemorySize for BodySource {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, file_id, span);
-    }
-}
-
-impl MemorySize for ScopeData {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, parent, local_items, local_impls, bindings);
-    }
-}
-
-impl MemorySize for ExprData {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(
-            recorder,
-            self,
-            source,
-            scope,
-            visible_bindings,
-            kind,
-            resolution,
-            ty,
-        );
     }
 }
 
@@ -198,26 +145,6 @@ impl MemorySize for ExprKind {
     }
 }
 
-impl MemorySize for ExprWrapperKind {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for MatchArmData {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, pat, scope, expr);
-    }
-}
-
-impl MemorySize for LiteralKind {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for BodyPath {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, path, segment_spans);
-    }
-}
-
 impl MemorySize for BodyResolution {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
@@ -275,18 +202,6 @@ impl MemorySize for BodyTy {
     }
 }
 
-impl MemorySize for BodyLocalNominalTy {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, item, args);
-    }
-}
-
-impl MemorySize for BodyNominalTy {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, def, args);
-    }
-}
-
 impl MemorySize for BodyGenericArg {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
@@ -302,61 +217,11 @@ impl MemorySize for BodyGenericArg {
     }
 }
 
-impl MemorySize for BodyItemData {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(
-            recorder,
-            self,
-            source,
-            name_source,
-            scope,
-            kind,
-            name,
-            docs,
-            generics,
-            fields,
-        );
-    }
-}
-
-impl MemorySize for BodyImplData {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(
-            recorder, self, source, scope, generics, trait_ref, self_ty, self_item, functions,
-        );
-    }
-}
-
-impl MemorySize for BodyFunctionData {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(
-            recorder,
-            self,
-            source,
-            name_source,
-            owner,
-            name,
-            docs,
-            declaration,
-        );
-    }
-}
-
 impl MemorySize for BodyFunctionOwner {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
             Self::LocalImpl(impl_id) => impl_id.record_memory_children(recorder),
         }
-    }
-}
-
-impl MemorySize for BodyItemKind {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for PatData {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, source, kind);
     }
 }
 
@@ -384,28 +249,6 @@ impl MemorySize for PatKind {
             Self::Path { path } => path.record_memory_children(recorder),
             Self::Wildcard | Self::Unsupported => {}
         }
-    }
-}
-
-impl MemorySize for RecordPatField {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, key, pat);
-    }
-}
-
-impl MemorySize for BindingData {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, source, scope, kind, name, annotation, ty);
-    }
-}
-
-impl MemorySize for BindingKind {
-    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-}
-
-impl MemorySize for StmtData {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, source, kind);
     }
 }
 
@@ -444,61 +287,5 @@ impl MemorySize for StmtKind {
             Self::Impl { impl_id } => impl_id.record_memory_children(recorder),
             Self::ItemIgnored => {}
         }
-    }
-}
-
-impl_leaf_memory_size!(
-    BodyId,
-    BodyItemId,
-    BodyImplId,
-    BodyFunctionId,
-    ExprId,
-    PatId,
-    StmtId,
-    BindingId,
-    ScopeId,
-);
-
-impl MemorySize for BodyRef {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, target, body);
-    }
-}
-
-impl MemorySize for BodyItemRef {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, body, item);
-    }
-}
-
-impl MemorySize for BodyFieldRef {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, item, index);
-    }
-}
-
-impl MemorySize for BodyFunctionRef {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(recorder, self, body, function);
-    }
-}
-
-impl MemorySize for BodyIrStats {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        record_fields!(
-            recorder,
-            self,
-            target_count,
-            built_target_count,
-            skipped_target_count,
-            body_count,
-            scope_count,
-            local_item_count,
-            local_impl_count,
-            local_function_count,
-            binding_count,
-            statement_count,
-            expression_count,
-        );
     }
 }

@@ -42,6 +42,83 @@ pub trait MemorySize {
     }
 }
 
+/// Records memory children for named fields under scopes matching their field names.
+///
+/// This is the small building block for manual `MemorySize` impls where most fields can be
+/// recorded mechanically, but the type still has one or two special cases that should stay
+/// handwritten. Field-level attributes, such as `#[allow(deprecated)]`, can be attached before a
+/// field when upstream structs expose legacy fields that still need to be counted.
+///
+/// ```
+/// # use rg_memsize::{MemoryRecorder, MemorySize, record_memory_fields};
+/// # struct Package { files: Vec<String>, target_roots: Vec<String> }
+/// # impl MemorySize for Package {
+/// #     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+/// record_memory_fields!(recorder, self, files, target_roots);
+/// #     }
+/// # }
+/// ```
+#[macro_export]
+macro_rules! record_memory_fields {
+    ($recorder:expr, $owner:expr, $($(#[$field_attr:meta])* $field:ident),+ $(,)?) => {
+        $(
+            $(#[$field_attr])*
+            {
+                $recorder.scope(stringify!($field), |recorder| {
+                    $crate::MemorySize::record_memory_children(&$owner.$field, recorder);
+                });
+            }
+        )+
+    };
+}
+
+/// Implements `MemorySize` for plain structs by recording the listed fields as children.
+///
+/// Use this for data types whose memory accounting is exactly "walk these fields". Keep manual
+/// impls for enums, transparent wrappers, lazy/offloaded state, and anything with approximate or
+/// intentionally omitted accounting.
+///
+/// ```
+/// # use rg_memsize::{MemorySize, impl_memory_size_children};
+/// # struct Package { files: Vec<String>, target_roots: Vec<String> }
+/// # struct FileTree { file: String, docs: Vec<String>, items: Vec<String> }
+/// impl_memory_size_children! {
+///     Package => files, target_roots;
+///     FileTree => file, docs, items;
+/// }
+/// ```
+#[macro_export]
+macro_rules! impl_memory_size_children {
+    ($($ty:ty => $($(#[$field_attr:meta])* $field:ident),+ $(,)?);+ $(;)?) => {
+        $(
+            impl $crate::MemorySize for $ty {
+                fn record_memory_children(&self, recorder: &mut $crate::MemoryRecorder) {
+                    $crate::record_memory_fields!(
+                        recorder,
+                        self,
+                        $($(#[$field_attr])* $field),+
+                    );
+                }
+            }
+        )+
+    };
+}
+
+/// Implements `MemorySize` for leaf values that own no child allocations.
+///
+/// This is intended for small ids, flags, and enum-like marker types where `size_of::<T>()` is the
+/// whole accounting story and the default `record_memory_size` shallow record is enough.
+#[macro_export]
+macro_rules! impl_memory_size_leaf {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl $crate::MemorySize for $ty {
+                fn record_memory_children(&self, _recorder: &mut $crate::MemoryRecorder) {}
+            }
+        )+
+    };
+}
+
 const ALLOCATION_HEADER_BYTES: usize = mem::size_of::<usize>() * 2;
 const ALLOCATION_GRANULARITY: usize = mem::size_of::<usize>() * 2;
 

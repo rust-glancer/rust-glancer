@@ -10,17 +10,7 @@ use std::{
 
 use crate::{MemoryRecorder, MemorySize, approximate_allocation_overhead};
 
-macro_rules! impl_leaf_memory_size {
-    ($($ty:ty),+ $(,)?) => {
-        $(
-            impl MemorySize for $ty {
-                fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-            }
-        )+
-    };
-}
-
-impl_leaf_memory_size!(
+crate::impl_memory_size_leaf!(
     (),
     bool,
     char,
