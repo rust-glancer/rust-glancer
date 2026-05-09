@@ -1,7 +1,7 @@
 [workspace]
 members = [
   "crates/rust-glancer",
-  "crates/lsp",
+  "crates/lsp-server",
   "crates/workspace",
   "crates/parse",
   "crates/item-tree",
@@ -10,6 +10,7 @@ members = [
   "crates/body-ir",
   "crates/analysis",
   "crates/project",
+  "crates/lsp-engine",
   "crates/text",
   "crates/arena",
   "crates/memsize",
@@ -65,7 +66,7 @@ tikv-jemalloc-sys = "0.6.1"
 
 ra_syntax = { package = "syntax", git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca"}
 
-rg_lsp = { path = "crates/lsp" }
+rg_lsp_server = { path = "crates/lsp-server" }
 rg_workspace = { path = "crates/workspace" }
 rg_parse = { path = "crates/parse" }
 rg_item_tree = { path = "crates/item-tree" }
@@ -74,6 +75,7 @@ rg_semantic_ir = { path = "crates/semantic-ir" }
 rg_body_ir = { path = "crates/body-ir" }
 rg_analysis = { path = "crates/analysis" }
 rg_project = { path = "crates/project" }
+rg_lsp_engine = { path = "crates/lsp-engine" }
 rg_text = { path = "crates/text" }
 rg_arena = { path = "crates/arena" }
 rg_memsize = { path = "crates/memsize" }

@@ -89,7 +89,7 @@ Use `rust-glancer.server.extraEnv` for server logs, for example:
 ```json
 {
   "rust-glancer.server.extraEnv": {
-    "RUST_GLANCER_LOG": "rg_lsp=debug"
+    "RUST_GLANCER_LOG": "rg_lsp_server=debug,rg_lsp_engine=debug"
   }
 }
 ```

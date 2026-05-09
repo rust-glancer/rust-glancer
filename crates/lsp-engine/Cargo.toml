@@ -1,0 +1,24 @@
+[package]
+name = "rg_lsp_engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+cargo_metadata.workspace = true
+derive_more = { workspace = true, features = ["debug", "display"] }
+ls_types.workspace = true
+rg_analysis.workspace = true
+rg_def_map.workspace = true
+rg_parse.workspace = true
+rg_project.workspace = true
+rg_workspace.workspace = true
+tokio = { workspace = true, features = ["process", "sync"] }
+tracing.workspace = true

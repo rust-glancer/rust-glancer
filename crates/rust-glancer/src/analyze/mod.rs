@@ -1,7 +1,7 @@
 use std::{path::PathBuf, time::Instant};
 
 use anyhow::Context as _;
-use rg_lsp::MemoryControl as _;
+use rg_lsp_server::MemoryControl as _;
 use rg_project::{BuildProcessMemory, PackageResidencyPolicy, Project, StartupCacheLoad};
 use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
 

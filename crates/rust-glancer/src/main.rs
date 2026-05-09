@@ -64,7 +64,7 @@ fn main() -> anyhow::Result<()> {
             package_residency.into(),
             target,
         ),
-        Command::Lsp => rg_lsp::run_stdio_with_memory_control(runtime::memory_control()),
+        Command::Lsp => rg_lsp_server::run_stdio_with_memory_control(runtime::memory_control()),
     }
 }
 
