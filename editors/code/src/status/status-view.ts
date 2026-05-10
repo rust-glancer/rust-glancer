@@ -2,8 +2,7 @@
  * Renders rust-glancer's global status-bar item.
  *
  * This module knows how status states should look in VS Code: text, tooltip contents, background
- * color, command wiring, and plain snapshots for tests. It does not decide which workspace state
- * should be displayed.
+ * color, command wiring, and plain snapshots for tests. It does not decide lifecycle state.
  */
 import * as vscode from "vscode";
 

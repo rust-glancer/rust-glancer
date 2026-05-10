@@ -22,9 +22,8 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             ..Default::default()
         }),
         document_symbol_provider: Some(OneOf::Left(true)),
-        // The VS Code extension sends this request directly. Advertising the internal command
-        // makes vscode-languageclient register it as a global VS Code command, which collides when
-        // the extension runs one language client per workspace folder.
+        // The VS Code extension sends this request directly, so keep the internal command out of
+        // the editor command registry.
         execute_command_provider: None,
         inlay_hint_provider: Some(OneOf::Right(InlayHintServerCapabilities::Options(
             InlayHintOptions {
@@ -35,7 +34,9 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         workspace_symbol_provider: Some(OneOf::Left(true)),
         workspace: Some(WorkspaceServerCapabilities {
             workspace_folders: Some(WorkspaceFoldersServerCapabilities {
-                supported: Some(false), // TODO: We might in fact want to support it eventually (low prio though)
+                supported: Some(true),
+                // TODO: Decide if we want to support live workspace-folder updates instead of
+                // letting the extension restart the server when the VS Code window shape changes.
                 change_notifications: Some(OneOf::Left(false)),
             }),
             file_operations: None,
@@ -50,14 +51,14 @@ mod tests {
     use tower_lsp_server::ls_types::{TextDocumentSyncCapability, TextDocumentSyncKind};
 
     #[test]
-    fn does_not_advertise_multi_root_workspace_support_yet() {
+    fn advertises_multi_root_workspace_support() {
         let capabilities = server_capabilities();
         let workspace_folders = capabilities
             .workspace
             .and_then(|workspace| workspace.workspace_folders)
             .expect("workspace folder capability should stay explicit");
 
-        assert_eq!(workspace_folders.supported, Some(false));
+        assert_eq!(workspace_folders.supported, Some(true));
     }
 
     #[test]

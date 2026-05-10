@@ -10,16 +10,15 @@ import { EXTENSION_COMMANDS } from "../src/commands";
 
 const EXTENSION_ID = "rust-glancer.rust-glancer-code";
 
-interface ClientManagerSnapshot {
-  readonly activeWorkspaceUri?: string;
-  readonly workspaces: WorkspaceClientSnapshot[];
+interface ExtensionControllerSnapshot {
+  readonly session?: LanguageClientSessionSnapshot;
   readonly status: {
     readonly state: string;
     readonly text: string;
   };
 }
 
-interface WorkspaceClientSnapshot {
+interface LanguageClientSessionSnapshot {
   readonly running: boolean;
   readonly hasClient: boolean;
   readonly workspaceRoot: string;
@@ -37,11 +36,9 @@ interface WorkspaceClientSnapshot {
 }
 
 suite("Rust Glancer extension", () => {
-  test("starts one real server per active Rust workspace", async () => {
+  test("starts one real server and lets it route multiple Rust workspaces", async () => {
     const extension = vscode.extensions.getExtension(EXTENSION_ID);
     assert.ok(extension, `expected VS Code to load extension ${EXTENSION_ID}`);
-
-    await extension.activate();
 
     const repositoryRoot = path.resolve(extension.extensionPath, "..", "..");
     const testTargetsUri = vscode.Uri.file(path.join(repositoryRoot, "test_targets"));
@@ -49,18 +46,19 @@ suite("Rust Glancer extension", () => {
     const moderateUri = vscode.Uri.joinPath(testTargetsUri, "moderate_crate");
     ensureWorkspaceFolder(testTargetsUri, "test_targets");
 
+    await extension.activate();
+
     const simpleDocument = await vscode.workspace.openTextDocument(
       vscode.Uri.joinPath(simpleUri, "src", "lib.rs"),
     );
     await vscode.window.showTextDocument(simpleDocument);
 
-    const simpleReady = await waitForClientState(
-      (state) => readyWorkspace(state, /test_targets[/\\]simple_crate$/) !== undefined,
-    );
-    const simple = readyWorkspace(simpleReady, /test_targets[/\\]simple_crate$/);
-    assert.ok(simple);
-    assert.equal(simple.hasClient, true);
+    const simpleReady = await waitForClientState((state) => readySession(state) !== undefined);
+    assert.ok(simpleReady.session);
     assert.equal(simpleReady.status.text, "$(check) Rust Glancer: ready");
+    await waitForOutput(
+      /workspace indexing finished.*simple_crate|simple_crate.*workspace indexing finished/,
+    );
 
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes(EXTENSION_COMMANDS.restartServer));
@@ -69,56 +67,54 @@ suite("Rust Glancer extension", () => {
 
     await vscode.commands.executeCommand(EXTENSION_COMMANDS.reindexWorkspace);
 
-    const reindexed = await waitForClientState(
-      (state) => readyWorkspace(state, /test_targets[/\\]simple_crate$/) !== undefined,
-    );
-    assert.equal(readyWorkspace(reindexed, /test_targets[/\\]simple_crate$/)?.hasClient, true);
+    const reindexed = await waitForClientState((state) => readySession(state) !== undefined);
+    assert.equal(readySession(reindexed)?.hasClient, true);
 
     const document = await vscode.workspace.openTextDocument(
       vscode.Uri.joinPath(moderateUri, "src", "lib.rs"),
     );
     await vscode.window.showTextDocument(document);
 
-    const multiRootReady = await waitForClientState(
-      (state) => readyWorkspace(state, /test_targets[/\\]moderate_crate$/) !== undefined,
+    const multiRootReady = await waitForClientState((state) => readySession(state) !== undefined);
+    const multiRootSession = readySession(multiRootReady);
+    assert.ok(multiRootSession);
+    assert.equal(multiRootSession.status.details.workspaceRoot, multiRootSession.workspaceRoot);
+    await waitForOutput(
+      /workspace indexing finished.*moderate_crate|moderate_crate.*workspace indexing finished/,
     );
-    assert.ok(readyWorkspace(multiRootReady, /test_targets[/\\]simple_crate$/));
-    assert.ok(readyWorkspace(multiRootReady, /test_targets[/\\]moderate_crate$/));
+
+    const outputAfterProjectSwitch =
+      (await vscode.commands.executeCommand<string>(EXTENSION_COMMANDS.testGetOutput)) ?? "";
     assert.equal(
-      multiRootReady.workspaces.length,
-      2,
-      JSON.stringify(multiRootReady.workspaces, undefined, 2),
+      outputAfterProjectSwitch.match(/server process started/g)?.length ?? 0,
+      1,
+      outputAfterProjectSwitch,
     );
 
     await vscode.commands.executeCommand(EXTENSION_COMMANDS.stopServer);
 
-    const stoppedModerate = await waitForClientState(
-      (state) =>
-        readyWorkspace(state, /test_targets[/\\]simple_crate$/) !== undefined &&
-        readyWorkspace(state, /test_targets[/\\]moderate_crate$/) === undefined &&
-        state.workspaces.length === 1,
+    await waitForClientState(
+      (state) => state.session === undefined && state.status.state === "stopped",
     );
-    assert.equal(stoppedModerate.activeWorkspaceUri, undefined);
 
     await vscode.window.showTextDocument(simpleDocument);
     await vscode.window.showTextDocument(document);
 
     const restartedModerate = await waitForClientState(
-      (state) => readyWorkspace(state, /test_targets[/\\]moderate_crate$/) !== undefined,
+      (state) => readySession(state) !== undefined && state.session !== undefined,
     );
-    assert.ok(readyWorkspace(restartedModerate, /test_targets[/\\]simple_crate$/));
-    assert.ok(readyWorkspace(restartedModerate, /test_targets[/\\]moderate_crate$/));
+    assert.ok(readySession(restartedModerate));
   });
 });
 
 async function waitForClientState(
-  isExpected: (state: ClientManagerSnapshot) => boolean,
-): Promise<ClientManagerSnapshot> {
+  isExpected: (state: ExtensionControllerSnapshot) => boolean,
+): Promise<ExtensionControllerSnapshot> {
   const startedAt = Date.now();
-  let lastState: ClientManagerSnapshot | undefined;
+  let lastState: ExtensionControllerSnapshot | undefined;
 
   while (Date.now() - startedAt < 30_000) {
-    lastState = await vscode.commands.executeCommand<ClientManagerSnapshot>(
+    lastState = await vscode.commands.executeCommand<ExtensionControllerSnapshot>(
       EXTENSION_COMMANDS.testGetState,
     );
     if (lastState !== undefined && isExpected(lastState)) {
@@ -138,6 +134,22 @@ async function waitForClientState(
   );
 }
 
+async function waitForOutput(pattern: RegExp): Promise<string> {
+  const startedAt = Date.now();
+  let output = "";
+
+  while (Date.now() - startedAt < 30_000) {
+    output = (await vscode.commands.executeCommand<string>(EXTENSION_COMMANDS.testGetOutput)) ?? "";
+    if (pattern.test(output)) {
+      return output;
+    }
+
+    await delay(100);
+  }
+
+  assert.fail(`timed out waiting for rust-glancer output ${pattern}; output:\n${output}`);
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -152,15 +164,13 @@ function ensureWorkspaceFolder(uri: vscode.Uri, name: string): void {
   assert.equal(added, true);
 }
 
-function readyWorkspace(
-  state: ClientManagerSnapshot,
-  workspaceRoot: RegExp,
-): WorkspaceClientSnapshot | undefined {
-  return state.workspaces.find(
-    (workspace) =>
-      workspace.running &&
-      workspace.hasClient &&
-      workspace.status.state === "ready" &&
-      workspaceRoot.test(workspace.workspaceRoot),
-  );
+function readySession(
+  state: ExtensionControllerSnapshot,
+): LanguageClientSessionSnapshot | undefined {
+  const session = state.session;
+  if (session?.running === true && session.hasClient && session.status.state === "ready") {
+    return session;
+  }
+
+  return undefined;
 }

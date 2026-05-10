@@ -20,17 +20,11 @@ use super::{
 pub(super) struct EngineRegistryInner {
     pub(super) routing: EngineRouting,
     pub(super) engines: Vec<EngineSlot>,
-    pub(super) initial_root: Option<PathBuf>,
     pub(super) analysis_config: Option<AnalysisConfig>,
     pub(super) diagnostics_config: Option<DiagnosticsConfig>,
 }
 
 impl EngineRegistryInner {
-    pub(super) fn route_root(&mut self, root: PathBuf) -> anyhow::Result<ReservedEngineRoute> {
-        let route = self.routing.route_root(root);
-        self.reserve_route(route)
-    }
-
     pub(super) fn route_document(
         &mut self,
         path: &Path,

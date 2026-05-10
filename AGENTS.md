@@ -1,3 +1,8 @@
+## Most important
+
+- Always run the VS code extensions tests outside of sandbox. Running them in sandbox fails
+  and crashes all the Code instances for user. Other test commands normally work in sandbox.
+
 ## Design
 
 Lack of DTOs for cache and shallow error propagation are part of design: since the cache

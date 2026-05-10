@@ -1,7 +1,9 @@
+use std::borrow::Cow;
+
 use tower_lsp_server::{
     Client as LspClient, LanguageServer,
-    jsonrpc::Result,
-    ls_types::{MessageType, request::*, *},
+    jsonrpc::{Error, ErrorCode, Result},
+    ls_types::{request::*, *},
 };
 
 use crate::{
@@ -12,17 +14,13 @@ use crate::{
 
 #[derive(Debug)]
 pub(crate) struct Backend {
-    lsp_client: LspClient,
     engines: EngineRegistry,
 }
 
 impl Backend {
     pub(crate) fn new(lsp_client: LspClient) -> Self {
-        let engines = EngineRegistry::new(lsp_client.clone());
-        Self {
-            lsp_client,
-            engines,
-        }
+        let engines = EngineRegistry::new(lsp_client);
+        Self { engines }
     }
 
     fn server_context(&self) -> ServerContext<'_> {
@@ -67,13 +65,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(skip_all, fields(method = "initialized"))]
     async fn initialized(&self, _params: InitializedParams) {
-        self.lsp_client
-            .log_message(MessageType::INFO, "rust-glancer initialized")
-            .await;
-
-        if let Err(error) = self.engines.start_initial_engine().await {
-            tracing::error!(error = %error, "failed to start initial rust-glancer engine");
-        }
+        tracing::debug!("rust-glancer LSP server initialized");
     }
 
     #[tracing::instrument(skip_all, fields(method = "shutdown"))]
@@ -280,7 +272,11 @@ impl LanguageServer for Backend {
     )]
     async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<LSPAny>> {
         let Some(context) = self.active_method_context().await else {
-            return Ok(None);
+            return Err(Error {
+                code: ErrorCode::InvalidRequest,
+                message: Cow::Borrowed("Rust Glancer has no active Rust project for this command"),
+                data: None,
+            });
         };
         methods::workspace::execute_command::execute_command(context, params).await
     }

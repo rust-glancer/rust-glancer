@@ -1,12 +1,10 @@
 /**
- * Owns one VS Code language-client instance for one resolved Cargo workspace root.
+ * Owns one started VS Code language-client session.
  *
- * This module is the boundary between extension orchestration and the LSP client process: it starts
- * and stops the server, forwards reindex requests, wires middleware, and maintains per-client
- * status state.
+ * A session has immutable startup details: server command, cwd, initialization options, and
+ * workspace folder list. Restarting creates a new session rather than mutating this one.
  */
 import * as vscode from "vscode";
-import * as path from "node:path";
 import {
   ExecuteCommandRequest,
   LanguageClient,
@@ -17,37 +15,30 @@ import {
 
 import { SERVER_COMMANDS } from "../commands";
 import { ExtensionConfig, type TraceSetting } from "../config";
-import { ClientStatus, type ClientStatusSnapshot } from "../status/client-status";
 import { hoverMiddleware } from "../features/hover-actions";
+import { ClientStatus, type ClientStatusSnapshot } from "../status/client-status";
+import { StatusView } from "../status/status-view";
 import { isRustFile } from "../utils/lsp-utils";
 import { ResolvedServer } from "./server";
-import { StatusView } from "../status/status-view";
-import { WorkspaceOwners } from "./workspace-lifecycle";
 
-export interface WorkspaceClientSnapshot extends ClientStatusSnapshot {
+export interface LanguageClientSessionSnapshot extends ClientStatusSnapshot {
   readonly workspaceRoot: string;
   readonly workspaceUri: string;
-  readonly ownerKeys: string[];
   readonly hasClient: boolean;
 }
 
-export class WorkspaceClient implements vscode.Disposable {
+export class LanguageClientSession implements vscode.Disposable {
   private client: LanguageClient | undefined;
   private clientState: vscode.Disposable | undefined;
   private readonly clientStatus: ClientStatus;
-  private readonly owners: WorkspaceOwners;
 
   public constructor(
     private readonly extensionPath: string,
     private readonly output: vscode.OutputChannel,
-    private readonly status: StatusView,
+    status: StatusView,
     private readonly workspaceFolder: vscode.WorkspaceFolder,
-    private configResource: vscode.Uri,
-    ownerKey: string,
-    private readonly isActive: () => boolean,
   ) {
-    this.clientStatus = new ClientStatus(status, isActive);
-    this.owners = new WorkspaceOwners(ownerKey);
+    this.clientStatus = new ClientStatus(status);
   }
 
   public workspaceKey(): string {
@@ -58,49 +49,16 @@ export class WorkspaceClient implements vscode.Disposable {
     return this.workspaceFolder.uri.fsPath;
   }
 
-  public workspaceName(): string {
-    return this.workspaceFolder.name;
-  }
-
   public isRunning(): boolean {
     return this.client !== undefined;
   }
 
-  public addOwner(ownerKey: string): void {
-    this.owners.add(ownerKey);
-  }
-
-  public useConfigResource(configResource: vscode.Uri): void {
-    this.configResource = configResource;
-  }
-
-  public removeOwner(ownerKey: string): void {
-    this.owners.delete(ownerKey);
-  }
-
-  public hasNoOwners(): boolean {
-    return this.owners.isEmpty();
-  }
-
-  public ownerKeys(): string[] {
-    return this.owners.snapshot();
-  }
-
-  public containsDocument(document: vscode.TextDocument): boolean {
-    if (!isRustFile(document)) {
-      return false;
-    }
-
-    const relative = path.relative(this.workspaceFolder.uri.fsPath, document.uri.fsPath);
-    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-  }
-
-  public async start(): Promise<void> {
+  public async start(): Promise<boolean> {
     if (this.client !== undefined) {
-      return;
+      return this.clientStatus.isRunning();
     }
 
-    const config = ExtensionConfig.read(this.configResource);
+    const config = ExtensionConfig.read();
     const server = ResolvedServer.discover(config, this.workspaceFolder, this.extensionPath);
     const statusDetails = {
       workspaceRoot: this.workspaceFolder.uri.fsPath,
@@ -114,14 +72,8 @@ export class WorkspaceClient implements vscode.Disposable {
     this.clientStatus.starting(statusDetails);
 
     const clientOptions: LanguageClientOptions = {
-      documentSelector: [
-        {
-          scheme: "file",
-          language: "rust",
-          pattern: `${globPath(this.workspaceFolder.uri.fsPath)}/**/*.rs`,
-        },
-      ],
-      diagnosticCollectionName: `rust-glancer-${clientIdSuffix(this.workspaceFolder)}`,
+      documentSelector: [{ scheme: "file", language: "rust" }],
+      diagnosticCollectionName: "rust-glancer",
       outputChannel: this.output,
       traceOutputChannel: this.output,
       initializationOptions: {
@@ -130,12 +82,11 @@ export class WorkspaceClient implements vscode.Disposable {
         cache: config.cache,
       },
       middleware: this.middleware(),
-      workspaceFolder: this.workspaceFolder,
     };
 
     const client = new LanguageClient(
-      `rust-glancer-${clientIdSuffix(this.workspaceFolder)}`,
-      `Rust Glancer (${this.workspaceFolder.name})`,
+      "rust-glancer",
+      "Rust Glancer",
       ResolvedServer.options(server, this.output),
       clientOptions,
     );
@@ -173,23 +124,20 @@ export class WorkspaceClient implements vscode.Disposable {
       void vscode.window.showErrorMessage(
         "Rust Glancer failed to start. Check the Rust Glancer output for details.",
       );
+      return false;
     }
-  }
 
-  public async restart(): Promise<void> {
-    this.output.appendLine(`restarting rust-glancer server for ${this.workspaceRoot()}`);
-    await this.stop();
-    await this.start();
+    return true;
   }
 
   public async reindexWorkspace(): Promise<void> {
     const client = this.client;
     if (!this.clientStatus.isRunning() || client === undefined) {
-      void vscode.window.showWarningMessage("Rust Glancer is not running for this workspace.");
+      void vscode.window.showWarningMessage("Rust Glancer is not running.");
       return;
     }
 
-    this.output.appendLine(`reindexing rust-glancer workspace: ${this.workspaceRoot()}`);
+    this.output.appendLine("reindexing rust-glancer active workspace");
     this.clientStatus.indexing();
 
     try {
@@ -197,10 +145,10 @@ export class WorkspaceClient implements vscode.Disposable {
         command: SERVER_COMMANDS.reindexWorkspace,
         arguments: [],
       });
-      this.output.appendLine(`rust-glancer workspace reindex finished: ${this.workspaceRoot()}`);
+      this.output.appendLine("rust-glancer active workspace reindex finished");
       this.refreshStatus();
     } catch (error) {
-      this.output.appendLine(`rust-glancer workspace reindex failed: ${String(error)}`);
+      this.output.appendLine(`rust-glancer active workspace reindex failed: ${String(error)}`);
       this.clientStatus.operationFailed(`reindex failed: ${String(error)}`);
       void vscode.window.showErrorMessage(
         "Rust Glancer failed to reindex the workspace. Check the Rust Glancer output for details.",
@@ -216,7 +164,7 @@ export class WorkspaceClient implements vscode.Disposable {
 
     if (client !== undefined) {
       await client.stop();
-      this.output.appendLine(`rust-glancer client stopped: ${this.workspaceRoot()}`);
+      this.output.appendLine("rust-glancer client stopped");
     }
 
     this.clientStatus.stopped("not running");
@@ -226,12 +174,11 @@ export class WorkspaceClient implements vscode.Disposable {
     this.clientStatus.refresh(this.isActiveRustDocumentDirty());
   }
 
-  public snapshot(): WorkspaceClientSnapshot {
+  public snapshot(): LanguageClientSessionSnapshot {
     const status = this.clientStatus.snapshot();
     return {
       workspaceRoot: this.workspaceRoot(),
       workspaceUri: this.workspaceKey(),
-      ownerKeys: this.ownerKeys(),
       hasClient: this.client !== undefined,
       ...status,
     };
@@ -253,16 +200,8 @@ export class WorkspaceClient implements vscode.Disposable {
 
   private isActiveRustDocumentDirty(): boolean {
     const document = vscode.window.activeTextEditor?.document;
-    return document !== undefined && this.containsDocument(document) && document.isDirty;
+    return document !== undefined && isRustFile(document) && document.isDirty;
   }
-}
-
-function clientIdSuffix(workspaceFolder: vscode.WorkspaceFolder): string {
-  return workspaceFolder.uri.toString().replace(/[^A-Za-z0-9_-]+/g, "-");
-}
-
-function globPath(path: string): string {
-  return path.replace(/\\/g, "/");
 }
 
 function trace(setting: TraceSetting): Trace {

@@ -1,5 +1,5 @@
 /**
- * Resolves and launches the rust-glancer language-server process for a workspace client.
+ * Resolves and launches the rust-glancer language-server process for the window client.
  *
  * This module chooses between explicit settings, test overrides, development checkouts, and PATH,
  * then converts that decision into `vscode-languageclient` server options.

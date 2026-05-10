@@ -72,7 +72,7 @@
           "description": "Ask the language server to purge allocator memory after project indexing and saved-file reindexing. This lowers idle RSS after large indexing spikes."
         },
         "rust-glancer.cargo.target": {
-          "scope": "resource",
+          "scope": "window",
           "type": [
             "string",
             "null"
@@ -112,25 +112,25 @@
           "description": "Controls LSP protocol tracing for the rust-glancer client."
         },
         "rust-glancer.diagnosticsOnStartup": {
-          "scope": "resource",
+          "scope": "window",
           "type": "boolean",
           "default": false,
-          "description": "Run Cargo diagnostics once after the rust-glancer server initializes."
+          "description": "Run Cargo diagnostics once after a Rust project engine initializes."
         },
         "rust-glancer.diagnosticsOnSave": {
-          "scope": "resource",
+          "scope": "window",
           "type": "boolean",
           "default": false,
           "description": "Run Cargo diagnostics after Rust files are saved."
         },
         "rust-glancer.diagnostics.command": {
-          "scope": "resource",
+          "scope": "window",
           "type": "string",
           "default": "check",
           "description": "Cargo subcommand used for diagnostics. This must be a Cargo subcommand such as check or clippy, not an arbitrary shell command."
         },
         "rust-glancer.diagnostics.arguments": {
-          "scope": "resource",
+          "scope": "window",
           "type": "array",
           "default": [
             "--workspace",

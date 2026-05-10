@@ -42,10 +42,6 @@ Run the extension-host smoke test:
 npm run test:e2e
 ```
 
-This builds the real `rust-glancer` release binary, opens
-`test_targets/simple_crate`, activates the extension, waits for the server to
-be ready, and runs the reindex command.
-
 The VS Code test runner uses a desktop Extension Development Host, so a short
 lived VS Code window is expected locally. For Linux CI/headless environments,
 run the same command under a virtual display such as `xvfb-run`.
@@ -97,7 +93,8 @@ Use `rust-glancer.server.extraEnv` for server logs, for example:
 ## Troubleshooting
 
 Open the `Rust Glancer` output channel first. It records the workspace root,
-server command, server source, process exit, and server stderr.
+server command, server source, process exit, server stderr, and engine startup
+logs.
 
 If the command palette does not show Rust Glancer commands in the Extension
 Development Host, VS Code probably launched with the wrong

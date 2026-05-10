@@ -3,7 +3,6 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Context as _;
 use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
 use tokio::sync::Mutex;
 use tower_lsp_server::Client as LspClient;
@@ -49,25 +48,14 @@ impl EngineRegistry {
     ) -> anyhow::Result<()> {
         {
             let mut inner = self.inner.lock().await;
-            inner.initial_root = Some(normalize_path(root));
+            let mut workspace_folders = workspace_folders;
+            workspace_folders.push(root);
             inner.routing.set_workspace_folders(workspace_folders);
             inner.analysis_config = Some(analysis_config);
             inner.diagnostics_config = Some(diagnostics_config);
         }
 
         Ok(())
-    }
-
-    /// Starts the initial workspace engine after the LSP `initialized` notification.
-    pub(crate) async fn start_initial_engine(&self) -> anyhow::Result<EngineClient> {
-        let root = {
-            let inner = self.inner.lock().await;
-            inner
-                .initial_root
-                .clone()
-                .context("while attempting to start engine before initial root")?
-        };
-        self.ensure_engine_for_root(root).await
     }
 
     /// Returns every ready engine client for lifecycle fan-out such as shutdown.
@@ -111,22 +99,6 @@ impl EngineRegistry {
         match route {
             ReservedEngineRoute::Existing(id) => self.engine_for_existing_id(id).await,
             ReservedEngineRoute::Spawn(start) => self.start_reserved_engine(start).await.map(Some),
-        }
-    }
-
-    /// Ensures that the given Cargo root has a ready engine and returns its RPC client.
-    async fn ensure_engine_for_root(&self, root: PathBuf) -> anyhow::Result<EngineClient> {
-        let route = {
-            let mut inner = self.inner.lock().await;
-            inner.route_root(root)?
-        };
-
-        match route {
-            ReservedEngineRoute::Existing(id) => self
-                .engine_for_existing_id(id)
-                .await?
-                .context("while attempting to find reserved engine client"),
-            ReservedEngineRoute::Spawn(start) => self.start_reserved_engine(start).await,
         }
     }
 

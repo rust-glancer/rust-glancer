@@ -85,10 +85,9 @@ pub(crate) fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
     uri.to_file_path().map(|path| path.into_owned())
 }
 
-// `root_uri` is deprecated in favor of `workspace_folders`, but the deprecation note says to use
-// `workspace_folders` when possible. That is not really possible with this server's current
-// single-root shape: the VS Code extension starts one client per Cargo root, and `root_uri` carries
-// that selected root while `workspace_folders` can still contain every folder in the window.
+// `root_uri` is deprecated in favor of `workspace_folders`, but clients still send it as the
+// process-level fallback root. Use it only to make initialization work when a client omits the
+// workspace-folder list; routed document requests still choose concrete Cargo roots later.
 #[expect(deprecated)]
 fn workspace_root(params: &InitializeParams) -> Option<PathBuf> {
     params

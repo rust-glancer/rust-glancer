@@ -1,9 +1,9 @@
 /**
- * Decides which per-client state should be rendered in the shared status view.
+ * Decides which language-client state should be rendered in the shared status view.
  *
- * A workspace client can be starting, indexing, stale, running diagnostics, failed, or ready based
+ * The language client can be starting, indexing, stale, running diagnostics, failed, or ready based
  * on several independent event streams. This module merges those signals and delegates the final
- * rendering to `StatusView` only when the client is currently visible.
+ * rendering to `StatusView`.
  */
 import {
   type ProgressToken,
@@ -30,7 +30,7 @@ export interface ClientStatusSnapshot {
  * Tracks client-facing state and decides which status-bar state should win.
  *
  * VS Code document events, LSP lifecycle events, and work-done progress can arrive independently.
- * Keeping their merge logic here makes `ClientManager` mostly responsible for wiring.
+ * Keeping their merge logic here makes the extension controller mostly responsible for wiring.
  */
 export class ClientStatus {
   private details: StatusDetails | undefined;

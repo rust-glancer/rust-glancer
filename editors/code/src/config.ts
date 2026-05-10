@@ -2,8 +2,8 @@
  * Reads and normalizes user-facing VS Code settings into runtime configuration.
  *
  * The rest of the extension should consume these typed values instead of repeatedly touching
- * `workspace.getConfiguration`, especially for resource-scoped settings selected by a document or
- * owner folder.
+ * `workspace.getConfiguration`. The values are window-level because one LSP server initializes all
+ * project engines in the current VS Code window.
  */
 import * as vscode from "vscode";
 
@@ -41,8 +41,8 @@ export interface DiagnosticsConfig {
 }
 
 export namespace ExtensionConfig {
-  export function read(resource?: vscode.Uri): ExtensionConfig {
-    const config = vscode.workspace.getConfiguration("rust-glancer", resource);
+  export function read(): ExtensionConfig {
+    const config = vscode.workspace.getConfiguration("rust-glancer");
     const serverPath = config.get<string | null>("server.path", null);
     const extraEnv = config.get<Record<string, unknown>>("server.extraEnv", {});
     const purgeMemoryAfterBuild = config.get<boolean>("server.purgeMemoryAfterBuild", true);
