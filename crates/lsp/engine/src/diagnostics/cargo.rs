@@ -14,11 +14,11 @@ use ls_types::{
 };
 
 #[derive(Debug, Default)]
-pub(crate) struct CheckDiagnostics {
+pub(crate) struct CargoDiagnostics {
     by_path: BTreeMap<PathBuf, Vec<Diagnostic>>,
 }
 
-impl CheckDiagnostics {
+impl CargoDiagnostics {
     pub(crate) fn parse(workspace_root: &Path, source: &str, stdout: &[u8], stderr: &[u8]) -> Self {
         let mut diagnostics = Self::default();
         diagnostics.parse_stream(workspace_root, source, stdout);

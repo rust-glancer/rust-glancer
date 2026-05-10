@@ -3,22 +3,22 @@ use std::time::Instant;
 use anyhow::Context as _;
 use tokio::process::Command;
 
-use super::{CheckSnapshot, diagnostics::CheckDiagnostics};
+use super::{DiagnosticsSnapshot, cargo::CargoDiagnostics};
 
-/// Executes the configured cargo diagnostics command for one check snapshot.
+/// Executes the configured cargo diagnostics command for one diagnostics snapshot.
 ///
 /// A non-zero cargo exit can still be useful when rustc emitted JSON diagnostics, so this only
 /// returns an error when cargo fails without producing diagnostics we can publish.
 pub(super) struct CargoDiagnosticsCommand {
-    snapshot: CheckSnapshot,
+    snapshot: DiagnosticsSnapshot,
 }
 
 impl CargoDiagnosticsCommand {
-    pub(super) fn new(snapshot: CheckSnapshot) -> Self {
+    pub(super) fn new(snapshot: DiagnosticsSnapshot) -> Self {
         Self { snapshot }
     }
 
-    pub(super) async fn run(self) -> anyhow::Result<CheckDiagnostics> {
+    pub(super) async fn run(self) -> anyhow::Result<CargoDiagnostics> {
         let started = Instant::now();
         let source = format!("cargo {}", self.snapshot.config.command);
         tracing::info!(
@@ -40,7 +40,7 @@ impl CargoDiagnosticsCommand {
             .output()
             .await
             .with_context(|| format!("while attempting to run {}", source))?;
-        let diagnostics = CheckDiagnostics::parse(
+        let diagnostics = CargoDiagnostics::parse(
             &self.snapshot.workspace_root,
             &source,
             &output.stdout,

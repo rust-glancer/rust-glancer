@@ -21,8 +21,8 @@ export type StatusState =
   | "indexing"
   | "ready"
   | "stale"
-  | "check-running"
-  | "check-failed"
+  | "diagnostics-running"
+  | "diagnostics-failed"
   | "stopped"
   | "failed"
   | "disposed";
@@ -75,18 +75,21 @@ export class StatusView implements vscode.Disposable {
     );
   }
 
-  public checkRunning(command: string | undefined, details: StatusDetails = this.details): void {
+  public diagnosticsRunning(
+    command: string | undefined,
+    details: StatusDetails = this.details,
+  ): void {
     this.showState(
-      "check-running",
+      "diagnostics-running",
       "$(sync~spin) Rust Glancer: cargo check running",
       command === undefined ? "Cargo check running" : `Cargo check running: ${command}`,
       details,
     );
   }
 
-  public checkFailed(details: StatusDetails = this.details): void {
+  public diagnosticsFailed(details: StatusDetails = this.details): void {
     this.showState(
-      "check-failed",
+      "diagnostics-failed",
       "$(error) Rust Glancer: cargo check failed",
       "Cargo check failed",
       details,

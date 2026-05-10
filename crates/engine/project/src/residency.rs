@@ -2,12 +2,13 @@ use std::collections::HashSet;
 
 use rg_def_map::PackageSlot;
 use rg_workspace::{Package, PackageId, PackageSource, WorkspaceMetadata};
+use serde::{Deserialize, Serialize};
 
 /// Decides which package artifacts should remain resident after a project build.
 ///
 /// This is cache policy, not Cargo metadata. `PackageSource` says where Cargo resolved a package
 /// from; residency policy decides how eagerly rust-glancer should keep that package in memory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum PackageResidencyPolicy {
     /// Keep the current pre-cache behavior: all packages stay in memory.
     #[default]

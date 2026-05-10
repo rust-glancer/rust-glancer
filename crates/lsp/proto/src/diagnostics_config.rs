@@ -1,52 +1,59 @@
 use ls_types::LSPAny;
+use serde::{Deserialize, Serialize};
 
 /// Cargo diagnostics configuration sent by the LSP client during initialization.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CheckConfig {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DiagnosticsConfig {
     pub on_startup: bool,
     pub on_save: bool,
     pub command: String,
     pub arguments: Vec<String>,
 }
 
-impl CheckConfig {
+impl DiagnosticsConfig {
     pub fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
-        let Some(check) = options
+        let Some(diagnostics) = options
             .and_then(LSPAny::as_object)
-            .and_then(|options| options.get("check"))
+            .and_then(|options| options.get("diagnostics"))
             .and_then(LSPAny::as_object)
         else {
             return Ok(Self::default());
         };
 
-        let on_startup = check
+        let on_startup = diagnostics
             .get("onStartup")
             .and_then(LSPAny::as_bool)
             .unwrap_or_default();
-        let on_save = check
+        let on_save = diagnostics
             .get("onSave")
             .and_then(LSPAny::as_bool)
             .unwrap_or_default();
-        let command = match check.get("command") {
+        let command = match diagnostics.get("command") {
             Some(command) => {
                 let command = command
                     .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("rust-glancer check.command must be a string"))?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("rust-glancer diagnostics.command must be a string")
+                    })?
                     .trim();
                 validate_cargo_subcommand(command)?;
                 command.to_string()
             }
             None => "check".to_string(),
         };
-        let arguments = match check.get("arguments") {
+        let arguments = match diagnostics.get("arguments") {
             Some(arguments) => arguments
                 .as_array()
-                .ok_or_else(|| anyhow::anyhow!("rust-glancer check.arguments must be an array"))?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("rust-glancer diagnostics.arguments must be an array")
+                })?
                 .iter()
                 .enumerate()
                 .map(|(idx, argument)| {
                     let argument = argument.as_str().ok_or_else(|| {
-                        anyhow::anyhow!("rust-glancer check.arguments[{idx}] must be a string")
+                        anyhow::anyhow!(
+                            "rust-glancer diagnostics.arguments[{idx}] must be a string"
+                        )
                     })?;
                     validate_cargo_argument(idx, argument)?;
                     Ok(argument.to_string())
@@ -77,17 +84,17 @@ impl CheckConfig {
 fn validate_cargo_subcommand(command: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         !command.is_empty(),
-        "rust-glancer check.command must not be empty",
+        "rust-glancer diagnostics.command must not be empty",
     );
     anyhow::ensure!(
         !command.starts_with('-'),
-        "rust-glancer check.command must be a Cargo subcommand, not an argument",
+        "rust-glancer diagnostics.command must be a Cargo subcommand, not an argument",
     );
     anyhow::ensure!(
         command
             .chars()
             .all(|char| char.is_ascii_alphanumeric() || char == '-' || char == '_'),
-        "rust-glancer check.command must be a single Cargo subcommand such as `check` or `clippy`",
+        "rust-glancer diagnostics.command must be a single Cargo subcommand such as `check` or `clippy`",
     );
 
     Ok(())
@@ -96,17 +103,17 @@ fn validate_cargo_subcommand(command: &str) -> anyhow::Result<()> {
 fn validate_cargo_argument(idx: usize, argument: &str) -> anyhow::Result<()> {
     anyhow::ensure!(
         !argument.is_empty(),
-        "rust-glancer check.arguments[{idx}] must not be empty",
+        "rust-glancer diagnostics.arguments[{idx}] must not be empty",
     );
     anyhow::ensure!(
         !argument.contains('\0'),
-        "rust-glancer check.arguments[{idx}] must not contain NUL bytes",
+        "rust-glancer diagnostics.arguments[{idx}] must not contain NUL bytes",
     );
 
     Ok(())
 }
 
-impl Default for CheckConfig {
+impl Default for DiagnosticsConfig {
     fn default() -> Self {
         Self {
             on_startup: false,
@@ -121,12 +128,12 @@ impl Default for CheckConfig {
 mod tests {
     use ls_types::LSPAny;
 
-    use super::CheckConfig;
+    use super::DiagnosticsConfig;
 
     #[test]
     fn defaults_to_disabled_cargo_check() {
-        let config = CheckConfig::from_initialization_options(None)
-            .expect("default check config should parse");
+        let config = DiagnosticsConfig::from_initialization_options(None)
+            .expect("default diagnostics config should parse");
 
         assert!(!config.on_startup);
         assert!(!config.on_save);
@@ -137,9 +144,9 @@ mod tests {
     }
 
     #[test]
-    fn parses_client_check_configuration() {
+    fn parses_client_diagnostics_configuration() {
         let options = object([(
-            "check",
+            "diagnostics",
             object([
                 ("onStartup", LSPAny::Bool(true)),
                 ("onSave", LSPAny::Bool(true)),
@@ -156,8 +163,8 @@ mod tests {
             ]),
         )]);
 
-        let config = CheckConfig::from_initialization_options(Some(&options))
-            .expect("fixture check config should parse");
+        let config = DiagnosticsConfig::from_initialization_options(Some(&options))
+            .expect("fixture diagnostics config should parse");
 
         assert!(config.on_startup);
         assert!(config.on_save);
@@ -173,40 +180,40 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_check_command() {
+    fn rejects_empty_diagnostics_command() {
         let options = object([(
-            "check",
+            "diagnostics",
             object([("command", LSPAny::String("  ".to_string()))]),
         )]);
 
-        let error = CheckConfig::from_initialization_options(Some(&options))
-            .expect_err("empty check command should be rejected");
+        let error = DiagnosticsConfig::from_initialization_options(Some(&options))
+            .expect_err("empty diagnostics command should be rejected");
 
         assert!(error.to_string().contains("must not be empty"));
     }
 
     #[test]
-    fn rejects_suspicious_check_command() {
+    fn rejects_suspicious_diagnostics_command() {
         let options = object([(
-            "check",
+            "diagnostics",
             object([("command", LSPAny::String("check --workspace".to_string()))]),
         )]);
 
-        let error = CheckConfig::from_initialization_options(Some(&options))
-            .expect_err("shell-like check command should be rejected");
+        let error = DiagnosticsConfig::from_initialization_options(Some(&options))
+            .expect_err("shell-like diagnostics command should be rejected");
 
         assert!(error.to_string().contains("single Cargo subcommand"));
     }
 
     #[test]
-    fn rejects_non_string_check_arguments() {
+    fn rejects_non_string_diagnostics_arguments() {
         let options = object([(
-            "check",
+            "diagnostics",
             object([("arguments", LSPAny::Array(vec![LSPAny::Bool(true)]))]),
         )]);
 
-        let error = CheckConfig::from_initialization_options(Some(&options))
-            .expect_err("malformed check argument should be rejected");
+        let error = DiagnosticsConfig::from_initialization_options(Some(&options))
+            .expect_err("malformed diagnostics argument should be rejected");
 
         assert!(error.to_string().contains("arguments[0]"));
     }

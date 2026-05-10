@@ -1,15 +1,23 @@
 use tower_lsp_server::{jsonrpc::Result, ls_types::*};
 
-use crate::{backend::ServerContext, commands, methods::internal_error};
+use crate::{commands, methods::MethodContext, methods::internal_error};
 
+#[tracing::instrument(
+    level = "trace", skip_all,
+    fields(command = %params.command)
+)]
 pub(crate) async fn execute_command(
-    ctx: &ServerContext,
+    ctx: MethodContext<'_>,
     params: ExecuteCommandParams,
 ) -> Result<Option<LSPAny>> {
-    match params.command.as_str() {
+    let command = params.command;
+
+    match command.as_str() {
         commands::REINDEX_WORKSPACE => {
-            ctx.engine
-                .reindex_workspace()
+            ctx.engine_client
+                .call("reindex_workspace", |client, request_context| async move {
+                    client.reindex_workspace(request_context).await
+                })
                 .await
                 .map_err(internal_error)?;
             Ok(None)

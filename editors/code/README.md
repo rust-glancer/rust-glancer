@@ -77,10 +77,10 @@ just client lint
   "rust-glancer.cargo.target": null,
   "rust-glancer.cache.packageResidency": "workspace-and-path-deps",
   "rust-glancer.trace.server": "off",
-  "rust-glancer.checkOnStartup": false,
-  "rust-glancer.checkOnSave": false,
-  "rust-glancer.check.command": "check",
-  "rust-glancer.check.arguments": ["--workspace", "--all-targets"]
+  "rust-glancer.diagnosticsOnStartup": false,
+  "rust-glancer.diagnosticsOnSave": false,
+  "rust-glancer.diagnostics.command": "check",
+  "rust-glancer.diagnostics.arguments": ["--workspace", "--all-targets"]
 }
 ```
 

@@ -1,9 +1,9 @@
 /**
  * Decides which per-client state should be rendered in the shared status view.
  *
- * A workspace client can be starting, indexing, stale, checking, failed, or ready based on several
- * independent event streams. This module merges those signals and delegates the final rendering to
- * `StatusView` only when the client is currently visible.
+ * A workspace client can be starting, indexing, stale, running diagnostics, failed, or ready based
+ * on several independent event streams. This module merges those signals and delegates the final
+ * rendering to `StatusView` only when the client is currently visible.
  */
 import {
   type ProgressToken,
@@ -18,9 +18,9 @@ const CARGO_DIAGNOSTICS_PROGRESS_TITLE = "Cargo diagnostics";
 
 export interface ClientStatusSnapshot {
   readonly running: boolean;
-  readonly checkRunning: boolean;
-  readonly checkFailed: boolean;
-  readonly checkCommand: string | undefined;
+  readonly diagnosticsRunning: boolean;
+  readonly diagnosticsFailed: boolean;
+  readonly diagnosticsCommand: string | undefined;
   readonly failureReason: string | undefined;
   readonly status: StatusSnapshot;
   readonly details: StatusDetails | undefined;
@@ -35,16 +35,16 @@ export interface ClientStatusSnapshot {
 export class ClientStatus {
   private details: StatusDetails | undefined;
   private running = false;
-  private checkRunning = false;
-  private checkFailed = false;
-  private checkCommand: string | undefined;
+  private diagnosticsRunning = false;
+  private diagnosticsFailed = false;
+  private diagnosticsCommand: string | undefined;
   private failureReason: string | undefined;
   private currentStatus: StatusSnapshot = {
     state: "created",
     text: "",
     details: {},
   };
-  private readonly checkProgressTokens = new Set<ProgressToken>();
+  private readonly diagnosticsProgressTokens = new Set<ProgressToken>();
 
   public constructor(
     private readonly view: StatusView,
@@ -61,7 +61,7 @@ export class ClientStatus {
 
   public starting(details: StatusDetails): void {
     this.running = false;
-    this.resetCheck();
+    this.resetDiagnostics();
     this.failureReason = undefined;
     this.details = details;
     this.show("starting", "$(sync~spin) Rust Glancer: starting", () => this.view.starting(details));
@@ -86,7 +86,7 @@ export class ClientStatus {
 
   public stopped(reason: string, details: StatusDetails | undefined = this.details): void {
     this.running = false;
-    this.resetCheck();
+    this.resetDiagnostics();
     this.failureReason = undefined;
     this.details = details;
     this.show("stopped", "$(circle-slash) Rust Glancer: stopped", () =>
@@ -96,7 +96,7 @@ export class ClientStatus {
 
   public failed(reason: string, details: StatusDetails | undefined = this.details): void {
     this.running = false;
-    this.resetCheck();
+    this.resetDiagnostics();
     this.failureReason = reason;
     this.details = details;
     this.show("failed", "$(error) Rust Glancer: failed", () =>
@@ -127,13 +127,13 @@ export class ClientStatus {
       this.show("stale", "$(warning) Rust Glancer: stale until save", () =>
         this.view.stale(this.details),
       );
-    } else if (this.checkRunning) {
-      this.show("check-running", "$(sync~spin) Rust Glancer: cargo check running", () =>
-        this.view.checkRunning(this.checkCommand, this.details),
+    } else if (this.diagnosticsRunning) {
+      this.show("diagnostics-running", "$(sync~spin) Rust Glancer: cargo check running", () =>
+        this.view.diagnosticsRunning(this.diagnosticsCommand, this.details),
       );
-    } else if (this.checkFailed) {
-      this.show("check-failed", "$(error) Rust Glancer: cargo check failed", () =>
-        this.view.checkFailed(this.details),
+    } else if (this.diagnosticsFailed) {
+      this.show("diagnostics-failed", "$(error) Rust Glancer: cargo check failed", () =>
+        this.view.diagnosticsFailed(this.details),
       );
     } else {
       this.show("ready", "$(check) Rust Glancer: ready", () => this.view.ready(this.details));
@@ -150,24 +150,24 @@ export class ClientStatus {
         return;
       }
 
-      this.checkProgressTokens.add(token);
-      this.checkRunning = true;
-      this.checkFailed = false;
-      this.checkCommand = params.message;
+      this.diagnosticsProgressTokens.add(token);
+      this.diagnosticsRunning = true;
+      this.diagnosticsFailed = false;
+      this.diagnosticsCommand = params.message;
       this.refresh(isActiveRustDocumentDirty);
       return;
     }
 
-    if (!this.checkProgressTokens.has(token)) {
+    if (!this.diagnosticsProgressTokens.has(token)) {
       return;
     }
 
     if (params.kind === "end") {
-      this.checkProgressTokens.delete(token);
-      this.checkRunning = this.checkProgressTokens.size > 0;
-      this.checkFailed = params.message === "Failed";
-      if (!this.checkRunning) {
-        this.checkCommand = undefined;
+      this.diagnosticsProgressTokens.delete(token);
+      this.diagnosticsRunning = this.diagnosticsProgressTokens.size > 0;
+      this.diagnosticsFailed = params.message === "Failed";
+      if (!this.diagnosticsRunning) {
+        this.diagnosticsCommand = undefined;
       }
       this.refresh(isActiveRustDocumentDirty);
     }
@@ -176,9 +176,9 @@ export class ClientStatus {
   public snapshot(): ClientStatusSnapshot {
     return {
       running: this.running,
-      checkRunning: this.checkRunning,
-      checkFailed: this.checkFailed,
-      checkCommand: this.checkCommand,
+      diagnosticsRunning: this.diagnosticsRunning,
+      diagnosticsFailed: this.diagnosticsFailed,
+      diagnosticsCommand: this.diagnosticsCommand,
       failureReason: this.failureReason,
       status: {
         ...this.currentStatus,
@@ -199,10 +199,10 @@ export class ClientStatus {
     }
   }
 
-  private resetCheck(): void {
-    this.checkRunning = false;
-    this.checkFailed = false;
-    this.checkCommand = undefined;
-    this.checkProgressTokens.clear();
+  private resetDiagnostics(): void {
+    this.diagnosticsRunning = false;
+    this.diagnosticsFailed = false;
+    this.diagnosticsCommand = undefined;
+    this.diagnosticsProgressTokens.clear();
   }
 }

@@ -4,9 +4,20 @@
 //! allocator-agnostic, while release builds can still compare jemalloc and the platform allocator
 //! by toggling the `jemalloc` Cargo feature.
 
-use rg_lsp_server::{AllocatorPurgeResult, AllocatorStats, MemoryControl};
+use rg_lsp_engine::{AllocatorPurgeResult, AllocatorStats, MemoryControl};
 
 const JEMALLOC_PURGE_AFTER_BUILD_ENV: &str = "RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD";
+
+pub(crate) fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_env("RUST_GLANCER_LOG")
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,tarpc=warn"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .try_init()
+        .ok();
+}
 
 #[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
 #[global_allocator]
@@ -86,7 +97,7 @@ impl ProcessMemoryControl {
 mod jemalloc_stats {
     use std::{ffi::CString, mem, ptr};
 
-    use rg_lsp_server::AllocatorStats;
+    use rg_lsp_engine::AllocatorStats;
 
     pub(super) fn capture() -> Option<AllocatorStats> {
         advance_epoch()?;
@@ -133,7 +144,7 @@ mod jemalloc_stats {
         CString::new(name).expect("jemalloc mallctl name should not contain NUL")
     }
 
-    pub(super) fn purge() -> rg_lsp_server::AllocatorPurgeResult {
+    pub(super) fn purge() -> rg_lsp_engine::AllocatorPurgeResult {
         // The engine builds analysis on a dedicated thread, so flushing this thread's tcache first
         // makes recently freed indexing allocations visible to the arena purge below.
         let tcache_flushed = mallctl_void("thread.tcache.flush");
@@ -142,7 +153,7 @@ mod jemalloc_stats {
         // arenas instead of discovering and iterating arena indexes manually.
         let arenas_purged = mallctl_void("arena.4096.purge");
 
-        rg_lsp_server::AllocatorPurgeResult {
+        rg_lsp_engine::AllocatorPurgeResult {
             tcache_flushed,
             arenas_purged,
         }

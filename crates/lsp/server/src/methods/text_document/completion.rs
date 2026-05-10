@@ -1,39 +1,31 @@
 use tower_lsp_server::{jsonrpc::Result, ls_types::*};
 
-use crate::{
-    backend::ServerContext,
-    methods::{internal_error, uri_to_path},
-};
+use crate::methods::{MethodContext, internal_error, uri_to_path};
 
+#[tracing::instrument(
+    level = "trace", skip_all,
+    fields(
+        path = %*params.text_document_position.text_document.uri,
+        position = ?params.text_document_position.position,
+    )
+)]
 pub(crate) async fn completion(
-    ctx: &ServerContext,
+    ctx: MethodContext<'_>,
     params: CompletionParams,
 ) -> Result<Option<CompletionResponse>> {
     let Some(path) = uri_to_path(&params.text_document_position.text_document.uri) else {
         return Ok(None);
     };
     let position = params.text_document_position.position;
-    let trigger = params
-        .context
-        .as_ref()
-        .and_then(|context| context.trigger_character.as_deref());
-    tracing::trace!(
-        path = %path.display(),
-        line = position.line,
-        character = position.character,
-        trigger,
-        "completion request received"
-    );
+    tracing::trace!("completion request received");
     let completions = ctx
-        .engine
-        .completion(path.clone(), position)
+        .engine_client
+        .call("completion", move |client, request_context| async move {
+            client.completion(request_context, path, position).await
+        })
         .await
         .map_err(internal_error)?;
     tracing::trace!(
-        path = %path.display(),
-        line = position.line,
-        character = position.character,
-        trigger,
         result_count = completions.len(),
         "completion request answered"
     );

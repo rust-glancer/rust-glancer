@@ -1,87 +1,80 @@
-use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
+use std::path::PathBuf;
 
 use rg_project::PackageResidencyPolicy;
 use rg_workspace::CargoMetadataConfig;
 
-use crate::CheckConfig;
+use crate::{DiagnosticsConfig, EngineError, ServiceNotification};
 
-pub type EngineServiceHandle = Arc<dyn EngineService>;
+pub type EngineResult<T> = Result<T, EngineError>;
 
-pub type EngineResultFuture<'a, T> = Pin<Box<dyn Future<Output = anyhow::Result<T>> + Send + 'a>>;
-pub type EngineNotifyFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
-
-/// Request/notification surface used by the LSP server to talk to an analysis engine.
+/// Requests and notifications accepted by one analysis engine.
 ///
-/// The current implementation is still in-process, but the boxed-future shape makes the server
-/// independent from that detail. A future tarpc-backed engine can replace this interim contract
-/// with generated RPC traits while keeping the same request vocabulary.
-pub trait EngineService: std::fmt::Debug + Send + Sync {
-    fn initialize(
-        &self,
+/// The LSP server owns editor protocol concerns; an engine owns project indexing, document
+/// freshness, queries, and cargo diagnostics. This service is the narrow request vocabulary between
+/// those two domains.
+#[tarpc::service]
+pub trait EngineService {
+    async fn initialize(
         root: PathBuf,
         package_residency_policy: PackageResidencyPolicy,
         cargo_metadata_config: CargoMetadataConfig,
-        check_config: CheckConfig,
-    ) -> EngineResultFuture<'_, ()>;
+        diagnostics_config: DiagnosticsConfig,
+    ) -> EngineResult<()>;
 
-    fn initialized(&self) -> EngineNotifyFuture<'_>;
+    async fn initialized() -> EngineResult<()>;
 
-    fn did_open(&self, path: PathBuf, version: Option<i32>, text: String)
-    -> EngineNotifyFuture<'_>;
+    async fn did_open(path: PathBuf, version: Option<i32>, text: String) -> EngineResult<()>;
 
-    fn did_change(
-        &self,
+    async fn did_change(
         path: PathBuf,
         version: Option<i32>,
         full_text: Option<String>,
         content_change_count: usize,
-    ) -> EngineNotifyFuture<'_>;
+    ) -> EngineResult<()>;
 
-    fn did_save(&self, path: PathBuf, text: Option<String>) -> EngineNotifyFuture<'_>;
+    async fn did_save(path: PathBuf, text: Option<String>) -> EngineResult<()>;
 
-    fn did_close(&self, path: PathBuf) -> EngineNotifyFuture<'_>;
+    async fn did_close(path: PathBuf) -> EngineResult<()>;
 
-    fn goto_definition(
-        &self,
+    async fn goto_definition(
         path: PathBuf,
         position: ls_types::Position,
-    ) -> EngineResultFuture<'_, Vec<ls_types::Location>>;
+    ) -> EngineResult<Vec<ls_types::Location>>;
 
-    fn goto_type_definition(
-        &self,
+    async fn goto_type_definition(
         path: PathBuf,
         position: ls_types::Position,
-    ) -> EngineResultFuture<'_, Vec<ls_types::Location>>;
+    ) -> EngineResult<Vec<ls_types::Location>>;
 
-    fn hover(
-        &self,
+    async fn hover(
         path: PathBuf,
         position: ls_types::Position,
-    ) -> EngineResultFuture<'_, Option<ls_types::Hover>>;
+    ) -> EngineResult<Option<ls_types::Hover>>;
 
-    fn completion(
-        &self,
+    async fn completion(
         path: PathBuf,
         position: ls_types::Position,
-    ) -> EngineResultFuture<'_, Vec<ls_types::CompletionItem>>;
+    ) -> EngineResult<Vec<ls_types::CompletionItem>>;
 
-    fn document_symbol(
-        &self,
-        path: PathBuf,
-    ) -> EngineResultFuture<'_, Vec<ls_types::DocumentSymbol>>;
+    async fn document_symbol(path: PathBuf) -> EngineResult<Vec<ls_types::DocumentSymbol>>;
 
-    fn inlay_hint(
-        &self,
+    async fn inlay_hint(
         path: PathBuf,
         range: ls_types::Range,
-    ) -> EngineResultFuture<'_, Vec<ls_types::InlayHint>>;
+    ) -> EngineResult<Vec<ls_types::InlayHint>>;
 
-    fn workspace_symbol(
-        &self,
-        query: String,
-    ) -> EngineResultFuture<'_, Vec<ls_types::WorkspaceSymbol>>;
+    async fn workspace_symbol(query: String) -> EngineResult<Vec<ls_types::WorkspaceSymbol>>;
 
-    fn reindex_workspace(&self) -> EngineResultFuture<'_, ()>;
+    async fn reindex_workspace() -> EngineResult<()>;
 
-    fn shutdown(&self) -> EngineResultFuture<'_, ()>;
+    async fn shutdown() -> EngineResult<()>;
+}
+
+/// Fire-and-forget side effects that an engine asks the LSP server to publish.
+///
+/// This is a service instead of an event stream so subprocess engines can report progress,
+/// diagnostics, and logs without knowing anything about tower-lsp.
+#[tarpc::service]
+pub trait NotificationsService {
+    async fn publish(notification: ServiceNotification) -> EngineResult<()>;
 }

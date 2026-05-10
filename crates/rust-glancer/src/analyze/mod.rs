@@ -1,11 +1,36 @@
 use std::{path::PathBuf, time::Instant};
 
 use anyhow::Context as _;
-use rg_lsp_server::MemoryControl as _;
+use clap::ValueEnum;
+use rg_lsp_engine::MemoryControl as _;
 use rg_project::{BuildProcessMemory, PackageResidencyPolicy, Project, StartupCacheLoad};
 use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
 
 mod fmt;
+
+/// CLI-facing package residency names for the `analyze` command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(super) enum CliPackageResidencyPolicy {
+    AllResident,
+    Workspace,
+    WorkspaceAndPathDeps,
+    WorkspacePathAndDirectDeps,
+    AllOffloadable,
+}
+
+impl From<CliPackageResidencyPolicy> for PackageResidencyPolicy {
+    fn from(policy: CliPackageResidencyPolicy) -> Self {
+        match policy {
+            CliPackageResidencyPolicy::AllResident => Self::AllResident,
+            CliPackageResidencyPolicy::Workspace => Self::WorkspaceResident,
+            CliPackageResidencyPolicy::WorkspaceAndPathDeps => Self::WorkspaceAndPathDepsResident,
+            CliPackageResidencyPolicy::WorkspacePathAndDirectDeps => {
+                Self::WorkspacePathAndDirectDepsResident
+            }
+            CliPackageResidencyPolicy::AllOffloadable => Self::AllOffloadable,
+        }
+    }
+}
 
 /// Runs project analysis for the Cargo manifest at `path` and prints a small build summary.
 pub(super) fn analyze(

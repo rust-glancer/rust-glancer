@@ -1,11 +1,11 @@
 use std::{collections::BTreeSet, path::PathBuf};
 
 use ls_types::Diagnostic;
-use rg_lsp_proto::EngineEvent;
+use rg_lsp_proto::ServiceNotification;
 
-use crate::{documents::DocumentStore, events::EngineEventSink};
+use crate::{documents::DocumentStore, service::ServiceNotificationsSink};
 
-use super::diagnostics::CheckDiagnostics;
+use super::cargo::CargoDiagnostics;
 
 /// Complete diagnostics publication for one cargo diagnostics run.
 ///
@@ -20,7 +20,7 @@ pub(super) struct WorkspaceDiagnostics {
 
 impl WorkspaceDiagnostics {
     pub(super) fn new(
-        diagnostics: CheckDiagnostics,
+        diagnostics: CargoDiagnostics,
         documents: &DocumentStore,
         previous_paths: &BTreeSet<PathBuf>,
     ) -> Self {
@@ -80,9 +80,9 @@ impl WorkspaceDiagnostics {
         std::mem::take(&mut self.published_paths)
     }
 
-    pub(super) fn publish(self, events: &EngineEventSink) {
+    pub(super) fn publish(self, notifications: &ServiceNotificationsSink) {
         for file_diagnostics in self.file_diagnostics {
-            file_diagnostics.publish(events);
+            file_diagnostics.publish(notifications);
         }
     }
 }
@@ -95,8 +95,8 @@ struct FileDiagnostics {
 }
 
 impl FileDiagnostics {
-    fn publish(self, events: &EngineEventSink) {
-        events.send(EngineEvent::PublishDiagnostics {
+    fn publish(self, notifications: &ServiceNotificationsSink) {
+        notifications.send(ServiceNotification::PublishDiagnostics {
             path: self.path,
             diagnostics: self.diagnostics,
             version: self.version,
@@ -113,8 +113,8 @@ mod tests {
 
     use ls_types::{Diagnostic, Position, Range};
 
-    use super::WorkspaceDiagnostics;
-    use crate::{check::diagnostics::CheckDiagnostics, documents::DocumentStore};
+    use super::{super::cargo::CargoDiagnostics, WorkspaceDiagnostics};
+    use crate::documents::DocumentStore;
 
     #[test]
     fn new_clears_stale_diagnostic_files() {
@@ -122,7 +122,7 @@ mod tests {
             PathBuf::from("/workspace/src/lib.rs"),
             PathBuf::from("/workspace/src/main.rs"),
         ]);
-        let diagnostics = CheckDiagnostics::from_map(BTreeMap::from([(
+        let diagnostics = CargoDiagnostics::from_map(BTreeMap::from([(
             PathBuf::from("/workspace/src/main.rs"),
             vec![diagnostic("still broken")],
         )]));
@@ -159,7 +159,7 @@ mod tests {
     fn new_leaves_dirty_documents_unpublished() {
         let path = PathBuf::from("/workspace/src/lib.rs");
         let diagnostics =
-            CheckDiagnostics::from_map(BTreeMap::from([(path.clone(), vec![diagnostic("new")])]));
+            CargoDiagnostics::from_map(BTreeMap::from([(path.clone(), vec![diagnostic("new")])]));
         let mut documents = DocumentStore::default();
         documents.did_open(path.clone(), Some(1), "fn main() {}\n");
         documents.did_change(path.clone(), Some(2), Some("fn main() {\n}\n"));
@@ -174,7 +174,7 @@ mod tests {
     #[test]
     fn new_keeps_previous_dirty_diagnostics_visible() {
         let path = PathBuf::from("/workspace/src/lib.rs");
-        let diagnostics = CheckDiagnostics::from_map(BTreeMap::from([(
+        let diagnostics = CargoDiagnostics::from_map(BTreeMap::from([(
             path.clone(),
             vec![diagnostic("saved snapshot changed")],
         )]));
@@ -193,7 +193,7 @@ mod tests {
     #[test]
     fn new_keeps_stale_dirty_diagnostics_until_clean_check() {
         let path = PathBuf::from("/workspace/src/lib.rs");
-        let diagnostics = CheckDiagnostics::default();
+        let diagnostics = CargoDiagnostics::default();
         let previous_paths = BTreeSet::from([path.clone()]);
         let mut documents = DocumentStore::default();
         documents.did_open(path.clone(), Some(1), "fn main() {}\n");

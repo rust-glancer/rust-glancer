@@ -6,13 +6,20 @@
 //! common shape.
 
 mod analysis_config;
-mod check_config;
-mod events;
+mod diagnostics_config;
+mod error;
+mod notifications;
 mod service;
 
 pub use self::{
     analysis_config::AnalysisConfig,
-    check_config::CheckConfig,
-    events::{EngineEvent, EngineLogLevel},
-    service::{EngineNotifyFuture, EngineResultFuture, EngineService, EngineServiceHandle},
+    diagnostics_config::DiagnosticsConfig,
+    error::EngineError,
+    notifications::{ServiceLogLevel, ServiceNotification},
+    service::{
+        EngineResult, EngineService, EngineServiceClient, NotificationsService,
+        NotificationsServiceClient,
+    },
 };
+pub use rg_project::PackageResidencyPolicy;
+pub use rg_workspace::CargoMetadataConfig;

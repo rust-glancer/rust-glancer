@@ -1,19 +1,30 @@
 use std::{borrow::Cow, path::PathBuf};
 
 use tower_lsp_server::{
+    Client,
     jsonrpc::{Error, ErrorCode, Result},
     ls_types::*,
 };
 
-use rg_lsp_proto::{AnalysisConfig, CheckConfig};
+use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
 
-use crate::{backend::ServerContext, capabilities};
+use crate::{capabilities, engine_client::EngineClient};
 
 pub(crate) mod text_document;
 pub(crate) mod workspace;
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MethodContext<'a> {
+    pub(crate) lsp_client: &'a Client,
+    pub(crate) engine_client: &'a EngineClient,
+}
+
+#[tracing::instrument(
+    level = "trace", skip_all,
+    fields(workspace_folder_count = params.workspace_folders.as_ref().map(Vec::len))
+)]
 pub(crate) async fn initialize(
-    ctx: &ServerContext,
+    ctx: MethodContext<'_>,
     params: InitializeParams,
 ) -> Result<InitializeResult> {
     let Some(root) = workspace_root(&params) else {
@@ -22,18 +33,23 @@ pub(crate) async fn initialize(
         ));
     };
 
-    let check_config =
-        CheckConfig::from_initialization_options(params.initialization_options.as_ref())
+    let diagnostics_config =
+        DiagnosticsConfig::from_initialization_options(params.initialization_options.as_ref())
             .map_err(|error| Error::invalid_params(error.to_string()))?;
     let analysis_config =
         AnalysisConfig::from_initialization_options(params.initialization_options.as_ref());
-    ctx.engine
-        .initialize(
-            root,
-            analysis_config.package_residency_policy,
-            analysis_config.cargo_metadata_config,
-            check_config,
-        )
+    ctx.engine_client
+        .call("initialize", move |client, request_context| async move {
+            client
+                .initialize(
+                    request_context,
+                    root,
+                    analysis_config.package_residency_policy,
+                    analysis_config.cargo_metadata_config,
+                    diagnostics_config,
+                )
+                .await
+        })
         .await
         .map_err(internal_error)?;
 
@@ -47,15 +63,26 @@ pub(crate) async fn initialize(
     })
 }
 
-pub(crate) async fn initialized(ctx: &ServerContext, _: InitializedParams) {
-    ctx.client
+#[tracing::instrument(level = "trace", skip_all)]
+pub(crate) async fn initialized(ctx: MethodContext<'_>, _params: InitializedParams) {
+    ctx.lsp_client
         .log_message(MessageType::INFO, "rust-glancer initialized")
         .await;
-    ctx.engine.initialized().await;
+    ctx.engine_client
+        .notify("initialized", |client, request_context| async move {
+            client.initialized(request_context).await
+        })
+        .await;
 }
 
-pub(crate) async fn shutdown(ctx: &ServerContext) -> Result<()> {
-    ctx.engine.shutdown().await.map_err(internal_error)
+#[tracing::instrument(level = "trace", skip_all)]
+pub(crate) async fn shutdown(ctx: MethodContext<'_>) -> Result<()> {
+    ctx.engine_client
+        .call("shutdown", |client, request_context| async move {
+            client.shutdown(request_context).await
+        })
+        .await
+        .map_err(internal_error)
 }
 
 pub(crate) fn internal_error(error: anyhow::Error) -> Error {

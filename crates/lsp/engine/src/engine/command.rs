@@ -4,10 +4,10 @@ use rg_project::PackageResidencyPolicy;
 use rg_workspace::CargoMetadataConfig;
 use tokio::sync::oneshot;
 
-pub(super) type EngineResponse<T> = oneshot::Sender<anyhow::Result<T>>;
+pub(crate) type EngineResponse<T> = oneshot::Sender<anyhow::Result<T>>;
 
 #[derive(Debug)]
-pub(super) enum EngineCommand {
+pub(crate) enum EngineCommand {
     Initialize {
         root: PathBuf,
         package_residency_policy: PackageResidencyPolicy,

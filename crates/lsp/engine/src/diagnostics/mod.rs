@@ -2,80 +2,84 @@
 //!
 //! This module runs `cargo check`/`cargo clippy` outside the synchronous analysis engine.
 //!
-//! `CheckHandle` is created next to the analysis engine and shares the same document freshness
-//! store. It emits diagnostics and progress as engine events, so cargo diagnostics can later move
-//! independently from query/indexing requests without keeping a direct LSP-client dependency here.
+//! `DiagnosticsHandle` is created next to the analysis engine and shares the same document freshness
+//! store. It emits diagnostics and progress through the service notification channel, so cargo
+//! diagnostics stays independent from query/indexing requests and from the concrete LSP client.
 
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
 use ls_types::ProgressToken;
-use rg_lsp_proto::CheckConfig;
+use rg_lsp_proto::DiagnosticsConfig;
 use tokio::{sync::Mutex, task::JoinHandle};
 
-use crate::{documents::DocumentStore, events::EngineEventSink};
+use crate::{documents::DocumentStore, service::ServiceNotificationsSink};
 
+mod cargo;
 mod command;
-mod diagnostics;
 mod progress;
 mod publish;
 mod task;
 
 use self::{
-    progress::{CheckProgress, ProgressFinish},
-    task::CheckTaskContext,
+    progress::{DiagnosticsProgress, ProgressFinish},
+    task::DiagnosticsTaskContext,
 };
 
 /// Launches Cargo diagnostics independently from the synchronous analysis engine.
 #[derive(Clone, Debug)]
-pub(crate) struct CheckHandle {
-    events: EngineEventSink,
+pub(crate) struct DiagnosticsHandle {
+    notifications: ServiceNotificationsSink,
     documents: Arc<Mutex<DocumentStore>>,
-    inner: Arc<Mutex<CheckHandleInner>>,
-    current: Arc<Mutex<Option<CurrentCheck>>>,
+    inner: Arc<Mutex<DiagnosticsHandleInner>>,
+    current: Arc<Mutex<Option<CurrentDiagnostics>>>,
 }
 
-impl CheckHandle {
-    pub(crate) fn new(events: EngineEventSink, documents: Arc<Mutex<DocumentStore>>) -> Self {
+impl DiagnosticsHandle {
+    pub(crate) fn new(
+        notifications: ServiceNotificationsSink,
+        documents: Arc<Mutex<DocumentStore>>,
+    ) -> Self {
         Self {
-            events,
+            notifications,
             documents,
             inner: Arc::default(),
             current: Arc::default(),
         }
     }
 
-    pub(crate) async fn configure(&self, workspace_root: PathBuf, config: CheckConfig) {
+    pub(crate) async fn configure(&self, workspace_root: PathBuf, config: DiagnosticsConfig) {
         let mut inner = self.inner.lock().await;
         inner.workspace_root = Some(workspace_root);
         inner.config = config;
     }
 
     pub(crate) async fn launch_on_startup(&self) {
-        self.launch(CheckTrigger::Startup).await;
+        self.launch(DiagnosticsTrigger::Startup).await;
     }
 
     pub(crate) async fn launch_on_save(&self, saved_path: PathBuf) {
-        self.launch(CheckTrigger::Save { path: saved_path }).await;
+        self.launch(DiagnosticsTrigger::Save { path: saved_path })
+            .await;
     }
 
-    async fn launch(&self, trigger: CheckTrigger) {
+    async fn launch(&self, trigger: DiagnosticsTrigger) {
         let Some(snapshot) = self.prepare_launch(trigger).await else {
             return;
         };
 
         self.cancel_current().await;
         let progress_token =
-            ProgressToken::String(format!("rust-glancer/check/{}", snapshot.generation));
-        let progress = CheckProgress::new(self.events.clone(), progress_token);
-        let task = CheckTaskContext::new(
-            self.events.clone(),
+            ProgressToken::String(format!("rust-glancer/diagnostics/{}", snapshot.generation));
+        let progress = DiagnosticsProgress::new(self.notifications.clone(), progress_token);
+        let task = DiagnosticsTaskContext::new(
+            self.notifications.clone(),
             Arc::clone(&self.documents),
             Arc::clone(&self.inner),
             Arc::clone(&self.current),
         )
         .spawn(snapshot, progress.clone());
 
-        *self.current.lock().await = Some(CurrentCheck { task, progress });
+        *self.current.lock().await = Some(CurrentDiagnostics { task, progress });
     }
 
     pub(crate) async fn shutdown(&self) {
@@ -85,7 +89,7 @@ impl CheckHandle {
         }
     }
 
-    async fn prepare_launch(&self, trigger: CheckTrigger) -> Option<CheckSnapshot> {
+    async fn prepare_launch(&self, trigger: DiagnosticsTrigger) -> Option<DiagnosticsSnapshot> {
         let mut inner = self.inner.lock().await;
         if !trigger.enabled(&inner.config) {
             return None;
@@ -96,7 +100,7 @@ impl CheckHandle {
         };
 
         inner.generation += 1;
-        Some(CheckSnapshot {
+        Some(DiagnosticsSnapshot {
             generation: inner.generation,
             workspace_root,
             config: inner.config.clone(),
@@ -114,15 +118,15 @@ impl CheckHandle {
 }
 
 #[derive(Debug)]
-struct CurrentCheck {
+struct CurrentDiagnostics {
     task: JoinHandle<()>,
-    progress: CheckProgress,
+    progress: DiagnosticsProgress,
 }
 
 #[derive(Debug, Default)]
-struct CheckHandleInner {
+struct DiagnosticsHandleInner {
     workspace_root: Option<PathBuf>,
-    config: CheckConfig,
+    config: DiagnosticsConfig,
     // Every launched cargo diagnostics task gets a monotonically increasing generation. A task
     // only publishes when it still matches the latest generation, so stale tasks cannot overwrite
     // newer diagnostics.
@@ -134,21 +138,21 @@ struct CheckHandleInner {
 }
 
 #[derive(Debug)]
-struct CheckSnapshot {
+struct DiagnosticsSnapshot {
     generation: u64,
     workspace_root: PathBuf,
-    config: CheckConfig,
-    trigger: CheckTrigger,
+    config: DiagnosticsConfig,
+    trigger: DiagnosticsTrigger,
 }
 
 #[derive(Debug)]
-enum CheckTrigger {
+enum DiagnosticsTrigger {
     Startup,
     Save { path: PathBuf },
 }
 
-impl CheckTrigger {
-    fn enabled(&self, config: &CheckConfig) -> bool {
+impl DiagnosticsTrigger {
+    fn enabled(&self, config: &DiagnosticsConfig) -> bool {
         match self {
             Self::Startup => config.on_startup,
             Self::Save { .. } => config.on_save,
@@ -156,7 +160,7 @@ impl CheckTrigger {
     }
 }
 
-impl std::fmt::Display for CheckTrigger {
+impl std::fmt::Display for DiagnosticsTrigger {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Startup => f.write_str("startup"),

@@ -15,6 +15,7 @@ cargo_metadata.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 rkyv.workspace = true
 rg_memsize.workspace = true
+serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 test_fixture.workspace = true

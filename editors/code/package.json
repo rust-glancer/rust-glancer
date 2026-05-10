@@ -111,25 +111,25 @@
           "default": "off",
           "description": "Controls LSP protocol tracing for the rust-glancer client."
         },
-        "rust-glancer.checkOnStartup": {
+        "rust-glancer.diagnosticsOnStartup": {
           "scope": "resource",
           "type": "boolean",
           "default": false,
           "description": "Run Cargo diagnostics once after the rust-glancer server initializes."
         },
-        "rust-glancer.checkOnSave": {
+        "rust-glancer.diagnosticsOnSave": {
           "scope": "resource",
           "type": "boolean",
           "default": false,
           "description": "Run Cargo diagnostics after Rust files are saved."
         },
-        "rust-glancer.check.command": {
+        "rust-glancer.diagnostics.command": {
           "scope": "resource",
           "type": "string",
           "default": "check",
           "description": "Cargo subcommand used for diagnostics. This must be a Cargo subcommand such as check or clippy, not an arbitrary shell command."
         },
-        "rust-glancer.check.arguments": {
+        "rust-glancer.diagnostics.arguments": {
           "scope": "resource",
           "type": "array",
           "default": [
@@ -139,7 +139,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Extra arguments appended to cargo <check.command> --message-format=json for diagnostics."
+          "description": "Extra arguments appended to cargo <diagnostics.command> --message-format=json for diagnostics."
         }
       }
     }

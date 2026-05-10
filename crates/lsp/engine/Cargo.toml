@@ -14,6 +14,7 @@ description.workspace = true
 anyhow.workspace = true
 cargo_metadata.workspace = true
 derive_more = { workspace = true, features = ["debug", "display"] }
+futures.workspace = true
 ls_types.workspace = true
 rg_analysis.workspace = true
 rg_def_map.workspace = true
@@ -21,5 +22,6 @@ rg_lsp_proto.workspace = true
 rg_parse.workspace = true
 rg_project.workspace = true
 rg_workspace.workspace = true
+tarpc = { workspace = true, features = ["serde-transport", "serde-transport-json", "tcp", "tokio1"] }
 tokio = { workspace = true, features = ["process", "sync"] }
 tracing.workspace = true

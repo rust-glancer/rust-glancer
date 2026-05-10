@@ -125,7 +125,7 @@ export class WorkspaceClient implements vscode.Disposable {
       outputChannel: this.output,
       traceOutputChannel: this.output,
       initializationOptions: {
-        check: config.check,
+        diagnostics: config.diagnostics,
         cargo: config.cargo,
         cache: config.cache,
       },

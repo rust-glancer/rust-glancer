@@ -1,10 +1,11 @@
 use std::path::PathBuf;
 
 use ls_types::{Diagnostic, NumberOrString};
+use serde::{Deserialize, Serialize};
 
-/// Engine-originated side effect that the LSP orchestrator should publish to the client.
-#[derive(Debug)]
-pub enum EngineEvent {
+/// Service-originated side effect that the LSP orchestrator should publish to the client.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ServiceNotification {
     PublishDiagnostics {
         path: PathBuf,
         diagnostics: Vec<Diagnostic>,
@@ -21,14 +22,14 @@ pub enum EngineEvent {
     },
     InlayHintRefresh,
     LogMessage {
-        level: EngineLogLevel,
+        level: ServiceLogLevel,
         message: String,
     },
 }
 
-/// Client-facing log severity requested by the engine.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EngineLogLevel {
+/// Client-facing log severity requested by the service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ServiceLogLevel {
     Error,
     Warning,
     Info,

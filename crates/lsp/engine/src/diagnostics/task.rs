@@ -2,48 +2,52 @@ use std::sync::Arc;
 
 use tokio::{sync::Mutex, task::JoinHandle};
 
-use crate::{documents::DocumentStore, events::EngineEventSink};
+use crate::{documents::DocumentStore, service::ServiceNotificationsSink};
 
 use super::{
-    CheckHandleInner, CheckSnapshot, CurrentCheck,
+    CurrentDiagnostics, DiagnosticsHandleInner, DiagnosticsSnapshot,
     command::CargoDiagnosticsCommand,
-    progress::{CheckProgress, ProgressFinish},
+    progress::{DiagnosticsProgress, ProgressFinish},
     publish::WorkspaceDiagnostics,
 };
 
 /// Owns the shared handles needed by the spawned diagnostics task.
 ///
-/// Keeping the task body here lets `CheckHandle` stay focused on lifecycle decisions: whether to
+/// Keeping the task body here lets `DiagnosticsHandle` stay focused on lifecycle decisions: whether to
 /// launch, what to cancel, and which task is currently active.
-pub(super) struct CheckTaskContext {
-    events: EngineEventSink,
+pub(super) struct DiagnosticsTaskContext {
+    notifications: ServiceNotificationsSink,
     documents: Arc<Mutex<DocumentStore>>,
-    inner: Arc<Mutex<CheckHandleInner>>,
-    current: Arc<Mutex<Option<CurrentCheck>>>,
+    inner: Arc<Mutex<DiagnosticsHandleInner>>,
+    current: Arc<Mutex<Option<CurrentDiagnostics>>>,
 }
 
-impl CheckTaskContext {
+impl DiagnosticsTaskContext {
     pub(super) fn new(
-        events: EngineEventSink,
+        notifications: ServiceNotificationsSink,
         documents: Arc<Mutex<DocumentStore>>,
-        inner: Arc<Mutex<CheckHandleInner>>,
-        current: Arc<Mutex<Option<CurrentCheck>>>,
+        inner: Arc<Mutex<DiagnosticsHandleInner>>,
+        current: Arc<Mutex<Option<CurrentDiagnostics>>>,
     ) -> Self {
         Self {
-            events,
+            notifications,
             documents,
             inner,
             current,
         }
     }
 
-    pub(super) fn spawn(self, snapshot: CheckSnapshot, progress: CheckProgress) -> JoinHandle<()> {
+    pub(super) fn spawn(
+        self,
+        snapshot: DiagnosticsSnapshot,
+        progress: DiagnosticsProgress,
+    ) -> JoinHandle<()> {
         tokio::spawn(async move {
             self.run(snapshot, progress).await;
         })
     }
 
-    async fn run(self, snapshot: CheckSnapshot, progress: CheckProgress) {
+    async fn run(self, snapshot: DiagnosticsSnapshot, progress: DiagnosticsProgress) {
         let generation = snapshot.generation;
         let command = snapshot.config.user_facing_command();
         progress.begin(command).await;
@@ -75,7 +79,7 @@ impl CheckTaskContext {
             }
         };
 
-        workspace_diagnostics.publish(&self.events);
+        workspace_diagnostics.publish(&self.notifications);
 
         let mut current = self.current.lock().await;
         if current

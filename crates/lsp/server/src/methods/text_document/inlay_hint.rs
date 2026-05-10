@@ -1,39 +1,28 @@
 use tower_lsp_server::{jsonrpc::Result, ls_types::*};
 
-use crate::{
-    backend::ServerContext,
-    methods::{internal_error, uri_to_path},
-};
+use crate::methods::{MethodContext, internal_error, uri_to_path};
 
+#[tracing::instrument(
+    level = "trace", skip_all,
+    fields(path = %*params.text_document.uri, range = ?params.range)
+)]
 pub(crate) async fn inlay_hint(
-    ctx: &ServerContext,
+    ctx: MethodContext<'_>,
     params: InlayHintParams,
 ) -> Result<Option<Vec<InlayHint>>> {
     let Some(path) = uri_to_path(&params.text_document.uri) else {
         return Ok(None);
     };
-    tracing::trace!(
-        path = %path.display(),
-        start_line = params.range.start.line,
-        start_character = params.range.start.character,
-        end_line = params.range.end.line,
-        end_character = params.range.end.character,
-        "inlay hint request received"
-    );
+    let range = params.range;
+    tracing::trace!("inlay hint request received");
     let hints = ctx
-        .engine
-        .inlay_hint(path.clone(), params.range)
+        .engine_client
+        .call("inlay_hint", move |client, request_context| async move {
+            client.inlay_hint(request_context, path, range).await
+        })
         .await
         .map_err(internal_error)?;
-    tracing::trace!(
-        path = %path.display(),
-        start_line = params.range.start.line,
-        start_character = params.range.start.character,
-        end_line = params.range.end.line,
-        end_character = params.range.end.character,
-        result_count = hints.len(),
-        "inlay hint request answered"
-    );
+    tracing::trace!(result_count = hints.len(), "inlay hint request answered");
 
     Ok(Some(hints))
 }

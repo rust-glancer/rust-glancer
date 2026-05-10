@@ -22,7 +22,7 @@ export interface ExtensionConfig {
   readonly cargo: CargoConfig;
   readonly cache: CacheConfig;
   readonly traceServer: TraceSetting;
-  readonly check: CheckConfig;
+  readonly diagnostics: DiagnosticsConfig;
 }
 
 export interface CargoConfig {
@@ -33,7 +33,7 @@ export interface CacheConfig {
   readonly packageResidency: PackageResidencySetting;
 }
 
-export interface CheckConfig {
+export interface DiagnosticsConfig {
   readonly onStartup: boolean;
   readonly onSave: boolean;
   readonly command: string;
@@ -52,10 +52,10 @@ export namespace ExtensionConfig {
       "workspace-and-path-deps",
     );
     const traceServer = config.get<TraceSetting>("trace.server", "off");
-    const checkOnStartup = config.get<boolean>("checkOnStartup", false);
-    const checkOnSave = config.get<boolean>("checkOnSave", false);
-    const checkCommand = config.get<string>("check.command", "check");
-    const checkArguments = config.get<unknown[]>("check.arguments", [
+    const diagnosticsOnStartup = config.get<boolean>("diagnosticsOnStartup", false);
+    const diagnosticsOnSave = config.get<boolean>("diagnosticsOnSave", false);
+    const diagnosticsCommand = config.get<string>("diagnostics.command", "check");
+    const diagnosticsArguments = config.get<unknown[]>("diagnostics.arguments", [
       "--workspace",
       "--all-targets",
     ]);
@@ -71,11 +71,11 @@ export namespace ExtensionConfig {
         packageResidency,
       },
       traceServer,
-      check: {
-        onStartup: checkOnStartup,
-        onSave: checkOnSave,
-        command: normalizeCargoSubcommand(checkCommand),
-        arguments: normalizeStringArray(checkArguments),
+      diagnostics: {
+        onStartup: diagnosticsOnStartup,
+        onSave: diagnosticsOnSave,
+        command: normalizeCargoSubcommand(diagnosticsCommand),
+        arguments: normalizeStringArray(diagnosticsArguments),
       },
     };
   }

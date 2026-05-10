@@ -6,6 +6,8 @@ use std::{
     process::Command,
 };
 
+use serde::{Deserialize, Serialize};
+
 mod memsize;
 mod sysroot;
 
@@ -33,7 +35,7 @@ pub struct WorkspaceMetadata {
 /// Cargo metadata includes dependencies for every platform unless callers pass
 /// `--filter-platform`. Analysis wants one concrete graph, so the default resolves the current
 /// rustc host triple and lets Cargo prune target-specific dependencies before lowering starts.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CargoMetadataConfig {
     target: CargoMetadataTarget,
 }
@@ -86,7 +88,7 @@ impl Default for CargoMetadataConfig {
 }
 
 /// Target platform selection for Cargo metadata filtering.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CargoMetadataTarget {
     /// Detect the host triple from `rustc -vV`.
     Auto,
