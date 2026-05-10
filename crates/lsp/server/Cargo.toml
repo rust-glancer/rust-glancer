@@ -19,3 +19,6 @@ tokio = { workspace = true, features = ["io-std", "macros", "process", "rt-multi
 tower-lsp-server.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+test_fixture.workspace = true

@@ -1,5 +1,5 @@
 use tower_lsp_server::{
-    Client, LanguageServer,
+    Client as LspClient, LanguageServer,
     jsonrpc::Result,
     ls_types::{MessageType, request::*, *},
 };
@@ -12,14 +12,17 @@ use crate::{
 
 #[derive(Debug)]
 pub(crate) struct Backend {
-    client: Client,
+    lsp_client: LspClient,
     engines: EngineRegistry,
 }
 
 impl Backend {
-    pub(crate) fn new(client: Client) -> Self {
-        let engines = EngineRegistry::new(client.clone());
-        Self { client, engines }
+    pub(crate) fn new(lsp_client: LspClient) -> Self {
+        let engines = EngineRegistry::new(lsp_client.clone());
+        Self {
+            lsp_client,
+            engines,
+        }
     }
 
     fn server_context(&self) -> ServerContext<'_> {
@@ -63,23 +66,13 @@ impl LanguageServer for Backend {
     }
 
     #[tracing::instrument(skip_all, fields(method = "initialized"))]
-    async fn initialized(&self, params: InitializedParams) {
-        self.client
+    async fn initialized(&self, _params: InitializedParams) {
+        self.lsp_client
             .log_message(MessageType::INFO, "rust-glancer initialized")
             .await;
 
-        for engine in self.engines.uninitialized_engines().await {
-            let context = self.method_context(engine.client);
-            if let Err(error) = methods::initialized(context, params).await {
-                tracing::error!(
-                    root = %engine.root.display(),
-                    error = %error,
-                    "failed to initialize rust-glancer engine"
-                );
-                continue;
-            }
-
-            self.engines.mark_initialized(&engine.root).await;
+        if let Err(error) = self.engines.start_initial_engine().await {
+            tracing::error!(error = %error, "failed to start initial rust-glancer engine");
         }
     }
 

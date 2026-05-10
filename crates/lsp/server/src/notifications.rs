@@ -3,7 +3,7 @@ use rg_lsp_proto::{
 };
 use tarpc::context;
 use tower_lsp_server::{
-    Client,
+    Client as LspClient,
     ls_types::{
         MessageType, ProgressParams, ProgressParamsValue, Uri, WorkDoneProgress,
         WorkDoneProgressBegin, WorkDoneProgressEnd, notification::Progress,
@@ -17,12 +17,12 @@ use tower_lsp_server::{
 /// log messages.
 #[derive(Clone, Debug)]
 pub(crate) struct NotificationsPublisher {
-    client: Client,
+    lsp_client: LspClient,
 }
 
 impl NotificationsPublisher {
-    pub(crate) fn new(client: Client) -> Self {
-        Self { client }
+    pub(crate) fn new(lsp_client: LspClient) -> Self {
+        Self { lsp_client }
     }
 }
 
@@ -32,14 +32,14 @@ impl NotificationsService for NotificationsPublisher {
         _: context::Context,
         notification: ServiceNotification,
     ) -> EngineResult<()> {
-        publish_service_notification(&self.client, notification)
+        publish_service_notification(&self.lsp_client, notification)
             .await
             .map_err(EngineError::from)
     }
 }
 
 async fn publish_service_notification(
-    client: &Client,
+    lsp_client: &LspClient,
     notification: ServiceNotification,
 ) -> anyhow::Result<()> {
     match notification {
@@ -55,14 +55,16 @@ async fn publish_service_notification(
                 );
                 return Ok(());
             };
-            client.publish_diagnostics(uri, diagnostics, version).await;
+            lsp_client
+                .publish_diagnostics(uri, diagnostics, version)
+                .await;
         }
         ServiceNotification::BeginWorkDoneProgress {
             token,
             title,
             message,
         } => {
-            if let Err(error) = client.create_work_done_progress(token.clone()).await {
+            if let Err(error) = lsp_client.create_work_done_progress(token.clone()).await {
                 tracing::debug!(
                     error = %error,
                     "failed to create service progress token"
@@ -76,7 +78,7 @@ async fn publish_service_notification(
                 message,
                 percentage: None,
             };
-            client
+            lsp_client
                 .send_notification::<Progress>(ProgressParams {
                     token,
                     value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(progress)),
@@ -84,7 +86,7 @@ async fn publish_service_notification(
                 .await;
         }
         ServiceNotification::EndWorkDoneProgress { token, message } => {
-            client
+            lsp_client
                 .send_notification::<Progress>(ProgressParams {
                     token,
                     value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(
@@ -94,7 +96,7 @@ async fn publish_service_notification(
                 .await;
         }
         ServiceNotification::InlayHintRefresh => {
-            if let Err(error) = client.inlay_hint_refresh().await {
+            if let Err(error) = lsp_client.inlay_hint_refresh().await {
                 tracing::debug!(
                     error = %error,
                     "failed to request inlay hint refresh after service notification"
@@ -102,7 +104,7 @@ async fn publish_service_notification(
             }
         }
         ServiceNotification::LogMessage { level, message } => {
-            client.log_message(message_type(level), message).await;
+            lsp_client.log_message(message_type(level), message).await;
         }
     }
 

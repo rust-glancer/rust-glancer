@@ -16,8 +16,8 @@ pub(crate) async fn hover(ctx: MethodContext, params: HoverParams) -> Result<Opt
     tracing::trace!("hover request received");
     let hover = ctx
         .engine_client
-        .call("hover", move |client, request_context| async move {
-            client.hover(request_context, path, position).await
+        .call("hover", move |engine_client, request_context| async move {
+            engine_client.hover(request_context, path, position).await
         })
         .await
         .map_err(internal_error)?;

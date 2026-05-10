@@ -21,16 +21,19 @@ pub(crate) async fn did_change(ctx: MethodContext, params: DidChangeTextDocument
     let version = Some(params.text_document.version);
     let content_change_count = params.content_changes.len();
     ctx.engine_client
-        .notify("did_change", move |client, request_context| async move {
-            client
-                .did_change(
-                    request_context,
-                    path,
-                    version,
-                    full_text,
-                    content_change_count,
-                )
-                .await
-        })
+        .notify(
+            "did_change",
+            move |engine_client, request_context| async move {
+                engine_client
+                    .did_change(
+                        request_context,
+                        path,
+                        version,
+                        full_text,
+                        content_change_count,
+                    )
+                    .await
+            },
+        )
         .await;
 }

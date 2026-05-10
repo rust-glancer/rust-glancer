@@ -16,8 +16,8 @@ pub(crate) async fn symbol(
         .engine_client
         .call(
             "workspace_symbol",
-            move |client, request_context| async move {
-                client.workspace_symbol(request_context, query).await
+            move |engine_client, request_context| async move {
+                engine_client.workspace_symbol(request_context, query).await
             },
         )
         .await

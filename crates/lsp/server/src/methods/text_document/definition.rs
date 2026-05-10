@@ -21,8 +21,8 @@ pub(crate) async fn definition(
         .engine_client
         .call(
             "goto_definition",
-            move |client, request_context| async move {
-                client
+            move |engine_client, request_context| async move {
+                engine_client
                     .goto_definition(request_context, path, position)
                     .await
             },

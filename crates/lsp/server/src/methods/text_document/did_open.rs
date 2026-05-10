@@ -13,10 +13,13 @@ pub(crate) async fn did_open(ctx: MethodContext, params: DidOpenTextDocumentPara
     let version = Some(params.text_document.version);
 
     ctx.engine_client
-        .notify("did_open", move |client, request_context| async move {
-            client
-                .did_open(request_context, path, version, params.text_document.text)
-                .await
-        })
+        .notify(
+            "did_open",
+            move |engine_client, request_context| async move {
+                engine_client
+                    .did_open(request_context, path, version, params.text_document.text)
+                    .await
+            },
+        )
         .await;
 }

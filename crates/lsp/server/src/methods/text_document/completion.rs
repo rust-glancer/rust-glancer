@@ -19,9 +19,14 @@ pub(crate) async fn completion(
     tracing::trace!("completion request received");
     let completions = ctx
         .engine_client
-        .call("completion", move |client, request_context| async move {
-            client.completion(request_context, path, position).await
-        })
+        .call(
+            "completion",
+            move |engine_client, request_context| async move {
+                engine_client
+                    .completion(request_context, path, position)
+                    .await
+            },
+        )
         .await
         .map_err(internal_error)?;
     tracing::trace!(

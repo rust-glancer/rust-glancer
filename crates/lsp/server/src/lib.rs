@@ -14,4 +14,7 @@ mod methods;
 mod notifications;
 mod stdio;
 
+#[cfg(test)]
+mod tests;
+
 pub use self::stdio::serve_stdio;

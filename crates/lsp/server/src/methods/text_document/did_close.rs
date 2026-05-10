@@ -9,8 +9,11 @@ pub(crate) async fn did_close(ctx: MethodContext, params: DidCloseTextDocumentPa
     };
 
     ctx.engine_client
-        .notify("did_close", move |client, request_context| async move {
-            client.did_close(request_context, path).await
-        })
+        .notify(
+            "did_close",
+            move |engine_client, request_context| async move {
+                engine_client.did_close(request_context, path).await
+            },
+        )
         .await;
 }

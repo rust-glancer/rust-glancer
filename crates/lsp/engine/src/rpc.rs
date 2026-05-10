@@ -4,8 +4,8 @@ use anyhow::Context as _;
 use futures::prelude::*;
 use rg_lsp_proto::{EngineService, NotificationsServiceClient};
 use tarpc::{
-    client, serde_transport::tcp, server::BaseChannel, server::Channel as _,
-    tokio_serde::formats::Json,
+    client::Config as TarpcClientConfig, serde_transport::tcp, server::BaseChannel,
+    server::Channel as _, tokio_serde::formats::Json,
 };
 
 use crate::{Service, memory::MemoryControl, service::ServiceNotificationsSink};
@@ -19,8 +19,8 @@ pub async fn run_rpc(
     engine_addr: SocketAddr,
     notifications_addr: SocketAddr,
 ) -> anyhow::Result<()> {
-    // Initialize the client for notifications service.
-    let notifications = {
+    // Initialize the notifications RPC client.
+    let notifications_client = {
         // The LSP server hosts this side so the engine can report progress, diagnostics, and logs
         // without knowing anything about editor-facing protocols.
         let mut transport = tcp::connect(notifications_addr, Json::default);
@@ -28,20 +28,20 @@ pub async fn run_rpc(
         let transport = transport
             .await
             .context("while attempting to connect to LSP notifications RPC")?;
-        NotificationsServiceClient::new(client::Config::default(), transport).spawn()
+        NotificationsServiceClient::new(TarpcClientConfig::default(), transport).spawn()
     };
 
     // Initialize the service.
     let service = {
-        // Notifications are routed through the callback client. This keeps the engine worker and
+        // Notifications are routed through the notifications client. This keeps the engine worker and
         // diagnostics subsystem independent from how the LSP server eventually publishes them.
-        let notifications = ServiceNotificationsSink::new(notifications);
+        let notifications = ServiceNotificationsSink::new(notifications_client);
         Service::spawn(memory_control, notifications)
     };
 
     // Initialize transport for engine service.
     let engine_transport = {
-        // The LSP server binds the socket and then acts as the client. The worker only connects
+        // The LSP server binds the socket and then acts as the RPC caller. The worker only connects
         // back and serves requests over the initialized transport.
         let mut transport = tcp::connect(engine_addr, Json::default);
         transport.config_mut().max_frame_length(usize::MAX);

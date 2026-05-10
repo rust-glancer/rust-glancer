@@ -15,9 +15,12 @@ pub(crate) async fn execute_command(
     match command.as_str() {
         commands::REINDEX_WORKSPACE => {
             ctx.engine_client
-                .call("reindex_workspace", |client, request_context| async move {
-                    client.reindex_workspace(request_context).await
-                })
+                .call(
+                    "reindex_workspace",
+                    |engine_client, request_context| async move {
+                        engine_client.reindex_workspace(request_context).await
+                    },
+                )
                 .await
                 .map_err(internal_error)?;
             Ok(None)

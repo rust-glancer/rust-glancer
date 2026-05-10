@@ -1272,6 +1272,7 @@ dependencies = [
  "futures",
  "rg_lsp_proto",
  "tarpc",
+ "test_fixture",
  "tokio",
  "tower-lsp-server",
  "tracing",

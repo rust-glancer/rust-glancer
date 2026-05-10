@@ -4,13 +4,13 @@ use anyhow::Context as _;
 use futures::prelude::*;
 use rg_lsp_proto::{EngineServiceClient, NotificationsService};
 use tarpc::{
-    client,
+    client::Config as TarpcClientConfig,
     serde_transport::tcp,
     server::{BaseChannel, Channel as _},
     tokio_serde::formats::Json,
 };
 use tokio::{process::Child, sync::Mutex};
-use tower_lsp_server::Client;
+use tower_lsp_server::Client as LspClient;
 
 use crate::{engine_client::EngineClient, notifications::NotificationsPublisher};
 
@@ -22,13 +22,13 @@ const ENGINE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
 /// `EngineClient`, while multi-engine routing lives one level up in the registry.
 #[derive(Clone)]
 pub(crate) struct EngineProcess {
-    client: EngineClient,
+    engine_client: EngineClient,
     // Kept alive so `kill_on_drop` remains tied to the server-side engine handle.
     _child: Arc<Mutex<Child>>,
 }
 
 impl EngineProcess {
-    pub(crate) async fn spawn(client: Client) -> anyhow::Result<Self> {
+    pub(crate) async fn spawn(lsp_client: LspClient) -> anyhow::Result<Self> {
         // Initialize transport for engine service.
         let (mut engine_listener, engine_addr) = {
             // Both JSON and TCP are chosen for convenience of debugging, not that we need too much speed.
@@ -61,8 +61,8 @@ impl EngineProcess {
         // Spawn the notifications publisher.
         {
             // Accept the notification connection in the background. The main initialization path
-            // only needs the request client below; callback delivery can become ready independently.
-            let publisher = NotificationsPublisher::new(client);
+            // only needs the engine client below; callback delivery can become ready independently.
+            let publisher = NotificationsPublisher::new(lsp_client);
             tokio::spawn(async move {
                 let accept =
                     tokio::time::timeout(ENGINE_CONNECTION_TIMEOUT, notifications_listener.next())
@@ -96,8 +96,8 @@ impl EngineProcess {
             });
         }
 
-        // Initialize the client for engine service.
-        let client = {
+        // Initialize the engine RPC client.
+        let engine_client = {
             // Wait for the worker to connect its request channel before constructing the backend.
             // Once this returns, method handlers can send engine RPCs normally.
             let engine_transport =
@@ -108,19 +108,19 @@ impl EngineProcess {
                         anyhow::anyhow!("engine RPC listener closed before engine connected")
                     })?
                     .context("while attempting to accept engine RPC connection")?;
-            let client =
-                EngineServiceClient::new(client::Config::default(), engine_transport).spawn();
-            EngineClient::new(client)
+            let engine_service_client =
+                EngineServiceClient::new(TarpcClientConfig::default(), engine_transport).spawn();
+            EngineClient::new(engine_service_client)
         };
 
         Ok(Self {
-            client,
+            engine_client,
             _child: Arc::new(Mutex::new(child)),
         })
     }
 
-    pub(crate) fn client(&self) -> &EngineClient {
-        &self.client
+    pub(crate) fn engine_client(&self) -> &EngineClient {
+        &self.engine_client
     }
 
     fn spawn_worker(

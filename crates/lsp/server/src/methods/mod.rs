@@ -61,22 +61,10 @@ pub(crate) async fn initialize(
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
-pub(crate) async fn initialized(
-    ctx: MethodContext,
-    _params: InitializedParams,
-) -> anyhow::Result<()> {
-    ctx.engine_client
-        .call("initialized", |client, request_context| async move {
-            client.initialized(request_context).await
-        })
-        .await
-}
-
-#[tracing::instrument(level = "trace", skip_all)]
 pub(crate) async fn shutdown(ctx: MethodContext) -> anyhow::Result<()> {
     ctx.engine_client
-        .call("shutdown", |client, request_context| async move {
-            client.shutdown(request_context).await
+        .call("shutdown", |engine_client, request_context| async move {
+            engine_client.shutdown(request_context).await
         })
         .await
 }

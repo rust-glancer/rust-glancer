@@ -24,8 +24,8 @@ pub(crate) async fn type_definition(
         .engine_client
         .call(
             "goto_type_definition",
-            move |client, request_context| async move {
-                client
+            move |engine_client, request_context| async move {
+                engine_client
                     .goto_type_definition(request_context, path, position)
                     .await
             },

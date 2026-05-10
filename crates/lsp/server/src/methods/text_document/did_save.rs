@@ -12,8 +12,13 @@ pub(crate) async fn did_save(ctx: MethodContext, params: DidSaveTextDocumentPara
     };
 
     ctx.engine_client
-        .notify("did_save", move |client, request_context| async move {
-            client.did_save(request_context, path, params.text).await
-        })
+        .notify(
+            "did_save",
+            move |engine_client, request_context| async move {
+                engine_client
+                    .did_save(request_context, path, params.text)
+                    .await
+            },
+        )
         .await;
 }

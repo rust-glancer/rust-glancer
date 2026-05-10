@@ -16,8 +16,8 @@ pub(crate) async fn document_symbol(
         .engine_client
         .call(
             "document_symbol",
-            move |client, request_context| async move {
-                client.document_symbol(request_context, path).await
+            move |engine_client, request_context| async move {
+                engine_client.document_symbol(request_context, path).await
             },
         )
         .await
