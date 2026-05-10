@@ -6,7 +6,12 @@
 //! store. It emits diagnostics and progress through the service notification channel, so cargo
 //! diagnostics stays independent from query/indexing requests and from the concrete LSP client.
 
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+use std::{
+    collections::{BTreeSet, hash_map::DefaultHasher},
+    hash::{Hash, Hasher},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use ls_types::ProgressToken;
 use rg_lsp_proto::DiagnosticsConfig;
@@ -68,8 +73,10 @@ impl DiagnosticsHandle {
         };
 
         self.cancel_current().await;
-        let progress_token =
-            ProgressToken::String(format!("rust-glancer/diagnostics/{}", snapshot.generation));
+        let progress_token = ProgressToken::String(Self::progress_token(
+            &snapshot.workspace_root,
+            snapshot.generation,
+        ));
         let progress = DiagnosticsProgress::new(self.notifications.clone(), progress_token);
         let task = DiagnosticsTaskContext::new(
             self.notifications.clone(),
@@ -114,6 +121,15 @@ impl DiagnosticsHandle {
             current.progress.finish(ProgressFinish::Cancelled).await;
             tracing::debug!("cancelled previous cargo diagnostics run");
         }
+    }
+
+    fn progress_token(workspace_root: &Path, generation: u64) -> String {
+        let mut hasher = DefaultHasher::new();
+        workspace_root.hash(&mut hasher);
+        format!(
+            "rust-glancer/diagnostics/{:x}/{generation}",
+            hasher.finish()
+        )
     }
 }
 

@@ -1,6 +1,6 @@
 use tower_lsp_server::{LspService, Server};
 
-use crate::{backend::Backend, engine_process::EngineProcess};
+use crate::backend::Backend;
 
 /// Serves the LSP protocol over this process' stdin/stdout streams.
 ///
@@ -9,13 +9,7 @@ use crate::{backend::Backend, engine_process::EngineProcess};
 pub async fn serve_stdio() -> anyhow::Result<()> {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
-    let (service, socket) = LspService::new(move |client| {
-        let engine = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(EngineProcess::spawn(client.clone()))
-        })
-        .expect("rust-glancer engine process should start before accepting LSP requests");
-        Backend::new(client, engine)
-    });
+    let (service, socket) = LspService::new(Backend::new);
 
     Server::new(stdin, stdout, socket).serve(service).await;
 

@@ -2,11 +2,8 @@ use tower_lsp_server::ls_types::*;
 
 use crate::methods::{MethodContext, uri_to_path};
 
-#[tracing::instrument(
-    level = "trace", skip_all,
-    fields(path = %*params.text_document.uri)
-)]
-pub(crate) async fn did_close(ctx: MethodContext<'_>, params: DidCloseTextDocumentParams) {
+#[tracing::instrument(level = "trace", skip_all)]
+pub(crate) async fn did_close(ctx: MethodContext, params: DidCloseTextDocumentParams) {
     let Some(path) = uri_to_path(&params.text_document.uri) else {
         return;
     };

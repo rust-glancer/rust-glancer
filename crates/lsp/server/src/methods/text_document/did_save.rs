@@ -4,9 +4,9 @@ use crate::methods::{MethodContext, uri_to_path};
 
 #[tracing::instrument(
     level = "trace", skip_all,
-    fields(path = %*params.text_document.uri, has_text = params.text.is_some())
+    fields(has_text = params.text.is_some())
 )]
-pub(crate) async fn did_save(ctx: MethodContext<'_>, params: DidSaveTextDocumentParams) {
+pub(crate) async fn did_save(ctx: MethodContext, params: DidSaveTextDocumentParams) {
     let Some(path) = uri_to_path(&params.text_document.uri) else {
         return;
     };

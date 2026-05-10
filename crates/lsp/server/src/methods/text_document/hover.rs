@@ -5,11 +5,10 @@ use crate::methods::{MethodContext, internal_error, uri_to_path};
 #[tracing::instrument(
     level = "trace", skip_all,
     fields(
-        path = %*params.text_document_position_params.text_document.uri,
         position = ?params.text_document_position_params.position
     )
 )]
-pub(crate) async fn hover(ctx: MethodContext<'_>, params: HoverParams) -> Result<Option<Hover>> {
+pub(crate) async fn hover(ctx: MethodContext, params: HoverParams) -> Result<Option<Hover>> {
     let Some(path) = uri_to_path(&params.text_document_position_params.text_document.uri) else {
         return Ok(None);
     };

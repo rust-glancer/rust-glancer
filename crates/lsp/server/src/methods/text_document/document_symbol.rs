@@ -2,12 +2,9 @@ use tower_lsp_server::{jsonrpc::Result, ls_types::*};
 
 use crate::methods::{MethodContext, internal_error, uri_to_path};
 
-#[tracing::instrument(
-    level = "trace", skip_all,
-    fields(path = %*params.text_document.uri)
-)]
+#[tracing::instrument(level = "trace", skip_all)]
 pub(crate) async fn document_symbol(
-    ctx: MethodContext<'_>,
+    ctx: MethodContext,
     params: DocumentSymbolParams,
 ) -> Result<Option<DocumentSymbolResponse>> {
     let Some(path) = uri_to_path(&params.text_document.uri) else {

@@ -5,12 +5,11 @@ use crate::methods::{MethodContext, internal_error, uri_to_path};
 #[tracing::instrument(
     level = "trace", skip_all,
     fields(
-        path = %*params.text_document_position.text_document.uri,
         position = ?params.text_document_position.position,
     )
 )]
 pub(crate) async fn completion(
-    ctx: MethodContext<'_>,
+    ctx: MethodContext,
     params: CompletionParams,
 ) -> Result<Option<CompletionResponse>> {
     let Some(path) = uri_to_path(&params.text_document_position.text_document.uri) else {

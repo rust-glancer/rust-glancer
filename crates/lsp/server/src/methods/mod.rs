@@ -1,22 +1,28 @@
-use std::{borrow::Cow, path::PathBuf};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 use tower_lsp_server::{
-    Client,
     jsonrpc::{Error, ErrorCode, Result},
     ls_types::*,
 };
 
 use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
 
-use crate::{capabilities, engine_client::EngineClient};
+use crate::{capabilities, engine_client::EngineClient, engine_registry::EngineRegistry};
 
 pub(crate) mod text_document;
 pub(crate) mod workspace;
 
+#[derive(Clone, Debug)]
+pub(crate) struct MethodContext {
+    pub(crate) engine_client: EngineClient,
+}
+
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct MethodContext<'a> {
-    pub(crate) lsp_client: &'a Client,
-    pub(crate) engine_client: &'a EngineClient,
+pub(crate) struct ServerContext<'a> {
+    pub(crate) engines: &'a EngineRegistry,
 }
 
 #[tracing::instrument(
@@ -24,7 +30,7 @@ pub(crate) struct MethodContext<'a> {
     fields(workspace_folder_count = params.workspace_folders.as_ref().map(Vec::len))
 )]
 pub(crate) async fn initialize(
-    ctx: MethodContext<'_>,
+    ctx: ServerContext<'_>,
     params: InitializeParams,
 ) -> Result<InitializeResult> {
     let Some(root) = workspace_root(&params) else {
@@ -38,18 +44,9 @@ pub(crate) async fn initialize(
             .map_err(|error| Error::invalid_params(error.to_string()))?;
     let analysis_config =
         AnalysisConfig::from_initialization_options(params.initialization_options.as_ref());
-    ctx.engine_client
-        .call("initialize", move |client, request_context| async move {
-            client
-                .initialize(
-                    request_context,
-                    root,
-                    analysis_config.package_residency_policy,
-                    analysis_config.cargo_metadata_config,
-                    diagnostics_config,
-                )
-                .await
-        })
+    let workspace_folders = workspace_folders(&params, &root);
+    ctx.engines
+        .initialize(root, workspace_folders, analysis_config, diagnostics_config)
         .await
         .map_err(internal_error)?;
 
@@ -64,25 +61,24 @@ pub(crate) async fn initialize(
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
-pub(crate) async fn initialized(ctx: MethodContext<'_>, _params: InitializedParams) {
-    ctx.lsp_client
-        .log_message(MessageType::INFO, "rust-glancer initialized")
-        .await;
+pub(crate) async fn initialized(
+    ctx: MethodContext,
+    _params: InitializedParams,
+) -> anyhow::Result<()> {
     ctx.engine_client
-        .notify("initialized", |client, request_context| async move {
+        .call("initialized", |client, request_context| async move {
             client.initialized(request_context).await
         })
-        .await;
+        .await
 }
 
 #[tracing::instrument(level = "trace", skip_all)]
-pub(crate) async fn shutdown(ctx: MethodContext<'_>) -> Result<()> {
+pub(crate) async fn shutdown(ctx: MethodContext) -> anyhow::Result<()> {
     ctx.engine_client
         .call("shutdown", |client, request_context| async move {
             client.shutdown(request_context).await
         })
         .await
-        .map_err(internal_error)
 }
 
 pub(crate) fn internal_error(error: anyhow::Error) -> Error {
@@ -119,6 +115,20 @@ fn workspace_root(params: &InitializeParams) -> Option<PathBuf> {
                 .and_then(|folder| uri_to_path(&folder.uri))
         })
         .or_else(|| params.root_path.as_ref().map(PathBuf::from))
+}
+
+fn workspace_folders(params: &InitializeParams, root: &Path) -> Vec<PathBuf> {
+    let mut folders = params
+        .workspace_folders
+        .as_ref()
+        .into_iter()
+        .flatten()
+        .filter_map(|folder| uri_to_path(&folder.uri))
+        .collect::<Vec<_>>();
+    folders.push(root.to_path_buf());
+    folders.sort();
+    folders.dedup();
+    folders
 }
 
 #[cfg(test)]

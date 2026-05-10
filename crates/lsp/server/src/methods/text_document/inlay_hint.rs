@@ -4,10 +4,10 @@ use crate::methods::{MethodContext, internal_error, uri_to_path};
 
 #[tracing::instrument(
     level = "trace", skip_all,
-    fields(path = %*params.text_document.uri, range = ?params.range)
+    fields(range = ?params.range)
 )]
 pub(crate) async fn inlay_hint(
-    ctx: MethodContext<'_>,
+    ctx: MethodContext,
     params: InlayHintParams,
 ) -> Result<Option<Vec<InlayHint>>> {
     let Some(path) = uri_to_path(&params.text_document.uri) else {

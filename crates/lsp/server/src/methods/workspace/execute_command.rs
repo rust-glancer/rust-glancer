@@ -7,7 +7,7 @@ use crate::{commands, methods::MethodContext, methods::internal_error};
     fields(command = %params.command)
 )]
 pub(crate) async fn execute_command(
-    ctx: MethodContext<'_>,
+    ctx: MethodContext,
     params: ExecuteCommandParams,
 ) -> Result<Option<LSPAny>> {
     let command = params.command;

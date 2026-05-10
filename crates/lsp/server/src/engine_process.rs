@@ -16,11 +16,10 @@ use crate::{engine_client::EngineClient, notifications::NotificationsPublisher};
 
 const ENGINE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Process-backed handle to the single engine used by today's LSP server.
+/// Process-backed handle to one engine owned by the LSP server.
 ///
 /// Process lifetime lives here; request-specific logic belongs to method handlers through
-/// `EngineClient`. Multi-engine routing can later swap this type for an orchestrator without making
-/// method handlers aware of subprocess mechanics.
+/// `EngineClient`, while multi-engine routing lives one level up in the registry.
 #[derive(Clone)]
 pub(crate) struct EngineProcess {
     client: EngineClient,

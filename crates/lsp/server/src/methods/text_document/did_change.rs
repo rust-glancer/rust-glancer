@@ -5,13 +5,12 @@ use crate::methods::{MethodContext, uri_to_path};
 #[tracing::instrument(
     level = "trace", skip_all,
     fields(
-        path = %*params.text_document.uri,
         version = params.text_document.version,
         content_change_count = params.content_changes.len(),
         has_full_text = params.content_changes.last().is_some_and(|change| change.range.is_none())
     )
 )]
-pub(crate) async fn did_change(ctx: MethodContext<'_>, params: DidChangeTextDocumentParams) {
+pub(crate) async fn did_change(ctx: MethodContext, params: DidChangeTextDocumentParams) {
     let Some(path) = uri_to_path(&params.text_document.uri) else {
         return;
     };

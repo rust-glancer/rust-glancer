@@ -7,7 +7,7 @@ use crate::{methods::MethodContext, methods::internal_error};
     fields(query = %params.query)
 )]
 pub(crate) async fn symbol(
-    ctx: MethodContext<'_>,
+    ctx: MethodContext,
     params: WorkspaceSymbolParams,
 ) -> Result<Option<WorkspaceSymbolResponse>> {
     let query = params.query;

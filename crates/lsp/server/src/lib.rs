@@ -9,6 +9,7 @@ mod capabilities;
 mod commands;
 mod engine_client;
 mod engine_process;
+mod engine_registry;
 mod methods;
 mod notifications;
 mod stdio;
