@@ -1,25 +1,36 @@
 # rust-glancer
 
-Incomplete-by-design LSP that trades completeness for speed and memory.
+An incomplete-by-design LSP that trades completeness for speed and memory.
 `rust-analyzer` is great, but it is just too heavy.
 
-This project aims to get you 70% there, with most of low-hanging fruits supported,
+This project aims to get you 70% there, with most low-hanging fruit supported,
 but not more.
 
-Do not use it if:
-- You fully rely on LSP and won't be comfortable without one.
-- You work on complex projects with heavy trait solving and bleeding edge features.
+See [SCOPE](docs/SCOPE.md) to see the idea behind the project, and [ARCHITECTURE](docs/ARCHITECTURE.md)
+to understand how it works and how it's different from `rust-analyzer`.
 
-Use it if:
-- `rust-analyzer` too slow/heavy for you
-- You don't mind to grep stuff from time to time.
+## AI use disclaimer
 
-The core principle is that we don't try to do anything smart:
-- no build script running
-- no proc macro expanding
-- no trait solving
+This project was created with heavy use of LLMs. It is not vibe coded and it is not AI slop, though.
 
-We check the sources and try to get stuff we can easily collect, but not more.
+The whole project is my personal effort, and LLMs were used as:
+- Domain experts
+- "I am too lazy to type".
+
+At no point were LLMs used as a replacement for a brain. So if you consider it to be slop, then it is _my_ slop.
+
+## Acknowledgements
+
+The `rust-analyzer` project is great, and some parts are heavily influenced by or even borrowed from there.
+I truly believe that success of Rust as a language can be attributed, among other reasons, to having such
+a cool LSP.
+
+As a result, this project is not a _replacement_ for `rust-analyzer`; it is an _alternative_ for those
+who are ready for some compromises.
+
+## Contributing
+
+See [docs/CONTRIBUTING.md].
 
 ## License
 
