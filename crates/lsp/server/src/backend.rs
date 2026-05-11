@@ -72,17 +72,17 @@ impl Backend {
 impl LanguageServer for Backend {
     #[tracing::instrument(skip_all, fields(method = "initialize"))]
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        let Some(root) = workspace_root(&params) else {
+        let workspace_folders = workspace_folders(&params);
+        if workspace_folders.is_empty() {
             return Err(Error::invalid_params(
-                "rust-glancer requires a filesystem workspace root",
+                "rust-glancer requires at least one filesystem workspace folder",
             ));
-        };
+        }
 
         let config =
             EngineConfig::from_initialization_options(params.initialization_options.as_ref())
                 .map_err(|error| Error::invalid_params(error.to_string()))?;
-        let workspace_folders = workspace_folders(&params);
-        let engines = EngineRegistry::new(self.lsp_client.clone(), root, workspace_folders, config);
+        let engines = EngineRegistry::new(self.lsp_client.clone(), workspace_folders, config);
 
         self.engines.set(engines).map_err(|_| Error {
             code: ErrorCode::InvalidRequest,
@@ -320,25 +320,6 @@ impl LanguageServer for Backend {
     }
 }
 
-// `root_uri` is deprecated in favor of `workspace_folders`, but clients still send it as the
-// process-level fallback root. Use it only to make initialization work when a client omits the
-// workspace-folder list; routed document requests still choose concrete Cargo roots later.
-#[expect(deprecated)]
-fn workspace_root(params: &InitializeParams) -> Option<PathBuf> {
-    params
-        .root_uri
-        .as_ref()
-        .and_then(methods::uri_to_path)
-        .or_else(|| {
-            params
-                .workspace_folders
-                .as_ref()
-                .and_then(|folders| folders.first())
-                .and_then(|folder| methods::uri_to_path(&folder.uri))
-        })
-        .or_else(|| params.root_path.as_ref().map(PathBuf::from))
-}
-
 fn workspace_folders(params: &InitializeParams) -> Vec<PathBuf> {
     let mut folders = params
         .workspace_folders
@@ -350,28 +331,4 @@ fn workspace_folders(params: &InitializeParams) -> Vec<PathBuf> {
     folders.sort();
     folders.dedup();
     folders
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{path::PathBuf, str::FromStr as _};
-
-    use tower_lsp_server::ls_types::{InitializeParams, Uri, WorkspaceFolder};
-
-    use super::workspace_root;
-
-    #[test]
-    #[expect(deprecated)]
-    fn workspace_root_prefers_client_root_uri_over_workspace_folder_list() {
-        let params = InitializeParams {
-            root_uri: Some(Uri::from_str("file:///selected").expect("test URI should parse")),
-            workspace_folders: Some(vec![WorkspaceFolder {
-                uri: Uri::from_str("file:///first-folder").expect("test URI should parse"),
-                name: "first-folder".to_string(),
-            }]),
-            ..Default::default()
-        };
-
-        assert_eq!(workspace_root(&params), Some(PathBuf::from("/selected")));
-    }
 }

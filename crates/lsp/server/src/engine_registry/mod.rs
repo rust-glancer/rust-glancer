@@ -38,12 +38,9 @@ impl EngineRegistry {
     /// Creates a registry that can spawn engines and forward their notifications to the LSP client.
     pub(crate) fn new(
         lsp_client: LspClient,
-        root: PathBuf,
         workspace_folders: Vec<PathBuf>,
         config: EngineConfig,
     ) -> Self {
-        let mut workspace_folders = workspace_folders;
-        workspace_folders.push(root);
         Self {
             lsp_client,
             inner: Mutex::new(EngineRegistryInner::new(workspace_folders, config)),
@@ -372,11 +369,10 @@ pub struct ProjectA;
 
     fn initialized_service(fixture: &CrateFixture) -> (LspService<TestBackend>, ClientSocket) {
         let root = fixture.path("workspace");
-        let workspace_folders = vec![root.clone()];
+        let workspace_folders = vec![root];
         let (service, socket) = LspService::new(|client| TestBackend {
             registry: EngineRegistry::new(
                 client,
-                root.clone(),
                 workspace_folders.clone(),
                 EngineConfig::default(),
             ),
