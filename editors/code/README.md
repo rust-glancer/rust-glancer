@@ -42,10 +42,6 @@ Run the extension-host smoke test:
 npm run test:e2e
 ```
 
-This builds the real `rust-glancer` release binary, opens
-`test_targets/simple_crate`, activates the extension, waits for the server to
-be ready, and runs the reindex command.
-
 The VS Code test runner uses a desktop Extension Development Host, so a short
 lived VS Code window is expected locally. For Linux CI/headless environments,
 run the same command under a virtual display such as `xvfb-run`.
@@ -77,10 +73,10 @@ just client lint
   "rust-glancer.cargo.target": null,
   "rust-glancer.cache.packageResidency": "workspace-and-path-deps",
   "rust-glancer.trace.server": "off",
-  "rust-glancer.checkOnStartup": false,
-  "rust-glancer.checkOnSave": false,
-  "rust-glancer.check.command": "check",
-  "rust-glancer.check.arguments": ["--workspace", "--all-targets"]
+  "rust-glancer.diagnosticsOnStartup": false,
+  "rust-glancer.diagnosticsOnSave": false,
+  "rust-glancer.diagnostics.command": "check",
+  "rust-glancer.diagnostics.arguments": ["--workspace", "--all-targets"]
 }
 ```
 
@@ -89,7 +85,7 @@ Use `rust-glancer.server.extraEnv` for server logs, for example:
 ```json
 {
   "rust-glancer.server.extraEnv": {
-    "RUST_GLANCER_LOG": "rg_lsp=debug"
+    "RUST_GLANCER_LOG": "rg_lsp_server=debug,rg_lsp_engine=debug"
   }
 }
 ```
@@ -97,7 +93,8 @@ Use `rust-glancer.server.extraEnv` for server logs, for example:
 ## Troubleshooting
 
 Open the `Rust Glancer` output channel first. It records the workspace root,
-server command, server source, process exit, and server stderr.
+server command, server source, process exit, server stderr, and engine startup
+logs.
 
 If the command palette does not show Rust Glancer commands in the Extension
 Development Host, VS Code probably launched with the wrong

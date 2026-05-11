@@ -184,7 +184,7 @@ fn print_cache_probe_profile(profile: &CacheProbeProfile) {
     );
 }
 
-pub(super) fn print_allocator_stats(stats: rg_lsp::AllocatorStats) {
+pub(super) fn print_allocator_stats(stats: rg_lsp_engine::AllocatorStats) {
     println!(
         "allocator stats: allocated {}, active {}, resident {}, mapped {}, retained {}",
         format_bytes(stats.allocated_bytes),
@@ -197,13 +197,13 @@ pub(super) fn print_allocator_stats(stats: rg_lsp::AllocatorStats) {
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct AllocatorPurgeReport {
-    result: rg_lsp::AllocatorPurgeResult,
-    before: Option<rg_lsp::AllocatorStats>,
-    after: Option<rg_lsp::AllocatorStats>,
+    result: rg_lsp_engine::AllocatorPurgeResult,
+    before: Option<rg_lsp_engine::AllocatorStats>,
+    after: Option<rg_lsp_engine::AllocatorStats>,
 }
 
 pub(super) fn purge_allocator_after_build(
-    memory_control: &dyn rg_lsp::MemoryControl,
+    memory_control: &dyn rg_lsp_engine::MemoryControl,
 ) -> Option<AllocatorPurgeReport> {
     let before_stats = memory_control.allocator_stats();
     let result = memory_control.try_purge_allocator()?;

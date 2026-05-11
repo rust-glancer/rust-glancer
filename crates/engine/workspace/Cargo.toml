@@ -1,0 +1,22 @@
+[package]
+name = "rg_workspace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description.workspace = true
+
+[dependencies]
+cargo_metadata.workspace = true
+derive_more = { workspace = true, features = ["display"] }
+rkyv.workspace = true
+rg_memsize.workspace = true
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+test_fixture.workspace = true
+expect-test.workspace = true

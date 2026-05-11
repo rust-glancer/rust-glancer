@@ -16,3 +16,7 @@ export const EXTENSION_COMMANDS = {
 export const SERVER_COMMANDS = {
   reindexWorkspace: "rust-glancer.internal.reindexWorkspace",
 } as const;
+
+export const SERVER_NOTIFICATIONS = {
+  activeWorkspaceChanged: "rust-glancer/activeWorkspaceChanged",
+} as const;

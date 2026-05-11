@@ -6,5 +6,5 @@
     "sourceMap": true,
     "types": ["node"]
   },
-  "include": ["unit", "src/workspace/workspace-lifecycle.ts"]
+  "include": ["unit"]
 }

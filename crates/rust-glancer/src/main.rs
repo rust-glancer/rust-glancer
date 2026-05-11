@@ -1,10 +1,12 @@
-use std::path::PathBuf;
+use std::{net::SocketAddr, path::PathBuf};
 
-use clap::{Parser, Subcommand, ValueEnum};
-use rg_project::{PackageResidencyPolicy, StartupCacheLoad};
+use clap::{Parser, Subcommand};
+use rg_project::StartupCacheLoad;
 
 mod analyze;
 mod runtime;
+mod start_engine;
+mod start_server;
 
 /// Command-line interface for the `rust-glancer` binary.
 #[derive(Debug, Parser)]
@@ -31,13 +33,21 @@ enum Command {
         load: bool,
         /// Which packages should remain resident after analysis is built.
         #[clap(long = "package-residency", value_enum, default_value = "all-resident")]
-        package_residency: CliPackageResidencyPolicy,
+        package_residency: analyze::CliPackageResidencyPolicy,
         /// Target triple used to filter Cargo metadata. Defaults to the current rustc host target.
         #[clap(long)]
         target: Option<String>,
     },
     /// Start the language server over stdio.
     Lsp,
+    /// Start one analysis engine subprocess.
+    #[command(hide = true)]
+    LspEngine {
+        #[clap(long)]
+        engine_addr: SocketAddr,
+        #[clap(long)]
+        notifications_addr: SocketAddr,
+    },
 }
 
 /// Parses CLI arguments and dispatches to the selected command handler.
@@ -64,30 +74,10 @@ fn main() -> anyhow::Result<()> {
             package_residency.into(),
             target,
         ),
-        Command::Lsp => rg_lsp::run_stdio_with_memory_control(runtime::memory_control()),
-    }
-}
-
-/// CLI-facing package residency names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-enum CliPackageResidencyPolicy {
-    AllResident,
-    Workspace,
-    WorkspaceAndPathDeps,
-    WorkspacePathAndDirectDeps,
-    AllOffloadable,
-}
-
-impl From<CliPackageResidencyPolicy> for PackageResidencyPolicy {
-    fn from(policy: CliPackageResidencyPolicy) -> Self {
-        match policy {
-            CliPackageResidencyPolicy::AllResident => Self::AllResident,
-            CliPackageResidencyPolicy::Workspace => Self::WorkspaceResident,
-            CliPackageResidencyPolicy::WorkspaceAndPathDeps => Self::WorkspaceAndPathDepsResident,
-            CliPackageResidencyPolicy::WorkspacePathAndDirectDeps => {
-                Self::WorkspacePathAndDirectDepsResident
-            }
-            CliPackageResidencyPolicy::AllOffloadable => Self::AllOffloadable,
-        }
+        Command::Lsp => start_server::start_server(),
+        Command::LspEngine {
+            engine_addr,
+            notifications_addr,
+        } => start_engine::start_engine(engine_addr, notifications_addr),
     }
 }

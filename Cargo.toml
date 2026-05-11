@@ -1,20 +1,22 @@
 [workspace]
 members = [
   "crates/rust-glancer",
-  "crates/lsp",
-  "crates/workspace",
-  "crates/parse",
-  "crates/item-tree",
-  "crates/def-map",
-  "crates/semantic-ir",
-  "crates/body-ir",
-  "crates/analysis",
-  "crates/project",
-  "crates/text",
-  "crates/arena",
-  "crates/memsize",
-  "crates/package-store",
-  "crates/test-fixture",
+  "crates/lsp/server",
+  "crates/lsp/proto",
+  "crates/lsp/engine",
+  "crates/engine/workspace",
+  "crates/engine/parse",
+  "crates/engine/item-tree",
+  "crates/engine/def-map",
+  "crates/engine/semantic-ir",
+  "crates/engine/body-ir",
+  "crates/engine/analysis",
+  "crates/engine/project",
+  "crates/engine/package-store",
+  "crates/lib/text",
+  "crates/lib/arena",
+  "crates/lib/memsize",
+  "crates/lib/test-fixture",
 ]
 exclude = [
   "test_targets/simple_crate",
@@ -51,9 +53,12 @@ cargo_metadata = "0.23"
 derive_more = { version = "2.1.1" }
 divan = "0.1.21"
 expect-test = "1.5.1"
+futures = "0.3"
 ls_types = { package = "ls-types", version = "0.0.6" }
 rkyv = "0.8.12"
 rayon = "1.12.0"
+serde = "1.0"
+tarpc = "0.37"
 tempfile = "3.27.0"
 thiserror = "2.0.17"
 tokio = "1.48"
@@ -65,17 +70,19 @@ tikv-jemalloc-sys = "0.6.1"
 
 ra_syntax = { package = "syntax", git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca"}
 
-rg_lsp = { path = "crates/lsp" }
-rg_workspace = { path = "crates/workspace" }
-rg_parse = { path = "crates/parse" }
-rg_item_tree = { path = "crates/item-tree" }
-rg_def_map = { path = "crates/def-map" }
-rg_semantic_ir = { path = "crates/semantic-ir" }
-rg_body_ir = { path = "crates/body-ir" }
-rg_analysis = { path = "crates/analysis" }
-rg_project = { path = "crates/project" }
-rg_text = { path = "crates/text" }
-rg_arena = { path = "crates/arena" }
-rg_memsize = { path = "crates/memsize" }
-rg_package_store = { path = "crates/package-store" }
-test_fixture = { path = "crates/test-fixture" }
+rg_lsp_server = { path = "crates/lsp/server" }
+rg_lsp_proto = { path = "crates/lsp/proto" }
+rg_lsp_engine = { path = "crates/lsp/engine" }
+rg_workspace = { path = "crates/engine/workspace" }
+rg_parse = { path = "crates/engine/parse" }
+rg_item_tree = { path = "crates/engine/item-tree" }
+rg_def_map = { path = "crates/engine/def-map" }
+rg_semantic_ir = { path = "crates/engine/semantic-ir" }
+rg_body_ir = { path = "crates/engine/body-ir" }
+rg_analysis = { path = "crates/engine/analysis" }
+rg_project = { path = "crates/engine/project" }
+rg_package_store = { path = "crates/engine/package-store" }
+rg_text = { path = "crates/lib/text" }
+rg_arena = { path = "crates/lib/arena" }
+rg_memsize = { path = "crates/lib/memsize" }
+test_fixture = { path = "crates/lib/test-fixture" }

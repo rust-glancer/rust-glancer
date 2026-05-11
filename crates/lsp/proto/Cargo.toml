@@ -1,0 +1,20 @@
+[package]
+name = "rg_lsp_proto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ls_types.workspace = true
+rg_project.workspace = true
+rg_workspace.workspace = true
+serde = { workspace = true, features = ["derive"] }
+tarpc.workspace = true
+thiserror.workspace = true

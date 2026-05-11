@@ -1,9 +1,9 @@
 /**
- * Decides which per-client state should be rendered in the shared status view.
+ * Decides which language-client state should be rendered in the shared status view.
  *
- * A workspace client can be starting, indexing, stale, checking, failed, or ready based on several
- * independent event streams. This module merges those signals and delegates the final rendering to
- * `StatusView` only when the client is currently visible.
+ * The language client can be starting, indexing, stale, running diagnostics, failed, or ready based
+ * on several independent event streams. This module merges those signals and delegates the final
+ * rendering to `StatusView`.
  */
 import {
   type ProgressToken,
@@ -12,39 +12,43 @@ import {
   type WorkDoneProgressReport,
 } from "vscode-languageclient/node";
 
-import { StatusView, type StatusDetails, type StatusSnapshot } from "./status-view";
+import { StatusView, statusText, type StatusDetails, type StatusSnapshot } from "./status-view";
 
 const CARGO_DIAGNOSTICS_PROGRESS_TITLE = "Cargo diagnostics";
 
 export interface ClientStatusSnapshot {
   readonly running: boolean;
-  readonly checkRunning: boolean;
-  readonly checkFailed: boolean;
-  readonly checkCommand: string | undefined;
+  readonly diagnosticsRunning: boolean;
+  readonly diagnosticsFailed: boolean;
+  readonly diagnosticsCommand: string | undefined;
   readonly failureReason: string | undefined;
   readonly status: StatusSnapshot;
   readonly details: StatusDetails | undefined;
 }
 
+export type ActiveWorkspaceState = "indexing" | "ready" | "failed";
+
 /**
  * Tracks client-facing state and decides which status-bar state should win.
  *
  * VS Code document events, LSP lifecycle events, and work-done progress can arrive independently.
- * Keeping their merge logic here makes `ClientManager` mostly responsible for wiring.
+ * Keeping their merge logic here makes the extension controller mostly responsible for wiring.
  */
 export class ClientStatus {
   private details: StatusDetails | undefined;
   private running = false;
-  private checkRunning = false;
-  private checkFailed = false;
-  private checkCommand: string | undefined;
+  private diagnosticsRunning = false;
+  private diagnosticsFailed = false;
+  private diagnosticsCommand: string | undefined;
   private failureReason: string | undefined;
+  private activeWorkspaceState: ActiveWorkspaceState | undefined;
+  private activeWorkspaceFailureReason: string | undefined;
   private currentStatus: StatusSnapshot = {
     state: "created",
     text: "",
     details: {},
   };
-  private readonly checkProgressTokens = new Set<ProgressToken>();
+  private readonly diagnosticsProgressTokens = new Set<ProgressToken>();
 
   public constructor(
     private readonly view: StatusView,
@@ -61,8 +65,10 @@ export class ClientStatus {
 
   public starting(details: StatusDetails): void {
     this.running = false;
-    this.resetCheck();
+    this.resetDiagnostics();
     this.failureReason = undefined;
+    this.activeWorkspaceState = undefined;
+    this.activeWorkspaceFailureReason = undefined;
     this.details = details;
     this.show("starting", "$(sync~spin) Rust Glancer: starting", () => this.view.starting(details));
   }
@@ -70,8 +76,11 @@ export class ClientStatus {
   public ready(details: StatusDetails): void {
     this.running = true;
     this.failureReason = undefined;
-    this.details = details;
-    this.show("ready", "$(check) Rust Glancer: ready", () => this.view.ready(details));
+    const activeWorkspaceRoot = this.details?.activeWorkspaceRoot;
+    const nextDetails =
+      activeWorkspaceRoot === undefined ? details : { ...details, activeWorkspaceRoot };
+    this.details = nextDetails;
+    this.show("ready", "$(check) Rust Glancer: ready", () => this.view.ready(nextDetails));
   }
 
   public indexing(): void {
@@ -84,9 +93,28 @@ export class ClientStatus {
     );
   }
 
+  public activeWorkspace(
+    root: string,
+    state: ActiveWorkspaceState,
+    message: string | undefined,
+    isActiveRustDocumentDirty: boolean,
+  ): void {
+    if (this.details === undefined) {
+      return;
+    }
+
+    this.activeWorkspaceState = state;
+    this.activeWorkspaceFailureReason = state === "failed" ? message : undefined;
+    this.details = {
+      ...this.details,
+      activeWorkspaceRoot: root,
+    };
+    this.refresh(isActiveRustDocumentDirty);
+  }
+
   public stopped(reason: string, details: StatusDetails | undefined = this.details): void {
     this.running = false;
-    this.resetCheck();
+    this.resetDiagnostics();
     this.failureReason = undefined;
     this.details = details;
     this.show("stopped", "$(circle-slash) Rust Glancer: stopped", () =>
@@ -96,7 +124,7 @@ export class ClientStatus {
 
   public failed(reason: string, details: StatusDetails | undefined = this.details): void {
     this.running = false;
-    this.resetCheck();
+    this.resetDiagnostics();
     this.failureReason = reason;
     this.details = details;
     this.show("failed", "$(error) Rust Glancer: failed", () =>
@@ -121,19 +149,28 @@ export class ClientStatus {
       return;
     }
 
-    // Dirty buffers are shown first because the last published analysis no longer describes
-    // the file the user is looking at. Cargo diagnostics remain visible once the editor is clean.
-    if (isActiveRustDocumentDirty) {
+    // Engine lifecycle wins because the workspace may not have any analysis to serve yet.
+    // Once the active engine is ready, file freshness and diagnostics become the useful signals.
+    if (this.activeWorkspaceState === "indexing") {
+      this.show("indexing", "$(sync~spin) Rust Glancer: indexing", () =>
+        this.view.indexing(this.details),
+      );
+    } else if (this.activeWorkspaceState === "failed") {
+      const reason = this.activeWorkspaceFailureReason ?? "active workspace failed";
+      this.show("failed", "$(error) Rust Glancer: failed", () =>
+        this.view.failed(reason, this.details ?? {}),
+      );
+    } else if (isActiveRustDocumentDirty) {
       this.show("stale", "$(warning) Rust Glancer: stale until save", () =>
         this.view.stale(this.details),
       );
-    } else if (this.checkRunning) {
-      this.show("check-running", "$(sync~spin) Rust Glancer: cargo check running", () =>
-        this.view.checkRunning(this.checkCommand, this.details),
+    } else if (this.diagnosticsRunning) {
+      this.show("diagnostics-running", "$(sync~spin) Rust Glancer: cargo check running", () =>
+        this.view.diagnosticsRunning(this.diagnosticsCommand, this.details),
       );
-    } else if (this.checkFailed) {
-      this.show("check-failed", "$(error) Rust Glancer: cargo check failed", () =>
-        this.view.checkFailed(this.details),
+    } else if (this.diagnosticsFailed) {
+      this.show("diagnostics-failed", "$(error) Rust Glancer: cargo check failed", () =>
+        this.view.diagnosticsFailed(this.details),
       );
     } else {
       this.show("ready", "$(check) Rust Glancer: ready", () => this.view.ready(this.details));
@@ -150,24 +187,24 @@ export class ClientStatus {
         return;
       }
 
-      this.checkProgressTokens.add(token);
-      this.checkRunning = true;
-      this.checkFailed = false;
-      this.checkCommand = params.message;
+      this.diagnosticsProgressTokens.add(token);
+      this.diagnosticsRunning = true;
+      this.diagnosticsFailed = false;
+      this.diagnosticsCommand = params.message;
       this.refresh(isActiveRustDocumentDirty);
       return;
     }
 
-    if (!this.checkProgressTokens.has(token)) {
+    if (!this.diagnosticsProgressTokens.has(token)) {
       return;
     }
 
     if (params.kind === "end") {
-      this.checkProgressTokens.delete(token);
-      this.checkRunning = this.checkProgressTokens.size > 0;
-      this.checkFailed = params.message === "Failed";
-      if (!this.checkRunning) {
-        this.checkCommand = undefined;
+      this.diagnosticsProgressTokens.delete(token);
+      this.diagnosticsRunning = this.diagnosticsProgressTokens.size > 0;
+      this.diagnosticsFailed = params.message === "Failed";
+      if (!this.diagnosticsRunning) {
+        this.diagnosticsCommand = undefined;
       }
       this.refresh(isActiveRustDocumentDirty);
     }
@@ -176,9 +213,9 @@ export class ClientStatus {
   public snapshot(): ClientStatusSnapshot {
     return {
       running: this.running,
-      checkRunning: this.checkRunning,
-      checkFailed: this.checkFailed,
-      checkCommand: this.checkCommand,
+      diagnosticsRunning: this.diagnosticsRunning,
+      diagnosticsFailed: this.diagnosticsFailed,
+      diagnosticsCommand: this.diagnosticsCommand,
       failureReason: this.failureReason,
       status: {
         ...this.currentStatus,
@@ -188,10 +225,10 @@ export class ClientStatus {
     };
   }
 
-  private show(state: StatusSnapshot["state"], text: string, render: () => void): void {
+  private show(state: StatusSnapshot["state"], baseText: string, render: () => void): void {
     this.currentStatus = {
       state,
-      text,
+      text: statusText(baseText, this.details),
       details: this.details === undefined ? {} : { ...this.details },
     };
     if (this.shouldRender()) {
@@ -199,10 +236,10 @@ export class ClientStatus {
     }
   }
 
-  private resetCheck(): void {
-    this.checkRunning = false;
-    this.checkFailed = false;
-    this.checkCommand = undefined;
-    this.checkProgressTokens.clear();
+  private resetDiagnostics(): void {
+    this.diagnosticsRunning = false;
+    this.diagnosticsFailed = false;
+    this.diagnosticsCommand = undefined;
+    this.diagnosticsProgressTokens.clear();
   }
 }
