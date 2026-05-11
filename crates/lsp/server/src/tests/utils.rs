@@ -6,7 +6,7 @@ use std::{
 use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::engine_registry::routing::{
-    DocumentEngineRoute, EngineId, EngineRouting, normalize_path,
+    EngineId, EngineRouting, WorkspaceEngineRoute, normalize_path,
 };
 
 pub(super) struct RoutingFixture {
@@ -31,25 +31,43 @@ impl RoutingFixture {
         self
     }
 
-    pub(super) fn engine(mut self, path: &str) -> Self {
-        self.ensure_engine(path);
-        self
-    }
-
-    pub(super) fn active_engine(mut self, path: &str) -> Self {
-        let id = self.ensure_engine(path);
-        self.routing.set_active_id(id);
-        self
-    }
-
     pub(super) fn render_steps(&mut self, steps: &[RoutingStep]) -> String {
         let mut rendered = String::new();
         for step in steps {
             match step {
-                RoutingStep::Open { title, path } => {
-                    let route = self.routing.route_document(&self.path(path));
-                    self.apply_route(route.as_ref());
-                    writeln!(rendered, "{title}: {}", self.render_route(route.as_ref()))
+                RoutingStep::CachedFileOwner { title, path } => {
+                    let owner = self.routing.open_file_owner(&self.path(path));
+                    if let Some(id) = owner {
+                        self.routing.set_active_id(id);
+                    }
+                    writeln!(
+                        rendered,
+                        "{title}: {}",
+                        self.render_cached_file_owner(owner)
+                    )
+                    .expect("routing snapshot should be writable");
+                }
+                RoutingStep::WorkspaceRoot {
+                    title,
+                    workspace_root,
+                } => {
+                    let route = self.routing.route_workspace_root(self.path(workspace_root));
+                    self.apply_workspace_route(route.as_ref());
+                    writeln!(rendered, "{title}: {}", self.render_workspace_route(&route))
+                        .expect("routing snapshot should be writable");
+                }
+                RoutingStep::OpenFile { title, path } => {
+                    let active = self
+                        .routing
+                        .active_id()
+                        .expect("open-file step should follow an active engine");
+                    self.routing.set_open_file(self.path(path), active);
+                    writeln!(rendered, "{title}: {}", self.render_active(Some(active)))
+                        .expect("routing snapshot should be writable");
+                }
+                RoutingStep::CloseFile { title, path } => {
+                    self.routing.remove_open_file(&self.path(path), None);
+                    writeln!(rendered, "{title}: closed")
                         .expect("routing snapshot should be writable");
                 }
                 RoutingStep::WorkspaceAction { title } => {
@@ -63,25 +81,29 @@ impl RoutingFixture {
         rendered
     }
 
-    fn apply_route(&mut self, route: Option<&DocumentEngineRoute>) {
-        if let Some(id) = route.map(DocumentEngineRoute::id) {
-            self.routing.set_active_id(id);
-        }
-    }
-
-    fn ensure_engine(&mut self, path: &str) -> EngineId {
-        match self.routing.route_root(self.path(path)) {
-            DocumentEngineRoute::Existing(id) => id,
-            DocumentEngineRoute::Spawn { new_id, .. } => new_id,
-        }
-    }
-
-    fn render_route(&self, route: Option<&DocumentEngineRoute>) -> String {
+    fn apply_workspace_route(&mut self, route: Option<&WorkspaceEngineRoute>) {
         match route {
-            Some(DocumentEngineRoute::Existing(id)) => {
+            None => {}
+            Some(WorkspaceEngineRoute::Existing(id))
+            | Some(WorkspaceEngineRoute::Spawn { new_id: id, .. }) => {
+                self.routing.set_active_id(*id);
+            }
+        }
+    }
+
+    fn render_cached_file_owner(&self, owner: Option<EngineId>) -> String {
+        match owner {
+            Some(id) => format!("existing {}", self.render_engine(id)),
+            None => "unowned".to_string(),
+        }
+    }
+
+    fn render_workspace_route(&self, route: &Option<WorkspaceEngineRoute>) -> String {
+        match route {
+            Some(WorkspaceEngineRoute::Existing(id)) => {
                 format!("existing {}", self.render_engine(*id))
             }
-            Some(DocumentEngineRoute::Spawn { new_id, root }) => {
+            Some(WorkspaceEngineRoute::Spawn { new_id, root }) => {
                 format!(
                     "spawn {} {}",
                     Self::render_id(*new_id),
@@ -127,7 +149,19 @@ impl RoutingFixture {
 }
 
 pub(super) enum RoutingStep {
-    Open {
+    CachedFileOwner {
+        title: &'static str,
+        path: &'static str,
+    },
+    WorkspaceRoot {
+        title: &'static str,
+        workspace_root: &'static str,
+    },
+    OpenFile {
+        title: &'static str,
+        path: &'static str,
+    },
+    CloseFile {
         title: &'static str,
         path: &'static str,
     },
@@ -137,22 +171,27 @@ pub(super) enum RoutingStep {
 }
 
 impl RoutingStep {
-    pub(super) fn open(title: &'static str, path: &'static str) -> Self {
-        Self::Open { title, path }
+    pub(super) fn cached_file_owner(title: &'static str, path: &'static str) -> Self {
+        Self::CachedFileOwner { title, path }
+    }
+
+    pub(super) fn workspace_root(title: &'static str, workspace_root: &'static str) -> Self {
+        Self::WorkspaceRoot {
+            title,
+            workspace_root,
+        }
+    }
+
+    pub(super) fn open_file(title: &'static str, path: &'static str) -> Self {
+        Self::OpenFile { title, path }
+    }
+
+    pub(super) fn close_file(title: &'static str, path: &'static str) -> Self {
+        Self::CloseFile { title, path }
     }
 
     pub(super) fn workspace_action(title: &'static str) -> Self {
         Self::WorkspaceAction { title }
-    }
-}
-
-impl DocumentEngineRoute {
-    fn id(&self) -> EngineId {
-        match self {
-            DocumentEngineRoute::Existing(id) | DocumentEngineRoute::Spawn { new_id: id, .. } => {
-                *id
-            }
-        }
     }
 }
 

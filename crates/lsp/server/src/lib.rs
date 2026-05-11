@@ -6,6 +6,7 @@
 
 mod backend;
 mod capabilities;
+mod client_notifications;
 mod commands;
 mod engine_client;
 mod engine_process;

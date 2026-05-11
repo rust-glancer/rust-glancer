@@ -7,13 +7,18 @@ use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
 use tokio::sync::Mutex;
 use tower_lsp_server::Client as LspClient;
 
-use crate::{engine_client::EngineClient, engine_process::EngineProcess};
+use crate::{
+    client_notifications::ActiveWorkspaceChanged, engine_client::EngineClient,
+    engine_process::EngineProcess,
+};
 
+mod document_owner;
 pub(crate) mod routing;
 mod slot;
 mod state;
 
 use self::{
+    document_owner::{DocumentOwner, OpenFileCachePolicy},
     routing::{EngineId, normalize_path},
     slot::{EngineEntry, EngineSlot},
     state::{EngineRegistryInner, EngineSpawnConfig, ReservedEngineRoute, ReservedEngineStart},
@@ -31,31 +36,23 @@ pub(crate) struct EngineRegistry {
 
 impl EngineRegistry {
     /// Creates a registry that can spawn engines and forward their notifications to the LSP client.
-    pub(crate) fn new(lsp_client: LspClient) -> Self {
-        Self {
-            lsp_client,
-            inner: Mutex::default(),
-        }
-    }
-
-    /// Stores initialization configuration without starting analysis work yet.
-    pub(crate) async fn initialize(
-        &self,
+    pub(crate) fn new(
+        lsp_client: LspClient,
         root: PathBuf,
         workspace_folders: Vec<PathBuf>,
         analysis_config: AnalysisConfig,
         diagnostics_config: DiagnosticsConfig,
-    ) -> anyhow::Result<()> {
-        {
-            let mut inner = self.inner.lock().await;
-            let mut workspace_folders = workspace_folders;
-            workspace_folders.push(root);
-            inner.routing.set_workspace_folders(workspace_folders);
-            inner.analysis_config = Some(analysis_config);
-            inner.diagnostics_config = Some(diagnostics_config);
+    ) -> Self {
+        let mut workspace_folders = workspace_folders;
+        workspace_folders.push(root);
+        Self {
+            lsp_client,
+            inner: Mutex::new(EngineRegistryInner::new(
+                workspace_folders,
+                analysis_config,
+                diagnostics_config,
+            )),
         }
-
-        Ok(())
     }
 
     /// Returns every ready engine client for lifecycle fan-out such as shutdown.
@@ -81,24 +78,96 @@ impl EngineRegistry {
             .map(|engine| engine.process.engine_client().clone())
     }
 
-    /// Finds or starts the engine that should receive a document-scoped request.
-    pub(crate) async fn engine_for_document(
-        &self,
-        path: &Path,
-    ) -> anyhow::Result<Option<EngineClient>> {
+    /// Routes a newly opened document and records exact file ownership until `didClose`.
+    pub(crate) async fn open_document(&self, path: &Path) -> anyhow::Result<Option<EngineClient>> {
         let path = normalize_path(path);
-        let route = {
+        let owner = {
             let mut inner = self.inner.lock().await;
-            inner.route_document(&path)?
+            DocumentOwner::new(&mut inner, &path, OpenFileCachePolicy::Record)?
         };
-
-        let Some(route) = route else {
+        let Some(owner) = owner else {
             return Ok(None);
         };
 
-        match route {
-            ReservedEngineRoute::Existing(id) => self.engine_for_existing_id(id).await,
-            ReservedEngineRoute::Spawn(start) => self.start_reserved_engine(start).await.map(Some),
+        let id = owner.id();
+        match self.engine_for_document_owner(owner).await {
+            Ok(Some(engine_client)) => Ok(Some(engine_client)),
+            Ok(None) => {
+                self.remove_open_file(path.as_path(), id).await;
+                Ok(None)
+            }
+            Err(error) => {
+                self.remove_open_file(path.as_path(), id).await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Finds or starts the engine that should receive a document-scoped request.
+    pub(crate) async fn document(&self, path: &Path) -> anyhow::Result<Option<EngineClient>> {
+        let path = normalize_path(path);
+        let owner = {
+            let mut inner = self.inner.lock().await;
+            DocumentOwner::new(&mut inner, &path, OpenFileCachePolicy::Ignore)?
+        };
+        let Some(owner) = owner else {
+            return Ok(None);
+        };
+
+        self.engine_for_document_owner(owner).await
+    }
+
+    /// Routes a closing document to its cached owner and forgets that ownership.
+    pub(crate) async fn close_document(&self, path: &Path) -> anyhow::Result<Option<EngineClient>> {
+        let path = normalize_path(path);
+        let owner = {
+            let mut inner = self.inner.lock().await;
+            DocumentOwner::new(&mut inner, &path, OpenFileCachePolicy::Remove)?
+        };
+        let Some(owner) = owner else {
+            return Ok(None);
+        };
+
+        self.engine_for_document_owner(owner).await
+    }
+
+    async fn engine_for_document_owner(
+        &self,
+        owner: DocumentOwner,
+    ) -> anyhow::Result<Option<EngineClient>> {
+        let id = owner.id();
+        tracing::trace!(
+            engine_id = id.index(),
+            source = ?owner.source(),
+            "resolved document owner"
+        );
+
+        let engine_client = match owner.into_route() {
+            ReservedEngineRoute::Existing(id) => self.engine_for_existing_id(id).await?,
+            ReservedEngineRoute::Spawn(start) => Some(self.start_reserved_engine(start).await?),
+        };
+        if engine_client.is_some() {
+            self.activate_workspace(id).await;
+        }
+        Ok(engine_client)
+    }
+
+    async fn remove_open_file(&self, path: &Path, id: EngineId) {
+        let mut inner = self.inner.lock().await;
+        inner.remove_open_file(path, Some(id));
+    }
+
+    async fn activate_workspace(&self, id: EngineId) {
+        let root = {
+            let mut inner = self.inner.lock().await;
+            inner.set_active_id(id);
+            inner.active_workspace_to_publish(id)
+        };
+
+        if let Some(root) = root {
+            self.lsp_client
+                .send_notification::<ActiveWorkspaceChanged>(ActiveWorkspaceChanged::params(&root))
+                .await;
         }
     }
 
@@ -143,11 +212,10 @@ impl EngineRegistry {
     async fn engine_for_existing_id(&self, id: EngineId) -> anyhow::Result<Option<EngineClient>> {
         loop {
             let wait = {
-                let mut inner = self.inner.lock().await;
+                let inner = self.inner.lock().await;
                 match inner.engine(id) {
                     Some(EngineSlot::Ready(engine)) => {
                         let engine_client = engine.process.engine_client().clone();
-                        inner.routing.set_active_id(id);
                         return Ok(Some(engine_client));
                     }
                     Some(EngineSlot::Starting { notify, .. }) => Some(notify.clone()),
@@ -178,7 +246,6 @@ impl EngineRegistry {
                 .and_then(EngineSlot::notify)
                 .expect("reserved engine slot should be starting");
             inner.engines[id.index()] = EngineSlot::Ready(EngineEntry { process });
-            inner.routing.set_active_id(id);
             notify
         };
         notify.notify_waiters();
@@ -230,5 +297,120 @@ impl EngineRegistry {
 
         tracing::info!(root = %root.display(), "started rust-glancer engine");
         Ok(engine)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
+    use test_fixture::{CrateFixture, fixture_crate};
+    use tower_lsp_server::{
+        ClientSocket, LanguageServer, LspService,
+        jsonrpc::Result,
+        ls_types::{InitializeParams, InitializeResult},
+    };
+
+    use super::document_owner::DocumentOwnerSource;
+    use super::*;
+
+    const WORKSPACE_FIXTURE: &str = r#"
+//- /workspace/Cargo.toml
+[workspace]
+members = ["project_a"]
+resolver = "3"
+
+//- /workspace/project_a/Cargo.toml
+[package]
+name = "project_a"
+version = "0.1.0"
+edition = "2024"
+
+//- /workspace/project_a/src/lib.rs
+pub struct ProjectA;
+"#;
+
+    #[tokio::test]
+    async fn open_document_records_owner_before_engine_startup_completes() {
+        let fixture = fixture_crate(WORKSPACE_FIXTURE);
+        let (service, _socket) = initialized_service(&fixture);
+        let registry = &service.inner().registry;
+        let document = fixture.path("workspace/project_a/src/lib.rs");
+
+        let owner = {
+            let mut inner = registry.inner.lock().await;
+            DocumentOwner::new(&mut inner, &document, OpenFileCachePolicy::Record)
+                .expect("open document should route through Cargo workspace")
+                .expect("workspace document should have an owner")
+        };
+        let cached_owner = {
+            let inner = registry.inner.lock().await;
+            inner.open_file_owner(&document)
+        };
+
+        assert!(matches!(
+            owner.source(),
+            DocumentOwnerSource::CargoWorkspace
+        ));
+        assert_eq!(cached_owner, Some(owner.id()));
+        assert!(matches!(
+            registry.inner.lock().await.engine(owner.id()),
+            Some(EngineSlot::Starting { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn unopened_document_route_does_not_populate_open_file_cache() {
+        let fixture = fixture_crate(WORKSPACE_FIXTURE);
+        let (service, _socket) = initialized_service(&fixture);
+        let registry = &service.inner().registry;
+        let document = fixture.path("workspace/project_a/src/lib.rs");
+
+        let owner = {
+            let mut inner = registry.inner.lock().await;
+            DocumentOwner::new(&mut inner, &document, OpenFileCachePolicy::Ignore)
+                .expect("document request should route through Cargo workspace")
+                .expect("workspace document should have an owner")
+        };
+        let cached_owner = {
+            let inner = registry.inner.lock().await;
+            inner.open_file_owner(&document)
+        };
+
+        assert!(matches!(
+            owner.source(),
+            DocumentOwnerSource::CargoWorkspace
+        ));
+        assert_eq!(cached_owner, None);
+    }
+
+    fn initialized_service(fixture: &CrateFixture) -> (LspService<TestBackend>, ClientSocket) {
+        let root = fixture.path("workspace");
+        let workspace_folders = vec![root.clone()];
+        let (service, socket) = LspService::new(|client| TestBackend {
+            registry: EngineRegistry::new(
+                client,
+                root.clone(),
+                workspace_folders.clone(),
+                AnalysisConfig::default(),
+                DiagnosticsConfig::default(),
+            ),
+        });
+
+        (service, socket)
+    }
+
+    #[derive(Debug)]
+    struct TestBackend {
+        registry: EngineRegistry,
+    }
+
+    impl LanguageServer for TestBackend {
+        async fn initialize(&self, _params: InitializeParams) -> Result<InitializeResult> {
+            Ok(InitializeResult::default())
+        }
+
+        async fn shutdown(&self) -> Result<()> {
+            Ok(())
+        }
     }
 }

@@ -3,12 +3,11 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Context as _;
 use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
 use tokio::sync::Notify;
 
 use super::{
-    routing::{DocumentEngineRoute, EngineId, EngineRouting},
+    routing::{EngineId, EngineRouting, WorkspaceEngineRoute},
     slot::EngineSlot,
 };
 
@@ -16,46 +15,92 @@ use super::{
 ///
 /// The key invariant here is that routing reservations and engine slot allocation happen together:
 /// once routing hands out a fresh `EngineId`, the same lock scope pushes the corresponding slot.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct EngineRegistryInner {
     pub(super) routing: EngineRouting,
     pub(super) engines: Vec<EngineSlot>,
-    pub(super) analysis_config: Option<AnalysisConfig>,
-    pub(super) diagnostics_config: Option<DiagnosticsConfig>,
+    analysis_config: AnalysisConfig,
+    diagnostics_config: DiagnosticsConfig,
+    last_published_workspace: Option<PathBuf>,
 }
 
 impl EngineRegistryInner {
-    pub(super) fn route_document(
+    pub(super) fn new(
+        workspace_folders: impl IntoIterator<Item = PathBuf>,
+        analysis_config: AnalysisConfig,
+        diagnostics_config: DiagnosticsConfig,
+    ) -> Self {
+        let mut routing = EngineRouting::default();
+        routing.set_workspace_folders(workspace_folders);
+
+        Self {
+            routing,
+            engines: Vec::new(),
+            analysis_config,
+            diagnostics_config,
+            last_published_workspace: None,
+        }
+    }
+
+    pub(super) fn open_file_owner(&self, path: &Path) -> Option<EngineId> {
+        self.routing.open_file_owner(path)
+    }
+
+    pub(super) fn set_open_file(&mut self, path: PathBuf, id: EngineId) {
+        self.routing.set_open_file(path, id);
+    }
+
+    pub(super) fn remove_open_file(
         &mut self,
         path: &Path,
-    ) -> anyhow::Result<Option<ReservedEngineRoute>> {
-        self.routing
-            .route_document(path)
-            .map(|route| self.reserve_route(route))
-            .transpose()
+        owner: Option<EngineId>,
+    ) -> Option<EngineId> {
+        self.routing.remove_open_file(path, owner)
+    }
+
+    pub(super) fn reserve_workspace_root(
+        &mut self,
+        workspace_root: PathBuf,
+    ) -> Option<ReservedEngineRoute> {
+        let route = self.routing.route_workspace_root(workspace_root)?;
+        Some(self.reserve_workspace_route(route))
     }
 
     pub(super) fn engine(&self, id: EngineId) -> Option<&EngineSlot> {
         self.engines.get(id.index())
     }
 
-    fn reserve_route(&mut self, route: DocumentEngineRoute) -> anyhow::Result<ReservedEngineRoute> {
+    pub(super) fn active_ready_id(&self) -> Option<EngineId> {
+        let id = self.routing.active_id()?;
+        self.engine(id).and_then(EngineSlot::ready)?;
+        Some(id)
+    }
+
+    pub(super) fn set_active_id(&mut self, id: EngineId) {
+        self.routing.set_active_id(id);
+    }
+
+    /// Returns the active-workspace display root if the client has not seen it yet.
+    pub(super) fn active_workspace_to_publish(&mut self, id: EngineId) -> Option<PathBuf> {
+        let root = self
+            .routing
+            .root_for_id(id)
+            .map(Path::to_path_buf)
+            .expect("ready engine id should have a routing root");
+
+        if self.last_published_workspace.as_deref() == Some(root.as_path()) {
+            return None;
+        }
+
+        self.last_published_workspace = Some(root.clone());
+        Some(root)
+    }
+
+    fn reserve_workspace_route(&mut self, route: WorkspaceEngineRoute) -> ReservedEngineRoute {
         match route {
-            DocumentEngineRoute::Existing(id) => Ok(ReservedEngineRoute::Existing(id)),
-            DocumentEngineRoute::Spawn { new_id, root } => {
-                let config = match self.spawn_config() {
-                    Ok(config) => config,
-                    Err(error) => {
-                        self.push_slot(
-                            new_id,
-                            EngineSlot::Failed {
-                                root: root.clone(),
-                                error: Arc::from(error.to_string()),
-                            },
-                        );
-                        return Err(error);
-                    }
-                };
+            WorkspaceEngineRoute::Existing(id) => ReservedEngineRoute::Existing(id),
+            WorkspaceEngineRoute::Spawn { new_id, root } => {
+                let config = self.spawn_config();
 
                 // The slot is visible before the process exists. Concurrent routes for the same
                 // root will now receive `Existing(new_id)` and wait on this notification.
@@ -66,26 +111,20 @@ impl EngineRegistryInner {
                     },
                 );
 
-                Ok(ReservedEngineRoute::Spawn(ReservedEngineStart {
+                ReservedEngineRoute::Spawn(ReservedEngineStart {
                     id: new_id,
                     root,
                     config,
-                }))
+                })
             }
         }
     }
 
-    fn spawn_config(&self) -> anyhow::Result<EngineSpawnConfig> {
-        Ok(EngineSpawnConfig {
-            analysis: self
-                .analysis_config
-                .clone()
-                .context("while attempting to spawn engine before analysis configuration")?,
-            diagnostics: self
-                .diagnostics_config
-                .clone()
-                .context("while attempting to spawn engine before diagnostics configuration")?,
-        })
+    fn spawn_config(&self) -> EngineSpawnConfig {
+        EngineSpawnConfig {
+            analysis: self.analysis_config.clone(),
+            diagnostics: self.diagnostics_config.clone(),
+        }
     }
 
     fn push_slot(&mut self, id: EngineId, slot: EngineSlot) {
@@ -109,6 +148,15 @@ pub(super) struct EngineSpawnConfig {
 pub(super) enum ReservedEngineRoute {
     Existing(EngineId),
     Spawn(ReservedEngineStart),
+}
+
+impl ReservedEngineRoute {
+    pub(super) fn id(&self) -> EngineId {
+        match self {
+            Self::Existing(id) => *id,
+            Self::Spawn(start) => start.id,
+        }
+    }
 }
 
 /// Token proving that an engine id has been reserved and needs process startup.

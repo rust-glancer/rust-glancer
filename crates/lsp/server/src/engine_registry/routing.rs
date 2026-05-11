@@ -6,11 +6,12 @@ use std::{
 /// Pure routing state for choosing which engine owns an LSP operation.
 ///
 /// The registry owns engine slots and RPC clients; this table owns path knowledge: workspace
-/// folders, Cargo roots, and which stable engine id belongs to each root.
+/// folders, Cargo workspace roots, and exact open-file ownership.
 #[derive(Debug, Default)]
 pub(crate) struct EngineRouting {
     workspace_folders: Vec<PathBuf>,
     engine_ids_by_root: BTreeMap<PathBuf, EngineId>,
+    engine_ids_by_open_file: BTreeMap<PathBuf, EngineId>,
     last_active_id: Option<EngineId>,
 }
 
@@ -30,55 +31,69 @@ impl EngineRouting {
         self.last_active_id
     }
 
-    /// Routes an explicit Cargo root, reserving a fresh engine id when needed.
+    /// Routes a Cargo-resolved workspace root into its owning workspace engine.
     ///
     /// `Spawn` is a reservation: after this method returns it, the root already maps to `new_id`.
     /// Concurrent callers therefore converge on the same id while the registry starts the process.
-    pub(crate) fn route_root(&mut self, root: PathBuf) -> DocumentEngineRoute {
-        let root = normalize_path(root);
-        if let Some(id) = self.engine_ids_by_root.get(&root).copied() {
-            return DocumentEngineRoute::Existing(id);
+    pub(crate) fn route_workspace_root(
+        &mut self,
+        workspace_root: PathBuf,
+    ) -> Option<WorkspaceEngineRoute> {
+        let workspace_root = normalize_path(workspace_root);
+        if let Some(id) = self.engine_ids_by_root.get(&workspace_root).copied() {
+            return Some(WorkspaceEngineRoute::Existing(id));
+        }
+
+        if !self.is_workspace_root_allowed(&workspace_root) {
+            return None;
         }
 
         let new_id = EngineId(self.engine_ids_by_root.len());
-        self.engine_ids_by_root.insert(root.clone(), new_id);
-        DocumentEngineRoute::Spawn { new_id, root }
+        self.engine_ids_by_root
+            .insert(workspace_root.clone(), new_id);
+        Some(WorkspaceEngineRoute::Spawn {
+            new_id,
+            root: workspace_root,
+        })
     }
 
-    /// Routes a document path to an existing engine, a new workspace engine, or the active engine.
-    pub(crate) fn route_document(&mut self, path: &Path) -> Option<DocumentEngineRoute> {
+    /// Records which engine owns an opened document.
+    pub(crate) fn set_open_file(&mut self, path: PathBuf, id: EngineId) {
+        self.engine_ids_by_open_file
+            .insert(normalize_path(path), id);
+    }
+
+    /// Removes ownership unconditionally, or only when it still belongs to the expected engine.
+    pub(crate) fn remove_open_file(
+        &mut self,
+        path: &Path,
+        owner: Option<EngineId>,
+    ) -> Option<EngineId> {
         let path = normalize_path(path);
-
-        if let Some(id) = self.engine_id_for_path(&path) {
-            return Some(DocumentEngineRoute::Existing(id));
+        if owner.is_none() || self.engine_ids_by_open_file.get(&path).copied() == owner {
+            return self.engine_ids_by_open_file.remove(&path);
         }
 
-        if self.is_in_workspace(&path) {
-            return nearest_cargo_root(&path).map(|root| self.route_root(root));
-        }
-
-        self.active_id().map(DocumentEngineRoute::Existing)
+        None
     }
 
-    #[cfg(test)]
+    /// Returns the engine that owns an open document, if the editor told us about it.
+    pub(crate) fn open_file_owner(&self, path: &Path) -> Option<EngineId> {
+        self.engine_ids_by_open_file
+            .get(&normalize_path(path))
+            .copied()
+    }
+
     pub(crate) fn root_for_id(&self, id: EngineId) -> Option<&Path> {
         self.engine_ids_by_root
             .iter()
             .find_map(|(root, candidate)| (*candidate == id).then_some(root.as_path()))
     }
 
-    fn engine_id_for_path(&self, path: &Path) -> Option<EngineId> {
-        self.engine_ids_by_root
-            .iter()
-            .filter(|(root, _)| path.starts_with(root))
-            .max_by_key(|(root, _)| root.components().count())
-            .map(|(_, id)| *id)
-    }
-
-    fn is_in_workspace(&self, path: &Path) -> bool {
+    fn is_workspace_root_allowed(&self, root: &Path) -> bool {
         self.workspace_folders
             .iter()
-            .any(|workspace_folder| path.starts_with(workspace_folder))
+            .any(|workspace_folder| root.starts_with(workspace_folder.as_path()))
     }
 }
 
@@ -92,9 +107,9 @@ impl EngineId {
     }
 }
 
-/// Routing decision before the registry has materialized any new process.
+/// Routing decision for a known Cargo workspace root.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum DocumentEngineRoute {
+pub(crate) enum WorkspaceEngineRoute {
     Existing(EngineId),
     Spawn { new_id: EngineId, root: PathBuf },
 }
@@ -102,15 +117,4 @@ pub(crate) enum DocumentEngineRoute {
 pub(crate) fn normalize_path(path: impl AsRef<Path>) -> PathBuf {
     let path = path.as_ref();
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-}
-
-fn nearest_cargo_root(path: &Path) -> Option<PathBuf> {
-    let mut current = path.is_dir().then_some(path).or_else(|| path.parent());
-    while let Some(candidate) = current {
-        if candidate.join("Cargo.toml").is_file() {
-            return Some(normalize_path(candidate));
-        }
-        current = candidate.parent();
-    }
-    None
 }

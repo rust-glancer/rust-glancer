@@ -40,38 +40,54 @@ pub struct ExternalDependency;
 #[test]
 fn routes_documents_to_existing_spawned_or_active_engines() {
     check_routing(
-        RoutingFixture::new(MULTI_PROJECT_FIXTURE)
-            .workspace_folders(["workspace"])
-            .active_engine("workspace/project_a")
-            .engine("workspace/project_a/vendor/member"),
+        RoutingFixture::new(MULTI_PROJECT_FIXTURE).workspace_folders(["workspace"]),
         &[
-            RoutingStep::workspace_action("initial active workspace action"),
-            RoutingStep::open("existing project file", "workspace/project_a/src/lib.rs"),
-            RoutingStep::open(
-                "longest nested engine wins",
-                "workspace/project_a/vendor/member/src/lib.rs",
+            RoutingStep::cached_file_owner(
+                "unopened workspace member is not cached",
+                "workspace/project_a/src/lib.rs",
             ),
-            RoutingStep::workspace_action("workspace action follows nested engine"),
-            RoutingStep::open(
-                "new workspace package spawns engine",
+            RoutingStep::workspace_root("resolved workspace root spawns engine", "workspace"),
+            RoutingStep::open_file(
+                "didOpen caches exact file owner",
+                "workspace/project_a/src/lib.rs",
+            ),
+            RoutingStep::cached_file_owner(
+                "same open file reuses cached owner",
+                "workspace/project_a/src/lib.rs",
+            ),
+            RoutingStep::cached_file_owner(
+                "different unopened file is not cached",
                 "workspace/project_b/src/lib.rs",
             ),
-            RoutingStep::workspace_action("workspace action follows spawned engine"),
-            RoutingStep::open(
-                "external file falls back to active",
-                "external/thin_vec/src/lib.rs",
+            RoutingStep::open_file(
+                "didOpen caches second exact file",
+                "workspace/project_b/src/lib.rs",
+            ),
+            RoutingStep::cached_file_owner(
+                "second open file reuses cached owner",
+                "workspace/project_b/src/lib.rs",
+            ),
+            RoutingStep::close_file(
+                "didClose drops exact file owner",
+                "workspace/project_b/src/lib.rs",
+            ),
+            RoutingStep::cached_file_owner(
+                "closed file is no longer cached",
+                "workspace/project_b/src/lib.rs",
             ),
             RoutingStep::workspace_action("external file keeps active engine"),
         ],
         r#"
-initial active workspace action: active e0 /workspace/project_a
-existing project file: existing e0 /workspace/project_a
-longest nested engine wins: existing e1 /workspace/project_a/vendor/member
-workspace action follows nested engine: active e1 /workspace/project_a/vendor/member
-new workspace package spawns engine: spawn e2 /workspace/project_b
-workspace action follows spawned engine: active e2 /workspace/project_b
-external file falls back to active: existing e2 /workspace/project_b
-external file keeps active engine: active e2 /workspace/project_b
+unopened workspace member is not cached: unowned
+resolved workspace root spawns engine: spawn e0 /workspace
+didOpen caches exact file owner: active e0 /workspace
+same open file reuses cached owner: existing e0 /workspace
+different unopened file is not cached: unowned
+didOpen caches second exact file: active e0 /workspace
+second open file reuses cached owner: existing e0 /workspace
+didClose drops exact file owner: closed
+closed file is no longer cached: unowned
+external file keeps active engine: active e0 /workspace
 "#,
     );
 }

@@ -13,7 +13,7 @@ import {
   Trace,
 } from "vscode-languageclient/node";
 
-import { SERVER_COMMANDS } from "../commands";
+import { SERVER_COMMANDS, SERVER_NOTIFICATIONS } from "../commands";
 import { ExtensionConfig, type TraceSetting } from "../config";
 import { hoverMiddleware } from "../features/hover-actions";
 import { ClientStatus, type ClientStatusSnapshot } from "../status/client-status";
@@ -92,22 +92,30 @@ export class LanguageClientSession implements vscode.Disposable {
     );
 
     this.client = client;
-    this.clientState = client.onDidChangeState((event) => {
-      switch (event.newState) {
-        case State.Starting:
-          this.clientStatus.starting(statusDetails);
-          break;
-        case State.Running:
-          this.clientStatus.ready(statusDetails);
-          this.refreshStatus();
-          break;
-        case State.Stopped:
-          if (this.client === client) {
-            this.clientStatus.stopped("language client stopped", statusDetails);
-          }
-          break;
-      }
-    });
+    this.clientState = vscode.Disposable.from(
+      client.onDidChangeState((event) => {
+        switch (event.newState) {
+          case State.Starting:
+            this.clientStatus.starting(statusDetails);
+            break;
+          case State.Running:
+            this.clientStatus.ready(statusDetails);
+            this.refreshStatus();
+            break;
+          case State.Stopped:
+            if (this.client === client) {
+              this.clientStatus.stopped("language client stopped", statusDetails);
+            }
+            break;
+        }
+      }),
+      client.onNotification(SERVER_NOTIFICATIONS.activeWorkspaceChanged, (params: unknown) => {
+        const root = activeWorkspaceRoot(params);
+        if (root !== undefined) {
+          this.clientStatus.activeWorkspace(root, this.isActiveRustDocumentDirty());
+        }
+      }),
+    );
 
     try {
       await client.start();
@@ -202,6 +210,15 @@ export class LanguageClientSession implements vscode.Disposable {
     const document = vscode.window.activeTextEditor?.document;
     return document !== undefined && isRustFile(document) && document.isDirty;
   }
+}
+
+function activeWorkspaceRoot(params: unknown): string | undefined {
+  if (typeof params !== "object" || params === null) {
+    return undefined;
+  }
+
+  const root = (params as { root?: unknown }).root;
+  return typeof root === "string" && root.length > 0 ? root : undefined;
 }
 
 function trace(setting: TraceSetting): Trace {

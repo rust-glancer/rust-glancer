@@ -29,6 +29,7 @@ interface LanguageClientSessionSnapshot {
     readonly text: string;
     readonly details: {
       readonly workspaceRoot?: string;
+      readonly activeWorkspaceRoot?: string;
       readonly serverCommand?: string;
       readonly serverSource?: string;
     };
@@ -55,10 +56,15 @@ suite("Rust Glancer extension", () => {
 
     const simpleReady = await waitForClientState((state) => readySession(state) !== undefined);
     assert.ok(simpleReady.session);
-    assert.equal(simpleReady.status.text, "$(check) Rust Glancer: ready");
     await waitForOutput(
       /workspace indexing finished.*simple_crate|simple_crate.*workspace indexing finished/,
     );
+    const activeSimple = await waitForClientState(
+      (state) =>
+        activeWorkspaceName(readySession(state)) === "simple_crate" &&
+        state.status.text.includes("[simple_crate]"),
+    );
+    assert.equal(activeSimple.status.text, "$(check) Rust Glancer: ready [simple_crate]");
 
     const commands = await vscode.commands.getCommands(true);
     assert.ok(commands.includes(EXTENSION_COMMANDS.restartServer));
@@ -75,13 +81,18 @@ suite("Rust Glancer extension", () => {
     );
     await vscode.window.showTextDocument(document);
 
-    const multiRootReady = await waitForClientState((state) => readySession(state) !== undefined);
-    const multiRootSession = readySession(multiRootReady);
-    assert.ok(multiRootSession);
-    assert.equal(multiRootSession.status.details.workspaceRoot, multiRootSession.workspaceRoot);
+    await waitForClientState((state) => readySession(state) !== undefined);
     await waitForOutput(
       /workspace indexing finished.*moderate_crate|moderate_crate.*workspace indexing finished/,
     );
+    const multiRootReady = await waitForClientState(
+      (state) =>
+        activeWorkspaceName(readySession(state)) === "moderate_crate" &&
+        state.status.text.includes("[moderate_crate]"),
+    );
+    const multiRootSession = readySession(multiRootReady);
+    assert.ok(multiRootSession);
+    assert.equal(multiRootSession.status.details.workspaceRoot, multiRootSession.workspaceRoot);
 
     const outputAfterProjectSwitch =
       (await vscode.commands.executeCommand<string>(EXTENSION_COMMANDS.testGetOutput)) ?? "";
@@ -173,4 +184,11 @@ function readySession(
   }
 
   return undefined;
+}
+
+function activeWorkspaceName(
+  session: LanguageClientSessionSnapshot | undefined,
+): string | undefined {
+  const root = session?.status.details.activeWorkspaceRoot;
+  return root === undefined ? undefined : path.basename(root);
 }

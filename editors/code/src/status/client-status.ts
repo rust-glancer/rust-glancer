@@ -12,7 +12,7 @@ import {
   type WorkDoneProgressReport,
 } from "vscode-languageclient/node";
 
-import { StatusView, type StatusDetails, type StatusSnapshot } from "./status-view";
+import { StatusView, statusText, type StatusDetails, type StatusSnapshot } from "./status-view";
 
 const CARGO_DIAGNOSTICS_PROGRESS_TITLE = "Cargo diagnostics";
 
@@ -82,6 +82,18 @@ export class ClientStatus {
     this.show("indexing", "$(sync~spin) Rust Glancer: indexing", () =>
       this.view.indexing(this.details),
     );
+  }
+
+  public activeWorkspace(root: string, isActiveRustDocumentDirty: boolean): void {
+    if (this.details === undefined) {
+      return;
+    }
+
+    this.details = {
+      ...this.details,
+      activeWorkspaceRoot: root,
+    };
+    this.refresh(isActiveRustDocumentDirty);
   }
 
   public stopped(reason: string, details: StatusDetails | undefined = this.details): void {
@@ -188,10 +200,10 @@ export class ClientStatus {
     };
   }
 
-  private show(state: StatusSnapshot["state"], text: string, render: () => void): void {
+  private show(state: StatusSnapshot["state"], baseText: string, render: () => void): void {
     this.currentStatus = {
       state,
-      text,
+      text: statusText(baseText, this.details),
       details: this.details === undefined ? {} : { ...this.details },
     };
     if (this.shouldRender()) {

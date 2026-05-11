@@ -4,12 +4,14 @@
  * This module knows how status states should look in VS Code: text, tooltip contents, background
  * color, command wiring, and plain snapshots for tests. It does not decide lifecycle state.
  */
+import * as path from "node:path";
 import * as vscode from "vscode";
 
 import { EXTENSION_COMMANDS } from "../commands";
 
 export interface StatusDetails {
   readonly workspaceRoot?: string;
+  readonly activeWorkspaceRoot?: string;
   readonly serverCommand?: string;
   readonly serverSource?: string;
 }
@@ -135,7 +137,7 @@ export class StatusView implements vscode.Disposable {
 
   private showState(
     state: StatusState,
-    text: string,
+    baseText: string,
     tooltipState: string,
     details: StatusDetails,
     backgroundColor: vscode.ThemeColor | undefined = undefined,
@@ -147,10 +149,10 @@ export class StatusView implements vscode.Disposable {
     this.details = details;
     this.currentSnapshot = {
       state,
-      text,
+      text: statusText(baseText, details),
       details: { ...details },
     };
-    this.item.text = text;
+    this.item.text = this.currentSnapshot.text;
     this.item.tooltip = this.tooltip(tooltipState);
     this.item.backgroundColor = backgroundColor;
     this.item.show();
@@ -161,8 +163,11 @@ export class StatusView implements vscode.Disposable {
     tooltip.appendMarkdown(`**Rust Glancer**\n\n`);
     appendTextField(tooltip, "State", state);
 
+    if (this.details.activeWorkspaceRoot !== undefined) {
+      appendCodeField(tooltip, "Active workspace", this.details.activeWorkspaceRoot);
+    }
     if (this.details.workspaceRoot !== undefined) {
-      appendCodeField(tooltip, "Workspace", this.details.workspaceRoot);
+      appendCodeField(tooltip, "Server workspace", this.details.workspaceRoot);
     }
     if (this.details.serverCommand !== undefined) {
       appendCodeField(tooltip, "Server", this.details.serverCommand);
@@ -190,4 +195,20 @@ function appendCodeField(tooltip: vscode.MarkdownString, label: string, value: s
 
 function singleLine(value: string): string {
   return value.replace(/\s+/g, " ");
+}
+
+export function statusText(baseText: string, details: StatusDetails | undefined): string {
+  const label = workspaceLabel(details);
+  return label === undefined ? baseText : `${baseText} [${label}]`;
+}
+
+function workspaceLabel(details: StatusDetails | undefined): string | undefined {
+  const root = details?.activeWorkspaceRoot;
+  if (root === undefined) {
+    return undefined;
+  }
+
+  const trimmed = root.replace(/[\\/]+$/, "");
+  const label = path.basename(trimmed);
+  return label.length > 0 ? label : trimmed;
 }

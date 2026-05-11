@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, path::PathBuf};
 
 use tower_lsp_server::{
     Client as LspClient, LanguageServer,
@@ -6,42 +6,52 @@ use tower_lsp_server::{
     ls_types::{request::*, *},
 };
 
+use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
+use tokio::sync::OnceCell;
+
 use crate::{
     engine_client::EngineClient,
     engine_registry::EngineRegistry,
-    methods::{self, MethodContext, ServerContext},
+    methods::{self, MethodContext},
 };
 
 #[derive(Debug)]
 pub(crate) struct Backend {
-    engines: EngineRegistry,
+    lsp_client: LspClient,
+    engines: OnceCell<EngineRegistry>,
 }
 
 impl Backend {
     pub(crate) fn new(lsp_client: LspClient) -> Self {
-        let engines = EngineRegistry::new(lsp_client);
-        Self { engines }
+        Self {
+            lsp_client,
+            engines: OnceCell::new(),
+        }
     }
 
-    fn server_context(&self) -> ServerContext<'_> {
-        ServerContext {
-            engines: &self.engines,
-        }
+    async fn registry(&self) -> Result<&EngineRegistry> {
+        self.engines.get().ok_or(Error {
+            code: ErrorCode::ServerError(-32002),
+            message: Cow::Borrowed("rust-glancer engine registry is not initialized"),
+            data: None,
+        })
     }
 
     fn method_context(&self, engine_client: EngineClient) -> MethodContext {
         MethodContext { engine_client }
     }
 
-    async fn method_context_for(&self, uri: &Uri) -> anyhow::Result<Option<MethodContext>> {
+    async fn method_context_for(&self, uri: &Uri) -> Result<Option<MethodContext>> {
         let Some(path) = methods::uri_to_path(uri) else {
             return Ok(None);
         };
         let Some(engine_client) = self
-            .engines
-            .engine_for_document(&path)
+            .registry()
+            .await?
+            .document(&path)
             .await
-            .inspect_err(|_| tracing::error!("failed to route LSP method to an engine"))?
+            .inspect_err(|_| tracing::error!("failed to route LSP method to an engine"))
+            .map_err(methods::internal_error)?
         else {
             return Ok(None);
         };
@@ -49,18 +59,46 @@ impl Backend {
         Ok(Some(self.method_context(engine_client)))
     }
 
-    async fn active_method_context(&self) -> Option<MethodContext> {
-        self.engines
+    async fn active_method_context(&self) -> Result<Option<MethodContext>> {
+        Ok(self
+            .registry()
+            .await?
             .active_engine()
             .await
-            .map(|engine_client| self.method_context(engine_client))
+            .map(|engine_client| self.method_context(engine_client)))
     }
 }
 
 impl LanguageServer for Backend {
     #[tracing::instrument(skip_all, fields(method = "initialize"))]
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
-        methods::initialize(self.server_context(), params).await
+        let Some(root) = workspace_root(&params) else {
+            return Err(Error::invalid_params(
+                "rust-glancer requires a filesystem workspace root",
+            ));
+        };
+
+        let diagnostics_config =
+            DiagnosticsConfig::from_initialization_options(params.initialization_options.as_ref())
+                .map_err(|error| Error::invalid_params(error.to_string()))?;
+        let analysis_config =
+            AnalysisConfig::from_initialization_options(params.initialization_options.as_ref());
+        let workspace_folders = workspace_folders(&params);
+        let engines = EngineRegistry::new(
+            self.lsp_client.clone(),
+            root,
+            workspace_folders,
+            analysis_config,
+            diagnostics_config,
+        );
+
+        self.engines.set(engines).map_err(|_| Error {
+            code: ErrorCode::InvalidRequest,
+            message: Cow::Borrowed("rust-glancer engine registry is already initialized"),
+            data: None,
+        })?;
+
+        Ok(methods::initialize())
     }
 
     #[tracing::instrument(skip_all, fields(method = "initialized"))]
@@ -70,7 +108,11 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(skip_all, fields(method = "shutdown"))]
     async fn shutdown(&self) -> Result<()> {
-        for engine_client in self.engines.engine_clients().await {
+        let Ok(registry) = self.registry().await else {
+            return Ok(());
+        };
+
+        for engine_client in registry.engine_clients().await {
             let context = self.method_context(engine_client);
             if let Err(error) = methods::shutdown(context).await {
                 tracing::debug!(error = %error, "failed to shut down rust-glancer engine");
@@ -85,15 +127,23 @@ impl LanguageServer for Backend {
         fields(method = "didOpen", uri = ?params.text_document.uri)
     )]
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        let Some(context) = self
-            .method_context_for(&params.text_document.uri)
+        let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
+            return;
+        };
+        let Some(registry) = self.registry().await.ok() else {
+            return;
+        };
+        let Some(engine_client) = registry
+            .open_document(&path)
             .await
+            .inspect_err(|_| tracing::error!("failed to route opened document to an engine"))
             .ok()
             .flatten()
         else {
             return;
         };
-        methods::text_document::did_open::did_open(context, params).await;
+        methods::text_document::did_open::did_open(self.method_context(engine_client), params)
+            .await;
     }
 
     #[tracing::instrument(
@@ -133,15 +183,23 @@ impl LanguageServer for Backend {
         fields(method = "didClose", uri = ?params.text_document.uri)
     )]
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
-        let Some(context) = self
-            .method_context_for(&params.text_document.uri)
+        let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
+            return;
+        };
+        let Some(registry) = self.registry().await.ok() else {
+            return;
+        };
+        let Some(engine_client) = registry
+            .close_document(&path)
             .await
+            .inspect_err(|_| tracing::error!("failed to route closed document to an engine"))
             .ok()
             .flatten()
         else {
             return;
         };
-        methods::text_document::did_close::did_close(context, params).await;
+        methods::text_document::did_close::did_close(self.method_context(engine_client), params)
+            .await;
     }
 
     #[tracing::instrument(
@@ -157,8 +215,7 @@ impl LanguageServer for Backend {
     ) -> Result<Option<GotoDefinitionResponse>> {
         let Some(context) = self
             .method_context_for(&params.text_document_position_params.text_document.uri)
-            .await
-            .map_err(methods::internal_error)?
+            .await?
         else {
             return Ok(None);
         };
@@ -178,8 +235,7 @@ impl LanguageServer for Backend {
     ) -> Result<Option<GotoTypeDefinitionResponse>> {
         let Some(context) = self
             .method_context_for(&params.text_document_position_params.text_document.uri)
-            .await
-            .map_err(methods::internal_error)?
+            .await?
         else {
             return Ok(None);
         };
@@ -196,8 +252,7 @@ impl LanguageServer for Backend {
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let Some(context) = self
             .method_context_for(&params.text_document_position_params.text_document.uri)
-            .await
-            .map_err(methods::internal_error)?
+            .await?
         else {
             return Ok(None);
         };
@@ -214,8 +269,7 @@ impl LanguageServer for Backend {
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let Some(context) = self
             .method_context_for(&params.text_document_position.text_document.uri)
-            .await
-            .map_err(methods::internal_error)?
+            .await?
         else {
             return Ok(None);
         };
@@ -230,11 +284,7 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentSymbolParams,
     ) -> Result<Option<DocumentSymbolResponse>> {
-        let Some(context) = self
-            .method_context_for(&params.text_document.uri)
-            .await
-            .map_err(methods::internal_error)?
-        else {
+        let Some(context) = self.method_context_for(&params.text_document.uri).await? else {
             return Ok(None);
         };
         methods::text_document::document_symbol::document_symbol(context, params).await
@@ -245,11 +295,7 @@ impl LanguageServer for Backend {
         fields(method = "inlayHint", uri = ?params.text_document.uri)
     )]
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
-        let Some(context) = self
-            .method_context_for(&params.text_document.uri)
-            .await
-            .map_err(methods::internal_error)?
-        else {
+        let Some(context) = self.method_context_for(&params.text_document.uri).await? else {
             return Ok(None);
         };
         methods::text_document::inlay_hint::inlay_hint(context, params).await
@@ -260,7 +306,7 @@ impl LanguageServer for Backend {
         &self,
         params: WorkspaceSymbolParams,
     ) -> Result<Option<WorkspaceSymbolResponse>> {
-        let Some(context) = self.active_method_context().await else {
+        let Some(context) = self.active_method_context().await? else {
             return Ok(Some(WorkspaceSymbolResponse::Nested(Vec::new())));
         };
         methods::workspace::symbol::symbol(context, params).await
@@ -271,7 +317,7 @@ impl LanguageServer for Backend {
         fields(method = "executeCommand", command = %params.command)
     )]
     async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<LSPAny>> {
-        let Some(context) = self.active_method_context().await else {
+        let Some(context) = self.active_method_context().await? else {
             return Err(Error {
                 code: ErrorCode::InvalidRequest,
                 message: Cow::Borrowed("Rust Glancer has no active Rust project for this command"),
@@ -279,5 +325,61 @@ impl LanguageServer for Backend {
             });
         };
         methods::workspace::execute_command::execute_command(context, params).await
+    }
+}
+
+// `root_uri` is deprecated in favor of `workspace_folders`, but clients still send it as the
+// process-level fallback root. Use it only to make initialization work when a client omits the
+// workspace-folder list; routed document requests still choose concrete Cargo roots later.
+#[expect(deprecated)]
+fn workspace_root(params: &InitializeParams) -> Option<PathBuf> {
+    params
+        .root_uri
+        .as_ref()
+        .and_then(methods::uri_to_path)
+        .or_else(|| {
+            params
+                .workspace_folders
+                .as_ref()
+                .and_then(|folders| folders.first())
+                .and_then(|folder| methods::uri_to_path(&folder.uri))
+        })
+        .or_else(|| params.root_path.as_ref().map(PathBuf::from))
+}
+
+fn workspace_folders(params: &InitializeParams) -> Vec<PathBuf> {
+    let mut folders = params
+        .workspace_folders
+        .as_ref()
+        .into_iter()
+        .flatten()
+        .filter_map(|folder| methods::uri_to_path(&folder.uri))
+        .collect::<Vec<_>>();
+    folders.sort();
+    folders.dedup();
+    folders
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, str::FromStr as _};
+
+    use tower_lsp_server::ls_types::{InitializeParams, Uri, WorkspaceFolder};
+
+    use super::workspace_root;
+
+    #[test]
+    #[expect(deprecated)]
+    fn workspace_root_prefers_client_root_uri_over_workspace_folder_list() {
+        let params = InitializeParams {
+            root_uri: Some(Uri::from_str("file:///selected").expect("test URI should parse")),
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: Uri::from_str("file:///first-folder").expect("test URI should parse"),
+                name: "first-folder".to_string(),
+            }]),
+            ..Default::default()
+        };
+
+        assert_eq!(workspace_root(&params), Some(PathBuf::from("/selected")));
     }
 }
