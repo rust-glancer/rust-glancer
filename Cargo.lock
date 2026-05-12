@@ -1344,6 +1344,7 @@ dependencies = [
  "rg_memsize",
  "rg_project",
  "rg_workspace",
+ "serde",
  "serde_json",
  "tikv-jemalloc-sys",
  "tikv-jemallocator",

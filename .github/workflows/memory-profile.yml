@@ -1,0 +1,85 @@
+name: Memory Profile
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "rust-toolchain.toml"
+      - ".github/scripts/render_memory_profile_comment.py"
+      - ".github/workflows/memory-profile.yml"
+      - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
+  push:
+    branches:
+      - main
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "rust-toolchain.toml"
+      - ".github/scripts/render_memory_profile_comment.py"
+      - ".github/workflows/memory-profile.yml"
+      - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  memory-profile:
+    name: memory-profile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore base memory profile
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci/memory/base
+          key: memory-profile-${{ github.event.pull_request.base.sha }}
+
+      - name: Fetch rust-analyzer fixture
+        run: ./test_targets/bench_fixtures/fetch-rust-analyzer.sh
+
+      - name: Build rust-glancer
+        run: cargo build --release --locked -p rust-glancer
+
+      - name: Run memory profile
+        run: |
+          mkdir -p .ci/memory/current
+          target/release/rust-glancer analyze test_targets/bench_fixtures/rust-analyzer \
+            --memory \
+            --package-residency all-offloadable \
+            --format json > .ci/memory/current/result.json
+
+      - name: Render memory profile comment
+        run: |
+          python3 .github/scripts/render_memory_profile_comment.py \
+            --current .ci/memory/current/result.json \
+            --base .ci/memory/base/result.json \
+            --output .ci/memory/comment.md
+          cat .ci/memory/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on pull request
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rust-glancer-memory-profile
+          path: .ci/memory/comment.md
+
+      - name: Prepare main-branch memory profile cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p .ci/memory/base
+          cp .ci/memory/current/result.json .ci/memory/base/result.json
+
+      - name: Save main-branch memory profile cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: .ci/memory/base
+          key: memory-profile-${{ github.sha }}
