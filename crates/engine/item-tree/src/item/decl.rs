@@ -18,9 +18,7 @@ use super::{
 };
 
 /// Generic parameter data attached to an item declaration.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct GenericParams {
     pub lifetimes: Vec<LifetimeParamData>,
     pub types: Vec<TypeParamData>,
@@ -170,7 +168,7 @@ impl fmt::Display for GenericParams {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct LifetimeParamData {
     pub name: Name,
     pub bounds: Vec<String>,
@@ -186,7 +184,7 @@ impl LifetimeParamData {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct TypeParamData {
     pub name: Name,
     pub bounds: Vec<TypeBound>,
@@ -206,7 +204,7 @@ impl TypeParamData {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ConstParamData {
     pub name: Name,
     pub ty: Option<TypeRef>,
@@ -226,7 +224,7 @@ impl ConstParamData {
 }
 
 /// Where-clause predicate that can affect later signature resolution.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum WherePredicate {
     Type {
         ty: TypeRef,
@@ -295,7 +293,7 @@ impl fmt::Display for WherePredicate {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct FunctionItem {
     pub generics: GenericParams,
     pub params: Vec<ParamItem>,
@@ -332,16 +330,14 @@ impl FunctionItem {
     }
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct FunctionQualifiers {
     pub is_async: bool,
     pub is_const: bool,
     pub is_unsafe: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ParamItem {
     pub pat: String,
     pub ty: Option<TypeRef>,
@@ -394,13 +390,13 @@ impl ParamItem {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum ParamKind {
     SelfParam,
     Normal,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct StructItem {
     pub generics: GenericParams,
     pub fields: FieldList,
@@ -424,7 +420,7 @@ impl StructItem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct UnionItem {
     pub generics: GenericParams,
     pub fields: Vec<FieldItem>,
@@ -454,7 +450,7 @@ impl UnionItem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct EnumItem {
     pub generics: GenericParams,
     pub variants: Vec<EnumVariantItem>,
@@ -485,7 +481,7 @@ impl EnumItem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct EnumVariantItem {
     pub name: Name,
     pub span: Span,
@@ -528,7 +524,7 @@ impl EnumVariantItem {
 }
 
 /// Field shape shared by structs and enum variants.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum FieldList {
     Named(Vec<FieldItem>),
     Tuple(Vec<FieldItem>),
@@ -572,7 +568,7 @@ impl FieldList {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct FieldItem {
     pub key: Option<FieldKey>,
     pub visibility: VisibilityLevel,
@@ -582,7 +578,7 @@ pub struct FieldItem {
 }
 
 /// User-visible field identity before semantic ownership is known.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum FieldKey {
     Named(Name),
     Tuple(usize),
@@ -673,7 +669,7 @@ impl FieldItem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct TraitItem {
     pub generics: GenericParams,
     pub super_traits: Vec<TypeBound>,
@@ -706,7 +702,7 @@ impl TraitItem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ImplItem {
     pub generics: GenericParams,
     pub trait_ref: Option<TypeRef>,
@@ -777,7 +773,7 @@ impl ImplItem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct TypeAliasItem {
     pub generics: GenericParams,
     pub bounds: Vec<TypeBound>,
@@ -811,7 +807,7 @@ impl TypeAliasItem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ConstItem {
     pub generics: GenericParams,
     pub ty: Option<TypeRef>,
@@ -839,7 +835,7 @@ impl ConstItem {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct StaticItem {
     pub ty: Option<TypeRef>,
     pub mutability: Mutability,

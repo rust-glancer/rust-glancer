@@ -1,4 +1,4 @@
-//! Owned cache metadata encoding built on rkyv.
+//! Owned cache metadata encoding built on wincode.
 //!
 //! Cache-native metadata structs are the artifact schema, and retained package payloads archive
 //! directly through their cache bundle wrappers.
@@ -10,60 +10,57 @@ use super::{
     PackageCacheHeader,
 };
 
+// Limit preallocation per package to 256mb.
+// This is meant to be a protection against corrupted/absurd artifacts, yet be sufficient
+// for any realistic payload.
+const PACKAGE_CACHE_PREALLOCATION_LIMIT_BYTES: usize = 256 * 1024 * 1024;
+
+type PackageCacheWincodeConfig =
+    wincode::config::Configuration<true, PACKAGE_CACHE_PREALLOCATION_LIMIT_BYTES>;
+
 /// Encodes and decodes cache artifact metadata.
 pub struct PackageCacheCodec;
 
 impl PackageCacheCodec {
     #[cfg(test)]
-    pub(super) fn encode_header(
-        header: &PackageCacheHeader,
-    ) -> anyhow::Result<rkyv::util::AlignedVec> {
-        Self::encode_with_cleared_arena(header)
+    pub(super) fn encode_header(header: &PackageCacheHeader) -> anyhow::Result<Vec<u8>> {
+        wincode::config::serialize(header, Self::wincode_config())
+            .map_err(|error| anyhow::anyhow!("{error}"))
             .context("while attempting to serialize package cache header")
     }
 
     #[cfg(test)]
     pub(super) fn decode_header(bytes: &[u8]) -> anyhow::Result<PackageCacheHeader> {
-        let header = rkyv::from_bytes::<PackageCacheHeader, rkyv::rancor::Error>(bytes)
-            .map_err(|error| anyhow::anyhow!("{error}"))
-            .context("while attempting to deserialize package cache header")?;
+        let header =
+            wincode::config::deserialize::<PackageCacheHeader, _>(bytes, Self::wincode_config())
+                .map_err(|error| anyhow::anyhow!("{error}"))
+                .context("while attempting to deserialize package cache header")?;
 
         Self::validate_header(&header)?;
 
         Ok(header)
     }
 
-    pub fn encode_artifact(
-        artifact: &PackageCacheArtifact,
-    ) -> anyhow::Result<rkyv::util::AlignedVec> {
-        Self::encode_with_cleared_arena(artifact)
+    pub fn encode_artifact(artifact: &PackageCacheArtifact) -> anyhow::Result<Vec<u8>> {
+        wincode::config::serialize(artifact, Self::wincode_config())
+            .map_err(|error| anyhow::anyhow!("{error}"))
             .context("while attempting to serialize package cache artifact")
     }
 
-    fn encode_with_cleared_arena<T>(value: &T) -> anyhow::Result<rkyv::util::AlignedVec>
-    where
-        T: for<'a> rkyv::Serialize<
-                rkyv::api::high::HighSerializer<
-                    rkyv::util::AlignedVec,
-                    rkyv::ser::allocator::ArenaHandle<'a>,
-                    rkyv::rancor::Error,
-                >,
-            >,
-    {
-        let bytes = rkyv::to_bytes::<rkyv::rancor::Error>(value)
-            .map_err(|error| anyhow::anyhow!("{error}"));
-        rkyv::util::clear_arena();
-        bytes
-    }
-
     pub fn decode_artifact(bytes: &[u8]) -> anyhow::Result<PackageCacheArtifact> {
-        let artifact = rkyv::from_bytes::<PackageCacheArtifact, rkyv::rancor::Error>(bytes)
-            .map_err(|error| anyhow::anyhow!("{error}"))
-            .context("while attempting to deserialize package cache artifact")?;
+        let artifact =
+            wincode::config::deserialize::<PackageCacheArtifact, _>(bytes, Self::wincode_config())
+                .map_err(|error| anyhow::anyhow!("{error}"))
+                .context("while attempting to deserialize package cache artifact")?;
 
         Self::validate_artifact(&artifact)?;
 
         Ok(artifact)
+    }
+
+    fn wincode_config() -> PackageCacheWincodeConfig {
+        wincode::config::Configuration::default()
+            .with_preallocation_size_limit::<PACKAGE_CACHE_PREALLOCATION_LIMIT_BYTES>()
     }
 
     fn validate_header(header: &PackageCacheHeader) -> anyhow::Result<()> {

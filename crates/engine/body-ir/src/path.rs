@@ -7,7 +7,7 @@ use rg_parse::Span;
 ///
 /// DefMap paths intentionally keep only the semantic shape. Body IR also needs cursor layout so
 /// analysis can distinguish `Command` from `Configure` in `Command::Configure`.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct BodyPath {
     /// Semantic path shape shared with DefMap and Semantic IR.
     pub path: Path,

@@ -5,58 +5,27 @@ use rg_text::Name;
 use crate::ids::BodyItemRef;
 
 /// Small type vocabulary for the first Body IR pass.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
-#[rkyv(
-    bytecheck(
-        bounds(
-            __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
-            <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-        )
-    ),
-    serialize_bounds(
-        __S: rkyv::ser::Allocator + rkyv::ser::Sharing + rkyv::ser::Writer,
-        <__S as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    ),
-    deserialize_bounds(
-        __D: rkyv::de::Pooling,
-        <__D as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    )
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum BodyTy {
     Unit,
     Never,
     Syntax(TypeRef),
-    Reference(#[rkyv(omit_bounds)] Box<BodyTy>),
-    LocalNominal(#[rkyv(omit_bounds)] Vec<BodyLocalNominalTy>),
-    Nominal(#[rkyv(omit_bounds)] Vec<BodyNominalTy>),
-    SelfTy(#[rkyv(omit_bounds)] Vec<BodyNominalTy>),
+    Reference(#[wincode(with = "rg_text::WincodeDynamic<Box<BodyTy>>")] Box<BodyTy>),
+    LocalNominal(
+        #[wincode(with = "rg_text::WincodeDynamic<Vec<BodyLocalNominalTy>>")]
+        Vec<BodyLocalNominalTy>,
+    ),
+    Nominal(#[wincode(with = "rg_text::WincodeDynamic<Vec<BodyNominalTy>>")] Vec<BodyNominalTy>),
+    SelfTy(#[wincode(with = "rg_text::WincodeDynamic<Vec<BodyNominalTy>>")] Vec<BodyNominalTy>),
     #[default]
     Unknown,
 }
 
 /// Body-local nominal type together with the generic arguments visible at use site.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[rkyv(
-    bytecheck(
-        bounds(
-            __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
-            <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-        )
-    ),
-    serialize_bounds(
-        __S: rkyv::ser::Allocator + rkyv::ser::Sharing + rkyv::ser::Writer,
-        <__S as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    ),
-    deserialize_bounds(
-        __D: rkyv::de::Pooling,
-        <__D as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    )
-)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct BodyLocalNominalTy {
     pub item: BodyItemRef,
-    #[rkyv(omit_bounds)]
+    #[wincode(with = "rg_text::WincodeDynamic<Vec<BodyGenericArg>>")]
     pub args: Vec<BodyGenericArg>,
 }
 
@@ -77,26 +46,10 @@ impl BodyLocalNominalTy {
 }
 
 /// Module-level nominal type together with the generic arguments visible at use site.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[rkyv(
-    bytecheck(
-        bounds(
-            __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
-            <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-        )
-    ),
-    serialize_bounds(
-        __S: rkyv::ser::Allocator + rkyv::ser::Sharing + rkyv::ser::Writer,
-        <__S as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    ),
-    deserialize_bounds(
-        __D: rkyv::de::Pooling,
-        <__D as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    )
-)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct BodyNominalTy {
     pub def: TypeDefRef,
-    #[rkyv(omit_bounds)]
+    #[wincode(with = "rg_text::WincodeDynamic<Vec<BodyGenericArg>>")]
     pub args: Vec<BodyGenericArg>,
 }
 
@@ -117,30 +70,14 @@ impl BodyNominalTy {
 }
 
 /// Generic argument as understood by the intentionally small Body IR type model.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[rkyv(
-    bytecheck(
-        bounds(
-            __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
-            <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-        )
-    ),
-    serialize_bounds(
-        __S: rkyv::ser::Allocator + rkyv::ser::Sharing + rkyv::ser::Writer,
-        <__S as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    ),
-    deserialize_bounds(
-        __D: rkyv::de::Pooling,
-        <__D as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    )
-)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum BodyGenericArg {
-    Type(#[rkyv(omit_bounds)] Box<BodyTy>),
+    Type(#[wincode(with = "rg_text::WincodeDynamic<Box<BodyTy>>")] Box<BodyTy>),
     Lifetime(String),
     Const(String),
     AssocType {
         name: Name,
-        #[rkyv(omit_bounds)]
+        #[wincode(with = "rg_text::WincodeDynamic<Option<Box<BodyTy>>>")]
         ty: Option<Box<BodyTy>>,
     },
     Unsupported(String),

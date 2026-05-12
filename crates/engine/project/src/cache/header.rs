@@ -4,7 +4,7 @@
 //! cached package metadata so stale or mismatched files can be rejected before loading analysis
 //! payloads.
 
-use rkyv::{Archive, Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::{cached::CachedPackage, fingerprint::Fingerprint};
 
@@ -12,11 +12,11 @@ use super::{cached::CachedPackage, fingerprint::Fingerprint};
 pub const CURRENT_PACKAGE_CACHE_SCHEMA_VERSION: PackageCacheSchemaVersion =
     PackageCacheSchemaVersion(1);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Archive, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct PackageCacheSchemaVersion(pub u32);
 
 /// Header shared by future package cache artifacts.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Archive, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct PackageCacheHeader {
     pub schema_version: PackageCacheSchemaVersion,
     pub package: CachedPackage,

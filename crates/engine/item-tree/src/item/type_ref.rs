@@ -11,7 +11,7 @@ use rg_text::{Name, NameInterner};
 use super::normalized_syntax;
 
 /// Syntax-level mutability marker used by lowered declarations and type refs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum Mutability {
     Shared,
     Mutable,
@@ -36,55 +36,39 @@ impl fmt::Display for Mutability {
 ///
 /// This intentionally stops before semantic resolution. `TypeRef` represents what the user wrote
 /// in an item declaration; resolving paths to definitions belongs to later IR layers.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[rkyv(
-    bytecheck(
-        bounds(
-            __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
-            <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-        )
-    ),
-    serialize_bounds(
-        __S: rkyv::ser::Allocator + rkyv::ser::Sharing + rkyv::ser::Writer,
-        <__S as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    ),
-    deserialize_bounds(
-        __D: rkyv::de::Pooling,
-        <__D as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    )
-)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum TypeRef {
     Unknown(String),
     Never,
     Unit,
     Infer,
-    Path(#[rkyv(omit_bounds)] TypePath),
-    Tuple(#[rkyv(omit_bounds)] Vec<TypeRef>),
+    Path(#[wincode(with = "rg_text::WincodeDynamic<TypePath>")] TypePath),
+    Tuple(#[wincode(with = "rg_text::WincodeDynamic<Vec<TypeRef>>")] Vec<TypeRef>),
     Reference {
         lifetime: Option<String>,
         mutability: Mutability,
-        #[rkyv(omit_bounds)]
+        #[wincode(with = "rg_text::WincodeDynamic<Box<TypeRef>>")]
         inner: Box<TypeRef>,
     },
     RawPointer {
         mutability: Mutability,
-        #[rkyv(omit_bounds)]
+        #[wincode(with = "rg_text::WincodeDynamic<Box<TypeRef>>")]
         inner: Box<TypeRef>,
     },
-    Slice(#[rkyv(omit_bounds)] Box<TypeRef>),
+    Slice(#[wincode(with = "rg_text::WincodeDynamic<Box<TypeRef>>")] Box<TypeRef>),
     Array {
-        #[rkyv(omit_bounds)]
+        #[wincode(with = "rg_text::WincodeDynamic<Box<TypeRef>>")]
         inner: Box<TypeRef>,
         len: Option<String>,
     },
     FnPointer {
-        #[rkyv(omit_bounds)]
+        #[wincode(with = "rg_text::WincodeDynamic<Vec<TypeRef>>")]
         params: Vec<TypeRef>,
-        #[rkyv(omit_bounds)]
+        #[wincode(with = "rg_text::WincodeDynamic<Box<TypeRef>>")]
         ret: Box<TypeRef>,
     },
-    ImplTrait(#[rkyv(omit_bounds)] Vec<TypeBound>),
-    DynTrait(#[rkyv(omit_bounds)] Vec<TypeBound>),
+    ImplTrait(#[wincode(with = "rg_text::WincodeDynamic<Vec<TypeBound>>")] Vec<TypeBound>),
+    DynTrait(#[wincode(with = "rg_text::WincodeDynamic<Vec<TypeBound>>")] Vec<TypeBound>),
 }
 
 impl TypeRef {
@@ -343,26 +327,10 @@ impl fmt::Display for TypeRef {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[rkyv(
-    bytecheck(
-        bounds(
-            __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
-            <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-        )
-    ),
-    serialize_bounds(
-        __S: rkyv::ser::Allocator + rkyv::ser::Sharing + rkyv::ser::Writer,
-        <__S as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    ),
-    deserialize_bounds(
-        __D: rkyv::de::Pooling,
-        <__D as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    )
-)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct TypePath {
     pub absolute: bool,
-    #[rkyv(omit_bounds)]
+    #[wincode(with = "rg_text::WincodeDynamic<Vec<TypePathSegment>>")]
     pub segments: Vec<TypePathSegment>,
 }
 
@@ -417,26 +385,10 @@ impl fmt::Display for TypePath {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[rkyv(
-    bytecheck(
-        bounds(
-            __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
-            <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-        )
-    ),
-    serialize_bounds(
-        __S: rkyv::ser::Allocator + rkyv::ser::Sharing + rkyv::ser::Writer,
-        <__S as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    ),
-    deserialize_bounds(
-        __D: rkyv::de::Pooling,
-        <__D as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    )
-)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct TypePathSegment {
     pub name: Name,
-    #[rkyv(omit_bounds)]
+    #[wincode(with = "rg_text::WincodeDynamic<Vec<GenericArg>>")]
     pub args: Vec<GenericArg>,
     pub span: Span,
 }
@@ -504,30 +456,14 @@ impl fmt::Display for TypePathSegment {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[rkyv(
-    bytecheck(
-        bounds(
-            __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
-            <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-        )
-    ),
-    serialize_bounds(
-        __S: rkyv::ser::Allocator + rkyv::ser::Sharing + rkyv::ser::Writer,
-        <__S as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    ),
-    deserialize_bounds(
-        __D: rkyv::de::Pooling,
-        <__D as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    )
-)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum GenericArg {
-    Type(#[rkyv(omit_bounds)] TypeRef),
+    Type(#[wincode(with = "rg_text::WincodeDynamic<TypeRef>")] TypeRef),
     Lifetime(String),
     Const(String),
     AssocType {
         name: Name,
-        #[rkyv(omit_bounds)]
+        #[wincode(with = "rg_text::WincodeDynamic<Option<TypeRef>>")]
         ty: Option<TypeRef>,
     },
     Unsupported(String),
@@ -600,25 +536,9 @@ impl fmt::Display for GenericArg {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
-#[rkyv(
-    bytecheck(
-        bounds(
-            __C: rkyv::validation::ArchiveContext + rkyv::validation::SharedContext,
-            <__C as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-        )
-    ),
-    serialize_bounds(
-        __S: rkyv::ser::Allocator + rkyv::ser::Sharing + rkyv::ser::Writer,
-        <__S as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    ),
-    deserialize_bounds(
-        __D: rkyv::de::Pooling,
-        <__D as rkyv::rancor::Fallible>::Error: rkyv::rancor::Source,
-    )
-)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum TypeBound {
-    Trait(#[rkyv(omit_bounds)] TypeRef),
+    Trait(#[wincode(with = "rg_text::WincodeDynamic<TypeRef>")] TypeRef),
     Lifetime(String),
     Unsupported(String),
 }

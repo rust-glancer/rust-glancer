@@ -3,7 +3,7 @@ use std::sync::Arc;
 use ra_syntax::TextRange;
 
 /// Span representation in UTF-8 byte offsets from the beginning of the file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct Span {
     pub text: TextSpan,
 }
@@ -49,7 +49,7 @@ impl Span {
 }
 
 /// A half-open byte-offset range within a source file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct TextSpan {
     pub start: u32,
     pub end: u32,
@@ -78,14 +78,14 @@ impl TextSpan {
 }
 
 /// A half-open line/column range within a source file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct LineColumnSpan {
     pub start: Position,
     pub end: Position,
 }
 
 /// A zero-based line/column coordinate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct Position {
     pub line: u32,
     pub column: u32,
@@ -314,7 +314,7 @@ impl LineIndex {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct LineIndexSnapshot {
     pub(crate) lines: Vec<LineInfo>,
     pub(crate) non_ascii_lines: Vec<LineUtf16Metrics>,
@@ -405,14 +405,14 @@ struct PackedLineIndexRanges {
 }
 
 /// Per-line byte facts needed for offset conversion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) struct LineInfo {
     pub(crate) start: u32,
     pub(crate) byte_len: u32,
 }
 
 /// Sparse per-line mapping between UTF-8 byte columns and UTF-16 code-unit columns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) struct LineUtf16Metrics {
     pub(crate) line: u32,
     pub(crate) utf16_len: u32,
@@ -513,7 +513,7 @@ impl LineUtf16Metrics {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) struct LineCharRange {
     pub(crate) byte_start: u32,
     pub(crate) byte_end: u32,

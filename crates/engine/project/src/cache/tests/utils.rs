@@ -69,27 +69,25 @@ pub(super) fn check_cache_header_codec(expect: Expect) {
     let header = PackageCacheHeader::new(
         CachedPackage {
             package: CachedPackageSlot(7),
-            package_id: CachedPackageId::from_stable_text("path+file:///workspace#app@0.1.0"),
+            package_id: CachedPackageId("path+file:///workspace#app@0.1.0".into()),
             name: "app".to_string(),
             source: CachedPackageSource::Workspace,
             edition: CachedRustEdition::Edition2024,
-            manifest_path: CachedPath::from_stable_text("/workspace/Cargo.toml"),
+            manifest_path: CachedPath("/workspace/Cargo.toml".into()),
             targets: vec![
                 CachedTarget {
                     name: "app".to_string(),
                     kind: CachedTargetKind::Lib,
-                    src_path: CachedPath::from_stable_text("/workspace/src/lib.rs"),
+                    src_path: CachedPath("/workspace/src/lib.rs".into()),
                 },
                 CachedTarget {
                     name: "app-cli".to_string(),
                     kind: CachedTargetKind::Bin,
-                    src_path: CachedPath::from_stable_text("/workspace/src/main.rs"),
+                    src_path: CachedPath("/workspace/src/main.rs".into()),
                 },
             ],
             dependencies: vec![CachedDependency {
-                package_id: CachedPackageId::from_stable_text(
-                    "path+file:///workspace/dep#dep@0.1.0",
-                ),
+                package_id: CachedPackageId("path+file:///workspace/dep#dep@0.1.0".into()),
                 name: "dep".to_string(),
                 is_normal: true,
                 is_build: false,
@@ -120,11 +118,11 @@ pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
         PackageCacheHeader::new(
             CachedPackage {
                 package: CachedPackageSlot(7),
-                package_id: CachedPackageId::from_stable_text("path+file:///workspace#empty@0.1.0"),
+                package_id: CachedPackageId("path+file:///workspace#empty@0.1.0".into()),
                 name: String::new(),
                 source: CachedPackageSource::Workspace,
                 edition: CachedRustEdition::Edition2024,
-                manifest_path: CachedPath::from_stable_text("/workspace/Cargo.toml"),
+                manifest_path: CachedPath("/workspace/Cargo.toml".into()),
                 targets: Vec::new(),
                 dependencies: Vec::new(),
             },
@@ -973,7 +971,7 @@ fn render_package(
     writeln!(
         dump,
         "id {}",
-        normalize_package_id(workspace.workspace_root(), package.package_id.as_str()),
+        normalize_package_id(workspace.workspace_root(), &package.package_id.0),
     )
     .expect("string writes should not fail");
     writeln!(dump, "source {}", package.source).expect("string writes should not fail");
@@ -1162,7 +1160,7 @@ fn render_dependency_package(
         .iter()
         .find(|package| &package.package_id == package_id)
         .map(|package| format!("{} (#{})", package.name, package.package.0))
-        .unwrap_or_else(|| normalize_package_id(workspace.workspace_root(), package_id.as_str()))
+        .unwrap_or_else(|| normalize_package_id(workspace.workspace_root(), &package_id.0))
 }
 
 fn render_dependency_kinds(dependency: &CachedDependency) -> String {

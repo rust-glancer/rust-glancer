@@ -511,9 +511,8 @@ impl PackageId {
     Hash,
     PartialOrd,
     Ord,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
 )]
 pub struct PackageSlot(pub usize);
 

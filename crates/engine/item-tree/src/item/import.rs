@@ -9,7 +9,7 @@ use rg_parse::Span;
 use rg_text::{Name, NameInterner};
 
 /// Syntactic `extern crate` facts attached to `ItemKind::ExternCrate`.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ExternCrateItem {
     pub name: Option<Name>,
     pub alias: ImportAlias,
@@ -27,7 +27,7 @@ impl ExternCrateItem {
 }
 
 /// Syntactic `use` facts attached to `ItemKind::Use`.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct UseItem {
     pub imports: Vec<UseImport>,
 }
@@ -83,7 +83,7 @@ impl UseItem {
 }
 
 /// One leaf import produced by a potentially nested use tree.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct UseImport {
     pub kind: UseImportKind,
     pub path: UsePath,
@@ -98,9 +98,8 @@ pub struct UseImport {
     PartialEq,
     Eq,
     derive_more::Display,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
 )]
 pub enum UseImportKind {
     #[display("named")]
@@ -112,7 +111,7 @@ pub enum UseImportKind {
 }
 
 /// Explicit import alias, including `as _`.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum ImportAlias {
     Inferred,
     Explicit { name: Name, span: Span },
@@ -150,7 +149,7 @@ impl fmt::Display for ImportAlias {
 }
 
 /// Structured path used before semantic resolution.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct UsePath {
     pub absolute: bool,
     pub segments: Vec<UsePathSegment>,
@@ -250,7 +249,7 @@ impl fmt::Display for UsePath {
 }
 
 /// One structured path segment.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct UsePathSegment {
     pub kind: UsePathSegmentKind,
     pub span: Span,
@@ -263,14 +262,7 @@ impl fmt::Display for UsePathSegment {
 }
 
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    Debug, Clone, PartialEq, Eq, derive_more::Display, wincode::SchemaRead, wincode::SchemaWrite,
 )]
 pub enum UsePathSegmentKind {
     #[display("{_0}")]

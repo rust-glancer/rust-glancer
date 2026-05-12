@@ -6,7 +6,7 @@
 use crate::PackageIr;
 
 /// One package worth of Semantic IR data as it will be serialized into an artifact.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct SemanticIrPackageBundle {
     package: PackageIr,
 }

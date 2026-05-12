@@ -5,9 +5,7 @@ use rg_arena::ArenaId;
 use rg_workspace::TargetKind;
 
 /// Stable identifier of a target within one parsed package.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct TargetId(pub usize);
 
 impl ArenaId for TargetId {

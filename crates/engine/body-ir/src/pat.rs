@@ -7,7 +7,7 @@ use crate::{
 };
 
 /// One lowered pattern node.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct PatData {
     pub source: BodySource,
     pub kind: PatKind,
@@ -20,7 +20,7 @@ impl PatData {
 }
 
 /// Pattern forms that matter for binding and enum-payload type propagation.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum PatKind {
     Binding {
         binding: Option<BindingId>,
@@ -57,7 +57,7 @@ pub enum PatKind {
 }
 
 /// One field inside a record pattern.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct RecordPatField {
     pub key: FieldKey,
     pub pat: PatId,

@@ -9,9 +9,7 @@ use super::{ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef, 
 use crate::scope::Namespace;
 
 /// Frozen namespace map for one analyzed target.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct DefMap {
     pub(crate) root_module: Option<ModuleId>,
     // Currently means “implicit roots visible to this target,” including sibling lib roots
@@ -106,7 +104,7 @@ impl DefMap {
 }
 
 /// One module in the frozen namespace graph.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ModuleData {
     pub name: Option<Name>,
     pub name_span: Option<Span>,
@@ -142,7 +140,7 @@ impl ModuleData {
 }
 
 /// Where a module came from in source code.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum ModuleOrigin {
     Root {
         file_id: FileId,
@@ -176,7 +174,7 @@ impl ModuleOrigin {
 }
 
 /// One module-scope definition collected from source.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct LocalDefData {
     pub module: ModuleId,
     pub name: Name,
@@ -195,7 +193,7 @@ impl LocalDefData {
 }
 
 /// One module-owned impl block collected from source.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct LocalImplData {
     pub module: ModuleId,
     pub source: ItemTreeRef,
@@ -211,9 +209,8 @@ pub struct LocalImplData {
     PartialEq,
     Eq,
     derive_more::Display,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
 )]
 pub enum LocalDefKind {
     #[display("const")]

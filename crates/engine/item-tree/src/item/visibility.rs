@@ -1,14 +1,7 @@
 use ra_syntax::{AstNode as _, ast};
 
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    Debug, Clone, PartialEq, Eq, derive_more::Display, wincode::SchemaRead, wincode::SchemaWrite,
 )]
 pub enum VisibilityLevel {
     #[display("private")]

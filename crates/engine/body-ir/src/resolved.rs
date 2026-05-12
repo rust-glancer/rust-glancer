@@ -4,27 +4,21 @@ use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, TraitRef, TypeDefRef
 use crate::ids::{BindingId, BodyFieldRef, BodyFunctionRef, BodyItemRef};
 
 /// Stable field identity across module-level Semantic IR and body-local declarations.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum ResolvedFieldRef {
     Semantic(FieldRef),
     BodyLocal(BodyFieldRef),
 }
 
 /// Stable function identity across module-level Semantic IR and body-local declarations.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum ResolvedFunctionRef {
     Semantic(FunctionRef),
     BodyLocal(BodyFunctionRef),
 }
 
 /// Best-effort semantic resolution attached to body expressions.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum BodyResolution {
     Local(BindingId),
     LocalItem(BodyItemRef),
@@ -46,7 +40,7 @@ pub enum BodyResolution {
 }
 
 /// Body-scoped type path resolution result.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum BodyTypePathResolution {
     BodyLocal(BodyItemRef),
     SelfType(Vec<TypeDefRef>),

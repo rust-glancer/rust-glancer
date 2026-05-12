@@ -7,7 +7,7 @@ use ra_syntax::{
 ///
 /// The text is already stripped from Rust doc-comment/doc-attribute syntax, but otherwise remains
 /// Markdown-like so editor features can render it without re-reading AST.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct Documentation {
     pub(crate) text: String,
 }

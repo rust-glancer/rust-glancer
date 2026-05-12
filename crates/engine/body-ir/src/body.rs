@@ -30,9 +30,7 @@ pub struct BodyIrStats {
 }
 
 /// Lowered bodies for all targets inside one parsed package.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct PackageBodies {
     pub(crate) targets: Arena<TargetId, TargetBodies>,
 }
@@ -67,7 +65,7 @@ impl PackageBodies {
 }
 
 /// Lowered bodies for one target.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct TargetBodies {
     pub(crate) status: TargetBodiesStatus,
     pub(crate) function_bodies: Arena<FunctionId, Option<BodyId>>,
@@ -132,9 +130,8 @@ impl TargetBodies {
     PartialEq,
     Eq,
     derive_more::Display,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
 )]
 pub enum TargetBodiesStatus {
     #[display("built")]
@@ -162,7 +159,7 @@ impl TargetBodies {
 }
 
 /// Lowered body for one function.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct BodyData {
     pub(crate) owner: FunctionRef,
     pub(crate) owner_module: rg_def_map::ModuleRef,
@@ -449,14 +446,14 @@ impl BodyBuilder {
 }
 
 /// Source location attached to every body node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct BodySource {
     pub file_id: FileId,
     pub span: Span,
 }
 
 /// One lexical scope.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ScopeData {
     pub parent: Option<ScopeId>,
     pub local_items: Vec<BodyItemId>,

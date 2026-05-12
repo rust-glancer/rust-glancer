@@ -34,9 +34,7 @@ pub use self::{
 };
 
 /// Def maps for all targets inside one parsed package.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct Package {
     name: String,
     target_names: Arena<TargetId, String>,

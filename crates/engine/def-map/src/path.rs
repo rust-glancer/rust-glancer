@@ -4,7 +4,7 @@ use rg_item_tree::{TypePath, TypeRef, UsePath, UsePathSegment, UsePathSegmentKin
 use rg_text::Name;
 
 /// Structured path used by def-map path resolution queries.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct Path {
     pub absolute: bool,
     pub segments: Vec<PathSegment>,
@@ -120,14 +120,7 @@ impl fmt::Display for Path {
 
 /// One structured path segment.
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    Debug, Clone, PartialEq, Eq, derive_more::Display, wincode::SchemaRead, wincode::SchemaWrite,
 )]
 pub enum PathSegment {
     #[display("{_0}")]

@@ -78,34 +78,77 @@ impl From<String> for Name {
     }
 }
 
-// Archive names as plain strings. That keeps archived map keys hashable and avoids making the
-// runtime interner part of the cache format.
-impl rkyv::Archive for Name {
-    type Archived = rkyv::string::ArchivedString;
-    type Resolver = rkyv::string::StringResolver;
+/// Wincode adapter for recursive schema fields.
+///
+/// Wincode derives try to compute static metadata through every field. Recursive IR nodes must
+/// stay dynamic so test builds do not evaluate `TypeRef -> Box<TypeRef> -> TypeRef` forever.
+pub struct WincodeDynamic<T: ?Sized>(std::marker::PhantomData<T>);
 
-    fn resolve(&self, resolver: Self::Resolver, out: rkyv::Place<Self::Archived>) {
-        rkyv::string::ArchivedString::resolve_from_str(self.as_str(), resolver, out);
+unsafe impl<C, T> wincode::SchemaWrite<C> for WincodeDynamic<T>
+where
+    C: wincode::config::ConfigCore,
+    T: wincode::SchemaWrite<C> + ?Sized,
+{
+    type Src = T::Src;
+
+    const TYPE_META: wincode::TypeMeta = wincode::TypeMeta::Dynamic;
+
+    fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
+        <T as wincode::SchemaWrite<C>>::size_of(src)
+    }
+
+    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        <T as wincode::SchemaWrite<C>>::write(writer, src)
     }
 }
 
-impl<S> rkyv::Serialize<S> for Name
+unsafe impl<'de, C, T> wincode::SchemaRead<'de, C> for WincodeDynamic<T>
 where
-    S: rkyv::rancor::Fallible + ?Sized,
-    S::Error: rkyv::rancor::Source,
-    str: rkyv::SerializeUnsized<S>,
+    C: wincode::config::ConfigCore,
+    T: wincode::SchemaRead<'de, C> + ?Sized,
 {
-    fn serialize(&self, serializer: &mut S) -> Result<Self::Resolver, S::Error> {
-        rkyv::string::ArchivedString::serialize_from_str(self.as_str(), serializer)
+    type Dst = T::Dst;
+
+    const TYPE_META: wincode::TypeMeta = wincode::TypeMeta::Dynamic;
+
+    fn read(
+        reader: impl wincode::io::Reader<'de>,
+        dst: &mut std::mem::MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        <T as wincode::SchemaRead<'de, C>>::read(reader, dst)
     }
 }
 
-impl<D> rkyv::Deserialize<Name, D> for rkyv::string::ArchivedString
+// Encode names as plain strings. That keeps the runtime interner out of the cache format while
+// preserving the compact representation used by the rest of the schema.
+unsafe impl<C> wincode::SchemaWrite<C> for Name
 where
-    D: rkyv::rancor::Fallible + ?Sized,
+    C: wincode::config::Config,
 {
-    fn deserialize(&self, _: &mut D) -> Result<Name, D::Error> {
-        Ok(Name::new(self.as_str()))
+    type Src = Name;
+
+    fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
+        <str as wincode::SchemaWrite<C>>::size_of(src.as_str())
+    }
+
+    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        <str as wincode::SchemaWrite<C>>::write(writer, src.as_str())
+    }
+}
+
+unsafe impl<'de, C> wincode::SchemaRead<'de, C> for Name
+where
+    C: wincode::config::Config,
+{
+    type Dst = Name;
+
+    fn read(
+        reader: impl wincode::io::Reader<'de>,
+        dst: &mut std::mem::MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        let text = <String as wincode::SchemaRead<C>>::get(reader)?;
+        dst.write(Name::from(text));
+        Ok(())
     }
 }
 

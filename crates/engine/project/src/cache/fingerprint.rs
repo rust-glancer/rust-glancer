@@ -10,9 +10,7 @@ use anyhow::Context as _;
 use super::{CachedDependency, CachedPackage, CachedPackageId, CachedTarget, WorkspaceCachePlan};
 
 /// Stable BLAKE3 fingerprint used by cache keys.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct Fingerprint([u8; 32]);
 
 impl Fingerprint {

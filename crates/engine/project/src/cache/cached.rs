@@ -7,59 +7,37 @@
 use std::path::Path;
 
 use rg_workspace::{PackageId, PackageSlot, PackageSource, RustEdition, TargetKind};
-use rkyv::{Archive, Deserialize, Serialize};
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::{Fingerprint, fingerprint};
 
 /// Snapshot-local package slot stored in cache metadata.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Archive, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, SchemaRead, SchemaWrite)]
 pub struct CachedPackageSlot(pub u64);
 
 impl CachedPackageSlot {
     pub(super) fn from_workspace(slot: PackageSlot) -> Self {
         Self(u64::try_from(slot.0).expect("package slot should fit into serialized u64"))
     }
-
-    pub fn workspace_slot(self) -> Option<PackageSlot> {
-        Some(PackageSlot(usize::try_from(self.0).ok()?))
-    }
 }
 
 /// Stable Cargo package id text stored in cache metadata.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, Archive, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite)]
 #[display("{_0}")]
 pub struct CachedPackageId(pub(crate) String);
 
 impl CachedPackageId {
-    pub fn from_stable_text(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
     pub(super) fn from_workspace(id: &PackageId) -> Self {
         Self(id.to_string())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
     }
 }
 
 /// UTF-8 path text stored in cache metadata.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, Archive, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite)]
 #[display("{_0}")]
 pub struct CachedPath(pub(crate) String);
 
 impl CachedPath {
-    pub fn from_stable_text(path: impl Into<String>) -> Self {
-        Self(path.into())
-    }
-
     pub(super) fn from_workspace_path(path: &Path) -> Self {
         Self(path.display().to_string())
     }
@@ -71,7 +49,7 @@ impl CachedPath {
 
 /// Cargo source kind stored in cache metadata.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, Archive, Serialize, Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite,
 )]
 pub enum CachedPackageSource {
     #[display("workspace")]
@@ -109,7 +87,7 @@ impl From<PackageSource> for CachedPackageSource {
 
 /// Rust edition stored in cache metadata.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, Archive, Serialize, Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite,
 )]
 pub enum CachedRustEdition {
     #[display("2015")]
@@ -134,9 +112,7 @@ impl From<RustEdition> for CachedRustEdition {
 }
 
 /// Target kind stored in cache metadata.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, Archive, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite)]
 pub enum CachedTargetKind {
     #[display("lib")]
     Lib,
@@ -181,7 +157,7 @@ impl CachedTargetKind {
 }
 
 /// Cached view of one package's artifact-selecting metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Archive, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct CachedPackage {
     pub package: CachedPackageSlot,
     pub package_id: CachedPackageId,
@@ -204,7 +180,7 @@ impl CachedPackage {
 }
 
 /// Target metadata that can affect package-local analysis artifacts.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Archive, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct CachedTarget {
     pub name: String,
     pub kind: CachedTargetKind,
@@ -229,7 +205,7 @@ impl CachedTarget {
 }
 
 /// Dependency edge metadata that can affect package-local path resolution.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Archive, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct CachedDependency {
     pub package_id: CachedPackageId,
     pub name: String,

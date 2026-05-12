@@ -202,7 +202,7 @@ impl Package {
 ///
 /// The file vector is intentionally package-local and ordered by `FileId`; cached item/semantic
 /// payloads can only be reused if those ids keep pointing at the same paths and line indexes.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct PackageParseSnapshot {
     pub(crate) files: Vec<ParsedFileSnapshot>,
     pub(crate) target_root_files: Vec<FileId>,

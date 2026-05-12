@@ -9,9 +9,7 @@ use crate::{DefId, ModuleRef};
 ///
 /// Build-time import resolution uses `ModuleScopeBuilder`; once scopes stabilize, entries are
 /// sorted and boxed here so retained modules do not keep hash-table and `Vec` capacity overhead.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ModuleScope {
     pub(crate) entries: Box<[ScopeNameEntry]>,
 }
@@ -39,7 +37,7 @@ impl ModuleScope {
 }
 
 /// One sorted name entry inside a frozen module scope.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) struct ScopeNameEntry {
     pub(crate) name: Name,
     pub(crate) entry: ScopeEntry,
@@ -134,9 +132,7 @@ impl ModuleScopeBuilder {
 }
 
 /// Frozen namespace slots for one textual name.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ScopeEntry {
     pub(crate) types: Box<[ScopeBinding]>,
     pub(crate) values: Box<[ScopeBinding]>,
@@ -244,7 +240,7 @@ impl<'a> ScopeEntryRef<'a> {
 }
 
 /// One definition together with the visibility of the binding that introduced it.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ScopeBinding {
     pub def: DefId,
     pub visibility: VisibilityLevel,

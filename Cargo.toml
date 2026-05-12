@@ -55,7 +55,7 @@ divan = "0.1.21"
 expect-test = "1.5.1"
 futures = "0.3"
 ls_types = { package = "ls-types", version = "0.0.6" }
-rkyv = "0.8.12"
+wincode = { version = "0.4.9", features = ["derive"] }
 rayon = "1.12.0"
 serde = "1.0"
 tarpc = "0.37"

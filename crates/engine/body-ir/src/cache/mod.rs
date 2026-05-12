@@ -6,7 +6,7 @@
 use crate::PackageBodies;
 
 /// One package worth of Body IR data as it will be serialized into an artifact.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct BodyIrPackageBundle {
     package: PackageBodies,
 }

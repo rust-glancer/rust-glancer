@@ -13,9 +13,7 @@ use rg_item_tree::{
 ///
 /// Most Rust functions are not generic. Boxing only the non-empty case keeps `FunctionData`
 /// compact while still preserving the exact syntax facts for signatures that need them.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) enum SignatureGenerics {
     #[default]
     Empty,
@@ -50,9 +48,7 @@ impl SignatureGenerics {
 }
 
 /// Function header facts used by semantic queries and LSP display.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct FunctionSignature {
     pub(crate) generics: SignatureGenerics,
     pub(crate) params: Box<[ParamItem]>,
@@ -110,9 +106,7 @@ fn shrink_param(param: &mut ParamItem) {
 }
 
 /// Type alias header facts used by signature cursors and hovers.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct TypeAliasSignature {
     pub(crate) generics: SignatureGenerics,
     pub(crate) bounds: Box<[TypeBound]>,
@@ -157,9 +151,7 @@ impl TypeAliasSignature {
 }
 
 /// Const signature facts used by type cursors and hovers.
-#[derive(
-    Debug, Clone, PartialEq, Eq, Default, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ConstSignature {
     pub(crate) ty: Option<TypeRef>,
 }

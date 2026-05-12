@@ -11,9 +11,7 @@ use rg_arena::Arena;
 use crate::span::{LineIndex, LineIndexSnapshot, Span};
 
 /// Stable identifier for a parsed source file inside `FileDb`.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct FileId(pub usize);
 
 impl rg_arena::ArenaId for FileId {
@@ -59,7 +57,7 @@ pub struct ParsedFile<'a> {
 ///
 /// Cache-backed startup restores this data so later queries can still translate file ids into
 /// paths and source coordinates without rebuilding item trees first.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ParsedFileSnapshot {
     pub(crate) path: ParsedFilePath,
     pub(crate) line_index: LineIndexSnapshot,
@@ -73,10 +71,10 @@ impl ParsedFileSnapshot {
 
 /// Cache-friendly file path representation for parse snapshots.
 ///
-/// `PathBuf` is the natural in-memory type, but cache artifacts are archived with `rkyv`, whose
-/// portable derives do not cover platform path buffers. The snapshot stores the canonical path as a
-/// string and converts back to `PathBuf` when restoring the parse database.
-#[derive(Debug, Clone, PartialEq, Eq, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize)]
+/// `PathBuf` is the natural in-memory type, but cache artifacts should stay platform-neutral. The
+/// snapshot stores the canonical path as a string and converts back to `PathBuf` when restoring the
+/// parse database.
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) struct ParsedFilePath(pub(crate) String);
 
 impl ParsedFilePath {

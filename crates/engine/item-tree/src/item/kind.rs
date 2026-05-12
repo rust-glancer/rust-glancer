@@ -12,14 +12,7 @@ use super::{
 /// Unit variants are enough for plain local definitions. Structured payloads live inline in the
 /// file item arena so lowering avoids one heap allocation per payload-bearing item.
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    Debug, Clone, PartialEq, Eq, derive_more::Display, wincode::SchemaRead, wincode::SchemaWrite,
 )]
 pub enum ItemKind {
     #[display("asm")]
@@ -85,9 +78,8 @@ impl ItemKind {
     PartialEq,
     Eq,
     derive_more::Display,
-    rkyv::Archive,
-    rkyv::Serialize,
-    rkyv::Deserialize,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
 )]
 pub enum ItemTag {
     #[display("asm")]
