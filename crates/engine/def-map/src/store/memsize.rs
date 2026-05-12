@@ -3,7 +3,7 @@ use crate::{
     ImportKind, ImportPath, ImportRef, ImportSourcePath, LocalDefData, LocalDefId, LocalDefKind,
     LocalDefRef, LocalImplData, LocalImplId, LocalImplRef, ModuleData, ModuleId, ModuleOrigin,
     ModuleRef, ModuleScope, Package, Path, PathSegment, ScopeBinding, ScopeEntry, TargetRef,
-    import::ImportSourcePathSegment, scope::ScopeNameEntry,
+    model::{ImportSourcePathSegment, ScopeNameEntry},
 };
 use rg_memsize::{MemoryRecorder, MemorySize};
 

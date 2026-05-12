@@ -15,12 +15,14 @@ use rg_workspace::WorkspaceMetadata;
 use crate::{
     DefMap as FrozenDefMap, DefMapReadTxn, LocalDefKind, LocalDefRef, ModuleData, ModuleId,
     ModuleRef, Package as DefMapPackage, PackageSlot, TargetRef,
-    collect::TargetState,
-    path_resolution::{PathResolutionEnv, resolve_path_to_modules_with_env},
-    scope::{ModuleScopeBuilder, ScopeEntryRef},
+    model::{ModuleScopeBuilder, ScopeEntryRef},
+    query::path_resolution::{PathResolutionEnv, resolve_path_to_modules_with_env},
 };
 
-use super::imports::{UnresolvedImports, apply_imports};
+use super::{
+    collect::TargetState,
+    imports::{UnresolvedImports, apply_imports},
+};
 
 /// Mutable target states for every target inside one package.
 pub(super) type PackageTargetStates = Vec<TargetState>;

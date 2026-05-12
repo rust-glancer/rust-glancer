@@ -23,7 +23,7 @@ pub struct ImportData {
 
 impl ImportData {
     /// Returns the binding name introduced by this import when it is not a glob import.
-    pub(super) fn binding_name(&self) -> Option<Name> {
+    pub(crate) fn binding_name(&self) -> Option<Name> {
         let inferred_name = match self.kind {
             ImportKind::Named => self.path.last_name(),
             ImportKind::SelfImport => self.path.last_name(),
@@ -54,7 +54,7 @@ pub enum ImportBinding {
 }
 
 impl ImportBinding {
-    pub(super) fn from_alias(alias: &ImportAlias) -> Self {
+    pub(crate) fn from_alias(alias: &ImportAlias) -> Self {
         match alias {
             ImportAlias::Inferred => Self::Inferred,
             ImportAlias::Explicit { name, .. } => Self::Explicit(name.clone()),
@@ -62,7 +62,7 @@ impl ImportBinding {
         }
     }
 
-    pub(super) fn resolve(&self, inferred_name: Option<Name>) -> Option<Name> {
+    pub(crate) fn resolve(&self, inferred_name: Option<Name>) -> Option<Name> {
         match self {
             Self::Inferred => inferred_name,
             Self::Explicit(name) => Some(name.clone()),
@@ -86,7 +86,7 @@ pub enum ImportKind {
 }
 
 impl ImportKind {
-    pub(super) fn from_use_kind(kind: UseImportKind) -> Self {
+    pub(crate) fn from_use_kind(kind: UseImportKind) -> Self {
         match kind {
             UseImportKind::Named => Self::Named,
             UseImportKind::SelfImport => Self::SelfImport,
@@ -103,7 +103,7 @@ pub struct ImportPath {
 }
 
 impl ImportPath {
-    pub(super) fn from_use_path(path: &UsePath) -> Self {
+    pub(crate) fn from_use_path(path: &UsePath) -> Self {
         let path = Path::from_use_path(path);
         Self {
             absolute: path.absolute,
@@ -111,7 +111,7 @@ impl ImportPath {
         }
     }
 
-    pub(super) fn standard_prelude(edition: RustEdition, interner: &mut NameInterner) -> Self {
+    pub(crate) fn standard_prelude(edition: RustEdition, interner: &mut NameInterner) -> Self {
         Self {
             absolute: true,
             segments: vec![
@@ -142,7 +142,7 @@ pub struct ImportSourcePath {
 }
 
 impl ImportSourcePath {
-    pub(super) fn from_use_path(path: &UsePath) -> Self {
+    pub(crate) fn from_use_path(path: &UsePath) -> Self {
         let def_map_path = Path::from_use_path(path);
         let segments = def_map_path
             .segments

@@ -6,7 +6,7 @@ use rg_parse::TargetId;
 use crate::{
     DefMap, ImportData, ImportId, ImportRef, LocalDefData, LocalDefId, LocalDefRef, LocalImplData,
     LocalImplRef, ModuleData, ModuleId, ModuleRef, Package, PackageSlot, Path, ResolvePathResult,
-    TargetRef, path_resolution,
+    TargetRef, query::path_resolution,
 };
 
 /// Read-only def-map access for one query transaction.

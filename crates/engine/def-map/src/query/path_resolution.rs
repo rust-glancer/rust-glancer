@@ -8,10 +8,10 @@
 //! During def-map construction this module reads from the fixed-point scope snapshot. After
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
-use super::{
-    DefId, DefMapReadTxn, LocalDefKind, LocalDefRef, ModuleData, ModuleId, ModuleRef, Path,
-    ScopeBinding, TargetRef,
-    scope::{ModuleScopeBuilder, Namespace, ScopeEntryRef},
+use crate::{
+    DefId, DefMapReadTxn, ImportPath, LocalDefKind, LocalDefRef, ModuleData, ModuleId, ModuleRef,
+    Path, PathSegment, ScopeBinding, TargetRef,
+    model::{ModuleScopeBuilder, Namespace, ScopeEntryRef},
 };
 use rg_item_tree::VisibilityLevel;
 use rg_package_store::PackageStoreError;
@@ -25,7 +25,7 @@ pub struct ResolvePathResult {
 }
 
 /// Minimal scope graph required by the path resolver.
-pub(super) trait PathResolutionEnv {
+pub(crate) trait PathResolutionEnv {
     fn extern_root(
         &self,
         target: TargetRef,
@@ -143,7 +143,7 @@ impl PathResolutionEnv for DefMapReadTxn<'_> {
     }
 }
 
-pub(super) fn visible_module_scope_entry_set_with_env(
+pub(crate) fn visible_module_scope_entry_set_with_env(
     env: &impl PathResolutionEnv,
     importing_module: ModuleRef,
     source_module: ModuleRef,
@@ -176,11 +176,11 @@ pub(super) fn visible_module_scope_entry_set_with_env(
 ///
 /// The return type is a list rather than a single value because one textual name may resolve in
 /// multiple namespaces at once.
-pub(super) fn resolve_path_to_defs_with_env(
+pub(crate) fn resolve_path_to_defs_with_env(
     env: &impl PathResolutionEnv,
     importing_target: TargetRef,
     importing_module: ModuleId,
-    path: &super::ImportPath,
+    path: &ImportPath,
 ) -> Result<Vec<DefId>, PackageStoreError> {
     resolve_path_to_defs_with_filter(
         env,
@@ -195,7 +195,7 @@ fn resolve_path_to_defs_with_filter(
     env: &impl PathResolutionEnv,
     importing_target: TargetRef,
     importing_module: ModuleId,
-    path: &super::ImportPath,
+    path: &ImportPath,
     terminal_filter: NameResolutionFilter,
 ) -> Result<Vec<DefId>, PackageStoreError> {
     let result = resolve_path_with_env(
@@ -216,11 +216,11 @@ fn resolve_path_to_defs_with_filter(
 ///
 /// This is used by glob imports, where the path must denote one or more source modules whose
 /// contents will be copied into the importing scope.
-pub(super) fn resolve_path_to_modules_with_env(
+pub(crate) fn resolve_path_to_modules_with_env(
     env: &impl PathResolutionEnv,
     importing_target: TargetRef,
     importing_module: ModuleId,
-    path: &super::ImportPath,
+    path: &ImportPath,
 ) -> Result<Vec<ModuleRef>, PackageStoreError> {
     let resolved_defs = resolve_path_to_defs_with_filter(
         env,
@@ -272,7 +272,7 @@ pub(crate) fn resolve_path_in_type_namespace_txn(
     )
 }
 
-pub(super) fn namespace_for_def_with_env(
+pub(crate) fn namespace_for_def_with_env(
     env: &impl PathResolutionEnv,
     def: DefId,
 ) -> Result<Option<Namespace>, PackageStoreError> {
@@ -289,7 +289,7 @@ fn resolve_path_with_env(
     env: &impl PathResolutionEnv,
     importing_module: ModuleRef,
     absolute: bool,
-    segments: &[super::PathSegment],
+    segments: &[PathSegment],
     terminal_filter: NameResolutionFilter,
 ) -> Result<ResolvePathResult, PackageStoreError> {
     let Some((first_segment, remaining_segments)) = segments.split_first() else {
@@ -348,34 +348,32 @@ fn resolve_first_segment(
     env: &impl PathResolutionEnv,
     importing_module: ModuleRef,
     absolute: bool,
-    segment: &super::PathSegment,
+    segment: &PathSegment,
     filter: NameResolutionFilter,
 ) -> Result<Vec<DefId>, PackageStoreError> {
     if absolute {
         return match segment {
-            super::PathSegment::Name(name) => Ok(env
+            PathSegment::Name(name) => Ok(env
                 .extern_root(importing_module.target, name)?
                 .map(|module_ref| vec![DefId::Module(module_ref)])
                 .unwrap_or_default()),
-            super::PathSegment::SelfKw
-            | super::PathSegment::SuperKw
-            | super::PathSegment::CrateKw => Ok(Vec::new()),
+            PathSegment::SelfKw | PathSegment::SuperKw | PathSegment::CrateKw => Ok(Vec::new()),
         };
     }
 
     match segment {
-        super::PathSegment::SelfKw => Ok(vec![DefId::Module(importing_module)]),
-        super::PathSegment::SuperKw => Ok(env
+        PathSegment::SelfKw => Ok(vec![DefId::Module(importing_module)]),
+        PathSegment::SuperKw => Ok(env
             .parent_module(importing_module.target, importing_module.module)?
             .map(DefId::Module)
             .into_iter()
             .collect()),
-        super::PathSegment::CrateKw => Ok(env
+        PathSegment::CrateKw => Ok(env
             .root_module(importing_module.target)?
             .map(DefId::Module)
             .into_iter()
             .collect()),
-        super::PathSegment::Name(name) => {
+        PathSegment::Name(name) => {
             // Shadowing is namespace-specific. Prefixes and type-position terminals walk the
             // type namespace, so same-spelling value/macro bindings do not block fallback.
             let local_defs =
@@ -405,7 +403,7 @@ fn resolve_next_segment(
     env: &impl PathResolutionEnv,
     importing_module: ModuleRef,
     current_defs: Vec<DefId>,
-    segment: &super::PathSegment,
+    segment: &PathSegment,
     filter: NameResolutionFilter,
 ) -> Result<Vec<DefId>, PackageStoreError> {
     let mut next_defs = Vec::new();
@@ -416,20 +414,20 @@ fn resolve_next_segment(
         };
 
         match segment {
-            super::PathSegment::SelfKw => {
+            PathSegment::SelfKw => {
                 push_unique_def(&mut next_defs, DefId::Module(module_ref));
             }
-            super::PathSegment::SuperKw => {
+            PathSegment::SuperKw => {
                 if let Some(parent) = env.parent_module(module_ref.target, module_ref.module)? {
                     push_unique_def(&mut next_defs, DefId::Module(parent));
                 }
             }
-            super::PathSegment::CrateKw => {
+            PathSegment::CrateKw => {
                 if let Some(root) = env.root_module(module_ref.target)? {
                     push_unique_def(&mut next_defs, DefId::Module(root));
                 }
             }
-            super::PathSegment::Name(name) => {
+            PathSegment::Name(name) => {
                 for resolved_def in
                     resolve_name_in_module(env, importing_module, module_ref, name, filter)?
                 {

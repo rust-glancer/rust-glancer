@@ -159,7 +159,7 @@ impl PathSegment {
     }
 }
 
-pub(super) fn last_segment_name(segments: &[PathSegment]) -> Option<Name> {
+pub(crate) fn last_segment_name(segments: &[PathSegment]) -> Option<Name> {
     match segments.last()? {
         PathSegment::Name(name) => Some(name.clone()),
         PathSegment::SelfKw => Some(Name::new("self")),

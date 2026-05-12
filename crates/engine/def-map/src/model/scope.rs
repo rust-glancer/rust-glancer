@@ -45,12 +45,12 @@ pub(crate) struct ScopeNameEntry {
 
 /// Mutable module scope used while import resolution is finding a fixed point.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(super) struct ModuleScopeBuilder {
+pub(crate) struct ModuleScopeBuilder {
     names: HashMap<Name, ScopeEntryBuilder>,
 }
 
 impl ModuleScopeBuilder {
-    pub(super) fn insert_binding(
+    pub(crate) fn insert_binding(
         &mut self,
         name: &Name,
         namespace: Namespace,
@@ -60,7 +60,7 @@ impl ModuleScopeBuilder {
         entry.insert_binding(namespace, binding)
     }
 
-    pub(super) fn copy_visible_bindings(
+    pub(crate) fn copy_visible_bindings(
         &mut self,
         name: &Name,
         entry: ScopeEntryRef<'_>,
@@ -104,17 +104,17 @@ impl ModuleScopeBuilder {
         }
     }
 
-    pub(super) fn entry(&self, name: &str) -> Option<ScopeEntryRef<'_>> {
+    pub(crate) fn entry(&self, name: &str) -> Option<ScopeEntryRef<'_>> {
         self.names.get(name).map(ScopeEntryBuilder::as_ref)
     }
 
-    pub(super) fn entries(&self) -> impl Iterator<Item = (&Name, ScopeEntryRef<'_>)> {
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&Name, ScopeEntryRef<'_>)> {
         self.names
             .iter()
             .map(|(name, entry)| (name, entry.as_ref()))
     }
 
-    pub(super) fn freeze(&self) -> ModuleScope {
+    pub(crate) fn freeze(&self) -> ModuleScope {
         let mut entries = self
             .names
             .iter()
@@ -156,7 +156,7 @@ impl ScopeEntry {
         self.types.is_empty() && self.values.is_empty() && self.macros.is_empty()
     }
 
-    pub(super) fn as_ref(&self) -> ScopeEntryRef<'_> {
+    pub(crate) fn as_ref(&self) -> ScopeEntryRef<'_> {
         ScopeEntryRef {
             types: &self.types,
             values: &self.values,
@@ -219,22 +219,22 @@ impl ScopeEntryBuilder {
 
 /// Borrowed view over either a mutable-build or frozen scope entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct ScopeEntryRef<'a> {
+pub(crate) struct ScopeEntryRef<'a> {
     types: &'a [ScopeBinding],
     values: &'a [ScopeBinding],
     macros: &'a [ScopeBinding],
 }
 
 impl<'a> ScopeEntryRef<'a> {
-    pub(super) fn types(self) -> &'a [ScopeBinding] {
+    pub(crate) fn types(self) -> &'a [ScopeBinding] {
         self.types
     }
 
-    pub(super) fn values(self) -> &'a [ScopeBinding] {
+    pub(crate) fn values(self) -> &'a [ScopeBinding] {
         self.values
     }
 
-    pub(super) fn macros(self) -> &'a [ScopeBinding] {
+    pub(crate) fn macros(self) -> &'a [ScopeBinding] {
         self.macros
     }
 }
@@ -263,7 +263,7 @@ impl ScopeBinding {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Namespace {
+pub(crate) enum Namespace {
     Types,
     Values,
     Macros,

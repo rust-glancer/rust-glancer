@@ -5,8 +5,8 @@ use rg_item_tree::{Documentation, ItemTag, ItemTreeRef, VisibilityLevel};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
+use super::scope::Namespace;
 use super::{ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef, ModuleScope};
-use crate::scope::Namespace;
 
 /// Frozen namespace map for one analyzed target.
 #[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
@@ -73,15 +73,15 @@ impl DefMap {
         self.imports.as_slice()
     }
 
-    pub(super) fn set_root_module(&mut self, root_module: ModuleId) {
+    pub(crate) fn set_root_module(&mut self, root_module: ModuleId) {
         self.root_module = Some(root_module);
     }
 
-    pub(super) fn set_extern_prelude(&mut self, extern_prelude: HashMap<Name, ModuleRef>) {
+    pub(crate) fn set_extern_prelude(&mut self, extern_prelude: HashMap<Name, ModuleRef>) {
         self.extern_prelude = extern_prelude;
     }
 
-    pub(super) fn set_prelude(&mut self, prelude: Option<ModuleRef>) {
+    pub(crate) fn set_prelude(&mut self, prelude: Option<ModuleRef>) {
         self.prelude = prelude;
     }
 
@@ -234,7 +234,7 @@ pub enum LocalDefKind {
 }
 
 impl LocalDefKind {
-    pub(super) fn from_item_tag(tag: ItemTag) -> Option<Self> {
+    pub(crate) fn from_item_tag(tag: ItemTag) -> Option<Self> {
         match tag {
             ItemTag::Const => Some(Self::Const),
             ItemTag::Enum => Some(Self::Enum),
@@ -254,7 +254,7 @@ impl LocalDefKind {
         }
     }
 
-    pub(super) fn namespace(self) -> Namespace {
+    pub(crate) fn namespace(self) -> Namespace {
         match self {
             Self::Const | Self::Function | Self::Static => Namespace::Values,
             Self::Enum | Self::Struct | Self::Trait | Self::TypeAlias | Self::Union => {

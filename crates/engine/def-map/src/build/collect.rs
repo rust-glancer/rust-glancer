@@ -21,11 +21,11 @@ use rg_item_tree::{
 use rg_parse::{Package, Target};
 use rg_text::Name;
 
-use super::{
+use crate::{
     DefId, DefMap, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
     LocalDefData, LocalDefKind, LocalDefRef, LocalImplData, ModuleData, ModuleId, ModuleOrigin,
     ModuleRef, ModuleScope, PackageSlot, ScopeBinding, TargetRef,
-    scope::{ModuleScopeBuilder, Namespace},
+    model::{ModuleScopeBuilder, Namespace},
 };
 
 /// Collected state for one target before fixed-point import resolution.

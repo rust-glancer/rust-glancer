@@ -10,7 +10,7 @@ use rg_workspace::WorkspaceMetadata;
 use crate::{
     DefMap, DefMapReadTxn, Package, PackageSlot,
     build::{DefMapDbBuilder, DefMapDbPackageRebuilder},
-    ids::ResidentTargetRef,
+    model::ResidentTargetRef,
 };
 
 /// Frozen def maps for all parsed packages and targets.
