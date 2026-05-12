@@ -6,10 +6,10 @@ use crate::{
     Package, PackageFileRef, PackageParseSnapshot, ParseDb, Position, Span, Target, TargetId,
     TextSpan,
     file::{FileDb, FileId, LineIndexState, ParsedFileData, ParsedFilePath, ParsedFileSnapshot},
-    span::{
-        LineCharRange, LineColumnSpan, LineIndex, LineIndexSnapshot, LineIndexStorage, LineInfo,
-        LineUtf16Metrics,
+    line_index::{
+        LineCharRange, LineIndex, LineIndexSnapshot, LineIndexStorage, LineInfo, LineUtf16Metrics,
     },
+    span::LineColumnSpan,
 };
 
 rg_memsize::impl_memory_size_leaf!(FileId, TargetId);

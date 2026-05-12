@@ -1,5 +1,6 @@
 mod db;
 mod file;
+mod line_index;
 mod memsize;
 mod package;
 mod span;
@@ -11,7 +12,8 @@ mod tests;
 pub use self::{
     db::{PackageFileRef, ParseDb},
     file::{FileId, ParsedFile, ParsedFileSnapshot},
+    line_index::{LineIndex, LineIndexSnapshot},
     package::{Package, PackageParseSnapshot},
-    span::{LineColumnSpan, LineIndex, LineIndexSnapshot, Position, Span, TextSpan},
+    span::{LineColumnSpan, Position, Span, TextSpan},
     target::{Target, TargetId},
 };
