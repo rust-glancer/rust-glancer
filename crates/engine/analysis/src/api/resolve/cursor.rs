@@ -7,12 +7,12 @@ use rg_def_map::{DefMapCursorCandidate, TargetRef};
 use rg_parse::FileId;
 use rg_semantic_ir::SemanticCursorCandidate;
 
-use super::{
+use crate::{
     Analysis,
-    data::{SymbolAt, SymbolCandidate},
+    model::{SymbolAt, SymbolCandidate},
 };
 
-pub(super) fn item_signature_candidates(
+pub(crate) fn item_signature_candidates(
     analysis: &Analysis<'_>,
     target: TargetRef,
     file_id: FileId,

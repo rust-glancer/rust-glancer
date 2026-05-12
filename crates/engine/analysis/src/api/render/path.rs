@@ -10,16 +10,16 @@ use rg_semantic_ir::{
     TypeDefRef,
 };
 
-use super::Analysis;
+use crate::api::Analysis;
 
-pub(super) struct PathRenderer<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct PathRenderer<'a, 'db>(&'a Analysis<'db>);
 
 impl<'a, 'db> PathRenderer<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
-    pub(super) fn module_path(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {
+    pub(crate) fn module_path(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {
         let package = self.0.def_map.package(module_ref.target.package)?;
         let Some(def_map) = self.0.def_map.def_map(module_ref.target)? else {
             return Ok(None);
@@ -53,21 +53,21 @@ impl<'a, 'db> PathRenderer<'a, 'db> {
         Ok(Some(names.join("::")))
     }
 
-    pub(super) fn type_def_path(&self, ty: TypeDefRef) -> anyhow::Result<Option<String>> {
+    pub(crate) fn type_def_path(&self, ty: TypeDefRef) -> anyhow::Result<Option<String>> {
         let Some((module, name)) = self.type_def_owner_and_name(ty)? else {
             return Ok(None);
         };
         self.path_in_module(module, name)
     }
 
-    pub(super) fn trait_path(&self, trait_ref: TraitRef) -> anyhow::Result<Option<String>> {
+    pub(crate) fn trait_path(&self, trait_ref: TraitRef) -> anyhow::Result<Option<String>> {
         let Some(data) = self.0.semantic_ir.trait_data(trait_ref)? else {
             return Ok(None);
         };
         self.path_in_module(data.owner, &data.name)
     }
 
-    pub(super) fn function_path(
+    pub(crate) fn function_path(
         &self,
         function_ref: FunctionRef,
     ) -> anyhow::Result<Option<String>> {
@@ -79,7 +79,7 @@ impl<'a, 'db> PathRenderer<'a, 'db> {
             .map(|owner| format!("{owner}::{}", data.name)))
     }
 
-    pub(super) fn type_alias_path(
+    pub(crate) fn type_alias_path(
         &self,
         type_alias_ref: TypeAliasRef,
     ) -> anyhow::Result<Option<String>> {
@@ -91,7 +91,7 @@ impl<'a, 'db> PathRenderer<'a, 'db> {
             .map(|owner| format!("{owner}::{}", data.name)))
     }
 
-    pub(super) fn const_path(&self, const_ref: ConstRef) -> anyhow::Result<Option<String>> {
+    pub(crate) fn const_path(&self, const_ref: ConstRef) -> anyhow::Result<Option<String>> {
         let Some(data) = self.0.semantic_ir.const_data(const_ref)? else {
             return Ok(None);
         };
@@ -100,14 +100,14 @@ impl<'a, 'db> PathRenderer<'a, 'db> {
             .map(|owner| format!("{owner}::{}", data.name)))
     }
 
-    pub(super) fn static_path(&self, static_ref: StaticRef) -> anyhow::Result<Option<String>> {
+    pub(crate) fn static_path(&self, static_ref: StaticRef) -> anyhow::Result<Option<String>> {
         let Some(data) = self.0.semantic_ir.static_data(static_ref)? else {
             return Ok(None);
         };
         self.path_in_module(data.owner, &data.name)
     }
 
-    pub(super) fn enum_variant_path(
+    pub(crate) fn enum_variant_path(
         &self,
         variant_ref: rg_semantic_ir::EnumVariantRef,
     ) -> anyhow::Result<Option<String>> {

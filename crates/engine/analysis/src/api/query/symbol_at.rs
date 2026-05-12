@@ -8,19 +8,19 @@ use rg_body_ir::BodyCursorCandidate;
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
 
-use super::{
-    Analysis, cursor,
-    data::{SymbolAt, SymbolCandidate},
+use crate::{
+    api::{Analysis, resolve::cursor},
+    model::{SymbolAt, SymbolCandidate},
 };
 
-pub(super) struct SymbolFinder<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct SymbolFinder<'a, 'db>(&'a Analysis<'db>);
 
 impl<'a, 'db> SymbolFinder<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
-    pub(super) fn symbol_at(
+    pub(crate) fn symbol_at(
         &self,
         target: TargetRef,
         file_id: FileId,

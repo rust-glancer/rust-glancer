@@ -4,16 +4,19 @@ use rg_body_ir::{BindingKind, BodyTy};
 use rg_def_map::TargetRef;
 use rg_parse::{FileId, TextSpan};
 
-use super::{Analysis, data::TypeHint, type_render::TypeRenderer};
+use crate::{
+    api::{Analysis, render::ty::TypeRenderer},
+    model::TypeHint,
+};
 
-pub(super) struct TypeHintCollector<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct TypeHintCollector<'a, 'db>(&'a Analysis<'db>);
 
 impl<'a, 'db> TypeHintCollector<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
-    pub(super) fn type_hints(
+    pub(crate) fn type_hints(
         &self,
         target: TargetRef,
         file_id: FileId,

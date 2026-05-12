@@ -13,10 +13,10 @@ use rg_semantic_ir::{
     TypeAliasRef, TypeDefId, TypeDefRef,
 };
 
-use super::{Analysis, data::SymbolAt};
+use crate::{api::Analysis, model::SymbolAt};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ResolvedEntity {
+pub(crate) enum ResolvedEntity {
     Module {
         module: ModuleRef,
         display_name: Option<String>,
@@ -37,14 +37,14 @@ pub(super) enum ResolvedEntity {
     LocalDef(LocalDefRef),
 }
 
-pub(super) struct EntityResolver<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct EntityResolver<'a, 'db>(&'a Analysis<'db>);
 
 impl<'a, 'db> EntityResolver<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
-    pub(super) fn entities_for_symbol(
+    pub(crate) fn entities_for_symbol(
         &self,
         symbol: SymbolAt,
     ) -> anyhow::Result<Vec<ResolvedEntity>> {

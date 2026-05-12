@@ -8,19 +8,19 @@ use rg_def_map::TargetRef;
 use rg_parse::FileId;
 use rg_semantic_ir::TraitApplicability;
 
-use super::{
+use crate::{
     Analysis,
-    data::{CompletionApplicability, CompletionItem, CompletionKind, CompletionTarget},
+    model::{CompletionApplicability, CompletionItem, CompletionKind, CompletionTarget},
 };
 
-pub(super) struct CompletionResolver<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct CompletionResolver<'a, 'db>(&'a Analysis<'db>);
 
 impl<'a, 'db> CompletionResolver<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
-    pub(super) fn completions_at_dot(
+    pub(crate) fn completions_at_dot(
         &self,
         target: TargetRef,
         file_id: FileId,

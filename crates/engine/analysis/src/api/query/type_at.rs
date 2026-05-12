@@ -11,16 +11,16 @@ use rg_semantic_ir::{
     FieldRef, ItemId, SemanticTypePathResolution, TypeDefId, TypeDefRef, TypePathContext,
 };
 
-use super::{Analysis, data::SymbolAt};
+use crate::{api::Analysis, model::SymbolAt};
 
-pub(super) struct TypeResolver<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct TypeResolver<'a, 'db>(&'a Analysis<'db>);
 
 impl<'a, 'db> TypeResolver<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
-    pub(super) fn type_at(
+    pub(crate) fn type_at(
         &self,
         target: rg_def_map::TargetRef,
         file_id: rg_parse::FileId,
@@ -76,7 +76,7 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
         Ok(ty)
     }
 
-    pub(super) fn ty_for_type_path(
+    pub(crate) fn ty_for_type_path(
         &self,
         context: TypePathContext,
         path: &Path,
@@ -88,7 +88,7 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
         ))
     }
 
-    pub(super) fn ty_for_body_type_path(
+    pub(crate) fn ty_for_body_type_path(
         &self,
         body_ref: BodyRef,
         scope: ScopeId,
@@ -152,7 +152,7 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
     }
 }
 
-pub(super) fn semantic_type_path_resolution_to_ty(
+pub(crate) fn semantic_type_path_resolution_to_ty(
     resolution: SemanticTypePathResolution,
 ) -> BodyTy {
     match resolution {
@@ -169,7 +169,7 @@ pub(super) fn semantic_type_path_resolution_to_ty(
     }
 }
 
-pub(super) fn body_type_path_resolution_to_ty(resolution: BodyTypePathResolution) -> BodyTy {
+pub(crate) fn body_type_path_resolution_to_ty(resolution: BodyTypePathResolution) -> BodyTy {
     match resolution {
         BodyTypePathResolution::BodyLocal(item) => {
             BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)])

@@ -7,23 +7,24 @@ use rg_semantic_ir::{
     ConstRef, Documentation, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 
-use super::{
-    Analysis,
-    data::{HoverBlock, HoverInfo, SymbolAt, SymbolKind},
-    entity::{EntityResolver, ResolvedEntity},
-    path_render::PathRenderer,
-    signature::SignatureRenderer,
-    ty::TypeResolver,
+use crate::{
+    api::{
+        Analysis,
+        query::type_at::TypeResolver,
+        render::{path::PathRenderer, signature::SignatureRenderer},
+        resolve::entity::{EntityResolver, ResolvedEntity},
+    },
+    model::{HoverBlock, HoverInfo, SymbolAt, SymbolKind},
 };
 
-pub(super) struct HoverResolver<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct HoverResolver<'a, 'db>(&'a Analysis<'db>);
 
 impl<'a, 'db> HoverResolver<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
-    pub(super) fn hover(
+    pub(crate) fn hover(
         &self,
         target: TargetRef,
         file_id: FileId,

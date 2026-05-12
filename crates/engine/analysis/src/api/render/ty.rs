@@ -7,16 +7,16 @@
 use rg_body_ir::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy};
 use rg_semantic_ir::TypeDefId;
 
-use super::Analysis;
+use crate::api::Analysis;
 
-pub(super) struct TypeRenderer<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct TypeRenderer<'a, 'db>(&'a Analysis<'db>);
 
 impl<'a, 'db> TypeRenderer<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
-    pub(super) fn render(&self, ty: &BodyTy) -> anyhow::Result<Option<String>> {
+    pub(crate) fn render(&self, ty: &BodyTy) -> anyhow::Result<Option<String>> {
         match ty {
             BodyTy::Unit => Ok(Some("()".to_string())),
             BodyTy::Never => Ok(Some("!".to_string())),
