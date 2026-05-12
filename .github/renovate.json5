@@ -1,0 +1,112 @@
+{
+    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
+    // Start from Renovate's recommended behavior, then add two repository-wide
+    // maintenance helpers: immutable GitHub Actions pins and future config migrations.
+    "extends": [
+        "config:recommended",
+        "helpers:pinGitHubActionDigests",
+        ":configMigration"
+    ],
+
+    // Keep pending/skipped updates visible without forcing every major update to
+    // open a PR immediately.
+    "dependencyDashboard": true,
+
+    // Renovate discovers package files directly, not through the Cargo workspace.
+    // The test targets are intentionally fake/fixture projects with their own
+    // lockfiles and pinned versions, so updating them would mostly create noise.
+    "ignorePaths": [
+        "**/node_modules/**",
+        "**/bower_components/**",
+        "test_targets/**"
+    ],
+
+    // Put dependency update PRs on a predictable weekly cadence and cap burstiness.
+    "labels": [
+        "dependencies"
+    ],
+    "timezone": "Asia/Dubai",
+    "schedule": [
+        "before 8am on monday"
+    ],
+    "prHourlyLimit": 2,
+    "prConcurrentLimit": 5,
+    "minimumReleaseAge": "3 days",
+    "internalChecksFilter": "strict",
+
+    // Prefer updating manifest ranges instead of only refreshing lockfiles, so
+    // accepted PRs leave dependency intent visible in Cargo.toml/package.json.
+    "rangeStrategy": "bump",
+
+    // Avoid unnecessary rebases while still keeping conflicted branches usable.
+    "rebaseWhen": "conflicted",
+
+    // Refresh lockfiles weekly as a separate maintenance PR rather than mixing
+    // transitive-only churn into direct dependency updates.
+    "lockFileMaintenance": {
+        "enabled": true,
+        "schedule": [
+            "before 8am on monday"
+        ],
+        "automerge": false
+    },
+
+    "packageRules": [
+        {
+            "description": "Group non-major Rust dependencies",
+            "matchManagers": [
+                "cargo"
+            ],
+            "matchUpdateTypes": [
+                "minor",
+                "patch"
+            ],
+            "groupName": "rust dependencies"
+        },
+        {
+            "description": "Group non-major TypeScript/npm dependencies",
+            "matchManagers": [
+                "npm"
+            ],
+            "matchUpdateTypes": [
+                "minor",
+                "patch"
+            ],
+            "groupName": "typescript dependencies"
+        },
+        {
+            "description": "Group non-major GitHub Actions version and pin updates",
+            "matchManagers": [
+                "github-actions"
+            ],
+            "matchUpdateTypes": [
+                "minor",
+                "patch",
+                "pinDigest"
+            ],
+            "groupName": "github-actions"
+        },
+        {
+            "description": "Require manual handling for major updates",
+            "matchUpdateTypes": [
+                "major"
+            ],
+            "dependencyDashboardApproval": true
+        },
+        {
+            // Digest refreshes keep already-pinned GitHub Actions pointing at the
+            // current commit behind their version tags. They are intentionally kept
+            // separate from version bumps so this narrow update type can automerge.
+            "description": "Automerge only GitHub Action digest pin refreshes",
+            "matchManagers": [
+                "github-actions"
+            ],
+            "matchUpdateTypes": [
+                "digest"
+            ],
+            "groupName": "github-action digests",
+            "automerge": true
+        }
+    ]
+}
