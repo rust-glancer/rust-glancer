@@ -237,6 +237,26 @@ impl LanguageServer for Backend {
     #[tracing::instrument(
         skip_all,
         fields(
+            method = "gotoImplementation",
+            uri = ?params.text_document_position_params.text_document.uri
+        )
+    )]
+    async fn goto_implementation(
+        &self,
+        params: GotoImplementationParams,
+    ) -> Result<Option<GotoImplementationResponse>> {
+        let Some(context) = self
+            .method_context_for(&params.text_document_position_params.text_document.uri)
+            .await?
+        else {
+            return Ok(None);
+        };
+        methods::text_document::implementation::implementation(context, params).await
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(
             method = "hover",
             uri = ?params.text_document_position_params.text_document.uri
         )

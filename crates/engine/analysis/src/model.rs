@@ -220,6 +220,8 @@ pub enum NavigationTargetKind {
     Field,
     #[display("fn")]
     Function,
+    #[display("impl")]
+    Impl,
     #[display("macro")]
     Macro,
     #[display("static")]

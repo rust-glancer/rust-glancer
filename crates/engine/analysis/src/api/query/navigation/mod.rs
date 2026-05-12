@@ -5,10 +5,12 @@
 //! and the public goto query flows compose symbol/type lookup with target projection.
 
 mod goto;
+mod implementation;
 mod symbol;
 mod target;
 mod type_definition;
 
 pub(crate) use self::{
-    goto::GotoResolver, symbol::SymbolResolver, type_definition::TypeDefinitionResolver,
+    goto::GotoResolver, implementation::ImplementationResolver, symbol::SymbolResolver,
+    type_definition::TypeDefinitionResolver,
 };

@@ -2,7 +2,7 @@
 
 use rg_def_map::{DefMapReadTxn, PackageSlot, Path, TargetRef};
 use rg_package_store::{PackageRead, PackageStoreError, PackageStoreReadTxn};
-use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrReadTxn, TraitApplicability};
+use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrReadTxn, TraitApplicability, TraitImplRef};
 
 use crate::{
     BodyData, BodyFieldData, BodyFieldRef, BodyFunctionData, BodyFunctionRef, BodyItemRef,
@@ -129,6 +129,22 @@ impl<'db> BodyIrReadTxn<'db> {
         resolution::semantic_trait_function_candidates_for_receiver(
             def_map,
             semantic_ir,
+            receiver_ty,
+        )
+    }
+
+    /// Checks whether a semantic trait impl is a plausible candidate for a receiver type.
+    pub fn semantic_trait_impl_applies_to_receiver(
+        &self,
+        def_map: &DefMapReadTxn<'db>,
+        semantic_ir: &SemanticIrReadTxn<'db>,
+        trait_impl: TraitImplRef,
+        receiver_ty: &BodyNominalTy,
+    ) -> Result<bool, PackageStoreError> {
+        resolution::semantic_trait_impl_applies_to_receiver(
+            def_map,
+            semantic_ir,
+            trait_impl,
             receiver_ty,
         )
     }

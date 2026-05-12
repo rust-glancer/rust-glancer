@@ -316,7 +316,7 @@ fn impl_self_args_match_receiver(
     Ok(true)
 }
 
-fn semantic_trait_impl_applicability(
+pub(super) fn semantic_trait_impl_applicability(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     trait_impl: TraitImplRef,

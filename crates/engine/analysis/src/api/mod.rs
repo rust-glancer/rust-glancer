@@ -83,6 +83,17 @@ impl<'a> Analysis<'a> {
             .goto_type_definition(target, file_id, offset)
     }
 
+    /// Returns best-effort implementations for the symbol under a source offset.
+    pub fn goto_implementation(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Vec<NavigationTarget>> {
+        query::navigation::ImplementationResolver::new(self)
+            .goto_implementation(target, file_id, offset)
+    }
+
     /// Returns the best-effort Body IR type under a source offset.
     pub fn type_at(
         &self,

@@ -215,6 +215,26 @@ impl EngineService for Service {
             .map_err(EngineError::from)
     }
 
+    async fn goto_implementation(
+        self,
+        _: context::Context,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> EngineResult<Vec<ls_types::Location>> {
+        if self.engine.is_dirty(&path).await {
+            return Ok(Vec::new());
+        }
+
+        self.engine
+            .request(|respond_to| EngineCommand::GotoImplementation {
+                path,
+                position,
+                respond_to,
+            })
+            .await
+            .map_err(EngineError::from)
+    }
+
     async fn hover(
         self,
         _: context::Context,

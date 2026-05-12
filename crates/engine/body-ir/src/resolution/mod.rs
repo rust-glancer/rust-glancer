@@ -14,7 +14,7 @@ mod type_path;
 use rg_def_map::{DefMapReadTxn, Path};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{
-    FieldRef, FunctionRef, SemanticIrReadTxn, TraitApplicability, TypePathContext,
+    FieldRef, FunctionRef, SemanticIrReadTxn, TraitApplicability, TraitImplRef, TypePathContext,
 };
 
 use crate::{
@@ -30,6 +30,7 @@ use self::{
         local_function_applies_to_receiver as local_function_applies_to_receiver_impl,
         semantic_function_applies_to_receiver as semantic_function_applies_to_receiver_impl,
         semantic_trait_function_candidates_for_receiver as semantic_trait_function_candidates_for_receiver_impl,
+        semantic_trait_impl_applicability,
     },
     ty::{TypeSubst, ty_from_type_ref_in_context},
     type_path::BodyTypePathResolver,
@@ -109,6 +110,18 @@ pub(super) fn semantic_trait_function_candidates_for_receiver(
         semantic_ir,
         receiver_ty,
         None,
+    )
+}
+
+pub(super) fn semantic_trait_impl_applies_to_receiver(
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
+    trait_impl: TraitImplRef,
+    receiver_ty: &BodyNominalTy,
+) -> Result<bool, PackageStoreError> {
+    Ok(
+        semantic_trait_impl_applicability(def_map, semantic_ir, trait_impl, receiver_ty)?
+            .is_applicable(),
     )
 }
 

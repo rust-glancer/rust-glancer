@@ -698,6 +698,21 @@ impl<'db> SemanticIrReadTxn<'db> {
         Ok(impls)
     }
 
+    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> Result<Vec<ImplRef>, PackageStoreError> {
+        let mut impls = Vec::new();
+
+        for impl_ref in self.impl_refs()? {
+            let Some(data) = self.impl_data(impl_ref)? else {
+                continue;
+            };
+            if data.resolved_trait_refs.contains(&trait_ref) {
+                push_unique(&mut impls, impl_ref);
+            }
+        }
+
+        Ok(impls)
+    }
+
     pub fn inherent_impls_for_type(
         &self,
         ty: TypeDefRef,

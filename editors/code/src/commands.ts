@@ -9,6 +9,7 @@ export const EXTENSION_COMMANDS = {
   stopServer: "rust-glancer.stopServer",
   reindexWorkspace: "rust-glancer.reindexWorkspace",
   goToTypeFromHover: "rust-glancer.gotoTypeFromHover",
+  goToImplementationFromHover: "rust-glancer.gotoImplementationFromHover",
   testGetState: "rust-glancer.test.getState",
   testGetOutput: "rust-glancer.test.getOutput",
 } as const;

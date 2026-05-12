@@ -6,5 +6,6 @@ pub(crate) mod did_open;
 pub(crate) mod did_save;
 pub(crate) mod document_symbol;
 pub(crate) mod hover;
+pub(crate) mod implementation;
 pub(crate) mod inlay_hint;
 pub(crate) mod type_definition;

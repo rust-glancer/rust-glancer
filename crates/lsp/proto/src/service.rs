@@ -38,6 +38,11 @@ pub trait EngineService {
         position: ls_types::Position,
     ) -> EngineResult<Vec<ls_types::Location>>;
 
+    async fn goto_implementation(
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> EngineResult<Vec<ls_types::Location>>;
+
     async fn hover(
         path: PathBuf,
         position: ls_types::Position,

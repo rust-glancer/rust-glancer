@@ -89,6 +89,21 @@ impl EngineWorker {
                         worker.goto_type_definition(path, position)
                     });
                 }
+                EngineCommand::GotoImplementation {
+                    path,
+                    position,
+                    respond_to,
+                } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        line = position.line,
+                        character = position.character,
+                        "engine command started: goto_implementation"
+                    );
+                    self.respond_to_query("goto_implementation", respond_to, |worker| {
+                        worker.goto_implementation(path, position)
+                    });
+                }
                 EngineCommand::Hover {
                     path,
                     position,
@@ -313,6 +328,14 @@ impl EngineWorker {
         self.navigation_query(path, position, NavigationQuery::TypeDefinition)
     }
 
+    fn goto_implementation(
+        &self,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> anyhow::Result<Vec<ls_types::Location>> {
+        self.navigation_query(path, position, NavigationQuery::Implementation)
+    }
+
     fn completion(
         &self,
         path: PathBuf,
@@ -526,6 +549,9 @@ impl EngineWorker {
                 }
                 NavigationQuery::TypeDefinition => {
                     analysis.goto_type_definition(target, context.file, offset)?
+                }
+                NavigationQuery::Implementation => {
+                    analysis.goto_implementation(target, context.file, offset)?
                 }
             };
 
@@ -776,6 +802,7 @@ impl EngineWorker {
 enum NavigationQuery {
     Definition,
     TypeDefinition,
+    Implementation,
 }
 
 impl NavigationQuery {
@@ -783,6 +810,7 @@ impl NavigationQuery {
         match self {
             Self::Definition => "definition",
             Self::TypeDefinition => "type_definition",
+            Self::Implementation => "implementation",
         }
     }
 }

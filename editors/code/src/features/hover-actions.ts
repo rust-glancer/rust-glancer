@@ -1,13 +1,15 @@
 /**
  * Adds rust-glancer-specific actions to VS Code hover results.
  *
- * The language server provides type-definition data through standard LSP requests; this feature
- * turns that data into safe command links so users can jump from hover text to the underlying type.
+ * The language server provides navigation data through standard LSP requests; this feature turns
+ * that data into safe command links so users can jump from hover text to related declarations.
  */
 import * as vscode from "vscode";
 import {
+  ImplementationRequest,
   TypeDefinitionRequest,
   type Definition,
+  type ImplementationParams,
   type LanguageClient,
   type LanguageClientOptions,
   type Location as ProtocolLocation,
@@ -32,6 +34,12 @@ interface SerializedPosition {
   readonly character: number;
 }
 
+interface HoverAction {
+  readonly command: string;
+  readonly label: string;
+  readonly locations: readonly SerializedLocation[];
+}
+
 export function hoverMiddleware(
   clientProvider: () => LanguageClient | undefined,
   output: vscode.LogOutputChannel,
@@ -49,18 +57,47 @@ export function hoverMiddleware(
       }
 
       try {
-        const locations = typeDefinitionLocationsExcludingCurrentHover(
-          await typeDefinitionLocations(client, document, position),
+        const [rawTypeLocations, rawImplementationLocations] = await Promise.all([
+          navigationLocationsOrEmpty(output, "hover go-to-type", () =>
+            typeDefinitionLocations(client, document, position),
+          ),
+          navigationLocationsOrEmpty(output, "hover go-to-implementation", () =>
+            implementationLocations(client, document, position),
+          ),
+        ]);
+        const typeLocations = locationsExcludingCurrentHover(
+          rawTypeLocations,
           document.uri,
           hover.range,
         );
-        if (token.isCancellationRequested || locations.length === 0) {
+        const implementationTargets = locationsExcludingCurrentHover(
+          rawImplementationLocations,
+          document.uri,
+          hover.range,
+        );
+        if (token.isCancellationRequested) {
           return hover;
         }
 
-        return appendGoToTypeAction(hover, locations);
+        return appendHoverActions(
+          hover,
+          [
+            hoverAction(
+              EXTENSION_COMMANDS.goToTypeFromHover,
+              typeLocations,
+              "type",
+              "type definitions",
+            ),
+            hoverAction(
+              EXTENSION_COMMANDS.goToImplementationFromHover,
+              implementationTargets,
+              "implementation",
+              "implementations",
+            ),
+          ].filter((action) => action.locations.length > 0),
+        );
       } catch (error) {
-        output.warn(`hover go-to-type action failed: ${String(error)}`);
+        output.warn(`hover navigation action failed: ${String(error)}`);
         return hover;
       }
     },
@@ -68,20 +105,34 @@ export function hoverMiddleware(
 }
 
 export function registerHoverActionCommands(output: vscode.LogOutputChannel): vscode.Disposable {
+  return vscode.Disposable.from(
+    registerGoToLocationsCommand(
+      EXTENSION_COMMANDS.goToTypeFromHover,
+      output,
+      "hover go-to-type",
+      "No type definition found",
+    ),
+    registerGoToLocationsCommand(
+      EXTENSION_COMMANDS.goToImplementationFromHover,
+      output,
+      "hover go-to-implementation",
+      "No implementation found",
+    ),
+  );
+}
+
+function registerGoToLocationsCommand(
+  command: string,
+  output: vscode.LogOutputChannel,
+  logLabel: string,
+  notFoundMessage: string,
+): vscode.Disposable {
   return vscode.commands.registerCommand(
-    EXTENSION_COMMANDS.goToTypeFromHover,
+    command,
     async (serializedLocations: unknown) => {
       const locations = deserializeLocations(serializedLocations);
       if (locations.length === 0) {
-        output.warn("hover go-to-type command ignored empty or malformed locations");
-        return;
-      }
-
-      if (locations.length === 1) {
-        await vscode.window.showTextDocument(locations[0].uri, {
-          preview: true,
-          selection: locations[0].range,
-        });
+        output.warn(`${logLabel} command ignored empty or malformed locations`);
         return;
       }
 
@@ -93,8 +144,8 @@ export function registerHoverActionCommands(output: vscode.LogOutputChannel): vs
         originUri,
         originPosition,
         locations,
-        "goto",
-        "No type definition found",
+        "peek",
+        notFoundMessage,
       );
     },
   );
@@ -114,24 +165,69 @@ async function typeDefinitionLocations(
   return uniqueLocations(protocolDefinitionLocations(definition));
 }
 
-function appendGoToTypeAction(
-  hover: vscode.Hover,
-  locations: readonly SerializedLocation[],
-): vscode.Hover {
-  const label =
-    locations.length === 1 ? "Go to type" : `Go to ${locations.length} type definitions`;
-  const args = encodeURIComponent(JSON.stringify([locations]));
-  const action = new vscode.MarkdownString(
-    `[${label}](command:${EXTENSION_COMMANDS.goToTypeFromHover}?${args})`,
-  );
+async function implementationLocations(
+  client: LanguageClient,
+  document: vscode.TextDocument,
+  position: vscode.Position,
+): Promise<SerializedLocation[]> {
+  const params: ImplementationParams = {
+    textDocument: { uri: document.uri.toString() },
+    position: { line: position.line, character: position.character },
+  };
 
-  // Only this locally generated command link is trusted. The server-rendered docs and signatures
-  // keep VS Code's default untrusted Markdown behavior.
-  action.isTrusted = { enabledCommands: [EXTENSION_COMMANDS.goToTypeFromHover] };
+  const implementation = await client.sendRequest(ImplementationRequest.type, params);
+  return uniqueLocations(protocolDefinitionLocations(implementation));
+}
+
+async function navigationLocationsOrEmpty(
+  output: vscode.LogOutputChannel,
+  label: string,
+  load: () => Promise<SerializedLocation[]>,
+): Promise<SerializedLocation[]> {
+  try {
+    return await load();
+  } catch (error) {
+    output.warn(`${label} action failed: ${String(error)}`);
+    return [];
+  }
+}
+
+function appendHoverActions(
+  hover: vscode.Hover,
+  actions: readonly HoverAction[],
+): vscode.Hover {
+  if (actions.length === 0) {
+    return hover;
+  }
 
   const contents = Array.isArray(hover.contents) ? [...hover.contents] : [hover.contents];
-  contents.push(action);
+  contents.push(commandLinkLine(actions));
   return new vscode.Hover(contents, hover.range);
+}
+
+function hoverAction(
+  command: string,
+  locations: readonly SerializedLocation[],
+  singularLabel: string,
+  pluralNoun: string,
+): HoverAction {
+  const label = locations.length === 1 ? singularLabel : `${locations.length} ${pluralNoun}`;
+  return { command, label, locations };
+}
+
+function commandLinkLine(actions: readonly HoverAction[]): vscode.MarkdownString {
+  const links = actions.map(commandLink).join(" | ");
+  const line = new vscode.MarkdownString(`Go to ${links}`);
+
+  // Only these locally generated command links are trusted. The server-rendered docs and signatures
+  // keep VS Code's default untrusted Markdown behavior.
+  line.isTrusted = { enabledCommands: actions.map((action) => action.command) };
+  return line;
+}
+
+function commandLink(action: HoverAction): string {
+  const args = encodeURIComponent(JSON.stringify([action.locations]));
+  return `[${action.label}](command:${action.command}?${args})`;
 }
 
 function protocolDefinitionLocations(
@@ -174,7 +270,7 @@ function uniqueLocations(locations: SerializedLocation[]): SerializedLocation[] 
   return unique;
 }
 
-function typeDefinitionLocationsExcludingCurrentHover(
+function locationsExcludingCurrentHover(
   locations: SerializedLocation[],
   documentUri: vscode.Uri,
   hoverRange: vscode.Range | undefined,

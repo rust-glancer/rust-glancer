@@ -1,11 +1,13 @@
 //! Concrete navigation target projection.
 
-use rg_body_ir::{BodyFieldRef, BodyItemRef, BodyTy, ResolvedFieldRef, ResolvedFunctionRef};
+use rg_body_ir::{
+    BodyFieldRef, BodyImplId, BodyItemRef, BodyRef, BodyTy, ResolvedFieldRef, ResolvedFunctionRef,
+};
 use rg_def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef};
-use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, TraitRef, TypeDefRef};
+use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, ImplRef, TraitRef, TypeDefRef};
 
 use crate::{
-    api::Analysis,
+    api::{Analysis, query::symbols::shared},
     model::{NavigationTarget, NavigationTargetKind},
 };
 
@@ -168,6 +170,47 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
             name: function_data.name.to_string(),
             file_id: function_data.source.file_id,
             span: Some(function_data.name_span.unwrap_or(function_data.span)),
+        }))
+    }
+
+    pub(crate) fn navigation_target_for_impl(
+        &self,
+        impl_ref: ImplRef,
+    ) -> anyhow::Result<Option<NavigationTarget>> {
+        let Some(data) = self.0.semantic_ir.impl_data(impl_ref)? else {
+            return Ok(None);
+        };
+        let Some(local_impl) = self.0.def_map.local_impl(data.local_impl)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(NavigationTarget {
+            target: impl_ref.target,
+            kind: NavigationTargetKind::Impl,
+            name: shared::impl_label(data),
+            file_id: local_impl.file_id,
+            span: Some(local_impl.span),
+        }))
+    }
+
+    pub(crate) fn navigation_target_for_body_impl(
+        &self,
+        body_ref: BodyRef,
+        impl_id: BodyImplId,
+    ) -> anyhow::Result<Option<NavigationTarget>> {
+        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
+            return Ok(None);
+        };
+        let Some(data) = body.local_impl(impl_id) else {
+            return Ok(None);
+        };
+
+        Ok(Some(NavigationTarget {
+            target: body_ref.target,
+            kind: NavigationTargetKind::Impl,
+            name: shared::body_impl_label(data),
+            file_id: data.source.file_id,
+            span: Some(data.source.span),
         }))
     }
 

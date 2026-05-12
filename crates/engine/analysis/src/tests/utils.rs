@@ -105,6 +105,10 @@ impl AnalysisQuery {
         Self::new(title, marker, AnalysisQueryKind::GotoTypeDefinition)
     }
 
+    pub(super) fn goto_impl(title: &'static str, marker: &'static str) -> Self {
+        Self::new(title, marker, AnalysisQueryKind::GotoImplementation)
+    }
+
     pub(super) fn ty(title: &'static str, marker: &'static str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::TypeAt)
     }
@@ -219,6 +223,7 @@ enum AnalysisQueryKind {
     ResolveSymbol,
     GotoDefinition,
     GotoTypeDefinition,
+    GotoImplementation,
     TypeAt,
     CompletionsAtDot,
     Hover,
@@ -427,6 +432,15 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                         .analysis()
                         .goto_type_definition(target, file_id, offset)
                         .expect("fixture goto type query should resolve"),
+                    &mut dump,
+                );
+            }
+            AnalysisQueryKind::GotoImplementation => {
+                self.render_targets(
+                    self.db
+                        .analysis()
+                        .goto_implementation(target, file_id, offset)
+                        .expect("fixture goto implementation query should resolve"),
                     &mut dump,
                 );
             }
@@ -715,11 +729,14 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
         writeln!(dump).expect("string writes should not fail");
         for target in targets {
+            let label = if target.kind == crate::NavigationTargetKind::Impl {
+                target.name
+            } else {
+                format!("{} {}", target.kind, target.name)
+            };
             writeln!(
                 dump,
-                "- {} {} @ {}",
-                target.kind,
-                target.name,
+                "- {label} @ {}",
                 self.render_optional_span(target.target.package, target.file_id, target.span)
             )
             .expect("string writes should not fail");
