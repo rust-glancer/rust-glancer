@@ -38,14 +38,17 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         };
 
         let mut targets = Vec::new();
+        // 1) Method-call sites: prefer concrete callable implementations.
         if self.push_method_call_targets(&symbol, &mut targets)? {
             return Ok(targets);
         }
 
+        // 2) Symbol/entity expansion: trait/type/function/local bindings.
         for entity in EntityResolver::new(self.0).entities_for_symbol(symbol)? {
             self.push_entity_targets(entity, &mut targets)?;
         }
 
+        // 3) If symbol expansion found nothing, fall back to inferred type.
         if targets.is_empty()
             && let Some(ty) = TypeResolver::new(self.0).type_at(target, file_id, offset)?
         {
