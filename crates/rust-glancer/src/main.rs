@@ -4,7 +4,8 @@ use clap::{Parser, Subcommand};
 use rg_project::StartupCacheLoad;
 
 mod analyze;
-mod runtime;
+mod logging;
+mod memory;
 mod start_engine;
 mod start_server;
 
@@ -62,18 +63,21 @@ fn main() -> anyhow::Result<()> {
             load,
             package_residency,
             target,
-        } => analyze::analyze(
-            path,
-            profile,
-            memory,
-            if load {
-                StartupCacheLoad::Enabled
-            } else {
-                StartupCacheLoad::Disabled
-            },
-            package_residency.into(),
-            target,
-        ),
+        } => {
+            logging::init_plain_tracing();
+            analyze::analyze(
+                path,
+                profile,
+                memory,
+                if load {
+                    StartupCacheLoad::Enabled
+                } else {
+                    StartupCacheLoad::Disabled
+                },
+                package_residency.into(),
+                target,
+            )
+        }
         Command::Lsp => start_server::start_server(),
         Command::LspEngine {
             engine_addr,

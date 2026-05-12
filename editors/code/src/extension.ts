@@ -9,20 +9,33 @@ import * as vscode from "vscode";
 import { EXTENSION_COMMANDS } from "./commands";
 import { ExtensionController } from "./extension-controller";
 import { registerHoverActionCommands } from "./features/hover-actions";
+import { ServerOutputChannel } from "./logging/server-output-channel";
 import { StatusView } from "./status/status-view";
-import { RecordingOutputChannel } from "./test-support/recording-output-channel";
+import { RecordingLogOutputChannel } from "./test-support/recording-output-channel";
 
 let controller: ExtensionController | undefined;
 
 const EXTENSION_TEST_ENV = "RUST_GLANCER_EXTENSION_TEST";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const rawOutput = vscode.window.createOutputChannel("Rust Glancer");
-  const recordingOutput =
-    process.env[EXTENSION_TEST_ENV] === "1" ? new RecordingOutputChannel(rawOutput) : undefined;
-  const output = recordingOutput ?? rawOutput;
+  const rawExtensionLog = vscode.window.createOutputChannel("Rust Glancer Extension", {
+    log: true,
+  });
+  const rawServerLog = vscode.window.createOutputChannel("Rust Glancer Language Server", {
+    log: true,
+  });
+  const recordingExtensionLog =
+    process.env[EXTENSION_TEST_ENV] === "1"
+      ? new RecordingLogOutputChannel(rawExtensionLog)
+      : undefined;
+  const recordingServerLog =
+    process.env[EXTENSION_TEST_ENV] === "1"
+      ? new RecordingLogOutputChannel(rawServerLog)
+      : undefined;
+  const extensionLog = recordingExtensionLog ?? rawExtensionLog;
+  const serverOutput = new ServerOutputChannel(recordingServerLog ?? rawServerLog);
   const status = new StatusView();
-  controller = new ExtensionController(context.extensionPath, output, status);
+  controller = new ExtensionController(context.extensionPath, extensionLog, serverOutput, status);
 
   // Extension-host tests need a stable synchronization point. Keep this command out of the
   // package manifest so it is available only when the test runner opts in through the environment.
@@ -31,18 +44,20 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       vscode.commands.registerCommand(EXTENSION_COMMANDS.testGetState, () =>
         controller?.snapshot(),
       ),
-      vscode.commands.registerCommand(
-        EXTENSION_COMMANDS.testGetOutput,
-        () => recordingOutput?.snapshot() ?? "",
+      vscode.commands.registerCommand(EXTENSION_COMMANDS.testGetOutput, () =>
+        [recordingExtensionLog?.snapshot(), recordingServerLog?.snapshot()]
+          .filter((output): output is string => output !== undefined)
+          .join(""),
       ),
     );
   }
 
   context.subscriptions.push(
-    output,
+    extensionLog,
+    serverOutput,
     status,
     controller,
-    registerHoverActionCommands(output),
+    registerHoverActionCommands(extensionLog),
     vscode.commands.registerCommand(EXTENSION_COMMANDS.restartServer, async () => {
       await controller?.restart();
     }),

@@ -57,11 +57,11 @@ export namespace ResolvedServer {
     return executableServer("rust-glancer", "PATH", config, workspaceFolder);
   }
 
-  export function options(server: ResolvedServer, output: vscode.OutputChannel): ServerOptions {
+  export function options(server: ResolvedServer, output: vscode.LogOutputChannel): ServerOptions {
     return (): Promise<ChildProcess> => {
-      output.appendLine(`starting server: ${server.command} ${server.args.join(" ")}`);
-      output.appendLine(`server cwd: ${server.cwd}`);
-      output.appendLine(`server source: ${server.source}`);
+      output.info(`starting server: ${server.command} ${server.args.join(" ")}`);
+      output.info(`server cwd: ${server.cwd}`);
+      output.info(`server source: ${server.source}`);
 
       const child = spawn(server.command, [...server.args], {
         cwd: server.cwd,
@@ -70,20 +70,18 @@ export namespace ResolvedServer {
       });
 
       child.on("spawn", () => {
-        output.appendLine(`server process started with pid ${child.pid ?? "unknown"}`);
+        output.info(`server process started with pid ${child.pid ?? "unknown"}`);
       });
 
       child.on("error", (error) => {
-        output.appendLine(`server failed to start: ${error.message}`);
+        output.error(`server failed to start: ${error.message}`);
         void vscode.window.showErrorMessage(
           `Failed to start rust-glancer language server: ${error.message}`,
         );
       });
 
       child.on("exit", (code, signal) => {
-        output.appendLine(
-          `server exited with code ${code ?? "null"} and signal ${signal ?? "null"}`,
-        );
+        output.info(`server exited with code ${code ?? "null"} and signal ${signal ?? "null"}`);
       });
 
       return Promise.resolve(child);

@@ -10,10 +10,10 @@ pub(crate) fn start_engine(
     engine_addr: SocketAddr,
     notifications_addr: SocketAddr,
 ) -> anyhow::Result<()> {
-    crate::runtime::init_tracing();
+    crate::logging::init_lsp_tracing(crate::logging::LogComponent::engine_from_env());
 
     let memory_control: Arc<dyn rg_lsp_engine::MemoryControl> =
-        Arc::new(crate::runtime::memory_control());
+        Arc::new(crate::memory::memory_control());
     tracing::info!(
         allocator = memory_control.allocator_name(),
         allocator_purge_enabled = memory_control.allocator_purge_enabled(),

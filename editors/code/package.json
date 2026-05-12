@@ -100,17 +100,6 @@
           "default": "workspace-and-path-deps",
           "description": "Controls which package analysis artifacts remain resident after indexing. Restart the rust-glancer server after changing this setting."
         },
-        "rust-glancer.trace.server": {
-          "scope": "window",
-          "type": "string",
-          "enum": [
-            "off",
-            "messages",
-            "verbose"
-          ],
-          "default": "off",
-          "description": "Controls LSP protocol tracing for the rust-glancer client."
-        },
         "rust-glancer.diagnosticsOnStartup": {
           "scope": "window",
           "type": "boolean",

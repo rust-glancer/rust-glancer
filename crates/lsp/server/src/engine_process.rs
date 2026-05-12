@@ -15,6 +15,7 @@ use tower_lsp_server::Client as LspClient;
 use crate::{engine_client::EngineClient, notifications::NotificationsPublisher};
 
 const ENGINE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
+const ENGINE_ID_ENV: &str = "RUST_GLANCER_ENGINE_ID";
 
 /// Process-backed handle to one engine owned by the LSP server.
 ///
@@ -28,7 +29,7 @@ pub(crate) struct EngineProcess {
 }
 
 impl EngineProcess {
-    pub(crate) async fn spawn(lsp_client: LspClient) -> anyhow::Result<Self> {
+    pub(crate) async fn spawn(lsp_client: LspClient, engine_id: String) -> anyhow::Result<Self> {
         // Initialize transport for engine service.
         let (mut engine_listener, engine_addr) = {
             // Both JSON and TCP are chosen for convenience of debugging, not that we need too much speed.
@@ -56,7 +57,7 @@ impl EngineProcess {
         };
 
         // Spawn the engine subprocess.
-        let child = Self::spawn_worker(engine_addr, notifications_addr)?;
+        let child = Self::spawn_worker(engine_addr, notifications_addr, &engine_id)?;
 
         // Spawn the notifications publisher.
         {
@@ -126,6 +127,7 @@ impl EngineProcess {
     fn spawn_worker(
         engine_addr: SocketAddr,
         notifications_addr: SocketAddr,
+        engine_id: &str,
     ) -> anyhow::Result<Child> {
         let executable = std::env::current_exe()
             .context("while attempting to locate rust-glancer executable")?;
@@ -139,6 +141,7 @@ impl EngineProcess {
 
         tokio::process::Command::new(executable)
             .args(args)
+            .env(ENGINE_ID_ENV, engine_id)
             // The parent LSP server owns stdout for JSON-RPC. The engine may log to stderr, but it
             // must never inherit stdout and accidentally corrupt the LSP stream.
             .stdin(Stdio::null())

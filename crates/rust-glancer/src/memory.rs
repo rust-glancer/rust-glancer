@@ -1,4 +1,4 @@
-//! Process runtime selection and memory controls for the CLI/LSP binary.
+//! Process memory controls for the CLI/LSP binary.
 //!
 //! Allocator choice is intentionally kept at the executable boundary. The analysis engine remains
 //! allocator-agnostic, while release builds can still compare jemalloc and the platform allocator
@@ -7,17 +7,6 @@
 use rg_lsp_engine::{AllocatorPurgeResult, AllocatorStats, MemoryControl};
 
 const JEMALLOC_PURGE_AFTER_BUILD_ENV: &str = "RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD";
-
-pub(crate) fn init_tracing() {
-    let filter = tracing_subscriber::EnvFilter::try_from_env("RUST_GLANCER_LOG")
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,tarpc=warn"));
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .with_ansi(false)
-        .try_init()
-        .ok();
-}
 
 #[cfg(all(feature = "jemalloc", not(target_env = "msvc")))]
 #[global_allocator]

@@ -68,7 +68,7 @@ pub(super) fn analyze(
     let sysroot = SysrootSources::discover(workspace.workspace_root());
     let sysroot_elapsed = sysroot_started.elapsed();
     let workspace = workspace.with_sysroot_sources(sysroot);
-    let memory_control = crate::runtime::memory_control();
+    let memory_control = crate::memory::memory_control();
 
     let builder = Project::builder(workspace)
         .cargo_metadata_config(cargo_metadata_config)

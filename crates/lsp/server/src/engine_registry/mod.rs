@@ -276,7 +276,7 @@ impl EngineRegistry {
         root: PathBuf,
         config: EngineConfig,
     ) -> anyhow::Result<EngineProcess> {
-        let engine = EngineProcess::spawn(self.lsp_client.clone()).await?;
+        let engine = EngineProcess::spawn(self.lsp_client.clone(), Self::engine_id(&root)).await?;
         let engine_client = engine.engine_client().clone();
         let initialize_root = root.clone();
         engine_client
@@ -292,6 +292,14 @@ impl EngineRegistry {
 
         tracing::info!(root = %root.display(), "started rust-glancer engine");
         Ok(engine)
+    }
+
+    fn engine_id(root: &Path) -> String {
+        root.file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("unknown")
+            .to_string()
     }
 }
 
