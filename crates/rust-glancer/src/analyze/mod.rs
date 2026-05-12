@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Instant};
+use std::{io::Write as _, path::PathBuf, time::Instant};
 
 use anyhow::Context as _;
 use clap::ValueEnum;
@@ -7,10 +7,11 @@ use rg_project::{BuildProcessMemory, PackageResidencyPolicy, Project, StartupCac
 use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
 
 mod fmt;
+mod report;
 
 /// CLI-facing package residency names for the `analyze` command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(super) enum CliPackageResidencyPolicy {
+pub(crate) enum CliPackageResidencyPolicy {
     AllResident,
     Workspace,
     WorkspaceAndPathDeps,
@@ -32,14 +33,22 @@ impl From<CliPackageResidencyPolicy> for PackageResidencyPolicy {
     }
 }
 
+/// Output format for the `analyze` command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum OutputFormat {
+    Text,
+    Json,
+}
+
 /// Runs project analysis for the Cargo manifest at `path` and prints a small build summary.
-pub(super) fn analyze(
+pub(crate) fn analyze(
     path: PathBuf,
     profile: bool,
     include_memory: bool,
     startup_cache_load: StartupCacheLoad,
     package_residency_policy: PackageResidencyPolicy,
     target: Option<String>,
+    output_format: OutputFormat,
 ) -> anyhow::Result<()> {
     if !path.exists() {
         anyhow::bail!("folder {} does not exist", path.display());
@@ -69,6 +78,8 @@ pub(super) fn analyze(
     let sysroot_elapsed = sysroot_started.elapsed();
     let workspace = workspace.with_sysroot_sources(sysroot);
     let memory_control = crate::memory::memory_control();
+    let analysis_setup =
+        report::AnalysisSetupReport::new(metadata_elapsed, workspace_elapsed, sysroot_elapsed);
 
     let builder = Project::builder(workspace)
         .cargo_metadata_config(cargo_metadata_config)
@@ -97,34 +108,52 @@ pub(super) fn analyze(
     })?;
 
     let (project, build_profile) = project_build.into_parts();
-    self::fmt::print_project_summary(&project);
-    if profile {
-        self::fmt::print_analysis_setup_profile(
-            metadata_elapsed,
-            workspace_elapsed,
-            sysroot_elapsed,
-        );
-    }
-    if profile
-        && !include_memory
-        && let Some(profile) = &build_profile
-    {
-        self::fmt::print_build_profile(profile, None);
-    }
-    if include_memory {
-        println!("allocator: {}", memory_control.allocator_name());
-        if let Some(stats) = memory_control.allocator_stats() {
-            self::fmt::print_allocator_stats(stats);
+    let allocator_name = memory_control.allocator_name();
+
+    // Capture allocator stats and purge after project-building allocations are finished, but
+    // before memory aggregation or text/JSON rendering can allocate and perturb the measurements.
+    let allocator_stats = include_memory
+        .then(|| memory_control.allocator_stats())
+        .flatten();
+    let purge = include_memory
+        .then(|| report::AllocatorPurgeReport::purge_memory_and_collect(&memory_control))
+        .flatten();
+    let allocator = include_memory
+        .then(|| report::AllocatorReport::capture(allocator_name, allocator_stats, purge));
+    let report = report::AnalyzeReport::build(
+        &project,
+        analysis_setup,
+        build_profile.as_ref(),
+        allocator,
+        include_memory,
+    );
+
+    let output = match output_format {
+        OutputFormat::Text => {
+            let mut output = String::new();
+            report
+                .render_text(
+                    fmt::TextRenderOptions {
+                        include_profile: profile,
+                        include_memory,
+                    },
+                    &mut output,
+                )
+                .expect("writing to a string should not fail");
+            output
         }
-        let purge = self::fmt::purge_allocator_after_build(&memory_control);
-        if let Some(purge) = &purge {
-            self::fmt::print_allocator_purge_after_build(purge);
+        OutputFormat::Json => {
+            let mut output = report
+                .render_json()
+                .context("while attempting to render analyze JSON report")?;
+            output.push('\n');
+            output
         }
-        if let Some(profile) = &build_profile {
-            self::fmt::print_build_profile(profile, purge.as_ref());
-        }
-        self::fmt::print_memory_summary(&project);
-    }
+    };
+    std::io::stdout()
+        .lock()
+        .write_all(output.as_bytes())
+        .context("while attempting to write analyze report")?;
 
     Ok(())
 }

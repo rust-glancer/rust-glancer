@@ -1,0 +1,203 @@
+name: Performance
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "rust-toolchain.toml"
+      - ".github/scripts/render_benchmark_comment.py"
+      - ".github/scripts/render_memory_profile_comment.py"
+      - ".github/scripts/render_performance_comment.py"
+      - ".github/workflows/performance.yml"
+      - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
+      - "test_targets/moderate_workspace/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "rust-toolchain.toml"
+      - ".github/scripts/render_benchmark_comment.py"
+      - ".github/scripts/render_memory_profile_comment.py"
+      - ".github/scripts/render_performance_comment.py"
+      - ".github/workflows/performance.yml"
+      - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
+      - "test_targets/moderate_workspace/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  memory-profile:
+    name: memory-profile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore base memory profile
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci/memory/base
+          key: memory-profile-${{ github.event.pull_request.base.sha }}
+
+      - name: Fetch rust-analyzer fixture
+        run: ./test_targets/bench_fixtures/fetch-rust-analyzer.sh
+
+      - name: Build rust-glancer
+        run: cargo build --release --locked -p rust-glancer
+
+      - name: Run memory profile
+        run: |
+          mkdir -p .ci/memory/current
+          target/release/rust-glancer analyze test_targets/bench_fixtures/rust-analyzer \
+            --memory \
+            --package-residency all-offloadable \
+            --format json > .ci/memory/current/result.json
+
+      - name: Render memory profile section
+        run: |
+          python3 .github/scripts/render_memory_profile_comment.py \
+            --current .ci/memory/current/result.json \
+            --base .ci/memory/base/result.json \
+            --output .ci/memory/comment.md \
+            --section-title "Memory usage analysis"
+          cat .ci/memory/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload memory profile section
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: memory-profile-comment
+          path: .ci/memory/comment.md
+
+      - name: Prepare main-branch memory profile cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p .ci/memory/base
+          cp .ci/memory/current/result.json .ci/memory/base/result.json
+
+      - name: Save main-branch memory profile cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: .ci/memory/base
+          key: memory-profile-${{ github.sha }}
+
+  benchmark:
+    name: benchmark
+    runs-on: ubuntu-latest
+    env:
+      GUNGRAUN_RUNNER_VERSION: "0.18.2"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes valgrind
+
+      - name: Install Gungraun runner
+        uses: taiki-e/install-action@v2
+        with:
+          tool: gungraun-runner@${{ env.GUNGRAUN_RUNNER_VERSION }}
+          fallback: none
+
+      - name: Restore base Gungraun baseline
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: target/gungraun
+          key: gungraun-${{ github.event.pull_request.base.sha }}
+
+      - name: Run pull request benchmark
+        if: github.event_name == 'pull_request'
+        run: |
+          mkdir -p .ci/benchmark/current
+          cargo bench --locked -p rust-glancer --bench ci_analyze -- \
+            --baseline=main \
+            --save-summary=json \
+            --output-format=json > .ci/benchmark/current/gungraun.jsonl
+
+      - name: Run main-branch benchmark
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p .ci/benchmark/current
+          cargo bench --locked -p rust-glancer --bench ci_analyze -- \
+            --save-baseline=main \
+            --save-summary=json \
+            --output-format=json > .ci/benchmark/current/gungraun.jsonl
+
+      - name: Run ad-hoc benchmark
+        if: github.event_name != 'pull_request' && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
+        run: |
+          mkdir -p .ci/benchmark/current
+          cargo bench --locked -p rust-glancer --bench ci_analyze -- \
+            --save-summary=json \
+            --output-format=json > .ci/benchmark/current/gungraun.jsonl
+
+      - name: Render benchmark section
+        run: |
+          python3 .github/scripts/render_benchmark_comment.py \
+            --input .ci/benchmark/current/gungraun.jsonl \
+            --output .ci/benchmark/comment.md \
+            --section-title "Benchmark results"
+          cat .ci/benchmark/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark section
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-comment
+          path: .ci/benchmark/comment.md
+
+      - name: Save main-branch Gungraun baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: target/gungraun
+          key: gungraun-${{ github.sha }}
+
+  performance-comment:
+    name: performance-comment
+    if: github.event_name == 'pull_request'
+    needs:
+      - memory-profile
+      - benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download memory profile section
+        uses: actions/download-artifact@v4
+        with:
+          name: memory-profile-comment
+          path: .ci/performance/memory
+
+      - name: Download benchmark section
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-comment
+          path: .ci/performance/benchmark
+
+      - name: Render performance comment
+        run: |
+          python3 .github/scripts/render_performance_comment.py \
+            --memory .ci/performance/memory/comment.md \
+            --benchmark .ci/performance/benchmark/comment.md \
+            --output .ci/performance/comment.md
+          cat .ci/performance/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on pull request
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rust-glancer-performance
+          path: .ci/performance/comment.md

@@ -38,6 +38,9 @@ enum Command {
         /// Target triple used to filter Cargo metadata. Defaults to the current rustc host target.
         #[clap(long)]
         target: Option<String>,
+        /// Render the analysis report for humans or CI tooling.
+        #[clap(long, value_enum, default_value = "text")]
+        format: analyze::OutputFormat,
     },
     /// Start the language server over stdio.
     Lsp,
@@ -63,6 +66,7 @@ fn main() -> anyhow::Result<()> {
             load,
             package_residency,
             target,
+            format,
         } => {
             logging::init_plain_tracing();
             analyze::analyze(
@@ -76,6 +80,7 @@ fn main() -> anyhow::Result<()> {
                 },
                 package_residency.into(),
                 target,
+                format,
             )
         }
         Command::Lsp => start_server::start_server(),
