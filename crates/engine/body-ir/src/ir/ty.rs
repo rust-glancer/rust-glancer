@@ -2,7 +2,7 @@ use rg_item_tree::TypeRef;
 use rg_semantic_ir::TypeDefRef;
 use rg_text::Name;
 
-use crate::ids::BodyItemRef;
+use super::ids::BodyItemRef;
 
 /// Small type vocabulary for the first Body IR pass.
 #[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]

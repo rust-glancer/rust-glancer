@@ -1,46 +1,25 @@
-mod body;
 mod build;
-mod cache;
 mod cursor;
-mod db;
-mod expr;
-mod ids;
-mod item;
-mod memsize;
-mod pat;
-mod path;
+mod ir;
 mod resolution;
-mod resolved;
-mod stmt;
-mod txn;
-mod ty;
+mod store;
 
 #[cfg(test)]
 mod tests;
 
 pub use self::{
-    body::{
-        BodyData, BodyIrStats, BodySource, PackageBodies, ScopeData, TargetBodies,
+    cursor::{BodyCursorCandidate, DotReceiver},
+    ir::{
+        BindingData, BindingId, BindingKind, BodyData, BodyFieldData, BodyFieldRef,
+        BodyFunctionData, BodyFunctionId, BodyFunctionOwner, BodyFunctionRef, BodyGenericArg,
+        BodyId, BodyImplData, BodyImplId, BodyIrStats, BodyItemData, BodyItemId, BodyItemKind,
+        BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef, BodyResolution,
+        BodySource, BodyTy, BodyTypePathResolution, ExprData, ExprId, ExprKind, LiteralKind,
+        PackageBodies, PatData, PatId, PatKind, RecordPatField, ResolvedFieldRef,
+        ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
         TargetBodiesStatus,
     },
-    cache::BodyIrPackageBundle,
-    cursor::{BodyCursorCandidate, DotReceiver},
-    db::BodyIrDb,
-    expr::{ExprData, ExprKind, LiteralKind},
-    ids::{
-        BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
-        BodyItemRef, BodyRef, ExprId, PatId, ScopeId,
-    },
-    item::{
-        BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyItemData,
-        BodyItemKind,
-    },
-    pat::{PatData, PatKind, RecordPatField},
-    path::BodyPath,
-    resolved::{BodyResolution, BodyTypePathResolution, ResolvedFieldRef, ResolvedFunctionRef},
-    stmt::{BindingData, BindingKind, StmtData, StmtKind},
-    txn::BodyIrReadTxn,
-    ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},
+    store::{BodyIrDb, BodyIrPackageBundle, BodyIrReadTxn},
 };
 
 /// Package-set selector for eager body lowering.

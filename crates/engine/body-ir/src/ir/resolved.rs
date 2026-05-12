@@ -1,7 +1,7 @@
 use rg_def_map::DefId;
 use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, TraitRef, TypeDefRef};
 
-use crate::ids::{BindingId, BodyFieldRef, BodyFunctionRef, BodyItemRef};
+use super::ids::{BindingId, BodyFieldRef, BodyFunctionRef, BodyItemRef};
 
 /// Stable field identity across module-level Semantic IR and body-local declarations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]

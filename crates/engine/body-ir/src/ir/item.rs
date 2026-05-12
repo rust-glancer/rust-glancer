@@ -3,7 +3,7 @@ use rg_item_tree::{
 };
 use rg_text::Name;
 
-use crate::{
+use super::{
     body::BodySource,
     ids::{BodyFunctionId, BodyImplId, BodyItemRef, ScopeId},
 };

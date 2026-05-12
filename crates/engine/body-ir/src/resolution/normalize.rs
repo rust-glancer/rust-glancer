@@ -7,9 +7,9 @@
 use rg_semantic_ir::SemanticIrReadTxn;
 
 use crate::{
-    body::BodyData,
-    expr::ExprWrapperKind,
-    ty::{BodyGenericArg, BodyTy},
+    ir::body::BodyData,
+    ir::expr::ExprWrapperKind,
+    ir::ty::{BodyGenericArg, BodyTy},
 };
 
 use super::push_unique;

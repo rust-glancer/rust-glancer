@@ -20,15 +20,13 @@ use rg_text::{Name, NameInterner, PackageNameInterners};
 
 use crate::{
     BodyIrBuildPolicy,
-    body::{BodyBuilder, BodyData, BodySource, PackageBodies, TargetBodies},
-    expr::{ExprData, ExprKind, ExprWrapperKind, LiteralKind, MatchArmData},
-    ids::{BindingId, BodyFunctionId, BodyImplId, BodyItemId, ExprId, PatId, ScopeId, StmtId},
-    item::{BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyItemData, BodyItemKind},
-    pat::{PatData, PatKind, RecordPatField},
-    path::BodyPath,
-    resolved::BodyResolution,
-    stmt::{BindingData, BindingKind, StmtData, StmtKind},
-    ty::BodyTy,
+    ir::{
+        BindingData, BindingId, BindingKind, BodyBuilder, BodyData, BodyFunctionData,
+        BodyFunctionId, BodyFunctionOwner, BodyImplData, BodyImplId, BodyItemData, BodyItemId,
+        BodyItemKind, BodyPath, BodyResolution, BodySource, BodyTy, ExprData, ExprId, ExprKind,
+        ExprWrapperKind, LiteralKind, MatchArmData, PackageBodies, PatData, PatId, PatKind,
+        RecordPatField, ScopeId, StmtData, StmtId, StmtKind, TargetBodies,
+    },
 };
 
 use super::local_thread_pool;

@@ -6,8 +6,8 @@ use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
 use crate::{
-    BindingId, BodyData, BodyId, BodyIrReadTxn, BodyItemId, BodyItemRef, BodyRef, ExprData, ExprId,
-    ExprKind, ScopeId, StmtKind, ids::PatId, pat::PatKind, path::BodyPath,
+    BindingId, BodyData, BodyId, BodyIrReadTxn, BodyItemId, BodyItemRef, BodyPath, BodyRef,
+    ExprData, ExprId, ExprKind, PatId, PatKind, ScopeId, StmtKind,
 };
 
 use super::{BodyCursorCandidate, DotReceiver};

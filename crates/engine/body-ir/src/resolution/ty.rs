@@ -10,8 +10,8 @@ use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
 
 use crate::{
-    resolved::BodyTypePathResolution,
-    ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},
+    ir::resolved::BodyTypePathResolution,
+    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
 
 use super::type_path::resolve_type_path_in_context;

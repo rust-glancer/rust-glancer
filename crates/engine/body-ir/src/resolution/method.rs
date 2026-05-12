@@ -12,10 +12,10 @@ use rg_semantic_ir::{
 };
 
 use crate::{
-    body::BodyData,
-    ids::{BodyFunctionRef, BodyRef},
-    item::{BodyFunctionOwner, BodyImplData},
-    ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
+    ir::body::BodyData,
+    ir::ids::{BodyFunctionRef, BodyRef},
+    ir::item::{BodyFunctionOwner, BodyImplData},
+    ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
 
 use super::{

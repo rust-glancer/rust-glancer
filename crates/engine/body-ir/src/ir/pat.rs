@@ -1,6 +1,6 @@
 use rg_item_tree::FieldKey;
 
-use crate::{
+use super::{
     body::BodySource,
     ids::{BindingId, PatId},
     path::BodyPath,

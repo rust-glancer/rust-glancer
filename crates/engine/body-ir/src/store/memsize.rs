@@ -6,8 +6,8 @@ use crate::{
     BodyResolution, BodySource, BodyTy, BodyTypePathResolution, ExprData, ExprId, ExprKind,
     LiteralKind, PackageBodies, PatData, PatId, PatKind, RecordPatField, ResolvedFieldRef,
     ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
-    expr::{ExprWrapperKind, MatchArmData},
-    ids::StmtId,
+    ir::expr::{ExprWrapperKind, MatchArmData},
+    ir::ids::StmtId,
 };
 use rg_memsize::{MemoryRecorder, MemorySize};
 

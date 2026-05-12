@@ -2,7 +2,7 @@ use rg_item_tree::FieldKey;
 use rg_parse::Span;
 use rg_text::Name;
 
-use crate::{
+use super::{
     body::BodySource,
     ids::{ExprId, PatId, ScopeId, StmtId},
     path::BodyPath,

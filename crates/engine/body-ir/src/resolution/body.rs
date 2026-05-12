@@ -9,15 +9,15 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{FunctionRef, SemanticIrReadTxn, TypeDefId, TypePathContext};
 
 use crate::{
-    body::BodyData,
-    expr::{ExprKind, ExprWrapperKind},
-    ids::{
+    ir::body::BodyData,
+    ir::expr::{ExprKind, ExprWrapperKind},
+    ir::ids::{
         BindingId, BodyFieldRef, BodyFunctionRef, BodyImplId, BodyItemRef, BodyRef, ExprId, ScopeId,
     },
-    item::BodyFunctionOwner,
-    resolved::{BodyResolution, BodyTypePathResolution, ResolvedFieldRef, ResolvedFunctionRef},
-    stmt::BindingKind,
-    ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
+    ir::item::BodyFunctionOwner,
+    ir::resolved::{BodyResolution, BodyTypePathResolution, ResolvedFieldRef, ResolvedFunctionRef},
+    ir::stmt::BindingKind,
+    ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
 
 use super::{

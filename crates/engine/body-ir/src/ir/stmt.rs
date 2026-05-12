@@ -1,7 +1,7 @@
 use rg_item_tree::TypeRef;
 use rg_text::Name;
 
-use crate::{
+use super::{
     body::BodySource,
     ids::{BindingId, BodyImplId, BodyItemId, ExprId, PatId, ScopeId},
     ty::BodyTy,

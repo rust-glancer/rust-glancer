@@ -2,7 +2,7 @@ use rg_arena::Arena;
 use rg_parse::{FileId, Span, TargetId};
 use rg_semantic_ir::{FunctionId, FunctionRef};
 
-use crate::{
+use super::{
     expr::ExprData,
     ids::{
         BindingId, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId, BodyItemRef,
@@ -36,7 +36,7 @@ pub struct PackageBodies {
 }
 
 impl PackageBodies {
-    pub(super) fn new(targets: Vec<TargetBodies>) -> Self {
+    pub(crate) fn new(targets: Vec<TargetBodies>) -> Self {
         Self {
             targets: Arena::from_vec(targets),
         }
@@ -59,7 +59,7 @@ impl PackageBodies {
 }
 
 impl PackageBodies {
-    pub(super) fn targets_mut(&mut self) -> &mut [TargetBodies] {
+    pub(crate) fn targets_mut(&mut self) -> &mut [TargetBodies] {
         self.targets.as_mut_slice()
     }
 }
@@ -73,7 +73,7 @@ pub struct TargetBodies {
 }
 
 impl TargetBodies {
-    pub(super) fn new(function_count: usize) -> Self {
+    pub(crate) fn new(function_count: usize) -> Self {
         Self {
             status: TargetBodiesStatus::Built,
             function_bodies: {
@@ -85,7 +85,7 @@ impl TargetBodies {
         }
     }
 
-    pub(super) fn skipped(function_count: usize) -> Self {
+    pub(crate) fn skipped(function_count: usize) -> Self {
         Self {
             status: TargetBodiesStatus::Skipped,
             function_bodies: {
@@ -141,11 +141,11 @@ pub enum TargetBodiesStatus {
 }
 
 impl TargetBodies {
-    pub(super) fn alloc_body(&mut self, data: BodyData) -> BodyId {
+    pub(crate) fn alloc_body(&mut self, data: BodyData) -> BodyId {
         self.bodies.alloc(data)
     }
 
-    pub(super) fn set_function_body(&mut self, function: FunctionId, body: BodyId) {
+    pub(crate) fn set_function_body(&mut self, function: FunctionId, body: BodyId) {
         let slot = self
             .function_bodies
             .get_mut(function)
@@ -153,7 +153,7 @@ impl TargetBodies {
         *slot = Some(body);
     }
 
-    pub(super) fn bodies_mut(&mut self) -> &mut [BodyData] {
+    pub(crate) fn bodies_mut(&mut self) -> &mut [BodyData] {
         self.bodies.as_mut_slice()
     }
 }
@@ -266,7 +266,7 @@ impl BodyData {
         self.exprs.get(expr)
     }
 
-    pub(super) fn new(
+    pub(crate) fn new(
         owner: FunctionRef,
         owner_module: rg_def_map::ModuleRef,
         source: BodySource,
@@ -362,19 +362,19 @@ impl BodyData {
 
 /// Mutable store used while one body is being lowered.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(super) struct BodyBuilder {
-    pub(super) scopes: Arena<ScopeId, ScopeData>,
-    pub(super) local_items: Arena<BodyItemId, BodyItemData>,
-    pub(super) local_impls: Arena<BodyImplId, BodyImplData>,
-    pub(super) local_functions: Arena<BodyFunctionId, BodyFunctionData>,
-    pub(super) bindings: Arena<BindingId, BindingData>,
-    pub(super) pats: Arena<PatId, PatData>,
-    pub(super) statements: Arena<StmtId, StmtData>,
-    pub(super) exprs: Arena<ExprId, ExprData>,
+pub(crate) struct BodyBuilder {
+    pub(crate) scopes: Arena<ScopeId, ScopeData>,
+    pub(crate) local_items: Arena<BodyItemId, BodyItemData>,
+    pub(crate) local_impls: Arena<BodyImplId, BodyImplData>,
+    pub(crate) local_functions: Arena<BodyFunctionId, BodyFunctionData>,
+    pub(crate) bindings: Arena<BindingId, BindingData>,
+    pub(crate) pats: Arena<PatId, PatData>,
+    pub(crate) statements: Arena<StmtId, StmtData>,
+    pub(crate) exprs: Arena<ExprId, ExprData>,
 }
 
 impl BodyBuilder {
-    pub(super) fn alloc_scope(&mut self, parent: Option<ScopeId>) -> ScopeId {
+    pub(crate) fn alloc_scope(&mut self, parent: Option<ScopeId>) -> ScopeId {
         self.scopes.alloc(ScopeData {
             parent,
             local_items: Vec::new(),
@@ -383,7 +383,7 @@ impl BodyBuilder {
         })
     }
 
-    pub(super) fn alloc_local_item(&mut self, data: BodyItemData) -> BodyItemId {
+    pub(crate) fn alloc_local_item(&mut self, data: BodyItemData) -> BodyItemId {
         let scope = data.scope;
         let item = self.local_items.alloc(data);
         self.scopes
@@ -394,7 +394,7 @@ impl BodyBuilder {
         item
     }
 
-    pub(super) fn alloc_local_impl(&mut self, data: BodyImplData) -> BodyImplId {
+    pub(crate) fn alloc_local_impl(&mut self, data: BodyImplData) -> BodyImplId {
         let scope = data.scope;
         let impl_id = self.local_impls.alloc(data);
         self.scopes
@@ -405,11 +405,11 @@ impl BodyBuilder {
         impl_id
     }
 
-    pub(super) fn alloc_local_function(&mut self, data: BodyFunctionData) -> BodyFunctionId {
+    pub(crate) fn alloc_local_function(&mut self, data: BodyFunctionData) -> BodyFunctionId {
         self.local_functions.alloc(data)
     }
 
-    pub(super) fn set_local_impl_functions(
+    pub(crate) fn set_local_impl_functions(
         &mut self,
         impl_id: BodyImplId,
         functions: Vec<BodyFunctionId>,
@@ -421,7 +421,7 @@ impl BodyBuilder {
         impl_data.functions = functions;
     }
 
-    pub(super) fn alloc_binding(&mut self, data: BindingData) -> BindingId {
+    pub(crate) fn alloc_binding(&mut self, data: BindingData) -> BindingId {
         let scope = data.scope;
         let binding = self.bindings.alloc(data);
         self.scopes
@@ -432,15 +432,15 @@ impl BodyBuilder {
         binding
     }
 
-    pub(super) fn alloc_pat(&mut self, data: PatData) -> PatId {
+    pub(crate) fn alloc_pat(&mut self, data: PatData) -> PatId {
         self.pats.alloc(data)
     }
 
-    pub(super) fn alloc_statement(&mut self, data: StmtData) -> StmtId {
+    pub(crate) fn alloc_statement(&mut self, data: StmtData) -> StmtId {
         self.statements.alloc(data)
     }
 
-    pub(super) fn alloc_expr(&mut self, data: ExprData) -> ExprId {
+    pub(crate) fn alloc_expr(&mut self, data: ExprData) -> ExprId {
         self.exprs.alloc(data)
     }
 }

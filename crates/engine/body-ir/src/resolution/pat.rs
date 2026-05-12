@@ -10,13 +10,13 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypeDefId, TypePathContext};
 
 use crate::{
-    body::BodyData,
-    expr::ExprKind,
-    ids::{BindingId, BodyRef, ExprId, PatId, ScopeId, StmtId},
-    pat::{PatKind, RecordPatField},
-    path::BodyPath,
-    stmt::StmtKind,
-    ty::{BodyNominalTy, BodyTy},
+    ir::body::BodyData,
+    ir::expr::ExprKind,
+    ir::ids::{BindingId, BodyRef, ExprId, PatId, ScopeId, StmtId},
+    ir::pat::{PatKind, RecordPatField},
+    ir::path::BodyPath,
+    ir::stmt::StmtKind,
+    ir::ty::{BodyNominalTy, BodyTy},
 };
 
 use super::{
