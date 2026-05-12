@@ -1,6 +1,10 @@
 [advisories]
 version = 2
-ignore = []
+ignore = [
+  # Gungraun uses bincode internally to pass benchmark definitions to its
+  # runner. The dependency is limited to the Linux CI benchmark harness.
+  "RUSTSEC-2025-0141",
+]
 
 [licenses]
 version = 2

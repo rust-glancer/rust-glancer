@@ -54,6 +54,7 @@ derive_more = { version = "2.1.1" }
 divan = "0.1.21"
 expect-test = "1.5.1"
 futures = "0.3"
+gungraun = "0.18.2"
 ls_types = { package = "ls-types", version = "0.0.6" }
 wincode = { version = "0.4.9", features = ["derive"] }
 rayon = "1.12.0"
@@ -87,3 +88,6 @@ rg_text = { path = "crates/lib/text" }
 rg_arena = { path = "crates/lib/arena" }
 rg_memsize = { path = "crates/lib/memsize" }
 test_fixture = { path = "crates/lib/test-fixture" }
+
+[profile.bench]
+debug = true

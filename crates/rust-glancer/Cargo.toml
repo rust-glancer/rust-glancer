@@ -36,3 +36,10 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = { workspace = true, optional = true }
 tikv-jemalloc-sys = { workspace = true, optional = true }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+gungraun.workspace = true
+
+[[bench]]
+name = "ci_analyze"
+harness = false

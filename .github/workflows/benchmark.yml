@@ -1,0 +1,101 @@
+name: Benchmark
+
+on:
+  pull_request:
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "rust-toolchain.toml"
+      - ".github/scripts/render_benchmark_comment.py"
+      - ".github/workflows/benchmark.yml"
+      - "test_targets/moderate_workspace/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "crates/**"
+      - "rust-toolchain.toml"
+      - ".github/scripts/render_benchmark_comment.py"
+      - ".github/workflows/benchmark.yml"
+      - "test_targets/moderate_workspace/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  benchmark:
+    name: benchmark
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Valgrind
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes valgrind
+
+      - name: Collect benchmark environment
+        id: benchmark-env
+        run: |
+          echo "rustc_hash=$(rustc -Vv | sha256sum | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          echo "valgrind_version=$(valgrind --version)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore base Gungraun baseline
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@v4
+        with:
+          path: target/gungraun
+          key: gungraun-${{ runner.os }}-${{ steps.benchmark-env.outputs.rustc_hash }}-${{ steps.benchmark-env.outputs.valgrind_version }}-${{ github.event.pull_request.base.sha }}
+
+      - name: Run pull request benchmark
+        if: github.event_name == 'pull_request'
+        run: |
+          mkdir -p .ci/benchmark/current
+          cargo bench --locked -p rust-glancer --bench ci_analyze -- \
+            --baseline=main \
+            --save-summary=json \
+            --output-format=json > .ci/benchmark/current/gungraun.jsonl
+
+      - name: Run main-branch benchmark
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p .ci/benchmark/current
+          cargo bench --locked -p rust-glancer --bench ci_analyze -- \
+            --save-baseline=main \
+            --save-summary=json \
+            --output-format=json > .ci/benchmark/current/gungraun.jsonl
+
+      - name: Run ad-hoc benchmark
+        if: github.event_name != 'pull_request' && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
+        run: |
+          mkdir -p .ci/benchmark/current
+          cargo bench --locked -p rust-glancer --bench ci_analyze -- \
+            --save-summary=json \
+            --output-format=json > .ci/benchmark/current/gungraun.jsonl
+
+      - name: Render benchmark comment
+        run: |
+          python3 .github/scripts/render_benchmark_comment.py \
+            --input .ci/benchmark/current/gungraun.jsonl \
+            --output .ci/benchmark/comment.md
+          cat .ci/benchmark/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on pull request
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: rust-glancer-benchmark
+          path: .ci/benchmark/comment.md
+
+      - name: Save main-branch Gungraun baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@v4
+        continue-on-error: true
+        with:
+          path: target/gungraun
+          key: gungraun-${{ runner.os }}-${{ steps.benchmark-env.outputs.rustc_hash }}-${{ steps.benchmark-env.outputs.valgrind_version }}-${{ github.sha }}
