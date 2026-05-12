@@ -31,6 +31,8 @@ jobs:
   benchmark:
     name: benchmark
     runs-on: ubuntu-latest
+    env:
+      GUNGRAUN_RUNNER_VERSION: "0.18.2"
     steps:
       - uses: actions/checkout@v4
 
@@ -39,18 +41,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes valgrind
 
-      - name: Collect benchmark environment
-        id: benchmark-env
-        run: |
-          echo "rustc_hash=$(rustc -Vv | sha256sum | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
-          echo "valgrind_version=$(valgrind --version)" >> "$GITHUB_OUTPUT"
+      - name: Install Gungraun runner
+        uses: taiki-e/install-action@v2
+        with:
+          tool: gungraun-runner@${{ env.GUNGRAUN_RUNNER_VERSION }}
+          fallback: none
 
       - name: Restore base Gungraun baseline
         if: github.event_name == 'pull_request'
         uses: actions/cache/restore@v4
         with:
           path: target/gungraun
-          key: gungraun-${{ runner.os }}-${{ steps.benchmark-env.outputs.rustc_hash }}-${{ steps.benchmark-env.outputs.valgrind_version }}-${{ github.event.pull_request.base.sha }}
+          key: gungraun-${{ github.event.pull_request.base.sha }}
 
       - name: Run pull request benchmark
         if: github.event_name == 'pull_request'
@@ -98,4 +100,4 @@ jobs:
         continue-on-error: true
         with:
           path: target/gungraun
-          key: gungraun-${{ runner.os }}-${{ steps.benchmark-env.outputs.rustc_hash }}-${{ steps.benchmark-env.outputs.valgrind_version }}-${{ github.sha }}
+          key: gungraun-${{ github.sha }}
