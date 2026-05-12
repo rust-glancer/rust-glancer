@@ -8,8 +8,7 @@ use rg_parse::TargetId;
 use rg_semantic_ir::SemanticIrReadTxn;
 
 use crate::{
-    body::{PackageBodies, TargetBodiesStatus},
-    ids::{BodyId, BodyRef},
+    ir::{BodyId, BodyRef, PackageBodies, TargetBodiesStatus},
     resolution::{BodyResolver, SemanticResolutionIndex},
 };
 

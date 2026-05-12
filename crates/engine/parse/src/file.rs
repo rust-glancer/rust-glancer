@@ -8,7 +8,10 @@ use std::{
 use ra_syntax::{Edition, Parse as SyntaxParse, SourceFile};
 use rg_arena::Arena;
 
-use crate::span::{LineIndex, LineIndexSnapshot, Span};
+use crate::{
+    line_index::{LineIndex, LineIndexSnapshot},
+    span::Span,
+};
 
 /// Stable identifier for a parsed source file inside `FileDb`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]

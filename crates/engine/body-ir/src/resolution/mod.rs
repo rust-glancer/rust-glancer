@@ -19,9 +19,9 @@ use rg_semantic_ir::{
 
 use crate::{
     BodyData, BodyResolution,
-    ids::{BodyFunctionRef, BodyRef, ScopeId},
-    resolved::BodyTypePathResolution,
-    ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
+    ir::ids::{BodyFunctionRef, BodyRef, ScopeId},
+    ir::resolved::BodyTypePathResolution,
+    ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
 
 use self::{

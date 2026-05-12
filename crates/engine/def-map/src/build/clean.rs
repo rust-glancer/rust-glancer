@@ -10,10 +10,11 @@ use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use super::{
+    collect::collect_target_states,
     finalize::{FinalizeTargetStates, finalize_target_states, freeze_package_states},
     implicit_roots::build_implicit_roots,
 };
-use crate::{DefMapDb, PackageSlot, collect::collect_target_states};
+use crate::{DefMapDb, PackageSlot};
 
 /// Builds the final `DefMapDb` from collected per-target states.
 ///

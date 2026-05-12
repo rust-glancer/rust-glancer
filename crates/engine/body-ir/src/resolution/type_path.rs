@@ -11,10 +11,10 @@ use rg_semantic_ir::{
 };
 
 use crate::{
-    body::BodyData,
-    ids::{BodyItemId, BodyItemRef, BodyRef, ScopeId},
-    resolved::BodyTypePathResolution,
-    ty::{BodyGenericArg, BodyTy},
+    ir::body::BodyData,
+    ir::ids::{BodyItemId, BodyItemRef, BodyRef, ScopeId},
+    ir::resolved::BodyTypePathResolution,
+    ir::ty::{BodyGenericArg, BodyTy},
 };
 
 use super::ty::{

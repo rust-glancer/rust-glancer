@@ -19,10 +19,10 @@ use rg_text::Name;
 use crate::{
     ConstData, EnumData, FunctionData, ImplData, PackageIr, StaticData, StructData, TargetIr,
     TraitData, TypeAliasData, UnionData,
-    ids::{
+    ir::ids::{
         AssocItemId, ConstId, FunctionId, ImplId, ItemId, ItemOwner, StaticId, TraitId, TypeAliasId,
     },
-    signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
+    ir::signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
 };
 
 pub(super) fn build_packages(

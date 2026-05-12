@@ -11,7 +11,7 @@ use crate::{
     BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy, BodyResolution,
     BodySource, BodyTy, ExprData, ExprKind, ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
     TargetBodiesStatus,
-    ids::{
+    ir::ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
         BodyItemRef, ExprId, StmtId,
     },

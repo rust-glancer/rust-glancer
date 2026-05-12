@@ -8,7 +8,7 @@ use expect_test::Expect;
 
 use crate::{
     ItemStore, SemanticIrDb, SemanticIrReadTxn,
-    ids::{FunctionRef, ImplRef, TraitRef, TypeDefId, TypeDefRef},
+    ir::ids::{FunctionRef, ImplRef, TraitRef, TypeDefId, TypeDefRef},
 };
 use rg_def_map::{DefMapDb, ModuleId, ModuleRef, PackageSlot, Path, PathSegment, TargetRef};
 use rg_item_tree::{FieldItem, FieldList, ItemTreeDb, ParamKind, VisibilityLevel};
@@ -17,7 +17,7 @@ use rg_parse::{Package, ParseDb, Target};
 use rg_workspace::{TargetKind, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
-use crate::ids::{AssocItemId, ConstId, FunctionId, ImplId, ItemId, TypeAliasId};
+use crate::ir::ids::{AssocItemId, ConstId, FunctionId, ImplId, ItemId, TypeAliasId};
 
 pub(super) fn check_project_semantic_ir(fixture: &str, expect: Expect) {
     let db = SemanticIrFixtureDb::build(fixture);
@@ -467,15 +467,15 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             .expect("function id should load while rendering query")
             .expect("function id should exist while rendering query");
         let owner = match data.owner {
-            crate::ids::ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
-            crate::ids::ItemOwner::Trait(trait_id) => self.render_trait_ref(
+            crate::ir::ids::ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
+            crate::ir::ids::ItemOwner::Trait(trait_id) => self.render_trait_ref(
                 semantic_ir,
                 TraitRef {
                     target: function_ref.target,
                     id: trait_id,
                 },
             ),
-            crate::ids::ItemOwner::Impl(impl_id) => self.render_impl_ref(
+            crate::ir::ids::ItemOwner::Impl(impl_id) => self.render_impl_ref(
                 semantic_ir,
                 ImplRef {
                     target: function_ref.target,

@@ -1,39 +1,23 @@
 mod build;
-mod cache;
 mod cursor;
-mod db;
-mod ids;
-mod items;
-mod memsize;
-mod package;
-mod resolution;
-mod signature;
-mod stats;
-mod target;
-mod txn;
+mod ir;
+mod store;
 
 #[cfg(test)]
 mod tests;
 
 pub use self::{
-    cache::SemanticIrPackageBundle,
     cursor::SemanticCursorCandidate,
-    db::SemanticIrDb,
-    ids::{
-        AssocItemId, ConstId, ConstRef, EnumId, EnumVariantRef, FieldRef, FunctionId, FunctionRef,
-        ImplId, ImplRef, ItemId, ItemOwner, StaticId, StaticRef, StructId, TraitApplicability,
-        TraitId, TraitImplRef, TraitRef, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
+    ir::{
+        AssocItemId, ConstData, ConstId, ConstRef, ConstSignature, EnumData, EnumId,
+        EnumVariantData, EnumVariantRef, FieldData, FieldRef, FunctionData, FunctionId,
+        FunctionRef, FunctionSignature, ImplData, ImplId, ImplRef, ItemId, ItemOwner, ItemStore,
+        PackageIr, SemanticIrStats, SemanticTypePathResolution, StaticData, StaticId, StaticRef,
+        StructData, StructId, TargetIr, TraitApplicability, TraitData, TraitId, TraitImplRef,
+        TraitRef, TypeAliasData, TypeAliasId, TypeAliasRef, TypeAliasSignature, TypeDefId,
+        TypeDefRef, TypePathContext, UnionData, UnionId,
     },
-    items::{
-        ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, ItemStore,
-        StaticData, StructData, TraitData, TypeAliasData, UnionData,
-    },
-    package::PackageIr,
-    resolution::{SemanticTypePathResolution, TypePathContext},
-    signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
-    stats::SemanticIrStats,
-    target::TargetIr,
-    txn::SemanticIrReadTxn,
+    store::{SemanticIrDb, SemanticIrPackageBundle, SemanticIrReadTxn},
 };
 pub use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,

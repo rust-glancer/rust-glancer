@@ -7,14 +7,16 @@
 
 use crate::{
     ImportData, ImportId, ImportKind, ModuleRef, ScopeBinding,
-    collect::TargetState,
-    path_resolution::{
+    query::path_resolution::{
         PathResolutionEnv, namespace_for_def_with_env, resolve_path_to_defs_with_env,
         resolve_path_to_modules_with_env, visible_module_scope_entry_set_with_env,
     },
 };
 
-use super::finalize::{FinalizeTargetStates, ScopeMatrix};
+use super::{
+    collect::TargetState,
+    finalize::{FinalizeTargetStates, ScopeMatrix},
+};
 
 /// Unresolved import ids for one module.
 type ModuleUnresolvedImports = Vec<ImportId>;

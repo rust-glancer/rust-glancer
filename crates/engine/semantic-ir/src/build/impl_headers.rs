@@ -7,8 +7,8 @@ use rg_parse::TargetId;
 
 use crate::{
     SemanticIrReadTxn,
-    db::SemanticIrDbMutator,
-    ids::{ImplRef, TraitRef, TypeDefRef},
+    ir::ids::{ImplRef, TraitRef, TypeDefRef},
+    store::SemanticIrDbMutator,
 };
 
 pub(super) fn resolve_impl_headers(

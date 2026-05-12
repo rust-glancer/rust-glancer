@@ -9,6 +9,7 @@
 //! - a package rebuild has an old baseline and marks only affected packages dirty.
 
 mod clean;
+mod collect;
 mod finalize;
 mod implicit_roots;
 mod imports;
