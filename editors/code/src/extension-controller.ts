@@ -23,10 +23,11 @@ export class ExtensionController implements vscode.Disposable {
   /** Wires VS Code workspace/editor events to the window-level LSP client lifecycle. */
   public constructor(
     extensionPath: string,
-    private readonly output: vscode.OutputChannel,
+    private readonly extensionLog: vscode.LogOutputChannel,
+    serverOutput: vscode.OutputChannel,
     private readonly status: StatusView,
   ) {
-    this.clientSlot = new LanguageClientSlot(extensionPath, output, status);
+    this.clientSlot = new LanguageClientSlot(extensionPath, extensionLog, serverOutput, status);
     this.workspaceListeners = vscode.Disposable.from(
       vscode.window.onDidChangeActiveTextEditor((editor) => {
         void this.activateForEditor(editor);
@@ -53,7 +54,7 @@ export class ExtensionController implements vscode.Disposable {
   public async start(): Promise<void> {
     const workspaceFolder = this.selectedWorkspaceFolder();
     if (workspaceFolder === undefined) {
-      this.output.appendLine("no workspace folder found; rust-glancer server was not started");
+      this.extensionLog.info("no workspace folder found; rust-glancer server was not started");
       this.status.stopped("no workspace folder");
       return;
     }

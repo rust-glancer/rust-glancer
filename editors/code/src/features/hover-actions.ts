@@ -34,7 +34,7 @@ interface SerializedPosition {
 
 export function hoverMiddleware(
   clientProvider: () => LanguageClient | undefined,
-  output: vscode.OutputChannel,
+  output: vscode.LogOutputChannel,
 ): LanguageClientOptions["middleware"] {
   return {
     async provideHover(document, position, token, next) {
@@ -60,20 +60,20 @@ export function hoverMiddleware(
 
         return appendGoToTypeAction(hover, locations);
       } catch (error) {
-        output.appendLine(`hover go-to-type action failed: ${String(error)}`);
+        output.warn(`hover go-to-type action failed: ${String(error)}`);
         return hover;
       }
     },
   };
 }
 
-export function registerHoverActionCommands(output: vscode.OutputChannel): vscode.Disposable {
+export function registerHoverActionCommands(output: vscode.LogOutputChannel): vscode.Disposable {
   return vscode.commands.registerCommand(
     EXTENSION_COMMANDS.goToTypeFromHover,
     async (serializedLocations: unknown) => {
       const locations = deserializeLocations(serializedLocations);
       if (locations.length === 0) {
-        output.appendLine("hover go-to-type command ignored empty or malformed locations");
+        output.warn("hover go-to-type command ignored empty or malformed locations");
         return;
       }
 

@@ -10,11 +10,10 @@ import {
   LanguageClient,
   State,
   type LanguageClientOptions,
-  Trace,
 } from "vscode-languageclient/node";
 
 import { SERVER_COMMANDS, SERVER_NOTIFICATIONS } from "../commands";
-import { ExtensionConfig, type TraceSetting } from "../config";
+import { ExtensionConfig } from "../config";
 import { hoverMiddleware } from "../features/hover-actions";
 import {
   ClientStatus,
@@ -38,7 +37,8 @@ export class LanguageClientSession implements vscode.Disposable {
 
   public constructor(
     private readonly extensionPath: string,
-    private readonly output: vscode.OutputChannel,
+    private readonly extensionLog: vscode.LogOutputChannel,
+    private readonly serverOutput: vscode.OutputChannel,
     status: StatusView,
     private readonly workspaceFolder: vscode.WorkspaceFolder,
   ) {
@@ -70,16 +70,15 @@ export class LanguageClientSession implements vscode.Disposable {
       serverSource: server.source,
     };
 
-    this.output.appendLine(`workspace root: ${this.workspaceFolder.uri.fsPath}`);
-    this.output.appendLine(`server command: ${statusDetails.serverCommand}`);
-    this.output.appendLine(`server source: ${statusDetails.serverSource}`);
+    this.extensionLog.info(`workspace root: ${this.workspaceFolder.uri.fsPath}`);
+    this.extensionLog.info(`server command: ${statusDetails.serverCommand}`);
+    this.extensionLog.info(`server source: ${statusDetails.serverSource}`);
     this.clientStatus.starting(statusDetails);
 
     const clientOptions: LanguageClientOptions = {
       documentSelector: [{ scheme: "file", language: "rust" }],
       diagnosticCollectionName: "rust-glancer",
-      outputChannel: this.output,
-      traceOutputChannel: this.output,
+      outputChannel: this.serverOutput,
       initializationOptions: {
         diagnostics: config.diagnostics,
         cargo: config.cargo,
@@ -91,7 +90,7 @@ export class LanguageClientSession implements vscode.Disposable {
     const client = new LanguageClient(
       "rust-glancer",
       "Rust Glancer",
-      ResolvedServer.options(server, this.output),
+      ResolvedServer.options(server, this.extensionLog),
       clientOptions,
     );
 
@@ -126,16 +125,15 @@ export class LanguageClientSession implements vscode.Disposable {
 
     try {
       await client.start();
-      await client.setTrace(trace(config.traceServer));
       this.clientStatus.ready(statusDetails);
       this.refreshStatus();
-      this.output.appendLine("rust-glancer client started");
+      this.extensionLog.info("rust-glancer client started");
     } catch (error) {
       this.client = undefined;
       this.clientState?.dispose();
       this.clientState = undefined;
       this.clientStatus.failed(String(error), statusDetails);
-      this.output.appendLine(`rust-glancer client failed to start: ${String(error)}`);
+      this.extensionLog.error(`rust-glancer client failed to start: ${String(error)}`);
       void vscode.window.showErrorMessage(
         "Rust Glancer failed to start. Check the Rust Glancer output for details.",
       );
@@ -152,7 +150,7 @@ export class LanguageClientSession implements vscode.Disposable {
       return;
     }
 
-    this.output.appendLine("reindexing rust-glancer active workspace");
+    this.extensionLog.info("reindexing rust-glancer active workspace");
     this.clientStatus.indexing();
 
     try {
@@ -160,10 +158,10 @@ export class LanguageClientSession implements vscode.Disposable {
         command: SERVER_COMMANDS.reindexWorkspace,
         arguments: [],
       });
-      this.output.appendLine("rust-glancer active workspace reindex finished");
+      this.extensionLog.info("rust-glancer active workspace reindex finished");
       this.refreshStatus();
     } catch (error) {
-      this.output.appendLine(`rust-glancer active workspace reindex failed: ${String(error)}`);
+      this.extensionLog.error(`rust-glancer active workspace reindex failed: ${String(error)}`);
       this.clientStatus.operationFailed(`reindex failed: ${String(error)}`);
       void vscode.window.showErrorMessage(
         "Rust Glancer failed to reindex the workspace. Check the Rust Glancer output for details.",
@@ -179,7 +177,7 @@ export class LanguageClientSession implements vscode.Disposable {
 
     if (client !== undefined) {
       await client.stop();
-      this.output.appendLine("rust-glancer client stopped");
+      this.extensionLog.info("rust-glancer client stopped");
     }
 
     this.clientStatus.stopped("not running");
@@ -205,7 +203,7 @@ export class LanguageClientSession implements vscode.Disposable {
 
   private middleware(): LanguageClientOptions["middleware"] {
     return {
-      ...hoverMiddleware(() => this.client, this.output),
+      ...hoverMiddleware(() => this.client, this.extensionLog),
       handleWorkDoneProgress: (token, params, next) => {
         this.clientStatus.handleWorkDoneProgress(token, params, this.isActiveRustDocumentDirty());
         next(token, params);
@@ -223,15 +221,4 @@ interface ActiveWorkspaceChangedParams {
   readonly root: string;
   readonly state: ActiveWorkspaceState;
   readonly message?: string;
-}
-
-function trace(setting: TraceSetting): Trace {
-  switch (setting) {
-    case "off":
-      return Trace.Off;
-    case "messages":
-      return Trace.Messages;
-    case "verbose":
-      return Trace.Verbose;
-  }
 }

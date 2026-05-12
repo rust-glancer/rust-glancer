@@ -17,7 +17,8 @@ export class LanguageClientSlot implements vscode.Disposable {
 
   public constructor(
     private readonly extensionPath: string,
-    private readonly output: vscode.OutputChannel,
+    private readonly extensionLog: vscode.LogOutputChannel,
+    private readonly serverOutput: vscode.OutputChannel,
     private readonly status: StatusView,
   ) {}
 
@@ -77,7 +78,8 @@ export class LanguageClientSlot implements vscode.Disposable {
   ): Promise<LanguageClientSession | undefined> {
     const session = new LanguageClientSession(
       this.extensionPath,
-      this.output,
+      this.extensionLog,
+      this.serverOutput,
       this.status,
       workspaceFolder,
     );

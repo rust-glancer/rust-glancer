@@ -7,7 +7,6 @@
  */
 import * as vscode from "vscode";
 
-export type TraceSetting = "off" | "messages" | "verbose";
 export type PackageResidencySetting =
   | "all-resident"
   | "workspace"
@@ -21,7 +20,6 @@ export interface ExtensionConfig {
   readonly purgeMemoryAfterBuild: boolean;
   readonly cargo: CargoConfig;
   readonly cache: CacheConfig;
-  readonly traceServer: TraceSetting;
   readonly diagnostics: DiagnosticsConfig;
 }
 
@@ -51,7 +49,6 @@ export namespace ExtensionConfig {
       "cache.packageResidency",
       "workspace-and-path-deps",
     );
-    const traceServer = config.get<TraceSetting>("trace.server", "off");
     const diagnosticsOnStartup = config.get<boolean>("diagnosticsOnStartup", false);
     const diagnosticsOnSave = config.get<boolean>("diagnosticsOnSave", false);
     const diagnosticsCommand = config.get<string>("diagnostics.command", "check");
@@ -70,7 +67,6 @@ export namespace ExtensionConfig {
       cache: {
         packageResidency,
       },
-      traceServer,
       diagnostics: {
         onStartup: diagnosticsOnStartup,
         onSave: diagnosticsOnSave,
