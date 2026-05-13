@@ -30,7 +30,7 @@ def main() -> None:
     title = args.section_title
     if title is None and not args.body_only:
         title = "Rust Glancer Benchmark"
-    markdown = BenchmarkComment(results).render(title)
+    markdown = BenchmarkComment(results, args.fixture, args.residency).render(title)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(markdown, encoding="utf-8")
 
@@ -41,6 +41,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--body-only", action="store_true")
     parser.add_argument("--section-title")
+    parser.add_argument("--fixture", default="test_targets/moderate_workspace")
+    parser.add_argument("--residency")
     return parser.parse_args()
 
 
@@ -199,19 +201,24 @@ class BenchmarkSummary:
 
 
 class BenchmarkComment:
-    def __init__(self, results: list[MetricResult]) -> None:
+    def __init__(
+        self,
+        results: list[MetricResult],
+        fixture: str,
+        residency: Optional[str],
+    ) -> None:
         self.results = results
+        self.fixture = fixture
+        self.residency = residency
 
     def render(self, title: Optional[str] = "Rust Glancer Benchmark") -> str:
         lines = []
         if title is not None:
             lines.extend([f"## {title}", ""])
 
+        lines.extend(self.render_context())
         lines.extend(
             [
-                "- Fixture: `test_targets/moderate_workspace`",
-                "- Tool: `Gungraun / Callgrind`",
-                f"- Base result: {self.base_note()}",
                 "",
                 "Values are Callgrind instruction-style measurements from one CI runner run. Treat deltas as directional signal rather than a hard threshold.",
                 "",
@@ -220,6 +227,16 @@ class BenchmarkComment:
             ]
         )
         return "\n".join(lines)
+
+    def render_context(self) -> list[str]:
+        lines = [
+            f"- Fixture: `{self.fixture}`",
+            "- Tool: `Gungraun / Callgrind`",
+        ]
+        if self.residency is not None:
+            lines.append(f"- Residency: `{self.residency}`")
+        lines.append(f"- Base result: {self.base_note()}")
+        return lines
 
     def base_note(self) -> str:
         return "available" if any(result.base is not None for result in self.results) else "unavailable"

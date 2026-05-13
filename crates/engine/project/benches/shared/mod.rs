@@ -15,10 +15,23 @@ use rg_semantic_ir::SemanticIrDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
+// Shared support for benchmark binaries.
+//
+// Each file in `benches/` is compiled as its own tiny crate, so common fixture discovery and
+// expensive setup live here. The benchmark entrypoints decide what to time; this module only
+// prepares stable workspaces and reusable baseline artifacts.
+pub mod query;
+
+// Several benchmark functions can request the same target in one process. `cargo fetch` is slow
+// setup work, so run it once per target and keep it outside all measured closures.
 static CARGO_FETCH_LOCK: OnceLock<Mutex<HashSet<BenchTarget>>> = OnceLock::new();
 
+/// One workspace fixture that can be used by build-pipeline or query benchmarks.
+///
+/// Synthetic targets are checked in and generated for specific pipeline stress shapes. The
+/// rust-analyzer fixture is intentionally optional because it is large and fetched separately.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum BenchTarget {
+pub enum BenchTarget {
     SmallApp,
     SyntheticParseHeavy,
     SyntheticItemTreeHeavy,
@@ -37,7 +50,7 @@ impl BenchTarget {
         Self::RustAnalyzer,
     ];
 
-    fn manifest_path(self) -> PathBuf {
+    pub fn manifest_path(self) -> PathBuf {
         self.project_root().join("Cargo.toml")
     }
 
@@ -52,7 +65,7 @@ impl BenchTarget {
         }
     }
 
-    fn project_root(self) -> PathBuf {
+    pub fn project_root(self) -> PathBuf {
         match self {
             Self::SmallApp => workspace_root().join("test_targets/bench_fixtures/small_app"),
             Self::SyntheticParseHeavy => {
@@ -73,7 +86,7 @@ impl BenchTarget {
         }
     }
 
-    fn prepare(self) {
+    pub fn prepare(self) {
         self.ensure_project_exists();
         self.fetch_dependencies();
     }
@@ -180,24 +193,29 @@ impl fmt::Display for BenchTarget {
     }
 }
 
-pub(crate) struct BenchFixture {
-    pub(crate) workspace: WorkspaceMetadata,
-    pub(crate) parse: ParseDb,
-    pub(crate) item_tree: ItemTreeDb,
-    pub(crate) names_after_item_tree: PackageNameInterners,
-    pub(crate) names_after_semantic_ir: PackageNameInterners,
-    pub(crate) def_map: DefMapDb,
-    pub(crate) semantic_ir: SemanticIrDb,
-    pub(crate) source_files: usize,
-    pub(crate) source_bytes: u64,
-    pub(crate) item_tree_items: usize,
-    pub(crate) def_map_imports: usize,
-    pub(crate) semantic_items: usize,
-    pub(crate) body_expressions: usize,
+/// Prebuilt inputs and counters for phase-by-phase pipeline benchmarks.
+///
+/// `analysis_pipeline.rs` measures rebuilding individual phase databases. Building every prior
+/// phase inside each measurement would swamp the phase being measured, so this fixture constructs
+/// one reusable baseline and stores both the inputs and the counters Divan displays.
+pub struct BenchFixture {
+    pub workspace: WorkspaceMetadata,
+    pub parse: ParseDb,
+    pub item_tree: ItemTreeDb,
+    pub names_after_item_tree: PackageNameInterners,
+    pub names_after_semantic_ir: PackageNameInterners,
+    pub def_map: DefMapDb,
+    pub semantic_ir: SemanticIrDb,
+    pub source_files: usize,
+    pub source_bytes: u64,
+    pub item_tree_items: usize,
+    pub def_map_imports: usize,
+    pub semantic_items: usize,
+    pub body_expressions: usize,
 }
 
 impl BenchFixture {
-    pub(crate) fn get(target: BenchTarget) -> &'static Self {
+    pub fn get(target: BenchTarget) -> &'static Self {
         thread_local! {
             static FIXTURES: RefCell<Vec<(BenchTarget, &'static BenchFixture)>> = const {
                 RefCell::new(Vec::new())
@@ -223,6 +241,9 @@ impl BenchFixture {
     fn load(target: BenchTarget) -> Self {
         target.prepare();
 
+        // The pipeline benchmark starts from the real Cargo workspace metadata for each target,
+        // matching the way the CLI/LSP build a project rather than using synthetic in-memory
+        // fixtures.
         let workspace = WorkspaceMetadata::from_manifest_path(target.manifest_path())
             .unwrap_or_else(|error| panic!("{target} Cargo metadata should load: {error}"));
         let mut parse = ParseDb::build(&workspace)
@@ -230,6 +251,9 @@ impl BenchFixture {
         let source_files = count_source_files(&parse);
         let source_bytes = count_source_bytes(&parse);
 
+        // Name interning is shared across phases during a normal build. Keep snapshots of the
+        // interner state at phase boundaries so each benchmark can start from the same inputs the
+        // real pipeline would have at that point.
         let mut names = PackageNameInterners::new(parse.package_count());
         let item_tree = ItemTreeDb::build_with_interners(&mut parse, &mut names)
             .unwrap_or_else(|error| panic!("{target} item tree should build: {error}"));
@@ -282,7 +306,7 @@ impl BenchFixture {
     }
 }
 
-pub(crate) fn bench_targets() -> Vec<BenchTarget> {
+pub fn bench_targets() -> Vec<BenchTarget> {
     match std::env::var("RUST_GLANCER_BENCH_TARGETS") {
         Ok(value) => BenchTarget::parse_list(&value),
         Err(std::env::VarError::NotPresent) => BenchTarget::ALL.to_vec(),
@@ -291,7 +315,9 @@ pub(crate) fn bench_targets() -> Vec<BenchTarget> {
 }
 
 fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    // `CARGO_MANIFEST_DIR` points at `crates/engine/project`; benchmark fixtures live at the
+    // workspace root under `test_targets/bench_fixtures`.
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
 fn count_source_files(parse: &ParseDb) -> usize {

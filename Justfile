@@ -16,6 +16,9 @@ build:
 bench:
     cargo bench -p rg_project --bench analysis_pipeline
 
+bench-queries:
+    cargo bench -p rg_project --bench query
+
 check-test-targets:
     cargo check --manifest-path test_targets/simple_crate/Cargo.toml --locked
     cargo check --manifest-path test_targets/moderate_crate/Cargo.toml --locked

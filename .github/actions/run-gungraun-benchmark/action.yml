@@ -1,0 +1,81 @@
+name: Run Gungraun benchmark
+description: Run one Gungraun benchmark and render its pull-request comment section.
+
+inputs:
+  package:
+    description: Cargo package containing the benchmark target.
+    required: true
+  bench:
+    description: Cargo benchmark target to run.
+    required: true
+  json-output:
+    description: Path where Gungraun JSONL output should be written.
+    required: true
+  comment-output:
+    description: Path where the rendered markdown section should be written.
+    required: true
+  section-title:
+    description: Markdown section title for the rendered benchmark report.
+    required: true
+  fixture:
+    description: Human-readable fixture path shown in the report.
+    required: true
+  residency:
+    description: Optional residency policy shown in the report.
+    required: false
+  baseline:
+    description: Gungraun baseline name used for PR comparisons and main-branch saves.
+    required: false
+    default: main
+
+runs:
+  using: composite
+  steps:
+    - name: Run benchmark
+      shell: bash
+      env:
+        PACKAGE: ${{ inputs.package }}
+        BENCH: ${{ inputs.bench }}
+        JSON_OUTPUT: ${{ inputs.json-output }}
+        BASELINE: ${{ inputs.baseline }}
+      run: |
+        set -euo pipefail
+
+        mkdir -p "$(dirname "$JSON_OUTPUT")"
+
+        baseline_args=()
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          baseline_args+=("--baseline=$BASELINE")
+        elif [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == "refs/heads/main" ]]; then
+          baseline_args+=("--save-baseline=$BASELINE")
+        fi
+
+        cargo bench --locked -p "$PACKAGE" --bench "$BENCH" -- \
+          "${baseline_args[@]}" \
+          --save-summary=json \
+          --output-format=json > "$JSON_OUTPUT"
+
+    - name: Render benchmark section
+      shell: bash
+      env:
+        JSON_OUTPUT: ${{ inputs.json-output }}
+        COMMENT_OUTPUT: ${{ inputs.comment-output }}
+        SECTION_TITLE: ${{ inputs.section-title }}
+        FIXTURE: ${{ inputs.fixture }}
+        RESIDENCY: ${{ inputs.residency }}
+      run: |
+        set -euo pipefail
+
+        render_args=(
+          --input "$JSON_OUTPUT"
+          --output "$COMMENT_OUTPUT"
+          --section-title "$SECTION_TITLE"
+          --fixture "$FIXTURE"
+        )
+
+        if [[ -n "$RESIDENCY" ]]; then
+          render_args+=(--residency "$RESIDENCY")
+        fi
+
+        python3 .github/scripts/render_benchmark_comment.py "${render_args[@]}"
+        cat "$COMMENT_OUTPUT" >> "$GITHUB_STEP_SUMMARY"

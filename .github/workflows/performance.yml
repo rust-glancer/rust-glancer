@@ -10,8 +10,10 @@ on:
       - ".github/scripts/render_benchmark_comment.py"
       - ".github/scripts/render_memory_profile_comment.py"
       - ".github/scripts/render_performance_comment.py"
+      - ".github/actions/run-gungraun-benchmark/action.yml"
       - ".github/workflows/performance.yml"
       - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
+      - "test_targets/bench_fixtures/small_app/**"
       - "test_targets/moderate_workspace/**"
   push:
     branches:
@@ -24,8 +26,10 @@ on:
       - ".github/scripts/render_benchmark_comment.py"
       - ".github/scripts/render_memory_profile_comment.py"
       - ".github/scripts/render_performance_comment.py"
+      - ".github/actions/run-gungraun-benchmark/action.yml"
       - ".github/workflows/performance.yml"
       - "test_targets/bench_fixtures/fetch-rust-analyzer.sh"
+      - "test_targets/bench_fixtures/small_app/**"
       - "test_targets/moderate_workspace/**"
   workflow_dispatch:
 
@@ -117,39 +121,26 @@ jobs:
           path: target/gungraun
           key: gungraun-${{ github.event.pull_request.base.sha }}
 
-      - name: Run pull request benchmark
-        if: github.event_name == 'pull_request'
-        run: |
-          mkdir -p .ci/benchmark/current
-          cargo bench --locked -p rust-glancer --bench ci_analyze -- \
-            --baseline=main \
-            --save-summary=json \
-            --output-format=json > .ci/benchmark/current/gungraun.jsonl
+      - name: Run build benchmark
+        uses: ./.github/actions/run-gungraun-benchmark
+        with:
+          package: rust-glancer
+          bench: ci_analyze
+          json-output: .ci/benchmark/current/gungraun.jsonl
+          comment-output: .ci/benchmark/comment.md
+          section-title: Benchmark results
+          fixture: test_targets/moderate_workspace
 
-      - name: Run main-branch benchmark
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          mkdir -p .ci/benchmark/current
-          cargo bench --locked -p rust-glancer --bench ci_analyze -- \
-            --save-baseline=main \
-            --save-summary=json \
-            --output-format=json > .ci/benchmark/current/gungraun.jsonl
-
-      - name: Run ad-hoc benchmark
-        if: github.event_name != 'pull_request' && !(github.event_name == 'push' && github.ref == 'refs/heads/main')
-        run: |
-          mkdir -p .ci/benchmark/current
-          cargo bench --locked -p rust-glancer --bench ci_analyze -- \
-            --save-summary=json \
-            --output-format=json > .ci/benchmark/current/gungraun.jsonl
-
-      - name: Render benchmark section
-        run: |
-          python3 .github/scripts/render_benchmark_comment.py \
-            --input .ci/benchmark/current/gungraun.jsonl \
-            --output .ci/benchmark/comment.md \
-            --section-title "Benchmark results"
-          cat .ci/benchmark/comment.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Run query benchmark
+        uses: ./.github/actions/run-gungraun-benchmark
+        with:
+          package: rg_project
+          bench: query_callgrind
+          json-output: .ci/query-benchmark/current/gungraun.jsonl
+          comment-output: .ci/query-benchmark/comment.md
+          section-title: Query benchmark results
+          fixture: test_targets/bench_fixtures/small_app
+          residency: all-offloadable
 
       - name: Upload benchmark section
         if: github.event_name == 'pull_request'
@@ -157,6 +148,13 @@ jobs:
         with:
           name: benchmark-comment
           path: .ci/benchmark/comment.md
+
+      - name: Upload query benchmark section
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: query-benchmark-comment
+          path: .ci/query-benchmark/comment.md
 
       - name: Save main-branch Gungraun baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -188,11 +186,18 @@ jobs:
           name: benchmark-comment
           path: .ci/performance/benchmark
 
+      - name: Download query benchmark section
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: query-benchmark-comment
+          path: .ci/performance/query-benchmark
+
       - name: Render performance comment
         run: |
           python3 .github/scripts/render_performance_comment.py \
             --memory .ci/performance/memory/comment.md \
             --benchmark .ci/performance/benchmark/comment.md \
+            --query-benchmark .ci/performance/query-benchmark/comment.md \
             --output .ci/performance/comment.md
           cat .ci/performance/comment.md >> "$GITHUB_STEP_SUMMARY"
 

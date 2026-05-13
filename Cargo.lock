@@ -1333,6 +1333,7 @@ dependencies = [
  "derive_more",
  "divan",
  "expect-test",
+ "gungraun",
  "rayon",
  "rg_analysis",
  "rg_body_ir",

@@ -1,4 +1,4 @@
-mod shared;
+pub mod shared;
 
 use divan::{
     Bencher, black_box, black_box_drop,

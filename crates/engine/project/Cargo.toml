@@ -33,8 +33,17 @@ serde = { workspace = true, features = ["derive"] }
 cargo_metadata.workspace = true
 divan.workspace = true
 expect-test.workspace = true
+gungraun.workspace = true
 test_fixture.workspace = true
 
 [[bench]]
 name = "analysis_pipeline"
+harness = false
+
+[[bench]]
+name = "query"
+harness = false
+
+[[bench]]
+name = "query_callgrind"
 harness = false

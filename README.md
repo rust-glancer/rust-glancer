@@ -30,7 +30,7 @@ who are ready for some compromises.
 
 ## Contributing
 
-See [docs/CONTRIBUTING.md].
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
 ## License
 
