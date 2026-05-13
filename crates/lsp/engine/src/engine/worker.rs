@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_analysis::{ReferenceSearchScope, TypeHint};
+use rg_analysis::{ReferenceQuery, TypeHint};
 use rg_def_map::TargetRef;
 use rg_lsp_proto::AnalysisConfig;
 use rg_parse::TextSpan;
@@ -393,8 +393,7 @@ impl EngineWorker {
                 target,
                 context.file,
                 offset,
-                include_declaration,
-                ReferenceSearchScope::Targets(&search_targets),
+                ReferenceQuery::find_references(&search_targets, include_declaration),
             )? {
                 let Some(location) = references::location_for_reference(snapshot, &reference)?
                 else {
@@ -435,11 +434,7 @@ impl EngineWorker {
                 target,
                 context.file,
                 offset,
-                true,
-                ReferenceSearchScope::File {
-                    target,
-                    file_id: context.file,
-                },
+                ReferenceQuery::file_scoped(target, context.file),
             )? {
                 if reference.target.package != context.package || reference.file_id != context.file
                 {

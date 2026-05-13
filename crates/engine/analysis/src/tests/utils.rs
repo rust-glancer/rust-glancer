@@ -4,7 +4,8 @@ use expect_test::Expect;
 
 use crate::{
     Analysis, AnalysisReadTxn, CompletionApplicability, CompletionItem, DocumentSymbol, HoverInfo,
-    NavigationTarget, ReferenceLocation, ReferenceSearchScope, SymbolAt, TypeHint, WorkspaceSymbol,
+    NavigationTarget, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, SymbolAt,
+    TypeHint, WorkspaceSymbol,
 };
 use rg_body_ir::{
     BodyGenericArg, BodyIrDb, BodyIrReadTxn, BodyItemRef, BodyLocalNominalTy, BodyNominalTy,
@@ -549,41 +550,38 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 let references = match query.scope {
                     ReferenceQueryScope::AllIncludedTargets => {
                         let use_site_targets = self.db.all_targets();
+                        let reference_query = AnalysisReferenceQuery::find_references(
+                            &use_site_targets,
+                            query.include_declaration,
+                        );
                         self.db
                             .analysis()
-                            .references(
-                                target,
-                                file_id,
-                                offset,
-                                query.include_declaration,
-                                ReferenceSearchScope::Targets(&use_site_targets),
-                            )
+                            .references(target, file_id, offset, reference_query)
                             .expect("fixture references query should resolve")
                     }
                     ReferenceQueryScope::CurrentTarget => {
                         let use_site_targets = [target];
+                        let reference_query = AnalysisReferenceQuery::find_references(
+                            &use_site_targets,
+                            query.include_declaration,
+                        );
                         self.db
                             .analysis()
-                            .references(
-                                target,
-                                file_id,
-                                offset,
-                                query.include_declaration,
-                                ReferenceSearchScope::Targets(&use_site_targets),
-                            )
+                            .references(target, file_id, offset, reference_query)
                             .expect("fixture scoped references query should resolve")
                     }
-                    ReferenceQueryScope::CurrentFile => self
-                        .db
-                        .analysis()
-                        .references(
-                            target,
-                            file_id,
-                            offset,
-                            query.include_declaration,
-                            ReferenceSearchScope::File { target, file_id },
-                        )
-                        .expect("fixture file-scoped references query should resolve"),
+                    ReferenceQueryScope::CurrentFile => {
+                        let reference_query = AnalysisReferenceQuery::file_scoped(target, file_id);
+                        let reference_query = if query.include_declaration {
+                            reference_query
+                        } else {
+                            reference_query.without_declarations()
+                        };
+                        self.db
+                            .analysis()
+                            .references(target, file_id, offset, reference_query)
+                            .expect("fixture file-scoped references query should resolve")
+                    }
                     ReferenceQueryScope::LibTargets(packages) => {
                         let use_site_targets = packages
                             .iter()
@@ -591,15 +589,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                                 self.db.target_for(&AnalysisTarget::lib_package(package))
                             })
                             .collect::<Vec<_>>();
+                        let reference_query = AnalysisReferenceQuery::find_references(
+                            &use_site_targets,
+                            query.include_declaration,
+                        );
                         self.db
                             .analysis()
-                            .references(
-                                target,
-                                file_id,
-                                offset,
-                                query.include_declaration,
-                                ReferenceSearchScope::Targets(&use_site_targets),
-                            )
+                            .references(target, file_id, offset, reference_query)
                             .expect("fixture scoped references query should resolve")
                     }
                 };

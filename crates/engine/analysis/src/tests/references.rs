@@ -197,6 +197,53 @@ pub fn use_there(_: User) {}
 }
 
 #[test]
+fn file_scoped_references_do_not_include_external_declaration() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/helper", "crates/app"]
+resolver = "3"
+
+//- /crates/helper/Cargo.toml
+[package]
+name = "helper"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/helper/src/lib.rs
+pub struct Tool;
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+helper = { path = "../helper" }
+
+//- /crates/app/src/lib.rs
+pub fn use_it() {
+    let tool: helper::To$file_scoped_external_decl$ol = todo!();
+    let _again: helper::Tool = tool;
+}
+"#,
+        &[AnalysisQuery::references(
+            "file-scoped external declaration references",
+            "file_scoped_external_decl",
+            ReferenceQuery::current_file(),
+        )
+        .in_lib("app")],
+        expect![[r#"
+            file-scoped external declaration references
+            - `Tool` @ app/src/lib.rs:2:23-2:27
+            - `Tool` @ app/src/lib.rs:3:25-3:29
+        "#]],
+    );
+}
+
+#[test]
 fn scoped_references_from_dependency_include_reverse_dependency_uses() {
     check_analysis_queries(
         r#"

@@ -20,33 +20,23 @@ use crate::{
         query::navigation::SymbolResolver,
         resolve::entity::{EntityResolver, ResolvedEntity},
     },
-    model::{ReferenceLocation, ReferenceSearchScope, SymbolAt},
+    model::{ReferenceLocation, ReferenceQuery, ReferenceSearchScope, SymbolAt},
 };
 
 pub(crate) struct ReferenceResolver<'a, 'db, 'scope> {
     analysis: &'a Analysis<'db>,
-    search_scope: ReferenceSearchScope<'scope>,
-    include_declaration: bool,
+    query: ReferenceQuery<'scope>,
 }
 
 impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
-    pub(crate) fn new(
-        analysis: &'a Analysis<'db>,
-        search_scope: ReferenceSearchScope<'scope>,
-        include_declaration: bool,
-    ) -> Self {
-        Self {
-            analysis,
-            search_scope,
-            include_declaration,
-        }
+    pub(crate) fn new(analysis: &'a Analysis<'db>, query: ReferenceQuery<'scope>) -> Self {
+        Self { analysis, query }
     }
 
     /// Finds references for the symbol under `offset` by scanning the requested use-site surface.
     ///
     /// Declaration locations are projected from the selected symbol before use-site scanning when
-    /// requested, so callers can keep declarations visible even when their search surface excludes
-    /// the defining target.
+    /// requested, using the resolver's declaration scope policy.
     pub(crate) fn references(
         &self,
         target: TargetRef,
@@ -62,7 +52,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         }
 
         let mut locations = Vec::new();
-        if self.include_declaration {
+        if self.query.includes_declarations() {
             self.push_selected_declarations(symbol, &mut locations)?;
         }
 
@@ -102,6 +92,12 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             let Some(span) = target.span else {
                 continue;
             };
+            if !self
+                .query
+                .accepts_declaration(target.target, target.file_id)
+            {
+                continue;
+            }
             locations.push(ReferenceLocation {
                 target: target.target,
                 file_id: target.file_id,
@@ -127,7 +123,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         let mut candidates = Vec::new();
         let mut visited = Vec::new();
 
-        match self.search_scope {
+        match self.query.search_scope() {
             ReferenceSearchScope::Targets(targets) => {
                 for target in targets {
                     let scan = ReferenceScanTarget {
@@ -178,7 +174,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         {
             let candidate = match candidate {
                 DefMapCursorCandidate::Def { def, file_id, span } => {
-                    if !self.include_declaration {
+                    if !self.query.includes_declarations() {
                         continue;
                     }
                     ReferenceCandidate {
@@ -231,7 +227,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
     ) -> anyhow::Result<Option<ReferenceCandidate>> {
         let candidate = match candidate {
             SemanticCursorCandidate::Field { field, span } => {
-                if !self.include_declaration {
+                if !self.query.includes_declarations() {
                     return Ok(None);
                 }
                 let Some(data) = self.analysis.semantic_ir.field_data(field)? else {
@@ -245,7 +241,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 }
             }
             SemanticCursorCandidate::Function { function, span } => {
-                if !self.include_declaration {
+                if !self.query.includes_declarations() {
                     return Ok(None);
                 }
                 let Some(data) = self.analysis.semantic_ir.function_data(function)? else {
@@ -259,7 +255,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 }
             }
             SemanticCursorCandidate::EnumVariant { variant, span } => {
-                if !self.include_declaration {
+                if !self.query.includes_declarations() {
                     return Ok(None);
                 }
                 let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant)? else {
@@ -319,7 +315,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         let candidate = match candidate {
             BodyCursorCandidate::Body { .. } => return Ok(None),
             BodyCursorCandidate::Binding { body, binding, .. } => {
-                if !self.include_declaration {
+                if !self.query.includes_declarations() {
                     return Ok(None);
                 }
                 let Some(body_data) = self.analysis.body_ir.body_data(body)? else {
@@ -350,7 +346,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 }
             }
             BodyCursorCandidate::LocalItem { item, .. } => {
-                if !self.include_declaration {
+                if !self.query.includes_declarations() {
                     return Ok(None);
                 }
                 let Some(body_data) = self.analysis.body_ir.body_data(item.body)? else {
@@ -367,7 +363,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 }
             }
             BodyCursorCandidate::LocalField { field, .. } => {
-                if !self.include_declaration {
+                if !self.query.includes_declarations() {
                     return Ok(None);
                 }
                 let Some(data) = self.analysis.body_ir.local_field_data(field)? else {
@@ -381,7 +377,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 }
             }
             BodyCursorCandidate::LocalFunction { function, .. } => {
-                if !self.include_declaration {
+                if !self.query.includes_declarations() {
                     return Ok(None);
                 }
                 let Some(data) = self.analysis.body_ir.local_function_data(function)? else {

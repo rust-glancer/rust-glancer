@@ -10,7 +10,7 @@ pub use self::{
     model::{
         CompletionApplicability, CompletionItem, CompletionKind, CompletionTarget, DocumentSymbol,
         HoverBlock, HoverInfo, NavigationTarget, NavigationTargetKind, ReferenceLocation,
-        ReferenceSearchScope, SymbolAt, SymbolKind, TypeHint, WorkspaceSymbol,
+        ReferenceQuery, SymbolAt, SymbolKind, TypeHint, WorkspaceSymbol,
     },
     txn::AnalysisReadTxn,
 };
