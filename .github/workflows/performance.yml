@@ -197,7 +197,7 @@ jobs:
           cat .ci/performance/comment.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Comment on pull request
-        uses: marocchino/sticky-pull-request-comment@v2
+        uses: marocchino/sticky-pull-request-comment@0ea0beb66eb9baf113663a64ec522f60e49231c0 # v3.0.4
         with:
           header: rust-glancer-performance
           path: .ci/performance/comment.md
