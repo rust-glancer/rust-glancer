@@ -42,7 +42,7 @@ jobs:
 
       - name: Restore base memory profile
         if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: .ci/memory/base
           key: memory-profile-${{ github.event.pull_request.base.sha }}
@@ -85,7 +85,7 @@ jobs:
 
       - name: Save main-branch memory profile cache
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         continue-on-error: true
         with:
           path: .ci/memory/base
@@ -112,7 +112,7 @@ jobs:
 
       - name: Restore base Gungraun baseline
         if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: target/gungraun
           key: gungraun-${{ github.event.pull_request.base.sha }}
@@ -160,7 +160,7 @@ jobs:
 
       - name: Save main-branch Gungraun baseline
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         continue-on-error: true
         with:
           path: target/gungraun
