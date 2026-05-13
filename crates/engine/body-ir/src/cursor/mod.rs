@@ -10,9 +10,12 @@ use rg_def_map::{Path, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
-use crate::{BindingId, BodyIrReadTxn, BodyItemRef, BodyRef, BodyTy, ExprId, ScopeId};
+use crate::{
+    BindingId, BodyFieldRef, BodyFunctionRef, BodyIrReadTxn, BodyItemRef, BodyRef, BodyTy, ExprId,
+    ScopeId,
+};
 
-use self::scan::{BodyCursorScanner, DotReceiverScanner};
+use self::scan::{BodyCursorScanner, BodySourceScanner, DotReceiverScanner};
 
 /// Receiver expression selected for a dot-completion query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,10 +45,19 @@ pub enum BodyCursorCandidate {
         item: BodyItemRef,
         span: Span,
     },
+    LocalField {
+        field: BodyFieldRef,
+        span: Span,
+    },
+    LocalFunction {
+        function: BodyFunctionRef,
+        span: Span,
+    },
     TypePath {
         body: BodyRef,
         scope: ScopeId,
         path: Path,
+        file_id: FileId,
         span: Span,
     },
     /// A value-namespace path segment inside a body expression or pattern.
@@ -57,6 +69,7 @@ pub enum BodyCursorCandidate {
         body: BodyRef,
         scope: ScopeId,
         path: Path,
+        file_id: FileId,
         span: Span,
     },
 }
@@ -68,6 +81,8 @@ impl BodyCursorCandidate {
             | Self::Binding { span, .. }
             | Self::Expr { span, .. }
             | Self::LocalItem { span, .. }
+            | Self::LocalField { span, .. }
+            | Self::LocalFunction { span, .. }
             | Self::TypePath { span, .. }
             | Self::ValuePath { span, .. } => *span,
         }
@@ -83,6 +98,15 @@ impl BodyIrReadTxn<'_> {
         offset: u32,
     ) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
         BodyCursorScanner::new(self, target, file_id, offset).scan()
+    }
+
+    /// Returns body-local source candidates in one target.
+    pub fn source_candidates(
+        &self,
+        target: TargetRef,
+        file_id: Option<FileId>,
+    ) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
+        BodySourceScanner::new(self, target, file_id).scan()
     }
 
     /// Returns the receiver expression for a dot-completion site.

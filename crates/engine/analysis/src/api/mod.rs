@@ -9,8 +9,8 @@ use rg_semantic_ir::SemanticIrReadTxn;
 
 use crate::{
     model::{
-        CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget, SymbolAt, TypeHint,
-        WorkspaceSymbol,
+        CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget, ReferenceLocation,
+        ReferenceQuery, SymbolAt, TypeHint, WorkspaceSymbol,
     },
     txn::AnalysisReadTxn,
 };
@@ -122,6 +122,20 @@ impl<'a> Analysis<'a> {
         offset: u32,
     ) -> anyhow::Result<Option<HoverInfo>> {
         query::hover::HoverResolver::new(self).hover(target, file_id, offset)
+    }
+
+    /// Returns best-effort source references for the symbol under a source offset.
+    ///
+    /// Only source occurrences inside the query's search surface are scanned. The query also
+    /// controls whether declaration locations are included and how they relate to that surface.
+    pub fn references(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+        query: ReferenceQuery<'_>,
+    ) -> anyhow::Result<Vec<ReferenceLocation>> {
+        query::references::ReferenceResolver::new(self, query).references(target, file_id, offset)
     }
 
     /// Returns field and method completion candidates for a receiver before a dot.

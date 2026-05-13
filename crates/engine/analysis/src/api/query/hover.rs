@@ -352,6 +352,8 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             | SymbolAt::Function { span, .. }
             | SymbolAt::EnumVariant { span, .. }
             | SymbolAt::LocalItem { span, .. }
+            | SymbolAt::LocalField { span, .. }
+            | SymbolAt::LocalFunction { span, .. }
             | SymbolAt::TypePath { span, .. }
             | SymbolAt::UsePath { span, .. } => Ok(Some(*span)),
             SymbolAt::Expr { body, expr } => Ok(self

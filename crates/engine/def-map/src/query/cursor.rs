@@ -8,18 +8,23 @@ use rg_parse::{FileId, Span};
 
 use rg_package_store::PackageStoreError;
 
-use crate::{DefId, DefMapReadTxn, ModuleOrigin, ModuleRef, Path, TargetRef};
+use crate::{
+    DefId, DefMap, DefMapReadTxn, LocalDefId, LocalDefRef, ModuleId, ModuleOrigin, ModuleRef, Path,
+    TargetRef,
+};
 
 /// One def-map source node that can participate in cursor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DefMapCursorCandidate {
     Def {
         def: DefId,
+        file_id: FileId,
         span: Span,
     },
     UsePath {
         module: ModuleRef,
         path: Path,
+        file_id: FileId,
         span: Span,
     },
 }
@@ -35,8 +40,23 @@ impl DefMapReadTxn<'_> {
         NamespaceCursorScanner {
             def_map: self,
             target,
+            file_id: Some(file_id),
+            offset: Some(offset),
+        }
+        .scan()
+    }
+
+    /// Returns namespace-level source candidates for one target.
+    pub fn source_candidates(
+        &self,
+        target: TargetRef,
+        file_id: Option<FileId>,
+    ) -> Result<Vec<DefMapCursorCandidate>, PackageStoreError> {
+        NamespaceCursorScanner {
+            def_map: self,
+            target,
             file_id,
-            offset,
+            offset: None,
         }
         .scan()
     }
@@ -46,24 +66,33 @@ impl DefMapReadTxn<'_> {
 struct NamespaceCursorScanner<'txn, 'db> {
     def_map: &'txn DefMapReadTxn<'db>,
     target: TargetRef,
-    file_id: FileId,
-    offset: u32,
+    file_id: Option<FileId>,
+    offset: Option<u32>,
 }
 
 impl NamespaceCursorScanner<'_, '_> {
     fn scan(&self) -> Result<Vec<DefMapCursorCandidate>, PackageStoreError> {
         let mut candidates = Vec::new();
-        self.push_module_candidates(&mut candidates)?;
-        self.push_local_def_candidates(&mut candidates)?;
-        self.push_import_candidates(&mut candidates)?;
+        let Some(def_map) = self.def_map.def_map(self.target)? else {
+            return Ok(candidates);
+        };
+
+        self.push_module_candidates(def_map, &mut candidates);
+        self.push_local_def_candidates(def_map, &mut candidates);
+        self.push_import_candidates(def_map, &mut candidates);
         Ok(candidates)
     }
 
     fn push_module_candidates(
         &self,
+        def_map: &DefMap,
         candidates: &mut Vec<DefMapCursorCandidate>,
-    ) -> Result<(), PackageStoreError> {
-        for (module_ref, module) in self.def_map.modules(self.target)? {
+    ) {
+        for (module_idx, module) in def_map.modules().iter().enumerate() {
+            let module_ref = ModuleRef {
+                target: self.target,
+                module: ModuleId(module_idx),
+            };
             let declaration_file = match module.origin {
                 ModuleOrigin::Root { .. } => continue,
                 ModuleOrigin::Inline {
@@ -73,51 +102,55 @@ impl NamespaceCursorScanner<'_, '_> {
                     declaration_file, ..
                 } => declaration_file,
             };
-            if declaration_file != self.file_id {
+            if !self.file_matches(declaration_file) {
                 continue;
             }
 
             let Some(span) = module.name_span else {
                 continue;
             };
-            if span.touches(self.offset) {
+            if self.offset_matches(span) {
                 candidates.push(DefMapCursorCandidate::Def {
                     def: DefId::Module(module_ref),
+                    file_id: declaration_file,
                     span,
                 });
             }
         }
-
-        Ok(())
     }
 
     fn push_local_def_candidates(
         &self,
+        def_map: &DefMap,
         candidates: &mut Vec<DefMapCursorCandidate>,
-    ) -> Result<(), PackageStoreError> {
-        for (local_def_ref, local_def) in self.def_map.local_defs(self.target)? {
-            if local_def.file_id != self.file_id {
+    ) {
+        for (local_def_idx, local_def) in def_map.local_defs().iter().enumerate() {
+            let local_def_ref = LocalDefRef {
+                target: self.target,
+                local_def: LocalDefId(local_def_idx),
+            };
+            if !self.file_matches(local_def.file_id) {
                 continue;
             }
 
             let span = local_def.name_span.unwrap_or(local_def.span);
-            if span.touches(self.offset) {
+            if self.offset_matches(span) {
                 candidates.push(DefMapCursorCandidate::Def {
                     def: DefId::Local(local_def_ref),
+                    file_id: local_def.file_id,
                     span,
                 });
             }
         }
-
-        Ok(())
     }
 
     fn push_import_candidates(
         &self,
+        def_map: &DefMap,
         candidates: &mut Vec<DefMapCursorCandidate>,
-    ) -> Result<(), PackageStoreError> {
-        for (_, import) in self.def_map.imports(self.target)? {
-            if import.source.file_id != self.file_id {
+    ) {
+        for import in def_map.imports() {
+            if !self.file_matches(import.source.file_id) {
                 continue;
             }
 
@@ -126,26 +159,34 @@ impl NamespaceCursorScanner<'_, '_> {
                 module: import.module,
             };
             for (idx, segment) in import.source_path.segments().iter().enumerate() {
-                if segment.span.touches(self.offset) {
+                if self.offset_matches(segment.span) {
                     candidates.push(DefMapCursorCandidate::UsePath {
                         module,
                         path: import.source_path.prefix_path(idx),
+                        file_id: import.source.file_id,
                         span: segment.span,
                     });
                 }
             }
 
             if let Some(alias_span) = import.alias_span
-                && alias_span.touches(self.offset)
+                && self.offset_matches(alias_span)
             {
                 candidates.push(DefMapCursorCandidate::UsePath {
                     module,
                     path: Path::from(&import.path),
+                    file_id: import.source.file_id,
                     span: alias_span,
                 });
             }
         }
+    }
 
-        Ok(())
+    fn file_matches(&self, file_id: FileId) -> bool {
+        self.file_id.is_none_or(|selected| selected == file_id)
+    }
+
+    fn offset_matches(&self, span: Span) -> bool {
+        self.offset.is_none_or(|offset| span.touches(offset))
     }
 }

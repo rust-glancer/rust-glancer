@@ -66,6 +66,8 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
             SymbolAt::LocalItem { item, .. } => {
                 Some(BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)]))
             }
+            SymbolAt::LocalField { .. } => None,
+            SymbolAt::LocalFunction { .. } => None,
             SymbolAt::TypePath { context, path, .. } => {
                 Some(self.ty_for_type_path(context, &path)?)
             }

@@ -43,6 +43,17 @@ pub trait EngineService {
         position: ls_types::Position,
     ) -> EngineResult<Vec<ls_types::Location>>;
 
+    async fn references(
+        path: PathBuf,
+        position: ls_types::Position,
+        include_declaration: bool,
+    ) -> EngineResult<Vec<ls_types::Location>>;
+
+    async fn document_highlight(
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> EngineResult<Vec<ls_types::DocumentHighlight>>;
+
     async fn hover(
         path: PathBuf,
         position: ls_types::Position,

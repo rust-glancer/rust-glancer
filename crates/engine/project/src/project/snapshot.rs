@@ -43,6 +43,82 @@ impl<'a> ProjectSnapshot<'a> {
         Ok(self.state.analysis(&txn))
     }
 
+    /// Returns targets whose source should be scanned for an explicit references query.
+    ///
+    /// Workspace-origin queries stay focused on workspace code even when the selected declaration
+    /// comes from a dependency. Dependency-origin queries use the selected declaration packages,
+    /// then expand to their package reverse-dependency closure.
+    pub fn reference_search_targets(
+        &self,
+        origin_package: PackageSlot,
+        declaration_targets: &[TargetRef],
+    ) -> Vec<TargetRef> {
+        let packages = self.reference_search_packages(origin_package, declaration_targets);
+        let mut targets = Vec::new();
+        for package in packages {
+            for target in self.state.target_refs_for_package(package) {
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
+            }
+        }
+        targets
+    }
+
+    /// Returns packages whose targets should be scanned for references.
+    fn reference_search_packages(
+        &self,
+        origin_package: PackageSlot,
+        declaration_targets: &[TargetRef],
+    ) -> Vec<PackageSlot> {
+        let workspace = self.state.workspace();
+        // Check if the query origin is part of the workspace.
+        if workspace
+            .packages()
+            .get(origin_package.0)
+            .is_some_and(|package| package.is_workspace_member)
+        {
+            // Workspace-origin queries scan all workspace members, but do not spill into
+            // dependency use-sites.
+            return workspace
+                .packages()
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, package)| {
+                    package.is_workspace_member.then_some(PackageSlot(slot))
+                })
+                .collect();
+        }
+
+        // Dependency-origin queries scan the selected declaration packages and their reverse
+        // dependencies, so references from packages that can use the dependency are visible.
+        let mut root_packages = Vec::new();
+        for target in declaration_targets {
+            if !root_packages.contains(&target.package) {
+                root_packages.push(target.package);
+            }
+        }
+        if root_packages.is_empty() {
+            root_packages.push(origin_package);
+        }
+
+        let root_ids = root_packages
+            .into_iter()
+            .filter_map(|package| {
+                workspace
+                    .packages()
+                    .get(package.0)
+                    .map(|package| package.id.clone())
+            })
+            .collect::<Vec<_>>();
+
+        workspace
+            .reverse_dependency_closure(&root_ids)
+            .into_iter()
+            .map(PackageSlot)
+            .collect()
+    }
+
     #[cfg(test)]
     pub(crate) fn parse_db(&self) -> &'a ParseDb {
         self.state.parse_db()

@@ -257,6 +257,43 @@ impl LanguageServer for Backend {
     #[tracing::instrument(
         skip_all,
         fields(
+            method = "references",
+            uri = ?params.text_document_position.text_document.uri
+        )
+    )]
+    async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
+        let Some(context) = self
+            .method_context_for(&params.text_document_position.text_document.uri)
+            .await?
+        else {
+            return Ok(None);
+        };
+        methods::text_document::references::references(context, params).await
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(
+            method = "documentHighlight",
+            uri = ?params.text_document_position_params.text_document.uri
+        )
+    )]
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> Result<Option<Vec<DocumentHighlight>>> {
+        let Some(context) = self
+            .method_context_for(&params.text_document_position_params.text_document.uri)
+            .await?
+        else {
+            return Ok(None);
+        };
+        methods::text_document::document_highlight::document_highlight(context, params).await
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(
             method = "hover",
             uri = ?params.text_document_position_params.text_document.uri
         )

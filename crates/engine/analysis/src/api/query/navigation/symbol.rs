@@ -77,6 +77,20 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
                 .navigation_target_for_body_item(item)?
                 .into_iter()
                 .collect()),
+            SymbolAt::LocalField { field, .. } => Ok(self
+                .targets()
+                .navigation_target_for_resolved_field(rg_body_ir::ResolvedFieldRef::BodyLocal(
+                    field,
+                ))?
+                .into_iter()
+                .collect()),
+            SymbolAt::LocalFunction { function, .. } => Ok(self
+                .targets()
+                .navigation_target_for_resolved_function(
+                    rg_body_ir::ResolvedFunctionRef::BodyLocal(function),
+                )?
+                .into_iter()
+                .collect()),
             SymbolAt::TypePath { context, path, .. } => {
                 self.navigation_targets_for_type_path(context, &path)
             }

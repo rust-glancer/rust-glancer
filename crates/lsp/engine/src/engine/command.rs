@@ -32,6 +32,17 @@ pub(crate) enum EngineCommand {
         position: ls_types::Position,
         respond_to: EngineResponse<Vec<ls_types::Location>>,
     },
+    References {
+        path: PathBuf,
+        position: ls_types::Position,
+        include_declaration: bool,
+        respond_to: EngineResponse<Vec<ls_types::Location>>,
+    },
+    DocumentHighlight {
+        path: PathBuf,
+        position: ls_types::Position,
+        respond_to: EngineResponse<Vec<ls_types::DocumentHighlight>>,
+    },
     Hover {
         path: PathBuf,
         position: ls_types::Position,

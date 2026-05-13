@@ -77,6 +77,12 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
             )]),
             SymbolAt::EnumVariant { variant, .. } => Ok(vec![ResolvedEntity::EnumVariant(variant)]),
             SymbolAt::LocalItem { item, .. } => Ok(vec![ResolvedEntity::LocalItem(item)]),
+            SymbolAt::LocalField { field, .. } => Ok(vec![ResolvedEntity::Field(
+                ResolvedFieldRef::BodyLocal(field),
+            )]),
+            SymbolAt::LocalFunction { function, .. } => Ok(vec![ResolvedEntity::Function(
+                ResolvedFunctionRef::BodyLocal(function),
+            )]),
             SymbolAt::TypePath { context, path, .. } => {
                 let resolution =
                     self.0

@@ -65,11 +65,16 @@ fn body_cursor_candidate_to_symbol_candidate(candidate: BodyCursorCandidate) -> 
         BodyCursorCandidate::Binding { body, binding, .. } => SymbolAt::Binding { body, binding },
         BodyCursorCandidate::Expr { body, expr, .. } => SymbolAt::Expr { body, expr },
         BodyCursorCandidate::LocalItem { item, span } => SymbolAt::LocalItem { item, span },
+        BodyCursorCandidate::LocalField { field, span } => SymbolAt::LocalField { field, span },
+        BodyCursorCandidate::LocalFunction { function, span } => {
+            SymbolAt::LocalFunction { function, span }
+        }
         BodyCursorCandidate::TypePath {
             body,
             scope,
             path,
             span,
+            ..
         } => SymbolAt::BodyPath {
             body,
             scope,
@@ -81,6 +86,7 @@ fn body_cursor_candidate_to_symbol_candidate(candidate: BodyCursorCandidate) -> 
             scope,
             path,
             span,
+            ..
         } => SymbolAt::BodyValuePath {
             body,
             scope,

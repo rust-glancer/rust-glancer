@@ -16,6 +16,8 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         definition_provider: Some(OneOf::Left(true)),
         type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
         implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
+        references_provider: Some(OneOf::Left(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
             resolve_provider: Some(false),
@@ -78,6 +80,18 @@ mod tests {
     fn advertises_implementation_support() {
         let capabilities = server_capabilities();
         assert!(capabilities.implementation_provider.is_some());
+    }
+
+    #[test]
+    fn advertises_references_support() {
+        let capabilities = server_capabilities();
+        assert!(capabilities.references_provider.is_some());
+    }
+
+    #[test]
+    fn advertises_document_highlight_support() {
+        let capabilities = server_capabilities();
+        assert!(capabilities.document_highlight_provider.is_some());
     }
 
     #[test]
