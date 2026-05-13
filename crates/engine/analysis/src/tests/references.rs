@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries};
+use super::utils::{AnalysisQuery, ReferenceQuery, check_analysis_queries};
 
 #[test]
 fn finds_common_reference_subjects() {
@@ -30,14 +30,15 @@ pub fn use_it() {
 }
 "#,
         &[
-            AnalysisQuery::references("type references", "type_ref"),
-            AnalysisQuery::references_without_declaration(
+            AnalysisQuery::references("type references", "type_ref", ReferenceQuery::all()),
+            AnalysisQuery::references(
                 "type references without declaration",
                 "type_ref",
+                ReferenceQuery::all().without_declaration(),
             ),
-            AnalysisQuery::references("field references", "field_ref"),
-            AnalysisQuery::references("function references", "fn_ref"),
-            AnalysisQuery::references("local references", "local_ref"),
+            AnalysisQuery::references("field references", "field_ref", ReferenceQuery::all()),
+            AnalysisQuery::references("function references", "fn_ref", ReferenceQuery::all()),
+            AnalysisQuery::references("local references", "local_ref", ReferenceQuery::all()),
         ],
         expect![[r#"
             type references
@@ -96,6 +97,7 @@ pub fn use_it() {
         &[AnalysisQuery::references(
             "body-local method references",
             "method_ref",
+            ReferenceQuery::all(),
         )],
         expect![[r#"
             body-local method references
@@ -142,18 +144,54 @@ pub fn use_it() {
     let _again: helper::Tool = tool;
 }
 "#,
-        &[
-            AnalysisQuery::references_in_current_target(
-                "scoped type references",
-                "scoped_type_ref",
-            )
-            .in_lib("app"),
-        ],
+        &[AnalysisQuery::references(
+            "scoped type references",
+            "scoped_type_ref",
+            ReferenceQuery::current_target(),
+        )
+        .in_lib("app")],
         expect![[r#"
             scoped type references
             - `Tool` @ app/src/lib.rs:2:23-2:27
             - `Tool` @ app/src/lib.rs:3:25-3:29
             - `Tool` @ helper/src/lib.rs:1:12-1:16
+        "#]],
+    );
+}
+
+#[test]
+fn file_scoped_references_skip_other_files_in_same_target() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_file_scoped_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod other;
+
+pub struct User;
+
+pub fn use_here() {
+    let _: Us$file_scoped_type_ref$er;
+}
+
+//- /src/other.rs
+use crate::User;
+
+pub fn use_there(_: User) {}
+"#,
+        &[AnalysisQuery::references(
+            "file-scoped type references",
+            "file_scoped_type_ref",
+            ReferenceQuery::current_file(),
+        )],
+        expect![[r#"
+            file-scoped type references
+            - `User` @ src/lib.rs:3:12-3:16
+            - `User` @ src/lib.rs:6:12-6:16
         "#]],
     );
 }
@@ -206,10 +244,10 @@ pub fn app_use(_: dep::Api) {
     helper::helper_use(todo!());
 }
 "#,
-        &[AnalysisQuery::references_in_lib_targets(
+        &[AnalysisQuery::references(
             "dependency-scoped type references",
             "dep_api",
-            &["dep", "helper", "app"],
+            ReferenceQuery::libs(&["dep", "helper", "app"]),
         )
         .in_lib("dep")],
         expect![[r#"

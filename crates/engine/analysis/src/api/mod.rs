@@ -9,8 +9,8 @@ use rg_semantic_ir::SemanticIrReadTxn;
 
 use crate::{
     model::{
-        CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget, ReferenceLocation, SymbolAt,
-        TypeHint, WorkspaceSymbol,
+        CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget, ReferenceLocation,
+        ReferenceSearchScope, SymbolAt, TypeHint, WorkspaceSymbol,
     },
     txn::AnalysisReadTxn,
 };
@@ -126,7 +126,7 @@ impl<'a> Analysis<'a> {
 
     /// Returns best-effort source references for the symbol under a source offset.
     ///
-    /// Only source occurrences inside `use_site_targets` are scanned. When
+    /// Only source occurrences inside `search_scope` are scanned. When
     /// `include_declaration` is true, declaration locations for the selected symbol are included
     /// even if the declaration target is outside the scanned use-site surface.
     pub fn references(
@@ -135,14 +135,14 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
         include_declaration: bool,
-        use_site_targets: &[TargetRef],
+        search_scope: ReferenceSearchScope<'_>,
     ) -> anyhow::Result<Vec<ReferenceLocation>> {
         query::references::ReferenceResolver::new(self).references(
             target,
             file_id,
             offset,
             include_declaration,
-            use_site_targets,
+            search_scope,
         )
     }
 

@@ -4,7 +4,7 @@ use expect_test::Expect;
 
 use crate::{
     Analysis, AnalysisReadTxn, CompletionApplicability, CompletionItem, DocumentSymbol, HoverInfo,
-    NavigationTarget, ReferenceLocation, SymbolAt, TypeHint, WorkspaceSymbol,
+    NavigationTarget, ReferenceLocation, ReferenceSearchScope, SymbolAt, TypeHint, WorkspaceSymbol,
 };
 use rg_body_ir::{
     BodyGenericArg, BodyIrDb, BodyIrReadTxn, BodyItemRef, BodyLocalNominalTy, BodyNominalTy,
@@ -121,55 +121,12 @@ impl AnalysisQuery {
         Self::new(title, marker, AnalysisQueryKind::Hover)
     }
 
-    pub(super) fn references(title: &'static str, marker: &'static str) -> Self {
-        Self::new(
-            title,
-            marker,
-            AnalysisQueryKind::References {
-                include_declaration: true,
-                scope: ReferenceQueryScope::AllIncludedTargets,
-            },
-        )
-    }
-
-    pub(super) fn references_without_declaration(
+    pub(super) fn references(
         title: &'static str,
         marker: &'static str,
+        query: ReferenceQuery,
     ) -> Self {
-        Self::new(
-            title,
-            marker,
-            AnalysisQueryKind::References {
-                include_declaration: false,
-                scope: ReferenceQueryScope::AllIncludedTargets,
-            },
-        )
-    }
-
-    pub(super) fn references_in_current_target(title: &'static str, marker: &'static str) -> Self {
-        Self::new(
-            title,
-            marker,
-            AnalysisQueryKind::References {
-                include_declaration: true,
-                scope: ReferenceQueryScope::CurrentTarget,
-            },
-        )
-    }
-
-    pub(super) fn references_in_lib_targets(
-        title: &'static str,
-        marker: &'static str,
-        packages: &'static [&'static str],
-    ) -> Self {
-        Self::new(
-            title,
-            marker,
-            AnalysisQueryKind::References {
-                include_declaration: true,
-                scope: ReferenceQueryScope::LibTargets(packages),
-            },
-        )
+        Self::new(title, marker, AnalysisQueryKind::References(query))
     }
 
     pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
@@ -275,19 +232,58 @@ enum AnalysisQueryKind {
     GotoDefinition,
     GotoTypeDefinition,
     GotoImplementation,
-    References {
-        include_declaration: bool,
-        scope: ReferenceQueryScope,
-    },
+    References(ReferenceQuery),
     TypeAt,
     CompletionsAtDot,
     Hover,
 }
 
 #[derive(Debug, Clone, Copy)]
+pub(super) struct ReferenceQuery {
+    include_declaration: bool,
+    scope: ReferenceQueryScope,
+}
+
+impl ReferenceQuery {
+    pub(super) fn all() -> Self {
+        Self {
+            include_declaration: true,
+            scope: ReferenceQueryScope::AllIncludedTargets,
+        }
+    }
+
+    pub(super) fn current_target() -> Self {
+        Self {
+            include_declaration: true,
+            scope: ReferenceQueryScope::CurrentTarget,
+        }
+    }
+
+    pub(super) fn current_file() -> Self {
+        Self {
+            include_declaration: true,
+            scope: ReferenceQueryScope::CurrentFile,
+        }
+    }
+
+    pub(super) fn libs(packages: &'static [&'static str]) -> Self {
+        Self {
+            include_declaration: true,
+            scope: ReferenceQueryScope::LibTargets(packages),
+        }
+    }
+
+    pub(super) fn without_declaration(mut self) -> Self {
+        self.include_declaration = false;
+        self
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 enum ReferenceQueryScope {
     AllIncludedTargets,
     CurrentTarget,
+    CurrentFile,
     LibTargets(&'static [&'static str]),
 }
 
@@ -549,11 +545,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     &mut dump,
                 );
             }
-            AnalysisQueryKind::References {
-                include_declaration,
-                scope,
-            } => {
-                let references = match scope {
+            AnalysisQueryKind::References(query) => {
+                let references = match query.scope {
                     ReferenceQueryScope::AllIncludedTargets => {
                         let use_site_targets = self.db.all_targets();
                         self.db
@@ -562,16 +555,35 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                                 target,
                                 file_id,
                                 offset,
-                                include_declaration,
-                                &use_site_targets,
+                                query.include_declaration,
+                                ReferenceSearchScope::Targets(&use_site_targets),
                             )
                             .expect("fixture references query should resolve")
                     }
-                    ReferenceQueryScope::CurrentTarget => self
+                    ReferenceQueryScope::CurrentTarget => {
+                        let use_site_targets = [target];
+                        self.db
+                            .analysis()
+                            .references(
+                                target,
+                                file_id,
+                                offset,
+                                query.include_declaration,
+                                ReferenceSearchScope::Targets(&use_site_targets),
+                            )
+                            .expect("fixture scoped references query should resolve")
+                    }
+                    ReferenceQueryScope::CurrentFile => self
                         .db
                         .analysis()
-                        .references(target, file_id, offset, include_declaration, &[target])
-                        .expect("fixture scoped references query should resolve"),
+                        .references(
+                            target,
+                            file_id,
+                            offset,
+                            query.include_declaration,
+                            ReferenceSearchScope::File { target, file_id },
+                        )
+                        .expect("fixture file-scoped references query should resolve"),
                     ReferenceQueryScope::LibTargets(packages) => {
                         let use_site_targets = packages
                             .iter()
@@ -585,8 +597,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                                 target,
                                 file_id,
                                 offset,
-                                include_declaration,
-                                &use_site_targets,
+                                query.include_declaration,
+                                ReferenceSearchScope::Targets(&use_site_targets),
                             )
                             .expect("fixture scoped references query should resolve")
                     }

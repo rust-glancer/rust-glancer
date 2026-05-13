@@ -9,8 +9,8 @@ pub use self::{
     api::Analysis,
     model::{
         CompletionApplicability, CompletionItem, CompletionKind, CompletionTarget, DocumentSymbol,
-        HoverBlock, HoverInfo, NavigationTarget, NavigationTargetKind, ReferenceLocation, SymbolAt,
-        SymbolKind, TypeHint, WorkspaceSymbol,
+        HoverBlock, HoverInfo, NavigationTarget, NavigationTargetKind, ReferenceLocation,
+        ReferenceSearchScope, SymbolAt, SymbolKind, TypeHint, WorkspaceSymbol,
     },
     txn::AnalysisReadTxn,
 };

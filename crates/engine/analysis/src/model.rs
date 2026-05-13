@@ -85,6 +85,15 @@ pub struct ReferenceLocation {
     pub span: Span,
 }
 
+/// Source surface scanned for reference use-sites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReferenceSearchScope<'a> {
+    /// Scans all source candidates inside the listed targets.
+    Targets(&'a [TargetRef]),
+    /// Scans source candidates in one file inside one target.
+    File { target: TargetRef, file_id: FileId },
+}
+
 /// One goto-definition destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavigationTarget {

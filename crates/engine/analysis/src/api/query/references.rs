@@ -21,7 +21,7 @@ use crate::{
         query::symbols::shared,
         resolve::entity::{EntityResolver, ResolvedEntity},
     },
-    model::{ReferenceLocation, SymbolAt},
+    model::{ReferenceLocation, ReferenceSearchScope, SymbolAt},
 };
 
 pub(crate) struct ReferenceResolver<'a, 'db>(&'a Analysis<'db>);
@@ -31,7 +31,7 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         Self(analysis)
     }
 
-    /// Finds references for the symbol under `offset` by scanning the provided use-site targets.
+    /// Finds references for the symbol under `offset` by scanning the requested use-site surface.
     ///
     /// Declaration locations are projected from the selected symbol before use-site scanning when
     /// requested, so callers can keep declarations visible even when their search surface excludes
@@ -42,7 +42,7 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         file_id: FileId,
         offset: u32,
         include_declaration: bool,
-        use_site_targets: &[TargetRef],
+        search_scope: ReferenceSearchScope<'_>,
     ) -> anyhow::Result<Vec<ReferenceLocation>> {
         let Some(symbol) = self.0.symbol_at_for_query(target, file_id, offset)? else {
             return Ok(Vec::new());
@@ -57,7 +57,7 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
             self.push_selected_declarations(symbol, &mut locations)?;
         }
 
-        for candidate in self.reference_candidates(use_site_targets)? {
+        for candidate in self.reference_candidates(search_scope)? {
             if candidate.is_declaration && !include_declaration {
                 continue;
             }
@@ -120,57 +120,102 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
 
     fn reference_candidates(
         &self,
-        use_site_targets: &[TargetRef],
+        search_scope: ReferenceSearchScope<'_>,
     ) -> anyhow::Result<Vec<ReferenceCandidate>> {
         let mut candidates = Vec::new();
         let mut visited = Vec::new();
-        for target in use_site_targets {
-            if visited.contains(target) {
-                continue;
-            }
-            visited.push(*target);
 
-            self.push_def_map_candidates(*target, &mut candidates)?;
-            self.push_body_candidates(*target, &mut candidates)?;
-            self.push_semantic_candidates(*target, &mut candidates)?;
+        match search_scope {
+            ReferenceSearchScope::Targets(targets) => {
+                for target in targets {
+                    let scan = ReferenceScanTarget {
+                        target: *target,
+                        file_id: None,
+                    };
+                    if visited.contains(&scan) {
+                        continue;
+                    }
+                    visited.push(scan);
+                    self.push_scan_target_candidates(scan, &mut candidates)?;
+                }
+            }
+            ReferenceSearchScope::File { target, file_id } => {
+                self.push_scan_target_candidates(
+                    ReferenceScanTarget {
+                        target,
+                        file_id: Some(file_id),
+                    },
+                    &mut candidates,
+                )?;
+            }
         }
 
         Ok(candidates)
     }
 
-    fn push_def_map_candidates(
+    fn push_scan_target_candidates(
         &self,
-        target: TargetRef,
+        scan: ReferenceScanTarget,
         candidates: &mut Vec<ReferenceCandidate>,
     ) -> anyhow::Result<()> {
+        self.push_def_map_candidates(scan, candidates)?;
+        self.push_body_candidates(scan, candidates)?;
+        self.push_semantic_candidates(scan, candidates)?;
+        Ok(())
+    }
+
+    fn push_candidate(
+        scan: ReferenceScanTarget,
+        candidates: &mut Vec<ReferenceCandidate>,
+        candidate: ReferenceCandidate,
+    ) {
+        if scan.accepts_file(candidate.file_id) {
+            candidates.push(candidate);
+        }
+    }
+
+    fn push_def_map_candidates(
+        &self,
+        scan: ReferenceScanTarget,
+        candidates: &mut Vec<ReferenceCandidate>,
+    ) -> anyhow::Result<()> {
+        let target = scan.target;
         for (module_ref, module) in self.0.def_map.modules(target)? {
             let Some(source) = shared::module_declaration_source(module) else {
                 continue;
             };
-            candidates.push(ReferenceCandidate {
-                symbol: SymbolAt::Def {
-                    def: DefId::Module(module_ref),
+            Self::push_candidate(
+                scan,
+                candidates,
+                ReferenceCandidate {
+                    symbol: SymbolAt::Def {
+                        def: DefId::Module(module_ref),
+                        span: source.selection_span,
+                    },
+                    target,
+                    file_id: source.file_id,
                     span: source.selection_span,
+                    is_declaration: true,
                 },
-                target,
-                file_id: source.file_id,
-                span: source.selection_span,
-                is_declaration: true,
-            });
+            );
         }
 
         for (local_def, data) in self.0.def_map.local_defs(target)? {
             let span = data.name_span.unwrap_or(data.span);
-            candidates.push(ReferenceCandidate {
-                symbol: SymbolAt::Def {
-                    def: DefId::Local(local_def),
+            Self::push_candidate(
+                scan,
+                candidates,
+                ReferenceCandidate {
+                    symbol: SymbolAt::Def {
+                        def: DefId::Local(local_def),
+                        span,
+                    },
+                    target,
+                    file_id: data.file_id,
                     span,
+                    is_declaration: true,
                 },
-                target,
-                file_id: data.file_id,
-                span,
-                is_declaration: true,
-            });
+            );
         }
 
         for (_, import) in self.0.def_map.imports(target)? {
@@ -179,31 +224,39 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
                 module: import.module,
             };
             for (idx, segment) in import.source_path.segments().iter().enumerate() {
-                candidates.push(ReferenceCandidate {
-                    symbol: SymbolAt::UsePath {
-                        module,
-                        path: import.source_path.prefix_path(idx),
+                Self::push_candidate(
+                    scan,
+                    candidates,
+                    ReferenceCandidate {
+                        symbol: SymbolAt::UsePath {
+                            module,
+                            path: import.source_path.prefix_path(idx),
+                            span: segment.span,
+                        },
+                        target,
+                        file_id: import.source.file_id,
                         span: segment.span,
+                        is_declaration: false,
                     },
-                    target,
-                    file_id: import.source.file_id,
-                    span: segment.span,
-                    is_declaration: false,
-                });
+                );
             }
 
             if let Some(alias_span) = import.alias_span {
-                candidates.push(ReferenceCandidate {
-                    symbol: SymbolAt::UsePath {
-                        module,
-                        path: Path::from(&import.path),
+                Self::push_candidate(
+                    scan,
+                    candidates,
+                    ReferenceCandidate {
+                        symbol: SymbolAt::UsePath {
+                            module,
+                            path: Path::from(&import.path),
+                            span: alias_span,
+                        },
+                        target,
+                        file_id: import.source.file_id,
                         span: alias_span,
+                        is_declaration: false,
                     },
-                    target,
-                    file_id: import.source.file_id,
-                    span: alias_span,
-                    is_declaration: false,
-                });
+                );
             }
         }
 
@@ -212,14 +265,18 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
 
     fn push_semantic_candidates(
         &self,
-        target: TargetRef,
+        scan: ReferenceScanTarget,
         candidates: &mut Vec<ReferenceCandidate>,
     ) -> anyhow::Result<()> {
-        for candidate in self.0.semantic_ir.signature_source_candidates(target)? {
-            let Some(candidate) = self.semantic_reference_candidate(target, candidate)? else {
+        for candidate in self
+            .0
+            .semantic_ir
+            .signature_source_candidates(scan.target)?
+        {
+            let Some(candidate) = self.semantic_reference_candidate(scan.target, candidate)? else {
                 continue;
             };
-            candidates.push(candidate);
+            Self::push_candidate(scan, candidates, candidate);
         }
         Ok(())
     }
@@ -289,14 +346,14 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
 
     fn push_body_candidates(
         &self,
-        target: TargetRef,
+        scan: ReferenceScanTarget,
         candidates: &mut Vec<ReferenceCandidate>,
     ) -> anyhow::Result<()> {
-        for candidate in self.0.body_ir.source_candidates(target)? {
-            let Some(candidate) = self.body_reference_candidate(target, candidate)? else {
+        for candidate in self.0.body_ir.source_candidates(scan.target)? {
+            let Some(candidate) = self.body_reference_candidate(scan.target, candidate)? else {
                 continue;
             };
-            candidates.push(candidate);
+            Self::push_candidate(scan, candidates, candidate);
         }
         Ok(())
     }
@@ -417,6 +474,19 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         };
 
         Ok(Some(candidate))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReferenceScanTarget {
+    target: TargetRef,
+    file_id: Option<FileId>,
+}
+
+impl ReferenceScanTarget {
+    fn accepts_file(self, candidate_file_id: FileId) -> bool {
+        self.file_id
+            .is_none_or(|selected_file_id| selected_file_id == candidate_file_id)
     }
 }
 

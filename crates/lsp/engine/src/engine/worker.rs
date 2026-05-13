@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_analysis::TypeHint;
+use rg_analysis::{ReferenceSearchScope, TypeHint};
 use rg_def_map::TargetRef;
 use rg_lsp_proto::AnalysisConfig;
 use rg_parse::TextSpan;
@@ -394,7 +394,7 @@ impl EngineWorker {
                 context.file,
                 offset,
                 include_declaration,
-                &search_targets,
+                ReferenceSearchScope::Targets(&search_targets),
             )? {
                 let Some(location) = references::location_for_reference(snapshot, &reference)?
                 else {
@@ -427,11 +427,20 @@ impl EngineWorker {
         let started = Instant::now();
         let snapshot = self.snapshot()?;
         let target_offsets = self.target_offsets(snapshot, &path, position)?;
-        let analysis = snapshot.full_analysis()?;
         let mut highlights = Vec::new();
 
         for (context, target, offset) in target_offsets {
-            for reference in analysis.references(target, context.file, offset, true, &[target])? {
+            let analysis = snapshot.analysis_for_targets(&[target])?;
+            for reference in analysis.references(
+                target,
+                context.file,
+                offset,
+                true,
+                ReferenceSearchScope::File {
+                    target,
+                    file_id: context.file,
+                },
+            )? {
                 if reference.target.package != context.package || reference.file_id != context.file
                 {
                     continue;
