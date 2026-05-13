@@ -36,6 +36,8 @@ pub(crate) fn document_highlight_for_reference(
 ) -> anyhow::Result<DocumentHighlight> {
     Ok(DocumentHighlight {
         range: range_for_file(snapshot, package, file_id, span)?,
+        // We use `read` highlight kind because it's simpler and barely noticeable. We'll fix it if
+        // somebody will actually notice the difference, which I doubt; until then it's not worth it.
         kind: Some(DocumentHighlightKind::READ),
     })
 }

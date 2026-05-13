@@ -65,17 +65,21 @@ impl<'a> ProjectSnapshot<'a> {
         targets
     }
 
+    /// Returns packages whose targets should be scanned for references.
     fn reference_search_packages(
         &self,
         origin_package: PackageSlot,
         declaration_targets: &[TargetRef],
     ) -> Vec<PackageSlot> {
         let workspace = self.state.workspace();
+        // Check if the query origin is part of the workspace.
         if workspace
             .packages()
             .get(origin_package.0)
             .is_some_and(|package| package.is_workspace_member)
         {
+            // Workspace-origin queries scan all workspace members, but do not spill into
+            // dependency use-sites.
             return workspace
                 .packages()
                 .iter()
@@ -86,6 +90,8 @@ impl<'a> ProjectSnapshot<'a> {
                 .collect();
         }
 
+        // Dependency-origin queries scan the selected declaration packages and their reverse
+        // dependencies, so references from packages that can use the dependency are visible.
         let mut root_packages = Vec::new();
         for target in declaration_targets {
             if !root_packages.contains(&target.package) {
