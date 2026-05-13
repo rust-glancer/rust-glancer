@@ -381,9 +381,21 @@ impl EngineWorker {
         let mut locations = Vec::new();
 
         for (context, target, offset) in target_offsets {
-            for reference in
-                analysis.references(target, context.file, offset, include_declaration)?
-            {
+            let declaration_targets = analysis
+                .goto_definition(target, context.file, offset)?
+                .into_iter()
+                .map(|target| target.target)
+                .collect::<Vec<_>>();
+            let search_targets =
+                snapshot.reference_search_targets(context.package, &declaration_targets);
+
+            for reference in analysis.references(
+                target,
+                context.file,
+                offset,
+                include_declaration,
+                &search_targets,
+            )? {
                 let Some(location) = references::location_for_reference(snapshot, &reference)?
                 else {
                     continue;
@@ -419,7 +431,7 @@ impl EngineWorker {
         let mut highlights = Vec::new();
 
         for (context, target, offset) in target_offsets {
-            for reference in analysis.references(target, context.file, offset, true)? {
+            for reference in analysis.references(target, context.file, offset, true, &[target])? {
                 if reference.target.package != context.package || reference.file_id != context.file
                 {
                     continue;

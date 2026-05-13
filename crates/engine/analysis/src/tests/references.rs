@@ -104,3 +104,120 @@ pub fn use_it() {
         "#]],
     );
 }
+
+#[test]
+fn scoped_references_keep_external_declaration_without_external_uses() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/helper", "crates/app"]
+resolver = "3"
+
+//- /crates/helper/Cargo.toml
+[package]
+name = "helper"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/helper/src/lib.rs
+pub struct Tool;
+
+pub fn helper_use(tool: Tool) {
+    let _again: Tool = tool;
+}
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+helper = { path = "../helper" }
+
+//- /crates/app/src/lib.rs
+pub fn use_it() {
+    let tool: helper::To$scoped_type_ref$ol = todo!();
+    let _again: helper::Tool = tool;
+}
+"#,
+        &[
+            AnalysisQuery::references_in_current_target(
+                "scoped type references",
+                "scoped_type_ref",
+            )
+            .in_lib("app"),
+        ],
+        expect![[r#"
+            scoped type references
+            - `Tool` @ app/src/lib.rs:2:23-2:27
+            - `Tool` @ app/src/lib.rs:3:25-3:29
+            - `Tool` @ helper/src/lib.rs:1:12-1:16
+        "#]],
+    );
+}
+
+#[test]
+fn scoped_references_from_dependency_include_reverse_dependency_uses() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/app"]
+exclude = ["dep", "helper"]
+resolver = "3"
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct A$dep_api$pi;
+
+pub fn dep_use(_: Api) {}
+
+//- /helper/Cargo.toml
+[package]
+name = "helper"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /helper/src/lib.rs
+pub fn helper_use(_: dep::Api) {}
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../../dep" }
+helper = { path = "../../helper" }
+
+//- /crates/app/src/lib.rs
+pub fn app_use(_: dep::Api) {
+    helper::helper_use(todo!());
+}
+"#,
+        &[AnalysisQuery::references_in_lib_targets(
+            "dependency-scoped type references",
+            "dep_api",
+            &["dep", "helper", "app"],
+        )
+        .in_lib("dep")],
+        expect![[r#"
+            dependency-scoped type references
+            - `Api` @ app/src/lib.rs:1:24-1:27
+            - `Api` @ dep/src/lib.rs:1:12-1:15
+            - `Api` @ dep/src/lib.rs:3:19-3:22
+            - `Api` @ helper/src/lib.rs:1:27-1:30
+        "#]],
+    );
+}

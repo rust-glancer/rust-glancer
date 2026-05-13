@@ -16,9 +16,10 @@ use rg_semantic_ir::{
 
 use crate::{
     api::{
+        Analysis,
+        query::navigation::SymbolResolver,
         query::symbols::shared,
         resolve::entity::{EntityResolver, ResolvedEntity},
-        Analysis,
     },
     model::{ReferenceLocation, SymbolAt},
 };
@@ -30,23 +31,33 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         Self(analysis)
     }
 
+    /// Finds references for the symbol under `offset` by scanning the provided use-site targets.
+    ///
+    /// Declaration locations are projected from the selected symbol before use-site scanning when
+    /// requested, so callers can keep declarations visible even when their search surface excludes
+    /// the defining target.
     pub(crate) fn references(
         &self,
         target: TargetRef,
         file_id: FileId,
         offset: u32,
         include_declaration: bool,
+        use_site_targets: &[TargetRef],
     ) -> anyhow::Result<Vec<ReferenceLocation>> {
         let Some(symbol) = self.0.symbol_at_for_query(target, file_id, offset)? else {
             return Ok(Vec::new());
         };
-        let subjects = self.subjects_for_symbol(symbol)?;
+        let subjects = self.subjects_for_symbol(symbol.clone())?;
         if subjects.is_empty() {
             return Ok(Vec::new());
         }
 
         let mut locations = Vec::new();
-        for candidate in self.reference_candidates()? {
+        if include_declaration {
+            self.push_selected_declarations(symbol, &mut locations)?;
+        }
+
+        for candidate in self.reference_candidates(use_site_targets)? {
             if candidate.is_declaration && !include_declaration {
                 continue;
             }
@@ -77,6 +88,24 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         Ok(locations)
     }
 
+    fn push_selected_declarations(
+        &self,
+        symbol: SymbolAt,
+        locations: &mut Vec<ReferenceLocation>,
+    ) -> anyhow::Result<()> {
+        for target in SymbolResolver::new(self.0).resolve_symbol(symbol)? {
+            let Some(span) = target.span else {
+                continue;
+            };
+            locations.push(ReferenceLocation {
+                target: target.target,
+                file_id: target.file_id,
+                span,
+            });
+        }
+        Ok(())
+    }
+
     fn subjects_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Vec<ReferenceSubject>> {
         let entities = EntityResolver::new(self.0).entities_for_symbol(symbol)?;
         let mut subjects = Vec::new();
@@ -89,16 +118,21 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         Ok(subjects)
     }
 
-    fn reference_candidates(&self) -> anyhow::Result<Vec<ReferenceCandidate>> {
+    fn reference_candidates(
+        &self,
+        use_site_targets: &[TargetRef],
+    ) -> anyhow::Result<Vec<ReferenceCandidate>> {
         let mut candidates = Vec::new();
+        let mut visited = Vec::new();
+        for target in use_site_targets {
+            if visited.contains(target) {
+                continue;
+            }
+            visited.push(*target);
 
-        for (target, _) in self.0.def_map.materialize_included_target_maps()? {
-            self.push_def_map_candidates(target, &mut candidates)?;
-            self.push_body_candidates(target, &mut candidates)?;
-        }
-
-        for (target, _) in self.0.semantic_ir.materialize_included_target_irs()? {
-            self.push_semantic_candidates(target, &mut candidates)?;
+            self.push_def_map_candidates(*target, &mut candidates)?;
+            self.push_body_candidates(*target, &mut candidates)?;
+            self.push_semantic_candidates(*target, &mut candidates)?;
         }
 
         Ok(candidates)

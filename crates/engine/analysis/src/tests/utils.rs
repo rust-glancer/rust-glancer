@@ -127,6 +127,7 @@ impl AnalysisQuery {
             marker,
             AnalysisQueryKind::References {
                 include_declaration: true,
+                scope: ReferenceQueryScope::AllIncludedTargets,
             },
         )
     }
@@ -140,6 +141,33 @@ impl AnalysisQuery {
             marker,
             AnalysisQueryKind::References {
                 include_declaration: false,
+                scope: ReferenceQueryScope::AllIncludedTargets,
+            },
+        )
+    }
+
+    pub(super) fn references_in_current_target(title: &'static str, marker: &'static str) -> Self {
+        Self::new(
+            title,
+            marker,
+            AnalysisQueryKind::References {
+                include_declaration: true,
+                scope: ReferenceQueryScope::CurrentTarget,
+            },
+        )
+    }
+
+    pub(super) fn references_in_lib_targets(
+        title: &'static str,
+        marker: &'static str,
+        packages: &'static [&'static str],
+    ) -> Self {
+        Self::new(
+            title,
+            marker,
+            AnalysisQueryKind::References {
+                include_declaration: true,
+                scope: ReferenceQueryScope::LibTargets(packages),
             },
         )
     }
@@ -247,10 +275,20 @@ enum AnalysisQueryKind {
     GotoDefinition,
     GotoTypeDefinition,
     GotoImplementation,
-    References { include_declaration: bool },
+    References {
+        include_declaration: bool,
+        scope: ReferenceQueryScope,
+    },
     TypeAt,
     CompletionsAtDot,
     Hover,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ReferenceQueryScope {
+    AllIncludedTargets,
+    CurrentTarget,
+    LibTargets(&'static [&'static str]),
 }
 
 struct AnalysisFixtureDb {
@@ -346,6 +384,49 @@ impl AnalysisFixtureDb {
             selected.kind
         );
         matches.pop().expect("one match should be present")
+    }
+
+    fn target_for(&self, selected: &AnalysisTarget) -> TargetRef {
+        let mut matches = Vec::new();
+
+        for (package_slot, package) in self.parse.packages().iter().enumerate() {
+            if !selected.matches_package(package.package_name()) {
+                continue;
+            }
+
+            for target in package
+                .targets()
+                .iter()
+                .filter(|target| target.kind == selected.kind)
+            {
+                matches.push(TargetRef {
+                    package: PackageSlot(package_slot),
+                    target: target.id,
+                });
+            }
+        }
+
+        assert_eq!(
+            matches.len(),
+            1,
+            "target selection should identify exactly one {} target",
+            selected.kind
+        );
+        matches.pop().expect("one match should be present")
+    }
+
+    fn all_targets(&self) -> Vec<TargetRef> {
+        self.parse
+            .packages()
+            .iter()
+            .enumerate()
+            .flat_map(|(package_slot, package)| {
+                package.targets().iter().map(move |target| TargetRef {
+                    package: PackageSlot(package_slot),
+                    target: target.id,
+                })
+            })
+            .collect()
     }
 
     fn target_owns_file(&self, target: TargetRef, file_id: FileId) -> bool {
@@ -470,14 +551,47 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             }
             AnalysisQueryKind::References {
                 include_declaration,
+                scope,
             } => {
-                self.render_references(
-                    self.db
+                let references = match scope {
+                    ReferenceQueryScope::AllIncludedTargets => {
+                        let use_site_targets = self.db.all_targets();
+                        self.db
+                            .analysis()
+                            .references(
+                                target,
+                                file_id,
+                                offset,
+                                include_declaration,
+                                &use_site_targets,
+                            )
+                            .expect("fixture references query should resolve")
+                    }
+                    ReferenceQueryScope::CurrentTarget => self
+                        .db
                         .analysis()
-                        .references(target, file_id, offset, include_declaration)
-                        .expect("fixture references query should resolve"),
-                    &mut dump,
-                );
+                        .references(target, file_id, offset, include_declaration, &[target])
+                        .expect("fixture scoped references query should resolve"),
+                    ReferenceQueryScope::LibTargets(packages) => {
+                        let use_site_targets = packages
+                            .iter()
+                            .map(|package| {
+                                self.db.target_for(&AnalysisTarget::lib_package(package))
+                            })
+                            .collect::<Vec<_>>();
+                        self.db
+                            .analysis()
+                            .references(
+                                target,
+                                file_id,
+                                offset,
+                                include_declaration,
+                                &use_site_targets,
+                            )
+                            .expect("fixture scoped references query should resolve")
+                    }
+                };
+                self.render_references(references, &mut dump);
             }
             AnalysisQueryKind::TypeAt => {
                 let ty = self
@@ -1195,14 +1309,21 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             .expect("reference file should exist while rendering file path");
         let path = path.to_string_lossy();
 
-        path.rfind("/src/")
+        let relative_path = path
+            .rfind("/src/")
             .map(|idx| path[idx + 1..].to_string())
             .unwrap_or_else(|| {
                 path.rsplit('/')
                     .next()
                     .expect("path string should contain a file name")
                     .to_string()
-            })
+            });
+
+        if self.db.parse.packages().len() > 1 {
+            format!("{}/{relative_path}", package.package_name())
+        } else {
+            relative_path
+        }
     }
 }
 

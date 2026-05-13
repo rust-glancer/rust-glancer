@@ -125,18 +125,24 @@ impl<'a> Analysis<'a> {
     }
 
     /// Returns best-effort source references for the symbol under a source offset.
+    ///
+    /// Only source occurrences inside `use_site_targets` are scanned. When
+    /// `include_declaration` is true, declaration locations for the selected symbol are included
+    /// even if the declaration target is outside the scanned use-site surface.
     pub fn references(
         &self,
         target: TargetRef,
         file_id: FileId,
         offset: u32,
         include_declaration: bool,
+        use_site_targets: &[TargetRef],
     ) -> anyhow::Result<Vec<ReferenceLocation>> {
         query::references::ReferenceResolver::new(self).references(
             target,
             file_id,
             offset,
             include_declaration,
+            use_site_targets,
         )
     }
 
