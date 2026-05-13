@@ -1,7 +1,7 @@
 use std::{cell::RefCell, fmt, path::PathBuf};
 
 use anyhow::Context as _;
-use rg_analysis::{ReferenceLocation, ReferenceQuery};
+use rg_analysis::{ReferenceLocation, ReferenceQuery, TypeHint};
 use rg_def_map::TargetRef;
 use rg_project::{FileContext, PackageResidencyPolicy, Project, StartupCacheLoad};
 use rg_workspace::WorkspaceMetadata;
@@ -25,21 +25,23 @@ pub enum BenchQuery {
     GotoWorkspaceImplementation,
     ReferencesWorkspaceSummary,
     DocumentHighlightSummary,
-    CompletionWorkspaceSummary,
+    CompletionWorkspaceMembers,
     DocumentSymbolsApi,
+    InlayHintsApi,
     WorkspaceSymbolsWorkspace,
 }
 
 impl BenchQuery {
-    const DIVAN: [Self; 9] = [
+    const DIVAN: [Self; 10] = [
         Self::HoverWorkspaceSummary,
         Self::GotoWorkspaceConstructor,
         Self::GotoWorkspaceType,
         Self::GotoWorkspaceImplementation,
         Self::ReferencesWorkspaceSummary,
         Self::DocumentHighlightSummary,
-        Self::CompletionWorkspaceSummary,
+        Self::CompletionWorkspaceMembers,
         Self::DocumentSymbolsApi,
+        Self::InlayHintsApi,
         Self::WorkspaceSymbolsWorkspace,
     ];
 
@@ -50,54 +52,70 @@ impl BenchQuery {
                 relative_path: Some("crates/api/src/lib.rs"),
                 cursor_marker: Some("Vec<Workspace$0Summary>"),
                 kind: QueryKind::Hover,
+                expected: QueryExpectation::Exact(1),
             },
             Self::GotoWorkspaceConstructor => QueryCase {
                 target: BenchTarget::SmallApp,
                 relative_path: Some("crates/api/src/lib.rs"),
                 cursor_marker: Some("Workspace::from_$0request(request)"),
                 kind: QueryKind::GotoDefinition,
+                expected: QueryExpectation::Exact(1),
             },
             Self::GotoWorkspaceType => QueryCase {
                 target: BenchTarget::SmallApp,
                 relative_path: Some("crates/api/src/lib.rs"),
-                cursor_marker: Some("let summary = work$0space.summary();"),
+                cursor_marker: Some("work$0space.plan != plan"),
                 kind: QueryKind::GotoTypeDefinition,
+                expected: QueryExpectation::Exact(1),
             },
             Self::GotoWorkspaceImplementation => QueryCase {
                 target: BenchTarget::SmallApp,
                 relative_path: Some("crates/api/src/lib.rs"),
                 cursor_marker: Some("Work$0space::from_request(request)"),
                 kind: QueryKind::GotoImplementation,
+                expected: QueryExpectation::Exact(1),
             },
             Self::ReferencesWorkspaceSummary => QueryCase {
                 target: BenchTarget::SmallApp,
                 relative_path: Some("crates/api/src/lib.rs"),
                 cursor_marker: Some("Vec<Workspace$0Summary>"),
                 kind: QueryKind::References,
+                expected: QueryExpectation::AtLeast(1),
             },
             Self::DocumentHighlightSummary => QueryCase {
                 target: BenchTarget::SmallApp,
                 relative_path: Some("crates/api/src/lib.rs"),
                 cursor_marker: Some("let sum$0mary = workspace.summary();"),
                 kind: QueryKind::DocumentHighlight,
+                expected: QueryExpectation::AtLeast(2),
             },
-            Self::CompletionWorkspaceSummary => QueryCase {
+            Self::CompletionWorkspaceMembers => QueryCase {
                 target: BenchTarget::SmallApp,
                 relative_path: Some("crates/api/src/lib.rs"),
-                cursor_marker: Some("workspace.$0summary();"),
+                cursor_marker: Some("workspace.$0plan"),
                 kind: QueryKind::Completion,
+                expected: QueryExpectation::AtLeast(1),
             },
             Self::DocumentSymbolsApi => QueryCase {
                 target: BenchTarget::SmallApp,
                 relative_path: Some("crates/api/src/lib.rs"),
                 cursor_marker: None,
                 kind: QueryKind::DocumentSymbols,
+                expected: QueryExpectation::AtLeast(1),
+            },
+            Self::InlayHintsApi => QueryCase {
+                target: BenchTarget::SmallApp,
+                relative_path: Some("crates/api/src/lib.rs"),
+                cursor_marker: None,
+                kind: QueryKind::InlayHints,
+                expected: QueryExpectation::AtLeast(1),
             },
             Self::WorkspaceSymbolsWorkspace => QueryCase {
                 target: BenchTarget::SmallApp,
                 relative_path: None,
                 cursor_marker: None,
                 kind: QueryKind::WorkspaceSymbols("Workspace"),
+                expected: QueryExpectation::AtLeast(1),
             },
         }
     }
@@ -112,8 +130,9 @@ impl fmt::Display for BenchQuery {
             Self::GotoWorkspaceImplementation => "goto_workspace_implementation",
             Self::ReferencesWorkspaceSummary => "references_workspace_summary",
             Self::DocumentHighlightSummary => "document_highlight_summary",
-            Self::CompletionWorkspaceSummary => "completion_workspace_summary",
+            Self::CompletionWorkspaceMembers => "completion_workspace_members",
             Self::DocumentSymbolsApi => "document_symbols_api",
+            Self::InlayHintsApi => "inlay_hints_api",
             Self::WorkspaceSymbolsWorkspace => "workspace_symbols_workspace",
         };
         write!(f, "{}::{name}", self.case().target)
@@ -131,6 +150,7 @@ struct QueryCase {
     relative_path: Option<&'static str>,
     cursor_marker: Option<&'static str>,
     kind: QueryKind,
+    expected: QueryExpectation,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -143,7 +163,37 @@ enum QueryKind {
     DocumentHighlight,
     Completion,
     DocumentSymbols,
+    InlayHints,
     WorkspaceSymbols(&'static str),
+}
+
+/// Minimal correctness guard for benchmark cases.
+///
+/// Benchmarks should fail when a query silently turns into "nothing found"; otherwise a broken
+/// implementation can look like a performance win. Exact counts are useful for single-symbol cases
+/// where the fixture is intentionally narrow, while lower bounds keep broader queries tolerant of
+/// harmless fixture growth.
+#[derive(Debug, Clone, Copy)]
+enum QueryExpectation {
+    Exact(usize),
+    AtLeast(usize),
+}
+
+impl QueryExpectation {
+    fn check(self, query: BenchQuery, actual: usize) -> anyhow::Result<()> {
+        match self {
+            Self::Exact(expected) => anyhow::ensure!(
+                actual == expected,
+                "{query} expected exactly {expected} results, got {actual}"
+            ),
+            Self::AtLeast(minimum) => anyhow::ensure!(
+                actual >= minimum,
+                "{query} expected at least {minimum} results, got {actual}"
+            ),
+        }
+
+        Ok(())
+    }
 }
 
 /// Frozen `Project` prepared once per target/residency policy.
@@ -264,6 +314,12 @@ impl PreparedQuery {
                     });
                 }
             }
+
+            anyhow::ensure!(
+                !sites.is_empty(),
+                "{query} resolved no query sites for {}",
+                path.display()
+            );
         }
 
         Ok(Self {
@@ -275,8 +331,14 @@ impl PreparedQuery {
     }
 
     pub fn run(&self) -> usize {
-        self.try_run()
+        self.try_run_and_validate()
             .unwrap_or_else(|error| panic!("{} benchmark query should run: {error:#}", self.query))
+    }
+
+    fn try_run_and_validate(&self) -> anyhow::Result<usize> {
+        let count = self.try_run()?;
+        self.query.case().expected.check(self.query, count)?;
+        Ok(count)
     }
 
     fn try_run(&self) -> anyhow::Result<usize> {
@@ -289,6 +351,7 @@ impl PreparedQuery {
             QueryKind::DocumentHighlight => self.run_document_highlight(),
             QueryKind::Completion => self.run_completion(),
             QueryKind::DocumentSymbols => self.run_document_symbols(),
+            QueryKind::InlayHints => self.run_inlay_hints(),
             QueryKind::WorkspaceSymbols(query) => self.run_workspace_symbols(query),
         }
     }
@@ -443,6 +506,30 @@ impl PreparedQuery {
         }
 
         Ok(count)
+    }
+
+    fn run_inlay_hints(&self) -> anyhow::Result<usize> {
+        let snapshot = self.fixture.project.snapshot();
+        let analysis = snapshot
+            .analysis_for_targets(&self.analysis_targets)
+            .context("while attempting to create target-scoped analysis")?;
+        let mut hints = Vec::<TypeHint>::new();
+
+        for site in &self.sites {
+            // Use the analysis API's whole-file mode. LSP range conversion is transport glue; the
+            // expensive part we care about here is collecting and rendering inferred binding types
+            // from the frozen analysis snapshot.
+            for hint in analysis
+                .type_hints(site.target, site.context.file, None)
+                .context("while attempting to run inlay-hints query")?
+            {
+                if !hints.contains(&hint) {
+                    hints.push(hint);
+                }
+            }
+        }
+
+        Ok(hints.len())
     }
 
     fn run_workspace_symbols(&self, query: &str) -> anyhow::Result<usize> {

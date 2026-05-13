@@ -20,9 +20,13 @@ std::cfg_select! {
         #[library_benchmark(setup = setup_query)]
         #[bench::small_app_hover_workspace_summary(BenchQuery::HoverWorkspaceSummary)]
         #[bench::small_app_goto_workspace_constructor(BenchQuery::GotoWorkspaceConstructor)]
+        #[bench::small_app_goto_workspace_type(BenchQuery::GotoWorkspaceType)]
+        #[bench::small_app_goto_workspace_implementation(BenchQuery::GotoWorkspaceImplementation)]
         #[bench::small_app_references_workspace_summary(BenchQuery::ReferencesWorkspaceSummary)]
         #[bench::small_app_document_highlight_summary(BenchQuery::DocumentHighlightSummary)]
-        #[bench::small_app_completion_workspace_summary(BenchQuery::CompletionWorkspaceSummary)]
+        #[bench::small_app_completion_workspace_members(BenchQuery::CompletionWorkspaceMembers)]
+        #[bench::small_app_document_symbols_api(BenchQuery::DocumentSymbolsApi)]
+        #[bench::small_app_inlay_hints_api(BenchQuery::InlayHintsApi)]
         #[bench::small_app_workspace_symbols_workspace(BenchQuery::WorkspaceSymbolsWorkspace)]
         fn frozen_project_query(prepared: PreparedQuery) -> usize {
             std::hint::black_box(prepared.run())
