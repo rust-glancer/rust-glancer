@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@285e94bf531e72a83c0923d52526fabb44c3b169 # nextest
       - name: Run tests
         run: cargo nextest run --workspace
 
@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: taiki-e/install-action@just
+      - uses: taiki-e/install-action@31aff3cbbd5cedd6280320e7d7871dd39147ed4c # just
       - name: Check test targets
         run: just check-test-targets
 
@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: taiki-e/install-action@cargo-deny
+      - uses: taiki-e/install-action@3a58a0b3ca97bb468adc27126d15973ca18bbfcb # cargo-deny
       - name: Run cargo deny
         run: cargo deny check
 
@@ -85,6 +85,6 @@ jobs:
       - client
     steps:
       - name: Decide on PR checks
-        uses: re-actors/alls-green@v1.2.2
+        uses: re-actors/alls-green@05ac9388f0aebcb5727afa17fcccfecd6f8ec5fe # v1.2.2
         with:
           jobs: ${{ toJSON(needs) }}
