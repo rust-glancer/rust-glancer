@@ -55,13 +55,15 @@ impl CursorScanner<'_, '_> {
                 .cursor_candidates(self.target, self.file_id, self.offset)?;
         for candidate in candidates {
             match candidate {
-                DefMapCursorCandidate::Def { def, span } => {
+                DefMapCursorCandidate::Def { def, span, .. } => {
                     self.candidates.push(SymbolCandidate {
                         symbol: SymbolAt::Def { def, span },
                         span,
                     });
                 }
-                DefMapCursorCandidate::UsePath { module, path, span } => {
+                DefMapCursorCandidate::UsePath {
+                    module, path, span, ..
+                } => {
                     self.candidates.push(SymbolCandidate {
                         symbol: SymbolAt::UsePath { module, path, span },
                         span,

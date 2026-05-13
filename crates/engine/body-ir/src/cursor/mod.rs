@@ -100,12 +100,13 @@ impl BodyIrReadTxn<'_> {
         BodyCursorScanner::new(self, target, file_id, offset).scan()
     }
 
-    /// Returns every body-local source candidate in one target.
+    /// Returns body-local source candidates in one target.
     pub fn source_candidates(
         &self,
         target: TargetRef,
+        file_id: Option<FileId>,
     ) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
-        BodySourceScanner::new(self, target).scan()
+        BodySourceScanner::new(self, target, file_id).scan()
     }
 
     /// Returns the receiver expression for a dot-completion site.

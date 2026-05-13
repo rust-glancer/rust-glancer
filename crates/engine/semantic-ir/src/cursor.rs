@@ -71,16 +71,17 @@ impl SemanticIrReadTxn<'_> {
         Ok(candidates)
     }
 
-    /// Returns every source candidate inside semantic item signatures for one target.
+    /// Returns source candidates inside semantic item signatures for one target.
     pub fn signature_source_candidates(
         &self,
         target: TargetRef,
+        file_id: Option<FileId>,
     ) -> Result<Vec<SemanticCursorCandidate>, PackageStoreError> {
         let mut candidates = Vec::new();
         SignatureCursorScanner {
             semantic_ir: self,
             target,
-            file_id: None,
+            file_id,
             offset: None,
             candidates: &mut candidates,
         }

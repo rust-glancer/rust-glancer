@@ -7,7 +7,7 @@
 use rg_body_ir::{
     BodyCursorCandidate, BodyItemRef, BodyRef, ResolvedFieldRef, ResolvedFunctionRef,
 };
-use rg_def_map::{DefId, LocalDefRef, ModuleRef, Path, TargetRef};
+use rg_def_map::{DefMapCursorCandidate, LocalDefRef, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
     ConstRef, EnumVariantRef, SemanticCursorCandidate, StaticRef, TraitRef, TypeAliasRef,
@@ -18,7 +18,6 @@ use crate::{
     api::{
         Analysis,
         query::navigation::SymbolResolver,
-        query::symbols::shared,
         resolve::entity::{EntityResolver, ResolvedEntity},
     },
     model::{ReferenceLocation, ReferenceSearchScope, SymbolAt},
@@ -179,85 +178,33 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         scan: ReferenceScanTarget,
         candidates: &mut Vec<ReferenceCandidate>,
     ) -> anyhow::Result<()> {
-        let target = scan.target;
-        for (module_ref, module) in self.0.def_map.modules(target)? {
-            let Some(source) = shared::module_declaration_source(module) else {
-                continue;
-            };
-            Self::push_candidate(
-                scan,
-                candidates,
-                ReferenceCandidate {
-                    symbol: SymbolAt::Def {
-                        def: DefId::Module(module_ref),
-                        span: source.selection_span,
-                    },
-                    target,
-                    file_id: source.file_id,
-                    span: source.selection_span,
-                    is_declaration: true,
-                },
-            );
-        }
-
-        for (local_def, data) in self.0.def_map.local_defs(target)? {
-            let span = data.name_span.unwrap_or(data.span);
-            Self::push_candidate(
-                scan,
-                candidates,
-                ReferenceCandidate {
-                    symbol: SymbolAt::Def {
-                        def: DefId::Local(local_def),
-                        span,
-                    },
-                    target,
-                    file_id: data.file_id,
+        for candidate in self
+            .0
+            .def_map
+            .source_candidates(scan.target, scan.file_id)?
+        {
+            let candidate = match candidate {
+                DefMapCursorCandidate::Def { def, file_id, span } => ReferenceCandidate {
+                    symbol: SymbolAt::Def { def, span },
+                    target: scan.target,
+                    file_id,
                     span,
                     is_declaration: true,
                 },
-            );
-        }
-
-        for (_, import) in self.0.def_map.imports(target)? {
-            let module = ModuleRef {
-                target,
-                module: import.module,
+                DefMapCursorCandidate::UsePath {
+                    module,
+                    path,
+                    file_id,
+                    span,
+                } => ReferenceCandidate {
+                    symbol: SymbolAt::UsePath { module, path, span },
+                    target: scan.target,
+                    file_id,
+                    span,
+                    is_declaration: false,
+                },
             };
-            for (idx, segment) in import.source_path.segments().iter().enumerate() {
-                Self::push_candidate(
-                    scan,
-                    candidates,
-                    ReferenceCandidate {
-                        symbol: SymbolAt::UsePath {
-                            module,
-                            path: import.source_path.prefix_path(idx),
-                            span: segment.span,
-                        },
-                        target,
-                        file_id: import.source.file_id,
-                        span: segment.span,
-                        is_declaration: false,
-                    },
-                );
-            }
-
-            if let Some(alias_span) = import.alias_span {
-                Self::push_candidate(
-                    scan,
-                    candidates,
-                    ReferenceCandidate {
-                        symbol: SymbolAt::UsePath {
-                            module,
-                            path: Path::from(&import.path),
-                            span: alias_span,
-                        },
-                        target,
-                        file_id: import.source.file_id,
-                        span: alias_span,
-                        is_declaration: false,
-                    },
-                );
-            }
+            Self::push_candidate(scan, candidates, candidate);
         }
 
         Ok(())
@@ -271,7 +218,7 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         for candidate in self
             .0
             .semantic_ir
-            .signature_source_candidates(scan.target)?
+            .signature_source_candidates(scan.target, scan.file_id)?
         {
             let Some(candidate) = self.semantic_reference_candidate(scan.target, candidate)? else {
                 continue;
@@ -349,7 +296,11 @@ impl<'a, 'db> ReferenceResolver<'a, 'db> {
         scan: ReferenceScanTarget,
         candidates: &mut Vec<ReferenceCandidate>,
     ) -> anyhow::Result<()> {
-        for candidate in self.0.body_ir.source_candidates(scan.target)? {
+        for candidate in self
+            .0
+            .body_ir
+            .source_candidates(scan.target, scan.file_id)?
+        {
             let Some(candidate) = self.body_reference_candidate(scan.target, candidate)? else {
                 continue;
             };

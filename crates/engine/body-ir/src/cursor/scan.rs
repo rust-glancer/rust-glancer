@@ -258,11 +258,20 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 pub(super) struct BodySourceScanner<'txn, 'db> {
     body_ir: &'txn BodyIrReadTxn<'db>,
     target: TargetRef,
+    file_id: Option<FileId>,
 }
 
 impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
-    pub(super) fn new(body_ir: &'txn BodyIrReadTxn<'db>, target: TargetRef) -> Self {
-        Self { body_ir, target }
+    pub(super) fn new(
+        body_ir: &'txn BodyIrReadTxn<'db>,
+        target: TargetRef,
+        file_id: Option<FileId>,
+    ) -> Self {
+        Self {
+            body_ir,
+            target,
+            file_id,
+        }
     }
 
     pub(super) fn scan(&self) -> Result<Vec<BodyCursorCandidate>, PackageStoreError> {
@@ -272,18 +281,22 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
         let mut candidates = Vec::new();
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
+            if !self.file_matches(body.source.file_id) {
+                continue;
+            }
+
             let body_ref = BodyRef {
                 target: self.target,
                 body: BodyId(body_idx),
             };
 
-            Self::push_declaration_candidates(body_ref, body, &mut candidates);
-            Self::push_member_reference_candidates(body_ref, body, &mut candidates);
+            self.push_declaration_candidates(body_ref, body, &mut candidates);
+            self.push_member_reference_candidates(body_ref, body, &mut candidates);
 
             TypePathCursorScanner {
                 body_ref,
                 body,
-                file_id: None,
+                file_id: self.file_id,
                 offset: None,
                 candidates: &mut candidates,
             }
@@ -291,7 +304,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             ValuePathCursorScanner {
                 body_ref,
                 body,
-                file_id: None,
+                file_id: self.file_id,
                 offset: None,
                 include_single_segment: true,
                 candidates: &mut candidates,
@@ -303,11 +316,15 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     }
 
     fn push_declaration_candidates(
+        &self,
         body_ref: BodyRef,
         body: &BodyData,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
         for (binding_idx, binding) in body.bindings().iter().enumerate() {
+            if !self.file_matches(binding.source.file_id) {
+                continue;
+            }
             candidates.push(BodyCursorCandidate::Binding {
                 body: body_ref,
                 binding: BindingId(binding_idx),
@@ -316,6 +333,10 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
 
         for (item_idx, item) in body.local_items().iter().enumerate() {
+            if !self.file_matches(item.name_source.file_id) {
+                continue;
+            }
+
             let item_ref = BodyItemRef {
                 body: body_ref,
                 item: BodyItemId(item_idx),
@@ -337,6 +358,9 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
 
         for (function_idx, function) in body.local_functions().iter().enumerate() {
+            if !self.file_matches(function.name_source.file_id) {
+                continue;
+            }
             candidates.push(BodyCursorCandidate::LocalFunction {
                 function: BodyFunctionRef {
                     body: body_ref,
@@ -348,11 +372,16 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     }
 
     fn push_member_reference_candidates(
+        &self,
         body_ref: BodyRef,
         body: &BodyData,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
         for (expr_idx, expr) in body.exprs().iter().enumerate() {
+            if !self.file_matches(expr.source.file_id) {
+                continue;
+            }
+
             let span = match &expr.kind {
                 ExprKind::Path { path } if path.segment_count() == 1 => {
                     path.segment_span(0).unwrap_or(expr.source.span)
@@ -375,6 +404,10 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 span,
             });
         }
+    }
+
+    fn file_matches(&self, file_id: FileId) -> bool {
+        self.file_id.is_none_or(|selected| selected == file_id)
     }
 }
 
