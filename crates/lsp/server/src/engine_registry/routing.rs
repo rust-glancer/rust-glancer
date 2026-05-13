@@ -31,12 +31,14 @@ impl EngineRouting {
         self.last_active_id
     }
 
-    /// Returns whether a document path is inside a folder where engines may be discovered.
-    pub(crate) fn can_discover_workspace_for(&self, path: &Path) -> bool {
+    /// Returns the workspace folder whose subtree may auto-spawn engines for this document.
+    pub(crate) fn discovery_workspace_for(&self, path: &Path) -> Option<&Path> {
         let path = normalize_path(path);
         self.workspace_folders
             .iter()
-            .any(|workspace_folder| path.starts_with(workspace_folder.as_path()))
+            .filter(|workspace_folder| path.starts_with(workspace_folder.as_path()))
+            .max_by_key(|workspace_folder| workspace_folder.components().count())
+            .map(PathBuf::as_path)
     }
 
     /// Routes a Cargo-resolved workspace root into its owning workspace engine.

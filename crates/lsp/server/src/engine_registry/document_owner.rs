@@ -1,6 +1,6 @@
 use std::{
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Output},
 };
 
 use anyhow::Context as _;
@@ -49,9 +49,13 @@ impl DocumentOwner {
         //   "parent"?
         // Answering these queestions is postponed until it _really_ becomes an issue and
         // there will be real users affected by this heuristic.
-        if !inner.routing.can_discover_workspace_for(path) {
+        let Some(discovery_workspace) = inner
+            .routing
+            .discovery_workspace_for(path)
+            .map(Path::to_path_buf)
+        else {
             return Ok(Self::fallback(inner, path, cache_policy));
-        }
+        };
 
         // This is an unknown workspace file.
         if cache_policy == OpenFileCachePolicy::Ignore {
@@ -61,8 +65,10 @@ impl DocumentOwner {
             );
         }
 
-        // Do we need to spawn a new engine?
-        if let Some(workspace_root) = Self::locate_workspace_root(path)?
+        // Ask Cargo for the workspace root from the containing VS Code workspace folder rather
+        // than from the document directory. Nested rust-toolchain overrides can be older than the
+        // workspace itself and break lightweight routing before analysis gets involved.
+        if let Some(workspace_root) = Self::locate_workspace_root(path, &discovery_workspace)?
             && let Some(owner) =
                 Self::for_cargo_workspace(inner, path, workspace_root, cache_policy)
         {
@@ -132,8 +138,12 @@ impl DocumentOwner {
         }
     }
 
-    fn locate_workspace_root(path: &Path) -> anyhow::Result<Option<PathBuf>> {
+    fn locate_workspace_root(
+        path: &Path,
+        discovery_workspace: &Path,
+    ) -> anyhow::Result<Option<PathBuf>> {
         let path = normalize_path(path);
+        let discovery_workspace = normalize_path(discovery_workspace);
         let Some(document_dir) = path
             .is_dir()
             .then(|| path.to_path_buf())
@@ -141,18 +151,16 @@ impl DocumentOwner {
         else {
             return Ok(None);
         };
+        let Some(manifest_path) = Self::nearest_manifest(&document_dir, &discovery_workspace)
+        else {
+            return Ok(None);
+        };
 
-        let output = Command::new("cargo")
-            .current_dir(&document_dir)
-            .arg("locate-project")
-            .arg("--workspace")
-            .arg("--message-format")
-            .arg("plain")
-            .output()
-            .with_context(|| {
+        let output =
+            Self::run_locate_project(&discovery_workspace, &manifest_path).with_context(|| {
                 format!(
                     "while attempting to locate Cargo workspace from {}",
-                    document_dir.display()
+                    manifest_path.display()
                 )
             })?;
 
@@ -162,12 +170,14 @@ impl DocumentOwner {
                 return Ok(None);
             }
 
-            anyhow::bail!(
-                "cargo locate-project failed in {}: status {}, stderr: {}",
-                document_dir.display(),
-                output.status,
-                stderr
+            tracing::warn!(
+                cwd = %discovery_workspace.display(),
+                manifest_path = %manifest_path.display(),
+                status = %output.status,
+                stderr = %stderr,
+                "cargo locate-project failed; falling back to active engine"
             );
+            return Ok(None);
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -179,13 +189,13 @@ impl DocumentOwner {
             .with_context(|| {
                 format!(
                     "while attempting to read Cargo workspace manifest from locate-project output in {}",
-                    document_dir.display()
+                    manifest_path.display()
                 )
             })?;
         let workspace_manifest = if workspace_manifest.is_absolute() {
             workspace_manifest
         } else {
-            document_dir.join(workspace_manifest)
+            discovery_workspace.join(workspace_manifest)
         };
         let workspace_manifest = workspace_manifest.canonicalize().with_context(|| {
             format!(
@@ -200,6 +210,32 @@ impl DocumentOwner {
                 .expect("Cargo workspace manifest path should have a parent directory")
                 .to_path_buf(),
         ))
+    }
+
+    fn run_locate_project(cwd: &Path, manifest_path: &Path) -> std::io::Result<Output> {
+        Command::new("cargo")
+            .current_dir(cwd)
+            .arg("locate-project")
+            .arg("--workspace")
+            .arg("--message-format")
+            .arg("plain")
+            .arg("--manifest-path")
+            .arg(manifest_path)
+            .output()
+    }
+
+    fn nearest_manifest(document_dir: &Path, discovery_workspace: &Path) -> Option<PathBuf> {
+        let mut current = document_dir;
+        while current.starts_with(discovery_workspace) {
+            let manifest_path = current.join("Cargo.toml");
+            if manifest_path.is_file() {
+                return Some(manifest_path);
+            }
+
+            current = current.parent()?;
+        }
+
+        None
     }
 }
 
@@ -225,5 +261,45 @@ pub(super) enum OpenFileCachePolicy {
 impl OpenFileCachePolicy {
     pub(super) fn should_record(self) -> bool {
         self == Self::Record
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use test_fixture::fixture_crate;
+
+    use crate::engine_registry::routing::normalize_path;
+
+    use super::DocumentOwner;
+
+    #[test]
+    fn nearest_manifest_walks_up_from_document_directory() {
+        let fixture = fixture_crate(
+            r#"
+//- /workspace/Cargo.toml
+[workspace]
+members = ["crates/app"]
+resolver = "3"
+
+//- /workspace/crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /workspace/crates/app/src/nested/module.rs
+pub struct App;
+"#,
+        );
+        let document_dir = normalize_path(fixture.path("workspace/crates/app/src/nested"));
+        let workspace = normalize_path(fixture.path("workspace"));
+
+        let manifest = DocumentOwner::nearest_manifest(&document_dir, &workspace)
+            .expect("nested source directory should resolve its package manifest");
+
+        assert_eq!(
+            manifest,
+            normalize_path(fixture.path("workspace/crates/app/Cargo.toml"))
+        );
     }
 }
