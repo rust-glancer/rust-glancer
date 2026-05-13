@@ -14,7 +14,7 @@ jobs:
     name: lints
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - name: Check formatting
         run: cargo fmt --check
       - name: Run clippy
@@ -24,7 +24,7 @@ jobs:
     name: tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: taiki-e/install-action@nextest
       - name: Run tests
         run: cargo nextest run --workspace
@@ -33,7 +33,7 @@ jobs:
     name: test-targets
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: taiki-e/install-action@just
       - name: Check test targets
         run: just check-test-targets
@@ -45,7 +45,7 @@ jobs:
       run:
         working-directory: editors/code
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -70,7 +70,7 @@ jobs:
     name: cargo-deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
       - uses: taiki-e/install-action@cargo-deny
       - name: Run cargo deny
         run: cargo deny check
