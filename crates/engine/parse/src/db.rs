@@ -171,6 +171,36 @@ impl ParseDb {
 
         Ok(changed_files)
     }
+
+    /// Reparses a known source file from an in-memory buffer for every package that owns it.
+    ///
+    /// Dirty-buffer analysis uses this to build an ephemeral project snapshot without changing the
+    /// saved filesystem-backed project. Unknown files are intentionally ignored: discovering new
+    /// module files still goes through ordinary root traversal and filesystem module rules.
+    pub fn reparse_file_from_source(
+        &mut self,
+        file_path: &Path,
+        source: &str,
+    ) -> anyhow::Result<Vec<PackageFileRef>> {
+        let canonical_file_path = file_path
+            .canonicalize()
+            .with_context(|| format!("while attempting to canonicalize {}", file_path.display()))?;
+        let mut changed_files = Vec::new();
+
+        for (package_slot, package) in self.packages.iter_mut().enumerate() {
+            let Some(file_id) = package.reparse_file_from_source(&canonical_file_path, source)
+            else {
+                continue;
+            };
+
+            changed_files.push(PackageFileRef {
+                package: package_slot,
+                file: file_id,
+            });
+        }
+
+        Ok(changed_files)
+    }
 }
 
 /// Renders a project-level report of parsed packages and diagnostics.

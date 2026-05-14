@@ -187,6 +187,126 @@ pub struct Account;
 }
 
 #[test]
+fn dirty_overlay_rebuilds_analysis_without_mutating_saved_project() {
+    let fixture = HostFixture::build_with_package_residency_policy(
+        r#"
+//- /Cargo.toml
+[package]
+name = "dirty_overlay_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod other;
+
+pub struct Saved;
+
+pub fn saved_body(value: Saved) {
+    let _ = value;
+}
+
+//- /src/other.rs
+pub fn untouched_body() {}
+"#,
+        PackageResidencyPolicy::AllOffloadable,
+    );
+    let dirty_text = r#"
+mod other;
+
+pub struct Dirty {
+    pub field: u8,
+}
+
+pub fn dirty_body(value: Dirty) {
+    value.;
+}
+"#;
+    let completion_offset = dirty_text
+        .find("value.")
+        .map(|offset| offset + "value.".len())
+        .expect("dirty completion fixture should include a dot receiver")
+        .try_into()
+        .expect("dirty completion offset should fit into u32");
+
+    let saved_before = fixture.render(&[
+        HostObservation::resident_stats("saved before dirty overlay"),
+        HostObservation::workspace_symbols("Saved"),
+        HostObservation::workspace_symbols("Dirty"),
+    ]);
+    let overlay = fixture.dirty_overlay("src/lib.rs", dirty_text);
+    let dirty_overlay = fixture.render_project(
+        &overlay,
+        &[
+            HostObservation::resident_stats("dirty overlay"),
+            HostObservation::body_ir_stats("dirty overlay"),
+            HostObservation::workspace_symbols("Dirty"),
+            HostObservation::workspace_symbols("Saved"),
+            HostObservation::completions_at("dirty receiver", "src/lib.rs", completion_offset),
+        ],
+    );
+    let saved_after = fixture.render(&[
+        HostObservation::resident_stats("saved after dirty overlay"),
+        HostObservation::workspace_symbols("Saved"),
+        HostObservation::workspace_symbols("Dirty"),
+    ]);
+
+    let actual = format!(
+        "saved project before dirty overlay\n{}\n\ndirty overlay\n{}\n\nsaved project after dirty overlay\n{}\n",
+        saved_before.trim_end(),
+        dirty_overlay.trim_end(),
+        saved_after.trim_end(),
+    );
+    expect![[r#"
+        saved project before dirty overlay
+        resident stats `saved before dirty overlay`
+        - def-map targets 0
+        - semantic targets 0
+        - body targets 0
+
+        workspace symbols `Saved`
+        - fn saved_body @ dirty_overlay_fixture[lib] src/lib.rs
+        - struct Saved @ dirty_overlay_fixture[lib] src/lib.rs
+
+        workspace symbols `Dirty`
+        - <none>
+
+        dirty overlay
+        resident stats `dirty overlay`
+        - def-map targets 1
+        - semantic targets 1
+        - body targets 1
+
+        body ir stats `dirty overlay`
+        - targets 1
+        - bodies 1
+
+        workspace symbols `Dirty`
+        - fn dirty_body @ dirty_overlay_fixture[lib] src/lib.rs
+        - struct Dirty @ dirty_overlay_fixture[lib] src/lib.rs
+
+        workspace symbols `Saved`
+        - <none>
+
+        completions at `dirty receiver`
+        - field field
+
+        saved project after dirty overlay
+        resident stats `saved after dirty overlay`
+        - def-map targets 0
+        - semantic targets 0
+        - body targets 0
+
+        workspace symbols `Saved`
+        - fn saved_body @ dirty_overlay_fixture[lib] src/lib.rs
+        - struct Saved @ dirty_overlay_fixture[lib] src/lib.rs
+
+        workspace symbols `Dirty`
+        - <none>
+    "#]]
+    .assert_eq(&actual);
+}
+
+#[test]
 fn reads_saved_disk_text_for_modules_discovered_after_the_change() {
     let mut fixture = HostFixture::build(
         r#"

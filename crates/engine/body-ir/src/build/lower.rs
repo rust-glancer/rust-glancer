@@ -19,7 +19,7 @@ use rg_semantic_ir::{FunctionRef, ImplRef, ItemOwner, SemanticIrReadTxn, TraitRe
 use rg_text::{Name, NameInterner, PackageNameInterners};
 
 use crate::{
-    BodyIrBuildPolicy,
+    BodyIrBuildPolicy, BodyIrFile,
     ir::{
         BindingData, BindingId, BindingKind, BodyBuilder, BodyData, BodyFunctionData,
         BodyFunctionId, BodyFunctionOwner, BodyImplData, BodyImplId, BodyItemData, BodyItemId,
@@ -46,7 +46,7 @@ pub(super) fn build_packages(
     build_package_outputs(
         parse,
         semantic_ir,
-        policy,
+        BodyIrLoweringScope::PackagePolicy(policy),
         interners,
         &selected,
         &mut packages,
@@ -61,12 +61,13 @@ pub(super) fn build_packages(
 pub(super) fn build_selected_packages(
     parse: &ParseDb,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    policy: BodyIrBuildPolicy,
+    scope: BodyIrLoweringScope<'_>,
     package_slots: &[PackageSlot],
     interners: &mut PackageNameInterners,
 ) -> anyhow::Result<Vec<(PackageSlot, PackageBodies)>> {
     validate_package_inputs(parse, parse.package_count(), interners)?;
     validate_selected_packages(parse.package_count(), package_slots)?;
+    validate_selected_files(parse.package_count(), &scope)?;
 
     let mut selected = vec![false; parse.package_count()];
     for package_slot in package_slots {
@@ -78,7 +79,7 @@ pub(super) fn build_selected_packages(
     build_package_outputs(
         parse,
         semantic_ir,
-        policy,
+        scope,
         interners,
         &selected,
         &mut packages,
@@ -94,7 +95,7 @@ pub(super) fn build_selected_packages(
 fn build_package_outputs(
     parse: &ParseDb,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    policy: BodyIrBuildPolicy,
+    scope: BodyIrLoweringScope<'_>,
     interners: &mut PackageNameInterners,
     selected: &[bool],
     packages: &mut [Option<PackageBodies>],
@@ -108,16 +109,16 @@ fn build_package_outputs(
 
     let selected_count = selected.iter().filter(|selected| **selected).count();
     if selected_count <= 1 {
-        build_package_outputs_serial(parse, semantic_ir, policy, interners, selected, packages)
+        build_package_outputs_serial(parse, semantic_ir, scope, interners, selected, packages)
     } else {
-        build_package_outputs_parallel(parse, semantic_ir, policy, interners, selected, packages)
+        build_package_outputs_parallel(parse, semantic_ir, scope, interners, selected, packages)
     }
 }
 
 fn build_package_outputs_serial(
     parse: &ParseDb,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    policy: BodyIrBuildPolicy,
+    scope: BodyIrLoweringScope<'_>,
     interners: &mut PackageNameInterners,
     selected: &[bool],
     packages: &mut [Option<PackageBodies>],
@@ -138,7 +139,7 @@ fn build_package_outputs_serial(
         *output = Some(build_package_with_interner(
             parse_package,
             semantic_ir,
-            policy,
+            scope,
             package,
             interner,
         )?);
@@ -150,7 +151,7 @@ fn build_package_outputs_serial(
 fn build_package_outputs_parallel(
     parse: &ParseDb,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    policy: BodyIrBuildPolicy,
+    scope: BodyIrLoweringScope<'_>,
     interners: &mut PackageNameInterners,
     selected: &[bool],
     packages: &mut [Option<PackageBodies>],
@@ -177,7 +178,7 @@ fn build_package_outputs_parallel(
                     *output = Some(build_package_with_interner(
                         parse_package,
                         semantic_ir,
-                        policy,
+                        scope,
                         package,
                         interner,
                     )?);
@@ -190,7 +191,7 @@ fn build_package_outputs_parallel(
 fn build_package_with_interner(
     parse_package: &rg_parse::Package,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    policy: BodyIrBuildPolicy,
+    scope: BodyIrLoweringScope<'_>,
     package: PackageSlot,
     interner: &mut NameInterner,
 ) -> anyhow::Result<PackageBodies> {
@@ -217,7 +218,9 @@ fn build_package_with_interner(
             .map(|(function_ref, function)| (function_ref, function.source.file_id, function.span))
             .collect::<Vec<_>>();
         let function_count = functions.len();
-        if !policy.should_lower_package(parse_package) {
+        if !scope.should_lower_package(package, parse_package)
+            || !scope.should_lower_target(package, &functions)
+        {
             targets.push(TargetBodies::skipped(function_count));
             continue;
         }
@@ -226,6 +229,8 @@ fn build_package_with_interner(
             TargetLowering {
                 parse_package,
                 semantic_ir,
+                scope,
+                package,
                 functions,
                 target_bodies: TargetBodies::new(function_count),
                 interner,
@@ -238,6 +243,45 @@ fn build_package_with_interner(
     }
 
     Ok(PackageBodies::new(targets))
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) enum BodyIrLoweringScope<'a> {
+    PackagePolicy(BodyIrBuildPolicy),
+    SelectedFiles(&'a [BodyIrFile]),
+}
+
+impl BodyIrLoweringScope<'_> {
+    fn should_lower_package(self, package: PackageSlot, parse_package: &rg_parse::Package) -> bool {
+        match self {
+            Self::PackagePolicy(policy) => policy.should_lower_package(parse_package),
+            Self::SelectedFiles(files) => files.iter().any(|file| file.package == package),
+        }
+    }
+
+    fn should_lower_target(
+        self,
+        package: PackageSlot,
+        functions: &[(FunctionRef, FileId, Span)],
+    ) -> bool {
+        match self {
+            Self::PackagePolicy(_) => true,
+            Self::SelectedFiles(files) => functions.iter().any(|(_, file_id, _)| {
+                files
+                    .iter()
+                    .any(|file| file.package == package && file.file == *file_id)
+            }),
+        }
+    }
+
+    fn should_lower_function(self, package: PackageSlot, file_id: FileId) -> bool {
+        match self {
+            Self::PackagePolicy(_) => true,
+            Self::SelectedFiles(files) => files
+                .iter()
+                .any(|file| file.package == package && file.file == file_id),
+        }
+    }
 }
 
 fn validate_package_inputs(
@@ -279,9 +323,33 @@ fn validate_selected_packages(
     Ok(())
 }
 
+fn validate_selected_files(
+    package_count: usize,
+    scope: &BodyIrLoweringScope<'_>,
+) -> anyhow::Result<()> {
+    let BodyIrLoweringScope::SelectedFiles(files) = scope else {
+        return Ok(());
+    };
+
+    if let Some(file) = files
+        .iter()
+        .copied()
+        .find(|file| file.package.0 >= package_count)
+    {
+        anyhow::bail!(
+            "body IR file package slot {} is out of bounds for {package_count} parsed packages",
+            file.package.0,
+        );
+    }
+
+    Ok(())
+}
+
 struct TargetLowering<'a> {
     parse_package: &'a rg_parse::Package,
     semantic_ir: &'a SemanticIrReadTxn<'a>,
+    scope: BodyIrLoweringScope<'a>,
+    package: PackageSlot,
     functions: Vec<(FunctionRef, FileId, Span)>,
     target_bodies: TargetBodies,
     interner: &'a mut NameInterner,
@@ -290,6 +358,10 @@ struct TargetLowering<'a> {
 impl<'a> TargetLowering<'a> {
     fn lower(mut self) -> anyhow::Result<TargetBodies> {
         for &(function_ref, file_id, span) in &self.functions {
+            if !self.scope.should_lower_function(self.package, file_id) {
+                continue;
+            }
+
             let Some(owner_module) = self.owner_module(function_ref)? else {
                 continue;
             };

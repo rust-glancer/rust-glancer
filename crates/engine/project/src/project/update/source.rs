@@ -10,7 +10,7 @@ use anyhow::Context as _;
 
 use rg_def_map::{PackageSlot, TargetRef};
 
-use super::package;
+use super::{affected_packages, package};
 use crate::project::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange};
 
 pub(super) fn apply_source_changes(
@@ -84,41 +84,6 @@ pub(super) fn apply_source_changes(
         affected_packages,
         changed_targets,
     })
-}
-
-fn affected_packages(
-    project: &Project,
-    changed_files: &[ChangedFile],
-    fallback_package_roots: &[PackageSlot],
-) -> Vec<PackageSlot> {
-    let mut changed_package_ids = changed_files
-        .iter()
-        .filter_map(|changed_file| {
-            project
-                .state
-                .workspace()
-                .packages()
-                .get(changed_file.package.0)
-                .map(|package| package.id.clone())
-        })
-        .collect::<Vec<_>>();
-
-    for package_slot in fallback_package_roots {
-        let Some(package) = project.state.workspace().packages().get(package_slot.0) else {
-            continue;
-        };
-        if !changed_package_ids.contains(&package.id) {
-            changed_package_ids.push(package.id.clone());
-        }
-    }
-
-    project
-        .state
-        .workspace()
-        .reverse_dependency_closure(&changed_package_ids)
-        .into_iter()
-        .map(PackageSlot)
-        .collect()
 }
 
 fn promote_discovered_fallback_files(
