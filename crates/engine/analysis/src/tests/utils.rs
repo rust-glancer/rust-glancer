@@ -118,6 +118,10 @@ impl AnalysisQuery {
         Self::new(title, marker, AnalysisQueryKind::CompletionsAt)
     }
 
+    pub(super) fn complete_verbose(title: &'static str, marker: &'static str) -> Self {
+        Self::new(title, marker, AnalysisQueryKind::CompletionsAtVerbose)
+    }
+
     pub(super) fn hover(title: &'static str, marker: &'static str) -> Self {
         Self::new(title, marker, AnalysisQueryKind::Hover)
     }
@@ -236,6 +240,7 @@ enum AnalysisQueryKind {
     References(ReferenceQuery),
     TypeAt,
     CompletionsAt,
+    CompletionsAtVerbose,
     Hover,
 }
 
@@ -625,6 +630,15 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     &mut dump,
                 );
             }
+            AnalysisQueryKind::CompletionsAtVerbose => {
+                self.render_completions_verbose(
+                    self.db
+                        .analysis()
+                        .completions_at(target, file_id, offset)
+                        .expect("fixture completion query should resolve"),
+                    &mut dump,
+                );
+            }
             AnalysisQueryKind::Hover => {
                 self.render_hover(
                     self.db
@@ -960,6 +974,34 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     completion.kind, completion.label, completion.applicability
                 )
                 .expect("string writes should not fail");
+            }
+        }
+    }
+
+    fn render_completions_verbose(&self, mut completions: Vec<CompletionItem>, dump: &mut String) {
+        completions.sort_by_key(|completion| completion.sort_text.clone());
+
+        if completions.is_empty() {
+            writeln!(dump, "\n- <none>").expect("string writes should not fail");
+            return;
+        }
+
+        writeln!(dump).expect("string writes should not fail");
+        for completion in completions {
+            writeln!(dump, "- {} {}", completion.kind, completion.label)
+                .expect("string writes should not fail");
+            if let Some(detail) = &completion.detail {
+                writeln!(dump, "  detail: {detail}").expect("string writes should not fail");
+            }
+            if let Some(docs) = &completion.documentation {
+                writeln!(dump, "  docs: {docs}").expect("string writes should not fail");
+            }
+            writeln!(dump, "  sort: {}", completion.sort_text)
+                .expect("string writes should not fail");
+            if let Some(edit) = completion.edit {
+                let span = edit.replace;
+                writeln!(dump, "  replace: {}..{}", span.text.start, span.text.end)
+                    .expect("string writes should not fail");
             }
         }
     }

@@ -360,6 +360,16 @@ pub struct CompletionItem {
     pub kind: CompletionKind,
     pub target: CompletionTarget,
     pub applicability: CompletionApplicability,
+    pub detail: Option<String>,
+    pub documentation: Option<String>,
+    pub sort_text: String,
+    pub edit: Option<CompletionEdit>,
+}
+
+/// Source edit applied when accepting a completion item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompletionEdit {
+    pub replace: Span,
 }
 
 /// Stable analysis identity behind one completion row.

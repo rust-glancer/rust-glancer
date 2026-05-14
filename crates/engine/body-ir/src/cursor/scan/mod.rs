@@ -1,0 +1,14 @@
+//! Private scanners that translate body source spans into cursor candidates.
+//!
+//! Scanner implementations are organized by query shape: point lookups,
+//! whole-target source scans, dot-completion receiver scans, and shared path
+//! scanners.
+
+mod cursor;
+mod dot_completion_site;
+mod paths;
+mod source;
+
+pub(super) use cursor::BodyCursorScanner;
+pub(super) use dot_completion_site::DotCompletionSiteScanner;
+pub(super) use source::BodySourceScanner;

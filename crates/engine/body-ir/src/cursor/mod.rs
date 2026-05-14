@@ -15,13 +15,17 @@ use crate::{
     ScopeId,
 };
 
-use self::scan::{BodyCursorScanner, BodySourceScanner, DotReceiverScanner};
+use self::scan::{BodyCursorScanner, BodySourceScanner, DotCompletionSiteScanner};
 
-/// Receiver expression selected for a dot-completion query.
+/// Source site selected for a dot-completion query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DotReceiver {
+pub struct DotCompletionSite {
     pub body: BodyRef,
     pub receiver: ExprId,
+    /// Member-name prefix already typed after the dot.
+    ///
+    /// For a bare dot, this is an empty span at the completion offset.
+    pub member_prefix_span: Span,
 }
 
 /// One body source node that can participate in cursor queries.
@@ -109,21 +113,24 @@ impl BodyIrReadTxn<'_> {
         BodySourceScanner::new(self, target, file_id).scan()
     }
 
-    /// Returns the receiver expression for a dot-completion site.
-    pub fn receiver_at_dot(
+    /// Returns the source site for a dot-completion query.
+    pub fn dot_completion_site(
         &self,
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> Result<Option<DotReceiver>, PackageStoreError> {
-        DotReceiverScanner::new(self, target, file_id, offset).receiver_at_dot()
+    ) -> Result<Option<DotCompletionSite>, PackageStoreError> {
+        DotCompletionSiteScanner::new(self, target, file_id, offset).site_at_dot()
     }
 
-    /// Returns the resolved type for a previously-selected dot receiver.
-    pub fn receiver_ty(&self, receiver: DotReceiver) -> Result<Option<&BodyTy>, PackageStoreError> {
+    /// Returns the resolved type for the receiver expression in a dot-completion site.
+    pub fn receiver_ty(
+        &self,
+        site: DotCompletionSite,
+    ) -> Result<Option<&BodyTy>, PackageStoreError> {
         Ok(self
-            .body_data(receiver.body)?
-            .and_then(|body| body.expr(receiver.receiver))
+            .body_data(site.body)?
+            .and_then(|body| body.expr(site.receiver))
             .map(|expr| &expr.ty))
     }
 }

@@ -713,3 +713,49 @@ pub fn use_it(pair: Pair) {
         "#]],
     );
 }
+
+#[test]
+fn completes_dot_members_with_metadata_and_replacement_range() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_completion_metadata"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Profile;
+
+pub struct User {
+    /// Name field.
+    pub name: Profile,
+}
+
+impl User {
+    /// Name method.
+    pub fn name(&self) -> Profile {
+        todo!()
+    }
+}
+
+pub fn use_it(user: User) {
+    user.na$0;
+}
+"#,
+        &[AnalysisQuery::complete_verbose("metadata completions", "0")],
+        expect![[r#"
+            metadata completions
+            - field name
+              detail: pub name: Profile
+              docs: Name field.
+              sort: name|00|00|Field(Semantic(FieldRef { owner: TypeDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: Struct(StructId(1)) }, index: 0 }))
+              replace: 216..218
+            - inherent_method name
+              detail: pub fn name(&self) -> Profile
+              docs: Name method.
+              sort: name|01|00|Function(Semantic(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: FunctionId(1) }))
+              replace: 216..218
+        "#]],
+    );
+}

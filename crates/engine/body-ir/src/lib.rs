@@ -11,7 +11,7 @@ use rg_parse::FileId;
 mod tests;
 
 pub use self::{
-    cursor::{BodyCursorCandidate, DotReceiver},
+    cursor::{BodyCursorCandidate, DotCompletionSite},
     ir::{
         BindingData, BindingId, BindingKind, BodyData, BodyFieldData, BodyFieldRef,
         BodyFunctionData, BodyFunctionId, BodyFunctionOwner, BodyFunctionRef, BodyGenericArg,
