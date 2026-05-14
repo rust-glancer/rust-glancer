@@ -71,12 +71,9 @@ fn try_rebuild_packages(
         .iter()
         .map(|package| package.0)
         .collect::<Vec<_>>();
-    let item_tree = ItemTreeDb::build_packages_with_interners(
-        &mut state.parse,
-        &package_indices,
-        &mut state.names,
-    )
-    .context("while attempting to rebuild affected item-tree packages")?;
+    let item_tree =
+        ItemTreeDb::build_packages(&mut state.parse, &package_indices, &mut state.names)
+            .context("while attempting to rebuild affected item-tree packages")?;
     let def_map = state
         .def_map
         .package_rebuilder(

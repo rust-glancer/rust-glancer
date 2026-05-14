@@ -17,7 +17,7 @@ use crate::{
     },
 };
 use rg_def_map::{DefId, DefMapDb, LocalDefRef, ModuleRef, TargetRef};
-use rg_item_tree::ItemTreeDb;
+use rg_item_tree::{ItemTreeDb, PackageNameInterners};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{Package, ParseDb, Target};
 use rg_semantic_ir::{
@@ -64,14 +64,18 @@ impl BodyIrFixtureDb {
         let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
             .expect("fixture workspace metadata should build");
         let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
-        let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item tree db should build");
+        let mut names = PackageNameInterners::new(parse.package_count());
+        let item_tree =
+            ItemTreeDb::build(&mut parse, &mut names).expect("fixture item tree db should build");
         let def_map = DefMapDb::builder(&workspace, &parse, &item_tree)
+            .name_interners(&mut names)
             .build()
             .expect("fixture def map db should build");
         let semantic_ir = SemanticIrDb::builder(&item_tree, &def_map)
             .build()
             .expect("fixture semantic ir db should build");
         let body_ir = BodyIrDb::builder(&parse, &def_map, &semantic_ir)
+            .name_interners(&mut names)
             .policy(policy)
             .build()
             .expect("fixture body ir db should build");

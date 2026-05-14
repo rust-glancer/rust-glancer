@@ -20,4 +20,4 @@ pub use self::{
     },
     package::{FileTree, Package, TargetRoot},
 };
-pub use rg_text::Name;
+pub use rg_text::{Name, PackageNameInterners};

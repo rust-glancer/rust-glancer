@@ -6,7 +6,7 @@ use crate::{
     DefId, DefMap, DefMapDb, ImportData, ImportKind, ModuleId, ModuleRef, Path, PathSegment,
     ResolvePathResult, ScopeBinding, ScopeEntry, TargetRef,
 };
-use rg_item_tree::{ItemTreeDb, VisibilityLevel};
+use rg_item_tree::{ItemTreeDb, PackageNameInterners, VisibilityLevel};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, Package, ParseDb, Target};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
@@ -101,8 +101,11 @@ impl DefMapFixtureDb {
 
     fn build_from_workspace(workspace: WorkspaceMetadata) -> Self {
         let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
-        let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item tree db should build");
+        let mut names = PackageNameInterners::new(parse.package_count());
+        let item_tree =
+            ItemTreeDb::build(&mut parse, &mut names).expect("fixture item tree db should build");
         let def_map = DefMapDb::builder(&workspace, &parse, &item_tree)
+            .name_interners(&mut names)
             .build()
             .expect("fixture def map db should build");
         Self { parse, def_map }

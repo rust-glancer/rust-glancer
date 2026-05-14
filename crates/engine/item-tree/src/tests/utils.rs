@@ -4,7 +4,7 @@ use expect_test::Expect;
 
 use crate::{
     FieldItem, FieldList, FileTree, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ModuleSource,
-    Package as ItemTreePackage, ParamKind, TargetRoot, VisibilityLevel,
+    Package as ItemTreePackage, PackageNameInterners, ParamKind, TargetRoot, VisibilityLevel,
 };
 use rg_parse::{FileId, Package, ParseDb, Target};
 use rg_workspace::WorkspaceMetadata;
@@ -42,7 +42,9 @@ impl ItemTreeFixtureDb {
         let metadata = WorkspaceMetadata::from_cargo(fixture.metadata())
             .expect("fixture workspace metadata should build");
         let mut parse = ParseDb::build(&metadata).expect("fixture parse db should build");
-        let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item tree db should build");
+        let mut names = PackageNameInterners::new(parse.package_count());
+        let item_tree =
+            ItemTreeDb::build(&mut parse, &mut names).expect("fixture item tree db should build");
         Self { parse, item_tree }
     }
 }

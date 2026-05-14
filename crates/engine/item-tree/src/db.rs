@@ -15,34 +15,22 @@ pub struct ItemTreeDb {
 }
 
 impl ItemTreeDb {
-    /// Builds file-local item trees on top of the parsed source database.
-    pub fn build(parse: &mut ParseDb) -> anyhow::Result<Self> {
-        let mut interners = PackageNameInterners::new(parse.package_count());
-        Self::build_with_interners(parse, &mut interners)
-    }
-
     /// Builds file-local item trees using caller-retained package-local name interners.
-    pub fn build_with_interners(
+    pub fn build(
         parse: &mut ParseDb,
         interners: &mut PackageNameInterners,
     ) -> anyhow::Result<Self> {
         let package_count = parse.package_count();
         let packages = (0..package_count).collect::<Vec<_>>();
-        Self::build_packages_with_interners(parse, &packages, interners)
+        Self::build_packages(parse, &packages, interners)
     }
 
-    /// Builds item trees only for selected packages.
+    /// Builds item trees only for selected packages using caller-retained interners.
     ///
     /// Project rebuilds use this as a temporary lowering input: affected packages are populated,
     /// while unrelated packages stay absent so accidental cross-package item-tree access fails
     /// loudly instead of retaining the whole item-tree graph.
-    pub fn build_packages(parse: &mut ParseDb, packages: &[usize]) -> anyhow::Result<Self> {
-        let mut interners = PackageNameInterners::new(parse.package_count());
-        Self::build_packages_with_interners(parse, packages, &mut interners)
-    }
-
-    /// Builds selected packages using caller-retained package-local name interners.
-    pub fn build_packages_with_interners(
+    pub fn build_packages(
         parse: &mut ParseDb,
         packages: &[usize],
         interners: &mut PackageNameInterners,
