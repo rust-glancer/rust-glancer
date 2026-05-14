@@ -1,5 +1,7 @@
 use rg_def_map::DefId;
-use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, TraitRef, TypeDefRef};
+use rg_semantic_ir::{
+    EnumVariantRef, FieldRef, FunctionRef, SemanticTypePathResolution, TraitRef, TypeDefRef,
+};
 
 use super::ids::{BindingId, BodyFieldRef, BodyFunctionRef, BodyItemRef};
 
@@ -47,6 +49,17 @@ pub enum BodyTypePathResolution {
     TypeDefs(Vec<TypeDefRef>),
     Traits(Vec<TraitRef>),
     Unknown,
+}
+
+impl From<SemanticTypePathResolution> for BodyTypePathResolution {
+    fn from(resolution: SemanticTypePathResolution) -> Self {
+        match resolution {
+            SemanticTypePathResolution::SelfType(types) => Self::SelfType(types),
+            SemanticTypePathResolution::TypeDefs(types) => Self::TypeDefs(types),
+            SemanticTypePathResolution::Traits(traits) => Self::Traits(traits),
+            SemanticTypePathResolution::Unknown => Self::Unknown,
+        }
+    }
 }
 
 impl BodyResolution {

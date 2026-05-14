@@ -6,9 +6,7 @@
 use rg_def_map::{DefMapReadTxn, ModuleRef, Path};
 use rg_item_tree::{GenericArg, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{
-    FunctionRef, SemanticIrReadTxn, SemanticTypePathResolution, TypeDefRef, TypePathContext,
-};
+use rg_semantic_ir::{FunctionRef, SemanticIrReadTxn, TypeDefRef, TypePathContext};
 
 use crate::{
     ir::body::BodyData,
@@ -59,18 +57,11 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             }
         }
 
-        self.resolve_in_context(
-            self.context_for_function(self.body.owner, self.body.owner_module)?,
-            path,
-        )
-    }
-
-    fn resolve_in_context(
-        &self,
-        context: TypePathContext,
-        path: &Path,
-    ) -> Result<BodyTypePathResolution, PackageStoreError> {
-        resolve_type_path_in_context(self.def_map, self.semantic_ir, context, path)
+        let context = self.context_for_function(self.body.owner, self.body.owner_module)?;
+        let resolution = self
+            .semantic_ir
+            .resolve_type_path(self.def_map, context, path)?;
+        Ok(BodyTypePathResolution::from(resolution))
     }
 
     pub(super) fn ty_from_type_ref_in_scope(
@@ -263,20 +254,4 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             GenericArg::Unsupported(text) => Ok(BodyGenericArg::Unsupported(text.clone())),
         }
     }
-}
-
-pub(super) fn resolve_type_path_in_context(
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
-    context: TypePathContext,
-    path: &Path,
-) -> Result<BodyTypePathResolution, PackageStoreError> {
-    Ok(
-        match semantic_ir.resolve_type_path(def_map, context, path)? {
-            SemanticTypePathResolution::SelfType(types) => BodyTypePathResolution::SelfType(types),
-            SemanticTypePathResolution::TypeDefs(types) => BodyTypePathResolution::TypeDefs(types),
-            SemanticTypePathResolution::Traits(traits) => BodyTypePathResolution::Traits(traits),
-            SemanticTypePathResolution::Unknown => BodyTypePathResolution::Unknown,
-        },
-    )
 }
