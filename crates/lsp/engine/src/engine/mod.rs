@@ -18,7 +18,7 @@ use tokio::sync::{Mutex, oneshot};
 pub(crate) use self::command::EngineCommand;
 use self::{command::EngineResponse, worker::EngineWorker};
 use crate::{
-    documents::{DirtyDocumentSnapshotState, DocumentStore},
+    documents::{DirtyAnalysisHandle, DirtyDocumentSnapshotState, DocumentStore},
     memory::MemoryControl,
     service::ServiceNotificationsSink,
 };
@@ -31,6 +31,7 @@ use crate::{
 pub(crate) struct EngineHandle {
     sender: Sender<QueuedEngineCommand>,
     pub(crate) documents: Arc<Mutex<DocumentStore>>,
+    dirty_analysis: DirtyAnalysisHandle,
     notifications: ServiceNotificationsSink,
 }
 
@@ -58,12 +59,17 @@ impl EngineHandle {
         documents: Arc<Mutex<DocumentStore>>,
     ) -> Self {
         let (sender, receiver) = mpsc::channel();
+        let dirty_analysis = DirtyAnalysisHandle::default();
 
-        thread::spawn(move || EngineWorker::new(memory_control).run(receiver));
+        thread::spawn({
+            let dirty_analysis = dirty_analysis.clone();
+            move || EngineWorker::new(memory_control, dirty_analysis).run(receiver)
+        });
 
         Self {
             sender,
             documents,
+            dirty_analysis,
             notifications,
         }
     }
@@ -123,10 +129,20 @@ impl EngineHandle {
         dirty
     }
 
+    pub(crate) fn sync_dirty_analysis_state(
+        &self,
+        path: &Path,
+        dirty: &DirtyDocumentSnapshotState,
+    ) {
+        self.dirty_analysis.sync_document(path, dirty);
+    }
+
     pub(crate) async fn mark_dirty_after_failed_save(&self, path: PathBuf, error: anyhow::Error) {
         let mut documents = self.documents.lock().await;
         documents.mark_dirty_after_failed_save(path.clone());
         let freshness = documents.freshness(&path);
+        let dirty = documents.dirty_snapshot(&path);
+        self.sync_dirty_analysis_state(&path, &dirty);
         drop(documents);
 
         tracing::trace!(

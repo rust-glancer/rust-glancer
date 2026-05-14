@@ -15,7 +15,7 @@ use rg_project::{
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
 
 use crate::{
-    documents::{DirtyDocumentSnapshot, TextFingerprint},
+    documents::{DirtyAnalysisHandle, DirtyDocumentIdentity, DirtyDocumentSnapshot},
     engine::{
         QueuedEngineCommand,
         command::{EngineCommand, EngineResponse},
@@ -29,37 +29,63 @@ use crate::{
 pub(super) struct EngineWorker {
     project: Option<Project>,
     dirty_overlay: Option<CachedDirtyOverlay>,
+    dirty_analysis: DirtyAnalysisHandle,
     memory_control: Arc<dyn MemoryControl>,
 }
 
 #[derive(Debug)]
 struct CachedDirtyOverlay {
-    key: DirtyOverlayKey,
+    identity: DirtyDocumentIdentity,
     project: Project,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DirtyOverlayKey {
-    path: PathBuf,
-    version: Option<i32>,
-    fingerprint: TextFingerprint,
+#[derive(Debug)]
+struct QueryContext {
+    label: &'static str,
+    queue_elapsed: Duration,
+    dirty_identity: Option<DirtyDocumentIdentity>,
 }
 
-impl DirtyOverlayKey {
-    fn from_snapshot(snapshot: &DirtyDocumentSnapshot) -> Self {
+impl QueryContext {
+    fn new(label: &'static str, queue_elapsed: Duration) -> Self {
         Self {
-            path: snapshot.path().to_path_buf(),
-            version: snapshot.version(),
-            fingerprint: snapshot.fingerprint(),
+            label,
+            queue_elapsed,
+            dirty_identity: None,
         }
+    }
+
+    fn document(
+        label: &'static str,
+        queue_elapsed: Duration,
+        dirty: Option<&DirtyDocumentSnapshot>,
+    ) -> Self {
+        Self {
+            label,
+            queue_elapsed,
+            dirty_identity: dirty.map(DirtyDocumentIdentity::from_snapshot),
+        }
+    }
+
+    fn stale_dirty_identity(
+        &self,
+        dirty_analysis: &DirtyAnalysisHandle,
+    ) -> Option<&DirtyDocumentIdentity> {
+        self.dirty_identity
+            .as_ref()
+            .filter(|identity| !dirty_analysis.is_current_identity(identity))
     }
 }
 
 impl EngineWorker {
-    pub(super) fn new(memory_control: Arc<dyn MemoryControl>) -> Self {
+    pub(super) fn new(
+        memory_control: Arc<dyn MemoryControl>,
+        dirty_analysis: DirtyAnalysisHandle,
+    ) -> Self {
         Self {
             project: None,
             dirty_overlay: None,
+            dirty_analysis,
             memory_control,
         }
     }
@@ -104,7 +130,9 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: goto_definition"
                     );
-                    self.respond_to_query("goto_definition", queue_elapsed, respond_to, |worker| {
+                    let context =
+                        QueryContext::document("goto_definition", queue_elapsed, dirty.as_ref());
+                    self.respond_to_query(context, respond_to, |worker| {
                         worker.goto_definition(path, position, dirty)
                     });
                 }
@@ -120,12 +148,14 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: goto_type_definition"
                     );
-                    self.respond_to_query(
+                    let context = QueryContext::document(
                         "goto_type_definition",
                         queue_elapsed,
-                        respond_to,
-                        |worker| worker.goto_type_definition(path, position, dirty),
+                        dirty.as_ref(),
                     );
+                    self.respond_to_query(context, respond_to, |worker| {
+                        worker.goto_type_definition(path, position, dirty)
+                    });
                 }
                 EngineCommand::GotoImplementation {
                     path,
@@ -139,12 +169,14 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: goto_implementation"
                     );
-                    self.respond_to_query(
+                    let context = QueryContext::document(
                         "goto_implementation",
                         queue_elapsed,
-                        respond_to,
-                        |worker| worker.goto_implementation(path, position, dirty),
+                        dirty.as_ref(),
                     );
+                    self.respond_to_query(context, respond_to, |worker| {
+                        worker.goto_implementation(path, position, dirty)
+                    });
                 }
                 EngineCommand::References {
                     path,
@@ -160,7 +192,9 @@ impl EngineWorker {
                         include_declaration,
                         "engine command started: references"
                     );
-                    self.respond_to_query("references", queue_elapsed, respond_to, |worker| {
+                    let context =
+                        QueryContext::document("references", queue_elapsed, dirty.as_ref());
+                    self.respond_to_query(context, respond_to, |worker| {
                         worker.references(path, position, include_declaration, dirty)
                     });
                 }
@@ -176,12 +210,11 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: document_highlight"
                     );
-                    self.respond_to_query(
-                        "document_highlight",
-                        queue_elapsed,
-                        respond_to,
-                        |worker| worker.document_highlight(path, position, dirty),
-                    );
+                    let context =
+                        QueryContext::document("document_highlight", queue_elapsed, dirty.as_ref());
+                    self.respond_to_query(context, respond_to, |worker| {
+                        worker.document_highlight(path, position, dirty)
+                    });
                 }
                 EngineCommand::Hover {
                     path,
@@ -195,7 +228,8 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: hover"
                     );
-                    self.respond_to_query("hover", queue_elapsed, respond_to, |worker| {
+                    let context = QueryContext::document("hover", queue_elapsed, dirty.as_ref());
+                    self.respond_to_query(context, respond_to, |worker| {
                         worker.hover(path, position, dirty)
                     });
                 }
@@ -211,7 +245,9 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: completion"
                     );
-                    self.respond_to_query("completion", queue_elapsed, respond_to, |worker| {
+                    let context =
+                        QueryContext::document("completion", queue_elapsed, dirty.as_ref());
+                    self.respond_to_query(context, respond_to, |worker| {
                         worker.completion(path, position, dirty)
                     });
                 }
@@ -224,7 +260,9 @@ impl EngineWorker {
                         path = %path.display(),
                         "engine command started: document_symbol"
                     );
-                    self.respond_to_query("document_symbol", queue_elapsed, respond_to, |worker| {
+                    let context =
+                        QueryContext::document("document_symbol", queue_elapsed, dirty.as_ref());
+                    self.respond_to_query(context, respond_to, |worker| {
                         worker.document_symbol(path, dirty)
                     });
                 }
@@ -242,18 +280,18 @@ impl EngineWorker {
                         end_character = range.end.character,
                         "engine command started: inlay_hint"
                     );
-                    self.respond_to_query("inlay_hint", queue_elapsed, respond_to, |worker| {
+                    let context =
+                        QueryContext::document("inlay_hint", queue_elapsed, dirty.as_ref());
+                    self.respond_to_query(context, respond_to, |worker| {
                         worker.inlay_hint(path, range, dirty)
                     });
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {
                     tracing::trace!(query = %query, "engine command started: workspace_symbol");
-                    self.respond_to_query(
-                        "workspace_symbol",
-                        queue_elapsed,
-                        respond_to,
-                        |worker| worker.workspace_symbol(&query),
-                    );
+                    let context = QueryContext::new("workspace_symbol", queue_elapsed);
+                    self.respond_to_query(context, respond_to, |worker| {
+                        worker.workspace_symbol(&query)
+                    });
                 }
                 EngineCommand::ReindexWorkspace { respond_to } => {
                     tracing::trace!("engine command started: reindex_workspace");
@@ -937,9 +975,9 @@ impl EngineWorker {
     }
 
     fn dirty_overlay_project(&mut self, dirty: &DirtyDocumentSnapshot) -> anyhow::Result<&Project> {
-        let key = DirtyOverlayKey::from_snapshot(dirty);
+        let identity = DirtyDocumentIdentity::from_snapshot(dirty);
         let should_rebuild = match &self.dirty_overlay {
-            Some(cached) => cached.key != key,
+            Some(cached) => cached.identity != identity,
             None => true,
         };
 
@@ -968,7 +1006,7 @@ impl EngineWorker {
                 dirty_overlay_build_ms = started.elapsed().as_millis(),
                 "dirty analysis overlay rebuilt"
             );
-            self.dirty_overlay = Some(CachedDirtyOverlay { key, project });
+            self.dirty_overlay = Some(CachedDirtyOverlay { identity, project });
         } else {
             tracing::debug!(
                 path = %dirty.path().display(),
@@ -990,13 +1028,33 @@ impl EngineWorker {
     /// Runs a read-only request, responds immediately, then heals disposable cache failures.
     fn respond_to_query<T>(
         &mut self,
-        label: &'static str,
-        queue_elapsed: Duration,
+        context: QueryContext,
         respond_to: EngineResponse<T>,
         query: impl FnOnce(&mut Self) -> anyhow::Result<T>,
     ) where
-        T: Send + 'static,
+        T: Default + Send + 'static,
     {
+        // If a newer document version is already available, this queued dirty query can only
+        // produce obsolete results. This is an internal optimization, not a replacement for LSP
+        // request cancellation.
+        if let Some(dirty_identity) = context.stale_dirty_identity(&self.dirty_analysis) {
+            tracing::debug!(
+                label = context.label,
+                path = %dirty_identity.path().display(),
+                version = ?dirty_identity.version(),
+                text_len = dirty_identity.text_len(),
+                queued_ms = context.queue_elapsed.as_millis(),
+                "stale dirty analysis query skipped"
+            );
+            let _ = respond_to.send(Ok(T::default()));
+            return;
+        }
+
+        // From here on, clean and current-dirty requests share the same execution path. Keeping the
+        // stale check in the context layer lets timing, memory reporting, and cache recovery remain
+        // uniform for every analysis query.
+        let label = context.label;
+        let queue_elapsed = context.queue_elapsed;
         let memory_control = Arc::clone(&self.memory_control);
         tracing::debug!(
             label,
@@ -1119,5 +1177,44 @@ impl NavigationQuery {
             Self::TypeDefinition => "type_definition",
             Self::Implementation => "implementation",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, sync::Arc};
+
+    use tokio::sync::oneshot;
+
+    use super::*;
+    use crate::documents::{DirtyDocumentSnapshotState, DocumentStore};
+
+    #[test]
+    fn stale_dirty_query_responds_without_running_analysis() {
+        let path = PathBuf::from("/workspace/src/lib.rs");
+        let mut documents = DocumentStore::default();
+        documents.did_open(path.clone(), Some(1), "fn main() {}\n");
+        documents.did_change(
+            path.clone(),
+            Some(2),
+            Some("fn main() {\n    dirty();\n}\n"),
+        );
+
+        let DirtyDocumentSnapshotState::Dirty(snapshot) = documents.dirty_snapshot(&path) else {
+            panic!("dirty full-sync document should expose a snapshot");
+        };
+
+        let mut worker = EngineWorker::new(Arc::new(()), DirtyAnalysisHandle::default());
+        let (respond_to, response) = oneshot::channel();
+        let context = QueryContext::document("hover", Duration::ZERO, Some(&snapshot));
+
+        worker.respond_to_query(context, respond_to, |_| {
+            panic!("stale query should not run analysis")
+        });
+
+        let result: Option<ls_types::Hover> = futures::executor::block_on(response)
+            .expect("stale query should send a response")
+            .expect("stale query should send a successful neutral result");
+        assert!(result.is_none());
     }
 }

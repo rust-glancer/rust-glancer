@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use super::{DirtyDocumentSnapshotState, DocumentStore};
+use super::{
+    DirtyAnalysisHandle, DirtyDocumentIdentity, DirtyDocumentSnapshotState, DocumentStore,
+};
 
 #[test]
 fn tracks_clean_to_dirty_to_clean_document_lifecycle() {
@@ -89,4 +91,43 @@ fn exposes_dirty_snapshot_when_full_live_text_is_available() {
     assert_eq!(snapshot.path(), path.as_path());
     assert_eq!(snapshot.version(), Some(2));
     assert_eq!(snapshot.text(), "fn main() {\n    live();\n}\n");
+}
+
+#[test]
+fn dirty_analysis_handle_rejects_old_dirty_snapshots() {
+    let path = PathBuf::from("/workspace/src/lib.rs");
+    let mut store = DocumentStore::default();
+    let dirty_analysis = DirtyAnalysisHandle::default();
+
+    store.did_open(path.clone(), Some(1), "fn main() {}\n");
+    dirty_analysis.sync_document(&path, &store.dirty_snapshot(&path));
+
+    store.did_change(path.clone(), Some(2), Some("fn main() {\n    v2();\n}\n"));
+    let snapshot_v2 = store.dirty_snapshot(&path);
+    dirty_analysis.sync_document(&path, &snapshot_v2);
+    let DirtyDocumentSnapshotState::Dirty(snapshot_v2) = snapshot_v2 else {
+        panic!("dirty full-sync document should expose version 2 snapshot");
+    };
+    assert!(
+        dirty_analysis.is_current_identity(&DirtyDocumentIdentity::from_snapshot(&snapshot_v2))
+    );
+
+    store.did_change(path.clone(), Some(3), Some("fn main() {\n    v3();\n}\n"));
+    let snapshot_v3 = store.dirty_snapshot(&path);
+    dirty_analysis.sync_document(&path, &snapshot_v3);
+    let DirtyDocumentSnapshotState::Dirty(snapshot_v3) = snapshot_v3 else {
+        panic!("dirty full-sync document should expose version 3 snapshot");
+    };
+    assert!(
+        !dirty_analysis.is_current_identity(&DirtyDocumentIdentity::from_snapshot(&snapshot_v2))
+    );
+    assert!(
+        dirty_analysis.is_current_identity(&DirtyDocumentIdentity::from_snapshot(&snapshot_v3))
+    );
+
+    store.did_save(path.clone(), Some("fn main() {\n    v3();\n}\n"));
+    dirty_analysis.sync_document(&path, &store.dirty_snapshot(&path));
+    assert!(
+        !dirty_analysis.is_current_identity(&DirtyDocumentIdentity::from_snapshot(&snapshot_v3))
+    );
 }
