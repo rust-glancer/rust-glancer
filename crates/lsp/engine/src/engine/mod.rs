@@ -1,5 +1,6 @@
 mod command;
 mod debounce;
+mod project_proxy;
 mod worker;
 
 use std::{
