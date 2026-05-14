@@ -1,14 +1,11 @@
 //! Owned cache metadata encoding built on wincode.
 //!
 //! Cache-native metadata structs are the artifact schema, and retained package payloads archive
-//! directly through their cache bundle wrappers.
+//! the phase package data directly.
 
 use anyhow::Context as _;
 
-use super::{
-    CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, PackageCacheArtifact, PackageCacheBodyIrState,
-    PackageCacheHeader,
-};
+use super::{CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, PackageCacheArtifact, PackageCacheHeader};
 
 // Limit preallocation per package to 256mb.
 // This is meant to be a protection against corrupted/absurd artifacts, yet be sufficient
@@ -91,38 +88,36 @@ impl PackageCacheCodec {
             );
         }
 
-        if artifact.payload.def_map.package().package_name() != package.name {
+        if artifact.payload.def_map.package_name() != package.name {
             anyhow::bail!(
                 "package cache artifact belongs to def-map package `{}`, expected `{}`",
-                artifact.payload.def_map.package().package_name(),
+                artifact.payload.def_map.package_name(),
                 package.name,
             );
         }
 
-        if artifact.payload.def_map.package().targets().len() != target_count {
+        if artifact.payload.def_map.targets().len() != target_count {
             anyhow::bail!(
                 "package cache artifact has {} def-map targets but header has {} targets",
-                artifact.payload.def_map.package().targets().len(),
+                artifact.payload.def_map.targets().len(),
                 target_count,
             );
         }
 
-        if artifact.payload.semantic_ir.package().targets().len() != target_count {
+        if artifact.payload.semantic_ir.targets().len() != target_count {
             anyhow::bail!(
                 "package cache artifact has {} semantic IR targets but header has {} targets",
-                artifact.payload.semantic_ir.package().targets().len(),
+                artifact.payload.semantic_ir.targets().len(),
                 target_count,
             );
         }
 
-        if let PackageCacheBodyIrState::Built(body_ir) = &artifact.payload.body_ir {
-            if body_ir.package().targets().len() != target_count {
-                anyhow::bail!(
-                    "package cache artifact has {} body IR targets but header has {} targets",
-                    body_ir.package().targets().len(),
-                    target_count,
-                );
-            }
+        if artifact.payload.body_ir.targets().len() != target_count {
+            anyhow::bail!(
+                "package cache artifact has {} body IR targets but header has {} targets",
+                artifact.payload.body_ir.targets().len(),
+                target_count,
+            );
         }
 
         Ok(())

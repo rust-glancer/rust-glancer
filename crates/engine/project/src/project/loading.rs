@@ -8,13 +8,10 @@ use std::sync::{Arc, OnceLock};
 
 use rg_body_ir::PackageBodies;
 use rg_def_map::{Package as DefMapPackage, PackageSlot};
-use rg_package_store::{LoadPackage, MalformedCacheError, PackageLoader, PackageStoreError};
+use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_semantic_ir::PackageIr;
 
-use crate::cache::{
-    Fingerprint, PackageCacheArtifact, PackageCacheBodyIrState, PackageCacheStore,
-    WorkspaceCachePlan,
-};
+use crate::cache::{Fingerprint, PackageCacheArtifact, PackageCacheStore, WorkspaceCachePlan};
 
 use super::state::ProjectState;
 
@@ -106,25 +103,11 @@ impl PackageBundleLoader {
     ) -> Result<LoadedPackageBundle, PackageStoreError> {
         let artifact = self.read_artifact(package)?;
         let payload = artifact.payload;
-        let body_ir = match payload.body_ir {
-            PackageCacheBodyIrState::Built(bundle) => bundle.into_package(),
-            PackageCacheBodyIrState::SkippedByPolicy => {
-                return Err(PackageStoreError::malformed_cache(
-                    package,
-                    MalformedCacheError::InvalidPayload {
-                        reason: format!(
-                            "package cache artifact for package {} skipped body IR payload",
-                            package.0,
-                        ),
-                    },
-                ));
-            }
-        };
 
         Ok(LoadedPackageBundle {
-            def_map: Arc::new(payload.def_map.into_package()),
-            semantic_ir: Arc::new(payload.semantic_ir.into_package()),
-            body_ir: Arc::new(body_ir),
+            def_map: Arc::new(payload.def_map),
+            semantic_ir: Arc::new(payload.semantic_ir),
+            body_ir: Arc::new(payload.body_ir),
         })
     }
 

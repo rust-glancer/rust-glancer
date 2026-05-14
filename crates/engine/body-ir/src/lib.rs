@@ -22,7 +22,7 @@ pub use self::{
         ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
         TargetBodiesStatus,
     },
-    store::{BodyIrDb, BodyIrPackageBundle, BodyIrReadTxn},
+    store::{BodyIrDb, BodyIrReadTxn},
 };
 
 /// One package-local source file whose function bodies should be lowered during a partial rebuild.

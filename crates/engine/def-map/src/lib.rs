@@ -13,7 +13,7 @@ pub use self::{
         Package, Path, PathSegment, ScopeBinding, ScopeEntry, TargetRef,
     },
     query::{DefMapCursorCandidate, ResolvePathResult},
-    store::{DefMapDb, DefMapPackageBundle, DefMapReadTxn, DefMapStats},
+    store::{DefMapDb, DefMapReadTxn, DefMapStats},
 };
 
 #[cfg(test)]

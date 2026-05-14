@@ -5,19 +5,18 @@ use std::{
 };
 
 use expect_test::Expect;
-use rg_body_ir::{BodyIrBuildPolicy, BodyIrPackageBundle, PackageBodies};
-use rg_def_map::{DefMapPackageBundle, Package, PackageSlot};
+use rg_body_ir::{BodyIrBuildPolicy, PackageBodies};
+use rg_def_map::{Package, PackageSlot};
 use rg_parse::PackageParseSnapshot;
-use rg_semantic_ir::{PackageIr, SemanticIrPackageBundle};
+use rg_semantic_ir::PackageIr;
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
 use crate::cache::{
     CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, CachedDependency, CachedPackage, CachedPackageId,
     CachedPackageSlot, CachedPackageSource, CachedPath, CachedRustEdition, CachedTarget,
-    CachedTargetKind, Fingerprint, PackageCacheArtifact, PackageCacheBodyIrState,
-    PackageCacheCodec, PackageCacheHeader, PackageCachePayload, PackageCacheStore,
-    WorkspaceCachePlan,
+    CachedTargetKind, Fingerprint, PackageCacheArtifact, PackageCacheCodec, PackageCacheHeader,
+    PackageCachePayload, PackageCacheStore, WorkspaceCachePlan,
 };
 use crate::{PackageResidencyPolicy, Project, project::state::ProjectState};
 
@@ -130,11 +129,9 @@ pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
         ),
         PackageCachePayload::new(
             PackageParseSnapshot::empty(),
-            DefMapPackageBundle::new(Package::default()),
-            SemanticIrPackageBundle::new(PackageIr::default()),
-            PackageCacheBodyIrState::Built(Box::new(BodyIrPackageBundle::new(
-                PackageBodies::default(),
-            ))),
+            Package::default(),
+            PackageIr::default(),
+            PackageBodies::default(),
         ),
     );
 
@@ -833,9 +830,9 @@ fn package_artifact_from_project(
                 .expect("fixture package should have parse data")
                 .parse_snapshot()
                 .expect("fixture parse metadata should snapshot"),
-            DefMapPackageBundle::new(def_map),
-            SemanticIrPackageBundle::new(semantic_ir),
-            PackageCacheBodyIrState::Built(Box::new(BodyIrPackageBundle::new(body_ir))),
+            def_map,
+            semantic_ir,
+            body_ir,
         ),
     )
 }
@@ -1060,44 +1057,30 @@ fn render_artifact(label: &str, artifact: &PackageCacheArtifact, dump: &mut Stri
     writeln!(
         dump,
         "def-map package {} targets {}",
-        artifact.payload.def_map.package().package_name(),
-        artifact.payload.def_map.package().targets().len(),
+        artifact.payload.def_map.package_name(),
+        artifact.payload.def_map.targets().len(),
     )
     .expect("string writes should not fail");
     writeln!(
         dump,
         "semantic IR targets {}",
-        artifact.payload.semantic_ir.package().targets().len(),
+        artifact.payload.semantic_ir.targets().len(),
     )
     .expect("string writes should not fail");
 
-    match &artifact.payload.body_ir {
-        PackageCacheBodyIrState::Built(bundle) => {
-            writeln!(
-                dump,
-                "body IR built targets {}",
-                bundle.package().targets().len()
-            )
-            .expect("string writes should not fail");
-        }
-        PackageCacheBodyIrState::SkippedByPolicy => {
-            writeln!(dump, "body IR skipped by policy").expect("string writes should not fail");
-        }
-    }
+    writeln!(
+        dump,
+        "body IR built targets {}",
+        artifact.payload.body_ir.targets().len()
+    )
+    .expect("string writes should not fail");
 }
 
 fn render_body_ir_target_statuses(artifact: &PackageCacheArtifact, dump: &mut String) {
     writeln!(dump, "body IR target statuses").expect("string writes should not fail");
-    match &artifact.payload.body_ir {
-        PackageCacheBodyIrState::Built(bundle) => {
-            for (target_idx, target) in bundle.package().targets().iter().enumerate() {
-                writeln!(dump, "- target {target_idx} {}", target.status())
-                    .expect("string writes should not fail");
-            }
-        }
-        PackageCacheBodyIrState::SkippedByPolicy => {
-            writeln!(dump, "- skipped by policy").expect("string writes should not fail");
-        }
+    for (target_idx, target) in artifact.payload.body_ir.targets().iter().enumerate() {
+        writeln!(dump, "- target {target_idx} {}", target.status())
+            .expect("string writes should not fail");
     }
 }
 

@@ -6,13 +6,11 @@
 
 use anyhow::Context as _;
 use rayon::prelude::*;
-use rg_body_ir::BodyIrPackageBundle;
-use rg_def_map::{DefMapPackageBundle, PackageSlot};
-use rg_semantic_ir::SemanticIrPackageBundle;
+use rg_def_map::PackageSlot;
 
 use crate::{
     PackageResidency,
-    cache::{PackageCacheArtifact, PackageCacheBodyIrState, PackageCachePayload},
+    cache::{PackageCacheArtifact, PackageCachePayload},
 };
 
 use super::{state::ProjectState, update};
@@ -289,9 +287,9 @@ impl<'a> ResidencyApplication<'a> {
                         package.0,
                     )
                 })?,
-                DefMapPackageBundle::new(def_map.clone()),
-                SemanticIrPackageBundle::new(semantic_ir.clone()),
-                PackageCacheBodyIrState::Built(Box::new(BodyIrPackageBundle::new(body_ir.clone()))),
+                def_map.clone(),
+                semantic_ir.clone(),
+                body_ir.clone(),
             ),
         ))
     }

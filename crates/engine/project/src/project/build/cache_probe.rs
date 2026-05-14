@@ -7,10 +7,7 @@ use rg_workspace::WorkspaceMetadata;
 
 use crate::{
     PackageResidency, PackageResidencyPlan,
-    cache::{
-        CachedPackage, PackageCacheArtifact, PackageCacheBodyIrState, PackageCacheStore,
-        WorkspaceCachePlan,
-    },
+    cache::{CachedPackage, PackageCacheArtifact, PackageCacheStore, WorkspaceCachePlan},
     profile::{CacheProbeProfile, CacheProbeRecorder},
 };
 
@@ -139,14 +136,12 @@ impl<'a> StartupCacheProbe<'a> {
 
         // A body artifact produced by a narrower policy can still be structurally valid while
         // containing skipped targets. Reject it so the requested policy gets a full source rebuild.
-        let matches_policy = match &artifact.payload.body_ir {
-            PackageCacheBodyIrState::Built(bundle) => bundle
-                .package()
-                .targets()
-                .iter()
-                .all(|target| target.status() == TargetBodiesStatus::Built),
-            PackageCacheBodyIrState::SkippedByPolicy => false,
-        };
+        let matches_policy = artifact
+            .payload
+            .body_ir
+            .targets()
+            .iter()
+            .all(|target| target.status() == TargetBodiesStatus::Built);
 
         if !matches_policy {
             self.profile.body_ir_policy_mismatch();
