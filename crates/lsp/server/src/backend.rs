@@ -70,7 +70,7 @@ impl Backend {
 }
 
 impl LanguageServer for Backend {
-    #[tracing::instrument(skip_all, fields(method = "initialize"))]
+    #[tracing::instrument(skip_all, fields(rg.method = "initialize"))]
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         let workspace_folders = workspace_folders(&params);
         if workspace_folders.is_empty() {
@@ -93,12 +93,12 @@ impl LanguageServer for Backend {
         Ok(methods::initialize())
     }
 
-    #[tracing::instrument(skip_all, fields(method = "initialized"))]
+    #[tracing::instrument(skip_all, fields(rg.method = "initialized"))]
     async fn initialized(&self, _params: InitializedParams) {
         tracing::debug!("rust-glancer LSP server initialized");
     }
 
-    #[tracing::instrument(skip_all, fields(method = "shutdown"))]
+    #[tracing::instrument(skip_all, fields(rg.method = "shutdown"))]
     async fn shutdown(&self) -> Result<()> {
         let Ok(registry) = self.registry().await else {
             return Ok(());
@@ -116,7 +116,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(method = "didOpen", uri = ?params.text_document.uri)
+        fields(rg.method = "didOpen", rg.uri = ?params.text_document.uri)
     )]
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
@@ -140,7 +140,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(method = "didChange", uri = ?params.text_document.uri)
+        fields(rg.method = "didChange", rg.uri = ?params.text_document.uri)
     )]
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let Some(context) = self
@@ -156,7 +156,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(method = "didSave", uri = ?params.text_document.uri)
+        fields(rg.method = "didSave", rg.uri = ?params.text_document.uri)
     )]
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         let Some(context) = self
@@ -172,7 +172,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(method = "didClose", uri = ?params.text_document.uri)
+        fields(rg.method = "didClose", rg.uri = ?params.text_document.uri)
     )]
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
@@ -197,8 +197,8 @@ impl LanguageServer for Backend {
     #[tracing::instrument(
         skip_all,
         fields(
-            method = "gotoDefinition",
-            uri = ?params.text_document_position_params.text_document.uri
+            rg.method = "gotoDefinition",
+            rg.uri = ?params.text_document_position_params.text_document.uri
         )
     )]
     async fn goto_definition(
@@ -217,8 +217,8 @@ impl LanguageServer for Backend {
     #[tracing::instrument(
         skip_all,
         fields(
-            method = "gotoTypeDefinition",
-            uri = ?params.text_document_position_params.text_document.uri
+            rg.method = "gotoTypeDefinition",
+            rg.uri = ?params.text_document_position_params.text_document.uri
         )
     )]
     async fn goto_type_definition(
@@ -237,8 +237,8 @@ impl LanguageServer for Backend {
     #[tracing::instrument(
         skip_all,
         fields(
-            method = "gotoImplementation",
-            uri = ?params.text_document_position_params.text_document.uri
+            rg.method = "gotoImplementation",
+            rg.uri = ?params.text_document_position_params.text_document.uri
         )
     )]
     async fn goto_implementation(
@@ -257,8 +257,8 @@ impl LanguageServer for Backend {
     #[tracing::instrument(
         skip_all,
         fields(
-            method = "references",
-            uri = ?params.text_document_position.text_document.uri
+            rg.method = "references",
+            rg.uri = ?params.text_document_position.text_document.uri
         )
     )]
     async fn references(&self, params: ReferenceParams) -> Result<Option<Vec<Location>>> {
@@ -274,8 +274,8 @@ impl LanguageServer for Backend {
     #[tracing::instrument(
         skip_all,
         fields(
-            method = "documentHighlight",
-            uri = ?params.text_document_position_params.text_document.uri
+            rg.method = "documentHighlight",
+            rg.uri = ?params.text_document_position_params.text_document.uri
         )
     )]
     async fn document_highlight(
@@ -294,8 +294,8 @@ impl LanguageServer for Backend {
     #[tracing::instrument(
         skip_all,
         fields(
-            method = "hover",
-            uri = ?params.text_document_position_params.text_document.uri
+            rg.method = "hover",
+            rg.uri = ?params.text_document_position_params.text_document.uri
         )
     )]
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
@@ -311,8 +311,8 @@ impl LanguageServer for Backend {
     #[tracing::instrument(
         skip_all,
         fields(
-            method = "completion",
-            uri = ?params.text_document_position.text_document.uri
+            rg.method = "completion",
+            rg.uri = ?params.text_document_position.text_document.uri
         )
     )]
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -327,7 +327,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(method = "documentSymbol", uri = ?params.text_document.uri)
+        fields(rg.method = "documentSymbol", rg.uri = ?params.text_document.uri)
     )]
     async fn document_symbol(
         &self,
@@ -341,7 +341,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(method = "inlayHint", uri = ?params.text_document.uri)
+        fields(rg.method = "inlayHint", rg.uri = ?params.text_document.uri)
     )]
     async fn inlay_hint(&self, params: InlayHintParams) -> Result<Option<Vec<InlayHint>>> {
         let Some(context) = self.method_context_for(&params.text_document.uri).await? else {
@@ -350,7 +350,7 @@ impl LanguageServer for Backend {
         methods::text_document::inlay_hint::inlay_hint(context, params).await
     }
 
-    #[tracing::instrument(skip_all, fields(method = "workspaceSymbol"))]
+    #[tracing::instrument(skip_all, fields(rg.method = "workspaceSymbol"))]
     async fn symbol(
         &self,
         params: WorkspaceSymbolParams,
@@ -363,7 +363,7 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
-        fields(method = "executeCommand", command = %params.command)
+        fields(rg.method = "executeCommand", rg.command = %params.command)
     )]
     async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<LSPAny>> {
         let Some(context) = self.active_method_context().await? else {

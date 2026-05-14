@@ -4,7 +4,7 @@ use crate::{commands, methods::MethodContext, methods::internal_error};
 
 #[tracing::instrument(
     level = "trace", skip_all,
-    fields(command = %params.command)
+    fields(rg.command = %params.command)
 )]
 pub(crate) async fn execute_command(
     ctx: MethodContext,

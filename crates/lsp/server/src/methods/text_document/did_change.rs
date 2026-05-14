@@ -5,9 +5,9 @@ use crate::methods::{MethodContext, uri_to_path};
 #[tracing::instrument(
     level = "trace", skip_all,
     fields(
-        version = params.text_document.version,
-        content_change_count = params.content_changes.len(),
-        has_full_text = params.content_changes.last().is_some_and(|change| change.range.is_none())
+        rg.version = params.text_document.version,
+        rg.content_change_count = params.content_changes.len(),
+        rg.has_full_text = params.content_changes.last().is_some_and(|change| change.range.is_none())
     )
 )]
 pub(crate) async fn did_change(ctx: MethodContext, params: DidChangeTextDocumentParams) {
