@@ -386,9 +386,7 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                 "  ".repeat(depth),
                 visibility_prefix(&field.visibility),
                 field
-                    .key
-                    .as_ref()
-                    .map(|key| key.declaration_label())
+                    .key_declaration_label()
                     .unwrap_or_else(|| "<missing>".to_string()),
                 field.ty,
             )

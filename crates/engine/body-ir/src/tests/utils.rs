@@ -876,9 +876,7 @@ impl TargetBodyIrSnapshot<'_> {
             .expect("field ref should exist while rendering body IR");
         let name = data
             .field
-            .key
-            .as_ref()
-            .map(|key| key.declaration_label())
+            .key_declaration_label()
             .unwrap_or_else(|| "<missing>".to_string());
 
         format!(
@@ -902,9 +900,7 @@ impl TargetBodyIrSnapshot<'_> {
             .expect("body field ref should exist while rendering body IR");
         let name = data
             .field
-            .key
-            .as_ref()
-            .map(|key| key.declaration_label())
+            .key_declaration_label()
             .unwrap_or_else(|| "<missing>".to_string());
 
         format!(

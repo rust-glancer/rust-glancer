@@ -609,6 +609,11 @@ impl fmt::Display for FieldKey {
 }
 
 impl FieldItem {
+    /// Returns the user-visible declaration label for this field's key, if one was parsed.
+    pub fn key_declaration_label(&self) -> Option<String> {
+        self.key.as_ref().map(FieldKey::declaration_label)
+    }
+
     fn record_list_from_ast(
         fields: ast::RecordFieldList,
         line_index: &LineIndex,
