@@ -16,7 +16,11 @@ use tokio::sync::{Mutex, oneshot};
 
 pub(crate) use self::command::EngineCommand;
 use self::{command::EngineResponse, worker::EngineWorker};
-use crate::{documents::DocumentStore, memory::MemoryControl, service::ServiceNotificationsSink};
+use crate::{
+    documents::{DirtyDocumentSnapshotState, DocumentStore},
+    memory::MemoryControl,
+    service::ServiceNotificationsSink,
+};
 
 /// Handle for the long-lived analysis worker.
 ///
@@ -64,8 +68,12 @@ impl EngineHandle {
             .context("while attempting to receive LSP engine response")?
     }
 
-    pub(crate) async fn is_dirty(&self, path: &Path) -> bool {
-        let freshness = self.documents.lock().await.freshness(path);
+    pub(crate) async fn dirty_document_snapshot(&self, path: &Path) -> DirtyDocumentSnapshotState {
+        let documents = self.documents.lock().await;
+        let freshness = documents.freshness(path);
+        let dirty = documents.dirty_snapshot(path);
+        drop(documents);
+
         tracing::trace!(
             path = %path.display(),
             tracked = freshness.tracked(),
@@ -78,14 +86,24 @@ impl EngineHandle {
             "checked document freshness"
         );
 
-        if freshness.dirty() {
-            tracing::debug!(
-                path = %path.display(),
-                "returning empty result for dirty document"
-            );
+        match &dirty {
+            DirtyDocumentSnapshotState::Dirty(snapshot) => {
+                tracing::debug!(
+                    path = %snapshot.path().display(),
+                    version = ?snapshot.version(),
+                    "using dirty document snapshot for analysis query"
+                );
+            }
+            DirtyDocumentSnapshotState::DirtyWithoutText => {
+                tracing::debug!(
+                    path = %path.display(),
+                    "dirty document has no full-text snapshot"
+                );
+            }
+            DirtyDocumentSnapshotState::Clean => {}
         }
 
-        freshness.dirty()
+        dirty
     }
 
     pub(crate) async fn mark_dirty_after_failed_save(&self, path: PathBuf, error: anyhow::Error) {

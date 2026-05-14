@@ -9,10 +9,13 @@ use rg_analysis::{ReferenceQuery, TypeHint};
 use rg_def_map::TargetRef;
 use rg_lsp_proto::AnalysisConfig;
 use rg_parse::TextSpan;
-use rg_project::{CacheProbeProfile, FileContext, Project, ProjectSnapshot, SavedFileChange};
+use rg_project::{
+    CacheProbeProfile, DirtyFileChange, FileContext, Project, ProjectSnapshot, SavedFileChange,
+};
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
 
 use crate::{
+    documents::{DirtyDocumentSnapshot, TextFingerprint},
     engine::command::{EngineCommand, EngineResponse},
     memory::{MemoryControl, MemoryReporter},
     project_stats::{ProjectStats, log_retained_memory},
@@ -22,13 +25,38 @@ use crate::{
 #[derive(Debug)]
 pub(super) struct EngineWorker {
     project: Option<Project>,
+    dirty_overlay: Option<CachedDirtyOverlay>,
     memory_control: Arc<dyn MemoryControl>,
+}
+
+#[derive(Debug)]
+struct CachedDirtyOverlay {
+    key: DirtyOverlayKey,
+    project: Project,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DirtyOverlayKey {
+    path: PathBuf,
+    version: Option<i32>,
+    fingerprint: TextFingerprint,
+}
+
+impl DirtyOverlayKey {
+    fn from_snapshot(snapshot: &DirtyDocumentSnapshot) -> Self {
+        Self {
+            path: snapshot.path().to_path_buf(),
+            version: snapshot.version(),
+            fingerprint: snapshot.fingerprint(),
+        }
+    }
 }
 
 impl EngineWorker {
     pub(super) fn new(memory_control: Arc<dyn MemoryControl>) -> Self {
         Self {
             project: None,
+            dirty_overlay: None,
             memory_control,
         }
     }
@@ -62,6 +90,7 @@ impl EngineWorker {
                 EngineCommand::GotoDefinition {
                     path,
                     position,
+                    dirty,
                     respond_to,
                 } => {
                     tracing::trace!(
@@ -71,12 +100,13 @@ impl EngineWorker {
                         "engine command started: goto_definition"
                     );
                     self.respond_to_query("goto_definition", respond_to, |worker| {
-                        worker.goto_definition(path, position)
+                        worker.goto_definition(path, position, dirty)
                     });
                 }
                 EngineCommand::GotoTypeDefinition {
                     path,
                     position,
+                    dirty,
                     respond_to,
                 } => {
                     tracing::trace!(
@@ -86,12 +116,13 @@ impl EngineWorker {
                         "engine command started: goto_type_definition"
                     );
                     self.respond_to_query("goto_type_definition", respond_to, |worker| {
-                        worker.goto_type_definition(path, position)
+                        worker.goto_type_definition(path, position, dirty)
                     });
                 }
                 EngineCommand::GotoImplementation {
                     path,
                     position,
+                    dirty,
                     respond_to,
                 } => {
                     tracing::trace!(
@@ -101,13 +132,14 @@ impl EngineWorker {
                         "engine command started: goto_implementation"
                     );
                     self.respond_to_query("goto_implementation", respond_to, |worker| {
-                        worker.goto_implementation(path, position)
+                        worker.goto_implementation(path, position, dirty)
                     });
                 }
                 EngineCommand::References {
                     path,
                     position,
                     include_declaration,
+                    dirty,
                     respond_to,
                 } => {
                     tracing::trace!(
@@ -118,12 +150,13 @@ impl EngineWorker {
                         "engine command started: references"
                     );
                     self.respond_to_query("references", respond_to, |worker| {
-                        worker.references(path, position, include_declaration)
+                        worker.references(path, position, include_declaration, dirty)
                     });
                 }
                 EngineCommand::DocumentHighlight {
                     path,
                     position,
+                    dirty,
                     respond_to,
                 } => {
                     tracing::trace!(
@@ -133,12 +166,13 @@ impl EngineWorker {
                         "engine command started: document_highlight"
                     );
                     self.respond_to_query("document_highlight", respond_to, |worker| {
-                        worker.document_highlight(path, position)
+                        worker.document_highlight(path, position, dirty)
                     });
                 }
                 EngineCommand::Hover {
                     path,
                     position,
+                    dirty,
                     respond_to,
                 } => {
                     tracing::trace!(
@@ -148,12 +182,13 @@ impl EngineWorker {
                         "engine command started: hover"
                     );
                     self.respond_to_query("hover", respond_to, |worker| {
-                        worker.hover(path, position)
+                        worker.hover(path, position, dirty)
                     });
                 }
                 EngineCommand::Completion {
                     path,
                     position,
+                    dirty,
                     respond_to,
                 } => {
                     tracing::trace!(
@@ -163,21 +198,26 @@ impl EngineWorker {
                         "engine command started: completion"
                     );
                     self.respond_to_query("completion", respond_to, |worker| {
-                        worker.completion(path, position)
+                        worker.completion(path, position, dirty)
                     });
                 }
-                EngineCommand::DocumentSymbol { path, respond_to } => {
+                EngineCommand::DocumentSymbol {
+                    path,
+                    dirty,
+                    respond_to,
+                } => {
                     tracing::trace!(
                         path = %path.display(),
                         "engine command started: document_symbol"
                     );
                     self.respond_to_query("document_symbol", respond_to, |worker| {
-                        worker.document_symbol(path)
+                        worker.document_symbol(path, dirty)
                     });
                 }
                 EngineCommand::InlayHint {
                     path,
                     range,
+                    dirty,
                     respond_to,
                 } => {
                     tracing::trace!(
@@ -189,7 +229,7 @@ impl EngineWorker {
                         "engine command started: inlay_hint"
                     );
                     self.respond_to_query("inlay_hint", respond_to, |worker| {
-                        worker.inlay_hint(path, range)
+                        worker.inlay_hint(path, range, dirty)
                     });
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {
@@ -280,6 +320,7 @@ impl EngineWorker {
         Self::post_project_build(self.memory_control.as_ref(), snapshot, "initial index");
 
         self.project = Some(project);
+        self.dirty_overlay = None;
         tracing::info!(
             workspace_root = %workspace_root.display(),
             elapsed_ms = started.elapsed().as_millis(),
@@ -301,6 +342,7 @@ impl EngineWorker {
         project
             .reindex_workspace()
             .context("while attempting to manually reindex workspace")?;
+        self.dirty_overlay = None;
         Self::post_project_build(
             memory_control.as_ref(),
             project.snapshot(),
@@ -331,6 +373,7 @@ impl EngineWorker {
         let summary = project
             .apply_change(SavedFileChange::new(&path))
             .context("while attempting to apply saved file change")?;
+        self.dirty_overlay = None;
         tracing::info!(
             path = %path.display(),
             changed_files = summary.changed_files.len(),
@@ -345,65 +388,72 @@ impl EngineWorker {
     }
 
     fn goto_definition(
-        &self,
+        &mut self,
         path: PathBuf,
         position: ls_types::Position,
+        dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
-        self.navigation_query(path, position, NavigationQuery::Definition)
+        self.navigation_query(path, position, NavigationQuery::Definition, dirty)
     }
 
     fn goto_type_definition(
-        &self,
+        &mut self,
         path: PathBuf,
         position: ls_types::Position,
+        dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
-        self.navigation_query(path, position, NavigationQuery::TypeDefinition)
+        self.navigation_query(path, position, NavigationQuery::TypeDefinition, dirty)
     }
 
     fn goto_implementation(
-        &self,
+        &mut self,
         path: PathBuf,
         position: ls_types::Position,
+        dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
-        self.navigation_query(path, position, NavigationQuery::Implementation)
+        self.navigation_query(path, position, NavigationQuery::Implementation, dirty)
     }
 
     fn references(
-        &self,
+        &mut self,
         path: PathBuf,
         position: ls_types::Position,
         include_declaration: bool,
+        dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
         let started = Instant::now();
-        let snapshot = self.snapshot()?;
-        let target_offsets = self.target_offsets(snapshot, &path, position)?;
-        let analysis = snapshot.full_analysis()?;
-        let mut locations = Vec::new();
+        let locations = self.with_query_snapshot(dirty.as_ref(), |snapshot| {
+            let target_offsets = Self::target_offsets(snapshot, &path, position)?;
+            let analysis = snapshot.full_analysis()?;
+            let mut locations = Vec::new();
 
-        for (context, target, offset) in target_offsets {
-            let declaration_targets = analysis
-                .goto_definition(target, context.file, offset)?
-                .into_iter()
-                .map(|target| target.target)
-                .collect::<Vec<_>>();
-            let search_targets =
-                snapshot.reference_search_targets(context.package, &declaration_targets);
+            for (context, target, offset) in target_offsets {
+                let declaration_targets = analysis
+                    .goto_definition(target, context.file, offset)?
+                    .into_iter()
+                    .map(|target| target.target)
+                    .collect::<Vec<_>>();
+                let search_targets =
+                    snapshot.reference_search_targets(context.package, &declaration_targets);
 
-            for reference in analysis.references(
-                target,
-                context.file,
-                offset,
-                ReferenceQuery::find_references(&search_targets, include_declaration),
-            )? {
-                let Some(location) = references::location_for_reference(snapshot, &reference)?
-                else {
-                    continue;
-                };
-                if !locations.contains(&location) {
-                    locations.push(location);
+                for reference in analysis.references(
+                    target,
+                    context.file,
+                    offset,
+                    ReferenceQuery::find_references(&search_targets, include_declaration),
+                )? {
+                    let Some(location) = references::location_for_reference(snapshot, &reference)?
+                    else {
+                        continue;
+                    };
+                    if !locations.contains(&location) {
+                        locations.push(location);
+                    }
                 }
             }
-        }
+
+            Ok(locations)
+        })?;
 
         tracing::debug!(
             path = %path.display(),
@@ -419,44 +469,49 @@ impl EngineWorker {
     }
 
     fn document_highlight(
-        &self,
+        &mut self,
         path: PathBuf,
         position: ls_types::Position,
+        dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::DocumentHighlight>> {
         let started = Instant::now();
-        let snapshot = self.snapshot()?;
-        let target_offsets = self.target_offsets(snapshot, &path, position)?;
+        let highlights = self.with_query_snapshot(dirty.as_ref(), |snapshot| {
+            let target_offsets = Self::target_offsets(snapshot, &path, position)?;
 
-        let analysis_targets = target_offsets
-            .iter()
-            .map(|(_, target, _)| *target)
-            .collect::<Vec<_>>();
-        let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
-        let mut highlights = Vec::new();
+            let analysis_targets = target_offsets
+                .iter()
+                .map(|(_, target, _)| *target)
+                .collect::<Vec<_>>();
+            let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+            let mut highlights = Vec::new();
 
-        for (context, target, offset) in target_offsets {
-            for reference in analysis.references(
-                target,
-                context.file,
-                offset,
-                ReferenceQuery::file_scoped(target, context.file),
-            )? {
-                if reference.target.package != context.package || reference.file_id != context.file
-                {
-                    continue;
-                }
-
-                let highlight = references::document_highlight_for_reference(
-                    snapshot,
-                    context.package,
+            for (context, target, offset) in target_offsets {
+                for reference in analysis.references(
+                    target,
                     context.file,
-                    reference.span,
-                )?;
-                if !highlights.contains(&highlight) {
-                    highlights.push(highlight);
+                    offset,
+                    ReferenceQuery::file_scoped(target, context.file),
+                )? {
+                    if reference.target.package != context.package
+                        || reference.file_id != context.file
+                    {
+                        continue;
+                    }
+
+                    let highlight = references::document_highlight_for_reference(
+                        snapshot,
+                        context.package,
+                        context.file,
+                        reference.span,
+                    )?;
+                    if !highlights.contains(&highlight) {
+                        highlights.push(highlight);
+                    }
                 }
             }
-        }
+
+            Ok(highlights)
+        })?;
 
         tracing::debug!(
             path = %path.display(),
@@ -471,28 +526,32 @@ impl EngineWorker {
     }
 
     fn completion(
-        &self,
+        &mut self,
         path: PathBuf,
         position: ls_types::Position,
+        dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::CompletionItem>> {
         let started = Instant::now();
-        let snapshot = self.snapshot()?;
-        let target_offsets = self.target_offsets(snapshot, &path, position)?;
-        let analysis_targets = target_offsets
-            .iter()
-            .map(|(_, target, _)| *target)
-            .collect::<Vec<_>>();
-        let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
-        let mut completions = Vec::new();
+        let completions = self.with_query_snapshot(dirty.as_ref(), |snapshot| {
+            let target_offsets = Self::target_offsets(snapshot, &path, position)?;
+            let analysis_targets = target_offsets
+                .iter()
+                .map(|(_, target, _)| *target)
+                .collect::<Vec<_>>();
+            let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+            let mut completions = Vec::new();
 
-        for (context, target, offset) in target_offsets {
-            for item in analysis.completions_at_dot(target, context.file, offset)? {
-                let item = completion::completion_item(item);
-                if !completions.contains(&item) {
-                    completions.push(item);
+            for (context, target, offset) in target_offsets {
+                for item in analysis.completions_at_dot(target, context.file, offset)? {
+                    let item = completion::completion_item(item);
+                    if !completions.contains(&item) {
+                        completions.push(item);
+                    }
                 }
             }
-        }
+
+            Ok(completions)
+        })?;
 
         tracing::debug!(
             path = %path.display(),
@@ -507,73 +566,77 @@ impl EngineWorker {
     }
 
     fn hover(
-        &self,
+        &mut self,
         path: PathBuf,
         position: ls_types::Position,
+        dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Option<ls_types::Hover>> {
         let started = Instant::now();
-        let snapshot = self.snapshot()?;
-        let target_offsets = self.target_offsets(snapshot, &path, position)?;
-        let analysis_targets = target_offsets
-            .iter()
-            .map(|(_, target, _)| *target)
-            .collect::<Vec<_>>();
-        let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+        let hover = self.with_query_snapshot(dirty.as_ref(), |snapshot| {
+            let target_offsets = Self::target_offsets(snapshot, &path, position)?;
+            let analysis_targets = target_offsets
+                .iter()
+                .map(|(_, target, _)| *target)
+                .collect::<Vec<_>>();
+            let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
 
-        for (context, target, offset) in target_offsets {
-            let Some(info) = analysis.hover(target, context.file, offset)? else {
-                continue;
-            };
-            let Some(line_index) = snapshot.file_line_index(context.package, context.file) else {
-                continue;
-            };
-            let Some(hover) = hover::hover(info, line_index) else {
-                continue;
-            };
-            tracing::debug!(
-                path = %path.display(),
-                line = position.line,
-                character = position.character,
-                has_hover = true,
-                elapsed_ms = started.elapsed().as_millis(),
-                "hover query finished"
-            );
-            return Ok(Some(hover));
-        }
+            for (context, target, offset) in target_offsets {
+                let Some(info) = analysis.hover(target, context.file, offset)? else {
+                    continue;
+                };
+                let Some(line_index) = snapshot.file_line_index(context.package, context.file)
+                else {
+                    continue;
+                };
+                let Some(hover) = hover::hover(info, line_index) else {
+                    continue;
+                };
+                return Ok(Some(hover));
+            }
+
+            Ok(None)
+        })?;
 
         tracing::debug!(
             path = %path.display(),
             line = position.line,
             character = position.character,
-            has_hover = false,
+            has_hover = hover.is_some(),
             elapsed_ms = started.elapsed().as_millis(),
             "hover query finished"
         );
-        Ok(None)
+        Ok(hover)
     }
 
-    fn document_symbol(&self, path: PathBuf) -> anyhow::Result<Vec<ls_types::DocumentSymbol>> {
+    fn document_symbol(
+        &mut self,
+        path: PathBuf,
+        dirty: Option<DirtyDocumentSnapshot>,
+    ) -> anyhow::Result<Vec<ls_types::DocumentSymbol>> {
         let started = Instant::now();
-        let snapshot = self.snapshot()?;
-        let contexts = self.file_contexts(snapshot, &path)?;
-        let analysis_targets = contexts
-            .iter()
-            .flat_map(|context| context.targets.iter().copied())
-            .collect::<Vec<_>>();
-        let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
-        let mut lsp_symbols = Vec::new();
+        let lsp_symbols = self.with_query_snapshot(dirty.as_ref(), |snapshot| {
+            let contexts = Self::file_contexts(snapshot, &path)?;
+            let analysis_targets = contexts
+                .iter()
+                .flat_map(|context| context.targets.iter().copied())
+                .collect::<Vec<_>>();
+            let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+            let mut lsp_symbols = Vec::new();
 
-        for context in contexts {
-            for target in context.targets {
-                let symbols = analysis.document_symbols(target, context.file)?;
-                for symbol in symbols {
-                    let symbol = symbols::document_symbol(snapshot, context.package, symbol)?;
-                    if !lsp_symbols.contains(&symbol) {
-                        lsp_symbols.push(symbol);
+            for context in contexts {
+                for target in context.targets {
+                    let symbols = analysis.document_symbols(target, context.file)?;
+                    for symbol in symbols {
+                        let symbol = symbols::document_symbol(snapshot, context.package, symbol)?;
+                        if !lsp_symbols.contains(&symbol) {
+                            lsp_symbols.push(symbol);
+                        }
                     }
                 }
             }
-        }
+
+            Ok(lsp_symbols)
+        })?;
 
         tracing::debug!(
             path = %path.display(),
@@ -586,44 +649,48 @@ impl EngineWorker {
     }
 
     fn inlay_hint(
-        &self,
+        &mut self,
         path: PathBuf,
         range: ls_types::Range,
+        dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::InlayHint>> {
         let started = Instant::now();
-        let snapshot = self.snapshot()?;
-        let contexts = self.file_contexts(snapshot, &path)?;
-        let analysis_targets = contexts
-            .iter()
-            .flat_map(|context| context.targets.iter().copied())
-            .collect::<Vec<_>>();
-        let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
-        let mut hints = Vec::<(rg_def_map::PackageSlot, TypeHint)>::new();
+        let lsp_hints = self.with_query_snapshot(dirty.as_ref(), |snapshot| {
+            let contexts = Self::file_contexts(snapshot, &path)?;
+            let analysis_targets = contexts
+                .iter()
+                .flat_map(|context| context.targets.iter().copied())
+                .collect::<Vec<_>>();
+            let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+            let mut hints = Vec::<(rg_def_map::PackageSlot, TypeHint)>::new();
 
-        for context in contexts {
-            let Some(range) = self.text_span_for_context(snapshot, &context, range) else {
-                continue;
-            };
+            for context in contexts {
+                let Some(range) = Self::text_span_for_context(snapshot, &context, range) else {
+                    continue;
+                };
 
-            for target in context.targets {
-                for hint in analysis.type_hints(target, context.file, Some(range))? {
-                    if !hints
-                        .iter()
-                        .any(|(_, existing_hint)| existing_hint == &hint)
-                    {
-                        hints.push((context.package, hint));
+                for target in context.targets {
+                    for hint in analysis.type_hints(target, context.file, Some(range))? {
+                        if !hints
+                            .iter()
+                            .any(|(_, existing_hint)| existing_hint == &hint)
+                        {
+                            hints.push((context.package, hint));
+                        }
                     }
                 }
             }
-        }
 
-        let mut lsp_hints = Vec::new();
-        for (package, hint) in hints {
-            let Some(hint) = inlay_hint::type_hint(snapshot, package, hint)? else {
-                continue;
-            };
-            lsp_hints.push(hint);
-        }
+            let mut lsp_hints = Vec::new();
+            for (package, hint) in hints {
+                let Some(hint) = inlay_hint::type_hint(snapshot, package, hint)? else {
+                    continue;
+                };
+                lsp_hints.push(hint);
+            }
+
+            Ok(lsp_hints)
+        })?;
 
         tracing::debug!(
             path = %path.display(),
@@ -661,43 +728,47 @@ impl EngineWorker {
     }
 
     fn navigation_query(
-        &self,
+        &mut self,
         path: PathBuf,
         position: ls_types::Position,
         query: NavigationQuery,
+        dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
         let started = Instant::now();
-        let snapshot = self.snapshot()?;
-        let target_offsets = self.target_offsets(snapshot, &path, position)?;
-        let analysis_targets = target_offsets
-            .iter()
-            .map(|(_, target, _)| *target)
-            .collect::<Vec<_>>();
-        let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
-        let mut locations = Vec::new();
+        let locations = self.with_query_snapshot(dirty.as_ref(), |snapshot| {
+            let target_offsets = Self::target_offsets(snapshot, &path, position)?;
+            let analysis_targets = target_offsets
+                .iter()
+                .map(|(_, target, _)| *target)
+                .collect::<Vec<_>>();
+            let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+            let mut locations = Vec::new();
 
-        for (context, target, offset) in target_offsets {
-            let targets = match query {
-                NavigationQuery::Definition => {
-                    analysis.goto_definition(target, context.file, offset)?
-                }
-                NavigationQuery::TypeDefinition => {
-                    analysis.goto_type_definition(target, context.file, offset)?
-                }
-                NavigationQuery::Implementation => {
-                    analysis.goto_implementation(target, context.file, offset)?
-                }
-            };
-
-            for target in targets {
-                let Some(location) = navigation::location_for_target(snapshot, &target)? else {
-                    continue;
+            for (context, target, offset) in target_offsets {
+                let targets = match query {
+                    NavigationQuery::Definition => {
+                        analysis.goto_definition(target, context.file, offset)?
+                    }
+                    NavigationQuery::TypeDefinition => {
+                        analysis.goto_type_definition(target, context.file, offset)?
+                    }
+                    NavigationQuery::Implementation => {
+                        analysis.goto_implementation(target, context.file, offset)?
+                    }
                 };
-                if !locations.contains(&location) {
-                    locations.push(location);
+
+                for target in targets {
+                    let Some(location) = navigation::location_for_target(snapshot, &target)? else {
+                        continue;
+                    };
+                    if !locations.contains(&location) {
+                        locations.push(location);
+                    }
                 }
             }
-        }
+
+            Ok(locations)
+        })?;
 
         tracing::debug!(
             query = query.name(),
@@ -713,16 +784,15 @@ impl EngineWorker {
     }
 
     fn target_offsets(
-        &self,
         snapshot: ProjectSnapshot<'_>,
         path: &Path,
         position: ls_types::Position,
     ) -> anyhow::Result<Vec<(FileContext, TargetRef, u32)>> {
         let mut targets = Vec::new();
 
-        let contexts = self.file_contexts(snapshot, path)?;
+        let contexts = Self::file_contexts(snapshot, path)?;
         for context in contexts {
-            let Some(offset) = self.offset_for_context(snapshot, &context, position) else {
+            let Some(offset) = Self::offset_for_context(snapshot, &context, position) else {
                 tracing::trace!(
                     path = %path.display(),
                     line = position.line,
@@ -751,7 +821,6 @@ impl EngineWorker {
     }
 
     fn file_contexts(
-        &self,
         snapshot: ProjectSnapshot<'_>,
         path: &Path,
     ) -> anyhow::Result<Vec<FileContext>> {
@@ -782,7 +851,6 @@ impl EngineWorker {
     }
 
     fn offset_for_context(
-        &self,
         snapshot: ProjectSnapshot<'_>,
         context: &FileContext,
         position: ls_types::Position,
@@ -801,7 +869,6 @@ impl EngineWorker {
     }
 
     fn text_span_for_context(
-        &self,
         snapshot: ProjectSnapshot<'_>,
         context: &FileContext,
         range: ls_types::Range,
@@ -832,16 +899,66 @@ impl EngineWorker {
             .context("LSP engine is not initialized")
     }
 
+    fn with_query_snapshot<T>(
+        &mut self,
+        dirty: Option<&DirtyDocumentSnapshot>,
+        query: impl FnOnce(ProjectSnapshot<'_>) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let project = match dirty {
+            Some(dirty) => self.dirty_overlay_project(dirty)?,
+            None => {
+                self.dirty_overlay = None;
+                self.project
+                    .as_ref()
+                    .context("LSP engine is not initialized")?
+            }
+        };
+
+        query(project.snapshot())
+    }
+
+    fn dirty_overlay_project(&mut self, dirty: &DirtyDocumentSnapshot) -> anyhow::Result<&Project> {
+        let key = DirtyOverlayKey::from_snapshot(dirty);
+        let should_rebuild = match &self.dirty_overlay {
+            Some(cached) => cached.key != key,
+            None => true,
+        };
+
+        if should_rebuild {
+            let base = self
+                .project
+                .as_ref()
+                .context("LSP engine is not initialized")?;
+            let project = base
+                .dirty_overlay([DirtyFileChange::new(dirty.path(), dirty.text().to_string())])
+                .with_context(|| {
+                    format!(
+                        "while attempting to build dirty analysis overlay for {}",
+                        dirty.path().display()
+                    )
+                })?
+                .unwrap_or_else(|| base.clone());
+            self.dirty_overlay = Some(CachedDirtyOverlay { key, project });
+        }
+
+        Ok(&self
+            .dirty_overlay
+            .as_ref()
+            .expect("dirty overlay should be cached after successful build")
+            .project)
+    }
+
     /// Runs a read-only request, responds immediately, then heals disposable cache failures.
     fn respond_to_query<T>(
         &mut self,
         label: &'static str,
         respond_to: EngineResponse<T>,
-        query: impl FnOnce(&Self) -> anyhow::Result<T>,
+        query: impl FnOnce(&mut Self) -> anyhow::Result<T>,
     ) where
         T: Send + 'static,
     {
-        let result = MemoryReporter::report_op(self.memory_control.as_ref(), label, || query(self));
+        let memory_control = Arc::clone(&self.memory_control);
+        let result = MemoryReporter::report_op(memory_control.as_ref(), label, || query(self));
         let should_recover = result
             .as_ref()
             .err()
@@ -871,6 +988,7 @@ impl EngineWorker {
 
         match project.recover_after_cache_load_failure() {
             Ok(()) => {
+                self.dirty_overlay = None;
                 let snapshot = project.snapshot();
                 Self::post_project_build(
                     self.memory_control.as_ref(),

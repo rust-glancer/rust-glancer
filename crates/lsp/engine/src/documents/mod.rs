@@ -1,14 +1,25 @@
+//! Tracks LSP document state that sits above the saved analysis project.
+
+mod snapshot;
+
+#[cfg(test)]
+mod tests;
+
 use std::{
     collections::HashMap,
-    hash::{Hash, Hasher},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
-/// LSP-side document freshness state.
+pub(crate) use self::snapshot::{
+    DirtyDocumentSnapshot, DirtyDocumentSnapshotState, TextFingerprint,
+};
+
+/// LSP-side document freshness and live-buffer state.
 ///
-/// The analysis engine remains save-only. This store only records whether VS Code has told us a
-/// file's live buffer has diverged from the saved snapshot, so position-sensitive requests can
-/// avoid returning stale answers.
+/// The saved project remains the stable baseline, but full-sync change notifications let analysis
+/// requests build a temporary dirty overlay for the queried document. Incremental-only changes
+/// still mark the file dirty without exposing a text snapshot.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DocumentStore {
     documents: HashMap<PathBuf, DocumentState>,
@@ -23,6 +34,7 @@ impl DocumentStore {
                 version,
                 saved: Some(fingerprint),
                 live: Some(fingerprint),
+                live_text: Some(Arc::from(text)),
                 dirty: false,
             },
         );
@@ -52,9 +64,11 @@ impl DocumentStore {
         if let Some(full_text) = full_text {
             let live = TextFingerprint::new(full_text);
             document.live = Some(live);
+            document.live_text = Some(Arc::from(full_text));
             document.dirty = document.saved != Some(live);
         } else {
             document.live = None;
+            document.live_text = None;
             document.dirty = true;
         }
 
@@ -74,6 +88,7 @@ impl DocumentStore {
             // document back to the saved snapshot.
             if !document.dirty || document.live == Some(saved) || document.live.is_none() {
                 document.live = Some(saved);
+                document.live_text = Some(Arc::from(full_text));
             }
         } else {
             document.saved = document.live;
@@ -103,6 +118,29 @@ impl DocumentStore {
             .map(DocumentFreshness::from_state)
             .unwrap_or_else(DocumentFreshness::untracked)
     }
+
+    pub(crate) fn dirty_snapshot(&self, path: &Path) -> DirtyDocumentSnapshotState {
+        let Some(document) = self.documents.get(path) else {
+            return DirtyDocumentSnapshotState::Clean;
+        };
+        if !document.dirty {
+            return DirtyDocumentSnapshotState::Clean;
+        }
+
+        let Some(fingerprint) = document.live else {
+            return DirtyDocumentSnapshotState::DirtyWithoutText;
+        };
+        let Some(text) = &document.live_text else {
+            return DirtyDocumentSnapshotState::DirtyWithoutText;
+        };
+
+        DirtyDocumentSnapshotState::Dirty(DirtyDocumentSnapshot::new(
+            path.to_path_buf(),
+            document.version,
+            fingerprint,
+            Arc::clone(text),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -110,6 +148,7 @@ struct DocumentState {
     version: Option<i32>,
     saved: Option<TextFingerprint>,
     live: Option<TextFingerprint>,
+    live_text: Option<Arc<str>>,
     dirty: bool,
 }
 
@@ -184,109 +223,5 @@ impl DocumentChange {
             became_dirty: false,
             became_clean: false,
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TextFingerprint {
-    len: usize,
-    hash: u64,
-}
-
-impl TextFingerprint {
-    fn new(text: &str) -> Self {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        text.hash(&mut hasher);
-        Self {
-            len: text.len(),
-            hash: hasher.finish(),
-        }
-    }
-
-    fn len(self) -> usize {
-        self.len
-    }
-
-    fn hash(self) -> u64 {
-        self.hash
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::DocumentStore;
-
-    #[test]
-    fn tracks_clean_to_dirty_to_clean_document_lifecycle() {
-        let path = PathBuf::from("/workspace/src/lib.rs");
-        let mut store = DocumentStore::default();
-
-        store.did_open(path.clone(), Some(1), "fn main() {}\n");
-        assert!(!store.is_dirty(&path));
-
-        let change = store.did_change(path.clone(), Some(2), Some("fn main() {\n}\n"));
-        assert!(change.became_dirty);
-        assert!(store.is_dirty(&path));
-
-        let change = store.did_change(path.clone(), Some(3), Some("fn main() {\n}\n"));
-        assert!(!change.became_dirty);
-        assert!(store.is_dirty(&path));
-
-        store.did_save(path.clone(), Some("fn main() {\n}\n"));
-        assert!(!store.is_dirty(&path));
-
-        store.mark_dirty_after_failed_save(path.clone());
-        assert!(store.is_dirty(&path));
-
-        store.did_close(&path);
-        assert!(!store.is_dirty(&path));
-    }
-
-    #[test]
-    fn ignores_delayed_change_events_that_match_saved_text() {
-        let path = PathBuf::from("/workspace/src/lib.rs");
-        let mut store = DocumentStore::default();
-
-        store.did_open(path.clone(), Some(1), "fn main() {}\n");
-        store.did_save(path.clone(), Some("fn main() {\n}\n"));
-        assert!(!store.is_dirty(&path));
-
-        let change = store.did_change(path.clone(), Some(2), Some("fn main() {\n}\n"));
-        assert!(!change.became_dirty);
-        assert!(!store.is_dirty(&path));
-    }
-
-    #[test]
-    fn ignores_out_of_order_older_change_versions() {
-        let path = PathBuf::from("/workspace/src/lib.rs");
-        let mut store = DocumentStore::default();
-
-        store.did_open(path.clone(), Some(1), "fn main() {}\n");
-        store.did_change(path.clone(), Some(3), Some("fn main() {\n    work();\n}\n"));
-        store.did_save(path.clone(), Some("fn main() {\n    work();\n}\n"));
-        assert!(!store.is_dirty(&path));
-
-        let change = store.did_change(path.clone(), Some(2), Some("fn main() {\n}\n"));
-        assert!(!change.became_dirty);
-        assert!(!change.became_clean);
-        assert!(!store.is_dirty(&path));
-    }
-
-    #[test]
-    fn save_keeps_document_dirty_when_a_newer_edit_already_landed() {
-        let path = PathBuf::from("/workspace/src/lib.rs");
-        let mut store = DocumentStore::default();
-
-        store.did_open(path.clone(), Some(1), "fn main() {}\n");
-        store.did_change(
-            path.clone(),
-            Some(3),
-            Some("fn main() {\n    unsaved();\n}\n"),
-        );
-
-        store.did_save(path.clone(), Some("fn main() {\n    saved();\n}\n"));
-        assert!(store.is_dirty(&path));
     }
 }

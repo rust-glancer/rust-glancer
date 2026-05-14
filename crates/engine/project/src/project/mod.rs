@@ -1,4 +1,5 @@
 mod build;
+mod dirty;
 pub(crate) mod loading;
 mod memsize;
 pub(crate) mod offloading;
@@ -21,6 +22,7 @@ use crate::residency::PackageResidencyPlan;
 
 pub use self::{
     build::{ProjectBuild, ProjectBuilder, StartupCacheLoad},
+    dirty::DirtyFileChange,
     snapshot::ProjectSnapshot,
     stats::ProjectStats,
 };
@@ -30,9 +32,9 @@ pub use self::{
 /// `Project` is the LSP-facing state container: it accepts saved file changes, refreshes the
 /// derived phase databases, and hands out immutable snapshots for queries.
 ///
-/// The project intentionally follows a rebuild-on-save model. It does not track arbitrary unsaved
-/// editor buffers; callers should provide text only for committed save events, or read the saved
-/// file from disk and pass that content through the same API.
+/// The main project intentionally follows a rebuild-on-save model. Dirty editor buffers are handled
+/// as temporary overlays so saved-state fingerprints, package cache artifacts, and residency
+/// decisions remain tied to committed source files.
 #[derive(Debug, Clone)]
 pub struct Project {
     pub(crate) state: ProjectState,
@@ -95,6 +97,18 @@ impl Project {
     ) -> anyhow::Result<AnalysisChangeSummary> {
         let changes = canonicalize_changes(changes)?;
         update::apply_changes(self, changes)
+    }
+
+    /// Builds an ephemeral analysis project from dirty editor buffers.
+    ///
+    /// The returned project is intentionally detached from saved-state cache lifecycle: dirty
+    /// rebuilds keep rebuilt package payloads resident and never refresh source fingerprints or
+    /// package artifacts. Callers can query the returned snapshot and then drop it.
+    pub fn dirty_overlay(
+        &self,
+        changes: impl IntoIterator<Item = DirtyFileChange>,
+    ) -> anyhow::Result<Option<Project>> {
+        dirty::build_overlay(self, changes)
     }
 }
 

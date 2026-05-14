@@ -21,7 +21,7 @@ pub(super) fn rebuild_packages(
         return Ok(());
     }
 
-    match try_rebuild_packages(state, packages) {
+    match try_rebuild_packages(state, packages, RebuildResidency::RestoreSavedState) {
         Ok(()) => Ok(()),
         Err(error) if ProjectState::is_recoverable_cache_load_failure(&error) => {
             ResidencyApplication::failure_recovery(state).with_context(|| {
@@ -34,7 +34,22 @@ pub(super) fn rebuild_packages(
     }
 }
 
-fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> anyhow::Result<()> {
+pub(super) fn rebuild_dirty_overlay_packages(
+    state: &mut ProjectState,
+    packages: &[PackageSlot],
+) -> anyhow::Result<()> {
+    if packages.is_empty() {
+        return Ok(());
+    }
+
+    try_rebuild_packages(state, packages, RebuildResidency::KeepResident)
+}
+
+fn try_rebuild_packages(
+    state: &mut ProjectState,
+    packages: &[PackageSlot],
+    residency: RebuildResidency,
+) -> anyhow::Result<()> {
     // Rebuilding one package can resolve names through its dependencies, but unrelated packages
     // should stay offloaded so save handling does not recreate full-project spikes.
     let rebuild_subset =
@@ -102,11 +117,19 @@ fn try_rebuild_packages(state: &mut ProjectState, packages: &[PackageSlot]) -> a
     state.semantic_ir = semantic_ir;
     state.body_ir = body_ir;
     state.names.shrink_to_fit();
-    ResidencyApplication::restore(state, packages)
-        .apply()
-        .context("while attempting to apply package cache residency after package rebuild")?;
+    if matches!(residency, RebuildResidency::RestoreSavedState) {
+        ResidencyApplication::restore(state, packages)
+            .apply()
+            .context("while attempting to apply package cache residency after package rebuild")?;
+    }
 
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RebuildResidency {
+    RestoreSavedState,
+    KeepResident,
 }
 
 pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::Result<()> {

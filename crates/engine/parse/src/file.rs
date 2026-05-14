@@ -178,6 +178,17 @@ impl FileDb {
         Ok(Some(file_id))
     }
 
+    /// Reparses an already known file from caller-provided source text.
+    pub(super) fn reparse_file_from_source(
+        &mut self,
+        file_path: &Path,
+        source: &str,
+    ) -> Option<FileId> {
+        let file_id = self.file_ids_by_path.get(file_path).copied()?;
+        self.parsed_files[file_id] = Self::parse_source(file_path.to_path_buf(), source);
+        Some(file_id)
+    }
+
     /// Ensures that syntax for an already known file is available for AST-consuming lowering.
     pub(super) fn ensure_file_syntax(&mut self, file_id: FileId) -> anyhow::Result<()> {
         let Some(parsed_file) = self.parsed_files.get(file_id) else {

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use rg_lsp_proto::{EngineConfig, EngineError, EngineResult, EngineService};
 use tarpc::context;
 
-use crate::engine::EngineCommand;
+use crate::{documents::DirtyDocumentSnapshotState, engine::EngineCommand};
 
 use super::Service;
 
@@ -181,14 +181,17 @@ impl EngineService for Service {
         path: PathBuf,
         position: ls_types::Position,
     ) -> EngineResult<Vec<ls_types::Location>> {
-        if self.engine.is_dirty(&path).await {
-            return Ok(Vec::new());
-        }
+        let dirty = match self.engine.dirty_document_snapshot(&path).await {
+            DirtyDocumentSnapshotState::Clean => None,
+            DirtyDocumentSnapshotState::Dirty(dirty) => Some(dirty),
+            DirtyDocumentSnapshotState::DirtyWithoutText => return Ok(Vec::new()),
+        };
 
         self.engine
             .request(|respond_to| EngineCommand::GotoDefinition {
                 path,
                 position,
+                dirty,
                 respond_to,
             })
             .await
@@ -201,14 +204,17 @@ impl EngineService for Service {
         path: PathBuf,
         position: ls_types::Position,
     ) -> EngineResult<Vec<ls_types::Location>> {
-        if self.engine.is_dirty(&path).await {
-            return Ok(Vec::new());
-        }
+        let dirty = match self.engine.dirty_document_snapshot(&path).await {
+            DirtyDocumentSnapshotState::Clean => None,
+            DirtyDocumentSnapshotState::Dirty(dirty) => Some(dirty),
+            DirtyDocumentSnapshotState::DirtyWithoutText => return Ok(Vec::new()),
+        };
 
         self.engine
             .request(|respond_to| EngineCommand::GotoTypeDefinition {
                 path,
                 position,
+                dirty,
                 respond_to,
             })
             .await
@@ -221,14 +227,17 @@ impl EngineService for Service {
         path: PathBuf,
         position: ls_types::Position,
     ) -> EngineResult<Vec<ls_types::Location>> {
-        if self.engine.is_dirty(&path).await {
-            return Ok(Vec::new());
-        }
+        let dirty = match self.engine.dirty_document_snapshot(&path).await {
+            DirtyDocumentSnapshotState::Clean => None,
+            DirtyDocumentSnapshotState::Dirty(dirty) => Some(dirty),
+            DirtyDocumentSnapshotState::DirtyWithoutText => return Ok(Vec::new()),
+        };
 
         self.engine
             .request(|respond_to| EngineCommand::GotoImplementation {
                 path,
                 position,
+                dirty,
                 respond_to,
             })
             .await
@@ -242,15 +251,18 @@ impl EngineService for Service {
         position: ls_types::Position,
         include_declaration: bool,
     ) -> EngineResult<Vec<ls_types::Location>> {
-        if self.engine.is_dirty(&path).await {
-            return Ok(Vec::new());
-        }
+        let dirty = match self.engine.dirty_document_snapshot(&path).await {
+            DirtyDocumentSnapshotState::Clean => None,
+            DirtyDocumentSnapshotState::Dirty(dirty) => Some(dirty),
+            DirtyDocumentSnapshotState::DirtyWithoutText => return Ok(Vec::new()),
+        };
 
         self.engine
             .request(|respond_to| EngineCommand::References {
                 path,
                 position,
                 include_declaration,
+                dirty,
                 respond_to,
             })
             .await
@@ -263,14 +275,17 @@ impl EngineService for Service {
         path: PathBuf,
         position: ls_types::Position,
     ) -> EngineResult<Vec<ls_types::DocumentHighlight>> {
-        if self.engine.is_dirty(&path).await {
-            return Ok(Vec::new());
-        }
+        let dirty = match self.engine.dirty_document_snapshot(&path).await {
+            DirtyDocumentSnapshotState::Clean => None,
+            DirtyDocumentSnapshotState::Dirty(dirty) => Some(dirty),
+            DirtyDocumentSnapshotState::DirtyWithoutText => return Ok(Vec::new()),
+        };
 
         self.engine
             .request(|respond_to| EngineCommand::DocumentHighlight {
                 path,
                 position,
+                dirty,
                 respond_to,
             })
             .await
@@ -283,14 +298,17 @@ impl EngineService for Service {
         path: PathBuf,
         position: ls_types::Position,
     ) -> EngineResult<Option<ls_types::Hover>> {
-        if self.engine.is_dirty(&path).await {
-            return Ok(None);
-        }
+        let dirty = match self.engine.dirty_document_snapshot(&path).await {
+            DirtyDocumentSnapshotState::Clean => None,
+            DirtyDocumentSnapshotState::Dirty(dirty) => Some(dirty),
+            DirtyDocumentSnapshotState::DirtyWithoutText => return Ok(None),
+        };
 
         self.engine
             .request(|respond_to| EngineCommand::Hover {
                 path,
                 position,
+                dirty,
                 respond_to,
             })
             .await
@@ -303,14 +321,17 @@ impl EngineService for Service {
         path: PathBuf,
         position: ls_types::Position,
     ) -> EngineResult<Vec<ls_types::CompletionItem>> {
-        if self.engine.is_dirty(&path).await {
-            return Ok(Vec::new());
-        }
+        let dirty = match self.engine.dirty_document_snapshot(&path).await {
+            DirtyDocumentSnapshotState::Clean => None,
+            DirtyDocumentSnapshotState::Dirty(dirty) => Some(dirty),
+            DirtyDocumentSnapshotState::DirtyWithoutText => return Ok(Vec::new()),
+        };
 
         self.engine
             .request(|respond_to| EngineCommand::Completion {
                 path,
                 position,
+                dirty,
                 respond_to,
             })
             .await
@@ -322,28 +343,18 @@ impl EngineService for Service {
         _: context::Context,
         path: PathBuf,
     ) -> EngineResult<Vec<ls_types::DocumentSymbol>> {
-        let freshness = self.engine.documents.lock().await.freshness(&path);
-        if freshness.dirty() {
-            // LSP has refresh requests for features like inlay hints, but not for document symbols.
-            // Returning an empty symbol tree while the document is dirty can leave VS Code's Outline
-            // empty after save, so document symbols intentionally use the last saved snapshot.
-            // TODO: This can show stale ranges while the dirty buffer shifts item spans. VSCode has
-            // an open issue to trigger outline refresh:
-            // https://github.com/microsoft/vscode/issues/108722
-            tracing::trace!(
-                path = %path.display(),
-                tracked = freshness.tracked(),
-                version = ?freshness.version(),
-                saved_len = ?freshness.saved_len(),
-                live_len = ?freshness.live_len(),
-                saved_hash = ?freshness.saved_hash(),
-                live_hash = ?freshness.live_hash(),
-                "document symbol request is using saved snapshot for dirty document"
-            );
-        }
+        let dirty = match self.engine.dirty_document_snapshot(&path).await {
+            DirtyDocumentSnapshotState::Clean => None,
+            DirtyDocumentSnapshotState::Dirty(dirty) => Some(dirty),
+            DirtyDocumentSnapshotState::DirtyWithoutText => None,
+        };
 
         self.engine
-            .request(|respond_to| EngineCommand::DocumentSymbol { path, respond_to })
+            .request(|respond_to| EngineCommand::DocumentSymbol {
+                path,
+                dirty,
+                respond_to,
+            })
             .await
             .map_err(EngineError::from)
     }
@@ -354,14 +365,17 @@ impl EngineService for Service {
         path: PathBuf,
         range: ls_types::Range,
     ) -> EngineResult<Vec<ls_types::InlayHint>> {
-        if self.engine.is_dirty(&path).await {
-            return Ok(Vec::new());
-        }
+        let dirty = match self.engine.dirty_document_snapshot(&path).await {
+            DirtyDocumentSnapshotState::Clean => None,
+            DirtyDocumentSnapshotState::Dirty(dirty) => Some(dirty),
+            DirtyDocumentSnapshotState::DirtyWithoutText => return Ok(Vec::new()),
+        };
 
         self.engine
             .request(|respond_to| EngineCommand::InlayHint {
                 path,
                 range,
+                dirty,
                 respond_to,
             })
             .await

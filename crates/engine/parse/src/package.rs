@@ -55,6 +55,15 @@ impl Package {
         self.files.reparse_file_from_disk(file_path)
     }
 
+    /// Reparses a package file from caller-provided text when it is already known to this package.
+    pub(crate) fn reparse_file_from_source(
+        &mut self,
+        file_path: &Path,
+        source: &str,
+    ) -> Option<FileId> {
+        self.files.reparse_file_from_source(file_path, source)
+    }
+
     /// Rehydrates syntax for a known file before an AST-consuming lowering pass.
     pub fn ensure_file_syntax(&mut self, file_id: FileId) -> anyhow::Result<()> {
         self.files.ensure_file_syntax(file_id)

@@ -8,8 +8,8 @@ pub use self::{
         BuildCheckpoint, BuildProcessMemory, BuildProfile, CacheProbeProfile, ProcessMemorySampler,
     },
     project::{
-        AnalysisChangeSummary, ChangedFile, FileContext, Project, ProjectBuild, ProjectBuilder,
-        ProjectSnapshot, ProjectStats, SavedFileChange, StartupCacheLoad,
+        AnalysisChangeSummary, ChangedFile, DirtyFileChange, FileContext, Project, ProjectBuild,
+        ProjectBuilder, ProjectSnapshot, ProjectStats, SavedFileChange, StartupCacheLoad,
     },
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
 };

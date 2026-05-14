@@ -5,7 +5,7 @@ use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
 use self::utils::{HostFixture, HostObservation};
-use crate::{PackageResidencyPolicy, Project};
+use crate::{DirtyFileChange, PackageResidencyPolicy, Project};
 
 #[test]
 fn timing_profile_reports_phase_checkpoints_without_memory_sampling() {
@@ -183,6 +183,93 @@ pub struct Account;
     assert_eq!(
         after_file_id, before_file_id,
         "known file reparses should keep the package-local FileId stable"
+    );
+}
+
+#[test]
+fn dirty_overlay_rebuilds_analysis_without_mutating_saved_project() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "dirty_overlay_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Saved;
+"#,
+    );
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should build");
+    let project = Project::builder(workspace)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .build()
+        .expect("fixture project should build")
+        .into_project();
+    let saved_stats = project.snapshot().stats();
+    assert_eq!(
+        saved_stats.def_map.target_count, 0,
+        "all-offloadable saved project should start without resident def maps",
+    );
+
+    let overlay = project
+        .dirty_overlay([DirtyFileChange::new(
+            fixture.path("src/lib.rs"),
+            "pub struct Dirty;\n",
+        )])
+        .expect("dirty overlay should build")
+        .expect("known dirty file should produce an overlay");
+    let dirty_stats = overlay.snapshot().stats();
+    assert!(
+        dirty_stats.def_map.target_count > 0,
+        "dirty overlay should keep rebuilt def maps resident",
+    );
+    assert!(
+        dirty_stats.semantic_ir.target_count > 0,
+        "dirty overlay should keep rebuilt semantic IR resident",
+    );
+    assert!(
+        dirty_stats.body_ir.target_count > 0,
+        "dirty overlay should keep rebuilt body IR resident",
+    );
+
+    let saved_analysis = project
+        .snapshot()
+        .full_analysis()
+        .expect("saved analysis should materialize");
+    let dirty_analysis = overlay
+        .snapshot()
+        .full_analysis()
+        .expect("dirty analysis should materialize");
+
+    assert!(
+        dirty_analysis
+            .workspace_symbols("Dirty")
+            .expect("dirty workspace symbol query should run")
+            .iter()
+            .any(|symbol| symbol.name == "Dirty"),
+        "dirty overlay should expose symbols from the live buffer"
+    );
+    assert!(
+        saved_analysis
+            .workspace_symbols("Dirty")
+            .expect("saved workspace symbol query should run")
+            .is_empty(),
+        "dirty overlay must not mutate saved project analysis"
+    );
+    assert!(
+        saved_analysis
+            .workspace_symbols("Saved")
+            .expect("saved workspace symbol query should run")
+            .iter()
+            .any(|symbol| symbol.name == "Saved"),
+        "saved project should retain its original source snapshot"
+    );
+    assert_eq!(
+        project.snapshot().stats().def_map.target_count,
+        0,
+        "dirty overlay must not materialize the saved project under all-offloadable policy",
     );
 }
 
