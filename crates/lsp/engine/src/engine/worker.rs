@@ -372,7 +372,7 @@ impl EngineWorker {
         );
         let project = project_build.into_project();
         let snapshot = project.snapshot();
-        Self::post_project_build(self.memory_control.as_ref(), snapshot, "initial index");
+        Self::log_project_snapshot(snapshot, "initial index");
 
         self.project = Some(project);
         self.dirty_overlay = None;
@@ -387,7 +387,6 @@ impl EngineWorker {
 
     fn reindex_workspace(&mut self) -> anyhow::Result<()> {
         let started = Instant::now();
-        let memory_control = Arc::clone(&self.memory_control);
         let project = self
             .project
             .as_mut()
@@ -398,11 +397,7 @@ impl EngineWorker {
             .reindex_workspace()
             .context("while attempting to manually reindex workspace")?;
         self.dirty_overlay = None;
-        Self::post_project_build(
-            memory_control.as_ref(),
-            project.snapshot(),
-            "manual reindex",
-        );
+        Self::log_project_snapshot(project.snapshot(), "manual reindex");
         tracing::info!(
             elapsed_ms = started.elapsed().as_millis(),
             "manual workspace reindex finished"
@@ -437,7 +432,10 @@ impl EngineWorker {
             elapsed_ms = started.elapsed().as_millis(),
             "saved file reindex finished"
         );
-        Self::post_project_build(memory_control.as_ref(), project.snapshot(), "after save");
+        // Saved-file reindexing is the point where temporary analysis memory can legitimately
+        // spike. Purging here keeps idle memory low without making every read-only query cold.
+        MemoryReporter::purge_and_report(memory_control.as_ref(), "after save");
+        Self::log_project_snapshot(project.snapshot(), "after save");
 
         Ok(())
     }
@@ -987,6 +985,11 @@ impl EngineWorker {
                 .project
                 .as_ref()
                 .context("LSP engine is not initialized")?;
+            let memory_before = MemoryReporter::log_checkpoint(
+                self.memory_control.as_ref(),
+                "dirty_overlay",
+                "before_rebuild",
+            );
             let overlay = base
                 .dirty_overlay([DirtyFileChange::new(dirty.path(), dirty.text().to_string())])
                 .with_context(|| {
@@ -995,6 +998,16 @@ impl EngineWorker {
                         dirty.path().display()
                     )
                 })?;
+            MemoryReporter::log_checkpoint_delta(
+                self.memory_control.as_ref(),
+                "dirty_overlay",
+                "after_rebuild",
+                memory_before,
+            );
+            // Dirty overlay rebuilds can temporarily materialize much more allocator memory than
+            // the retained overlay needs. Purge at this rebuild boundary without making every
+            // read-only query pay the same cost.
+            MemoryReporter::purge_and_report(self.memory_control.as_ref(), "after dirty overlay");
             let changed_known_file = overlay.is_some();
             let project = overlay.unwrap_or_else(|| base.clone());
             tracing::debug!(
@@ -1051,19 +1064,27 @@ impl EngineWorker {
         }
 
         // From here on, clean and current-dirty requests share the same execution path. Keeping the
-        // stale check in the context layer lets timing, memory reporting, and cache recovery remain
-        // uniform for every analysis query.
+        // stale check in the context layer lets timing and cache recovery remain uniform for every
+        // analysis query.
         let label = context.label;
         let queue_elapsed = context.queue_elapsed;
-        let memory_control = Arc::clone(&self.memory_control);
         tracing::debug!(
             label,
             queued_ms = queue_elapsed.as_millis(),
             "analysis query dequeued"
         );
         let started = Instant::now();
-        let result = MemoryReporter::report_op(memory_control.as_ref(), label, || query(self));
+        let memory_control = Arc::clone(&self.memory_control);
+        let memory_before =
+            MemoryReporter::log_checkpoint(memory_control.as_ref(), label, "query_before");
+        let result = query(self);
         let query_elapsed = started.elapsed();
+        MemoryReporter::log_checkpoint_delta(
+            memory_control.as_ref(),
+            label,
+            "query_after",
+            memory_before,
+        );
         let should_recover = result
             .as_ref()
             .err()
@@ -1103,11 +1124,7 @@ impl EngineWorker {
             Ok(()) => {
                 self.dirty_overlay = None;
                 let snapshot = project.snapshot();
-                Self::post_project_build(
-                    self.memory_control.as_ref(),
-                    snapshot,
-                    "after package cache recovery",
-                );
+                Self::log_project_snapshot(snapshot, "after package cache recovery");
                 tracing::info!(
                     label,
                     elapsed_ms = started.elapsed().as_millis(),
@@ -1149,15 +1166,8 @@ impl EngineWorker {
         );
     }
 
-    /// Hook for activities to be run after the project (re-)build.
-    fn post_project_build(
-        memory_control: &dyn MemoryControl,
-        snapshot: ProjectSnapshot<'_>,
-        label: &'static str,
-    ) {
-        // Indexing can temporarily materialize most of the project. Once the snapshot is ready for
-        // editor queries, purge allocator caches and report memory separately from project shape.
-        MemoryReporter::report_current(memory_control, label);
+    /// Logs the retained project shape after the analysis project changes.
+    fn log_project_snapshot(snapshot: ProjectSnapshot<'_>, label: &'static str) {
         ProjectStats::capture(snapshot).log_info(label);
         log_retained_memory(snapshot, label);
     }

@@ -1,58 +1,56 @@
 //! Allocator memory reporting helpers.
 //!
 //! The core memory module defines what the executable can expose. This module owns the logging
-//! shape: scoped reporters, trace/info records, and human-readable byte formatting.
-
-use std::time::{Duration, Instant};
+//! shape: point-in-time records and human-readable byte formatting.
 
 use super::{MemoryControl, MemoryDelta, MemoryPurge, MemoryStats};
 
-/// Reports allocator memory for scoped operations and point-in-time checkpoints.
+/// Reports allocator memory at explicit retention checkpoints.
 pub(crate) struct MemoryReporter;
 
 impl MemoryReporter {
-    pub(crate) fn report_op<T>(
+    pub(crate) fn log_checkpoint(
         memory_control: &dyn MemoryControl,
         label: &'static str,
-        op: impl FnOnce() -> T,
-    ) -> T {
-        let trace_report =
-            tracing::enabled!(target: "rg_lsp_engine::memory", tracing::Level::TRACE);
-        let purge_enabled = memory_control.allocator_purge_enabled();
-        if !trace_report && !purge_enabled {
-            return op();
-        }
-
-        let before = if trace_report {
-            Some(MemoryStats::capture(memory_control))
-        } else {
-            None
-        };
-        let started = Instant::now();
-        let result = op();
-        let elapsed = started.elapsed();
-        let after_operation = MemoryStats::capture(memory_control);
-        let purge = if purge_enabled {
-            MemoryPurge::try_purge(memory_control, after_operation)
-        } else {
-            None
-        };
-
-        if let Some(before) = before {
-            Self::trace_operation(
-                memory_control,
-                label,
-                elapsed,
-                before,
-                after_operation,
-                purge,
-            );
-        }
-
-        result
+        phase: &'static str,
+    ) -> MemoryStats {
+        let stats = MemoryStats::capture(memory_control);
+        tracing::debug!(
+            target: "rg_lsp_engine::memory",
+            label,
+            phase,
+            allocator = memory_control.allocator_name(),
+            allocator_purge_enabled = memory_control.allocator_purge_enabled(),
+            allocator_purged = false,
+            stats = %stats,
+            "temporary allocation checkpoint"
+        );
+        stats
     }
 
-    pub(crate) fn report_current(memory_control: &dyn MemoryControl, label: &'static str) {
+    pub(crate) fn log_checkpoint_delta(
+        memory_control: &dyn MemoryControl,
+        label: &'static str,
+        phase: &'static str,
+        before: MemoryStats,
+    ) -> MemoryStats {
+        let after = MemoryStats::capture(memory_control);
+        tracing::debug!(
+            target: "rg_lsp_engine::memory",
+            label,
+            phase,
+            allocator = memory_control.allocator_name(),
+            allocator_purge_enabled = memory_control.allocator_purge_enabled(),
+            allocator_purged = false,
+            before = %before,
+            after = %after,
+            delta = %MemoryDelta::between(before, after),
+            "temporary allocation checkpoint delta"
+        );
+        after
+    }
+
+    pub(crate) fn purge_and_report(memory_control: &dyn MemoryControl, label: &'static str) {
         let before_purge = MemoryStats::capture(memory_control);
         let purge = if memory_control.allocator_purge_enabled() {
             MemoryPurge::try_purge(memory_control, before_purge)
@@ -78,46 +76,6 @@ impl MemoryReporter {
                 label,
                 purge = %purge,
                 "purge stats"
-            );
-        }
-    }
-
-    fn trace_operation(
-        memory_control: &dyn MemoryControl,
-        label: &'static str,
-        elapsed: Duration,
-        before: MemoryStats,
-        after_operation: MemoryStats,
-        purge: Option<MemoryPurge>,
-    ) {
-        tracing::trace!(
-            target: "rg_lsp_engine::memory",
-            label,
-            elapsed_ms = elapsed.as_millis(),
-            allocator = memory_control.allocator_name(),
-            allocator_purge_enabled = memory_control.allocator_purge_enabled(),
-            allocator_purged = purge.is_some(),
-            "memory report"
-        );
-        tracing::trace!(
-            target: "rg_lsp_engine::memory",
-            label,
-            before = %before,
-            "memory before"
-        );
-        tracing::trace!(
-            target: "rg_lsp_engine::memory",
-            label,
-            after = %after_operation,
-            delta = %MemoryDelta::between(before, after_operation),
-            "memory after operation"
-        );
-        if let Some(purge) = purge {
-            tracing::trace!(
-                target: "rg_lsp_engine::memory",
-                label,
-                purge = %purge,
-                "memory purge"
             );
         }
     }
