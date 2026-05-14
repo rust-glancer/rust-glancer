@@ -17,8 +17,8 @@ rg_memsize::impl_memory_size_leaf!(FileId, TargetId);
 rg_memsize::impl_memory_size_children! {
     ParseDb => workspace_root, packages;
     PackageFileRef => package, file;
-    Package => id, package_name, is_workspace_member, origin, files, targets;
-    FileDb => parsed_files, file_ids_by_path;
+    Package => id, package_name, edition, is_workspace_member, origin, files, targets;
+    FileDb => edition, parsed_files, file_ids_by_path;
     ParsedFileData => path, line_index, syntax;
     ParsedFileSnapshot => path, line_index;
     PackageParseSnapshot => files, target_root_files;

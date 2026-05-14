@@ -75,6 +75,33 @@ fn main() {
 }
 
 #[test]
+fn uses_manifest_edition_when_parsing_package_sources() {
+    utils::check_project_item_tree(
+        r#"
+//- /Cargo.toml
+[package]
+name = "edition_fixture"
+version = "0.1.0"
+edition = "2021"
+
+//- /src/lib.rs
+// `gen` is allowed in Rust 2021, but reserved in Rust 2024.
+pub fn gen() {}
+"#,
+        expect![[r#"
+            package edition_fixture
+
+            targets
+            - edition_fixture [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - pub fn gen
+        "#]],
+    );
+}
+
+#[test]
 fn lowers_distinct_out_of_line_modules_for_lib_and_bin_roots() {
     utils::check_project_item_tree(
         r#"
