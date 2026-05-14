@@ -8,7 +8,7 @@ use crate::methods::{MethodContext, internal_error, uri_to_path};
 #[tracing::instrument(
     level = "trace", skip_all,
     fields(
-        position = ?params.text_document_position_params.position
+        rg.position = ?params.text_document_position_params.position
     )
 )]
 pub(crate) async fn implementation(

@@ -11,7 +11,10 @@ import { ExtensionController } from "./extension-controller";
 import { registerHoverActionCommands } from "./features/hover-actions";
 import { ServerOutputChannel } from "./logging/server-output-channel";
 import { StatusView } from "./status/status-view";
-import { RecordingLogOutputChannel } from "./test-support/recording-output-channel";
+import {
+  RecordingLogOutputChannel,
+  RecordingOutputChannel,
+} from "./test-support/recording-output-channel";
 
 let controller: ExtensionController | undefined;
 
@@ -21,17 +24,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const rawExtensionLog = vscode.window.createOutputChannel("Rust Glancer Extension", {
     log: true,
   });
-  const rawServerLog = vscode.window.createOutputChannel("Rust Glancer Language Server", {
-    log: true,
-  });
+  const rawServerLog = vscode.window.createOutputChannel("Rust Glancer Language Server", "log");
   const recordingExtensionLog =
     process.env[EXTENSION_TEST_ENV] === "1"
       ? new RecordingLogOutputChannel(rawExtensionLog)
       : undefined;
   const recordingServerLog =
-    process.env[EXTENSION_TEST_ENV] === "1"
-      ? new RecordingLogOutputChannel(rawServerLog)
-      : undefined;
+    process.env[EXTENSION_TEST_ENV] === "1" ? new RecordingOutputChannel(rawServerLog) : undefined;
   const extensionLog = recordingExtensionLog ?? rawExtensionLog;
   const serverOutput = new ServerOutputChannel(recordingServerLog ?? rawServerLog);
   const status = new StatusView();

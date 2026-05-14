@@ -4,7 +4,7 @@ use crate::methods::{MethodContext, uri_to_path};
 
 #[tracing::instrument(
     level = "trace", skip_all,
-    fields(version = params.text_document.version)
+    fields(rg.version = params.text_document.version)
 )]
 pub(crate) async fn did_open(ctx: MethodContext, params: DidOpenTextDocumentParams) {
     let Some(path) = uri_to_path(&params.text_document.uri) else {

@@ -4,7 +4,7 @@ use crate::{methods::MethodContext, methods::internal_error};
 
 #[tracing::instrument(
     level = "trace", skip_all,
-    fields(query = %params.query)
+    fields(rg.query = %params.query)
 )]
 pub(crate) async fn symbol(
     ctx: MethodContext,

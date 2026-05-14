@@ -4,7 +4,7 @@ use crate::methods::{MethodContext, internal_error, uri_to_path};
 
 #[tracing::instrument(
     level = "trace", skip_all,
-    fields(range = ?params.range)
+    fields(rg.range = ?params.range)
 )]
 pub(crate) async fn inlay_hint(
     ctx: MethodContext,

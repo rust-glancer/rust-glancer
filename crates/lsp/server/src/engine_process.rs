@@ -1,4 +1,4 @@
-use std::{fmt, net::SocketAddr, process::Stdio, sync::Arc, time::Duration};
+use std::{fmt, io::Write as _, net::SocketAddr, process::Stdio, sync::Arc, time::Duration};
 
 use anyhow::Context as _;
 use futures::prelude::*;
@@ -9,7 +9,11 @@ use tarpc::{
     server::{BaseChannel, Channel as _},
     tokio_serde::formats::Json,
 };
-use tokio::{process::Child, sync::Mutex};
+use tokio::{
+    io::{AsyncBufReadExt as _, BufReader},
+    process::Child,
+    sync::Mutex,
+};
 use tower_lsp_server::Client as LspClient;
 
 use crate::{engine_client::EngineClient, notifications::NotificationsPublisher};
@@ -57,7 +61,8 @@ impl EngineProcess {
         };
 
         // Spawn the engine subprocess.
-        let child = Self::spawn_worker(engine_addr, notifications_addr, &engine_id)?;
+        let mut child = Self::spawn_worker(engine_addr, notifications_addr, &engine_id)?;
+        Self::spawn_stderr_forwarder(&mut child, &engine_id);
 
         // Spawn the notifications publisher.
         {
@@ -143,13 +148,44 @@ impl EngineProcess {
             .args(args)
             .env(ENGINE_ID_ENV, engine_id)
             // The parent LSP server owns stdout for JSON-RPC. The engine may log to stderr, but it
-            // must never inherit stdout and accidentally corrupt the LSP stream.
+            // must never inherit stdout and accidentally corrupt the LSP stream. Stderr is piped
+            // through the parent so server and engine JSON log lines are serialized in one process.
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .context("while attempting to spawn rust-glancer engine process")
+    }
+
+    fn spawn_stderr_forwarder(child: &mut Child, engine_id: &str) {
+        let Some(stderr) = child.stderr.take() else {
+            tracing::warn!(engine = engine_id, "engine stderr was not piped");
+            return;
+        };
+        let engine_id = engine_id.to_string();
+
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = stderr.write_all(line.as_bytes());
+                        let _ = stderr.write_all(b"\n");
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        tracing::warn!(
+                            engine = %engine_id,
+                            error = %error,
+                            "failed to read engine stderr"
+                        );
+                        break;
+                    }
+                }
+            }
+        });
     }
 }
 

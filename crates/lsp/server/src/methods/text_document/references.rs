@@ -5,8 +5,8 @@ use crate::methods::{MethodContext, internal_error, uri_to_path};
 #[tracing::instrument(
     level = "trace", skip_all,
     fields(
-        position = ?params.text_document_position.position,
-        include_declaration = params.context.include_declaration
+        rg.position = ?params.text_document_position.position,
+        rg.include_declaration = params.context.include_declaration
     )
 )]
 pub(crate) async fn references(

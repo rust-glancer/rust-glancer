@@ -19,6 +19,18 @@ export interface ServerLogRecord {
   readonly fields: Record<string, unknown>;
 }
 
+export function formatServerLogLine(record: ServerLogRecord, date = new Date()): string {
+  return `${formatTimestamp(date)} [${record.level}] ${formatServerLogRecord(record)}`;
+}
+
+export function formatRawServerLogLine(
+  level: ServerLogLevel,
+  message: string,
+  date = new Date(),
+): string {
+  return `${formatTimestamp(date)} [${level}] ${message}`;
+}
+
 export type ParsedServerLogLine =
   | {
       readonly kind: "structured";
@@ -66,11 +78,14 @@ export function formatServerLogRecord(record: ServerLogRecord): string {
     record.component === "engine" && record.engine !== undefined
       ? `${record.component}:${record.engine}`
       : record.component;
+  const prefixParts =
+    record.target !== undefined && record.target.length > 0 ? [record.target, source] : [source];
+  const prefix = prefixParts.map((part) => `[${part}]`).join(" ");
   const fields = formatFields(record.fields);
 
   return fields.length === 0
-    ? `[${source}] ${record.message}`
-    : `[${source}] ${record.message} ${fields}`;
+    ? `${prefix} ${record.message}`
+    : `${prefix} ${record.message} ${fields}`;
 }
 
 function parseJsonObject(line: string): Record<string, unknown> | undefined {
@@ -136,4 +151,20 @@ function formatFieldValue(value: unknown): string {
 
 function quoteIfNeeded(value: string): string {
   return /^[A-Za-z0-9_./:-]+$/.test(value) ? value : JSON.stringify(value);
+}
+
+function formatTimestamp(date: Date): string {
+  const year = date.getFullYear();
+  const month = pad(date.getMonth() + 1, 2);
+  const day = pad(date.getDate(), 2);
+  const hours = pad(date.getHours(), 2);
+  const minutes = pad(date.getMinutes(), 2);
+  const seconds = pad(date.getSeconds(), 2);
+  const milliseconds = pad(date.getMilliseconds(), 3);
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${milliseconds}`;
+}
+
+function pad(value: number, length: number): string {
+  return String(value).padStart(length, "0");
 }
