@@ -8,6 +8,7 @@ use std::{
         mpsc::{self, Sender},
     },
     thread,
+    time::Instant,
 };
 
 use anyhow::Context as _;
@@ -28,9 +29,25 @@ use crate::{
 /// This handle is the async side used by the RPC-facing service.
 #[derive(Clone, Debug)]
 pub(crate) struct EngineHandle {
-    sender: Sender<EngineCommand>,
+    sender: Sender<QueuedEngineCommand>,
     pub(crate) documents: Arc<Mutex<DocumentStore>>,
     notifications: ServiceNotificationsSink,
+}
+
+/// Separates time spent waiting behind older commands from time spent executing this command.
+#[derive(Debug)]
+pub(crate) struct QueuedEngineCommand {
+    pub(crate) command: EngineCommand,
+    pub(crate) enqueued_at: Instant,
+}
+
+impl QueuedEngineCommand {
+    fn new(command: EngineCommand) -> Self {
+        Self {
+            command,
+            enqueued_at: Instant::now(),
+        }
+    }
 }
 
 impl EngineHandle {
@@ -60,7 +77,7 @@ impl EngineHandle {
     {
         let (respond_to, response) = oneshot::channel();
         self.sender
-            .send(build(respond_to))
+            .send(QueuedEngineCommand::new(build(respond_to)))
             .context("while attempting to send LSP engine command")?;
 
         response

@@ -1,7 +1,7 @@
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, mpsc::Receiver},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use anyhow::Context as _;
@@ -16,7 +16,10 @@ use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
 
 use crate::{
     documents::{DirtyDocumentSnapshot, TextFingerprint},
-    engine::command::{EngineCommand, EngineResponse},
+    engine::{
+        QueuedEngineCommand,
+        command::{EngineCommand, EngineResponse},
+    },
     memory::{MemoryControl, MemoryReporter},
     project_stats::{ProjectStats, log_retained_memory},
     proto::{completion, hover, inlay_hint, navigation, position, references, symbols},
@@ -61,10 +64,12 @@ impl EngineWorker {
         }
     }
 
-    pub(super) fn run(mut self, receiver: Receiver<EngineCommand>) {
+    pub(super) fn run(mut self, receiver: Receiver<QueuedEngineCommand>) {
         tracing::debug!("LSP engine worker started");
 
-        while let Ok(command) = receiver.recv() {
+        while let Ok(queued) = receiver.recv() {
+            let queue_elapsed = queued.enqueued_at.elapsed();
+            let command = queued.command;
             match command {
                 EngineCommand::Initialize {
                     root,
@@ -99,7 +104,7 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: goto_definition"
                     );
-                    self.respond_to_query("goto_definition", respond_to, |worker| {
+                    self.respond_to_query("goto_definition", queue_elapsed, respond_to, |worker| {
                         worker.goto_definition(path, position, dirty)
                     });
                 }
@@ -115,9 +120,12 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: goto_type_definition"
                     );
-                    self.respond_to_query("goto_type_definition", respond_to, |worker| {
-                        worker.goto_type_definition(path, position, dirty)
-                    });
+                    self.respond_to_query(
+                        "goto_type_definition",
+                        queue_elapsed,
+                        respond_to,
+                        |worker| worker.goto_type_definition(path, position, dirty),
+                    );
                 }
                 EngineCommand::GotoImplementation {
                     path,
@@ -131,9 +139,12 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: goto_implementation"
                     );
-                    self.respond_to_query("goto_implementation", respond_to, |worker| {
-                        worker.goto_implementation(path, position, dirty)
-                    });
+                    self.respond_to_query(
+                        "goto_implementation",
+                        queue_elapsed,
+                        respond_to,
+                        |worker| worker.goto_implementation(path, position, dirty),
+                    );
                 }
                 EngineCommand::References {
                     path,
@@ -149,7 +160,7 @@ impl EngineWorker {
                         include_declaration,
                         "engine command started: references"
                     );
-                    self.respond_to_query("references", respond_to, |worker| {
+                    self.respond_to_query("references", queue_elapsed, respond_to, |worker| {
                         worker.references(path, position, include_declaration, dirty)
                     });
                 }
@@ -165,9 +176,12 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: document_highlight"
                     );
-                    self.respond_to_query("document_highlight", respond_to, |worker| {
-                        worker.document_highlight(path, position, dirty)
-                    });
+                    self.respond_to_query(
+                        "document_highlight",
+                        queue_elapsed,
+                        respond_to,
+                        |worker| worker.document_highlight(path, position, dirty),
+                    );
                 }
                 EngineCommand::Hover {
                     path,
@@ -181,7 +195,7 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: hover"
                     );
-                    self.respond_to_query("hover", respond_to, |worker| {
+                    self.respond_to_query("hover", queue_elapsed, respond_to, |worker| {
                         worker.hover(path, position, dirty)
                     });
                 }
@@ -197,7 +211,7 @@ impl EngineWorker {
                         character = position.character,
                         "engine command started: completion"
                     );
-                    self.respond_to_query("completion", respond_to, |worker| {
+                    self.respond_to_query("completion", queue_elapsed, respond_to, |worker| {
                         worker.completion(path, position, dirty)
                     });
                 }
@@ -210,7 +224,7 @@ impl EngineWorker {
                         path = %path.display(),
                         "engine command started: document_symbol"
                     );
-                    self.respond_to_query("document_symbol", respond_to, |worker| {
+                    self.respond_to_query("document_symbol", queue_elapsed, respond_to, |worker| {
                         worker.document_symbol(path, dirty)
                     });
                 }
@@ -228,15 +242,18 @@ impl EngineWorker {
                         end_character = range.end.character,
                         "engine command started: inlay_hint"
                     );
-                    self.respond_to_query("inlay_hint", respond_to, |worker| {
+                    self.respond_to_query("inlay_hint", queue_elapsed, respond_to, |worker| {
                         worker.inlay_hint(path, range, dirty)
                     });
                 }
                 EngineCommand::WorkspaceSymbol { query, respond_to } => {
                     tracing::trace!(query = %query, "engine command started: workspace_symbol");
-                    self.respond_to_query("workspace_symbol", respond_to, |worker| {
-                        worker.workspace_symbol(&query)
-                    });
+                    self.respond_to_query(
+                        "workspace_symbol",
+                        queue_elapsed,
+                        respond_to,
+                        |worker| worker.workspace_symbol(&query),
+                    );
                 }
                 EngineCommand::ReindexWorkspace { respond_to } => {
                     tracing::trace!("engine command started: reindex_workspace");
@@ -927,20 +944,40 @@ impl EngineWorker {
         };
 
         if should_rebuild {
+            let started = Instant::now();
             let base = self
                 .project
                 .as_ref()
                 .context("LSP engine is not initialized")?;
-            let project = base
+            let overlay = base
                 .dirty_overlay([DirtyFileChange::new(dirty.path(), dirty.text().to_string())])
                 .with_context(|| {
                     format!(
                         "while attempting to build dirty analysis overlay for {}",
                         dirty.path().display()
                     )
-                })?
-                .unwrap_or_else(|| base.clone());
+                })?;
+            let changed_known_file = overlay.is_some();
+            let project = overlay.unwrap_or_else(|| base.clone());
+            tracing::debug!(
+                path = %dirty.path().display(),
+                version = ?dirty.version(),
+                text_len = dirty.text().len(),
+                dirty_overlay_cache_hit = false,
+                dirty_overlay_changed_known_file = changed_known_file,
+                dirty_overlay_build_ms = started.elapsed().as_millis(),
+                "dirty analysis overlay rebuilt"
+            );
             self.dirty_overlay = Some(CachedDirtyOverlay { key, project });
+        } else {
+            tracing::debug!(
+                path = %dirty.path().display(),
+                version = ?dirty.version(),
+                text_len = dirty.text().len(),
+                dirty_overlay_cache_hit = true,
+                dirty_overlay_build_ms = 0_u128,
+                "dirty analysis overlay cache hit"
+            );
         }
 
         Ok(&self
@@ -954,17 +991,33 @@ impl EngineWorker {
     fn respond_to_query<T>(
         &mut self,
         label: &'static str,
+        queue_elapsed: Duration,
         respond_to: EngineResponse<T>,
         query: impl FnOnce(&mut Self) -> anyhow::Result<T>,
     ) where
         T: Send + 'static,
     {
         let memory_control = Arc::clone(&self.memory_control);
+        tracing::debug!(
+            label,
+            queued_ms = queue_elapsed.as_millis(),
+            "analysis query dequeued"
+        );
+        let started = Instant::now();
         let result = MemoryReporter::report_op(memory_control.as_ref(), label, || query(self));
+        let query_elapsed = started.elapsed();
         let should_recover = result
             .as_ref()
             .err()
             .is_some_and(Project::is_recoverable_cache_load_failure);
+        tracing::debug!(
+            label,
+            queued_ms = queue_elapsed.as_millis(),
+            query_elapsed_ms = query_elapsed.as_millis(),
+            result_ok = result.is_ok(),
+            recoverable_cache_failure = should_recover,
+            "analysis query finished"
+        );
 
         let _ = respond_to.send(result);
 
