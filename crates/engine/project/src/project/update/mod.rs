@@ -6,6 +6,7 @@ mod workspace;
 mod workspace_graph;
 
 use anyhow::Context as _;
+use rg_body_ir::BodyIrFile;
 use rg_def_map::PackageSlot;
 
 use super::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, state::ProjectState};
@@ -39,8 +40,9 @@ pub(super) fn apply_changes(
 pub(super) fn rebuild_dirty_overlay_packages(
     state: &mut ProjectState,
     packages: &[PackageSlot],
+    body_files: &[BodyIrFile],
 ) -> anyhow::Result<()> {
-    package::rebuild_dirty_overlay_packages(state, packages)
+    package::rebuild_dirty_overlay_packages(state, packages, body_files)
 }
 
 pub(super) fn affected_packages(

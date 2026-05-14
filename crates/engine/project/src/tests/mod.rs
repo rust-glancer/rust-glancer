@@ -5,7 +5,7 @@ use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
 use self::utils::{HostFixture, HostObservation};
-use crate::{DirtyFileChange, PackageResidencyPolicy, Project};
+use crate::{PackageResidencyPolicy, Project};
 
 #[test]
 fn timing_profile_reports_phase_checkpoints_without_memory_sampling() {
@@ -188,7 +188,7 @@ pub struct Account;
 
 #[test]
 fn dirty_overlay_rebuilds_analysis_without_mutating_saved_project() {
-    let fixture = fixture_crate(
+    let fixture = HostFixture::build_with_package_residency_policy(
         r#"
 //- /Cargo.toml
 [package]
@@ -197,80 +197,113 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
+mod other;
+
 pub struct Saved;
+
+pub fn saved_body(value: Saved) {
+    let _ = value;
+}
+
+//- /src/other.rs
+pub fn untouched_body() {}
 "#,
+        PackageResidencyPolicy::AllOffloadable,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should build");
-    let project = Project::builder(workspace)
-        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
-        .build()
-        .expect("fixture project should build")
-        .into_project();
-    let saved_stats = project.snapshot().stats();
-    assert_eq!(
-        saved_stats.def_map.target_count, 0,
-        "all-offloadable saved project should start without resident def maps",
-    );
+    let dirty_text = r#"
+mod other;
 
-    let overlay = project
-        .dirty_overlay([DirtyFileChange::new(
-            fixture.path("src/lib.rs"),
-            "pub struct Dirty;\n",
-        )])
-        .expect("dirty overlay should build")
-        .expect("known dirty file should produce an overlay");
-    let dirty_stats = overlay.snapshot().stats();
-    assert!(
-        dirty_stats.def_map.target_count > 0,
-        "dirty overlay should keep rebuilt def maps resident",
-    );
-    assert!(
-        dirty_stats.semantic_ir.target_count > 0,
-        "dirty overlay should keep rebuilt semantic IR resident",
-    );
-    assert!(
-        dirty_stats.body_ir.target_count > 0,
-        "dirty overlay should keep rebuilt body IR resident",
-    );
+pub struct Dirty {
+    pub field: u8,
+}
 
-    let saved_analysis = project
-        .snapshot()
-        .full_analysis()
-        .expect("saved analysis should materialize");
-    let dirty_analysis = overlay
-        .snapshot()
-        .full_analysis()
-        .expect("dirty analysis should materialize");
+pub fn dirty_body(value: Dirty) {
+    value.;
+}
+"#;
+    let completion_offset = dirty_text
+        .find("value.")
+        .map(|offset| offset + "value.".len())
+        .expect("dirty completion fixture should include a dot receiver")
+        .try_into()
+        .expect("dirty completion offset should fit into u32");
 
-    assert!(
-        dirty_analysis
-            .workspace_symbols("Dirty")
-            .expect("dirty workspace symbol query should run")
-            .iter()
-            .any(|symbol| symbol.name == "Dirty"),
-        "dirty overlay should expose symbols from the live buffer"
+    let saved_before = fixture.render(&[
+        HostObservation::resident_stats("saved before dirty overlay"),
+        HostObservation::workspace_symbols("Saved"),
+        HostObservation::workspace_symbols("Dirty"),
+    ]);
+    let overlay = fixture.dirty_overlay("src/lib.rs", dirty_text);
+    let dirty_overlay = fixture.render_project(
+        &overlay,
+        &[
+            HostObservation::resident_stats("dirty overlay"),
+            HostObservation::body_ir_stats("dirty overlay"),
+            HostObservation::workspace_symbols("Dirty"),
+            HostObservation::workspace_symbols("Saved"),
+            HostObservation::completions_at("dirty receiver", "src/lib.rs", completion_offset),
+        ],
     );
-    assert!(
-        saved_analysis
-            .workspace_symbols("Dirty")
-            .expect("saved workspace symbol query should run")
-            .is_empty(),
-        "dirty overlay must not mutate saved project analysis"
+    let saved_after = fixture.render(&[
+        HostObservation::resident_stats("saved after dirty overlay"),
+        HostObservation::workspace_symbols("Saved"),
+        HostObservation::workspace_symbols("Dirty"),
+    ]);
+
+    let actual = format!(
+        "saved project before dirty overlay\n{}\n\ndirty overlay\n{}\n\nsaved project after dirty overlay\n{}\n",
+        saved_before.trim_end(),
+        dirty_overlay.trim_end(),
+        saved_after.trim_end(),
     );
-    assert!(
-        saved_analysis
-            .workspace_symbols("Saved")
-            .expect("saved workspace symbol query should run")
-            .iter()
-            .any(|symbol| symbol.name == "Saved"),
-        "saved project should retain its original source snapshot"
-    );
-    assert_eq!(
-        project.snapshot().stats().def_map.target_count,
-        0,
-        "dirty overlay must not materialize the saved project under all-offloadable policy",
-    );
+    expect![[r#"
+        saved project before dirty overlay
+        resident stats `saved before dirty overlay`
+        - def-map targets 0
+        - semantic targets 0
+        - body targets 0
+
+        workspace symbols `Saved`
+        - fn saved_body @ dirty_overlay_fixture[lib] src/lib.rs
+        - struct Saved @ dirty_overlay_fixture[lib] src/lib.rs
+
+        workspace symbols `Dirty`
+        - <none>
+
+        dirty overlay
+        resident stats `dirty overlay`
+        - def-map targets 1
+        - semantic targets 1
+        - body targets 1
+
+        body ir stats `dirty overlay`
+        - targets 1
+        - bodies 1
+
+        workspace symbols `Dirty`
+        - fn dirty_body @ dirty_overlay_fixture[lib] src/lib.rs
+        - struct Dirty @ dirty_overlay_fixture[lib] src/lib.rs
+
+        workspace symbols `Saved`
+        - <none>
+
+        completions at `dirty receiver`
+        - field field
+
+        saved project after dirty overlay
+        resident stats `saved after dirty overlay`
+        - def-map targets 0
+        - semantic targets 0
+        - body targets 0
+
+        workspace symbols `Saved`
+        - fn saved_body @ dirty_overlay_fixture[lib] src/lib.rs
+        - struct Saved @ dirty_overlay_fixture[lib] src/lib.rs
+
+        workspace symbols `Dirty`
+        - <none>
+    "#]]
+    .assert_eq(&actual);
 }
 
 #[test]

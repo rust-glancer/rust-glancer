@@ -2,6 +2,7 @@
 
 use anyhow::Context as _;
 
+use rg_body_ir::BodyIrFile;
 use rg_def_map::PackageSlot;
 use rg_item_tree::ItemTreeDb;
 
@@ -21,7 +22,8 @@ pub(super) fn rebuild_packages(
         return Ok(());
     }
 
-    match try_rebuild_packages(state, packages, RebuildResidency::RestoreSavedState) {
+    let plan = PackageRebuildPlan::saved(packages);
+    match try_rebuild_packages(state, plan) {
         Ok(()) => Ok(()),
         Err(error) if ProjectState::is_recoverable_cache_load_failure(&error) => {
             ResidencyApplication::failure_recovery(state).with_context(|| {
@@ -37,29 +39,38 @@ pub(super) fn rebuild_packages(
 pub(super) fn rebuild_dirty_overlay_packages(
     state: &mut ProjectState,
     packages: &[PackageSlot],
+    body_files: &[BodyIrFile],
 ) -> anyhow::Result<()> {
     if packages.is_empty() {
         return Ok(());
     }
 
-    try_rebuild_packages(state, packages, RebuildResidency::KeepResident)
+    try_rebuild_packages(
+        state,
+        PackageRebuildPlan::dirty_overlay(packages, body_files),
+    )
 }
 
 fn try_rebuild_packages(
     state: &mut ProjectState,
-    packages: &[PackageSlot],
-    residency: RebuildResidency,
+    plan: PackageRebuildPlan<'_>,
 ) -> anyhow::Result<()> {
     // Rebuilding one package can resolve names through its dependencies, but unrelated packages
     // should stay offloaded so save handling does not recreate full-project spikes.
-    let rebuild_subset =
-        subset::rebuild_packages_with_visible_dependencies(&state.workspace, packages);
+    let rebuild_subset = subset::rebuild_packages_with_visible_dependencies(
+        &state.workspace,
+        plan.semantic_packages,
+    );
     let loaders = PackageReadLoaders::new(state);
     let old_def_map_txn = state
         .def_map
         .read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
 
-    let package_indices = packages.iter().map(|package| package.0).collect::<Vec<_>>();
+    let package_indices = plan
+        .semantic_packages
+        .iter()
+        .map(|package| package.0)
+        .collect::<Vec<_>>();
     let item_tree = ItemTreeDb::build_packages_with_interners(
         &mut state.parse,
         &package_indices,
@@ -73,7 +84,7 @@ fn try_rebuild_packages(
             &state.workspace,
             &state.parse,
             &item_tree,
-            packages,
+            plan.semantic_packages,
             &mut state.names,
         )
         .build()
@@ -84,26 +95,29 @@ fn try_rebuild_packages(
         .package_rebuilder(
             &item_tree,
             &def_map,
-            packages,
+            plan.semantic_packages,
             loaders.def_map.clone(),
             loaders.semantic_ir.clone(),
             &rebuild_subset,
         )
         .build()
         .context("while attempting to rebuild affected semantic IR packages")?;
-    let body_ir = state
-        .body_ir
-        .package_rebuilder(
-            &state.parse,
-            &def_map,
-            &semantic_ir,
-            packages,
-            &mut state.names,
-            loaders.def_map,
-            loaders.semantic_ir,
-            &rebuild_subset,
-        )
-        .policy(state.body_ir_policy)
+    let body_packages = plan.body_packages();
+    let mut body_rebuilder = state.body_ir.package_rebuilder(
+        &state.parse,
+        &def_map,
+        &semantic_ir,
+        &body_packages,
+        &mut state.names,
+        loaders.def_map,
+        loaders.semantic_ir,
+        &rebuild_subset,
+    );
+    body_rebuilder = match plan.body_scope {
+        BodyRebuildScope::SavedPolicy => body_rebuilder.policy(state.body_ir_policy),
+        BodyRebuildScope::DirtyFiles(files) => body_rebuilder.selected_files(files.to_vec()),
+    };
+    let body_ir = body_rebuilder
         .build()
         .context("while attempting to rebuild affected body IR packages")?;
 
@@ -117,13 +131,55 @@ fn try_rebuild_packages(
     state.semantic_ir = semantic_ir;
     state.body_ir = body_ir;
     state.names.shrink_to_fit();
-    if matches!(residency, RebuildResidency::RestoreSavedState) {
-        ResidencyApplication::restore(state, packages)
+    if matches!(plan.residency, RebuildResidency::RestoreSavedState) {
+        ResidencyApplication::restore(state, plan.semantic_packages)
             .apply()
             .context("while attempting to apply package cache residency after package rebuild")?;
     }
 
     Ok(())
+}
+
+struct PackageRebuildPlan<'a> {
+    semantic_packages: &'a [PackageSlot],
+    body_scope: BodyRebuildScope<'a>,
+    residency: RebuildResidency,
+}
+
+impl<'a> PackageRebuildPlan<'a> {
+    fn saved(packages: &'a [PackageSlot]) -> Self {
+        Self {
+            semantic_packages: packages,
+            body_scope: BodyRebuildScope::SavedPolicy,
+            residency: RebuildResidency::RestoreSavedState,
+        }
+    }
+
+    fn dirty_overlay(semantic_packages: &'a [PackageSlot], body_files: &'a [BodyIrFile]) -> Self {
+        Self {
+            semantic_packages,
+            body_scope: BodyRebuildScope::DirtyFiles(body_files),
+            residency: RebuildResidency::KeepResident,
+        }
+    }
+
+    fn body_packages(&self) -> Vec<PackageSlot> {
+        match self.body_scope {
+            BodyRebuildScope::SavedPolicy => self.semantic_packages.to_vec(),
+            BodyRebuildScope::DirtyFiles(files) => {
+                let mut packages = files.iter().map(|file| file.package).collect::<Vec<_>>();
+                packages.sort_by_key(|package| package.0);
+                packages.dedup();
+                packages
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyRebuildScope<'a> {
+    SavedPolicy,
+    DirtyFiles(&'a [BodyIrFile]),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

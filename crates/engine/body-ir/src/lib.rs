@@ -4,6 +4,9 @@ mod ir;
 mod resolution;
 mod store;
 
+use rg_def_map::PackageSlot;
+use rg_parse::FileId;
+
 #[cfg(test)]
 mod tests;
 
@@ -21,6 +24,19 @@ pub use self::{
     },
     store::{BodyIrDb, BodyIrPackageBundle, BodyIrReadTxn},
 };
+
+/// One package-local source file whose function bodies should be lowered during a partial rebuild.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BodyIrFile {
+    pub package: PackageSlot,
+    pub file: FileId,
+}
+
+impl BodyIrFile {
+    pub fn new(package: PackageSlot, file: FileId) -> Self {
+        Self { package, file }
+    }
+}
 
 /// Package-set selector for eager body lowering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

@@ -7,14 +7,17 @@ use std::{
 };
 
 use expect_test::Expect;
-use rg_analysis::WorkspaceSymbol;
+use rg_analysis::{CompletionApplicability, CompletionItem, WorkspaceSymbol};
 use rg_def_map::{PackageSlot, TargetRef};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb};
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate_with_markers};
 
-use crate::{AnalysisChangeSummary, FileContext, PackageResidencyPolicy, Project, SavedFileChange};
+use crate::{
+    AnalysisChangeSummary, DirtyFileChange, FileContext, PackageResidencyPolicy, Project,
+    SavedFileChange,
+};
 
 pub(super) struct HostFixture {
     fixture: CrateFixture,
@@ -135,6 +138,13 @@ impl HostFixture {
         }
     }
 
+    pub(super) fn dirty_overlay(&self, relative_path: &str, text: &str) -> Project {
+        self.host
+            .dirty_overlay([DirtyFileChange::new(self.fixture.path(relative_path), text)])
+            .expect("fixture dirty overlay should build")
+            .expect("fixture dirty overlay should touch a known file")
+    }
+
     fn package_cache_artifact_path(&self, package_name: &str) -> PathBuf {
         let package = package_slot_by_name(self.host.snapshot().parse_db(), package_name);
         let header = self
@@ -150,8 +160,20 @@ impl HostFixture {
     }
 
     pub(super) fn check(&self, observations: &[HostObservation<'_>], expect: Expect) {
-        let actual = self.render_observations(observations);
+        let actual = self.render(observations);
         expect.assert_eq(&format!("{}\n", actual.trim_end()));
+    }
+
+    pub(super) fn render(&self, observations: &[HostObservation<'_>]) -> String {
+        self.render_project(&self.host, observations)
+    }
+
+    pub(super) fn render_project(
+        &self,
+        project: &Project,
+        observations: &[HostObservation<'_>],
+    ) -> String {
+        self.render_observations(project, observations)
     }
 
     pub(super) fn check_save(
@@ -183,7 +205,7 @@ impl HostFixture {
         observations: &[HostObservation<'_>],
     ) -> String {
         let mut dump = self.render_change_summary(summary);
-        let observations = self.render_observations(observations);
+        let observations = self.render_observations(&self.host, observations);
         if !observations.is_empty() {
             writeln!(&mut dump).expect("string writes should not fail");
             dump.push_str(&observations);
@@ -194,22 +216,27 @@ impl HostFixture {
     fn render_change_summary(&self, summary: &AnalysisChangeSummary) -> String {
         let mut dump = String::new();
 
-        self.render_changed_files(&summary.changed_files, &mut dump);
+        self.render_changed_files(&self.host, &summary.changed_files, &mut dump);
         writeln!(&mut dump).expect("string writes should not fail");
-        self.render_affected_packages(&summary.affected_packages, &mut dump);
+        self.render_affected_packages(&self.host, &summary.affected_packages, &mut dump);
         writeln!(&mut dump).expect("string writes should not fail");
-        self.render_changed_targets(&summary.changed_targets, &mut dump);
+        self.render_changed_targets(&self.host, &summary.changed_targets, &mut dump);
 
         dump
     }
 
-    fn render_changed_files(&self, changed_files: &[crate::ChangedFile], dump: &mut String) {
+    fn render_changed_files(
+        &self,
+        project: &Project,
+        changed_files: &[crate::ChangedFile],
+        dump: &mut String,
+    ) {
         writeln!(dump, "changed files").expect("string writes should not fail");
 
         let mut files = changed_files
             .iter()
             .map(|changed_file| {
-                let package = self.package(changed_file.package);
+                let package = self.package(project, changed_file.package);
                 let path = package
                     .file_path(changed_file.file)
                     .expect("changed file should have a parsed path");
@@ -228,12 +255,17 @@ impl HostFixture {
         }
     }
 
-    fn render_affected_packages(&self, packages: &[PackageSlot], dump: &mut String) {
+    fn render_affected_packages(
+        &self,
+        project: &Project,
+        packages: &[PackageSlot],
+        dump: &mut String,
+    ) {
         writeln!(dump, "affected packages").expect("string writes should not fail");
 
         let mut names = packages
             .iter()
-            .map(|slot| self.package(*slot).package_name().to_string())
+            .map(|slot| self.package(project, *slot).package_name().to_string())
             .collect::<Vec<_>>();
         names.sort();
 
@@ -247,12 +279,12 @@ impl HostFixture {
         }
     }
 
-    fn render_changed_targets(&self, targets: &[TargetRef], dump: &mut String) {
+    fn render_changed_targets(&self, project: &Project, targets: &[TargetRef], dump: &mut String) {
         writeln!(dump, "changed targets").expect("string writes should not fail");
 
         let mut labels = targets
             .iter()
-            .map(|target| self.render_target_ref(*target))
+            .map(|target| self.render_target_ref(project, *target))
             .collect::<Vec<_>>();
         labels.sort();
 
@@ -266,7 +298,11 @@ impl HostFixture {
         }
     }
 
-    fn render_observations(&self, observations: &[HostObservation<'_>]) -> String {
+    fn render_observations(
+        &self,
+        project: &Project,
+        observations: &[HostObservation<'_>],
+    ) -> String {
         let mut dump = String::new();
 
         for (idx, observation) in observations.iter().enumerate() {
@@ -275,23 +311,33 @@ impl HostFixture {
             }
             match observation {
                 HostObservation::WorkspaceSymbols { query } => {
-                    self.render_workspace_symbols(query, &mut dump);
+                    self.render_workspace_symbols(project, query, &mut dump);
                 }
                 HostObservation::FileContexts {
                     label,
                     relative_path,
                 } => {
-                    self.render_file_contexts(label, relative_path, &mut dump);
+                    self.render_file_contexts(project, label, relative_path, &mut dump);
                 }
                 HostObservation::TypeNamesAt {
                     label,
                     package,
                     marker,
                 } => {
-                    self.render_type_names_at(label, package, marker, &mut dump);
+                    self.render_type_names_at(project, label, package, marker, &mut dump);
                 }
                 HostObservation::ResidentStats { label } => {
-                    self.render_resident_stats(label, &mut dump);
+                    self.render_resident_stats(project, label, &mut dump);
+                }
+                HostObservation::BodyIrStats { label } => {
+                    self.render_body_ir_stats(project, label, &mut dump);
+                }
+                HostObservation::CompletionsAt {
+                    label,
+                    relative_path,
+                    offset,
+                } => {
+                    self.render_completions_at(project, label, relative_path, *offset, &mut dump);
                 }
             }
         }
@@ -299,18 +345,18 @@ impl HostFixture {
         dump
     }
 
-    fn render_workspace_symbols(&self, query: &str, dump: &mut String) {
+    fn render_workspace_symbols(&self, project: &Project, query: &str, dump: &mut String) {
         writeln!(dump, "workspace symbols `{query}`").expect("string writes should not fail");
 
-        let snapshot = self.host.snapshot();
+        let snapshot = project.snapshot();
         let mut symbols = snapshot
             .full_analysis()
             .expect("fixture analysis should materialize")
             .workspace_symbols(query)
             .expect("fixture workspace symbols should resolve");
         symbols.sort_by(|left, right| {
-            self.workspace_symbol_key(left)
-                .cmp(&self.workspace_symbol_key(right))
+            self.workspace_symbol_key(project, left)
+                .cmp(&self.workspace_symbol_key(project, right))
         });
 
         if symbols.is_empty() {
@@ -319,29 +365,34 @@ impl HostFixture {
         }
 
         for symbol in symbols {
-            let path = self.symbol_path(&symbol);
+            let path = self.symbol_path(project, &symbol);
             writeln!(
                 dump,
                 "- {} {} @ {} {path}",
                 symbol.kind,
                 symbol.name,
-                self.render_target_ref(symbol.target),
+                self.render_target_ref(project, symbol.target),
             )
             .expect("string writes should not fail");
         }
     }
 
-    fn render_file_contexts(&self, label: &str, relative_path: &str, dump: &mut String) {
+    fn render_file_contexts(
+        &self,
+        project: &Project,
+        label: &str,
+        relative_path: &str,
+        dump: &mut String,
+    ) {
         writeln!(dump, "file contexts `{label}`").expect("string writes should not fail");
 
-        let mut contexts = self
-            .host
+        let mut contexts = project
             .snapshot()
             .file_contexts_for_path(self.fixture.path(relative_path))
             .expect("fixture path should resolve to file contexts");
         contexts.sort_by(|left, right| {
-            self.file_context_key(left)
-                .cmp(&self.file_context_key(right))
+            self.file_context_key(project, left)
+                .cmp(&self.file_context_key(project, right))
         });
 
         if contexts.is_empty() {
@@ -350,14 +401,14 @@ impl HostFixture {
         }
 
         for context in contexts {
-            let package = self.package(context.package);
+            let package = self.package(project, context.package);
             let path = package
                 .file_path(context.file)
                 .expect("file context should have a parsed path");
             let mut targets = context
                 .targets
                 .iter()
-                .map(|target| self.render_target_ref(*target))
+                .map(|target| self.render_target_ref(project, *target))
                 .collect::<Vec<_>>();
             targets.sort();
 
@@ -374,6 +425,7 @@ impl HostFixture {
 
     fn render_type_names_at(
         &self,
+        project: &Project,
         label: &str,
         package_name: &str,
         marker: &str,
@@ -383,7 +435,7 @@ impl HostFixture {
 
         let marker = self.markers.position(marker);
         let path = self.fixture.path(&marker.path);
-        let mut names = nominal_type_names_at(&self.host, package_name, &path, marker.offset);
+        let mut names = nominal_type_names_at(project, package_name, &path, marker.offset);
         names.sort();
 
         if names.is_empty() {
@@ -396,8 +448,8 @@ impl HostFixture {
         }
     }
 
-    fn render_resident_stats(&self, label: &str, dump: &mut String) {
-        let stats = self.host.snapshot().stats();
+    fn render_resident_stats(&self, project: &Project, label: &str, dump: &mut String) {
+        let stats = project.snapshot().stats();
 
         writeln!(dump, "resident stats `{label}`").expect("string writes should not fail");
         writeln!(dump, "- def-map targets {}", stats.def_map.target_count)
@@ -412,41 +464,117 @@ impl HostFixture {
             .expect("string writes should not fail");
     }
 
-    fn workspace_symbol_key(&self, symbol: &WorkspaceSymbol) -> (String, String, String, String) {
+    fn render_body_ir_stats(&self, project: &Project, label: &str, dump: &mut String) {
+        let stats = project.snapshot().stats();
+
+        writeln!(dump, "body ir stats `{label}`").expect("string writes should not fail");
+        writeln!(dump, "- targets {}", stats.body_ir.target_count)
+            .expect("string writes should not fail");
+        writeln!(dump, "- bodies {}", stats.body_ir.body_count)
+            .expect("string writes should not fail");
+    }
+
+    fn render_completions_at(
+        &self,
+        project: &Project,
+        label: &str,
+        relative_path: &str,
+        offset: u32,
+        dump: &mut String,
+    ) {
+        writeln!(dump, "completions at `{label}`").expect("string writes should not fail");
+
+        let snapshot = project.snapshot();
+        let contexts = snapshot
+            .file_contexts_for_path(self.fixture.path(relative_path))
+            .expect("fixture path should resolve to file contexts");
+        let targets = contexts
+            .iter()
+            .flat_map(|context| context.targets.iter().copied())
+            .collect::<Vec<_>>();
+        let analysis = snapshot
+            .analysis_for_targets(&targets)
+            .expect("fixture completion analysis should materialize");
+        let mut completions = Vec::new();
+
+        for context in contexts {
+            for target in context.targets {
+                for item in analysis
+                    .completions_at_dot(target, context.file, offset)
+                    .expect("fixture dot completions should resolve")
+                {
+                    if !completions.contains(&item) {
+                        completions.push(item);
+                    }
+                }
+            }
+        }
+
+        completions.sort_by(|left, right| {
+            left.label
+                .cmp(&right.label)
+                .then(left.kind.cmp(&right.kind))
+                .then(left.applicability.cmp(&right.applicability))
+        });
+
+        if completions.is_empty() {
+            writeln!(dump, "- <none>").expect("string writes should not fail");
+            return;
+        }
+
+        for item in completions {
+            writeln!(dump, "- {}", Self::render_completion_item(&item))
+                .expect("string writes should not fail");
+        }
+    }
+
+    fn render_completion_item(item: &CompletionItem) -> String {
+        if matches!(item.applicability, CompletionApplicability::Known) {
+            return format!("{} {}", item.kind, item.label);
+        }
+
+        format!("{} {} ({})", item.kind, item.label, item.applicability)
+    }
+
+    fn workspace_symbol_key(
+        &self,
+        project: &Project,
+        symbol: &WorkspaceSymbol,
+    ) -> (String, String, String, String) {
         (
             symbol.kind.to_string(),
             symbol.name.clone(),
-            self.render_target_ref(symbol.target),
-            self.symbol_path(symbol),
+            self.render_target_ref(project, symbol.target),
+            self.symbol_path(project, symbol),
         )
     }
 
-    fn file_context_key(&self, context: &FileContext) -> (String, String) {
-        let package = self.package(context.package);
+    fn file_context_key(&self, project: &Project, context: &FileContext) -> (String, String) {
+        let package = self.package(project, context.package);
         let path = package
             .file_path(context.file)
             .expect("file context should have a parsed path");
         (package.package_name().to_string(), self.display_path(path))
     }
 
-    fn symbol_path(&self, symbol: &WorkspaceSymbol) -> String {
-        let package = self.package(symbol.target.package);
+    fn symbol_path(&self, project: &Project, symbol: &WorkspaceSymbol) -> String {
+        let package = self.package(project, symbol.target.package);
         let path = package
             .file_path(symbol.file_id)
             .expect("workspace symbol file should be parsed");
         self.display_path(path)
     }
 
-    fn render_target_ref(&self, target_ref: TargetRef) -> String {
-        let package = self.package(target_ref.package);
+    fn render_target_ref(&self, project: &Project, target_ref: TargetRef) -> String {
+        let package = self.package(project, target_ref.package);
         let target = package
             .target(target_ref.target)
             .expect("target should exist while rendering host fixture");
         format!("{}[{}]", package.package_name(), target.kind)
     }
 
-    fn package(&self, package: PackageSlot) -> &rg_parse::Package {
-        self.host
+    fn package<'a>(&self, project: &'a Project, package: PackageSlot) -> &'a rg_parse::Package {
+        project
             .snapshot()
             .parse_db()
             .package(package.0)
@@ -483,6 +611,14 @@ pub(super) enum HostObservation<'a> {
     ResidentStats {
         label: &'a str,
     },
+    BodyIrStats {
+        label: &'a str,
+    },
+    CompletionsAt {
+        label: &'a str,
+        relative_path: &'a str,
+        offset: u32,
+    },
 }
 
 impl<'a> HostObservation<'a> {
@@ -507,6 +643,18 @@ impl<'a> HostObservation<'a> {
 
     pub(super) fn resident_stats(label: &'a str) -> Self {
         Self::ResidentStats { label }
+    }
+
+    pub(super) fn body_ir_stats(label: &'a str) -> Self {
+        Self::BodyIrStats { label }
+    }
+
+    pub(super) fn completions_at(label: &'a str, relative_path: &'a str, offset: u32) -> Self {
+        Self::CompletionsAt {
+            label,
+            relative_path,
+            offset,
+        }
     }
 }
 

@@ -12,7 +12,7 @@ use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError, PackageSub
 use rg_semantic_ir::PackageIr;
 use rg_text::PackageNameInterners;
 
-use crate::{BodyIrBuildPolicy, BodyIrDb};
+use crate::{BodyIrBuildPolicy, BodyIrDb, BodyIrFile};
 
 /// Builder for a fresh Body IR snapshot.
 pub struct BodyIrDbBuilder<'db, 'names> {
@@ -100,6 +100,7 @@ pub struct BodyIrDbPackageRebuilder<'db, 'names> {
     def_map: &'db rg_def_map::DefMapDb,
     semantic_ir: &'db rg_semantic_ir::SemanticIrDb,
     policy: BodyIrBuildPolicy,
+    selected_files: Option<Vec<BodyIrFile>>,
     packages: &'db [PackageSlot],
     interners: &'names mut PackageNameInterners,
     def_map_loader: PackageLoader<'db, DefMapPackage>,
@@ -126,6 +127,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             def_map,
             semantic_ir,
             policy: BodyIrBuildPolicy::default(),
+            selected_files: None,
             packages,
             interners,
             def_map_loader,
@@ -139,9 +141,18 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         self
     }
 
+    pub fn selected_files(mut self, files: Vec<BodyIrFile>) -> Self {
+        self.selected_files = Some(files);
+        self
+    }
+
     pub fn build(self) -> anyhow::Result<BodyIrDb> {
         let mut next = self.old.clone();
         let packages = normalized_package_slots(self.packages);
+        let lowering_scope = match &self.selected_files {
+            Some(files) => lower::BodyIrLoweringScope::SelectedFiles(files),
+            None => lower::BodyIrLoweringScope::PackagePolicy(self.policy),
+        };
         let semantic_ir_txn = self
             .semantic_ir
             .read_txn_for_subset(self.semantic_ir_loader, self.subset);
@@ -151,7 +162,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
         let mut rebuilt_packages = lower::build_selected_packages(
             self.parse,
             &semantic_ir_txn,
-            self.policy,
+            lowering_scope,
             &packages,
             self.interners,
         )

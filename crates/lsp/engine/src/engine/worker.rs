@@ -422,6 +422,8 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::Location>> {
         let started = Instant::now();
+        // Dirty overlays lower Body IR only for dirty files. Cross-file body references are
+        // intentionally best-effort until the buffer is saved and the normal project catches up.
         let locations = self.with_query_snapshot(dirty.as_ref(), |snapshot| {
             let target_offsets = Self::target_offsets(snapshot, &path, position)?;
             let analysis = snapshot.full_analysis()?;

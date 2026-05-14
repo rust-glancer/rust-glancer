@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
+use rg_body_ir::BodyIrFile;
 use rg_def_map::PackageSlot;
 
 use super::{ChangedFile, Project, update};
@@ -81,7 +82,11 @@ pub(super) fn build_overlay(
         return Ok(None);
     }
 
-    update::rebuild_dirty_overlay_packages(&mut overlay.state, &affected_packages)
+    let body_files = changed_files
+        .iter()
+        .map(|file| BodyIrFile::new(file.package, file.file))
+        .collect::<Vec<_>>();
+    update::rebuild_dirty_overlay_packages(&mut overlay.state, &affected_packages, &body_files)
         .context("while attempting to rebuild dirty analysis overlay packages")?;
 
     Ok(Some(overlay))
