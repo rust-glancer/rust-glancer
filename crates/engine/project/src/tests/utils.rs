@@ -500,8 +500,8 @@ impl HostFixture {
         for context in contexts {
             for target in context.targets {
                 for item in analysis
-                    .completions_at_dot(target, context.file, offset)
-                    .expect("fixture dot completions should resolve")
+                    .completions_at(target, context.file, offset)
+                    .expect("fixture completions should resolve")
                 {
                     if !completions.contains(&item) {
                         completions.push(item);

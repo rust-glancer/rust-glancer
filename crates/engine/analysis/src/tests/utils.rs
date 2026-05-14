@@ -115,7 +115,7 @@ impl AnalysisQuery {
     }
 
     pub(super) fn complete(title: &'static str, marker: &'static str) -> Self {
-        Self::new(title, marker, AnalysisQueryKind::CompletionsAtDot)
+        Self::new(title, marker, AnalysisQueryKind::CompletionsAt)
     }
 
     pub(super) fn hover(title: &'static str, marker: &'static str) -> Self {
@@ -235,7 +235,7 @@ enum AnalysisQueryKind {
     GotoImplementation,
     References(ReferenceQuery),
     TypeAt,
-    CompletionsAtDot,
+    CompletionsAt,
     Hover,
 }
 
@@ -616,11 +616,11 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
-            AnalysisQueryKind::CompletionsAtDot => {
+            AnalysisQueryKind::CompletionsAt => {
                 self.render_completions(
                     self.db
                         .analysis()
-                        .completions_at_dot(target, file_id, offset)
+                        .completions_at(target, file_id, offset)
                         .expect("fixture completion query should resolve"),
                     &mut dump,
                 );

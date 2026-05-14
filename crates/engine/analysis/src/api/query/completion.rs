@@ -1,9 +1,9 @@
-//! Dot-completion assembly for known receiver types.
-//!
-//! Body IR finds the receiver before the dot and classifies its type. This layer collects fields
-//! and methods from semantic and body-local item stores into stable completion rows.
+//! Completion assembly for source positions.
 
-use rg_body_ir::{BodyLocalNominalTy, BodyNominalTy, ResolvedFieldRef, ResolvedFunctionRef};
+use rg_body_ir::{
+    BodyIrReadTxn, BodyLocalNominalTy, BodyNominalTy, DotReceiver, ResolvedFieldRef,
+    ResolvedFunctionRef,
+};
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
 use rg_semantic_ir::TraitApplicability;
@@ -20,15 +20,25 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         Self(analysis)
     }
 
-    pub(crate) fn completions_at_dot(
+    pub(crate) fn completions_at(
         &self,
         target: TargetRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        let Some(receiver) = self.0.body_ir.receiver_at_dot(target, file_id, offset)? else {
+        let Some(context) = CompletionContext::at(&self.0.body_ir, target, file_id, offset)? else {
             return Ok(Vec::new());
         };
+
+        match context {
+            CompletionContext::DotReceiver(receiver) => self.dot_receiver_completions(receiver),
+        }
+    }
+
+    fn dot_receiver_completions(
+        &self,
+        receiver: DotReceiver,
+    ) -> anyhow::Result<Vec<CompletionItem>> {
         let Some(receiver_ty) = self.0.body_ir.receiver_ty(receiver)? else {
             return Ok(Vec::new());
         };
@@ -213,6 +223,23 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
                 Ok(data.has_self_receiver().then(|| data.name.to_string()))
             }
         }
+    }
+}
+
+enum CompletionContext {
+    DotReceiver(DotReceiver),
+}
+
+impl CompletionContext {
+    fn at(
+        body_ir: &BodyIrReadTxn<'_>,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<Self>> {
+        Ok(body_ir
+            .receiver_at_dot(target, file_id, offset)?
+            .map(Self::DotReceiver))
     }
 }
 

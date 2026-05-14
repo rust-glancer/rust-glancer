@@ -138,14 +138,16 @@ impl<'a> Analysis<'a> {
         query::references::ReferenceResolver::new(self, query).references(target, file_id, offset)
     }
 
-    /// Returns field and method completion candidates for a receiver before a dot.
-    pub fn completions_at_dot(
+    /// Returns best-effort completion candidates for a source offset.
+    ///
+    /// The current implementation recognizes dot-member contexts only.
+    pub fn completions_at(
         &self,
         target: TargetRef,
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        query::completion::CompletionResolver::new(self).completions_at_dot(target, file_id, offset)
+        query::completion::CompletionResolver::new(self).completions_at(target, file_id, offset)
     }
 
     /// Returns a hierarchical outline for one file under the selected target context.

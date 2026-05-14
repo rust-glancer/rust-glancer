@@ -580,7 +580,7 @@ impl EngineWorker {
                 let mut completions = Vec::new();
 
                 for (context, target, offset) in target_offsets {
-                    for item in analysis.completions_at_dot(target, context.file, offset)? {
+                    for item in analysis.completions_at(target, context.file, offset)? {
                         let item = completion::completion_item(item);
                         if !completions.contains(&item) {
                             completions.push(item);

@@ -1,6 +1,6 @@
 mod utils;
 
-mod completions_at_dot;
+mod completions_at;
 mod document_symbols;
 mod goto_definition;
 mod goto_implementation;
