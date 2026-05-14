@@ -99,9 +99,7 @@ impl EngineService for Service {
             "document freshness after change"
         );
 
-        if change.became_dirty || change.became_clean {
-            self.engine.refresh_inlay_hints();
-        }
+        self.engine.refresh_inlay_hints_debounced();
 
         Ok(())
     }
@@ -152,7 +150,7 @@ impl EngineService for Service {
         }
 
         self.engine.log_freshness_after_save(&saved_path).await;
-        self.engine.refresh_inlay_hints();
+        self.engine.refresh_inlay_hints_now();
 
         Ok(())
     }

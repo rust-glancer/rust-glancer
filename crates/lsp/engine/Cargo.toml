@@ -23,5 +23,5 @@ rg_parse.workspace = true
 rg_project.workspace = true
 rg_workspace.workspace = true
 tarpc = { workspace = true, features = ["serde-transport", "serde-transport-json", "tcp", "tokio1"] }
-tokio = { workspace = true, features = ["process", "sync"] }
+tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true

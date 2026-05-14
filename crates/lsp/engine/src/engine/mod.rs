@@ -1,4 +1,5 @@
 mod command;
+mod debounce;
 mod worker;
 
 use std::{
@@ -8,7 +9,7 @@ use std::{
         mpsc::{self, Sender},
     },
     thread,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use anyhow::Context as _;
@@ -16,12 +17,15 @@ use rg_lsp_proto::{ServiceLogLevel, ServiceNotification};
 use tokio::sync::{Mutex, oneshot};
 
 pub(crate) use self::command::EngineCommand;
+use self::debounce::Debouncer;
 use self::{command::EngineResponse, worker::EngineWorker};
 use crate::{
     documents::{DirtyAnalysisHandle, DirtyDocumentSnapshotState, DocumentStore},
     memory::MemoryControl,
     service::ServiceNotificationsSink,
 };
+
+const INLAY_HINT_REFRESH_DEBOUNCE: Duration = Duration::from_millis(150);
 
 /// Handle for the long-lived analysis worker.
 ///
@@ -31,8 +35,9 @@ use crate::{
 pub(crate) struct EngineHandle {
     sender: Sender<QueuedEngineCommand>,
     pub(crate) documents: Arc<Mutex<DocumentStore>>,
-    dirty_analysis: DirtyAnalysisHandle,
+    inlay_hint_debouncer: Debouncer,
     notifications: ServiceNotificationsSink,
+    dirty_analysis: DirtyAnalysisHandle,
 }
 
 /// Separates time spent waiting behind older commands from time spent executing this command.
@@ -60,6 +65,7 @@ impl EngineHandle {
     ) -> Self {
         let (sender, receiver) = mpsc::channel();
         let dirty_analysis = DirtyAnalysisHandle::default();
+        let inlay_hint_debouncer = Debouncer::new(INLAY_HINT_REFRESH_DEBOUNCE);
 
         thread::spawn({
             let dirty_analysis = dirty_analysis.clone();
@@ -69,8 +75,9 @@ impl EngineHandle {
         Self {
             sender,
             documents,
-            dirty_analysis,
+            inlay_hint_debouncer,
             notifications,
+            dirty_analysis,
         }
     }
 
@@ -179,8 +186,19 @@ impl EngineHandle {
         );
     }
 
-    pub(crate) fn refresh_inlay_hints(&self) {
-        self.notifications
-            .send(ServiceNotification::InlayHintRefresh);
+    /// Schedules an inlay-hint refresh after nearby edit notifications settle.
+    pub(crate) fn refresh_inlay_hints_debounced(&self) {
+        let notifications = self.notifications.clone();
+        self.inlay_hint_debouncer.call(move || {
+            notifications.send(ServiceNotification::InlayHintRefresh);
+        });
+    }
+
+    /// Sends an inlay-hint refresh immediately and cancels any pending debounced refresh.
+    pub(crate) fn refresh_inlay_hints_now(&self) {
+        let notifications = self.notifications.clone();
+        self.inlay_hint_debouncer.call_now(move || {
+            notifications.send(ServiceNotification::InlayHintRefresh);
+        });
     }
 }
