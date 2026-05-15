@@ -35,6 +35,7 @@ fn completion_kind(kind: CompletionKind) -> CompletionItemKind {
         CompletionKind::Struct | CompletionKind::Union => CompletionItemKind::STRUCT,
         CompletionKind::Trait => CompletionItemKind::INTERFACE,
         CompletionKind::TypeAlias => CompletionItemKind::CLASS,
+        CompletionKind::Variable => CompletionItemKind::VARIABLE,
     }
 }
 

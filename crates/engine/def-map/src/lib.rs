@@ -13,8 +13,8 @@ pub use self::{
         Package, Path, PathSegment, ScopeBinding, ScopeEntry, TargetRef,
     },
     query::{
-        DefMapCursorCandidate, DefMapPathCompletionSite, ResolvePathResult, ScopeNamespace,
-        VisibleScopeDef,
+        DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite,
+        ResolvePathResult, ScopeNamespace, VisibleScopeDef,
     },
     store::{DefMapDb, DefMapPackageBundle, DefMapReadTxn, DefMapStats},
 };

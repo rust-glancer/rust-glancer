@@ -1,7 +1,7 @@
 //! Cursor-site classification for completion requests.
 
-use rg_body_ir::{DotCompletionSite, PathCompletionSite};
-use rg_def_map::{DefMapPathCompletionSite, TargetRef};
+use rg_body_ir::{DotCompletionSite, PathCompletionSite, UnqualifiedCompletionSite};
+use rg_def_map::{DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite, TargetRef};
 use rg_parse::FileId;
 
 use crate::Analysis;
@@ -12,8 +12,12 @@ pub(super) enum CompletionContext {
     DotCompletionSite(DotCompletionSite),
     /// Body path position, such as `let value = crate::$0`.
     BodyPathCompletionSite(PathCompletionSite),
+    /// Body lexical position, such as `let value = inp$0`.
+    BodyUnqualifiedCompletionSite(UnqualifiedCompletionSite),
     /// Import path position, such as `use crate::api::$0`.
     UsePathCompletionSite(DefMapPathCompletionSite),
+    /// Import root position, such as `use st$0`.
+    UseUnqualifiedCompletionSite(DefMapUnqualifiedCompletionSite),
 }
 
 impl CompletionContext {
@@ -39,9 +43,23 @@ impl CompletionContext {
             return Ok(Some(Self::BodyPathCompletionSite(site)));
         }
 
-        Ok(analysis
+        if let Some(site) = analysis
+            .body_ir
+            .unqualified_completion_site(target, file_id, offset)?
+        {
+            return Ok(Some(Self::BodyUnqualifiedCompletionSite(site)));
+        }
+
+        if let Some(site) = analysis
             .def_map
             .path_completion_site(target, file_id, offset)?
-            .map(Self::UsePathCompletionSite))
+        {
+            return Ok(Some(Self::UsePathCompletionSite(site)));
+        }
+
+        Ok(analysis
+            .def_map
+            .unqualified_completion_site(target, file_id, offset)?
+            .map(Self::UseUnqualifiedCompletionSite))
     }
 }

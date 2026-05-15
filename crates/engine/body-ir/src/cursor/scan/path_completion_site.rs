@@ -272,8 +272,13 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             });
         }
 
-        let Some(span) = self.empty_member_span(path.source_span, path.segments.last()?.span)
-        else {
+        let last_segment = path.segments.last()?;
+        // Generic argument text also extends past the segment name. When arguments are present,
+        // that suffix is not the synthetic empty segment created by a trailing `::`.
+        if !last_segment.args.is_empty() {
+            return None;
+        }
+        let Some(span) = self.empty_member_span(path.source_span, last_segment.span) else {
             return None;
         };
 

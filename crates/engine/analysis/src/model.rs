@@ -375,6 +375,8 @@ pub struct CompletionEdit {
 /// Stable analysis identity behind one completion row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionTarget {
+    Binding { body: BodyRef, binding: BindingId },
+    BodyItem(BodyItemRef),
     Field(ResolvedFieldRef),
     Function(ResolvedFunctionRef),
     Def(DefId),
@@ -409,6 +411,8 @@ pub enum CompletionKind {
     TypeAlias,
     #[display("union")]
     Union,
+    #[display("variable")]
+    Variable,
 }
 
 impl CompletionKind {
@@ -426,6 +430,19 @@ impl CompletionKind {
             Self::Struct | Self::Enum | Self::Trait | Self::TypeAlias | Self::Union => 4,
             Self::Const | Self::Static => 5,
             Self::Function | Self::Macro => 6,
+            Self::Variable => 7,
+        }
+    }
+
+    /// Coarse bucket used by type-position completions that can still accept modules as prefixes.
+    ///
+    /// This is a context-specific component of LSP `sortText`, not the enum's general ordering.
+    pub(super) fn type_context_sort_text_rank(self) -> u8 {
+        match self {
+            Self::Struct | Self::Enum | Self::Union | Self::TypeAlias => 0,
+            Self::Trait => 1,
+            Self::Module => 2,
+            _ => 3,
         }
     }
 
@@ -440,6 +457,12 @@ impl CompletionKind {
             LocalDefKind::Trait => Self::Trait,
             LocalDefKind::TypeAlias => Self::TypeAlias,
             LocalDefKind::Union => Self::Union,
+        }
+    }
+
+    pub(super) fn from_body_item_kind(kind: BodyItemKind) -> Self {
+        match kind {
+            BodyItemKind::Struct => Self::Struct,
         }
     }
 }

@@ -11,7 +11,11 @@ use rg_parse::FileId;
 mod tests;
 
 pub use self::{
-    cursor::{BodyCursorCandidate, DotCompletionSite, PathCompletionNamespace, PathCompletionSite},
+    cursor::{
+        BodyCursorCandidate, BodyUnqualifiedCompletionCandidate, DotCompletionSite,
+        PathCompletionNamespace, PathCompletionSite, UnqualifiedCompletionNamespace,
+        UnqualifiedCompletionSite,
+    },
     ir::{
         BindingData, BindingId, BindingKind, BodyData, BodyFieldData, BodyFieldRef,
         BodyFunctionData, BodyFunctionId, BodyFunctionOwner, BodyFunctionRef, BodyGenericArg,

@@ -210,6 +210,287 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_unqualified_values_from_lexical_and_module_scope() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_unqualified_value_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub fn make_user() -> User {
+    User
+}
+
+pub fn use_it(input_user: User) {
+    let local_user = input_user;
+    let _selected = inp$0;
+    let later_user = local_user;
+}
+"#,
+        &[AnalysisQuery::complete(
+            "unqualified value completions",
+            "0",
+        )],
+        expect![[r#"
+            unqualified value completions
+            - struct User
+            - variable input_user
+            - variable local_user
+            - fn make_user
+            - fn use_it
+        "#]],
+    );
+}
+
+#[test]
+fn unqualified_local_values_shadow_module_values() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_unqualified_shadow_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn shadowed() {}
+
+pub fn use_it(shadowed: u8) {
+    let _ = sha$0;
+}
+"#,
+        &[AnalysisQuery::complete("shadowed value completions", "0")],
+        expect![[r#"
+            shadowed value completions
+            - variable shadowed
+            - fn use_it
+        "#]],
+    );
+}
+
+#[test]
+fn completes_unqualified_types_from_body_and_module_scope() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_unqualified_type_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct ModuleUser;
+
+pub fn use_it() {
+    struct LocalUser {
+        id: u8,
+    }
+
+    let _value: Lo$0;
+}
+"#,
+        &[AnalysisQuery::complete("unqualified type completions", "0")],
+        expect![[r#"
+            unqualified type completions
+            - struct LocalUser
+            - struct ModuleUser
+        "#]],
+    );
+}
+
+#[test]
+fn completes_unqualified_type_args_in_generic_type_paths() {
+    check_analysis_queries_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_unqualified_generic_type_arg_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Session;
+pub struct State;
+pub struct String;
+
+pub fn use_it() {
+    let _values: std::collections::HashMap<String, S$value_arg$>;
+    let _keys: std::collections::HashMap<S$key_arg$
+}
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod collections {
+    pub struct HashMap<K, V>;
+}
+"#,
+        &[
+            AnalysisQuery::complete("first generic arg completions", "key_arg")
+                .in_lib("analysis_unqualified_generic_type_arg_completions"),
+            AnalysisQuery::complete("second generic arg completions", "value_arg")
+                .in_lib("analysis_unqualified_generic_type_arg_completions"),
+        ],
+        expect![[r#"
+            first generic arg completions
+            - struct Session
+            - struct State
+            - struct String
+            - module alloc
+            - module core
+            - module std
+
+            second generic arg completions
+            - struct Session
+            - struct State
+            - struct String
+            - module alloc
+            - module core
+            - module std
+        "#]],
+    );
+}
+
+#[test]
+fn sorts_unqualified_type_context_completions_by_type_likelihood() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_unqualified_type_sorting"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod aa_prefix {}
+pub trait Mid {}
+pub struct Zed;
+
+pub fn use_it() {
+    let _value: Z$0;
+}
+"#,
+        &[AnalysisQuery::complete_verbose(
+            "unqualified type sorting",
+            "0",
+        )],
+        expect![[r#"
+            unqualified type sorting
+            - struct Zed
+              detail: struct Zed
+              sort: 00|Zed|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) }))
+              replace: 89..90
+            - trait Mid
+              detail: trait Mid
+              sort: 01|Mid|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) }))
+              replace: 89..90
+            - module aa_prefix
+              detail: mod aa_prefix
+              sort: 02|aa_prefix|00|Def(Module(ModuleRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, module: ModuleId(1) }))
+              replace: 89..90
+        "#]],
+    );
+}
+
+#[test]
+fn completes_unqualified_import_roots_and_external_roots() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_unqualified_roots"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "analysis-unqualified-roots"
+path = "src/main.rs"
+
+//- /src/lib.rs
+pub struct Api;
+
+//- /src/main.rs
+use analysis_unqualified_roots$use_root$;
+
+fn main() {
+    let _ = analysis_unqualified_roots$value_root$;
+}
+"#,
+        &[
+            AnalysisQuery::complete("unqualified use root completions", "use_root")
+                .in_bin("analysis_unqualified_roots"),
+            AnalysisQuery::complete("unqualified value root completions", "value_root")
+                .in_bin("analysis_unqualified_roots"),
+        ],
+        expect![[r#"
+            unqualified use root completions
+            - module analysis_unqualified_roots
+            - fn main
+
+            unqualified value root completions
+            - module analysis_unqualified_roots
+            - fn main
+        "#]],
+    );
+}
+
+#[test]
+fn completes_unqualified_prelude_names() {
+    check_analysis_queries_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_unqualified_prelude_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    let _value: Vec$0;
+}
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub mod vec {
+    pub struct Vec;
+}
+
+//- /sysroot/library/std/src/lib.rs
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use alloc::vec::Vec;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::complete("unqualified prelude completions", "0")
+                .in_lib("analysis_unqualified_prelude_completions"),
+        ],
+        expect![[r#"
+            unqualified prelude completions
+            - struct Vec
+            - module alloc
+            - module core
+            - module std
+        "#]],
+    );
+}
+
+#[test]
 fn completes_qualified_paths_in_use_items() {
     check_analysis_queries(
         r#"

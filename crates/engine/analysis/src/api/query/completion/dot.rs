@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-use super::{CompletionMetadata, completion_sort_text};
+use super::{CompletionMetadata, CompletionSortPolicy};
 
 pub(super) struct DotCompletionResolver<'a, 'db>(&'a Analysis<'db>);
 
@@ -158,7 +158,7 @@ impl<'a, 'db> DotCompletionResolver<'a, 'db> {
             applicability: CompletionApplicability::Known,
             detail: metadata.detail,
             documentation: metadata.documentation,
-            sort_text: completion_sort_text(
+            sort_text: CompletionSortPolicy::General.sort_text(
                 &metadata.label,
                 CompletionKind::Field,
                 CompletionApplicability::Known,
@@ -229,7 +229,7 @@ impl<'a, 'db> DotCompletionResolver<'a, 'db> {
             applicability,
             detail: metadata.detail,
             documentation: metadata.documentation,
-            sort_text: completion_sort_text(
+            sort_text: CompletionSortPolicy::General.sort_text(
                 &metadata.label,
                 kind,
                 applicability,

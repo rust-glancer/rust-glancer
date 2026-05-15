@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-use super::{CompletionMetadata, completion_sort_text};
+use super::{CompletionMetadata, CompletionSortPolicy, def_completion_detail};
 
 pub(super) struct PathCompletionResolver<'a, 'db>(&'a Analysis<'db>);
 
@@ -120,7 +120,7 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
             applicability: CompletionApplicability::Known,
             detail: metadata.detail,
             documentation: metadata.documentation,
-            sort_text: completion_sort_text(
+            sort_text: CompletionSortPolicy::General.sort_text(
                 &metadata.label,
                 kind,
                 CompletionApplicability::Known,
@@ -158,7 +158,7 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
                     kind,
                     CompletionMetadata {
                         label: visible_def.label.clone(),
-                        detail: Some(path_completion_detail(kind, &visible_def.label)),
+                        detail: Some(def_completion_detail(kind, &visible_def.label)),
                         documentation: None,
                     },
                 )
@@ -196,22 +196,5 @@ impl From<PathCompletionNamespace> for PathCompletionFilter {
             PathCompletionNamespace::Types => Self::Types,
             PathCompletionNamespace::Values => Self::All,
         }
-    }
-}
-
-fn path_completion_detail(kind: CompletionKind, label: &str) -> String {
-    match kind {
-        CompletionKind::Const => format!("const {label}"),
-        CompletionKind::Enum => format!("enum {label}"),
-        CompletionKind::Field => format!("field {label}"),
-        CompletionKind::Function => format!("fn {label}"),
-        CompletionKind::InherentMethod | CompletionKind::TraitMethod => format!("method {label}"),
-        CompletionKind::Macro => format!("macro {label}"),
-        CompletionKind::Module => format!("mod {label}"),
-        CompletionKind::Static => format!("static {label}"),
-        CompletionKind::Struct => format!("struct {label}"),
-        CompletionKind::Trait => format!("trait {label}"),
-        CompletionKind::TypeAlias => format!("type {label}"),
-        CompletionKind::Union => format!("union {label}"),
     }
 }
