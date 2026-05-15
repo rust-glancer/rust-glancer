@@ -1,6 +1,6 @@
 //! Qualified path completion assembly for body and import positions.
 
-use rg_body_ir::{PathCompletionNamespace, PathCompletionSite};
+use rg_body_ir::{PathCompletionNamespace, PathCompletionSite, ResolvedFunctionRef};
 use rg_def_map::{
     DefId, DefMapPathCompletionSite, ModuleRef, Path, ScopeNamespace, VisibleScopeDef,
 };
@@ -15,7 +15,12 @@ use crate::{
     },
 };
 
-use super::{CompletionMetadata, completion_sort::CompletionSortPolicy, def_completion_detail};
+use super::{
+    CompletionMetadata,
+    completion_sort::CompletionSortPolicy,
+    def_completion_detail,
+    function::{FunctionCallCompletion, FunctionCompletionRenderer},
+};
 
 pub(super) struct PathCompletionResolver<'a, 'db>(&'a Analysis<'db>);
 
@@ -39,6 +44,7 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
             &site.qualifier,
             site.member_prefix_span,
             PathCompletionFilter::from(site.namespace),
+            FunctionCallCompletion::FunctionCall,
         )
     }
 
@@ -52,6 +58,7 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
             &site.qualifier,
             site.member_prefix_span,
             PathCompletionFilter::All,
+            FunctionCallCompletion::Plain,
         )
     }
 
@@ -63,6 +70,7 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
         qualifier: &Path,
         member_prefix_span: Span,
         filter: PathCompletionFilter,
+        function_call_completion: FunctionCallCompletion,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let resolved = self
             .0
@@ -86,7 +94,12 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
                 .visible_scope_defs(importing_module, source_module)?
             {
                 if filter.accepts(visible_def.namespace) {
-                    self.push_visible_scope_completion(visible_def, edit, &mut completions)?;
+                    self.push_visible_scope_completion(
+                        visible_def,
+                        edit,
+                        function_call_completion,
+                        &mut completions,
+                    )?;
                 }
             }
         }
@@ -101,8 +114,21 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
         &self,
         visible_def: VisibleScopeDef,
         edit: CompletionEdit,
+        function_call_completion: FunctionCallCompletion,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
+        if let Some(completion) =
+            self.function_completion(&visible_def, edit, function_call_completion)?
+        {
+            if completions.iter().any(|existing| {
+                existing.target == completion.target && existing.label == completion.label
+            }) {
+                return Ok(());
+            }
+            completions.push(completion);
+            return Ok(());
+        }
+
         let Some((kind, metadata)) = self.visible_scope_completion_metadata(&visible_def)? else {
             return Ok(());
         };
@@ -132,6 +158,33 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
             edit: Some(edit),
         });
         Ok(())
+    }
+
+    fn function_completion(
+        &self,
+        visible_def: &VisibleScopeDef,
+        edit: CompletionEdit,
+        function_call_completion: FunctionCallCompletion,
+    ) -> anyhow::Result<Option<CompletionItem>> {
+        let DefId::Local(local_def) = visible_def.def else {
+            return Ok(None);
+        };
+        let Some(function) = self.0.semantic_ir.function_for_local_def(local_def)? else {
+            return Ok(None);
+        };
+        let function = ResolvedFunctionRef::Semantic(function);
+        Ok(FunctionCompletionRenderer::new(self.0)
+            .completion(
+                function,
+                Some(&visible_def.label),
+                CompletionKind::Function,
+                CompletionApplicability::Known,
+                edit,
+                function_call_completion,
+                CompletionSortPolicy::General,
+                None,
+            )?
+            .map(|completion| completion.item))
     }
 
     fn visible_scope_completion_metadata(

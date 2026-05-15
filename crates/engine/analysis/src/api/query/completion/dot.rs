@@ -3,19 +3,18 @@
 use rg_body_ir::{
     BodyLocalNominalTy, BodyNominalTy, DotCompletionSite, ResolvedFieldRef, ResolvedFunctionRef,
 };
-use rg_semantic_ir::Documentation;
 
 use crate::{
     Analysis,
-    api::render::signature::SignatureRenderer,
     model::{
-        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
-        CompletionKind, CompletionTarget,
+        CompletionApplicability, CompletionEdit, CompletionItem, CompletionKind, CompletionTarget,
     },
 };
 
 use super::{
-    CompletionMetadata, completion_sort::CompletionSortPolicy, field::FieldCompletionRenderer,
+    completion_sort::CompletionSortPolicy,
+    field::FieldCompletionRenderer,
+    function::{FunctionCallCompletion, FunctionCompletionRenderer},
 };
 
 pub(super) struct DotCompletionResolver<'a, 'db>(&'a Analysis<'db>);
@@ -165,68 +164,32 @@ impl<'a, 'db> DotCompletionResolver<'a, 'db> {
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
-        let Some(metadata) = self.function_completion_metadata(function)? else {
+        let renderer = FunctionCompletionRenderer::new(self.0);
+        let target = CompletionTarget::Function(function);
+        let Some(completion) = renderer.completion(
+            function,
+            None,
+            kind,
+            applicability,
+            edit,
+            FunctionCallCompletion::MethodCall,
+            CompletionSortPolicy::General,
+            None,
+        )?
+        else {
             return Ok(());
         };
+        if !completion.has_self_receiver {
+            return Ok(());
+        }
         if completions
             .iter()
-            .any(|completion| completion.target == CompletionTarget::Function(function))
+            .any(|completion| completion.target == target)
         {
             return Ok(());
         }
 
-        completions.push(CompletionItem {
-            label: metadata.label.clone(),
-            kind,
-            target: CompletionTarget::Function(function),
-            applicability,
-            detail: metadata.detail,
-            documentation: metadata.documentation,
-            sort_text: CompletionSortPolicy::General.sort_text(
-                None,
-                &metadata.label,
-                kind,
-                applicability,
-                CompletionTarget::Function(function),
-            ),
-            insert_text: CompletionInsertText::Plain,
-            edit: Some(edit),
-        });
+        completions.push(completion.item);
         Ok(())
-    }
-
-    fn function_completion_metadata(
-        &self,
-        function: ResolvedFunctionRef,
-    ) -> anyhow::Result<Option<CompletionMetadata>> {
-        let renderer = SignatureRenderer::new(self.0);
-        match function {
-            ResolvedFunctionRef::Semantic(function) => {
-                let Some(data) = self.0.semantic_ir.function_data(function)? else {
-                    return Ok(None);
-                };
-                if !data.has_self_receiver() {
-                    return Ok(None);
-                }
-                Ok(Some(CompletionMetadata {
-                    label: data.name.to_string(),
-                    detail: Some(renderer.function_signature(data)),
-                    documentation: data.docs.as_ref().map(Documentation::text),
-                }))
-            }
-            ResolvedFunctionRef::BodyLocal(function) => {
-                let Some(data) = self.0.body_ir.local_function_data(function)? else {
-                    return Ok(None);
-                };
-                if !data.has_self_receiver() {
-                    return Ok(None);
-                }
-                Ok(Some(CompletionMetadata {
-                    label: data.name.to_string(),
-                    detail: Some(renderer.local_function_signature(data)),
-                    documentation: data.docs.as_ref().map(Documentation::text),
-                }))
-            }
-        }
     }
 }

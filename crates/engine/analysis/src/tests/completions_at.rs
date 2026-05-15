@@ -90,6 +90,50 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn completes_bare_dot_before_following_statement() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_bare_dot_before_statement_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User {
+    pub name: String,
+}
+
+impl User {
+    pub fn id(&self) {}
+}
+
+pub fn use_it(user: User) {
+    user.$0
+
+    user.id();
+}
+"#,
+        &[AnalysisQuery::complete_verbose(
+            "bare dot before statement completions",
+            "0",
+        )],
+        expect![[r#"
+            bare dot before statement completions
+            - inherent_method id
+              detail: pub fn id(&self)
+              sort: id|01|00|Function(Semantic(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: FunctionId(1) }))
+              replace: 119..119
+              snippet: id()$0
+            - field name
+              detail: pub name: String
+              sort: name|00|00|Field(Semantic(FieldRef { owner: TypeDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: Struct(StructId(0)) }, index: 0 }))
+              replace: 119..119
+        "#]],
+    );
+}
+
+#[test]
 fn completes_qualified_module_paths_in_body_contexts() {
     check_analysis_queries(
         r#"
@@ -308,13 +352,15 @@ pub fn use_it(c_a_outer: u8) {
               sort: 00-body:0002|c_a_outer|07|00|Binding { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(1) }, binding: BindingId(0) }
               replace: 107..108
             - fn c_module_item
-              detail: fn c_module_item
-              sort: 01-module|c_module_item|06|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) }))
+              detail: pub fn c_module_item()
+              sort: 01-module|c_module_item|06|00|Function(Semantic(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: FunctionId(0) }))
               replace: 107..108
+              snippet: c_module_item()$0
             - fn use_it
-              detail: fn use_it
-              sort: 01-module|use_it|06|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) }))
+              detail: pub fn use_it(c_a_outer: u8)
+              sort: 01-module|use_it|06|00|Function(Semantic(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: FunctionId(1) }))
               replace: 107..108
+              snippet: use_it(${1:c_a_outer})$0
         "#]],
     );
 }
@@ -1429,6 +1475,7 @@ pub fn use_it(user: User) {
               docs: Name method.
               sort: name|01|00|Function(Semantic(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: FunctionId(1) }))
               replace: 216..218
+              snippet: name()$0
         "#]],
     );
 }

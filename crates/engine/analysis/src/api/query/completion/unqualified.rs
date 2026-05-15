@@ -3,7 +3,8 @@
 use std::collections::HashSet;
 
 use rg_body_ir::{
-    BodyUnqualifiedCompletionCandidate, UnqualifiedCompletionNamespace, UnqualifiedCompletionSite,
+    BodyUnqualifiedCompletionCandidate, ResolvedFunctionRef, UnqualifiedCompletionNamespace,
+    UnqualifiedCompletionSite,
 };
 use rg_def_map::{DefId, DefMapUnqualifiedCompletionSite, ScopeNamespace, VisibleScopeDef};
 use rg_semantic_ir::Documentation;
@@ -21,6 +22,7 @@ use super::{
     CompletionMetadata,
     completion_sort::{CompletionSortPolicy, CompletionSortPriority},
     def_completion_detail,
+    function::{FunctionCallCompletion, FunctionCompletionRenderer},
 };
 
 pub(super) struct UnqualifiedCompletionResolver<'a, 'db>(&'a Analysis<'db>);
@@ -66,6 +68,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
             edit,
             &hidden,
             VisibleScopeSort::ByOrigin,
+            FunctionCallCompletion::FunctionCall,
             &mut completions,
         )?;
 
@@ -89,6 +92,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
             edit,
             &hidden,
             VisibleScopeSort::General,
+            FunctionCallCompletion::Plain,
             &mut completions,
         )?;
 
@@ -184,6 +188,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
         edit: CompletionEdit,
         hidden: &HashSet<(String, ScopeNamespace)>,
         visible_scope_sort: VisibleScopeSort,
+        function_call_completion: FunctionCallCompletion,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
         for visible_def in self.0.def_map.visible_unqualified_scope_defs(module)? {
@@ -197,6 +202,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
                 filter,
                 edit,
                 visible_scope_sort,
+                function_call_completion,
                 completions,
             )?;
         }
@@ -209,8 +215,25 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
         filter: UnqualifiedCompletionFilter,
         edit: CompletionEdit,
         visible_scope_sort: VisibleScopeSort,
+        function_call_completion: FunctionCallCompletion,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
+        if let Some(completion) = self.function_completion(
+            &visible_def,
+            filter,
+            edit,
+            visible_scope_sort,
+            function_call_completion,
+        )? {
+            if completions.iter().any(|existing| {
+                existing.target == completion.target && existing.label == completion.label
+            }) {
+                return Ok(());
+            }
+            completions.push(completion);
+            return Ok(());
+        }
+
         let Some((kind, metadata)) = self.visible_scope_completion_metadata(&visible_def)? else {
             return Ok(());
         };
@@ -252,6 +275,43 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
             edit: Some(edit),
         });
         Ok(())
+    }
+
+    fn function_completion(
+        &self,
+        visible_def: &VisibleScopeDef,
+        filter: UnqualifiedCompletionFilter,
+        edit: CompletionEdit,
+        visible_scope_sort: VisibleScopeSort,
+        function_call_completion: FunctionCallCompletion,
+    ) -> anyhow::Result<Option<CompletionItem>> {
+        let DefId::Local(local_def) = visible_def.def else {
+            return Ok(None);
+        };
+        let Some(function) = self.0.semantic_ir.function_for_local_def(local_def)? else {
+            return Ok(None);
+        };
+        let function = ResolvedFunctionRef::Semantic(function);
+        let sort_policy = filter.sort_policy();
+        let sort_priority = match visible_scope_sort {
+            VisibleScopeSort::ByOrigin => {
+                Some(CompletionSortPriority::visible_scope(visible_def.origin))
+            }
+            VisibleScopeSort::General => None,
+        };
+
+        Ok(FunctionCompletionRenderer::new(self.0)
+            .completion(
+                function,
+                Some(&visible_def.label),
+                CompletionKind::Function,
+                CompletionApplicability::Known,
+                edit,
+                function_call_completion,
+                sort_policy,
+                sort_priority,
+            )?
+            .map(|completion| completion.item))
     }
 
     fn visible_scope_completion_metadata(

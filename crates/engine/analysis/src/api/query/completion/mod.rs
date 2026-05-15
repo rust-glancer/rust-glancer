@@ -13,6 +13,7 @@ mod completion_sort;
 mod context;
 mod dot;
 mod field;
+mod function;
 mod keyword;
 mod path;
 mod record;

@@ -112,14 +112,21 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
             return None;
         }
 
-        // Bare-dot completions have no prefix. Partially typed completions use the member
-        // name that already exists in source.
-        Some(member_span.unwrap_or(Span {
+        // Parser recovery can attach a later token as the member name for a bare
+        // `receiver.`. If the cursor is still between the dot and that token,
+        // keep the edit range empty at the cursor so LSP clients can accept it.
+        if let Some(member_span) = member_span
+            && member_span.text.start <= offset
+        {
+            return Some(member_span);
+        }
+
+        Some(Span {
             text: TextSpan {
                 start: offset,
                 end: offset,
             },
-        }))
+        })
     }
 
     /// Extracts the receiver expression from supported dot-access expression kinds.

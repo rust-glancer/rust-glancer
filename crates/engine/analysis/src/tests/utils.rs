@@ -3,9 +3,9 @@ use std::{fmt, fmt::Write as _, marker::PhantomData, sync::Arc};
 use expect_test::Expect;
 
 use crate::{
-    Analysis, AnalysisReadTxn, CompletionApplicability, CompletionItem, DocumentSymbol, HoverInfo,
-    NavigationTarget, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, SymbolAt,
-    TypeHint, WorkspaceSymbol,
+    Analysis, AnalysisReadTxn, CompletionApplicability, CompletionInsertText, CompletionItem,
+    DocumentSymbol, HoverInfo, NavigationTarget, ReferenceLocation,
+    ReferenceQuery as AnalysisReferenceQuery, SymbolAt, TypeHint, WorkspaceSymbol,
 };
 use rg_body_ir::{
     BodyGenericArg, BodyIrDb, BodyIrReadTxn, BodyItemRef, BodyLocalNominalTy, BodyNominalTy,
@@ -1009,6 +1009,9 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 let span = edit.replace;
                 writeln!(dump, "  replace: {}..{}", span.text.start, span.text.end)
                     .expect("string writes should not fail");
+            }
+            if let CompletionInsertText::Snippet(snippet) = &completion.insert_text {
+                writeln!(dump, "  snippet: {snippet}").expect("string writes should not fail");
             }
         }
     }
