@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt::{self, Write as _},
     fs,
     marker::PhantomData,
@@ -173,7 +174,16 @@ impl HostFixture {
         project: &Project,
         observations: &[HostObservation<'_>],
     ) -> String {
-        self.render_observations(project, observations)
+        self.render_observations(project, None, observations)
+    }
+
+    pub(super) fn render_dirty_project(
+        &self,
+        project: &Project,
+        dirty_text: &str,
+        observations: &[HostObservation<'_>],
+    ) -> String {
+        self.render_observations(project, Some(dirty_text), observations)
     }
 
     pub(super) fn check_save(
@@ -205,7 +215,7 @@ impl HostFixture {
         observations: &[HostObservation<'_>],
     ) -> String {
         let mut dump = self.render_change_summary(summary);
-        let observations = self.render_observations(&self.host, observations);
+        let observations = self.render_observations(&self.host, None, observations);
         if !observations.is_empty() {
             writeln!(&mut dump).expect("string writes should not fail");
             dump.push_str(&observations);
@@ -301,6 +311,7 @@ impl HostFixture {
     fn render_observations(
         &self,
         project: &Project,
+        dirty_text: Option<&str>,
         observations: &[HostObservation<'_>],
     ) -> String {
         let mut dump = String::new();
@@ -337,7 +348,14 @@ impl HostFixture {
                     relative_path,
                     offset,
                 } => {
-                    self.render_completions_at(project, label, relative_path, *offset, &mut dump);
+                    self.render_completions_at(
+                        project,
+                        label,
+                        relative_path,
+                        *offset,
+                        dirty_text,
+                        &mut dump,
+                    );
                 }
             }
         }
@@ -479,7 +497,8 @@ impl HostFixture {
         project: &Project,
         label: &str,
         relative_path: &str,
-        offset: u32,
+        offset: usize,
+        dirty_text: Option<&str>,
         dump: &mut String,
     ) {
         writeln!(dump, "completions at `{label}`").expect("string writes should not fail");
@@ -492,10 +511,19 @@ impl HostFixture {
             .iter()
             .flat_map(|context| context.targets.iter().copied())
             .collect::<Vec<_>>();
-        let analysis = snapshot
-            .analysis_for_targets(&targets)
-            .expect("fixture completion analysis should materialize");
+        let analysis = match dirty_text {
+            Some(text) => snapshot
+                .analysis_for_targets(&targets)
+                .map(|analysis| analysis.with_dirty_context(rg_analysis::DirtyContext::new(text)))
+                .expect("fixture dirty completion analysis should materialize"),
+            None => snapshot
+                .analysis_for_targets(&targets)
+                .expect("fixture completion analysis should materialize"),
+        };
         let mut completions = Vec::new();
+        let offset = offset
+            .try_into()
+            .expect("fixture completion offset should fit into u32");
 
         for context in contexts {
             for target in context.targets {
@@ -617,7 +645,7 @@ pub(super) enum HostObservation<'a> {
     CompletionsAt {
         label: &'a str,
         relative_path: &'a str,
-        offset: u32,
+        offset: usize,
     },
 }
 
@@ -649,13 +677,41 @@ impl<'a> HostObservation<'a> {
         Self::BodyIrStats { label }
     }
 
-    pub(super) fn completions_at(label: &'a str, relative_path: &'a str, offset: u32) -> Self {
+    pub(super) fn completions_at(label: &'a str, relative_path: &'a str, offset: usize) -> Self {
         Self::CompletionsAt {
             label,
             relative_path,
             offset,
         }
     }
+}
+
+/// Removes `$name$` cursor markers and reports their byte offsets in the cleaned text.
+pub(super) fn parse_dirty_text(text: &str) -> (String, HashMap<String, usize>) {
+    let mut clean = String::new();
+    let mut cursors = HashMap::new();
+    let mut remaining = text;
+
+    while let Some(start) = remaining.find('$') {
+        clean.push_str(&remaining[..start]);
+        let after_start = &remaining[start + "$".len()..];
+        let end = after_start
+            .find('$')
+            .expect("dirty text cursor should end with `$`");
+        let cursor = &after_start[..end];
+        assert!(
+            !cursor.is_empty(),
+            "dirty text cursor should have a non-empty name"
+        );
+        assert!(
+            cursors.insert(cursor.to_string(), clean.len()).is_none(),
+            "dirty text cursor `{cursor}` should be unique"
+        );
+        remaining = &after_start[end + "$".len()..];
+    }
+
+    clean.push_str(remaining);
+    (clean, cursors)
 }
 
 fn file_id_for_path(parse: &ParseDb, path: &Path) -> FileId {

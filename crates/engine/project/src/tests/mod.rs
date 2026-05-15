@@ -4,7 +4,7 @@ use expect_test::expect;
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
-use self::utils::{HostFixture, HostObservation};
+use self::utils::{HostFixture, HostObservation, parse_dirty_text};
 use crate::{PackageResidencyPolicy, Project};
 
 #[test]
@@ -210,7 +210,8 @@ pub fn untouched_body() {}
 "#,
         PackageResidencyPolicy::AllOffloadable,
     );
-    let dirty_text = r#"
+    let (dirty_text, cursors) = parse_dirty_text(
+        r#"
 mod other;
 
 pub struct Dirty {
@@ -218,30 +219,26 @@ pub struct Dirty {
 }
 
 pub fn dirty_body(value: Dirty) {
-    value.;
+    value.$receiver$
 }
-"#;
-    let completion_offset = dirty_text
-        .find("value.")
-        .map(|offset| offset + "value.".len())
-        .expect("dirty completion fixture should include a dot receiver")
-        .try_into()
-        .expect("dirty completion offset should fit into u32");
+"#,
+    );
 
     let saved_before = fixture.render(&[
         HostObservation::resident_stats("saved before dirty overlay"),
         HostObservation::workspace_symbols("Saved"),
         HostObservation::workspace_symbols("Dirty"),
     ]);
-    let overlay = fixture.dirty_overlay("src/lib.rs", dirty_text);
-    let dirty_overlay = fixture.render_project(
+    let overlay = fixture.dirty_overlay("src/lib.rs", &dirty_text);
+    let dirty_overlay = fixture.render_dirty_project(
         &overlay,
+        &dirty_text,
         &[
             HostObservation::resident_stats("dirty overlay"),
             HostObservation::body_ir_stats("dirty overlay"),
             HostObservation::workspace_symbols("Dirty"),
             HostObservation::workspace_symbols("Saved"),
-            HostObservation::completions_at("dirty receiver", "src/lib.rs", completion_offset),
+            HostObservation::completions_at("dirty receiver", "src/lib.rs", cursors["receiver"]),
         ],
     );
     let saved_after = fixture.render(&[
@@ -302,6 +299,96 @@ pub fn dirty_body(value: Dirty) {
 
         workspace symbols `Dirty`
         - <none>
+    "#]]
+    .assert_eq(&actual);
+}
+
+#[test]
+fn dirty_overlay_completes_keywords_after_parse_syntax_eviction() {
+    let fixture = HostFixture::build_with_package_residency_policy(
+        r#"
+//- /Cargo.toml
+[package]
+name = "dirty_overlay_keyword_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Saved;
+"#,
+        PackageResidencyPolicy::AllOffloadable,
+    );
+    let (dirty_text, cursors) = parse_dirty_text(
+        r#"
+f$item$
+im$impl_item$
+
+pub struct Dirty;
+
+pub fn use_it() {
+    le$statement$
+    let _value = ma$expression$;
+    let _bare = $bare_expression$;
+}
+"#,
+    );
+
+    let overlay = fixture.dirty_overlay("src/lib.rs", &dirty_text);
+    let actual = fixture.render_dirty_project(
+        &overlay,
+        &dirty_text,
+        &[
+            HostObservation::completions_at("dirty item keyword", "src/lib.rs", cursors["item"]),
+            HostObservation::completions_at(
+                "dirty impl keyword",
+                "src/lib.rs",
+                cursors["impl_item"],
+            ),
+            HostObservation::completions_at(
+                "dirty statement keyword",
+                "src/lib.rs",
+                cursors["statement"],
+            ),
+            HostObservation::completions_at(
+                "dirty expression keyword",
+                "src/lib.rs",
+                cursors["expression"],
+            ),
+            HostObservation::completions_at(
+                "dirty bare expression keyword",
+                "src/lib.rs",
+                cursors["bare_expression"],
+            ),
+        ],
+    );
+
+    expect![[r#"
+        completions at `dirty item keyword`
+        - keyword fn
+
+        completions at `dirty impl keyword`
+        - keyword impl
+        - keyword impl for
+
+        completions at `dirty statement keyword`
+        - struct Dirty
+        - keyword let
+        - fn use_it
+
+        completions at `dirty expression keyword`
+        - struct Dirty
+        - keyword match
+        - fn use_it
+
+        completions at `dirty bare expression keyword`
+        - keyword async
+        - keyword false
+        - keyword if
+        - keyword loop
+        - keyword match
+        - keyword move
+        - keyword return
+        - keyword true
     "#]]
     .assert_eq(&actual);
 }

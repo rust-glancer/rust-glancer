@@ -10,7 +10,8 @@ use crate::{
     Analysis,
     api::render::signature::SignatureRenderer,
     model::{
-        CompletionApplicability, CompletionEdit, CompletionItem, CompletionKind, CompletionTarget,
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind, CompletionTarget,
     },
 };
 
@@ -50,6 +51,7 @@ impl<'a, 'db> FieldCompletionRenderer<'a, 'db> {
                     CompletionApplicability::Known,
                     target,
                 ),
+                insert_text: CompletionInsertText::Plain,
                 edit: Some(edit),
             },
         }))

@@ -12,7 +12,8 @@ use crate::{
     Analysis,
     api::render::signature::SignatureRenderer,
     model::{
-        CompletionApplicability, CompletionEdit, CompletionItem, CompletionKind, CompletionTarget,
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind, CompletionTarget,
     },
 };
 
@@ -135,6 +136,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
                         CompletionApplicability::Known,
                         target,
                     ),
+                    insert_text: CompletionInsertText::Plain,
                     edit: Some(edit),
                 });
             }
@@ -167,6 +169,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
                         CompletionApplicability::Known,
                         target,
                     ),
+                    insert_text: CompletionInsertText::Plain,
                     edit: Some(edit),
                 });
             }
@@ -245,6 +248,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
             detail: metadata.detail,
             documentation: metadata.documentation,
             sort_text,
+            insert_text: CompletionInsertText::Plain,
             edit: Some(edit),
         });
         Ok(())

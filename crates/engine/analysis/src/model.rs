@@ -363,7 +363,15 @@ pub struct CompletionItem {
     pub detail: Option<String>,
     pub documentation: Option<String>,
     pub sort_text: String,
+    pub insert_text: CompletionInsertText,
     pub edit: Option<CompletionEdit>,
+}
+
+/// Text inserted when accepting a completion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionInsertText {
+    Plain,
+    Snippet(String),
 }
 
 /// Source edit applied when accepting a completion item.
@@ -380,6 +388,34 @@ pub enum CompletionTarget {
     Field(ResolvedFieldRef),
     Function(ResolvedFunctionRef),
     Def(DefId),
+    Keyword(KeywordCompletion),
+}
+
+/// Small, explicit set of Rust keyword and keyword-like snippet completions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeywordCompletion {
+    Async,
+    Const,
+    Enum,
+    False,
+    Fn,
+    For,
+    If,
+    Impl,
+    ImplFor,
+    Let,
+    Loop,
+    Match,
+    Mod,
+    Move,
+    Return,
+    Static,
+    Struct,
+    Trait,
+    True,
+    Type,
+    Use,
+    While,
 }
 
 /// Completion source category.
@@ -395,6 +431,8 @@ pub enum CompletionKind {
     Function,
     #[display("inherent_method")]
     InherentMethod,
+    #[display("keyword")]
+    Keyword,
     #[display("macro")]
     Macro,
     #[display("module")]
@@ -431,6 +469,7 @@ impl CompletionKind {
             Self::Const | Self::Static => 5,
             Self::Function | Self::Macro => 6,
             Self::Variable => 7,
+            Self::Keyword => 8,
         }
     }
 
@@ -442,7 +481,8 @@ impl CompletionKind {
             Self::Struct | Self::Enum | Self::Union | Self::TypeAlias => 0,
             Self::Trait => 1,
             Self::Module => 2,
-            _ => 3,
+            Self::Keyword => 3,
+            _ => 4,
         }
     }
 

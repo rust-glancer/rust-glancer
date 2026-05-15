@@ -8,9 +8,10 @@ mod tests;
 pub use self::{
     api::Analysis,
     model::{
-        CompletionApplicability, CompletionEdit, CompletionItem, CompletionKind, CompletionTarget,
-        DocumentSymbol, HoverBlock, HoverInfo, NavigationTarget, NavigationTargetKind,
-        ReferenceLocation, ReferenceQuery, SymbolAt, SymbolKind, TypeHint, WorkspaceSymbol,
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind, CompletionTarget, DocumentSymbol, HoverBlock, HoverInfo, KeywordCompletion,
+        NavigationTarget, NavigationTargetKind, ReferenceLocation, ReferenceQuery, SymbolAt,
+        SymbolKind, TypeHint, WorkspaceSymbol,
     },
-    txn::AnalysisReadTxn,
+    txn::{AnalysisReadTxn, DirtyContext},
 };

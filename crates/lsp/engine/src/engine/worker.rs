@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_analysis::{ReferenceQuery, TypeHint};
+use rg_analysis::{DirtyContext, ReferenceQuery, TypeHint};
 use rg_def_map::TargetRef;
 use rg_lsp_proto::AnalysisConfig;
 use rg_parse::TextSpan;
@@ -568,6 +568,7 @@ impl EngineWorker {
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::CompletionItem>> {
         let started = Instant::now();
+        let dirty_context = dirty.as_ref().map(|dirty| DirtyContext::new(dirty.text()));
         let completions = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -577,6 +578,10 @@ impl EngineWorker {
                     .map(|(_, target, _)| *target)
                     .collect::<Vec<_>>();
                 let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+                let analysis = match dirty_context {
+                    Some(dirty_context) => analysis.with_dirty_context(dirty_context),
+                    None => analysis,
+                };
                 let mut completions = Vec::new();
 
                 for (context, target, offset) in target_offsets {

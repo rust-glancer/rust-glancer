@@ -13,10 +13,12 @@ mod completion_sort;
 mod context;
 mod dot;
 mod field;
+mod keyword;
 mod path;
 mod record;
 mod unqualified;
 
+use rg_body_ir::UnqualifiedCompletionNamespace;
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
 
@@ -26,8 +28,9 @@ use crate::{
 };
 
 use self::{
-    context::CompletionContext, dot::DotCompletionResolver, path::PathCompletionResolver,
-    record::RecordFieldCompletionResolver, unqualified::UnqualifiedCompletionResolver,
+    context::CompletionContext, dot::DotCompletionResolver, keyword::KeywordCompletionResolver,
+    path::PathCompletionResolver, record::RecordFieldCompletionResolver,
+    unqualified::UnqualifiedCompletionResolver,
 };
 
 /// Coordinates completion-site detection with semantic candidate rendering.
@@ -52,8 +55,11 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<CompletionItem>> {
+        // Keyword fragments can be useful even when the cursor does not lower
+        // into a semantic completion site. For example, `f$0` at item level is
+        // just incomplete text, not a Body IR or DefMap path.
         let Some(context) = CompletionContext::at(self.0, target, file_id, offset)? else {
-            return Ok(Vec::new());
+            return KeywordCompletionResolver::new(self.0).completions_at(target, file_id, offset);
         };
 
         match context {
@@ -64,7 +70,19 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
                 PathCompletionResolver::new(self.0).body_completions(site)
             }
             CompletionContext::BodyUnqualifiedCompletionSite(site) => {
-                UnqualifiedCompletionResolver::new(self.0).body_completions(site)
+                // Plain body names come from lexical scope, but value positions
+                // also accept expression keywords. Keep those as low-priority
+                // overlay rows so semantic names remain the primary signal.
+                let mut completions =
+                    UnqualifiedCompletionResolver::new(self.0).body_completions(site)?;
+                if matches!(site.namespace, UnqualifiedCompletionNamespace::Values) {
+                    completions.extend(
+                        KeywordCompletionResolver::new(self.0)
+                            .overlay_completions_at(target, file_id, offset)?,
+                    );
+                    completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
+                }
+                Ok(completions)
             }
             CompletionContext::RecordFieldCompletionSite(site) => {
                 RecordFieldCompletionResolver::new(self.0).completions(site)
@@ -92,6 +110,7 @@ fn def_completion_detail(kind: CompletionKind, label: &str) -> String {
         CompletionKind::Field => format!("field {label}"),
         CompletionKind::Function => format!("fn {label}"),
         CompletionKind::InherentMethod | CompletionKind::TraitMethod => format!("method {label}"),
+        CompletionKind::Keyword => format!("keyword {label}"),
         CompletionKind::Macro => format!("macro {label}"),
         CompletionKind::Module => format!("mod {label}"),
         CompletionKind::Static => format!("static {label}"),

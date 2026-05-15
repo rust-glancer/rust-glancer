@@ -10,7 +10,8 @@ use rg_semantic_ir::Documentation;
 use crate::{
     Analysis,
     model::{
-        CompletionApplicability, CompletionEdit, CompletionItem, CompletionKind, CompletionTarget,
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind, CompletionTarget,
     },
 };
 
@@ -127,6 +128,7 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
                 CompletionApplicability::Known,
                 target,
             ),
+            insert_text: CompletionInsertText::Plain,
             edit: Some(edit),
         });
         Ok(())
