@@ -8,6 +8,7 @@
 //! while the resolver turns that site into labels, detail text, documentation,
 //! sort keys, and replacement edits.
 
+mod completion_sort;
 mod context;
 mod dot;
 mod path;
@@ -18,7 +19,7 @@ use rg_parse::FileId;
 
 use crate::{
     Analysis,
-    model::{CompletionApplicability, CompletionItem, CompletionKind, CompletionTarget},
+    model::{CompletionItem, CompletionKind},
 };
 
 use self::{
@@ -76,40 +77,6 @@ struct CompletionMetadata {
     label: String,
     detail: Option<String>,
     documentation: Option<String>,
-}
-
-/// Context-sensitive policy for building LSP `sortText`.
-///
-/// The policy keeps resolver-specific filtering separate from the final sort
-/// key shape, while still allowing contexts like type positions to prefer
-/// concrete types over modules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CompletionSortPolicy {
-    General,
-    TypePosition,
-}
-
-impl CompletionSortPolicy {
-    fn sort_text(
-        self,
-        label: &str,
-        kind: CompletionKind,
-        applicability: CompletionApplicability,
-        target: CompletionTarget,
-    ) -> String {
-        match self {
-            Self::General => format!(
-                "{label}|{:02}|{:02}|{target:?}",
-                kind.sort_text_rank(),
-                applicability.sort_text_rank(),
-            ),
-            Self::TypePosition => format!(
-                "{:02}|{label}|{:02}|{target:?}",
-                kind.type_context_sort_text_rank(),
-                applicability.sort_text_rank(),
-            ),
-        }
-    }
 }
 
 fn def_completion_detail(kind: CompletionKind, label: &str) -> String {

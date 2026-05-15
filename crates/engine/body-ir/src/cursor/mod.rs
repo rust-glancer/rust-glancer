@@ -78,11 +78,15 @@ pub enum BodyUnqualifiedCompletionCandidate {
     Binding {
         binding: BindingId,
         label: String,
+        /// Number of lexical parents between the cursor scope and the binding's scope.
+        scope_distance: usize,
     },
     LocalItem {
         item: BodyItemRef,
         kind: BodyItemKind,
         label: String,
+        /// Number of lexical parents between the cursor scope and the item's scope.
+        scope_distance: usize,
     },
 }
 
@@ -213,6 +217,7 @@ impl BodyIrReadTxn<'_> {
         let mut seen_values = Vec::new();
         let mut seen_types = Vec::new();
         let mut scope = Some(site.scope);
+        let mut scope_distance = 0;
 
         // Walk outward from the innermost scope so local shadowing naturally wins.
         while let Some(scope_id) = scope {
@@ -238,6 +243,7 @@ impl BodyIrReadTxn<'_> {
                     candidates.push(BodyUnqualifiedCompletionCandidate::Binding {
                         binding: binding_id,
                         label,
+                        scope_distance,
                     });
                 }
             }
@@ -258,10 +264,12 @@ impl BodyIrReadTxn<'_> {
                     },
                     kind: item.kind,
                     label,
+                    scope_distance,
                 });
             }
 
             scope = scope_data.parent;
+            scope_distance += 1;
         }
 
         Ok(candidates)

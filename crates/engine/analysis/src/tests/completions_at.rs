@@ -274,6 +274,99 @@ pub fn use_it(shadowed: u8) {
 }
 
 #[test]
+fn sorts_unqualified_body_values_by_lexical_proximity() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_unqualified_value_proximity"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn c_module_item() {}
+
+pub fn use_it(c_a_outer: u8) {
+    {
+        let c_z_inner = c_a_outer;
+        c$0;
+    }
+}
+"#,
+        &[AnalysisQuery::complete_verbose(
+            "unqualified value proximity",
+            "0",
+        )],
+        expect![[r#"
+            unqualified value proximity
+            - variable c_z_inner
+              detail: let c_z_inner: u8
+              sort: 00-body:0000|c_z_inner|07|00|Binding { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(1) }, binding: BindingId(1) }
+              replace: 107..108
+            - variable c_a_outer
+              detail: let c_a_outer: u8
+              sort: 00-body:0002|c_a_outer|07|00|Binding { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(1) }, binding: BindingId(0) }
+              replace: 107..108
+            - fn c_module_item
+              detail: fn c_module_item
+              sort: 01-module|c_module_item|06|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) }))
+              replace: 107..108
+            - fn use_it
+              detail: fn use_it
+              sort: 01-module|use_it|06|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) }))
+              replace: 107..108
+        "#]],
+    );
+}
+
+#[test]
+fn sorts_unqualified_body_types_by_lexical_proximity() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_unqualified_type_proximity"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod a_mod {}
+pub trait ATrait {}
+pub struct AModule;
+
+pub fn use_it() {
+    struct ZLocal;
+
+    let _value: A$0;
+}
+"#,
+        &[AnalysisQuery::complete_verbose(
+            "unqualified type proximity",
+            "0",
+        )],
+        expect![[r#"
+            unqualified type proximity
+            - struct ZLocal
+              detail: struct ZLocal
+              sort: 00-body:0000|00|ZLocal|00|BodyItem(BodyItemRef { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(0) }, item: BodyItemId(0) })
+              replace: 112..113
+            - struct AModule
+              detail: struct AModule
+              sort: 01-module|00|AModule|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) }))
+              replace: 112..113
+            - trait ATrait
+              detail: trait ATrait
+              sort: 01-module|01|ATrait|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) }))
+              replace: 112..113
+            - module a_mod
+              detail: mod a_mod
+              sort: 01-module|02|a_mod|00|Def(Module(ModuleRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, module: ModuleId(1) }))
+              replace: 112..113
+        "#]],
+    );
+}
+
+#[test]
 fn completes_unqualified_types_from_body_and_module_scope() {
     check_analysis_queries(
         r#"
@@ -387,15 +480,15 @@ pub fn use_it() {
             unqualified type sorting
             - struct Zed
               detail: struct Zed
-              sort: 00|Zed|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) }))
+              sort: 01-module|00|Zed|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) }))
               replace: 89..90
             - trait Mid
               detail: trait Mid
-              sort: 01|Mid|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) }))
+              sort: 01-module|01|Mid|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) }))
               replace: 89..90
             - module aa_prefix
               detail: mod aa_prefix
-              sort: 02|aa_prefix|00|Def(Module(ModuleRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, module: ModuleId(1) }))
+              sort: 01-module|02|aa_prefix|00|Def(Module(ModuleRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, module: ModuleId(1) }))
               replace: 89..90
         "#]],
     );

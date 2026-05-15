@@ -31,6 +31,14 @@ pub struct DefMapUnqualifiedCompletionSite {
     pub member_prefix_span: Span,
 }
 
+/// Where a visible definition came from during unqualified lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VisibleScopeOrigin {
+    ModuleScope,
+    Prelude,
+    ExternRoot,
+}
+
 /// Namespace slot occupied by a visible module-scope definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ScopeNamespace {
@@ -55,6 +63,8 @@ pub struct VisibleScopeDef {
     pub label: String,
     pub namespace: ScopeNamespace,
     pub def: DefId,
+    /// Lookup source used by unqualified completions to rank familiar names first.
+    pub origin: VisibleScopeOrigin,
 }
 
 impl DefMapReadTxn<'_> {
@@ -103,7 +113,13 @@ impl DefMapReadTxn<'_> {
         )?;
         let mut defs = Vec::new();
         let mut shadowed = HashSet::new();
-        push_visible_scope_defs(&mut defs, &mut shadowed, &scope, false);
+        push_visible_scope_defs(
+            &mut defs,
+            &mut shadowed,
+            &scope,
+            VisibleScopeOrigin::ModuleScope,
+            false,
+        );
         sort_visible_scope_defs(&mut defs);
         Ok(defs)
     }
@@ -123,7 +139,13 @@ impl DefMapReadTxn<'_> {
             importing_module,
             importing_module,
         )?;
-        push_visible_scope_defs(&mut defs, &mut shadowed, &current_scope, false);
+        push_visible_scope_defs(
+            &mut defs,
+            &mut shadowed,
+            &current_scope,
+            VisibleScopeOrigin::ModuleScope,
+            false,
+        );
 
         if let Some(def_map) = self.def_map(importing_module.target)? {
             let mut extern_roots = def_map.extern_prelude().iter().collect::<Vec<_>>();
@@ -137,6 +159,7 @@ impl DefMapReadTxn<'_> {
                     label,
                     namespace: ScopeNamespace::Types,
                     def: DefId::Module(*module_ref),
+                    origin: VisibleScopeOrigin::ExternRoot,
                 });
             }
 
@@ -146,7 +169,13 @@ impl DefMapReadTxn<'_> {
                     importing_module,
                     prelude,
                 )?;
-                push_visible_scope_defs(&mut defs, &mut shadowed, &prelude_scope, true);
+                push_visible_scope_defs(
+                    &mut defs,
+                    &mut shadowed,
+                    &prelude_scope,
+                    VisibleScopeOrigin::Prelude,
+                    true,
+                );
             }
         }
 
@@ -321,6 +350,7 @@ fn push_visible_scope_defs(
     defs: &mut Vec<VisibleScopeDef>,
     shadowed: &mut HashSet<(String, ScopeNamespace)>,
     scope: &crate::model::ModuleScopeBuilder,
+    origin: VisibleScopeOrigin,
     skip_shadowed: bool,
 ) {
     // The visibility-aware builder keeps namespace buckets separate. Analysis filters those
@@ -333,6 +363,7 @@ fn push_visible_scope_defs(
                 name.to_string(),
                 ScopeNamespace::Types,
                 binding.def,
+                origin,
                 skip_shadowed,
             );
         }
@@ -343,6 +374,7 @@ fn push_visible_scope_defs(
                 name.to_string(),
                 ScopeNamespace::Values,
                 binding.def,
+                origin,
                 skip_shadowed,
             );
         }
@@ -353,6 +385,7 @@ fn push_visible_scope_defs(
                 name.to_string(),
                 ScopeNamespace::Macros,
                 binding.def,
+                origin,
                 skip_shadowed,
             );
         }
@@ -365,6 +398,7 @@ fn push_visible_scope_def(
     label: String,
     namespace: ScopeNamespace,
     def: DefId,
+    origin: VisibleScopeOrigin,
     skip_shadowed: bool,
 ) {
     if skip_shadowed && shadowed.contains(&(label.clone(), namespace)) {
@@ -375,6 +409,7 @@ fn push_visible_scope_def(
         label,
         namespace,
         def,
+        origin,
     });
 }
 

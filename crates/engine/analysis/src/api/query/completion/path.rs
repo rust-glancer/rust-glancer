@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-use super::{CompletionMetadata, CompletionSortPolicy, def_completion_detail};
+use super::{CompletionMetadata, completion_sort::CompletionSortPolicy, def_completion_detail};
 
 pub(super) struct PathCompletionResolver<'a, 'db>(&'a Analysis<'db>);
 
@@ -121,6 +121,7 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
             detail: metadata.detail,
             documentation: metadata.documentation,
             sort_text: CompletionSortPolicy::General.sort_text(
+                None,
                 &metadata.label,
                 kind,
                 CompletionApplicability::Known,
