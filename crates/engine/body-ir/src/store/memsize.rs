@@ -4,8 +4,9 @@ use crate::{
     BodyIrBuildPolicy, BodyIrDb, BodyIrPackageBundle, BodyIrStats, BodyItemData, BodyItemId,
     BodyItemKind, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef,
     BodyResolution, BodySource, BodyTy, BodyTypePathResolution, ExprData, ExprId, ExprKind,
-    LiteralKind, PackageBodies, PatData, PatId, PatKind, RecordPatField, ResolvedFieldRef,
-    ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
+    LiteralKind, PackageBodies, PatData, PatId, PatKind, RecordExprField, RecordPatField,
+    ResolvedFieldRef, ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
+    TargetBodiesStatus,
     ir::expr::{ExprWrapperKind, MatchArmData},
     ir::ids::StmtId,
 };
@@ -39,6 +40,7 @@ rg_memsize::impl_memory_size_children! {
     ScopeData => parent, local_items, local_impls, bindings;
     ExprData => source, scope, visible_bindings, kind, resolution, ty;
     MatchArmData => pat, scope, expr;
+    RecordExprField => key, key_span, source_span, value;
     BodyPath => source_span, path, segment_spans;
     BodyLocalNominalTy => item, args;
     BodyNominalTy => def, args;
@@ -46,7 +48,7 @@ rg_memsize::impl_memory_size_children! {
     BodyImplData => source, scope, generics, trait_ref, self_ty, self_item, functions;
     BodyFunctionData => source, name_source, owner, name, docs, declaration;
     PatData => source, kind;
-    RecordPatField => key, pat;
+    RecordPatField => key, key_span, source_span, pat;
     BindingData => source, scope, kind, name, annotation, ty;
     StmtData => source, kind;
     BodyRef => target, body;
@@ -134,6 +136,19 @@ impl MemorySize for ExprKind {
                 recorder.scope("field_span", |recorder| {
                     field_span.record_memory_children(recorder);
                 });
+            }
+            Self::Record {
+                path,
+                field_list_span,
+                fields,
+                spread,
+            } => {
+                recorder.scope("path", |recorder| path.record_memory_children(recorder));
+                recorder.scope("field_list_span", |recorder| {
+                    field_list_span.record_memory_children(recorder);
+                });
+                recorder.scope("fields", |recorder| fields.record_memory_children(recorder));
+                recorder.scope("spread", |recorder| spread.record_memory_children(recorder));
             }
             Self::Wrapper { kind, inner } => {
                 recorder.scope("kind", |recorder| kind.record_memory_children(recorder));
@@ -241,8 +256,15 @@ impl MemorySize for PatKind {
                 recorder.scope("path", |recorder| path.record_memory_children(recorder));
                 recorder.scope("fields", |recorder| fields.record_memory_children(recorder));
             }
-            Self::Record { path, fields } => {
+            Self::Record {
+                path,
+                field_list_span,
+                fields,
+            } => {
                 recorder.scope("path", |recorder| path.record_memory_children(recorder));
+                recorder.scope("field_list_span", |recorder| {
+                    field_list_span.record_memory_children(recorder);
+                });
                 recorder.scope("fields", |recorder| fields.record_memory_children(recorder));
             }
             Self::Ref { pat } | Self::Box { pat } => pat.record_memory_children(recorder),

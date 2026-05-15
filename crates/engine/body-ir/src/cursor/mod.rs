@@ -7,6 +7,7 @@
 mod scan;
 
 use rg_def_map::{Path, TargetRef};
+use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
@@ -17,7 +18,7 @@ use crate::{
 
 use self::scan::{
     BodyCursorScanner, BodySourceScanner, DotCompletionSiteScanner, PathCompletionSiteScanner,
-    UnqualifiedCompletionSiteScanner,
+    RecordFieldCompletionSiteScanner, UnqualifiedCompletionSiteScanner,
 };
 
 /// Source site selected for a dot-completion query.
@@ -70,6 +71,19 @@ pub struct UnqualifiedCompletionSite {
     /// Bindings are allocated in source order, so this boundary prevents later
     /// `let` declarations from completing before they are in scope.
     pub visible_bindings: usize,
+}
+
+/// Source site selected for a record-field completion query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordFieldCompletionSite {
+    pub body: BodyRef,
+    pub scope: ScopeId,
+    /// Struct-like path before the record field list.
+    pub owner: Path,
+    /// Field-name prefix already typed inside the record field list.
+    pub member_prefix_span: Span,
+    /// Named fields already written in this literal or pattern.
+    pub existing_fields: Vec<FieldKey>,
 }
 
 /// Body-local name visible at an unqualified completion site.
@@ -203,6 +217,16 @@ impl BodyIrReadTxn<'_> {
         offset: u32,
     ) -> Result<Option<UnqualifiedCompletionSite>, PackageStoreError> {
         UnqualifiedCompletionSiteScanner::new(self, target, file_id, offset).site_at_name()
+    }
+
+    /// Returns the source site for a record-field completion query inside a body.
+    pub fn record_field_completion_site(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> Result<Option<RecordFieldCompletionSite>, PackageStoreError> {
+        RecordFieldCompletionSiteScanner::new(self, target, file_id, offset).site_at_record_field()
     }
 
     /// Returns body-local names visible from an unqualified completion site.

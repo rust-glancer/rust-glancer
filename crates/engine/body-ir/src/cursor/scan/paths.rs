@@ -183,7 +183,7 @@ impl ValuePathCursorScanner<'_> {
                     self.scan_pat(scope, *field);
                 }
             }
-            PatKind::Record { path, fields } => {
+            PatKind::Record { path, fields, .. } => {
                 if let Some(path) = path {
                     self.scan_body_path(scope, path, data.source.file_id);
                 }

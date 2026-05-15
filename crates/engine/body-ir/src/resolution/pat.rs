@@ -132,7 +132,7 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
             PatKind::TupleStruct { path, fields } => {
                 self.propagate_tuple_variant(path.as_ref(), &fields, expected_ty)
             }
-            PatKind::Record { path, fields } => {
+            PatKind::Record { path, fields, .. } => {
                 self.propagate_record_variant(path.as_ref(), &fields, expected_ty)
             }
             PatKind::Or { pats } => {

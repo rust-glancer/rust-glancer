@@ -1,6 +1,8 @@
 //! Cursor-site classification for completion requests.
 
-use rg_body_ir::{DotCompletionSite, PathCompletionSite, UnqualifiedCompletionSite};
+use rg_body_ir::{
+    DotCompletionSite, PathCompletionSite, RecordFieldCompletionSite, UnqualifiedCompletionSite,
+};
 use rg_def_map::{DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite, TargetRef};
 use rg_parse::FileId;
 
@@ -14,6 +16,8 @@ pub(super) enum CompletionContext {
     BodyPathCompletionSite(PathCompletionSite),
     /// Body lexical position, such as `let value = inp$0`.
     BodyUnqualifiedCompletionSite(UnqualifiedCompletionSite),
+    /// Record field position, such as `User { na$0 }`.
+    RecordFieldCompletionSite(RecordFieldCompletionSite),
     /// Import path position, such as `use crate::api::$0`.
     UsePathCompletionSite(DefMapPathCompletionSite),
     /// Import root position, such as `use st$0`.
@@ -41,6 +45,13 @@ impl CompletionContext {
             .path_completion_site(target, file_id, offset)?
         {
             return Ok(Some(Self::BodyPathCompletionSite(site)));
+        }
+
+        if let Some(site) = analysis
+            .body_ir
+            .record_field_completion_site(target, file_id, offset)?
+        {
+            return Ok(Some(Self::RecordFieldCompletionSite(site)));
         }
 
         if let Some(site) = analysis

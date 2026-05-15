@@ -219,7 +219,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                     self.scan_pat(body_ref, body, scope, *field, best);
                 }
             }
-            PatKind::Record { path, fields } => {
+            PatKind::Record { path, fields, .. } => {
                 if let Some(path) = path {
                     self.scan_body_path(body_ref, scope, path, best);
                 }

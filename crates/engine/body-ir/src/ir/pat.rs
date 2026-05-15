@@ -35,6 +35,7 @@ pub enum PatKind {
     },
     Record {
         path: Option<BodyPath>,
+        field_list_span: Option<rg_parse::Span>,
         fields: Vec<RecordPatField>,
     },
     Or {
@@ -60,6 +61,8 @@ pub enum PatKind {
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct RecordPatField {
     pub key: FieldKey,
+    pub key_span: rg_parse::Span,
+    pub source_span: rg_parse::Span,
     pub pat: PatId,
 }
 
@@ -73,7 +76,7 @@ impl PatKind {
                 }
                 fields.shrink_to_fit();
             }
-            Self::Record { path, fields } => {
+            Self::Record { path, fields, .. } => {
                 if let Some(path) = path {
                     path.shrink_to_fit();
                 }

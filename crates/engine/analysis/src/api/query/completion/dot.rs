@@ -13,7 +13,9 @@ use crate::{
     },
 };
 
-use super::{CompletionMetadata, completion_sort::CompletionSortPolicy};
+use super::{
+    CompletionMetadata, completion_sort::CompletionSortPolicy, field::FieldCompletionRenderer,
+};
 
 pub(super) struct DotCompletionResolver<'a, 'db>(&'a Analysis<'db>);
 
@@ -140,69 +142,18 @@ impl<'a, 'db> DotCompletionResolver<'a, 'db> {
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
-        let Some(metadata) = self.field_completion_metadata(field)? else {
+        let Some(completion) = FieldCompletionRenderer::new(self.0).completion(field, edit)? else {
             return Ok(());
         };
-        let target = CompletionTarget::Field(field);
         if completions
             .iter()
-            .any(|completion| completion.target == target)
+            .any(|existing| existing.target == completion.item.target)
         {
             return Ok(());
         }
 
-        completions.push(CompletionItem {
-            label: metadata.label.clone(),
-            kind: CompletionKind::Field,
-            target,
-            applicability: CompletionApplicability::Known,
-            detail: metadata.detail,
-            documentation: metadata.documentation,
-            sort_text: CompletionSortPolicy::General.sort_text(
-                None,
-                &metadata.label,
-                CompletionKind::Field,
-                CompletionApplicability::Known,
-                target,
-            ),
-            edit: Some(edit),
-        });
+        completions.push(completion.item);
         Ok(())
-    }
-
-    fn field_completion_metadata(
-        &self,
-        field: ResolvedFieldRef,
-    ) -> anyhow::Result<Option<CompletionMetadata>> {
-        let renderer = SignatureRenderer::new(self.0);
-        match field {
-            ResolvedFieldRef::Semantic(field) => {
-                let Some(data) = self.0.semantic_ir.field_data(field)? else {
-                    return Ok(None);
-                };
-                let Some(label) = data.field.key.as_ref().map(ToString::to_string) else {
-                    return Ok(None);
-                };
-                Ok(Some(CompletionMetadata {
-                    label,
-                    detail: renderer.field_signature(data),
-                    documentation: data.field.docs.as_ref().map(Documentation::text),
-                }))
-            }
-            ResolvedFieldRef::BodyLocal(field) => {
-                let Some(data) = self.0.body_ir.local_field_data(field)? else {
-                    return Ok(None);
-                };
-                let Some(label) = data.field.key.as_ref().map(ToString::to_string) else {
-                    return Ok(None);
-                };
-                Ok(Some(CompletionMetadata {
-                    label,
-                    detail: renderer.local_field_signature(data),
-                    documentation: data.field.docs.as_ref().map(Documentation::text),
-                }))
-            }
-        }
     }
 
     fn push_function_completion(

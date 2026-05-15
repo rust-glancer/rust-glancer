@@ -897,6 +897,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     .unwrap_or_else(|| "<missing>".to_string());
                 format!("field {field}")
             }
+            ExprKind::Record { path, .. } => {
+                let path = path
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("record {path}")
+            }
             ExprKind::Wrapper { kind, .. } => format!("wrapper {kind}"),
             ExprKind::Literal { kind } => {
                 format!(

@@ -182,6 +182,17 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 data.resolution = resolution;
                 data.ty = ty;
             }
+            ExprKind::Record { path, .. } => {
+                let (resolution, ty) = match path {
+                    Some(path) => {
+                        self.resolve_nonlocal_path_expr(self.body.exprs[expr].scope, &path.path)?
+                    }
+                    None => (BodyResolution::Unknown, BodyTy::Unknown),
+                };
+                let data = &mut self.body.exprs[expr];
+                data.resolution = resolution;
+                data.ty = ty;
+            }
             ExprKind::MethodCall {
                 receiver,
                 method_name,

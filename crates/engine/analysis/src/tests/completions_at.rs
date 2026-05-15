@@ -1432,3 +1432,139 @@ pub fn use_it(user: User) {
         "#]],
     );
 }
+
+#[test]
+fn completes_record_literal_fields() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_record_literal_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User {
+    pub id: u8,
+    pub name: u8,
+    pub active: bool,
+}
+
+pub fn use_it(id: u8) {
+    let _with_prefix = User { id, na$literal_prefix$ };
+    let _empty = User { id, $literal_empty$ };
+}
+"#,
+        &[
+            AnalysisQuery::complete("record literal prefix completions", "literal_prefix"),
+            AnalysisQuery::complete("record literal empty completions", "literal_empty"),
+        ],
+        expect![[r#"
+            record literal prefix completions
+            - field active
+            - field name
+
+            record literal empty completions
+            - field active
+            - field name
+        "#]],
+    );
+}
+
+#[test]
+fn completes_record_pattern_fields() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_record_pattern_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User {
+    pub id: u8,
+    pub name: u8,
+    pub active: bool,
+}
+
+pub fn use_it(user: User) {
+    let User { id, na$pattern_prefix$ } = user;
+}
+"#,
+        &[AnalysisQuery::complete(
+            "record pattern prefix completions",
+            "pattern_prefix",
+        )],
+        expect![[r#"
+            record pattern prefix completions
+            - field active
+            - field name
+        "#]],
+    );
+}
+
+#[test]
+fn completes_body_local_record_literal_fields() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_record_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    struct Local {
+        left: u8,
+        right: u8,
+    }
+
+    let _value = Local { $0 };
+}
+"#,
+        &[AnalysisQuery::complete(
+            "body-local record literal completions",
+            "0",
+        )],
+        expect![[r#"
+            body-local record literal completions
+            - field left
+            - field right
+        "#]],
+    );
+}
+
+#[test]
+fn keeps_record_field_value_positions_as_value_completions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_record_value_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User {
+    pub id: u8,
+    pub name: u8,
+}
+
+pub fn use_it(user_value: u8) {
+    let _value = User { id: us$0, name: 0 };
+}
+"#,
+        &[AnalysisQuery::complete(
+            "record field value completions",
+            "0",
+        )],
+        expect![[r#"
+            record field value completions
+            - struct User
+            - fn use_it
+            - variable user_value
+        "#]],
+    );
+}

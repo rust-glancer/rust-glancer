@@ -3,15 +3,18 @@
 //! Examples use `$0` to mark the cursor. Member completion handles shapes like
 //! `user.na$0`; path completion handles body paths such as
 //! `let value = crate::api::bu$0` and imports such as `use crate::api::$0`;
-//! unqualified completion handles lexical positions such as `let value = inp$0`
-//! and import roots such as `use st$0`. The scanners identify the cursor site,
-//! while the resolver turns that site into labels, detail text, documentation,
-//! sort keys, and replacement edits.
+//! unqualified completion handles lexical positions such as `let value = inp$0`;
+//! record-field completion handles `User { na$0 }`; import roots use shapes like
+//! `use st$0`. The scanners identify the cursor site, while the resolver turns
+//! that site into labels, detail text, documentation, sort keys, and replacement
+//! edits.
 
 mod completion_sort;
 mod context;
 mod dot;
+mod field;
 mod path;
+mod record;
 mod unqualified;
 
 use rg_def_map::TargetRef;
@@ -24,7 +27,7 @@ use crate::{
 
 use self::{
     context::CompletionContext, dot::DotCompletionResolver, path::PathCompletionResolver,
-    unqualified::UnqualifiedCompletionResolver,
+    record::RecordFieldCompletionResolver, unqualified::UnqualifiedCompletionResolver,
 };
 
 /// Coordinates completion-site detection with semantic candidate rendering.
@@ -42,7 +45,7 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
     }
 
     /// Collects completions for one source offset, e.g. `user.$0`,
-    /// `let value = crate::$0`, `let value = inp$0`, or `use st$0`.
+    /// `let value = crate::$0`, `let value = inp$0`, `User { na$0 }`, or `use st$0`.
     pub(crate) fn completions_at(
         &self,
         target: TargetRef,
@@ -62,6 +65,9 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
             }
             CompletionContext::BodyUnqualifiedCompletionSite(site) => {
                 UnqualifiedCompletionResolver::new(self.0).body_completions(site)
+            }
+            CompletionContext::RecordFieldCompletionSite(site) => {
+                RecordFieldCompletionResolver::new(self.0).completions(site)
             }
             CompletionContext::UsePathCompletionSite(site) => {
                 PathCompletionResolver::new(self.0).use_completions(site)

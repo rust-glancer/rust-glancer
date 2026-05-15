@@ -269,6 +269,58 @@ impl User {
 }
 
 #[test]
+fn records_struct_literals_as_record_expressions() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_record_expr_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User {
+    pub id: u8,
+    pub name: u8,
+}
+
+pub fn use_it(id: u8, name: u8) -> User {
+    let base = User { id, name };
+    User { id: 1, ..base }
+}
+"#,
+        expect![[r#"
+            package body_record_expr_fixture
+
+            body_record_expr_fixture [lib]
+            body b0 fn body_record_expr_fixture[lib]::crate::use_it @ 6:1-9:2
+            scopes
+            - s0 parent <none>: v0, v1
+            - s1 parent s0: v2
+            bindings
+            - v0 param id `id`: u8 => syntax u8 @ 6:15-6:17
+            - v1 param name `name`: u8 => syntax u8 @ 6:23-6:27
+            - v2 let base `base` => nominal struct body_record_expr_fixture[lib]::crate::User @ 7:9-7:13
+            body
+            expr e6 block s1 => nominal struct body_record_expr_fixture[lib]::crate::User @ 6:41-9:2
+              stmt s0 let v2 @ 7:5-7:34
+                initializer
+                  expr e2 record User -> item struct body_record_expr_fixture[lib]::crate::User => nominal struct body_record_expr_fixture[lib]::crate::User @ 7:16-7:33
+                    field id
+                      expr e0 path id -> local v0 => syntax u8 @ 7:23-7:25
+                    field name
+                      expr e1 path name -> local v1 => syntax u8 @ 7:27-7:31
+              tail
+                expr e5 record User -> item struct body_record_expr_fixture[lib]::crate::User => nominal struct body_record_expr_fixture[lib]::crate::User @ 8:5-8:27
+                  field id
+                    expr e3 literal int `1` => <unknown> @ 8:16-8:17
+                  spread
+                    expr e4 path base -> local v2 => nominal struct body_record_expr_fixture[lib]::crate::User @ 8:21-8:25
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_associated_functions_and_enum_variant_calls() {
     check_project_body_ir(
         r#"
