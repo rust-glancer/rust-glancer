@@ -72,12 +72,12 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         Ok(candidates)
     }
 
-    /// Finds the enclosing body and the smallest matching node in each body-local category.
+    /// Finds the innermost enclosing body and the smallest matching node in each category.
     fn source_node_at(&self) -> Result<Option<SourceNodeAt>, PackageStoreError> {
         let Some(target_bodies) = self.body_ir.target_bodies(self.target)? else {
             return Ok(None);
         };
-        let mut best = None;
+        let mut best: Option<(SourceNodeAt, u32)> = None;
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
             if body.source.file_id != self.file_id || !body.source.span.contains(self.offset) {
@@ -88,7 +88,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                 target: self.target,
                 body: BodyId(body_idx),
             };
-            best = Some(SourceNodeAt {
+            let source_node = SourceNodeAt {
                 body: body_ref,
                 expr: Self::smallest_expr_at(body, self.file_id, self.offset),
                 binding: Self::smallest_binding_at(body, self.file_id, self.offset),
@@ -100,10 +100,14 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                     self.offset,
                 ),
                 local_function: Self::smallest_local_function_at(body, self.file_id, self.offset),
-            });
+            };
+            let body_len = body.source.span.len();
+            if best.is_none_or(|(_, best_len)| body_len < best_len) {
+                best = Some((source_node, body_len));
+            }
         }
 
-        Ok(best)
+        Ok(best.map(|(source_node, _)| source_node))
     }
 
     fn smallest_expr_at(body: &BodyData, file_id: FileId, offset: u32) -> Option<ExprId> {
