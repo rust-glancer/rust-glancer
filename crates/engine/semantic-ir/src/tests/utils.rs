@@ -11,7 +11,9 @@ use crate::{
     ir::ids::{FunctionRef, ImplRef, TraitRef, TypeDefId, TypeDefRef},
 };
 use rg_def_map::{DefMapDb, ModuleId, ModuleRef, PackageSlot, Path, PathSegment, TargetRef};
-use rg_item_tree::{FieldItem, FieldList, ItemTreeDb, ParamKind, VisibilityLevel};
+use rg_item_tree::{
+    FieldItem, FieldList, ItemTreeDb, PackageNameInterners, ParamKind, VisibilityLevel,
+};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{Package, ParseDb, Target};
 use rg_workspace::{TargetKind, WorkspaceMetadata};
@@ -92,8 +94,11 @@ impl SemanticIrFixtureDb {
         let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
             .expect("fixture workspace metadata should build");
         let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
-        let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item tree db should build");
+        let mut names = PackageNameInterners::new(parse.package_count());
+        let item_tree =
+            ItemTreeDb::build(&mut parse, &mut names).expect("fixture item tree db should build");
         let def_map = DefMapDb::builder(&workspace, &parse, &item_tree)
+            .name_interners(&mut names)
             .build()
             .expect("fixture def map db should build");
         let semantic_ir = SemanticIrDb::builder(&item_tree, &def_map)
@@ -849,9 +854,7 @@ impl TargetSemanticIrSnapshot<'_> {
                 indent(depth),
                 visibility_prefix(&field.visibility),
                 field
-                    .key
-                    .as_ref()
-                    .map(|key| key.declaration_label())
+                    .key_declaration_label()
                     .unwrap_or_else(|| "<missing>".to_string()),
                 field.ty,
             )

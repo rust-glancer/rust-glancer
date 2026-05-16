@@ -87,16 +87,13 @@ impl Project {
         &mut self,
         change: SavedFileChange,
     ) -> anyhow::Result<AnalysisChangeSummary> {
-        self.apply_changes([change])
-    }
-
-    /// Applies a batch of saved file replacements and refreshes derived analysis state once.
-    pub fn apply_changes(
-        &mut self,
-        changes: impl IntoIterator<Item = SavedFileChange>,
-    ) -> anyhow::Result<AnalysisChangeSummary> {
-        let changes = canonicalize_changes(changes)?;
-        update::apply_changes(self, changes)
+        let path = change.path.canonicalize().with_context(|| {
+            format!(
+                "while attempting to canonicalize changed file {}",
+                change.path.display()
+            )
+        })?;
+        update::apply_change(self, SavedFileChange { path })
     }
 
     /// Builds an ephemeral analysis project from dirty editor buffers.
@@ -110,23 +107,6 @@ impl Project {
     ) -> anyhow::Result<Option<Project>> {
         dirty::build_overlay(self, changes)
     }
-}
-
-fn canonicalize_changes(
-    changes: impl IntoIterator<Item = SavedFileChange>,
-) -> anyhow::Result<Vec<SavedFileChange>> {
-    changes
-        .into_iter()
-        .map(|change| {
-            let path = change.path.canonicalize().with_context(|| {
-                format!(
-                    "while attempting to canonicalize changed file {}",
-                    change.path.display()
-                )
-            })?;
-            Ok(SavedFileChange { path })
-        })
-        .collect()
 }
 
 /// One source file saved on disk.
@@ -147,7 +127,7 @@ impl SavedFileChange {
     }
 }
 
-/// Summary of what a change batch touched.
+/// Summary of what one saved-file change touched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AnalysisChangeSummary {
     pub changed_files: Vec<ChangedFile>,

@@ -11,15 +11,15 @@ use super::{ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef, 
 /// Frozen namespace map for one analyzed target.
 #[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct DefMap {
-    pub(crate) root_module: Option<ModuleId>,
+    root_module: Option<ModuleId>,
     // Currently means “implicit roots visible to this target,” including sibling lib roots
-    pub(crate) extern_prelude: HashMap<Name, ModuleRef>,
+    extern_prelude: HashMap<Name, ModuleRef>,
     // Standard prelude module selected for this target, if sysroot sources are available.
-    pub(crate) prelude: Option<ModuleRef>,
-    pub(crate) modules: Arena<ModuleId, ModuleData>,
-    pub(crate) local_defs: Arena<LocalDefId, LocalDefData>,
-    pub(crate) local_impls: Arena<LocalImplId, LocalImplData>,
-    pub(crate) imports: Arena<ImportId, ImportData>,
+    prelude: Option<ModuleRef>,
+    modules: Arena<ModuleId, ModuleData>,
+    local_defs: Arena<LocalDefId, LocalDefData>,
+    local_impls: Arena<LocalImplId, LocalImplData>,
+    imports: Arena<ImportId, ImportData>,
 }
 
 impl DefMap {
@@ -43,9 +43,21 @@ impl DefMap {
         self.modules.as_slice()
     }
 
+    pub(crate) fn modules_storage(&self) -> &Arena<ModuleId, ModuleData> {
+        &self.modules
+    }
+
     /// Returns module data by id.
     pub fn module(&self, module_id: ModuleId) -> Option<&ModuleData> {
         self.modules.get(module_id)
+    }
+
+    pub(crate) fn module_mut(&mut self, module_id: ModuleId) -> Option<&mut ModuleData> {
+        self.modules.get_mut(module_id)
+    }
+
+    pub(crate) fn module_count(&self) -> usize {
+        self.modules.len()
     }
 
     /// Returns local definition data by id.
@@ -58,6 +70,10 @@ impl DefMap {
         self.local_defs.as_slice()
     }
 
+    pub(crate) fn local_defs_storage(&self) -> &Arena<LocalDefId, LocalDefData> {
+        &self.local_defs
+    }
+
     /// Returns impl block data by id.
     pub(crate) fn local_impl(&self, local_impl: LocalImplId) -> Option<&LocalImplData> {
         self.local_impls.get(local_impl)
@@ -68,9 +84,37 @@ impl DefMap {
         self.local_impls.as_slice()
     }
 
+    pub(crate) fn local_impls_storage(&self) -> &Arena<LocalImplId, LocalImplData> {
+        &self.local_impls
+    }
+
     /// Returns all imports in stable import-id order.
     pub fn imports(&self) -> &[ImportData] {
         self.imports.as_slice()
+    }
+
+    pub(crate) fn imports_storage(&self) -> &Arena<ImportId, ImportData> {
+        &self.imports
+    }
+
+    pub(crate) fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &ImportData)> {
+        self.imports.iter_with_ids()
+    }
+
+    pub(crate) fn alloc_module(&mut self, module: ModuleData) -> ModuleId {
+        self.modules.alloc(module)
+    }
+
+    pub(crate) fn alloc_local_def(&mut self, local_def: LocalDefData) -> LocalDefId {
+        self.local_defs.alloc(local_def)
+    }
+
+    pub(crate) fn alloc_local_impl(&mut self, local_impl: LocalImplData) -> LocalImplId {
+        self.local_impls.alloc(local_impl)
+    }
+
+    pub(crate) fn alloc_import(&mut self, import: ImportData) -> ImportId {
+        self.imports.alloc(import)
     }
 
     pub(crate) fn set_root_module(&mut self, root_module: ModuleId) {

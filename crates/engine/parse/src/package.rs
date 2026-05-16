@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use rg_arena::Arena;
 
 use crate::{FileId, LineIndex, ParsedFile, ParsedFileSnapshot, Target, TargetId, file::FileDb};
-use rg_workspace::{PackageId, PackageOrigin, TargetKind};
+use rg_workspace::{PackageId, PackageOrigin, RustEdition, TargetKind};
 
 /// Parsed package, including package-local files and target entrypoints.
 #[derive(Debug, Clone)]
@@ -13,6 +13,8 @@ pub struct Package {
     pub(crate) id: PackageId,
     /// Package name from `Cargo.toml`.
     pub(crate) package_name: String,
+    /// Rust edition from `Cargo.toml`; source parsing depends on edition-specific keywords.
+    pub(crate) edition: RustEdition,
     /// Whether this package belongs to the analyzed workspace.
     pub(crate) is_workspace_member: bool,
     /// Where this package came from in the normalized workspace graph.
@@ -130,7 +132,7 @@ impl Package {
             );
         }
 
-        self.files = FileDb::from_parse_snapshot(snapshot.files);
+        self.files = FileDb::from_parse_snapshot(self.edition, snapshot.files);
         for (target, root_file) in self.targets.iter_mut().zip(snapshot.target_root_files) {
             target.root_file = root_file;
         }
@@ -175,7 +177,7 @@ impl Package {
 
     /// Parses package targets and their root files.
     pub(super) fn build(package: &rg_workspace::Package) -> anyhow::Result<Self> {
-        let mut files = FileDb::default();
+        let mut files = FileDb::new(package.edition);
         let mut parsed_targets = Arena::new();
 
         for target in Self::analyzed_targets(package) {
@@ -199,6 +201,7 @@ impl Package {
         Ok(Self {
             id: package.id.clone(),
             package_name: package.name.clone(),
+            edition: package.edition,
             is_workspace_member: package.is_workspace_member,
             origin: package.origin.clone(),
             files,

@@ -29,6 +29,24 @@ pub(super) struct HostFixture {
     host: Project,
 }
 
+fn merge_change_summary(target: &mut AnalysisChangeSummary, source: AnalysisChangeSummary) {
+    for changed_file in source.changed_files {
+        if !target.changed_files.contains(&changed_file) {
+            target.changed_files.push(changed_file);
+        }
+    }
+    for package in source.affected_packages {
+        if !target.affected_packages.contains(&package) {
+            target.affected_packages.push(package);
+        }
+    }
+    for target_ref in source.changed_targets {
+        if !target.changed_targets.contains(&target_ref) {
+            target.changed_targets.push(target_ref);
+        }
+    }
+}
+
 impl HostFixture {
     pub(super) fn build(spec: &str) -> Self {
         Self::build_with_package_residency_policy(spec, PackageResidencyPolicy::default())
@@ -202,14 +220,22 @@ impl HostFixture {
 
     fn save(&mut self, spec: &str) -> AnalysisChangeSummary {
         let saved_files = self.fixture.write_fixture_files(spec);
-        let changes = saved_files
-            .files()
-            .iter()
-            .map(|file| SavedFileChange::new(self.fixture.path(file.relative_path())));
+        let mut summary = AnalysisChangeSummary {
+            changed_files: Vec::new(),
+            affected_packages: Vec::new(),
+            changed_targets: Vec::new(),
+        };
 
-        self.host
-            .apply_changes(changes)
-            .expect("fixture save changes should apply")
+        for file in saved_files.files() {
+            let change = SavedFileChange::new(self.fixture.path(file.relative_path()));
+            let change_summary = self
+                .host
+                .apply_change(change)
+                .expect("fixture save change should apply");
+            merge_change_summary(&mut summary, change_summary);
+        }
+
+        summary
     }
 
     fn render_save_result(

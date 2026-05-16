@@ -289,8 +289,7 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         if let Some(state) = self.states.target(local_def_ref.target) {
             return Ok(state
                 .def_map
-                .local_defs
-                .get(local_def_ref.local_def)
+                .local_def(local_def_ref.local_def)
                 .map(|local_def| local_def.kind));
         }
 
@@ -473,8 +472,7 @@ fn freeze_target_scopes(
     for (module_idx, scope) in final_scopes.iter().enumerate() {
         let module = state
             .def_map
-            .modules
-            .get_mut(ModuleId(module_idx))
+            .module_mut(ModuleId(module_idx))
             .expect("module should exist for every final dirty scope");
         module.scope = scope.freeze();
         module.unresolved_imports = final_unresolved_imports

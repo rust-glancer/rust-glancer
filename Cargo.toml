@@ -16,6 +16,7 @@ members = [
   "crates/lib/text",
   "crates/lib/arena",
   "crates/lib/memsize",
+  "crates/lib/wincode-utils",
   "crates/lib/test-fixture",
 ]
 exclude = [
@@ -87,6 +88,7 @@ rg_package_store = { path = "crates/engine/package-store" }
 rg_text = { path = "crates/lib/text" }
 rg_arena = { path = "crates/lib/arena" }
 rg_memsize = { path = "crates/lib/memsize" }
+rg_wincode_utils = { path = "crates/lib/wincode-utils" }
 test_fixture = { path = "crates/lib/test-fixture" }
 
 [profile.bench]

@@ -17,7 +17,7 @@ pub use self::{
         TraitRef, TypeAliasData, TypeAliasId, TypeAliasRef, TypeAliasSignature, TypeDefId,
         TypeDefRef, TypePathContext, UnionData, UnionId,
     },
-    store::{SemanticIrDb, SemanticIrPackageBundle, SemanticIrReadTxn},
+    store::{SemanticIrDb, SemanticIrReadTxn},
 };
 pub use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,

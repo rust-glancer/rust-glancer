@@ -42,33 +42,33 @@ pub enum TypeRef {
     Never,
     Unit,
     Infer,
-    Path(#[wincode(with = "rg_text::WincodeDynamic<TypePath>")] TypePath),
-    Tuple(#[wincode(with = "rg_text::WincodeDynamic<Vec<TypeRef>>")] Vec<TypeRef>),
+    Path(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypePath>")] TypePath),
+    Tuple(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypeRef>>")] Vec<TypeRef>),
     Reference {
         lifetime: Option<String>,
         mutability: Mutability,
-        #[wincode(with = "rg_text::WincodeDynamic<Box<TypeRef>>")]
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")]
         inner: Box<TypeRef>,
     },
     RawPointer {
         mutability: Mutability,
-        #[wincode(with = "rg_text::WincodeDynamic<Box<TypeRef>>")]
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")]
         inner: Box<TypeRef>,
     },
-    Slice(#[wincode(with = "rg_text::WincodeDynamic<Box<TypeRef>>")] Box<TypeRef>),
+    Slice(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")] Box<TypeRef>),
     Array {
-        #[wincode(with = "rg_text::WincodeDynamic<Box<TypeRef>>")]
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")]
         inner: Box<TypeRef>,
         len: Option<String>,
     },
     FnPointer {
-        #[wincode(with = "rg_text::WincodeDynamic<Vec<TypeRef>>")]
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypeRef>>")]
         params: Vec<TypeRef>,
-        #[wincode(with = "rg_text::WincodeDynamic<Box<TypeRef>>")]
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")]
         ret: Box<TypeRef>,
     },
-    ImplTrait(#[wincode(with = "rg_text::WincodeDynamic<Vec<TypeBound>>")] Vec<TypeBound>),
-    DynTrait(#[wincode(with = "rg_text::WincodeDynamic<Vec<TypeBound>>")] Vec<TypeBound>),
+    ImplTrait(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypeBound>>")] Vec<TypeBound>),
+    DynTrait(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypeBound>>")] Vec<TypeBound>),
 }
 
 impl TypeRef {
@@ -332,7 +332,7 @@ pub struct TypePath {
     /// Full source range of the path syntax, including separators around segments.
     pub source_span: Span,
     pub absolute: bool,
-    #[wincode(with = "rg_text::WincodeDynamic<Vec<TypePathSegment>>")]
+    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypePathSegment>>")]
     pub segments: Vec<TypePathSegment>,
 }
 
@@ -395,7 +395,7 @@ impl fmt::Display for TypePath {
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct TypePathSegment {
     pub name: Name,
-    #[wincode(with = "rg_text::WincodeDynamic<Vec<GenericArg>>")]
+    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
     pub args: Vec<GenericArg>,
     pub span: Span,
 }
@@ -465,12 +465,12 @@ impl fmt::Display for TypePathSegment {
 
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum GenericArg {
-    Type(#[wincode(with = "rg_text::WincodeDynamic<TypeRef>")] TypeRef),
+    Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
     Lifetime(String),
     Const(String),
     AssocType {
         name: Name,
-        #[wincode(with = "rg_text::WincodeDynamic<Option<TypeRef>>")]
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Option<TypeRef>>")]
         ty: Option<TypeRef>,
     },
     Unsupported(String),
@@ -545,7 +545,7 @@ impl fmt::Display for GenericArg {
 
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum TypeBound {
-    Trait(#[wincode(with = "rg_text::WincodeDynamic<TypeRef>")] TypeRef),
+    Trait(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
     Lifetime(String),
     Unsupported(String),
 }

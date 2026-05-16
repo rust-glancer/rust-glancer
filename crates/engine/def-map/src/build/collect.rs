@@ -178,7 +178,7 @@ impl<'db> TargetScopeCollector<'db> {
         docs: Option<rg_item_tree::Documentation>,
         origin: ModuleOrigin,
     ) -> ModuleId {
-        let module_id = self.def_map.modules.alloc(ModuleData {
+        let module_id = self.def_map.alloc_module(ModuleData {
             name,
             name_span,
             docs,
@@ -245,7 +245,7 @@ impl<'db> TargetScopeCollector<'db> {
             return;
         };
 
-        let local_def_id = self.def_map.local_defs.alloc(LocalDefData {
+        let local_def_id = self.def_map.alloc_local_def(LocalDefData {
             module: module_id,
             name: name.clone(),
             kind,
@@ -256,8 +256,7 @@ impl<'db> TargetScopeCollector<'db> {
             span: item.span,
         });
         self.def_map
-            .modules
-            .get_mut(module_id)
+            .module_mut(module_id)
             .expect("module should exist for collected local definition")
             .local_defs
             .push(local_def_id);
@@ -283,15 +282,14 @@ impl<'db> TargetScopeCollector<'db> {
 
     /// Records one module-scope impl block without inserting a namespace binding.
     fn collect_local_impl(&mut self, module_id: ModuleId, item: &ItemNode, source: ItemTreeRef) {
-        let local_impl_id = self.def_map.local_impls.alloc(LocalImplData {
+        let local_impl_id = self.def_map.alloc_local_impl(LocalImplData {
             module: module_id,
             source,
             file_id: item.file_id,
             span: item.span,
         });
         self.def_map
-            .modules
-            .get_mut(module_id)
+            .module_mut(module_id)
             .expect("module should exist for collected impl block")
             .impls
             .push(local_impl_id);
@@ -395,8 +393,7 @@ impl<'db> TargetScopeCollector<'db> {
         visibility: rg_item_tree::VisibilityLevel,
     ) {
         self.def_map
-            .modules
-            .get_mut(parent_module)
+            .module_mut(parent_module)
             .expect("parent module should exist for child link")
             .children
             .push((module_name.clone(), child_module));
@@ -441,7 +438,7 @@ impl<'db> TargetScopeCollector<'db> {
                 continue;
             }
 
-            let import_id = self.def_map.imports.alloc(ImportData {
+            let import_id = self.def_map.alloc_import(ImportData {
                 module: module_id,
                 visibility: item.visibility.clone(),
                 kind: ImportKind::from_use_kind(import.kind),
@@ -456,8 +453,7 @@ impl<'db> TargetScopeCollector<'db> {
                 import_index,
             });
             self.def_map
-                .modules
-                .get_mut(module_id)
+                .module_mut(module_id)
                 .expect("module should exist for lowered import")
                 .imports
                 .push(import_id);

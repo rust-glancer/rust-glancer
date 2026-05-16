@@ -7,6 +7,7 @@ use std::{
 
 use ra_syntax::{Edition, Parse as SyntaxParse, SourceFile};
 use rg_arena::Arena;
+use rg_workspace::RustEdition;
 
 use crate::{
     line_index::{LineIndex, LineIndexSnapshot},
@@ -136,13 +137,22 @@ impl<'a> ParsedFile<'a> {
 ///
 /// `FileDb` deduplicates parsing across targets, so shared modules are parsed once
 /// and reused during multiple target traversals.
-#[derive(Default, Debug, Clone)]
+#[derive(Debug, Clone)]
 pub(super) struct FileDb {
+    pub(crate) edition: RustEdition,
     pub(crate) parsed_files: Arena<FileId, ParsedFileData>,
     pub(crate) file_ids_by_path: HashMap<PathBuf, FileId>,
 }
 
 impl FileDb {
+    pub(super) fn new(edition: RustEdition) -> Self {
+        Self {
+            edition,
+            parsed_files: Arena::new(),
+            file_ids_by_path: HashMap::new(),
+        }
+    }
+
     /// Returns an existing `FileId` for `file_path` or parses and caches the file.
     pub(super) fn get_or_parse_file(&mut self, file_path: &Path) -> anyhow::Result<FileId> {
         let canonical_file_path = file_path
@@ -156,9 +166,11 @@ impl FileDb {
 
         let source = Self::read_source(&canonical_file_path)?;
 
-        let file_id = self
-            .parsed_files
-            .alloc(Self::parse_source(canonical_file_path.clone(), &source));
+        let file_id = self.parsed_files.alloc(Self::parse_source(
+            canonical_file_path.clone(),
+            &source,
+            self.edition,
+        ));
         self.file_ids_by_path.insert(canonical_file_path, file_id);
 
         Ok(file_id)
@@ -174,7 +186,8 @@ impl FileDb {
         };
 
         let source = Self::read_source(file_path)?;
-        self.parsed_files[file_id] = Self::parse_source(file_path.to_path_buf(), &source);
+        self.parsed_files[file_id] =
+            Self::parse_source(file_path.to_path_buf(), &source, self.edition);
         Ok(Some(file_id))
     }
 
@@ -185,7 +198,8 @@ impl FileDb {
         source: &str,
     ) -> Option<FileId> {
         let file_id = self.file_ids_by_path.get(file_path).copied()?;
-        self.parsed_files[file_id] = Self::parse_source(file_path.to_path_buf(), source);
+        self.parsed_files[file_id] =
+            Self::parse_source(file_path.to_path_buf(), source, self.edition);
         Some(file_id)
     }
 
@@ -200,7 +214,7 @@ impl FileDb {
 
         let source = Self::read_source(&parsed_file.path)?;
         let path = parsed_file.path.clone();
-        self.parsed_files[file_id] = Self::parse_source(path, &source);
+        self.parsed_files[file_id] = Self::parse_source(path, &source, self.edition);
         Ok(())
     }
 
@@ -254,7 +268,10 @@ impl FileDb {
             .collect()
     }
 
-    pub(super) fn from_parse_snapshot(files: Vec<ParsedFileSnapshot>) -> Self {
+    pub(super) fn from_parse_snapshot(
+        edition: RustEdition,
+        files: Vec<ParsedFileSnapshot>,
+    ) -> Self {
         let parsed_files = Arena::from_vec(
             files
                 .into_iter()
@@ -267,6 +284,7 @@ impl FileDb {
             .collect::<HashMap<_, _>>();
 
         Self {
+            edition,
             parsed_files,
             file_ids_by_path,
         }
@@ -284,9 +302,15 @@ impl FileDb {
             .with_context(|| format!("while attempting to read {}", file_path.display()))
     }
 
-    fn parse_source(path: PathBuf, source: &str) -> ParsedFileData {
+    fn parse_source(path: PathBuf, source: &str, edition: RustEdition) -> ParsedFileData {
         let line_index = LineIndex::new(source);
-        let parsed_file = SourceFile::parse(source, Edition::CURRENT);
+        let ra_edition = match edition {
+            RustEdition::Edition2015 => Edition::Edition2015,
+            RustEdition::Edition2018 => Edition::Edition2018,
+            RustEdition::Edition2021 => Edition::Edition2021,
+            RustEdition::Edition2024 => Edition::Edition2024,
+        };
+        let parsed_file = SourceFile::parse(source, ra_edition);
 
         ParsedFileData {
             path,

@@ -62,13 +62,50 @@ impl CargoMetadataConfig {
         &self,
         manifest_path: impl AsRef<Path>,
     ) -> WorkspaceMetadataResult<cargo_metadata::Metadata> {
-        let target_triple = self.resolved_target_triple()?;
-        let mut command = cargo_metadata::MetadataCommand::new();
-        command.manifest_path(manifest_path.as_ref().to_path_buf());
-        command.other_options(vec!["--filter-platform".to_string(), target_triple]);
-        command
+        self.metadata_command(manifest_path.as_ref())?
             .exec()
             .map_err(WorkspaceMetadataError::CargoMetadata)
+    }
+
+    /// Runs `cargo metadata --no-deps` and returns canonical workspace member manifests.
+    ///
+    /// This gives update code a cheap Cargo-backed discovery probe for new workspace members
+    /// without constructing a partial analysis graph or resolving third-party dependencies.
+    pub fn load_workspace_member_manifest_paths(
+        &self,
+        manifest_path: impl AsRef<Path>,
+    ) -> WorkspaceMetadataResult<Vec<PathBuf>> {
+        let metadata = self
+            .metadata_command(manifest_path.as_ref())?
+            .no_deps()
+            .exec()
+            .map_err(WorkspaceMetadataError::CargoMetadata)?;
+        let workspace_members = metadata
+            .workspace_members
+            .iter()
+            .map(PackageId::from_cargo)
+            .collect::<HashSet<_>>();
+
+        metadata
+            .packages
+            .into_iter()
+            .filter(|package| workspace_members.contains(&PackageId::from_cargo(&package.id)))
+            .map(|package| {
+                canonicalize_path(package.manifest_path.as_std_path())
+                    .map_err(WorkspaceMetadataError::Path)
+            })
+            .collect()
+    }
+
+    fn metadata_command(
+        &self,
+        manifest_path: &Path,
+    ) -> WorkspaceMetadataResult<cargo_metadata::MetadataCommand> {
+        let target_triple = self.resolved_target_triple()?;
+        let mut command = cargo_metadata::MetadataCommand::new();
+        command.manifest_path(manifest_path.to_path_buf());
+        command.other_options(vec!["--filter-platform".to_string(), target_triple]);
+        Ok(command)
     }
 
     fn resolved_target_triple(&self) -> WorkspaceMetadataResult<String> {

@@ -569,6 +569,124 @@ path = "src/tool.rs"
 }
 
 #[test]
+fn rebuilds_project_after_new_workspace_member_manifest_is_saved() {
+    let mut fixture = HostFixture::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/app/src/lib.rs
+pub struct App;
+"#,
+    );
+
+    fixture.check_save(
+        r#"
+//- /crates/new_pkg/Cargo.toml
+[package]
+name = "new_pkg"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/new_pkg/src/lib.rs
+pub struct NewType;
+"#,
+        &[HostObservation::workspace_symbols("NewType")],
+        expect![[r#"
+            changed files
+            - new_pkg crates/new_pkg/src/lib.rs
+
+            affected packages
+            - app
+            - new_pkg
+
+            changed targets
+            - app[lib]
+            - new_pkg[lib]
+
+            workspace symbols `NewType`
+            - struct NewType @ new_pkg[lib] crates/new_pkg/src/lib.rs
+        "#]],
+    );
+}
+
+#[test]
+fn discovers_new_workspace_member_after_manifest_becomes_valid() {
+    let mut fixture = HostFixture::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/app/src/lib.rs
+pub struct App;
+"#,
+    );
+
+    fixture.check_save(
+        r#"
+//- /crates/new_pkg/Cargo.toml
+[package]
+name = "new_pkg"
+version = "0.1.0"
+edition = "2024"
+"#,
+        &[HostObservation::workspace_symbols("NewType")],
+        expect![[r#"
+            changed files
+            - <none>
+
+            affected packages
+            - <none>
+
+            changed targets
+            - <none>
+
+            workspace symbols `NewType`
+            - <none>
+        "#]],
+    );
+
+    fixture.check_save(
+        r#"
+//- /crates/new_pkg/src/lib.rs
+pub struct NewType;
+"#,
+        &[HostObservation::workspace_symbols("NewType")],
+        expect![[r#"
+            changed files
+            - new_pkg crates/new_pkg/src/lib.rs
+
+            affected packages
+            - app
+            - new_pkg
+
+            changed targets
+            - app[lib]
+            - new_pkg[lib]
+
+            workspace symbols `NewType`
+            - struct NewType @ new_pkg[lib] crates/new_pkg/src/lib.rs
+        "#]],
+    );
+}
+
+#[test]
 fn workspace_graph_rebuild_reports_changed_targets_when_packages_are_offloaded() {
     let mut fixture = HostFixture::build_with_package_residency_policy(
         r#"

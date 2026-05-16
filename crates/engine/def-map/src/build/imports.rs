@@ -149,9 +149,9 @@ fn unresolved_imports_for_target(
     state: &TargetState,
     env: &impl PathResolutionEnv,
 ) -> anyhow::Result<Vec<Vec<ImportId>>> {
-    let mut module_imports = vec![Vec::new(); state.def_map.modules.len()];
+    let mut module_imports = vec![Vec::new(); state.def_map.module_count()];
 
-    for (import_id, import) in state.def_map.imports.iter_with_ids() {
+    for (import_id, import) in state.def_map.imports_with_ids() {
         if import_is_unresolved(state, env, import)? {
             module_imports
                 .get_mut(import.module.0)

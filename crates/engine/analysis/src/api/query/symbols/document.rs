@@ -124,7 +124,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                 .map(|field| {
                     Self::field_document_symbol(
                         file_id,
-                        shared::field_label(field.key.as_ref().map(|key| key.declaration_label())),
+                        shared::field_label(field.key_declaration_label()),
                         field.span,
                     )
                 })
@@ -152,7 +152,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                 .map(|field| {
                     Self::field_document_symbol(
                         file_id,
-                        shared::field_label(field.key.as_ref().map(|key| key.declaration_label())),
+                        shared::field_label(field.key_declaration_label()),
                         field.span,
                     )
                 })
@@ -190,9 +190,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                         .map(|field| {
                             Self::field_document_symbol(
                                 file_id,
-                                shared::field_label(
-                                    field.key.as_ref().map(|key| key.declaration_label()),
-                                ),
+                                shared::field_label(field.key_declaration_label()),
                                 field.span,
                             )
                         })
@@ -473,7 +471,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                 .map(|field| {
                     Self::field_document_symbol(
                         file_id,
-                        shared::field_label(field.key.as_ref().map(|key| key.declaration_label())),
+                        shared::field_label(field.key_declaration_label()),
                         field.span,
                     )
                 })

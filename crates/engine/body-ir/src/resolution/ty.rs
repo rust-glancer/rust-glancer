@@ -14,8 +14,6 @@ use crate::{
     ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
 
-use super::type_path::resolve_type_path_in_context;
-
 /// Mapping from a generic type parameter name to the concrete Body IR type known at a use site.
 ///
 /// For example, `Wrapper<User>` against `struct Wrapper<T>` records `T -> User`.
@@ -47,8 +45,9 @@ pub(super) fn ty_from_type_ref_in_context(
                 context,
                 subst,
             )?;
+            let resolution = semantic_ir.resolve_type_path(def_map, context, &path)?;
             Ok(ty_from_body_resolution(
-                resolve_type_path_in_context(def_map, semantic_ir, context, &path)?,
+                BodyTypePathResolution::from(resolution),
                 unresolved_path_fallback,
                 args,
             ))

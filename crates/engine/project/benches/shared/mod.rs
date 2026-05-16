@@ -231,7 +231,7 @@ impl BenchFixture {
         let source_bytes = count_source_bytes(&parse);
 
         let mut names = PackageNameInterners::new(parse.package_count());
-        let item_tree = ItemTreeDb::build_with_interners(&mut parse, &mut names)
+        let item_tree = ItemTreeDb::build(&mut parse, &mut names)
             .unwrap_or_else(|error| panic!("{target} item tree should build: {error}"));
         let item_tree_items = count_item_tree_items(&workspace, &item_tree);
         let names_after_item_tree = names.clone();

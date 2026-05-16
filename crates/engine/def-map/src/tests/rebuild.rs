@@ -45,8 +45,11 @@ pub use dep::api::Api as Before;
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should build");
     let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
-    let item_tree = ItemTreeDb::build(&mut parse).expect("fixture item-tree db should build");
+    let mut old_names = PackageNameInterners::new(parse.package_count());
+    let item_tree =
+        ItemTreeDb::build(&mut parse, &mut old_names).expect("fixture item-tree db should build");
     let old = DefMapDb::builder(&workspace, &parse, &item_tree)
+        .name_interners(&mut old_names)
         .build()
         .expect("fixture def-map db should build");
 
@@ -58,8 +61,9 @@ pub use dep::api::Api as Renamed;
     );
 
     let mut parse = ParseDb::build(&workspace).expect("updated fixture parse db should build");
-    let item_tree =
-        ItemTreeDb::build(&mut parse).expect("updated fixture item-tree db should build");
+    let mut interner = PackageNameInterners::new(parse.package_count());
+    let item_tree = ItemTreeDb::build(&mut parse, &mut interner)
+        .expect("updated fixture item-tree db should build");
 
     let mut app_slot = None;
     for (package_idx, package) in parse.packages().iter().enumerate() {
@@ -70,7 +74,6 @@ pub use dep::api::Api as Renamed;
     let app_slot = app_slot.expect("fixture app package should exist");
 
     let old_read = old.read_txn(PackageLoader::new(UnexpectedPackageLoader));
-    let mut interner = PackageNameInterners::new(parse.package_count());
     let rebuilt = old
         .package_rebuilder(
             &old_read,

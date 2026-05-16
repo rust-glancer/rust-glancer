@@ -42,8 +42,8 @@ fn item_tree_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
             )
         })
         .bench_local_values(|(mut parse, mut names)| {
-            let item_tree = ItemTreeDb::build_with_interners(&mut parse, &mut names)
-                .expect("item tree should build");
+            let item_tree =
+                ItemTreeDb::build(&mut parse, &mut names).expect("item tree should build");
             black_box_drop(item_tree);
         });
 }

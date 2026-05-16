@@ -3,8 +3,8 @@ use rg_memsize::{MemoryRecorder, MemorySize};
 use crate::cache::{
     CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot, CachedPackageSource,
     CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind, Fingerprint,
-    PackageCacheArtifact, PackageCacheBodyIrState, PackageCacheHeader, PackageCachePayload,
-    PackageCacheSchemaVersion, WorkspaceCachePlan,
+    PackageCacheArtifact, PackageCacheHeader, PackageCachePayload, PackageCacheSchemaVersion,
+    WorkspaceCachePlan,
 };
 use crate::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
 
@@ -64,17 +64,6 @@ impl MemorySize for CachedTargetKind {
             | Self::Test
             | Self::Bench
             | Self::CustomBuild => {}
-        }
-    }
-}
-
-impl MemorySize for PackageCacheBodyIrState {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        match self {
-            Self::Built(bundle) => recorder.scope("built", |recorder| {
-                bundle.record_memory_children(recorder);
-            }),
-            Self::SkippedByPolicy => {}
         }
     }
 }

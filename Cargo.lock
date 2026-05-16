@@ -1292,6 +1292,7 @@ dependencies = [
  "rg_parse",
  "rg_semantic_ir",
  "rg_text",
+ "rg_wincode_utils",
  "rg_workspace",
  "syntax",
  "test_fixture",
@@ -1328,6 +1329,7 @@ dependencies = [
  "rg_memsize",
  "rg_parse",
  "rg_text",
+ "rg_wincode_utils",
  "rg_workspace",
  "syntax",
  "test_fixture",
@@ -1463,6 +1465,13 @@ name = "rg_text"
 version = "0.1.0"
 dependencies = [
  "rg_memsize",
+ "wincode",
+]
+
+[[package]]
+name = "rg_wincode_utils"
+version = "0.1.0"
+dependencies = [
  "wincode",
 ]
 

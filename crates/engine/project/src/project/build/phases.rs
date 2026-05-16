@@ -66,9 +66,8 @@ pub(super) fn build(
     let mut names = PackageNameInterners::new(parse.package_count());
 
     let package_indices = build_plan.package_indices_to_build();
-    let item_tree =
-        ItemTreeDb::build_packages_with_interners(&mut parse, &package_indices, &mut names)
-            .context("while attempting to build item tree db")?;
+    let item_tree = ItemTreeDb::build_packages(&mut parse, &package_indices, &mut names)
+        .context("while attempting to build item tree db")?;
     let process_memory = profiler.sample_process_memory();
     let names_bytes = profiler.measure(&names);
     let parse_bytes = profiler.measure(&parse);

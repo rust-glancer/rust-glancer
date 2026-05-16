@@ -16,7 +16,7 @@ pub use self::{
         DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite,
         ResolvePathResult, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin,
     },
-    store::{DefMapDb, DefMapPackageBundle, DefMapReadTxn, DefMapStats},
+    store::{DefMapDb, DefMapReadTxn, DefMapStats},
 };
 
 #[cfg(test)]

@@ -1,12 +1,11 @@
 use crate::{
     BindingData, BindingId, BindingKind, BodyData, BodyFieldRef, BodyFunctionData, BodyFunctionId,
     BodyFunctionOwner, BodyFunctionRef, BodyGenericArg, BodyId, BodyImplData, BodyImplId,
-    BodyIrBuildPolicy, BodyIrDb, BodyIrPackageBundle, BodyIrStats, BodyItemData, BodyItemId,
-    BodyItemKind, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef,
-    BodyResolution, BodySource, BodyTy, BodyTypePathResolution, ExprData, ExprId, ExprKind,
-    LiteralKind, PackageBodies, PatData, PatId, PatKind, RecordExprField, RecordPatField,
-    ResolvedFieldRef, ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
-    TargetBodiesStatus,
+    BodyIrBuildPolicy, BodyIrDb, BodyIrStats, BodyItemData, BodyItemId, BodyItemKind, BodyItemRef,
+    BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef, BodyResolution, BodySource, BodyTy,
+    BodyTypePathResolution, ExprData, ExprId, ExprKind, LiteralKind, PackageBodies, PatData, PatId,
+    PatKind, RecordExprField, RecordPatField, ResolvedFieldRef, ResolvedFunctionRef, ScopeData,
+    ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
     ir::expr::{ExprWrapperKind, MatchArmData},
     ir::ids::StmtId,
 };
@@ -64,14 +63,6 @@ impl MemorySize for BodyIrDb {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         recorder.scope("packages", |recorder| {
             self.record_packages_memory_children(recorder);
-        });
-    }
-}
-
-impl MemorySize for BodyIrPackageBundle {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        recorder.scope("package", |recorder| {
-            self.package().record_memory_children(recorder);
         });
     }
 }

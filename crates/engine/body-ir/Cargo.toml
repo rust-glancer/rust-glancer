@@ -24,6 +24,7 @@ rg_item_tree.workspace = true
 rg_parse.workspace = true
 rg_semantic_ir.workspace = true
 rg_text = { workspace = true, features = ["memsize"] }
+rg_wincode_utils.workspace = true
 
 [dev-dependencies]
 expect-test.workspace = true

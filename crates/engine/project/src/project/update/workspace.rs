@@ -12,7 +12,7 @@ use crate::project::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChang
 
 pub(super) fn rebuild_workspace_graph(
     project: &mut Project,
-    changes: &[SavedFileChange],
+    change: Option<&SavedFileChange>,
 ) -> anyhow::Result<AnalysisChangeSummary> {
     let manifest_path = project
         .state
@@ -40,7 +40,18 @@ pub(super) fn rebuild_workspace_graph(
         .into_project()
         .state;
 
-    let changed_files = changed_source_files_for_saved_paths(project, changes);
+    let mut changed_files = Vec::new();
+    if let Some(change) = change {
+        for file in project.state.file_refs_for_path(&change.path) {
+            let changed_file = ChangedFile {
+                package: file.package,
+                file: file.file,
+            };
+            if !changed_files.contains(&changed_file) {
+                changed_files.push(changed_file);
+            }
+        }
+    }
     let mut affected_packages = Vec::new();
     let mut changed_targets = Vec::new();
 
@@ -57,25 +68,4 @@ pub(super) fn rebuild_workspace_graph(
         affected_packages,
         changed_targets,
     })
-}
-
-fn changed_source_files_for_saved_paths(
-    project: &Project,
-    changes: &[SavedFileChange],
-) -> Vec<ChangedFile> {
-    let mut changed_files = Vec::new();
-
-    for change in changes {
-        for file in project.state.file_refs_for_path(&change.path) {
-            let changed_file = ChangedFile {
-                package: file.package,
-                file: file.file,
-            };
-            if !changed_files.contains(&changed_file) {
-                changed_files.push(changed_file);
-            }
-        }
-    }
-
-    changed_files
 }

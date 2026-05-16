@@ -340,13 +340,7 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
             let Some(field_data) = self.0.semantic_ir.field_data(field_ref)? else {
                 continue;
             };
-            let name = shared::field_label(
-                field_data
-                    .field
-                    .key
-                    .as_ref()
-                    .map(|key| key.declaration_label()),
-            );
+            let name = shared::field_label(field_data.field.key_declaration_label());
             self.push_workspace_symbol(
                 WorkspaceSymbolInput {
                     target: ty.target,

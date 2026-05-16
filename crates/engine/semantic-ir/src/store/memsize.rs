@@ -1,11 +1,11 @@
 use crate::{
     AssocItemId, ConstData, ConstId, ConstRef, ConstSignature, EnumData, EnumId, EnumVariantRef,
     FieldRef, FunctionData, FunctionId, FunctionRef, FunctionSignature, ImplData, ImplId, ImplRef,
-    ItemId, ItemOwner, ItemStore, PackageIr, SemanticIrDb, SemanticIrPackageBundle,
-    SemanticIrStats, SemanticTypePathResolution, StaticData, StaticId, StaticRef, StructData,
-    StructId, TargetIr, TraitApplicability, TraitId, TraitImplRef, TraitRef, TypeAliasData,
-    TypeAliasId, TypeAliasRef, TypeAliasSignature, TypeDefId, TypeDefRef, TypePathContext,
-    UnionData, UnionId, ir::SignatureGenerics,
+    ItemId, ItemOwner, ItemStore, PackageIr, SemanticIrDb, SemanticIrStats,
+    SemanticTypePathResolution, StaticData, StaticId, StaticRef, StructData, StructId, TargetIr,
+    TraitApplicability, TraitId, TraitImplRef, TraitRef, TypeAliasData, TypeAliasId, TypeAliasRef,
+    TypeAliasSignature, TypeDefId, TypeDefRef, TypePathContext, UnionData, UnionId,
+    ir::SignatureGenerics,
 };
 use rg_memsize::{MemoryRecorder, MemorySize};
 
@@ -60,14 +60,6 @@ impl MemorySize for SemanticIrDb {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         recorder.scope("packages", |recorder| {
             self.record_packages_memory_children(recorder);
-        });
-    }
-}
-
-impl MemorySize for SemanticIrPackageBundle {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        recorder.scope("package", |recorder| {
-            self.package().record_memory_children(recorder);
         });
     }
 }

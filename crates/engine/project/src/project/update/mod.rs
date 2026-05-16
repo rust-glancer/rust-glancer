@@ -15,25 +15,28 @@ use workspace_graph::WorkspaceGraphChanges;
 pub(crate) use package::rebuild_resident_from_source;
 
 pub(super) fn reindex_workspace(project: &mut Project) -> anyhow::Result<()> {
-    workspace::rebuild_workspace_graph(project, &[])
+    workspace::rebuild_workspace_graph(project, None)
         .context("while attempting to reindex analysis project from workspace root")?;
     Ok(())
 }
 
-pub(super) fn apply_changes(
+pub(super) fn apply_change(
     project: &mut Project,
-    changes: Vec<SavedFileChange>,
+    change: SavedFileChange,
 ) -> anyhow::Result<AnalysisChangeSummary> {
     let graph_changes = WorkspaceGraphChanges::check(
         project.state.workspace(),
         project.state.parse_db(),
-        &changes,
+        &project.state.cargo_metadata_config,
+        &change,
     );
 
     match graph_changes {
-        WorkspaceGraphChanges::Changed => workspace::rebuild_workspace_graph(project, &changes)
-            .context("while attempting to rebuild analysis project after workspace change"),
-        WorkspaceGraphChanges::Unchanged => source::apply_source_changes(project, changes),
+        WorkspaceGraphChanges::Changed => {
+            workspace::rebuild_workspace_graph(project, Some(&change))
+                .context("while attempting to rebuild analysis project after workspace change")
+        }
+        WorkspaceGraphChanges::Unchanged => source::apply_source_change(project, change),
     }
 }
 

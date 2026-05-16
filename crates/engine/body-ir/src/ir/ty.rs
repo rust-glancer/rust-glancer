@@ -10,13 +10,19 @@ pub enum BodyTy {
     Unit,
     Never,
     Syntax(TypeRef),
-    Reference(#[wincode(with = "rg_text::WincodeDynamic<Box<BodyTy>>")] Box<BodyTy>),
+    Reference(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<BodyTy>>")] Box<BodyTy>),
     LocalNominal(
-        #[wincode(with = "rg_text::WincodeDynamic<Vec<BodyLocalNominalTy>>")]
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<BodyLocalNominalTy>>")]
         Vec<BodyLocalNominalTy>,
     ),
-    Nominal(#[wincode(with = "rg_text::WincodeDynamic<Vec<BodyNominalTy>>")] Vec<BodyNominalTy>),
-    SelfTy(#[wincode(with = "rg_text::WincodeDynamic<Vec<BodyNominalTy>>")] Vec<BodyNominalTy>),
+    Nominal(
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<BodyNominalTy>>")]
+        Vec<BodyNominalTy>,
+    ),
+    SelfTy(
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<BodyNominalTy>>")]
+        Vec<BodyNominalTy>,
+    ),
     #[default]
     Unknown,
 }
@@ -25,7 +31,7 @@ pub enum BodyTy {
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct BodyLocalNominalTy {
     pub item: BodyItemRef,
-    #[wincode(with = "rg_text::WincodeDynamic<Vec<BodyGenericArg>>")]
+    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<BodyGenericArg>>")]
     pub args: Vec<BodyGenericArg>,
 }
 
@@ -49,7 +55,7 @@ impl BodyLocalNominalTy {
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct BodyNominalTy {
     pub def: TypeDefRef,
-    #[wincode(with = "rg_text::WincodeDynamic<Vec<BodyGenericArg>>")]
+    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<BodyGenericArg>>")]
     pub args: Vec<BodyGenericArg>,
 }
 
@@ -72,12 +78,12 @@ impl BodyNominalTy {
 /// Generic argument as understood by the intentionally small Body IR type model.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum BodyGenericArg {
-    Type(#[wincode(with = "rg_text::WincodeDynamic<Box<BodyTy>>")] Box<BodyTy>),
+    Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<BodyTy>>")] Box<BodyTy>),
     Lifetime(String),
     Const(String),
     AssocType {
         name: Name,
-        #[wincode(with = "rg_text::WincodeDynamic<Option<Box<BodyTy>>>")]
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Option<Box<BodyTy>>>")]
         ty: Option<Box<BodyTy>>,
     },
     Unsupported(String),
