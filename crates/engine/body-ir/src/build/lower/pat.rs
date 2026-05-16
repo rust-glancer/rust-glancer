@@ -14,7 +14,7 @@ use crate::ir::{
     ScopeId,
 };
 
-use super::{function::FunctionBodyLowering, syntax::body_path_from_ast};
+use super::function::FunctionBodyLowering;
 
 impl FunctionBodyLowering<'_> {
     pub(super) fn lower_pat(
@@ -48,29 +48,26 @@ impl FunctionBodyLowering<'_> {
                 }
             }
             ast::Pat::IdentPat(pat) => {
-                let Some(name_text) = pat.name().map(|name| name.text().to_string()) else {
+                let Some(name_ast) = pat.name() else {
                     return self.alloc_unsupported_pat(pat.syntax());
                 };
+                let name_span = self.source(name_ast.syntax()).span;
+                let name = self.intern_ast_name(name_ast);
                 let subpat = pat
                     .pat()
                     .map(|pat| self.lower_pat_inner(pat, scope, kind, None, bindings));
-                if is_capitalized_bare_pat(&name_text, &pat, subpat) {
-                    let name_span = pat
-                        .name()
-                        .map(|name| self.source(name.syntax()).span)
-                        .unwrap_or(source.span);
+                if is_capitalized_bare_pat(name.as_str(), &pat, subpat) {
                     PatKind::Path {
                         path: Some(BodyPath::new(
                             name_span,
                             Path {
                                 absolute: false,
-                                segments: vec![PathSegment::Name(self.interner.intern(&name_text))],
+                                segments: vec![PathSegment::Name(name)],
                             },
                             vec![name_span],
                         )),
                     }
                 } else {
-                    let name = self.interner.intern(&name_text);
                     let binding = self.push_pat_binding(
                         pat.syntax(),
                         scope,
@@ -102,9 +99,9 @@ impl FunctionBodyLowering<'_> {
                     .flat_map(|field_list| field_list.fields())
                     .filter_map(|field| {
                         let field_name = field.field_name()?;
-                        let name = self.interner.intern(field_name.text());
-                        let key = FieldKey::Named(name.clone());
                         let key_span = self.source(field_name.syntax()).span;
+                        let name = self.intern_ast_name_or_name_ref(field_name);
+                        let key = FieldKey::Named(name.clone());
                         let source_span = self.source(field.syntax()).span;
                         let pat = if let Some(inner) = field.pat() {
                             self.lower_pat_inner(inner, scope, kind, None, bindings)
@@ -126,9 +123,7 @@ impl FunctionBodyLowering<'_> {
                     })
                     .collect();
                 PatKind::Record {
-                    path: pat
-                        .path()
-                        .map(|path| body_path_from_ast(path, self.interner)),
+                    path: pat.path().and_then(|path| self.lower_body_path(path)),
                     field_list_span: pat
                         .record_pat_field_list()
                         .as_ref()
@@ -164,16 +159,12 @@ impl FunctionBodyLowering<'_> {
                     .map(|inner| self.lower_pat_inner(inner, scope, kind, None, bindings))
                     .collect();
                 PatKind::TupleStruct {
-                    path: pat
-                        .path()
-                        .map(|path| body_path_from_ast(path, self.interner)),
+                    path: pat.path().and_then(|path| self.lower_body_path(path)),
                     fields,
                 }
             }
             ast::Pat::PathPat(pat) => PatKind::Path {
-                path: pat
-                    .path()
-                    .map(|path| body_path_from_ast(path, self.interner)),
+                path: pat.path().and_then(|path| self.lower_body_path(path)),
             },
             ast::Pat::RestPat(_) | ast::Pat::WildcardPat(_) => PatKind::Wildcard,
             ast::Pat::ConstBlockPat(_)

@@ -13,10 +13,7 @@ use crate::ir::{
     ScopeId,
 };
 
-use super::{
-    function::FunctionBodyLowering,
-    syntax::{body_path_from_ast, normalized_syntax},
-};
+use super::{function::FunctionBodyLowering, syntax::normalized_syntax};
 
 impl FunctionBodyLowering<'_> {
     pub(super) fn lower_expr(&mut self, expr: ast::Expr, scope: ScopeId) -> ExprId {
@@ -143,8 +140,8 @@ impl FunctionBodyLowering<'_> {
             .map(|dot| Span::from_text_range(dot.text_range()));
         let name_ref = method_call.name_ref();
         let method_name = name_ref
-            .as_ref()
-            .map(|name| self.interner.intern(name.syntax().text().to_string()))
+            .clone()
+            .map(|name| self.intern_ast_name_ref(name))
             .unwrap_or_else(|| self.interner.intern("<missing>"));
         let method_name_span = name_ref
             .as_ref()
@@ -183,9 +180,7 @@ impl FunctionBodyLowering<'_> {
             let field_key = name
                 .as_tuple_field()
                 .map(FieldKey::Tuple)
-                .unwrap_or_else(|| {
-                    FieldKey::Named(self.interner.intern(name.syntax().text().to_string()))
-                });
+                .unwrap_or_else(|| FieldKey::Named(self.intern_ast_name_ref(name.clone())));
             (Some(field_key), Some(self.source(name.syntax()).span))
         } else {
             (None, None)
@@ -219,9 +214,7 @@ impl FunctionBodyLowering<'_> {
             );
             spread = field_list.spread().map(|expr| self.lower_expr(expr, scope));
         }
-        let path = record
-            .path()
-            .map(|path| body_path_from_ast(path, self.interner));
+        let path = record.path().and_then(|path| self.lower_body_path(path));
 
         self.alloc_expr(
             record.syntax(),
@@ -241,8 +234,8 @@ impl FunctionBodyLowering<'_> {
         scope: ScopeId,
     ) -> Option<RecordExprField> {
         let field_name = field.field_name()?;
-        let key = FieldKey::Named(self.interner.intern(field_name.text()));
         let key_span = self.source(field_name.syntax()).span;
+        let key = FieldKey::Named(self.intern_ast_name_ref(field_name));
         let source_span = self.source(field.syntax()).span;
         let value = field.expr().map(|expr| self.lower_expr(expr, scope));
 
@@ -262,10 +255,7 @@ impl FunctionBodyLowering<'_> {
     }
 
     fn lower_path_expr(&mut self, expr: ast::PathExpr, scope: ScopeId) -> ExprId {
-        let Some(path) = expr
-            .path()
-            .map(|path| body_path_from_ast(path, self.interner))
-        else {
+        let Some(path) = expr.path().and_then(|path| self.lower_body_path(path)) else {
             return self.lower_unknown_expr(expr.syntax(), scope);
         };
 

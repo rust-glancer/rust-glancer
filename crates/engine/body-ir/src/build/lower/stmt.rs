@@ -143,14 +143,16 @@ impl FunctionBodyLowering<'_> {
 
     fn lower_local_struct_item(&mut self, item: ast::Struct, scope: ScopeId) -> Option<BodyItemId> {
         let name = item.name()?;
+        let name_source = self.source(name.syntax());
+        let name = self.intern_ast_name(name);
         let fields = FieldList::from_ast(item.field_list(), self.line_index, self.interner);
 
         Some(self.builder.alloc_local_item(BodyItemData {
             source: self.source(item.syntax()),
-            name_source: self.source(name.syntax()),
+            name_source,
             scope,
             kind: BodyItemKind::Struct,
-            name: self.interner.intern(name.text()),
+            name,
             docs: Documentation::from_ast(&item),
             generics: GenericParams::from_ast(&item, self.line_index, self.interner),
             fields,
@@ -189,12 +191,14 @@ impl FunctionBodyLowering<'_> {
             return None;
         };
         let name = function.name()?;
+        let name_source = self.source(name.syntax());
+        let name = self.intern_ast_name(name);
 
         Some(self.builder.alloc_local_function(BodyFunctionData {
             source: self.source(function.syntax()),
-            name_source: self.source(name.syntax()),
+            name_source,
             owner: BodyFunctionOwner::LocalImpl(impl_id),
-            name: self.interner.intern(name.text()),
+            name,
             docs: Documentation::from_ast(&function),
             declaration: FunctionItem::from_ast(&function, self.line_index, self.interner),
         }))
