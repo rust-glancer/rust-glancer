@@ -83,6 +83,10 @@ impl Documentation {
         &self.text
     }
 
+    pub fn text(&self) -> String {
+        self.text.clone()
+    }
+
     pub fn shrink_to_fit(&mut self) {
         self.text.shrink_to_fit();
     }

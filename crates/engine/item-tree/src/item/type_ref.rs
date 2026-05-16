@@ -329,6 +329,8 @@ impl fmt::Display for TypeRef {
 
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct TypePath {
+    /// Full source range of the path syntax, including separators around segments.
+    pub source_span: Span,
     pub absolute: bool,
     #[wincode(with = "rg_text::WincodeDynamic<Vec<TypePathSegment>>")]
     pub segments: Vec<TypePathSegment>,
@@ -336,13 +338,18 @@ pub struct TypePath {
 
 impl TypePath {
     pub fn from_ast(path: ast::Path, line_index: &LineIndex, interner: &mut NameInterner) -> Self {
+        let source_span = Span::from_text_range(path.syntax().text_range());
         let absolute = path
             .first_segment()
             .is_some_and(|segment| segment.coloncolon_token().is_some());
         let mut segments = Vec::new();
         Self::collect_segments(&path, line_index, interner, &mut segments);
 
-        Self { absolute, segments }
+        Self {
+            source_span,
+            absolute,
+            segments,
+        }
     }
 
     fn collect_segments(

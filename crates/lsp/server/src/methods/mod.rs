@@ -5,6 +5,8 @@ use tower_lsp_server::{
     ls_types::*,
 };
 
+use rg_lsp_proto::ClientCapabilities;
+
 use crate::{capabilities, engine_client::EngineClient};
 
 pub(crate) mod text_document;
@@ -13,6 +15,7 @@ pub(crate) mod workspace;
 #[derive(Clone, Debug)]
 pub(crate) struct MethodContext {
     pub(crate) engine_client: EngineClient,
+    pub(crate) client_capabilities: ClientCapabilities,
 }
 
 pub(crate) fn initialize() -> InitializeResult {

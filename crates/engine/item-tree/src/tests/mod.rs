@@ -368,6 +368,39 @@ use ::bar::foo;
 }
 
 #[test]
+fn lowers_dangling_use_before_attribute_for_completion() {
+    utils::check_project_item_tree(
+        r#"
+//- /Cargo.toml
+[package]
+name = "dangling_use_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+use std::collections::
+
+#[derive(Debug)]
+enum CliInvocation {
+    Capture,
+}
+"#,
+        expect![[r#"
+            package dangling_use_fixture
+
+            targets
+            - dangling_use_fixture [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - use std::collections:: #
+              - import named std::collections
+            - enum CliInvocation
+        "#]],
+    );
+}
+
+#[test]
 fn dumps_macro_item_trees() {
     utils::check_project_item_tree(
         r#"

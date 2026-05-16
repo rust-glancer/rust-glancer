@@ -12,7 +12,10 @@ pub use self::{
         LocalImplId, LocalImplRef, ModuleData, ModuleId, ModuleOrigin, ModuleRef, ModuleScope,
         Package, Path, PathSegment, ScopeBinding, ScopeEntry, TargetRef,
     },
-    query::{DefMapCursorCandidate, ResolvePathResult},
+    query::{
+        DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite,
+        ResolvePathResult, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin,
+    },
     store::{DefMapDb, DefMapPackageBundle, DefMapReadTxn, DefMapStats},
 };
 

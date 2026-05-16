@@ -30,7 +30,7 @@ rg_memsize::impl_memory_size_children! {
     ImportData => module, visibility, kind, path, source_path, binding, alias_span, source,
         import_index;
     ImportPath => absolute, segments;
-    ImportSourcePath => absolute, segments;
+    ImportSourcePath => source_span, absolute, segments;
     ImportSourcePathSegment => segment, span;
     Path => absolute, segments;
     TargetRef => package, target;

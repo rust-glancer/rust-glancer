@@ -359,6 +359,7 @@ mod tests {
 
     fn type_path(absolute: bool, names: &[&str]) -> TypePath {
         TypePath {
+            source_span: span(),
             absolute,
             segments: names
                 .iter()
@@ -373,6 +374,7 @@ mod tests {
 
     fn use_path(absolute: bool, kinds: &[UsePathSegmentKind]) -> UsePath {
         UsePath {
+            source_span: Some(span()),
             absolute,
             segments: kinds
                 .iter()

@@ -75,7 +75,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     path: PathRenderer::new(self.0).enum_variant_path(variant)?,
                     signature: Some(SignatureRenderer::new(self.0).enum_variant_signature(data)),
                     ty: None,
-                    docs: docs_text(data.variant.docs.as_ref()),
+                    docs: data.variant.docs.as_ref().map(Documentation::text),
                 }))
             }
             ResolvedEntity::TypeAlias(type_alias_ref) => self.hover_for_type_alias(type_alias_ref),
@@ -110,7 +110,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     path: None,
                     signature: Some(SignatureRenderer::new(self.0).local_item_signature(item)),
                     ty: None,
-                    docs: docs_text(item.docs.as_ref()),
+                    docs: item.docs.as_ref().map(Documentation::text),
                 }))
             }
             ResolvedEntity::LocalDef(local_def) => self.hover_for_local_def(local_def),
@@ -133,7 +133,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     path,
                     signature: Some(renderer.struct_signature(data)),
                     ty: None,
-                    docs: docs_text(data.docs.as_ref()),
+                    docs: data.docs.as_ref().map(Documentation::text),
                 }))
             }
             TypeDefId::Enum(id) => {
@@ -145,7 +145,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     path,
                     signature: Some(renderer.enum_signature(data)),
                     ty: None,
-                    docs: docs_text(data.docs.as_ref()),
+                    docs: data.docs.as_ref().map(Documentation::text),
                 }))
             }
             TypeDefId::Union(id) => {
@@ -157,7 +157,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     path,
                     signature: Some(renderer.union_signature(data)),
                     ty: None,
-                    docs: docs_text(data.docs.as_ref()),
+                    docs: data.docs.as_ref().map(Documentation::text),
                 }))
             }
         }
@@ -172,7 +172,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             path: PathRenderer::new(self.0).trait_path(trait_ref)?,
             signature: Some(SignatureRenderer::new(self.0).trait_signature(data)),
             ty: None,
-            docs: docs_text(data.docs.as_ref()),
+            docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
 
@@ -190,7 +190,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     path: PathRenderer::new(self.0).function_path(function_ref)?,
                     signature: Some(SignatureRenderer::new(self.0).function_signature(data)),
                     ty: None,
-                    docs: docs_text(data.docs.as_ref()),
+                    docs: data.docs.as_ref().map(Documentation::text),
                 }))
             }
             ResolvedFunctionRef::BodyLocal(function_ref) => {
@@ -202,7 +202,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     path: None,
                     signature: Some(SignatureRenderer::new(self.0).local_function_signature(data)),
                     ty: None,
-                    docs: docs_text(data.docs.as_ref()),
+                    docs: data.docs.as_ref().map(Documentation::text),
                 }))
             }
         }
@@ -219,7 +219,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     path: PathRenderer::new(self.0).type_def_path(field_ref.owner)?,
                     signature: SignatureRenderer::new(self.0).field_signature(data),
                     ty: None,
-                    docs: docs_text(data.field.docs.as_ref()),
+                    docs: data.field.docs.as_ref().map(Documentation::text),
                 }))
             }
             ResolvedFieldRef::BodyLocal(field_ref) => {
@@ -231,7 +231,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     path: None,
                     signature: SignatureRenderer::new(self.0).local_field_signature(data),
                     ty: None,
-                    docs: docs_text(data.field.docs.as_ref()),
+                    docs: data.field.docs.as_ref().map(Documentation::text),
                 }))
             }
         }
@@ -249,7 +249,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             path: PathRenderer::new(self.0).type_alias_path(type_alias_ref)?,
             signature: Some(SignatureRenderer::new(self.0).type_alias_signature(data)),
             ty: None,
-            docs: docs_text(data.docs.as_ref()),
+            docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
 
@@ -262,7 +262,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             path: PathRenderer::new(self.0).const_path(const_ref)?,
             signature: Some(SignatureRenderer::new(self.0).const_signature(data)),
             ty: None,
-            docs: docs_text(data.docs.as_ref()),
+            docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
 
@@ -275,7 +275,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             path: PathRenderer::new(self.0).static_path(static_ref)?,
             signature: Some(SignatureRenderer::new(self.0).static_signature(data)),
             ty: None,
-            docs: docs_text(data.docs.as_ref()),
+            docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
 
@@ -296,7 +296,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             path: PathRenderer::new(self.0).module_path(module_ref)?,
             signature: Some(format!("mod {name}")),
             ty: None,
-            docs: docs_text(module.docs.as_ref()),
+            docs: module.docs.as_ref().map(Documentation::text),
         }))
     }
 
@@ -373,8 +373,4 @@ fn function_kind(owner: rg_semantic_ir::ItemOwner) -> SymbolKind {
             SymbolKind::Method
         }
     }
-}
-
-fn docs_text(docs: Option<&Documentation>) -> Option<String> {
-    docs.map(|docs| docs.as_str().to_string())
 }

@@ -6,6 +6,8 @@
 //! common shape.
 
 mod analysis_config;
+mod client_capabilities;
+mod completion;
 mod diagnostics_config;
 mod engine_config;
 mod error;
@@ -14,6 +16,8 @@ mod service;
 
 pub use self::{
     analysis_config::AnalysisConfig,
+    client_capabilities::ClientCapabilities,
+    completion::CompletionClientCapabilities,
     diagnostics_config::DiagnosticsConfig,
     engine_config::EngineConfig,
     error::EngineError,

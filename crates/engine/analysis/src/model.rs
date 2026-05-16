@@ -4,7 +4,7 @@ use rg_body_ir::{
 };
 use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, TypePathContext};
+use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, TraitApplicability, TypePathContext};
 
 pub(super) struct SymbolCandidate {
     pub(super) symbol: SymbolAt,
@@ -83,85 +83,6 @@ pub struct ReferenceLocation {
     pub target: TargetRef,
     pub file_id: FileId,
     pub span: Span,
-}
-
-/// Options for a source reference lookup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ReferenceQuery<'a> {
-    search_scope: ReferenceSearchScope<'a>,
-    declaration_policy: ReferenceDeclarationPolicy,
-}
-
-impl<'a> ReferenceQuery<'a> {
-    /// Returns a query for explicit find-references requests.
-    pub fn find_references(search_targets: &'a [TargetRef], include_declarations: bool) -> Self {
-        let declaration_policy = if include_declarations {
-            ReferenceDeclarationPolicy::IncludeUnscoped
-        } else {
-            ReferenceDeclarationPolicy::Exclude
-        };
-
-        Self {
-            search_scope: ReferenceSearchScope::Targets(search_targets),
-            declaration_policy,
-        }
-    }
-
-    /// Returns a query scoped to one file inside one target.
-    pub fn file_scoped(target: TargetRef, file_id: FileId) -> Self {
-        Self {
-            search_scope: ReferenceSearchScope::File { target, file_id },
-            declaration_policy: ReferenceDeclarationPolicy::IncludeInSearchScope,
-        }
-    }
-
-    /// Removes declaration locations from this query.
-    pub fn without_declarations(mut self) -> Self {
-        self.declaration_policy = ReferenceDeclarationPolicy::Exclude;
-        self
-    }
-
-    pub(crate) fn search_scope(self) -> ReferenceSearchScope<'a> {
-        self.search_scope
-    }
-
-    pub(crate) fn includes_declarations(self) -> bool {
-        !matches!(self.declaration_policy, ReferenceDeclarationPolicy::Exclude)
-    }
-
-    pub(crate) fn accepts_declaration(self, target: TargetRef, file_id: FileId) -> bool {
-        match self.declaration_policy {
-            ReferenceDeclarationPolicy::Exclude => false,
-            ReferenceDeclarationPolicy::IncludeUnscoped => true,
-            ReferenceDeclarationPolicy::IncludeInSearchScope => match self.search_scope {
-                ReferenceSearchScope::Targets(targets) => targets.contains(&target),
-                ReferenceSearchScope::File {
-                    target: selected_target,
-                    file_id: selected_file_id,
-                } => selected_target == target && selected_file_id == file_id,
-            },
-        }
-    }
-}
-
-/// Source surface scanned for reference use-sites.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ReferenceSearchScope<'a> {
-    /// Scans all source candidates inside the listed targets.
-    Targets(&'a [TargetRef]),
-    /// Scans source candidates in one file inside one target.
-    File { target: TargetRef, file_id: FileId },
-}
-
-/// How declaration locations should relate to the reference search surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReferenceDeclarationPolicy {
-    /// Do not return declaration locations.
-    Exclude,
-    /// Return declarations even when they are outside `ReferenceSearchScope`.
-    IncludeUnscoped,
-    /// Return declarations only when they are inside `ReferenceSearchScope`.
-    IncludeInSearchScope,
 }
 
 /// One goto-definition destination.
@@ -360,24 +281,151 @@ pub struct CompletionItem {
     pub kind: CompletionKind,
     pub target: CompletionTarget,
     pub applicability: CompletionApplicability,
+    pub detail: Option<String>,
+    pub documentation: Option<String>,
+    pub sort_text: String,
+    pub insert_text: CompletionInsertText,
+    pub edit: Option<CompletionEdit>,
+}
+
+/// Text inserted when accepting a completion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompletionInsertText {
+    Plain,
+    Snippet(String),
+}
+
+/// Source edit applied when accepting a completion item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompletionEdit {
+    pub replace: Span,
 }
 
 /// Stable analysis identity behind one completion row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionTarget {
+    Binding { body: BodyRef, binding: BindingId },
+    BodyItem(BodyItemRef),
     Field(ResolvedFieldRef),
     Function(ResolvedFunctionRef),
+    Def(DefId),
+    Keyword(KeywordCompletion),
+}
+
+/// Small, explicit set of Rust keyword and keyword-like snippet completions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeywordCompletion {
+    Async,
+    Const,
+    Enum,
+    False,
+    Fn,
+    For,
+    If,
+    Impl,
+    ImplFor,
+    Let,
+    Loop,
+    Match,
+    Mod,
+    Move,
+    Return,
+    Static,
+    Struct,
+    Trait,
+    True,
+    Type,
+    Use,
+    While,
 }
 
 /// Completion source category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 pub enum CompletionKind {
+    #[display("const")]
+    Const,
+    #[display("enum")]
+    Enum,
     #[display("field")]
     Field,
+    #[display("fn")]
+    Function,
     #[display("inherent_method")]
     InherentMethod,
+    #[display("keyword")]
+    Keyword,
+    #[display("macro")]
+    Macro,
+    #[display("module")]
+    Module,
+    #[display("static")]
+    Static,
+    #[display("struct")]
+    Struct,
+    #[display("trait")]
+    Trait,
     #[display("trait_method")]
     TraitMethod,
+    #[display("type_alias")]
+    TypeAlias,
+    #[display("union")]
+    Union,
+    #[display("variable")]
+    Variable,
+}
+
+impl CompletionKind {
+    /// Coarse bucket used as one component of LSP `sortText`.
+    ///
+    /// This is not the enum's full ordering: some variants intentionally share a
+    /// bucket, and completion ordering also includes label, applicability, and
+    /// target identity. Derived `Ord` remains the ordinary total enum order.
+    pub(super) fn sort_text_rank(self) -> u8 {
+        match self {
+            Self::Field => 0,
+            Self::InherentMethod => 1,
+            Self::TraitMethod => 2,
+            Self::Module => 3,
+            Self::Struct | Self::Enum | Self::Trait | Self::TypeAlias | Self::Union => 4,
+            Self::Const | Self::Static => 5,
+            Self::Function | Self::Macro => 6,
+            Self::Variable => 7,
+            Self::Keyword => 8,
+        }
+    }
+
+    /// Coarse bucket used by type-position completions that can still accept modules as prefixes.
+    ///
+    /// This is a context-specific component of LSP `sortText`, not the enum's general ordering.
+    pub(super) fn type_context_sort_text_rank(self) -> u8 {
+        match self {
+            Self::Struct | Self::Enum | Self::Union | Self::TypeAlias => 0,
+            Self::Trait => 1,
+            Self::Module => 2,
+            Self::Keyword => 3,
+            _ => 4,
+        }
+    }
+
+    pub(super) fn from_local_def_kind(kind: LocalDefKind) -> Self {
+        match kind {
+            LocalDefKind::Const => Self::Const,
+            LocalDefKind::Enum => Self::Enum,
+            LocalDefKind::Function => Self::Function,
+            LocalDefKind::MacroDefinition => Self::Macro,
+            LocalDefKind::Static => Self::Static,
+            LocalDefKind::Struct => Self::Struct,
+            LocalDefKind::Trait => Self::Trait,
+            LocalDefKind::TypeAlias => Self::TypeAlias,
+            LocalDefKind::Union => Self::Union,
+        }
+    }
+
+    pub(super) fn from_body_item_kind(kind: BodyItemKind) -> Self {
+        match kind {
+            BodyItemKind::Struct => Self::Struct,
+        }
+    }
 }
 
 /// Confidence attached to a completion candidate.
@@ -387,4 +435,27 @@ pub enum CompletionApplicability {
     Known,
     #[display("maybe")]
     Maybe,
+}
+
+impl CompletionApplicability {
+    /// Coarse bucket used as one component of LSP `sortText`.
+    ///
+    /// This is not the completion item's full ordering: applicability is only
+    /// one part of the final sort key. Derived `Ord` remains the ordinary total
+    /// enum order.
+    pub(super) fn sort_text_rank(self) -> u8 {
+        match self {
+            Self::Known => 0,
+            Self::Maybe => 1,
+        }
+    }
+}
+
+impl From<TraitApplicability> for CompletionApplicability {
+    fn from(applicability: TraitApplicability) -> Self {
+        match applicability {
+            TraitApplicability::Yes => Self::Known,
+            TraitApplicability::Maybe | TraitApplicability::No => Self::Maybe,
+        }
+    }
 }

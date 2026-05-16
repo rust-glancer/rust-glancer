@@ -3,7 +3,8 @@ use std::{fmt, fmt::Write as _, marker::PhantomData, sync::Arc};
 use expect_test::Expect;
 
 use crate::{
-    Analysis, AnalysisReadTxn, CompletionApplicability, CompletionItem, DocumentSymbol, HoverInfo,
+    Analysis, AnalysisReadTxn, CompletionApplicability, CompletionClientCapabilities,
+    CompletionInsertText, CompletionItem, CompletionQuery, DocumentSymbol, HoverInfo,
     NavigationTarget, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, SymbolAt,
     TypeHint, WorkspaceSymbol,
 };
@@ -115,7 +116,11 @@ impl AnalysisQuery {
     }
 
     pub(super) fn complete(title: &'static str, marker: &'static str) -> Self {
-        Self::new(title, marker, AnalysisQueryKind::CompletionsAtDot)
+        Self::new(title, marker, AnalysisQueryKind::CompletionsAt)
+    }
+
+    pub(super) fn complete_verbose(title: &'static str, marker: &'static str) -> Self {
+        Self::new(title, marker, AnalysisQueryKind::CompletionsAtVerbose)
     }
 
     pub(super) fn hover(title: &'static str, marker: &'static str) -> Self {
@@ -235,7 +240,8 @@ enum AnalysisQueryKind {
     GotoImplementation,
     References(ReferenceQuery),
     TypeAt,
-    CompletionsAtDot,
+    CompletionsAt,
+    CompletionsAtVerbose,
     Hover,
 }
 
@@ -616,11 +622,26 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
-            AnalysisQueryKind::CompletionsAtDot => {
+            AnalysisQueryKind::CompletionsAt => {
+                let query = CompletionQuery::new(target, file_id, offset).with_client_capabilities(
+                    CompletionClientCapabilities::default().with_snippet_support(true),
+                );
                 self.render_completions(
                     self.db
                         .analysis()
-                        .completions_at_dot(target, file_id, offset)
+                        .completions_at(query)
+                        .expect("fixture completion query should resolve"),
+                    &mut dump,
+                );
+            }
+            AnalysisQueryKind::CompletionsAtVerbose => {
+                let query = CompletionQuery::new(target, file_id, offset).with_client_capabilities(
+                    CompletionClientCapabilities::default().with_snippet_support(true),
+                );
+                self.render_completions_verbose(
+                    self.db
+                        .analysis()
+                        .completions_at(query)
                         .expect("fixture completion query should resolve"),
                     &mut dump,
                 );
@@ -883,6 +904,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     .unwrap_or_else(|| "<missing>".to_string());
                 format!("field {field}")
             }
+            ExprKind::Record { path, .. } => {
+                let path = path
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("record {path}")
+            }
             ExprKind::Wrapper { kind, .. } => format!("wrapper {kind}"),
             ExprKind::Literal { kind } => {
                 format!(
@@ -960,6 +988,37 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     completion.kind, completion.label, completion.applicability
                 )
                 .expect("string writes should not fail");
+            }
+        }
+    }
+
+    fn render_completions_verbose(&self, mut completions: Vec<CompletionItem>, dump: &mut String) {
+        completions.sort_by_key(|completion| completion.sort_text.clone());
+
+        if completions.is_empty() {
+            writeln!(dump, "\n- <none>").expect("string writes should not fail");
+            return;
+        }
+
+        writeln!(dump).expect("string writes should not fail");
+        for completion in completions {
+            writeln!(dump, "- {} {}", completion.kind, completion.label)
+                .expect("string writes should not fail");
+            if let Some(detail) = &completion.detail {
+                writeln!(dump, "  detail: {detail}").expect("string writes should not fail");
+            }
+            if let Some(docs) = &completion.documentation {
+                writeln!(dump, "  docs: {docs}").expect("string writes should not fail");
+            }
+            writeln!(dump, "  sort: {}", completion.sort_text)
+                .expect("string writes should not fail");
+            if let Some(edit) = completion.edit {
+                let span = edit.replace;
+                writeln!(dump, "  replace: {}..{}", span.text.start, span.text.end)
+                    .expect("string writes should not fail");
+            }
+            if let CompletionInsertText::Snippet(snippet) = &completion.insert_text {
+                writeln!(dump, "  snippet: {snippet}").expect("string writes should not fail");
             }
         }
     }

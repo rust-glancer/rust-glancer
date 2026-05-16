@@ -96,6 +96,7 @@ Rules of thumb:
 - user should not need to go to other places to understand the comment, it should keep reading with more knowledge
 - user should not have special knowledge to understand the comment (e.g. project roadmap/tasks/private discussions)
 - user should get a knowledge from comment that otherwise would require them to spend time reasoning about codebase.
+- if your comment uses the word "currently" or another implication of current state that is likely to change, then it's probably a temporary implementation detail that should not be mentioned.
 
 ## `reference/` folder
 

@@ -37,12 +37,12 @@ rg_memsize::impl_memory_size_children! {
     TypeAliasItem => generics, bounds, aliased_ty;
     ConstItem => generics, ty;
     StaticItem => ty, mutability;
-    TypePath => absolute, segments;
+    TypePath => source_span, absolute, segments;
     TypePathSegment => name, args, span;
     ExternCrateItem => name, alias;
     UseItem => imports;
     UseImport => kind, path, alias;
-    UsePath => absolute, segments;
+    UsePath => source_span, absolute, segments;
     UsePathSegment => kind, span;
     ModuleItem => inner_docs, source;
 }
