@@ -16,6 +16,7 @@ pub(crate) async fn completion(
         return Ok(None);
     };
     let position = params.text_document_position.position;
+    let client_capabilities = ctx.client_capabilities.completion;
     tracing::trace!("completion request received");
     let completions = ctx
         .engine_client
@@ -23,7 +24,7 @@ pub(crate) async fn completion(
             "completion",
             move |engine_client, request_context| async move {
                 engine_client
-                    .completion(request_context, path, position)
+                    .completion(request_context, path, position, client_capabilities)
                     .await
             },
         )

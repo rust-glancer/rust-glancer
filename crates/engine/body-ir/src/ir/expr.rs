@@ -33,6 +33,15 @@ impl ExprData {
     }
 }
 
+/// One field written inside a record expression.
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct RecordExprField {
+    pub key: FieldKey,
+    pub key_span: Span,
+    pub source_span: Span,
+    pub value: Option<ExprId>,
+}
+
 /// Expression forms that the first Body IR pass understands.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum ExprKind {
@@ -64,6 +73,12 @@ pub enum ExprKind {
         dot_span: Option<Span>,
         field: Option<FieldKey>,
         field_span: Option<Span>,
+    },
+    Record {
+        path: Option<BodyPath>,
+        field_list_span: Option<Span>,
+        fields: Vec<RecordExprField>,
+        spread: Option<ExprId>,
     },
     Wrapper {
         kind: ExprWrapperKind,
@@ -168,8 +183,23 @@ impl ExprKind {
                     field.shrink_to_fit();
                 }
             }
+            Self::Record { path, fields, .. } => {
+                if let Some(path) = path {
+                    path.shrink_to_fit();
+                }
+                fields.shrink_to_fit();
+                for field in fields {
+                    field.shrink_to_fit();
+                }
+            }
             Self::Wrapper { .. } | Self::Literal { .. } => {}
             Self::Unknown { children } => children.shrink_to_fit(),
         }
+    }
+}
+
+impl RecordExprField {
+    fn shrink_to_fit(&mut self) {
+        self.key.shrink_to_fit();
     }
 }

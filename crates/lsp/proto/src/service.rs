@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::{EngineConfig, EngineError, ServiceNotification};
+use crate::{CompletionClientCapabilities, EngineConfig, EngineError, ServiceNotification};
 
 pub type EngineResult<T> = Result<T, EngineError>;
 
@@ -62,6 +62,7 @@ pub trait EngineService {
     async fn completion(
         path: PathBuf,
         position: ls_types::Position,
+        client_capabilities: CompletionClientCapabilities,
     ) -> EngineResult<Vec<ls_types::CompletionItem>>;
 
     async fn document_symbol(path: PathBuf) -> EngineResult<Vec<ls_types::DocumentSymbol>>;

@@ -21,7 +21,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
             resolve_provider: Some(false),
-            trigger_characters: Some(vec![".".to_string()]),
+            trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
             ..Default::default()
         }),
         document_symbol_provider: Some(OneOf::Left(true)),
@@ -74,6 +74,19 @@ mod tests {
     fn advertises_hover_support() {
         let capabilities = server_capabilities();
         assert!(capabilities.hover_provider.is_some());
+    }
+
+    #[test]
+    fn triggers_completions_for_member_and_path_access() {
+        let capabilities = server_capabilities();
+        let completion = capabilities
+            .completion_provider
+            .expect("completion capability should stay explicit");
+
+        assert_eq!(
+            completion.trigger_characters,
+            Some(vec![".".to_string(), ":".to_string()])
+        );
     }
 
     #[test]

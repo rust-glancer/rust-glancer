@@ -5,9 +5,9 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_analysis::{ReferenceQuery, TypeHint};
+use rg_analysis::{CompletionQuery, ReferenceQuery, TypeHint};
 use rg_def_map::TargetRef;
-use rg_lsp_proto::AnalysisConfig;
+use rg_lsp_proto::{AnalysisConfig, CompletionClientCapabilities};
 use rg_parse::TextSpan;
 use rg_project::{CacheProbeProfile, FileContext, Project, ProjectSnapshot, SavedFileChange};
 use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
@@ -222,6 +222,7 @@ impl EngineWorker {
                 EngineCommand::Completion {
                     path,
                     position,
+                    client_capabilities,
                     dirty,
                     respond_to,
                 } => {
@@ -234,7 +235,7 @@ impl EngineWorker {
                     let context =
                         QueryContext::document("completion", queue_elapsed, dirty.as_ref());
                     self.respond_to_query(context, respond_to, |worker| {
-                        worker.completion(path, position, dirty)
+                        worker.completion(path, position, client_capabilities, dirty)
                     });
                 }
                 EngineCommand::DocumentSymbol {
@@ -565,9 +566,11 @@ impl EngineWorker {
         &mut self,
         path: PathBuf,
         position: ls_types::Position,
+        client_capabilities: CompletionClientCapabilities,
         dirty: Option<DirtyDocumentSnapshot>,
     ) -> anyhow::Result<Vec<ls_types::CompletionItem>> {
         let started = Instant::now();
+        let source_text = dirty.as_ref().map(DirtyDocumentSnapshot::text);
         let completions = self
             .project
             .with_query_snapshot(dirty.as_ref(), |snapshot| {
@@ -580,8 +583,19 @@ impl EngineWorker {
                 let mut completions = Vec::new();
 
                 for (context, target, offset) in target_offsets {
-                    for item in analysis.completions_at(target, context.file, offset)? {
-                        let item = completion::completion_item(item);
+                    let Some(line_index) = snapshot.file_line_index(context.package, context.file)
+                    else {
+                        continue;
+                    };
+                    let mut query = CompletionQuery::new(target, context.file, offset)
+                        .with_client_capabilities(rg_analysis::CompletionClientCapabilities {
+                            snippet_support: client_capabilities.snippet_support,
+                        });
+                    if let Some(source_text) = source_text {
+                        query = query.with_source_text(source_text);
+                    }
+                    for item in analysis.completions_at(query)? {
+                        let item = completion::completion_item(item, line_index);
                         if !completions.contains(&item) {
                             completions.push(item);
                         }

@@ -1,11 +1,11 @@
 use std::fmt;
 
 use ra_syntax::{
-    AstNode as _,
+    AstNode as _, SyntaxKind, algo,
     ast::{self, HasName},
 };
 
-use rg_parse::Span;
+use rg_parse::{Span, TextSpan};
 use rg_text::{Name, NameInterner};
 
 /// Syntactic `extern crate` facts attached to `ItemKind::ExternCrate`.
@@ -51,7 +51,7 @@ impl UseItem {
     ) {
         let path = match use_tree.path() {
             Some(path) => {
-                let Some(path) = UsePath::from_ast(&path, interner) else {
+                let Some(path) = UsePath::from_ast(&path, &use_tree, interner) else {
                     return;
                 };
                 prefix.joined(&path)
@@ -151,6 +151,7 @@ impl fmt::Display for ImportAlias {
 /// Structured path used before semantic resolution.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct UsePath {
+    pub source_span: Option<Span>,
     pub absolute: bool,
     pub segments: Vec<UsePathSegment>,
 }
@@ -158,17 +159,37 @@ pub struct UsePath {
 impl UsePath {
     fn empty() -> Self {
         Self {
+            source_span: None,
             absolute: false,
             segments: Vec::new(),
         }
     }
 
-    fn from_ast(path: &ast::Path, interner: &mut NameInterner) -> Option<Self> {
+    fn from_ast(
+        path: &ast::Path,
+        use_tree: &ast::UseTree,
+        interner: &mut NameInterner,
+    ) -> Option<Self> {
         let mut segments = Vec::new();
 
         for segment in path.segments() {
             let span = Span::from_text_range(segment.syntax().text_range());
-            let lowered_segment = match segment.kind()? {
+            let Some(kind) = segment.kind() else {
+                // A live edit such as `use crate::module::` produces an empty trailing segment.
+                // Keep the completed prefix so completion can fill that final segment.
+                if span.is_empty() {
+                    continue;
+                }
+
+                // Syntax recovery may attach the next item's attribute marker as a bogus segment
+                // after the trailing `::`. The valid prefix is still useful for completion, so stop
+                // before the recovered token instead of dropping the whole use path.
+                if !segments.is_empty() {
+                    break;
+                }
+                return None;
+            };
+            let lowered_segment = match kind {
                 ast::PathSegmentKind::Name(name_ref) => UsePathSegment {
                     kind: UsePathSegmentKind::Name(interner.intern(name_ref.text())),
                     span: Span::from_text_range(name_ref.syntax().text_range()),
@@ -191,8 +212,12 @@ impl UsePath {
             };
             segments.push(lowered_segment);
         }
+        if segments.is_empty() {
+            return None;
+        }
 
         Some(Self {
+            source_span: Some(Self::source_span(path, use_tree)),
             absolute: path
                 .first_segment()
                 .is_some_and(|segment| segment.coloncolon_token().is_some()),
@@ -200,10 +225,44 @@ impl UsePath {
         })
     }
 
+    fn source_span(path: &ast::Path, use_tree: &ast::UseTree) -> Span {
+        let mut span = Span::from_text_range(path.syntax().text_range());
+        let Some(next_token) = algo::next_non_trivia_token(path.syntax().clone()) else {
+            return span;
+        };
+        if next_token.kind() != SyntaxKind::COLON2 {
+            return span;
+        }
+
+        // Some use-tree forms keep a trailing separator next to the path rather than in a named
+        // segment span. Keep that token in the source span so completion can recognize an empty
+        // final segment.
+        let use_tree_range = use_tree.syntax().text_range();
+        let colon_range = next_token.text_range();
+        if use_tree_range.start() <= colon_range.start()
+            && colon_range.end() <= use_tree_range.end()
+        {
+            span.text.end = u32::from(colon_range.end());
+        }
+        span
+    }
+
     fn joined(&self, suffix: &Self) -> Self {
         let mut segments = self.segments.clone();
         segments.extend(suffix.segments.clone());
+        let source_span = match (self.source_span, suffix.source_span) {
+            (Some(left), Some(right)) => Some(Span {
+                text: TextSpan {
+                    start: left.text.start.min(right.text.start),
+                    end: left.text.end.max(right.text.end),
+                },
+            }),
+            (Some(span), None) | (None, Some(span)) => Some(span),
+            (None, None) => None,
+        };
+
         Self {
+            source_span,
             absolute: self.absolute || suffix.absolute,
             segments,
         }
@@ -218,6 +277,7 @@ impl UsePath {
             segments.pop();
         }
         Self {
+            source_span: self.source_span,
             absolute: self.absolute,
             segments,
         }

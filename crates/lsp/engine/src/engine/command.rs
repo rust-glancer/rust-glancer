@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use rg_lsp_proto::AnalysisConfig;
+use rg_lsp_proto::{AnalysisConfig, CompletionClientCapabilities};
 use tokio::sync::oneshot;
 
 use crate::documents::DirtyDocumentSnapshot;
@@ -59,6 +59,7 @@ pub(crate) enum EngineCommand {
     Completion {
         path: PathBuf,
         position: ls_types::Position,
+        client_capabilities: CompletionClientCapabilities,
         dirty: Option<DirtyDocumentSnapshot>,
         respond_to: EngineResponse<Vec<ls_types::CompletionItem>>,
     },

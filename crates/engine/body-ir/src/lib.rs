@@ -7,18 +7,24 @@ mod store;
 use rg_def_map::PackageSlot;
 use rg_parse::FileId;
 
+pub use rg_item_tree::FieldKey;
+
 #[cfg(test)]
 mod tests;
 
 pub use self::{
-    cursor::{BodyCursorCandidate, DotReceiver},
+    cursor::{
+        BodyCursorCandidate, BodyUnqualifiedCompletionCandidate, DotCompletionSite,
+        PathCompletionNamespace, PathCompletionSite, RecordFieldCompletionSite,
+        UnqualifiedCompletionNamespace, UnqualifiedCompletionSite,
+    },
     ir::{
         BindingData, BindingId, BindingKind, BodyData, BodyFieldData, BodyFieldRef,
         BodyFunctionData, BodyFunctionId, BodyFunctionOwner, BodyFunctionRef, BodyGenericArg,
         BodyId, BodyImplData, BodyImplId, BodyIrStats, BodyItemData, BodyItemId, BodyItemKind,
         BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef, BodyResolution,
         BodySource, BodyTy, BodyTypePathResolution, ExprData, ExprId, ExprKind, LiteralKind,
-        PackageBodies, PatData, PatId, PatKind, RecordPatField, ResolvedFieldRef,
+        PackageBodies, PatData, PatId, PatKind, RecordExprField, RecordPatField, ResolvedFieldRef,
         ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
         TargetBodiesStatus,
     },

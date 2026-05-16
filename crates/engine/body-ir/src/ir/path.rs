@@ -9,6 +9,11 @@ use rg_parse::Span;
 /// analysis can distinguish `Command` from `Configure` in `Command::Configure`.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct BodyPath {
+    /// Full source range of the path expression or pattern.
+    ///
+    /// Segment spans cover named pieces only. The full span gives cursor queries a stable path
+    /// width when choosing between nested path-like syntax.
+    pub source_span: Span,
     /// Semantic path shape shared with DefMap and Semantic IR.
     pub path: Path,
     /// Per-segment spans in the same order as `path.segments`.
@@ -19,8 +24,9 @@ pub struct BodyPath {
 }
 
 impl BodyPath {
-    pub(crate) fn new(path: Path, segment_spans: Vec<Span>) -> Self {
+    pub(crate) fn new(source_span: Span, path: Path, segment_spans: Vec<Span>) -> Self {
         Self {
+            source_span,
             path,
             segment_spans,
         }

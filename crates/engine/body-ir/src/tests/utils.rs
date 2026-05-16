@@ -544,6 +544,20 @@ impl TargetBodyIrSnapshot<'_> {
                     self.render_expr(body, *base, depth + 2, dump);
                 }
             }
+            ExprKind::Record { fields, spread, .. } => {
+                for field in fields {
+                    if let Some(value) = field.value {
+                        writeln!(dump, "{}field {}", indent(depth + 1), field.key)
+                            .expect("string writes should not fail");
+                        self.render_expr(body, value, depth + 2, dump);
+                    }
+                }
+                if let Some(spread) = spread {
+                    writeln!(dump, "{}spread", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *spread, depth + 2, dump);
+                }
+            }
             ExprKind::Wrapper { inner, .. } => {
                 if let Some(inner) = inner {
                     writeln!(dump, "{}inner", indent(depth + 1))
@@ -577,6 +591,13 @@ impl TargetBodyIrSnapshot<'_> {
                     .map(ToString::to_string)
                     .unwrap_or_else(|| "<missing>".to_string());
                 format!("field {field}")
+            }
+            ExprKind::Record { path, .. } => {
+                let path = path
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("record {path}")
             }
             ExprKind::Wrapper { kind, .. } => format!("wrapper {kind}"),
             ExprKind::Literal { kind } => {

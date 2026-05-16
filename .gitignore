@@ -6,6 +6,8 @@ editors/code/out
 editors/code/out-unit
 editors/code/.vscode-test
 
+.codex
+
 # This folder is for extra repos I want to check out as a reference / local documentation only
 reference/
 

@@ -137,6 +137,7 @@ impl ImportPath {
 /// Import path plus source spans for each segment.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ImportSourcePath {
+    pub(crate) source_span: Option<Span>,
     pub(crate) absolute: bool,
     pub(crate) segments: Vec<ImportSourcePathSegment>,
 }
@@ -155,6 +156,7 @@ impl ImportSourcePath {
             .collect();
 
         Self {
+            source_span: path.source_span,
             absolute: path.absolute,
             segments,
         }
@@ -162,6 +164,10 @@ impl ImportSourcePath {
 
     pub fn segments(&self) -> &[ImportSourcePathSegment] {
         &self.segments
+    }
+
+    pub fn source_span(&self) -> Option<Span> {
+        self.source_span
     }
 
     pub fn prefix_path(&self, segment_idx: usize) -> Path {

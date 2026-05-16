@@ -1264,6 +1264,7 @@ dependencies = [
  "rg_parse",
  "rg_semantic_ir",
  "rg_workspace",
+ "syntax",
  "test_fixture",
 ]
 

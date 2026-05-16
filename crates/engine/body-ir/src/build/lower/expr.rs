@@ -1,0 +1,313 @@
+//! Expression lowering for syntax that Body IR models directly.
+
+use ra_syntax::{
+    AstNode as _,
+    ast::{self, HasArgList as _},
+};
+
+use rg_item_tree::FieldKey;
+use rg_parse::Span;
+
+use crate::ir::{
+    BindingKind, ExprId, ExprKind, ExprWrapperKind, LiteralKind, MatchArmData, RecordExprField,
+    ScopeId,
+};
+
+use super::function::FunctionBodyLowering;
+
+impl FunctionBodyLowering<'_> {
+    pub(super) fn lower_expr(&mut self, expr: ast::Expr, scope: ScopeId) -> ExprId {
+        match expr {
+            ast::Expr::BlockExpr(block) => self.lower_block_expr(block, scope),
+            ast::Expr::CallExpr(call) => self.lower_call_expr(call, scope),
+            ast::Expr::FieldExpr(field) => self.lower_field_expr(field, scope),
+            ast::Expr::Literal(literal) => self.lower_literal(literal, scope),
+            ast::Expr::MatchExpr(match_expr) => self.lower_match_expr(match_expr, scope),
+            ast::Expr::MethodCallExpr(method_call) => {
+                self.lower_method_call_expr(method_call, scope)
+            }
+            ast::Expr::RecordExpr(record) => self.lower_record_expr(record, scope),
+            ast::Expr::AwaitExpr(await_expr) => self.lower_wrapper_expr(
+                await_expr.syntax(),
+                await_expr.expr(),
+                scope,
+                ExprWrapperKind::Await,
+            ),
+            ast::Expr::ParenExpr(paren) => match paren.expr() {
+                Some(inner) => self.lower_wrapper_expr(
+                    paren.syntax(),
+                    Some(inner),
+                    scope,
+                    ExprWrapperKind::Paren,
+                ),
+                None => {
+                    self.lower_wrapper_expr(paren.syntax(), None, scope, ExprWrapperKind::Paren)
+                }
+            },
+            ast::Expr::PathExpr(path) => self.lower_path_expr(path, scope),
+            ast::Expr::PrefixExpr(prefix) => match prefix.expr() {
+                Some(inner) => self.lower_passthrough_unknown(prefix.syntax(), vec![inner], scope),
+                None => self.lower_unknown_expr(prefix.syntax(), scope),
+            },
+            ast::Expr::RefExpr(ref_expr) => match ref_expr.expr() {
+                Some(inner) => self.lower_wrapper_expr(
+                    ref_expr.syntax(),
+                    Some(inner),
+                    scope,
+                    ExprWrapperKind::Ref,
+                ),
+                None => {
+                    self.lower_wrapper_expr(ref_expr.syntax(), None, scope, ExprWrapperKind::Ref)
+                }
+            },
+            ast::Expr::ReturnExpr(return_expr) => match return_expr.expr() {
+                Some(inner) => self.lower_wrapper_expr(
+                    return_expr.syntax(),
+                    Some(inner),
+                    scope,
+                    ExprWrapperKind::Return,
+                ),
+                None => self.lower_wrapper_expr(
+                    return_expr.syntax(),
+                    None,
+                    scope,
+                    ExprWrapperKind::Return,
+                ),
+            },
+            ast::Expr::TryExpr(try_expr) => self.lower_wrapper_expr(
+                try_expr.syntax(),
+                try_expr.expr(),
+                scope,
+                ExprWrapperKind::Try,
+            ),
+            // Unsupported expressions still lower their direct expression children so cursor and
+            // type queries can work inside syntax the IR does not model yet.
+            expr => self.lower_unknown_with_direct_children(expr.syntax(), scope),
+        }
+    }
+
+    fn lower_call_expr(&mut self, call: ast::CallExpr, scope: ScopeId) -> ExprId {
+        let callee = call.expr().map(|callee| self.lower_expr(callee, scope));
+        let args = call
+            .arg_list()
+            .into_iter()
+            .flat_map(|args| args.args())
+            .map(|arg| self.lower_expr(arg, scope))
+            .collect();
+
+        self.alloc_expr(call.syntax(), scope, ExprKind::Call { callee, args })
+    }
+
+    fn lower_match_expr(&mut self, match_expr: ast::MatchExpr, scope: ScopeId) -> ExprId {
+        let scrutinee = match_expr
+            .expr()
+            .map(|scrutinee| self.lower_expr(scrutinee, scope));
+        let arms = match_expr
+            .match_arm_list()
+            .into_iter()
+            .flat_map(|arm_list| arm_list.arms())
+            .map(|arm| self.lower_match_arm(arm, scope))
+            .collect();
+
+        self.alloc_expr(
+            match_expr.syntax(),
+            scope,
+            ExprKind::Match { scrutinee, arms },
+        )
+    }
+
+    fn lower_match_arm(&mut self, arm: ast::MatchArm, parent_scope: ScopeId) -> MatchArmData {
+        let scope = self.builder.alloc_scope(Some(parent_scope));
+        let pat = arm
+            .pat()
+            .map(|pat| self.lower_pat(pat, scope, BindingKind::Let, None).0)
+            .unwrap_or_default();
+        let expr = arm.expr().map(|expr| self.lower_expr(expr, scope));
+
+        MatchArmData { pat, scope, expr }
+    }
+
+    fn lower_method_call_expr(
+        &mut self,
+        method_call: ast::MethodCallExpr,
+        scope: ScopeId,
+    ) -> ExprId {
+        let receiver = method_call
+            .receiver()
+            .map(|receiver| self.lower_expr(receiver, scope));
+        let dot_span = method_call
+            .dot_token()
+            .map(|dot| Span::from_text_range(dot.text_range()));
+        let name_ref = method_call.name_ref();
+        let method_name = name_ref
+            .clone()
+            .map(|name| self.intern_ast_name_ref(name))
+            .unwrap_or_else(|| self.interner.intern("<missing>"));
+        let method_name_span = name_ref
+            .as_ref()
+            .map(|name| self.source(name.syntax()).span);
+        let args = method_call
+            .arg_list()
+            .into_iter()
+            .flat_map(|args| args.args())
+            .map(|arg| self.lower_expr(arg, scope))
+            .collect();
+
+        self.alloc_expr(
+            method_call.syntax(),
+            scope,
+            ExprKind::MethodCall {
+                receiver,
+                dot_span,
+                method_name,
+                method_name_span,
+                args,
+            },
+        )
+    }
+
+    fn lower_field_expr(&mut self, field: ast::FieldExpr, scope: ScopeId) -> ExprId {
+        let base = field.expr().map(|base| self.lower_expr(base, scope));
+        let dot_span = field
+            .dot_token()
+            .map(|dot| Span::from_text_range(dot.text_range()));
+        let (field_key, field_span) = if let Some(index) = field.index_token() {
+            (
+                index.text().parse::<usize>().ok().map(FieldKey::Tuple),
+                Some(Span::from_text_range(index.text_range())),
+            )
+        } else if let Some(name) = field.name_ref() {
+            let field_key = name
+                .as_tuple_field()
+                .map(FieldKey::Tuple)
+                .unwrap_or_else(|| FieldKey::Named(self.intern_ast_name_ref(name.clone())));
+            (Some(field_key), Some(self.source(name.syntax()).span))
+        } else {
+            (None, None)
+        };
+
+        self.alloc_expr(
+            field.syntax(),
+            scope,
+            ExprKind::Field {
+                base,
+                dot_span,
+                field: field_key,
+                field_span,
+            },
+        )
+    }
+
+    fn lower_record_expr(&mut self, record: ast::RecordExpr, scope: ScopeId) -> ExprId {
+        let mut fields = Vec::new();
+        let mut spread = None;
+        let field_list_span = record
+            .record_expr_field_list()
+            .as_ref()
+            .map(|field_list| self.source(field_list.syntax()).span);
+
+        if let Some(field_list) = record.record_expr_field_list() {
+            fields.extend(
+                field_list
+                    .fields()
+                    .filter_map(|field| self.lower_record_expr_field(field, scope)),
+            );
+            spread = field_list.spread().map(|expr| self.lower_expr(expr, scope));
+        }
+        let path = record.path().and_then(|path| self.lower_body_path(path));
+
+        self.alloc_expr(
+            record.syntax(),
+            scope,
+            ExprKind::Record {
+                path,
+                field_list_span,
+                fields,
+                spread,
+            },
+        )
+    }
+
+    fn lower_record_expr_field(
+        &mut self,
+        field: ast::RecordExprField,
+        scope: ScopeId,
+    ) -> Option<RecordExprField> {
+        let field_name = field.field_name()?;
+        let key_span = self.source(field_name.syntax()).span;
+        let key = FieldKey::Named(self.intern_ast_name_ref(field_name));
+        let source_span = self.source(field.syntax()).span;
+        let value = field.expr().map(|expr| self.lower_expr(expr, scope));
+
+        Some(RecordExprField {
+            key,
+            key_span,
+            source_span,
+            value,
+        })
+    }
+
+    fn lower_literal(&mut self, literal: ast::Literal, scope: ScopeId) -> ExprId {
+        let kind = LiteralKind::from_ast(&literal);
+
+        self.alloc_expr(literal.syntax(), scope, ExprKind::Literal { kind })
+    }
+
+    fn lower_path_expr(&mut self, expr: ast::PathExpr, scope: ScopeId) -> ExprId {
+        let Some(path) = expr.path().and_then(|path| self.lower_body_path(path)) else {
+            return self.lower_unknown_expr(expr.syntax(), scope);
+        };
+
+        self.alloc_expr(expr.syntax(), scope, ExprKind::Path { path })
+    }
+
+    fn lower_wrapper_expr(
+        &mut self,
+        syntax: &ra_syntax::SyntaxNode,
+        inner: Option<ast::Expr>,
+        scope: ScopeId,
+        kind: ExprWrapperKind,
+    ) -> ExprId {
+        let inner = inner.map(|inner| self.lower_expr(inner, scope));
+
+        self.alloc_expr(syntax, scope, ExprKind::Wrapper { kind, inner })
+    }
+
+    fn lower_passthrough_unknown(
+        &mut self,
+        syntax: &ra_syntax::SyntaxNode,
+        children: Vec<ast::Expr>,
+        scope: ScopeId,
+    ) -> ExprId {
+        let children = children
+            .into_iter()
+            .map(|child| self.lower_expr(child, scope))
+            .collect();
+
+        self.alloc_expr(syntax, scope, ExprKind::Unknown { children })
+    }
+
+    fn lower_unknown_with_direct_children(
+        &mut self,
+        syntax: &ra_syntax::SyntaxNode,
+        scope: ScopeId,
+    ) -> ExprId {
+        let children = syntax
+            .children()
+            .filter_map(ast::Expr::cast)
+            .map(|child| self.lower_expr(child, scope))
+            .collect();
+
+        self.alloc_expr(syntax, scope, ExprKind::Unknown { children })
+    }
+
+    fn lower_unknown_expr(&mut self, syntax: &ra_syntax::SyntaxNode, scope: ScopeId) -> ExprId {
+        self.alloc_expr(
+            syntax,
+            scope,
+            ExprKind::Unknown {
+                children: Vec::new(),
+            },
+        )
+    }
+}
