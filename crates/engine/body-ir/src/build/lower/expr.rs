@@ -13,7 +13,7 @@ use crate::ir::{
     ScopeId,
 };
 
-use super::{function::FunctionBodyLowering, syntax::normalized_syntax};
+use super::function::FunctionBodyLowering;
 
 impl FunctionBodyLowering<'_> {
     pub(super) fn lower_expr(&mut self, expr: ast::Expr, scope: ScopeId) -> ExprId {
@@ -248,8 +248,7 @@ impl FunctionBodyLowering<'_> {
     }
 
     fn lower_literal(&mut self, literal: ast::Literal, scope: ScopeId) -> ExprId {
-        let text = normalized_syntax(&literal);
-        let kind = LiteralKind::from_text(&text);
+        let kind = LiteralKind::from_ast(&literal);
 
         self.alloc_expr(literal.syntax(), scope, ExprKind::Literal { kind })
     }

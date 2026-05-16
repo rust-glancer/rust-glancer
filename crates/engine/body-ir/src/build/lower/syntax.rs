@@ -14,32 +14,16 @@ use crate::ir::{BodyPath, BodySource, LiteralKind};
 use super::function::FunctionBodyLowering;
 
 impl LiteralKind {
-    pub(super) fn from_text(text: &str) -> Self {
-        if matches!(text, "true" | "false") {
-            return Self::Bool;
+    pub(super) fn from_ast(literal: &ast::Literal) -> Self {
+        match literal.kind() {
+            ast::LiteralKind::Bool(_) => Self::Bool,
+            ast::LiteralKind::Char(_) | ast::LiteralKind::Byte(_) => Self::Char,
+            ast::LiteralKind::FloatNumber(_) => Self::Float,
+            ast::LiteralKind::IntNumber(_) => Self::Int,
+            ast::LiteralKind::String(_)
+            | ast::LiteralKind::ByteString(_)
+            | ast::LiteralKind::CString(_) => Self::String,
         }
-
-        if text.starts_with('"') || text.starts_with("r#") || text.starts_with("br#") {
-            return Self::String;
-        }
-
-        if text.starts_with('\'') {
-            return Self::Char;
-        }
-
-        if text.contains('.') {
-            return Self::Float;
-        }
-
-        if text
-            .bytes()
-            .next()
-            .is_some_and(|byte| byte.is_ascii_digit())
-        {
-            return Self::Int;
-        }
-
-        Self::Unknown
     }
 }
 
@@ -152,14 +136,48 @@ pub(super) fn source_for(file_id: FileId, syntax: &ra_syntax::SyntaxNode) -> Bod
     }
 }
 
-pub(super) fn normalized_syntax(node: &impl ra_syntax::AstNode) -> String {
-    normalized_syntax_node(node.syntax())
-}
+#[cfg(test)]
+mod tests {
+    use ra_syntax::{AstNode as _, Edition, SourceFile, ast};
 
-fn normalized_syntax_node(node: &ra_syntax::SyntaxNode) -> String {
-    node.text()
-        .to_string()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    use crate::ir::LiteralKind;
+
+    #[test]
+    fn classifies_rust_literal_tokens() {
+        let cases = [
+            ("true", LiteralKind::Bool, "bool literal"),
+            ("'x'", LiteralKind::Char, "char literal"),
+            ("b'x'", LiteralKind::Char, "byte literal"),
+            ("42", LiteralKind::Int, "integer literal"),
+            ("1.5", LiteralKind::Float, "decimal float literal"),
+            ("1e10", LiteralKind::Float, "exponent float literal"),
+            (
+                "1E-10",
+                LiteralKind::Float,
+                "negative exponent float literal",
+            ),
+            (r#""text""#, LiteralKind::String, "string literal"),
+            (r##"r#"text"#"##, LiteralKind::String, "raw string literal"),
+            (r#"b"text""#, LiteralKind::String, "byte string literal"),
+            (
+                r##"br#"text"#"##,
+                LiteralKind::String,
+                "raw byte string literal",
+            ),
+        ];
+
+        for (expr, expected, label) in cases {
+            let source = format!("fn main() {{ let _ = {expr}; }}");
+            let file = SourceFile::parse(&source, Edition::CURRENT)
+                .ok()
+                .expect("literal fixture should parse");
+            let literal = file
+                .syntax()
+                .descendants()
+                .find_map(ast::Literal::cast)
+                .expect("fixture should contain a literal expression");
+
+            assert_eq!(LiteralKind::from_ast(&literal), expected, "{label}");
+        }
+    }
 }
