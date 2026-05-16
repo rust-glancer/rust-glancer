@@ -115,13 +115,13 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
         };
 
         match context {
-            CompletionContext::DotCompletionSite(site) => {
+            CompletionContext::Dot(site) => {
                 DotCompletionResolver::new(self.analysis, self.query).completions(site)
             }
-            CompletionContext::BodyPathCompletionSite(site) => {
+            CompletionContext::BodyPath(site) => {
                 PathCompletionResolver::new(self.analysis, self.query).body_completions(site)
             }
-            CompletionContext::BodyUnqualifiedCompletionSite(site) => {
+            CompletionContext::BodyUnqualified(site) => {
                 // Plain body names come from lexical scope, but value positions
                 // also accept expression keywords. Keep those as low-priority
                 // overlay rows so semantic names remain the primary signal.
@@ -136,13 +136,13 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 }
                 Ok(completions)
             }
-            CompletionContext::RecordFieldCompletionSite(site) => {
+            CompletionContext::RecordField(site) => {
                 RecordFieldCompletionResolver::new(self.analysis).completions(site)
             }
-            CompletionContext::UsePathCompletionSite(site) => {
+            CompletionContext::UsePath(site) => {
                 PathCompletionResolver::new(self.analysis, self.query).use_completions(site)
             }
-            CompletionContext::UseUnqualifiedCompletionSite(site) => {
+            CompletionContext::UseUnqualified(site) => {
                 UnqualifiedCompletionResolver::new(self.analysis, self.query).use_completions(site)
             }
         }

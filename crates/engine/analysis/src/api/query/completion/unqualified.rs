@@ -22,7 +22,7 @@ use super::{
     CompletionMetadata, CompletionQuery,
     completion_sort::{CompletionSortPolicy, CompletionSortPriority},
     def_completion_detail,
-    function::{FunctionCallCompletion, FunctionCompletionRenderer},
+    function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
 };
 
 pub(super) struct UnqualifiedCompletionResolver<'a, 'db, 'source> {
@@ -71,11 +71,13 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         };
         self.push_module_completions(
             body.owner_module(),
-            filter,
-            edit,
+            ModuleCompletionOptions {
+                filter,
+                edit,
+                visible_scope_sort: VisibleScopeSort::ByOrigin,
+                function_call_completion: FunctionCallCompletion::FunctionCall,
+            },
             &hidden,
-            VisibleScopeSort::ByOrigin,
-            FunctionCallCompletion::FunctionCall,
             &mut completions,
         )?;
 
@@ -95,11 +97,13 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let hidden = HashSet::new();
         self.push_module_completions(
             site.module,
-            UnqualifiedCompletionFilter::All,
-            edit,
+            ModuleCompletionOptions {
+                filter: UnqualifiedCompletionFilter::All,
+                edit,
+                visible_scope_sort: VisibleScopeSort::General,
+                function_call_completion: FunctionCallCompletion::Plain,
+            },
             &hidden,
-            VisibleScopeSort::General,
-            FunctionCallCompletion::Plain,
             &mut completions,
         )?;
 
@@ -191,11 +195,8 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
     fn push_module_completions(
         &self,
         module: rg_def_map::ModuleRef,
-        filter: UnqualifiedCompletionFilter,
-        edit: CompletionEdit,
+        options: ModuleCompletionOptions,
         hidden: &HashSet<(String, ScopeNamespace)>,
-        visible_scope_sort: VisibleScopeSort,
-        function_call_completion: FunctionCallCompletion,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
         for visible_def in self
@@ -203,17 +204,19 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             .def_map
             .visible_unqualified_scope_defs(module)?
         {
-            if !filter.accepts_scope_namespace(visible_def.namespace)
+            if !options
+                .filter
+                .accepts_scope_namespace(visible_def.namespace)
                 || hidden.contains(&(visible_def.label.clone(), visible_def.namespace))
             {
                 continue;
             }
             self.push_visible_scope_completion(
                 visible_def,
-                filter,
-                edit,
-                visible_scope_sort,
-                function_call_completion,
+                options.filter,
+                options.edit,
+                options.visible_scope_sort,
+                options.function_call_completion,
                 completions,
             )?;
         }
@@ -316,16 +319,16 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         };
 
         Ok(FunctionCompletionRenderer::new(self.analysis, self.query)
-            .completion(
+            .completion(FunctionCompletionRequest {
                 function,
-                Some(&visible_def.label),
-                CompletionKind::Function,
-                CompletionApplicability::Known,
+                label_override: Some(&visible_def.label),
+                kind: CompletionKind::Function,
+                applicability: CompletionApplicability::Known,
                 edit,
-                function_call_completion,
+                call_completion: function_call_completion,
                 sort_policy,
                 sort_priority,
-            )?
+            })?
             .map(|completion| completion.item))
     }
 
@@ -379,6 +382,14 @@ enum VisibleScopeSort {
     General,
     /// Rank module-scope names after body-local names but before prelude and extern roots.
     ByOrigin,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ModuleCompletionOptions {
+    filter: UnqualifiedCompletionFilter,
+    edit: CompletionEdit,
+    visible_scope_sort: VisibleScopeSort,
+    function_call_completion: FunctionCallCompletion,
 }
 
 impl UnqualifiedCompletionFilter {

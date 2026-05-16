@@ -19,7 +19,7 @@ use super::{
     CompletionMetadata, CompletionQuery,
     completion_sort::CompletionSortPolicy,
     def_completion_detail,
-    function::{FunctionCallCompletion, FunctionCompletionRenderer},
+    function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
 };
 
 pub(super) struct PathCompletionResolver<'a, 'db, 'source> {
@@ -181,16 +181,16 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         };
         let function = ResolvedFunctionRef::Semantic(function);
         Ok(FunctionCompletionRenderer::new(self.analysis, self.query)
-            .completion(
+            .completion(FunctionCompletionRequest {
                 function,
-                Some(&visible_def.label),
-                CompletionKind::Function,
-                CompletionApplicability::Known,
+                label_override: Some(&visible_def.label),
+                kind: CompletionKind::Function,
+                applicability: CompletionApplicability::Known,
                 edit,
-                function_call_completion,
-                CompletionSortPolicy::General,
-                None,
-            )?
+                call_completion: function_call_completion,
+                sort_policy: CompletionSortPolicy::General,
+                sort_priority: None,
+            })?
             .map(|completion| completion.item))
     }
 

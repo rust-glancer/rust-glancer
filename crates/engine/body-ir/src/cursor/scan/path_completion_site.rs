@@ -278,9 +278,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         if !last_segment.args.is_empty() {
             return None;
         }
-        let Some(span) = self.empty_member_span(path.source_span, last_segment.span) else {
-            return None;
-        };
+        let span = self.empty_member_span(path.source_span, last_segment.span)?;
 
         // Live edits such as `let value: crate::` have no final segment yet. Treat the completed
         // prefix as the qualifier and let completion fill the missing segment.

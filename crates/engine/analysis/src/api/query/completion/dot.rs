@@ -15,7 +15,7 @@ use super::{
     CompletionQuery,
     completion_sort::CompletionSortPolicy,
     field::FieldCompletionRenderer,
-    function::{FunctionCallCompletion, FunctionCompletionRenderer},
+    function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
 };
 
 pub(super) struct DotCompletionResolver<'a, 'db, 'source> {
@@ -184,16 +184,16 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
     ) -> anyhow::Result<()> {
         let renderer = FunctionCompletionRenderer::new(self.analysis, self.query);
         let target = CompletionTarget::Function(function);
-        let Some(completion) = renderer.completion(
+        let Some(completion) = renderer.completion(FunctionCompletionRequest {
             function,
-            None,
+            label_override: None,
             kind,
             applicability,
             edit,
-            FunctionCallCompletion::MethodCall,
-            CompletionSortPolicy::General,
-            None,
-        )?
+            call_completion: FunctionCallCompletion::MethodCall,
+            sort_policy: CompletionSortPolicy::General,
+            sort_priority: None,
+        })?
         else {
             return Ok(());
         };

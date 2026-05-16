@@ -12,17 +12,17 @@ use super::{CompletionQuery, syntax::CompletionSyntaxContext};
 /// Cursor shape recognized before semantic completion rendering.
 pub(super) enum CompletionContext {
     /// Member access, such as `user.na$0`.
-    DotCompletionSite(DotCompletionSite),
+    Dot(DotCompletionSite),
     /// Body path position, such as `let value = crate::$0`.
-    BodyPathCompletionSite(PathCompletionSite),
+    BodyPath(PathCompletionSite),
     /// Body lexical position, such as `let value = inp$0`.
-    BodyUnqualifiedCompletionSite(UnqualifiedCompletionSite),
+    BodyUnqualified(UnqualifiedCompletionSite),
     /// Record field position, such as `User { na$0 }`.
-    RecordFieldCompletionSite(RecordFieldCompletionSite),
+    RecordField(RecordFieldCompletionSite),
     /// Import path position, such as `use crate::api::$0`.
-    UsePathCompletionSite(DefMapPathCompletionSite),
+    UsePath(DefMapPathCompletionSite),
     /// Import root position, such as `use st$0`.
-    UseUnqualifiedCompletionSite(DefMapUnqualifiedCompletionSite),
+    UseUnqualified(DefMapUnqualifiedCompletionSite),
 }
 
 impl CompletionContext {
@@ -59,7 +59,7 @@ impl CompletionContext {
                 .body_ir
                 .dot_completion_site(query.target, query.file_id, query.offset)?
         {
-            return Ok(Some(Self::DotCompletionSite(site)));
+            return Ok(Some(Self::Dot(site)));
         }
 
         if let Some(site) =
@@ -67,7 +67,7 @@ impl CompletionContext {
                 .body_ir
                 .path_completion_site(query.target, query.file_id, query.offset)?
         {
-            return Ok(Some(Self::BodyPathCompletionSite(site)));
+            return Ok(Some(Self::BodyPath(site)));
         }
 
         if let Some(site) = analysis.body_ir.record_field_completion_site(
@@ -75,7 +75,7 @@ impl CompletionContext {
             query.file_id,
             query.offset,
         )? {
-            return Ok(Some(Self::RecordFieldCompletionSite(site)));
+            return Ok(Some(Self::RecordField(site)));
         }
 
         if let Some(site) = analysis.body_ir.unqualified_completion_site(
@@ -83,7 +83,7 @@ impl CompletionContext {
             query.file_id,
             query.offset,
         )? {
-            return Ok(Some(Self::BodyUnqualifiedCompletionSite(site)));
+            return Ok(Some(Self::BodyUnqualified(site)));
         }
 
         if let Some(site) =
@@ -91,13 +91,13 @@ impl CompletionContext {
                 .def_map
                 .path_completion_site(query.target, query.file_id, query.offset)?
         {
-            return Ok(Some(Self::UsePathCompletionSite(site)));
+            return Ok(Some(Self::UsePath(site)));
         }
 
         Ok(analysis
             .def_map
             .unqualified_completion_site(query.target, query.file_id, query.offset)?
-            .map(Self::UseUnqualifiedCompletionSite))
+            .map(Self::UseUnqualified))
     }
 
     fn dot_context_at(
@@ -107,7 +107,7 @@ impl CompletionContext {
         Ok(analysis
             .body_ir
             .dot_completion_site(query.target, query.file_id, query.offset)?
-            .map(Self::DotCompletionSite))
+            .map(Self::Dot))
     }
 
     fn body_path_context_at(
@@ -117,7 +117,7 @@ impl CompletionContext {
         Ok(analysis
             .body_ir
             .path_completion_site(query.target, query.file_id, query.offset)?
-            .map(Self::BodyPathCompletionSite))
+            .map(Self::BodyPath))
     }
 
     fn use_context_at(
@@ -129,12 +129,12 @@ impl CompletionContext {
                 .def_map
                 .path_completion_site(query.target, query.file_id, query.offset)?
         {
-            return Ok(Some(Self::UsePathCompletionSite(site)));
+            return Ok(Some(Self::UsePath(site)));
         }
 
         Ok(analysis
             .def_map
             .unqualified_completion_site(query.target, query.file_id, query.offset)?
-            .map(Self::UseUnqualifiedCompletionSite))
+            .map(Self::UseUnqualified))
     }
 }

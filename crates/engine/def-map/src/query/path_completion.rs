@@ -149,7 +149,7 @@ impl DefMapReadTxn<'_> {
 
         if let Some(def_map) = self.def_map(importing_module.target)? {
             let mut extern_roots = def_map.extern_prelude().iter().collect::<Vec<_>>();
-            extern_roots.sort_by(|(left, _), (right, _)| left.cmp(right));
+            extern_roots.sort_by_key(|(name, _)| *name);
             for (name, module_ref) in extern_roots {
                 let label = name.to_string();
                 if !shadowed.insert((label.clone(), ScopeNamespace::Types)) {

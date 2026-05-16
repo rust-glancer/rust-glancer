@@ -43,6 +43,18 @@ pub(super) struct FunctionCompletion {
     pub(super) item: CompletionItem,
 }
 
+/// Inputs that vary between function completion sites.
+pub(super) struct FunctionCompletionRequest<'label> {
+    pub(super) function: ResolvedFunctionRef,
+    pub(super) label_override: Option<&'label str>,
+    pub(super) kind: CompletionKind,
+    pub(super) applicability: CompletionApplicability,
+    pub(super) edit: CompletionEdit,
+    pub(super) call_completion: FunctionCallCompletion,
+    pub(super) sort_policy: CompletionSortPolicy,
+    pub(super) sort_priority: Option<CompletionSortPriority>,
+}
+
 pub(super) struct FunctionCompletionRenderer<'a, 'db, 'source> {
     analysis: &'a Analysis<'db>,
     query: CompletionQuery<'source>,
@@ -56,34 +68,38 @@ impl<'a, 'db, 'source> FunctionCompletionRenderer<'a, 'db, 'source> {
     /// Builds display and snippet metadata for a resolved function declaration.
     pub(super) fn completion(
         &self,
-        function: ResolvedFunctionRef,
-        label_override: Option<&str>,
-        kind: CompletionKind,
-        applicability: CompletionApplicability,
-        edit: CompletionEdit,
-        call_completion: FunctionCallCompletion,
-        sort_policy: CompletionSortPolicy,
-        sort_priority: Option<CompletionSortPriority>,
+        request: FunctionCompletionRequest<'_>,
     ) -> anyhow::Result<Option<FunctionCompletion>> {
-        let Some(metadata) = self.metadata(function, label_override, call_completion, edit)? else {
+        let Some(metadata) = self.metadata(
+            request.function,
+            request.label_override,
+            request.call_completion,
+            request.edit,
+        )?
+        else {
             return Ok(None);
         };
-        let target = CompletionTarget::Function(function);
-        let sort_text =
-            sort_policy.sort_text(sort_priority, &metadata.label, kind, applicability, target);
+        let target = CompletionTarget::Function(request.function);
+        let sort_text = request.sort_policy.sort_text(
+            request.sort_priority,
+            &metadata.label,
+            request.kind,
+            request.applicability,
+            target,
+        );
 
         Ok(Some(FunctionCompletion {
             has_self_receiver: metadata.has_self_receiver,
             item: CompletionItem {
                 label: metadata.label,
-                kind,
+                kind: request.kind,
                 target,
-                applicability,
+                applicability: request.applicability,
                 detail: metadata.detail,
                 documentation: metadata.documentation,
                 sort_text,
                 insert_text: metadata.insert_text,
-                edit: Some(edit),
+                edit: Some(request.edit),
             },
         }))
     }
