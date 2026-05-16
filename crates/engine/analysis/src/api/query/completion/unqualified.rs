@@ -19,17 +19,20 @@ use crate::{
 };
 
 use super::{
-    CompletionMetadata,
+    CompletionMetadata, CompletionQuery,
     completion_sort::{CompletionSortPolicy, CompletionSortPriority},
     def_completion_detail,
     function::{FunctionCallCompletion, FunctionCompletionRenderer},
 };
 
-pub(super) struct UnqualifiedCompletionResolver<'a, 'db>(&'a Analysis<'db>);
+pub(super) struct UnqualifiedCompletionResolver<'a, 'db, 'source> {
+    analysis: &'a Analysis<'db>,
+    query: CompletionQuery<'source>,
+}
 
-impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+        Self { analysis, query }
     }
 
     /// Collects lexical and module-scope completions inside a body, such as
@@ -45,7 +48,11 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
         let mut completions = Vec::new();
         let mut hidden = HashSet::new();
 
-        for candidate in self.0.body_ir.unqualified_completion_candidates(site)? {
+        for candidate in self
+            .analysis
+            .body_ir
+            .unqualified_completion_candidates(site)?
+        {
             if !filter.accepts_body_candidate(&candidate) {
                 continue;
             }
@@ -59,7 +66,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
             )?;
         }
 
-        let Some(body) = self.0.body_ir.body_data(site.body)? else {
+        let Some(body) = self.analysis.body_ir.body_data(site.body)? else {
             return Ok(completions);
         };
         self.push_module_completions(
@@ -116,7 +123,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
                 scope_distance,
             } => {
                 hidden.insert((label.clone(), ScopeNamespace::Values));
-                let Some(body) = self.0.body_ir.body_data(site.body)? else {
+                let Some(body) = self.analysis.body_ir.body_data(site.body)? else {
                     return Ok(());
                 };
                 let Some(data) = body.binding(binding) else {
@@ -131,7 +138,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
                     kind: CompletionKind::Variable,
                     target,
                     applicability: CompletionApplicability::Known,
-                    detail: Some(SignatureRenderer::new(self.0).binding_signature(data)?),
+                    detail: Some(SignatureRenderer::new(self.analysis).binding_signature(data)?),
                     documentation: None,
                     sort_text: filter.sort_policy().sort_text(
                         Some(CompletionSortPriority::body_scope(scope_distance)),
@@ -151,7 +158,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
                 scope_distance,
             } => {
                 hidden.insert((label.clone(), ScopeNamespace::Types));
-                let Some(body) = self.0.body_ir.body_data(item.body)? else {
+                let Some(body) = self.analysis.body_ir.body_data(item.body)? else {
                     return Ok(());
                 };
                 let Some(data) = body.local_item(item.item) else {
@@ -164,7 +171,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
                     kind,
                     target,
                     applicability: CompletionApplicability::Known,
-                    detail: Some(SignatureRenderer::new(self.0).local_item_signature(data)),
+                    detail: Some(SignatureRenderer::new(self.analysis).local_item_signature(data)),
                     documentation: data.docs.as_ref().map(Documentation::text),
                     sort_text: filter.sort_policy().sort_text(
                         Some(CompletionSortPriority::body_scope(scope_distance)),
@@ -191,7 +198,11 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
         function_call_completion: FunctionCallCompletion,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
-        for visible_def in self.0.def_map.visible_unqualified_scope_defs(module)? {
+        for visible_def in self
+            .analysis
+            .def_map
+            .visible_unqualified_scope_defs(module)?
+        {
             if !filter.accepts_scope_namespace(visible_def.namespace)
                 || hidden.contains(&(visible_def.label.clone(), visible_def.namespace))
             {
@@ -288,7 +299,11 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
         let DefId::Local(local_def) = visible_def.def else {
             return Ok(None);
         };
-        let Some(function) = self.0.semantic_ir.function_for_local_def(local_def)? else {
+        let Some(function) = self
+            .analysis
+            .semantic_ir
+            .function_for_local_def(local_def)?
+        else {
             return Ok(None);
         };
         let function = ResolvedFunctionRef::Semantic(function);
@@ -300,7 +315,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
             VisibleScopeSort::General => None,
         };
 
-        Ok(FunctionCompletionRenderer::new(self.0)
+        Ok(FunctionCompletionRenderer::new(self.analysis, self.query)
             .completion(
                 function,
                 Some(&visible_def.label),
@@ -320,7 +335,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
     ) -> anyhow::Result<Option<(CompletionKind, CompletionMetadata)>> {
         let (kind, metadata) = match visible_def.def {
             DefId::Module(module) => {
-                let Some(data) = self.0.def_map.module(module)? else {
+                let Some(data) = self.analysis.def_map.module(module)? else {
                     return Ok(None);
                 };
                 (
@@ -333,7 +348,7 @@ impl<'a, 'db> UnqualifiedCompletionResolver<'a, 'db> {
                 )
             }
             DefId::Local(local_def) => {
-                let Some(data) = self.0.def_map.local_def(local_def)? else {
+                let Some(data) = self.analysis.def_map.local_def(local_def)? else {
                     return Ok(None);
                 };
                 let kind = CompletionKind::from_local_def_kind(data.kind);

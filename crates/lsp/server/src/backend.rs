@@ -6,7 +6,7 @@ use tower_lsp_server::{
     ls_types::{request::*, *},
 };
 
-use rg_lsp_proto::EngineConfig;
+use rg_lsp_proto::{ClientCapabilities as EngineClientCapabilities, EngineConfig};
 use tokio::sync::OnceCell;
 
 use crate::{
@@ -19,6 +19,7 @@ use crate::{
 pub(crate) struct Backend {
     lsp_client: LspClient,
     engines: OnceCell<EngineRegistry>,
+    client_capabilities: OnceCell<EngineClientCapabilities>,
 }
 
 impl Backend {
@@ -26,6 +27,7 @@ impl Backend {
         Self {
             lsp_client,
             engines: OnceCell::new(),
+            client_capabilities: OnceCell::new(),
         }
     }
 
@@ -38,7 +40,10 @@ impl Backend {
     }
 
     fn method_context(&self, engine_client: EngineClient) -> MethodContext {
-        MethodContext { engine_client }
+        MethodContext {
+            engine_client,
+            client_capabilities: self.client_capabilities.get().copied().unwrap_or_default(),
+        }
     }
 
     async fn method_context_for(&self, uri: &Uri) -> Result<Option<MethodContext>> {
@@ -82,6 +87,15 @@ impl LanguageServer for Backend {
         let config =
             EngineConfig::from_initialization_options(params.initialization_options.as_ref())
                 .map_err(|error| Error::invalid_params(error.to_string()))?;
+        let client_capabilities =
+            EngineClientCapabilities::from_lsp_client_capabilities(&params.capabilities);
+        self.client_capabilities
+            .set(client_capabilities)
+            .map_err(|_| Error {
+                code: ErrorCode::InvalidRequest,
+                message: Cow::Borrowed("rust-glancer client capabilities are already initialized"),
+                data: None,
+            })?;
         let engines = EngineRegistry::new(self.lsp_client.clone(), workspace_folders, config);
 
         self.engines.set(engines).map_err(|_| Error {

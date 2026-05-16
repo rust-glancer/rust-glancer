@@ -20,8 +20,87 @@ use crate::{
         query::navigation::SymbolResolver,
         resolve::entity::{EntityResolver, ResolvedEntity},
     },
-    model::{ReferenceLocation, ReferenceQuery, ReferenceSearchScope, SymbolAt},
+    model::{ReferenceLocation, SymbolAt},
 };
+
+/// Options for a source reference lookup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReferenceQuery<'a> {
+    search_scope: ReferenceSearchScope<'a>,
+    declaration_policy: ReferenceDeclarationPolicy,
+}
+
+impl<'a> ReferenceQuery<'a> {
+    /// Returns a query for explicit find-references requests.
+    pub fn find_references(search_targets: &'a [TargetRef], include_declarations: bool) -> Self {
+        let declaration_policy = if include_declarations {
+            ReferenceDeclarationPolicy::IncludeUnscoped
+        } else {
+            ReferenceDeclarationPolicy::Exclude
+        };
+
+        Self {
+            search_scope: ReferenceSearchScope::Targets(search_targets),
+            declaration_policy,
+        }
+    }
+
+    /// Returns a query scoped to one file inside one target.
+    pub fn file_scoped(target: TargetRef, file_id: FileId) -> Self {
+        Self {
+            search_scope: ReferenceSearchScope::File { target, file_id },
+            declaration_policy: ReferenceDeclarationPolicy::IncludeInSearchScope,
+        }
+    }
+
+    /// Removes declaration locations from this query.
+    pub fn without_declarations(mut self) -> Self {
+        self.declaration_policy = ReferenceDeclarationPolicy::Exclude;
+        self
+    }
+
+    fn search_scope(self) -> ReferenceSearchScope<'a> {
+        self.search_scope
+    }
+
+    fn includes_declarations(self) -> bool {
+        !matches!(self.declaration_policy, ReferenceDeclarationPolicy::Exclude)
+    }
+
+    fn accepts_declaration(self, target: TargetRef, file_id: FileId) -> bool {
+        match self.declaration_policy {
+            ReferenceDeclarationPolicy::Exclude => false,
+            ReferenceDeclarationPolicy::IncludeUnscoped => true,
+            ReferenceDeclarationPolicy::IncludeInSearchScope => match self.search_scope {
+                ReferenceSearchScope::Targets(targets) => targets.contains(&target),
+                ReferenceSearchScope::File {
+                    target: selected_target,
+                    file_id: selected_file_id,
+                } => selected_target == target && selected_file_id == file_id,
+            },
+        }
+    }
+}
+
+/// Source surface scanned for reference use-sites.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReferenceSearchScope<'a> {
+    /// Scans all source candidates inside the listed targets.
+    Targets(&'a [TargetRef]),
+    /// Scans source candidates in one file inside one target.
+    File { target: TargetRef, file_id: FileId },
+}
+
+/// How declaration locations should relate to the reference search surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReferenceDeclarationPolicy {
+    /// Do not return declaration locations.
+    Exclude,
+    /// Return declarations even when they are outside `ReferenceSearchScope`.
+    IncludeUnscoped,
+    /// Return declarations only when they are inside `ReferenceSearchScope`.
+    IncludeInSearchScope,
+}
 
 pub(crate) struct ReferenceResolver<'a, 'db, 'scope> {
     analysis: &'a Analysis<'db>,

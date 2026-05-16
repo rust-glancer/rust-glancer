@@ -16,17 +16,20 @@ use crate::{
 };
 
 use super::{
-    CompletionMetadata,
+    CompletionMetadata, CompletionQuery,
     completion_sort::CompletionSortPolicy,
     def_completion_detail,
     function::{FunctionCallCompletion, FunctionCompletionRenderer},
 };
 
-pub(super) struct PathCompletionResolver<'a, 'db>(&'a Analysis<'db>);
+pub(super) struct PathCompletionResolver<'a, 'db, 'source> {
+    analysis: &'a Analysis<'db>,
+    query: CompletionQuery<'source>,
+}
 
-impl<'a, 'db> PathCompletionResolver<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+        Self { analysis, query }
     }
 
     /// Collects qualified-path completions inside a body, such as
@@ -35,7 +38,7 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
         &self,
         site: PathCompletionSite,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        let Some(body) = self.0.body_ir.body_data(site.body)? else {
+        let Some(body) = self.analysis.body_ir.body_data(site.body)? else {
             return Ok(Vec::new());
         };
 
@@ -73,7 +76,7 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
         function_call_completion: FunctionCallCompletion,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let resolved = self
-            .0
+            .analysis
             .def_map
             .resolve_path_in_type_namespace(importing_module, qualifier)?;
         let edit = CompletionEdit {
@@ -89,7 +92,7 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
                 continue;
             };
             for visible_def in self
-                .0
+                .analysis
                 .def_map
                 .visible_scope_defs(importing_module, source_module)?
             {
@@ -169,11 +172,15 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
         let DefId::Local(local_def) = visible_def.def else {
             return Ok(None);
         };
-        let Some(function) = self.0.semantic_ir.function_for_local_def(local_def)? else {
+        let Some(function) = self
+            .analysis
+            .semantic_ir
+            .function_for_local_def(local_def)?
+        else {
             return Ok(None);
         };
         let function = ResolvedFunctionRef::Semantic(function);
-        Ok(FunctionCompletionRenderer::new(self.0)
+        Ok(FunctionCompletionRenderer::new(self.analysis, self.query)
             .completion(
                 function,
                 Some(&visible_def.label),
@@ -193,7 +200,7 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
     ) -> anyhow::Result<Option<(CompletionKind, CompletionMetadata)>> {
         let (kind, metadata) = match visible_def.def {
             DefId::Module(module) => {
-                let Some(data) = self.0.def_map.module(module)? else {
+                let Some(data) = self.analysis.def_map.module(module)? else {
                     return Ok(None);
                 };
                 (
@@ -206,7 +213,7 @@ impl<'a, 'db> PathCompletionResolver<'a, 'db> {
                 )
             }
             DefId::Local(local_def) => {
-                let Some(data) = self.0.def_map.local_def(local_def)? else {
+                let Some(data) = self.analysis.def_map.local_def(local_def)? else {
                     return Ok(None);
                 };
                 let kind = CompletionKind::from_local_def_kind(data.kind);

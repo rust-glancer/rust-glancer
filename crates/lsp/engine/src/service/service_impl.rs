@@ -324,6 +324,7 @@ impl EngineService for Service {
         _: context::Context,
         path: PathBuf,
         position: ls_types::Position,
+        client_capabilities: rg_lsp_proto::CompletionClientCapabilities,
     ) -> EngineResult<Vec<ls_types::CompletionItem>> {
         let dirty = match self.engine.dirty_document_snapshot(&path).await {
             DirtyDocumentSnapshotState::Clean => None,
@@ -335,6 +336,7 @@ impl EngineService for Service {
             .request(|respond_to| EngineCommand::Completion {
                 path,
                 position,
+                client_capabilities,
                 dirty,
                 respond_to,
             })

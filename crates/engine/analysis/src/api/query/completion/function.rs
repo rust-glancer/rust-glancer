@@ -15,7 +15,10 @@ use crate::{
     },
 };
 
-use super::completion_sort::{CompletionSortPolicy, CompletionSortPriority};
+use super::{
+    CompletionQuery,
+    completion_sort::{CompletionSortPolicy, CompletionSortPriority},
+};
 
 /// Controls whether accepting a function completion inserts a call expression.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,11 +43,14 @@ pub(super) struct FunctionCompletion {
     pub(super) item: CompletionItem,
 }
 
-pub(super) struct FunctionCompletionRenderer<'a, 'db>(&'a Analysis<'db>);
+pub(super) struct FunctionCompletionRenderer<'a, 'db, 'source> {
+    analysis: &'a Analysis<'db>,
+    query: CompletionQuery<'source>,
+}
 
-impl<'a, 'db> FunctionCompletionRenderer<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+impl<'a, 'db, 'source> FunctionCompletionRenderer<'a, 'db, 'source> {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+        Self { analysis, query }
     }
 
     /// Builds display and snippet metadata for a resolved function declaration.
@@ -89,10 +95,10 @@ impl<'a, 'db> FunctionCompletionRenderer<'a, 'db> {
         call_completion: FunctionCallCompletion,
         edit: CompletionEdit,
     ) -> anyhow::Result<Option<FunctionCompletionMetadata>> {
-        let renderer = SignatureRenderer::new(self.0);
+        let renderer = SignatureRenderer::new(self.analysis);
         match function {
             ResolvedFunctionRef::Semantic(function) => {
-                let Some(data) = self.0.semantic_ir.function_data(function)? else {
+                let Some(data) = self.analysis.semantic_ir.function_data(function)? else {
                     return Ok(None);
                 };
                 let label = label_override.unwrap_or(&data.name).to_string();
@@ -110,7 +116,7 @@ impl<'a, 'db> FunctionCompletionRenderer<'a, 'db> {
                 }))
             }
             ResolvedFunctionRef::BodyLocal(function) => {
-                let Some(data) = self.0.body_ir.local_function_data(function)? else {
+                let Some(data) = self.analysis.body_ir.local_function_data(function)? else {
                     return Ok(None);
                 };
                 let label = label_override.unwrap_or(&data.name).to_string();
@@ -138,6 +144,7 @@ impl<'a, 'db> FunctionCompletionRenderer<'a, 'db> {
         edit: CompletionEdit,
     ) -> CompletionInsertText {
         if matches!(call_completion, FunctionCallCompletion::Plain)
+            || !self.query.client_capabilities.snippet_support
             || self.call_parens_already_present(edit)
         {
             return CompletionInsertText::Plain;
@@ -148,10 +155,9 @@ impl<'a, 'db> FunctionCompletionRenderer<'a, 'db> {
     }
 
     fn call_parens_already_present(&self, edit: CompletionEdit) -> bool {
-        let Some(dirty_context) = self.0.dirty_context else {
+        let Some(source) = self.query.source_text else {
             return false;
         };
-        let source = dirty_context.text();
         let Ok(end) = usize::try_from(edit.replace.text.end) else {
             return false;
         };

@@ -10,13 +10,20 @@ use crate::model::{
     CompletionTarget, KeywordCompletion,
 };
 
-use super::syntax::{CompletionSyntaxContext, KeywordSyntaxPosition};
+use super::{
+    CompletionClientCapabilities,
+    syntax::{CompletionSyntaxContext, KeywordSyntaxPosition},
+};
 
-pub(super) struct KeywordCompletionResolver;
+pub(super) struct KeywordCompletionResolver {
+    client_capabilities: CompletionClientCapabilities,
+}
 
 impl KeywordCompletionResolver {
-    pub(super) fn new() -> Self {
-        Self
+    pub(super) fn new(client_capabilities: CompletionClientCapabilities) -> Self {
+        Self {
+            client_capabilities,
+        }
     }
 
     /// Collects keyword completions for plain source positions like `ma$0` or `fn $0`.
@@ -58,7 +65,7 @@ impl KeywordCompletionResolver {
         let mut completions = KeywordCandidate::for_context(context)
             .iter()
             .filter(|candidate| candidate.label.starts_with(prefix.text()))
-            .map(|candidate| candidate.completion_item(edit, sort))
+            .map(|candidate| candidate.completion_item(edit, sort, self.client_capabilities))
             .collect::<Vec<_>>();
 
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
@@ -204,7 +211,12 @@ impl KeywordCandidate {
         }
     }
 
-    fn completion_item(self, edit: CompletionEdit, sort: KeywordSortPosition) -> CompletionItem {
+    fn completion_item(
+        self,
+        edit: CompletionEdit,
+        sort: KeywordSortPosition,
+        client_capabilities: CompletionClientCapabilities,
+    ) -> CompletionItem {
         let target = CompletionTarget::Keyword(self.keyword);
         CompletionItem {
             label: self.label.to_string(),
@@ -214,10 +226,13 @@ impl KeywordCandidate {
             detail: Some(format!("keyword {}", self.label)),
             documentation: None,
             sort_text: sort.sort_text(self.sort_rank, self.label),
-            insert_text: self
-                .snippet
-                .map(|snippet| CompletionInsertText::Snippet(snippet.to_string()))
-                .unwrap_or(CompletionInsertText::Plain),
+            insert_text: if client_capabilities.snippet_support {
+                self.snippet
+                    .map(|snippet| CompletionInsertText::Snippet(snippet.to_string()))
+                    .unwrap_or(CompletionInsertText::Plain)
+            } else {
+                CompletionInsertText::Plain
+            },
             edit: Some(edit),
         }
     }

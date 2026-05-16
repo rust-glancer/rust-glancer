@@ -6,12 +6,12 @@ mod txn;
 mod tests;
 
 pub use self::{
-    api::Analysis,
+    api::{Analysis, CompletionClientCapabilities, CompletionQuery, ReferenceQuery},
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget, DocumentSymbol, HoverBlock, HoverInfo, KeywordCompletion,
-        NavigationTarget, NavigationTargetKind, ReferenceLocation, ReferenceQuery, SymbolAt,
-        SymbolKind, TypeHint, WorkspaceSymbol,
+        NavigationTarget, NavigationTargetKind, ReferenceLocation, SymbolAt, SymbolKind, TypeHint,
+        WorkspaceSymbol,
     },
-    txn::{AnalysisReadTxn, DirtyContext},
+    txn::AnalysisReadTxn,
 };

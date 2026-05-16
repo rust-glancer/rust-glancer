@@ -4,22 +4,6 @@ use rg_body_ir::BodyIrReadTxn;
 use rg_def_map::DefMapReadTxn;
 use rg_semantic_ir::SemanticIrReadTxn;
 
-/// Request-local editor text for queries that need the dirty buffer itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DirtyContext<'a> {
-    text: &'a str,
-}
-
-impl<'a> DirtyContext<'a> {
-    pub fn new(text: &'a str) -> Self {
-        Self { text }
-    }
-
-    pub(crate) fn text(self) -> &'a str {
-        self.text
-    }
-}
-
 /// Read transaction shared by all analysis queries in one request.
 ///
 /// Phase transactions own request-local handles to resident packages and lazily loaded offloaded

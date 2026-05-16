@@ -3,9 +3,10 @@ use std::{fmt, fmt::Write as _, marker::PhantomData, sync::Arc};
 use expect_test::Expect;
 
 use crate::{
-    Analysis, AnalysisReadTxn, CompletionApplicability, CompletionInsertText, CompletionItem,
-    DocumentSymbol, HoverInfo, NavigationTarget, ReferenceLocation,
-    ReferenceQuery as AnalysisReferenceQuery, SymbolAt, TypeHint, WorkspaceSymbol,
+    Analysis, AnalysisReadTxn, CompletionApplicability, CompletionClientCapabilities,
+    CompletionInsertText, CompletionItem, CompletionQuery, DocumentSymbol, HoverInfo,
+    NavigationTarget, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, SymbolAt,
+    TypeHint, WorkspaceSymbol,
 };
 use rg_body_ir::{
     BodyGenericArg, BodyIrDb, BodyIrReadTxn, BodyItemRef, BodyLocalNominalTy, BodyNominalTy,
@@ -622,19 +623,25 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 .expect("string writes should not fail");
             }
             AnalysisQueryKind::CompletionsAt => {
+                let query = CompletionQuery::new(target, file_id, offset).with_client_capabilities(
+                    CompletionClientCapabilities::default().with_snippet_support(true),
+                );
                 self.render_completions(
                     self.db
                         .analysis()
-                        .completions_at(target, file_id, offset)
+                        .completions_at(query)
                         .expect("fixture completion query should resolve"),
                     &mut dump,
                 );
             }
             AnalysisQueryKind::CompletionsAtVerbose => {
+                let query = CompletionQuery::new(target, file_id, offset).with_client_capabilities(
+                    CompletionClientCapabilities::default().with_snippet_support(true),
+                );
                 self.render_completions_verbose(
                     self.db
                         .analysis()
-                        .completions_at(target, file_id, offset)
+                        .completions_at(query)
                         .expect("fixture completion query should resolve"),
                     &mut dump,
                 );

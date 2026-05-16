@@ -8,30 +8,28 @@
 use ra_syntax::{AstNode as _, Edition, SourceFile, SyntaxKind, SyntaxToken, TextSize, ast};
 use rg_parse::{Span, TextSpan};
 
-use crate::Analysis;
-
 /// Lazily builds syntax context only for completion paths that need source recovery.
-pub(super) struct CompletionSyntaxContextCache<'analysis, 'source> {
-    analysis: &'analysis Analysis<'source>,
+pub(super) struct CompletionSyntaxContextCache<'source> {
+    source_text: Option<&'source str>,
     offset: u32,
     loaded: bool,
     context: Option<CompletionSyntaxContext<'source>>,
 }
 
-impl<'analysis, 'source> CompletionSyntaxContextCache<'analysis, 'source> {
-    pub(super) fn new(analysis: &'analysis Analysis<'source>, offset: u32) -> Self {
+impl<'source> CompletionSyntaxContextCache<'source> {
+    pub(super) fn new(source_text: Option<&'source str>, offset: u32) -> Self {
         Self {
-            analysis,
+            source_text,
             offset,
             loaded: false,
             context: None,
         }
     }
 
-    /// Returns the parsed dirty-source context, building it at most once per request.
+    /// Returns parsed request-source context, building it at most once per request.
     pub(super) fn get(&mut self) -> Option<&CompletionSyntaxContext<'source>> {
         if !self.loaded {
-            self.context = CompletionSyntaxContext::at(self.analysis, self.offset);
+            self.context = CompletionSyntaxContext::at(self.source_text, self.offset);
             self.loaded = true;
         }
 
@@ -48,9 +46,9 @@ pub(super) struct CompletionSyntaxContext<'source> {
 impl<'source> CompletionSyntaxContext<'source> {
     const MARKER: &'static str = "__rg_completion";
 
-    /// Builds syntax context from the dirty editor buffer attached to the analysis query.
-    pub(super) fn at(analysis: &Analysis<'source>, offset: u32) -> Option<Self> {
-        Self::from_source(analysis.dirty_context?.text(), offset)
+    /// Builds syntax context from the request-local editor buffer.
+    pub(super) fn at(source_text: Option<&'source str>, offset: u32) -> Option<Self> {
+        Self::from_source(source_text?, offset)
     }
 
     fn from_source(source: &'source str, offset: u32) -> Option<Self> {

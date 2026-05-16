@@ -2,6 +2,11 @@ mod query;
 mod render;
 mod resolve;
 
+pub use query::{
+    completion::{CompletionClientCapabilities, CompletionQuery},
+    references::ReferenceQuery,
+};
+
 use rg_body_ir::{BodyIrReadTxn, BodyTy};
 use rg_def_map::{DefMapReadTxn, PackageSlot, TargetRef};
 use rg_parse::FileId;
@@ -9,15 +14,14 @@ use rg_semantic_ir::SemanticIrReadTxn;
 
 use crate::{
     model::{
-        CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget, ReferenceLocation,
-        ReferenceQuery, SymbolAt, TypeHint, WorkspaceSymbol,
+        CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget, ReferenceLocation, SymbolAt,
+        TypeHint, WorkspaceSymbol,
     },
-    txn::{AnalysisReadTxn, DirtyContext},
+    txn::AnalysisReadTxn,
 };
 
 /// High-level LSP-facing query API over one request-scoped project transaction.
 pub struct Analysis<'a> {
-    dirty_context: Option<DirtyContext<'a>>,
     def_map: DefMapReadTxn<'a>,
     semantic_ir: SemanticIrReadTxn<'a>,
     body_ir: BodyIrReadTxn<'a>,
@@ -33,17 +37,10 @@ impl<'a> Analysis<'a> {
     /// unrelated source files, package slots, or line indexes.
     pub fn new(txn: &AnalysisReadTxn<'a>) -> Self {
         Self {
-            dirty_context: None,
             def_map: txn.def_map().clone(),
             semantic_ir: txn.semantic_ir().clone(),
             body_ir: txn.body_ir().clone(),
         }
-    }
-
-    /// Attaches live editor text for source-sensitive queries like keyword completions.
-    pub fn with_dirty_context(mut self, dirty_context: DirtyContext<'a>) -> Self {
-        self.dirty_context = Some(dirty_context);
-        self
     }
 
     /// Returns the smallest known symbol under a source offset.
@@ -148,14 +145,14 @@ impl<'a> Analysis<'a> {
 
     /// Returns best-effort completion candidates for a source offset.
     ///
-    /// Recognized sites include member access, paths, lexical names, record fields, and keywords.
+    /// The query carries the source position plus editor-local facts, such as live source text
+    /// and client snippet support. Recognized sites include member access, paths, lexical names,
+    /// record fields, and keywords.
     pub fn completions_at(
         &self,
-        target: TargetRef,
-        file_id: FileId,
-        offset: u32,
+        query: CompletionQuery<'_>,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        query::completion::CompletionResolver::new(self).completions_at(target, file_id, offset)
+        query::completion::CompletionResolver::new(self, query).completions_at()
     }
 
     /// Returns a hierarchical outline for one file under the selected target context.

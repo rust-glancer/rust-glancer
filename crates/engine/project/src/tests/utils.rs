@@ -8,7 +8,10 @@ use std::{
 };
 
 use expect_test::Expect;
-use rg_analysis::{CompletionApplicability, CompletionItem, WorkspaceSymbol};
+use rg_analysis::{
+    CompletionApplicability, CompletionClientCapabilities, CompletionItem, CompletionQuery,
+    WorkspaceSymbol,
+};
 use rg_def_map::{PackageSlot, TargetRef};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb};
@@ -511,15 +514,9 @@ impl HostFixture {
             .iter()
             .flat_map(|context| context.targets.iter().copied())
             .collect::<Vec<_>>();
-        let analysis = match dirty_text {
-            Some(text) => snapshot
-                .analysis_for_targets(&targets)
-                .map(|analysis| analysis.with_dirty_context(rg_analysis::DirtyContext::new(text)))
-                .expect("fixture dirty completion analysis should materialize"),
-            None => snapshot
-                .analysis_for_targets(&targets)
-                .expect("fixture completion analysis should materialize"),
-        };
+        let analysis = snapshot
+            .analysis_for_targets(&targets)
+            .expect("fixture completion analysis should materialize");
         let mut completions = Vec::new();
         let offset = offset
             .try_into()
@@ -527,8 +524,15 @@ impl HostFixture {
 
         for context in contexts {
             for target in context.targets {
+                let mut query = CompletionQuery::new(target, context.file, offset)
+                    .with_client_capabilities(
+                        CompletionClientCapabilities::default().with_snippet_support(true),
+                    );
+                if let Some(text) = dirty_text {
+                    query = query.with_source_text(text);
+                }
                 for item in analysis
-                    .completions_at(target, context.file, offset)
+                    .completions_at(query)
                     .expect("fixture completions should resolve")
                 {
                     if !completions.contains(&item) {

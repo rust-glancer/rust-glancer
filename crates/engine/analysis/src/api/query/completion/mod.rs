@@ -20,20 +20,67 @@ mod record;
 mod syntax;
 mod unqualified;
 
-use rg_body_ir::UnqualifiedCompletionNamespace;
-use rg_def_map::TargetRef;
-use rg_parse::FileId;
-
 use crate::{
     Analysis,
     model::{CompletionItem, CompletionKind},
 };
+use rg_body_ir::UnqualifiedCompletionNamespace;
+use rg_def_map::TargetRef;
+use rg_parse::FileId;
 
 use self::{
     context::CompletionContext, dot::DotCompletionResolver, keyword::KeywordCompletionResolver,
     path::PathCompletionResolver, record::RecordFieldCompletionResolver,
     syntax::CompletionSyntaxContextCache, unqualified::UnqualifiedCompletionResolver,
 };
+
+/// Editor capabilities that affect how completion items should be rendered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CompletionClientCapabilities {
+    pub snippet_support: bool,
+}
+
+impl CompletionClientCapabilities {
+    pub fn with_snippet_support(mut self, snippet_support: bool) -> Self {
+        self.snippet_support = snippet_support;
+        self
+    }
+}
+
+/// One source-position completion query, including request-local editor state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CompletionQuery<'a> {
+    pub target: TargetRef,
+    pub file_id: FileId,
+    pub offset: u32,
+    pub source_text: Option<&'a str>,
+    pub client_capabilities: CompletionClientCapabilities,
+}
+
+impl<'a> CompletionQuery<'a> {
+    pub fn new(target: TargetRef, file_id: FileId, offset: u32) -> Self {
+        Self {
+            target,
+            file_id,
+            offset,
+            source_text: None,
+            client_capabilities: CompletionClientCapabilities::default(),
+        }
+    }
+
+    pub fn with_source_text(mut self, source_text: &'a str) -> Self {
+        self.source_text = Some(source_text);
+        self
+    }
+
+    pub fn with_client_capabilities(
+        mut self,
+        client_capabilities: CompletionClientCapabilities,
+    ) -> Self {
+        self.client_capabilities = client_capabilities;
+        self
+    }
+}
 
 /// Coordinates completion-site detection with semantic candidate rendering.
 ///
@@ -42,48 +89,47 @@ use self::{
 /// candidates. For `crate::api::$0` or `inp$0`, scanners provide the relevant
 /// source site and replacement span; the resolver renders the matching visible
 /// definitions.
-pub(crate) struct CompletionResolver<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct CompletionResolver<'a, 'db, 'source> {
+    analysis: &'a Analysis<'db>,
+    query: CompletionQuery<'source>,
+}
 
-impl<'a, 'db> CompletionResolver<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
+    pub(crate) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+        Self { analysis, query }
     }
 
     /// Collects completions for one source offset, e.g. `user.$0`,
     /// `let value = crate::$0`, `let value = inp$0`, `User { na$0 }`, or `use st$0`.
-    pub(crate) fn completions_at(
-        &self,
-        target: TargetRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> anyhow::Result<Vec<CompletionItem>> {
-        let mut syntax_context = CompletionSyntaxContextCache::new(self.0, offset);
+    pub(crate) fn completions_at(&self) -> anyhow::Result<Vec<CompletionItem>> {
+        let mut syntax_context =
+            CompletionSyntaxContextCache::new(self.query.source_text, self.query.offset);
 
         // Keyword fragments can be useful even when the cursor does not lower
         // into a semantic completion site. For example, `f$0` at item level is
         // just incomplete text, not a Body IR or DefMap path.
-        let Some(context) =
-            CompletionContext::at(self.0, target, file_id, offset, syntax_context.get())?
+        let Some(context) = CompletionContext::at(self.analysis, self.query, syntax_context.get())?
         else {
-            return KeywordCompletionResolver::new().completions(syntax_context.get());
+            return KeywordCompletionResolver::new(self.query.client_capabilities)
+                .completions(syntax_context.get());
         };
 
         match context {
             CompletionContext::DotCompletionSite(site) => {
-                DotCompletionResolver::new(self.0).completions(site)
+                DotCompletionResolver::new(self.analysis, self.query).completions(site)
             }
             CompletionContext::BodyPathCompletionSite(site) => {
-                PathCompletionResolver::new(self.0).body_completions(site)
+                PathCompletionResolver::new(self.analysis, self.query).body_completions(site)
             }
             CompletionContext::BodyUnqualifiedCompletionSite(site) => {
                 // Plain body names come from lexical scope, but value positions
                 // also accept expression keywords. Keep those as low-priority
                 // overlay rows so semantic names remain the primary signal.
-                let mut completions =
-                    UnqualifiedCompletionResolver::new(self.0).body_completions(site)?;
+                let mut completions = UnqualifiedCompletionResolver::new(self.analysis, self.query)
+                    .body_completions(site)?;
                 if matches!(site.namespace, UnqualifiedCompletionNamespace::Values) {
                     completions.extend(
-                        KeywordCompletionResolver::new()
+                        KeywordCompletionResolver::new(self.query.client_capabilities)
                             .overlay_completions(syntax_context.get())?,
                     );
                     completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
@@ -91,13 +137,13 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
                 Ok(completions)
             }
             CompletionContext::RecordFieldCompletionSite(site) => {
-                RecordFieldCompletionResolver::new(self.0).completions(site)
+                RecordFieldCompletionResolver::new(self.analysis).completions(site)
             }
             CompletionContext::UsePathCompletionSite(site) => {
-                PathCompletionResolver::new(self.0).use_completions(site)
+                PathCompletionResolver::new(self.analysis, self.query).use_completions(site)
             }
             CompletionContext::UseUnqualifiedCompletionSite(site) => {
-                UnqualifiedCompletionResolver::new(self.0).use_completions(site)
+                UnqualifiedCompletionResolver::new(self.analysis, self.query).use_completions(site)
             }
         }
     }

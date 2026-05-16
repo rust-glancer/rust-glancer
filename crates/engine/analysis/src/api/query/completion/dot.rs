@@ -12,16 +12,20 @@ use crate::{
 };
 
 use super::{
+    CompletionQuery,
     completion_sort::CompletionSortPolicy,
     field::FieldCompletionRenderer,
     function::{FunctionCallCompletion, FunctionCompletionRenderer},
 };
 
-pub(super) struct DotCompletionResolver<'a, 'db>(&'a Analysis<'db>);
+pub(super) struct DotCompletionResolver<'a, 'db, 'source> {
+    analysis: &'a Analysis<'db>,
+    query: CompletionQuery<'source>,
+}
 
-impl<'a, 'db> DotCompletionResolver<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
+    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
+        Self { analysis, query }
     }
 
     /// Collects member completions for a dot site like `user.na$0`.
@@ -29,7 +33,7 @@ impl<'a, 'db> DotCompletionResolver<'a, 'db> {
         &self,
         site: DotCompletionSite,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        let Some(receiver_ty) = self.0.body_ir.receiver_ty(site)? else {
+        let Some(receiver_ty) = self.analysis.body_ir.receiver_ty(site)? else {
             return Ok(Vec::new());
         };
 
@@ -58,17 +62,25 @@ impl<'a, 'db> DotCompletionResolver<'a, 'db> {
     ) -> anyhow::Result<()> {
         // Semantic nominal types can offer fields, inherent methods, and trait methods. Trait
         // candidates carry applicability because this project intentionally avoids full solving.
-        for field in self.0.semantic_ir.fields_for_type(ty.def)? {
+        for field in self.analysis.semantic_ir.fields_for_type(ty.def)? {
             self.push_field_completion(ResolvedFieldRef::Semantic(field), edit, completions)?;
         }
 
-        for function in self.0.semantic_ir.inherent_functions_for_type(ty.def)? {
-            if !self.0.body_ir.semantic_function_applies_to_receiver(
-                &self.0.def_map,
-                &self.0.semantic_ir,
-                function,
-                ty,
-            )? {
+        for function in self
+            .analysis
+            .semantic_ir
+            .inherent_functions_for_type(ty.def)?
+        {
+            if !self
+                .analysis
+                .body_ir
+                .semantic_function_applies_to_receiver(
+                    &self.analysis.def_map,
+                    &self.analysis.semantic_ir,
+                    function,
+                    ty,
+                )?
+            {
                 continue;
             }
 
@@ -82,11 +94,11 @@ impl<'a, 'db> DotCompletionResolver<'a, 'db> {
         }
 
         for (function, applicability) in self
-            .0
+            .analysis
             .body_ir
             .semantic_trait_function_candidates_for_receiver(
-                &self.0.def_map,
-                &self.0.semantic_ir,
+                &self.analysis.def_map,
+                &self.analysis.semantic_ir,
                 ty,
             )?
         {
@@ -111,14 +123,18 @@ impl<'a, 'db> DotCompletionResolver<'a, 'db> {
     ) -> anyhow::Result<()> {
         // Body-local structs are visible only through Body IR, so their member
         // data comes from body-local lowering rather than Semantic IR.
-        for field in self.0.body_ir.fields_for_local_type(ty.item)? {
+        for field in self.analysis.body_ir.fields_for_local_type(ty.item)? {
             self.push_field_completion(ResolvedFieldRef::BodyLocal(field), edit, completions)?;
         }
 
-        for function in self.0.body_ir.inherent_functions_for_local_type(ty.item)? {
-            if !self.0.body_ir.local_function_applies_to_receiver(
-                &self.0.def_map,
-                &self.0.semantic_ir,
+        for function in self
+            .analysis
+            .body_ir
+            .inherent_functions_for_local_type(ty.item)?
+        {
+            if !self.analysis.body_ir.local_function_applies_to_receiver(
+                &self.analysis.def_map,
+                &self.analysis.semantic_ir,
                 function,
                 ty,
             )? {
@@ -142,7 +158,9 @@ impl<'a, 'db> DotCompletionResolver<'a, 'db> {
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
-        let Some(completion) = FieldCompletionRenderer::new(self.0).completion(field, edit)? else {
+        let Some(completion) =
+            FieldCompletionRenderer::new(self.analysis).completion(field, edit)?
+        else {
             return Ok(());
         };
         if completions
@@ -164,7 +182,7 @@ impl<'a, 'db> DotCompletionResolver<'a, 'db> {
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
-        let renderer = FunctionCompletionRenderer::new(self.0);
+        let renderer = FunctionCompletionRenderer::new(self.analysis, self.query);
         let target = CompletionTarget::Function(function);
         let Some(completion) = renderer.completion(
             function,
