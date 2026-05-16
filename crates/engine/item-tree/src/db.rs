@@ -126,6 +126,14 @@ impl ItemTreeDb {
         interner: &mut rg_text::NameInterner,
     ) -> anyhow::Result<Package> {
         let package_name = package.package_name().to_owned();
+        // Important: `ItemTreeDb` is dropped during indexing, while retained parse syntax stays alive
+        // until Body IR lowering finishes. So these two DBs have different lifetimes, and it is
+        // important to make sure that their allocations are not mixed up.
+        // If allocations _will_ be mixed up, then dropping `ItemTreeDb` will create a lot of holes,
+        // which will cause severe (measured and observed in the past!) fragmentation issues.
+        package.discover_modules().with_context(|| {
+            format!("while attempting to discover modules for package {package_name}")
+        })?;
         lower::build_package(package, interner)
             .with_context(|| {
                 format!("while attempting to build item trees for package {package_name}")

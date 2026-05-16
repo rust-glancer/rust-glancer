@@ -4,19 +4,16 @@
 //! and targets only point at their root file. Out-of-line modules therefore reuse the same lowered
 //! file tree whenever multiple targets reach them.
 
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-};
+use std::collections::HashSet;
 
 use anyhow::Context as _;
 use ra_syntax::{
     AstNode as _,
-    ast::{self, HasAttrs, HasDocComments, HasModuleItem, HasName, HasVisibility},
+    ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
 };
 use rg_arena::Arena;
 
-use rg_parse::{FileId, LineIndex, Package as ParsePackage};
+use rg_parse::{FileId, LineIndex, ModuleFileContext, Package as ParsePackage};
 use rg_text::{Name, NameInterner};
 
 use super::{
@@ -391,22 +388,7 @@ impl<'db> PackageLowering<'db> {
             });
         }
 
-        // A nameless out-of-line module cannot be resolved to a file path.
-        let Some(module_name) = item.name().map(|name| name.text().to_string()) else {
-            return Ok(ModuleItem {
-                inner_docs: None,
-                source: ModuleSource::OutOfLine {
-                    definition_file: None,
-                },
-            });
-        };
-        let module_file_path = if let Some(path_attr) = module_path_attr(item) {
-            module_file_context.resolve_path_attr_file(&path_attr)
-        } else {
-            module_file_context.resolve_child_file(&module_name)
-        };
-
-        let Some(module_file_path) = module_file_path else {
+        let Some(module_file_path) = module_file_context.resolve_module_file(item) else {
             return Ok(ModuleItem {
                 inner_docs: None,
                 source: ModuleSource::OutOfLine {
@@ -611,95 +593,6 @@ impl<'a> FileTreeBuilder<'a> {
             self.current_file_id,
         ))
     }
-}
-
-/// Filesystem context for resolving out-of-line child modules of the current logical module.
-#[derive(Debug, Clone)]
-struct ModuleFileContext {
-    child_module_dir: PathBuf,
-}
-
-impl ModuleFileContext {
-    /// Builds the child-module directory for a file-backed module.
-    fn from_definition_file(definition_file: &Path) -> Self {
-        let parent_dir = definition_file
-            .parent()
-            .expect("definition file should have a parent directory");
-        let file_name = definition_file
-            .file_name()
-            .and_then(|name| name.to_str())
-            .expect("definition file name should be UTF-8");
-        let file_stem = definition_file
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .expect("definition file stem should be UTF-8");
-
-        let child_module_dir = match file_name {
-            "lib.rs" | "main.rs" | "mod.rs" => parent_dir.to_path_buf(),
-            _ => parent_dir.join(file_stem),
-        };
-
-        Self { child_module_dir }
-    }
-
-    /// Builds the child-module directory for an inline child module.
-    fn descend(&self, module_name: &str) -> Self {
-        Self {
-            child_module_dir: self.child_module_dir.join(module_name),
-        }
-    }
-
-    /// Resolves `mod name;` according to conventional Rust module file rules.
-    fn resolve_child_file(&self, module_name: &str) -> Option<PathBuf> {
-        let flat_file = self.child_module_dir.join(format!("{module_name}.rs"));
-        if flat_file.exists() {
-            return Some(flat_file);
-        }
-
-        let nested_file = self.child_module_dir.join(module_name).join("mod.rs");
-        if nested_file.exists() {
-            return Some(nested_file);
-        }
-
-        None
-    }
-
-    /// Resolves the basic literal form of `#[path = "..."]` relative to the current module.
-    fn resolve_path_attr_file(&self, path_attr: &str) -> Option<PathBuf> {
-        let path_attr = Path::new(path_attr);
-        if path_attr.as_os_str().is_empty() || path_attr.is_absolute() {
-            return None;
-        }
-
-        let file = self.child_module_dir.join(path_attr);
-        file.exists().then_some(file)
-    }
-}
-
-/// Extracts the basic `#[path = "..."]` module override.
-///
-/// This intentionally handles only direct string-literal attributes. More advanced forms such as
-/// `cfg_attr` can be added later when the rest of the module system needs them.
-fn module_path_attr(item: &ast::Module) -> Option<String> {
-    for attr in item.attrs() {
-        if !attr.kind().is_outer() || attr.simple_name().as_deref() != Some("path") {
-            continue;
-        }
-
-        let Some(ast::Meta::KeyValueMeta(meta)) = attr.meta() else {
-            continue;
-        };
-        let Some(ast::Expr::Literal(literal)) = meta.expr() else {
-            continue;
-        };
-        let ast::LiteralKind::String(path) = literal.kind() else {
-            continue;
-        };
-
-        return path.value().ok().map(|path| path.into_owned());
-    }
-
-    None
 }
 
 /// Keeps the original `use ...` text in a compact, human-readable form for debugging and tests.

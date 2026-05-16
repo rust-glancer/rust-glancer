@@ -2,7 +2,7 @@ mod utils;
 
 use expect_test::expect;
 
-use self::utils::check_parse_db;
+use self::utils::{check_parse_db, check_parse_db_after_module_discovery};
 
 #[test]
 fn dumps_workspace_packages_targets_and_dependencies() {
@@ -115,6 +115,127 @@ fn parses_shared_files_once_across_targets() {
             - shared-bin [bin] -> src/shared.rs
             files
             - src/shared.rs
+        "#]],
+    );
+}
+
+#[test]
+fn module_discovery_parses_reachable_out_of_line_files() {
+    check_parse_db_after_module_discovery(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "module_discovery"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub mod flat;
+        pub mod nested;
+        pub mod inline {
+            pub mod child;
+        }
+        #[path = "generated/api.rs"]
+        pub mod api;
+        pub mod missing;
+
+        //- /src/flat.rs
+        pub struct Flat;
+
+        //- /src/nested/mod.rs
+        pub struct Nested;
+
+        //- /src/inline/child.rs
+        pub struct Child;
+
+        //- /src/generated/api.rs
+        pub struct Api;
+        "#,
+        expect![[r#"
+            packages 1 (workspace members: 1, dependencies: 0)
+
+            package module_discovery [member]
+            targets
+            - module_discovery [lib] -> src/lib.rs
+            files
+            - src/flat.rs
+            - src/generated/api.rs
+            - src/inline/child.rs
+            - src/lib.rs
+            - src/nested/mod.rs
+        "#]],
+    );
+}
+
+#[test]
+fn module_discovery_shares_files_across_targets() {
+    check_parse_db_after_module_discovery(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "shared_discovery"
+        version = "0.1.0"
+        edition = "2024"
+
+        [lib]
+        path = "src/lib.rs"
+
+        [[bin]]
+        name = "shared-discovery"
+        path = "src/main.rs"
+
+        //- /src/lib.rs
+        pub mod shared;
+
+        //- /src/main.rs
+        mod shared;
+
+        fn main() {}
+
+        //- /src/shared.rs
+        pub struct Shared;
+        "#,
+        expect![[r#"
+            packages 1 (workspace members: 1, dependencies: 0)
+
+            package shared_discovery [member]
+            targets
+            - shared_discovery [lib] -> src/lib.rs
+            - shared-discovery [bin] -> src/main.rs
+            files
+            - src/lib.rs
+            - src/main.rs
+            - src/shared.rs
+        "#]],
+    );
+}
+
+#[test]
+fn module_discovery_terminates_on_module_cycles() {
+    check_parse_db_after_module_discovery(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "cycle_discovery"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub mod a;
+
+        //- /src/a/mod.rs
+        #[path = "../lib.rs"]
+        pub mod root_again;
+        "#,
+        expect![[r#"
+            packages 1 (workspace members: 1, dependencies: 0)
+
+            package cycle_discovery [member]
+            targets
+            - cycle_discovery [lib] -> src/lib.rs
+            files
+            - src/a/mod.rs
+            - src/lib.rs
         "#]],
     );
 }

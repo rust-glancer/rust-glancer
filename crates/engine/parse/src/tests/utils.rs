@@ -7,6 +7,14 @@ use test_fixture::fixture_crate;
 use crate::{Package, ParseDb, Target};
 
 pub(super) fn check_parse_db(fixture: &str, expect: Expect) {
+    check_parse_db_with(fixture, ParseFixtureMode::RootsOnly, expect);
+}
+
+pub(super) fn check_parse_db_after_module_discovery(fixture: &str, expect: Expect) {
+    check_parse_db_with(fixture, ParseFixtureMode::DiscoverModules, expect);
+}
+
+fn check_parse_db_with(fixture: &str, mode: ParseFixtureMode, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let root = fixture
         .path("")
@@ -15,10 +23,23 @@ pub(super) fn check_parse_db(fixture: &str, expect: Expect) {
     let display_root = fixture.path("");
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should build");
-    let parse = ParseDb::build(&workspace).expect("fixture parse db should build");
+    let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
+    if matches!(mode, ParseFixtureMode::DiscoverModules) {
+        for package in parse.packages_mut() {
+            package
+                .discover_modules()
+                .expect("fixture module discovery should succeed");
+        }
+    }
     let actual = ProjectParseSnapshot::new(&parse, &root, &display_root).render();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ParseFixtureMode {
+    RootsOnly,
+    DiscoverModules,
 }
 
 struct ProjectParseSnapshot<'a> {

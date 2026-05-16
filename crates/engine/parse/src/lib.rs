@@ -2,6 +2,7 @@ mod db;
 mod file;
 mod line_index;
 mod memsize;
+mod module;
 mod package;
 mod span;
 mod target;
@@ -13,6 +14,7 @@ pub use self::{
     db::{PackageFileRef, ParseDb},
     file::{FileId, ParsedFile, ParsedFileSnapshot},
     line_index::{LineIndex, LineIndexSnapshot},
+    module::ModuleFileContext,
     package::{Package, PackageParseSnapshot},
     span::{LineColumnSpan, Position, Span, TextSpan},
     target::{Target, TargetId},
