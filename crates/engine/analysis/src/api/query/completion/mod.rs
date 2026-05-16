@@ -62,7 +62,9 @@ impl<'a, 'db> CompletionResolver<'a, 'db> {
         // Keyword fragments can be useful even when the cursor does not lower
         // into a semantic completion site. For example, `f$0` at item level is
         // just incomplete text, not a Body IR or DefMap path.
-        let Some(context) = CompletionContext::at(self.0, target, file_id, offset)? else {
+        let Some(context) =
+            CompletionContext::at(self.0, target, file_id, offset, syntax_context.get())?
+        else {
             return KeywordCompletionResolver::new().completions(syntax_context.get());
         };
 

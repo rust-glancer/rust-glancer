@@ -674,6 +674,36 @@ pub mod api {
 }
 
 #[test]
+fn completes_qualified_paths_inside_braced_use_items() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_braced_use_path_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+use crate::api::{Ap$use_path$};
+
+pub mod api {
+    pub mod api_nested {}
+    pub struct ApiUser;
+}
+"#,
+        &[AnalysisQuery::complete(
+            "braced use path completions",
+            "use_path",
+        )],
+        expect![[r#"
+            braced use path completions
+            - struct ApiUser
+            - module api_nested
+        "#]],
+    );
+}
+
+#[test]
 fn completes_qualified_paths_at_bare_use_path_coloncolon() {
     check_analysis_queries(
         r#"
