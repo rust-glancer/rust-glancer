@@ -1,10 +1,11 @@
 //! Conservative keyword and small-snippet completion assembly.
 //!
-//! Keyword completion is intentionally text-based. It runs on the dirty editor
-//! snapshot so incomplete source like `f$0` or `ma$0` can still produce useful
-//! rows even when the parser cannot lower that fragment into a semantic cursor
-//! site.
+//! Keyword completion runs on a speculative parse of the dirty editor snapshot.
+//! Incomplete source like `f$0` or `ma$0` often cannot lower into a semantic
+//! cursor site yet, but `ra_syntax` can still tell us whether a fake identifier
+//! sits in item, statement, or expression position.
 
+use ra_syntax::{AstNode as _, Edition, SourceFile, SyntaxKind, SyntaxToken, TextSize, ast};
 use rg_def_map::TargetRef;
 use rg_parse::{FileId, Span, TextSpan};
 
@@ -104,7 +105,10 @@ struct KeywordCompletionSite<'source> {
 impl<'source> KeywordCompletionSite<'source> {
     /// Finds the typed prefix and the surrounding context in the dirty source text.
     fn at(analysis: &'source Analysis<'_>, offset: u32) -> Option<Self> {
-        let source = analysis.dirty_context?.text();
+        Self::from_source(analysis.dirty_context?.text(), offset)
+    }
+
+    fn from_source(source: &'source str, offset: u32) -> Option<Self> {
         let cursor = usize::try_from(offset).ok()?;
         if cursor > source.len() || !source.is_char_boundary(cursor) {
             return None;
@@ -117,11 +121,12 @@ impl<'source> KeywordCompletionSite<'source> {
             .map(|(idx, ch)| idx + ch.len_utf8())
             .unwrap_or(0);
         let prefix = source.get(prefix_start..cursor)?;
-        if !Self::accepts_prefix_site(source, prefix_start, cursor) {
+        let syntax = KeywordSyntaxContext::parse(source, prefix_start, cursor)?;
+        if !syntax.accepts_prefix_site(cursor == prefix_start) {
             return None;
         }
 
-        let context = SourceContext::before_offset(source, prefix_start)?;
+        let context = syntax.context()?;
         Some(Self {
             context,
             prefix,
@@ -134,244 +139,111 @@ impl<'source> KeywordCompletionSite<'source> {
         })
     }
 
-    /// Rejects obvious non-keyword sites before the broader context scan runs.
-    fn accepts_prefix_site(source: &str, prefix_start: usize, cursor: usize) -> bool {
-        if Self::inside_comment_or_string(source, cursor) {
-            return false;
-        }
-
-        let previous = source[..prefix_start]
-            .chars()
-            .rev()
-            .find(|ch| !ch.is_whitespace());
-        if cursor == prefix_start && matches!(previous, Some('(' | ',')) {
-            return false;
-        }
-        if matches!(previous, Some('.') | Some(':') | Some('\'')) {
-            return false;
-        }
-
-        !Self::looks_like_use_path(source, prefix_start)
-    }
-
-    /// Provides a cheap guard against suggesting keywords inside trivia and strings.
-    fn inside_comment_or_string(source: &str, cursor: usize) -> bool {
-        let mut state = TextScanState::Code;
-        let mut chars = source[..cursor].char_indices().peekable();
-        while let Some((_, ch)) = chars.next() {
-            if state.advance(ch, chars.peek().map(|(_, next)| *next)) {
-                chars.next();
-            }
-        }
-
-        matches!(
-            state,
-            TextScanState::LineComment
-                | TextScanState::BlockComment { .. }
-                | TextScanState::String { .. }
-        )
-    }
-
-    fn looks_like_use_path(source: &str, prefix_start: usize) -> bool {
-        let line_start = source[..prefix_start]
-            .rfind('\n')
-            .map(|idx| idx + 1)
-            .unwrap_or(0);
-        let before_prefix = source[line_start..prefix_start].trim_start();
-
-        before_prefix.starts_with("use ") || before_prefix.starts_with("pub use ")
-    }
-
     fn is_identifier_continue(ch: char) -> bool {
         ch == '_' || ch.is_ascii_alphanumeric()
     }
 }
 
-/// Classifies a keyword site into item, statement, or expression position.
-struct SourceContext;
+/// Speculative syntax around the keyword prefix.
+struct KeywordSyntaxContext {
+    marker: SyntaxToken,
+}
 
-impl SourceContext {
-    fn before_offset(source: &str, offset: usize) -> Option<KeywordCompletionContext> {
-        let stack = BraceStack::scan(source, offset);
-        if !stack.is_body() {
+impl KeywordSyntaxContext {
+    const MARKER: &'static str = "__rg_completion";
+
+    /// Replaces the typed prefix with a stable identifier so the parser can classify the site.
+    fn parse(source: &str, prefix_start: usize, cursor: usize) -> Option<Self> {
+        let mut speculative =
+            String::with_capacity(source.len() - (cursor - prefix_start) + Self::MARKER.len());
+        speculative.push_str(source.get(..prefix_start)?);
+        speculative.push_str(Self::MARKER);
+        speculative.push_str(source.get(cursor..)?);
+
+        let file = SourceFile::parse(&speculative, Edition::CURRENT).tree();
+        let marker_offset = TextSize::from(u32::try_from(prefix_start).ok()?);
+        let marker = file
+            .syntax()
+            .token_at_offset(marker_offset)
+            .right_biased()?;
+
+        Some(Self { marker })
+    }
+
+    /// Rejects syntax positions that are not plain keyword slots.
+    fn accepts_prefix_site(&self, empty_prefix: bool) -> bool {
+        if self.marker.text() != Self::MARKER || !self.marker.kind().is_any_identifier() {
+            return false;
+        }
+
+        let previous = self.previous_non_trivia_token();
+        if empty_prefix
+            && previous.as_ref().is_some_and(|token| {
+                matches!(token.kind(), SyntaxKind::L_PAREN | SyntaxKind::COMMA)
+            })
+        {
+            return false;
+        }
+        if previous.as_ref().is_some_and(|token| {
+            matches!(
+                token.kind(),
+                SyntaxKind::DOT | SyntaxKind::COLON | SyntaxKind::LIFETIME_IDENT
+            )
+        }) {
+            return false;
+        }
+
+        !self.inside_use_item()
+    }
+
+    /// Classifies the marker by its AST ancestors and nearby non-trivia token.
+    fn context(&self) -> Option<KeywordCompletionContext> {
+        if !self.inside_block_expr()? {
             return Some(KeywordCompletionContext::Item);
         }
 
-        if Self::is_statement_position(source, offset) {
+        if self.at_statement_boundary() {
             Some(KeywordCompletionContext::Statement)
         } else {
             Some(KeywordCompletionContext::Expression)
         }
     }
 
-    fn is_statement_position(source: &str, offset: usize) -> bool {
-        let previous = source[..offset]
-            .chars()
-            .rev()
-            .find(|ch| !ch.is_whitespace());
-
-        previous.is_none_or(|ch| matches!(ch, '{' | '}' | ';'))
-    }
-}
-
-/// Approximate stack of brace owners before the completion offset.
-#[derive(Debug, Default)]
-struct BraceStack {
-    contexts: Vec<BraceContext>,
-}
-
-impl BraceStack {
-    fn scan(source: &str, end: usize) -> Self {
-        let mut scanner = BraceScanner::new(source, end);
-        scanner.scan()
+    fn inside_block_expr(&self) -> Option<bool> {
+        Some(
+            self.marker
+                .parent()?
+                .ancestors()
+                .any(|node| ast::BlockExpr::can_cast(node.kind())),
+        )
     }
 
-    fn is_body(&self) -> bool {
-        self.contexts
-            .iter()
-            .any(|context| matches!(context, BraceContext::Body))
+    fn inside_use_item(&self) -> bool {
+        self.marker.parent().is_some_and(|parent| {
+            parent
+                .ancestors()
+                .any(|node| ast::Use::can_cast(node.kind()))
+        })
     }
-}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BraceContext {
-    Body,
-    Item,
-}
+    fn at_statement_boundary(&self) -> bool {
+        self.previous_non_trivia_token().is_none_or(|token| {
+            matches!(
+                token.kind(),
+                SyntaxKind::L_CURLY | SyntaxKind::R_CURLY | SyntaxKind::SEMICOLON
+            )
+        })
+    }
 
-/// Scans source text just far enough to classify braces as body or item braces.
-struct BraceScanner<'a> {
-    source: &'a str,
-    end: usize,
-    stack: BraceStack,
-    state: TextScanState,
-}
-
-impl<'a> BraceScanner<'a> {
-    fn new(source: &'a str, end: usize) -> Self {
-        Self {
-            source,
-            end,
-            stack: BraceStack::default(),
-            state: TextScanState::Code,
+    fn previous_non_trivia_token(&self) -> Option<SyntaxToken> {
+        let mut token = self.marker.prev_token();
+        while let Some(previous) = token {
+            if !previous.kind().is_trivia() {
+                return Some(previous);
+            }
+            token = previous.prev_token();
         }
-    }
-
-    fn scan(&mut self) -> BraceStack {
-        let mut chars = self.source[..self.end].char_indices().peekable();
-        while let Some((idx, ch)) = chars.next() {
-            if self.state.advance(ch, chars.peek().map(|(_, ch)| *ch)) {
-                chars.next();
-                continue;
-            }
-            if !matches!(self.state, TextScanState::Code) {
-                continue;
-            }
-
-            match ch {
-                '{' => self.push_context(idx),
-                '}' => {
-                    self.stack.contexts.pop();
-                }
-                _ => {}
-            }
-        }
-
-        std::mem::take(&mut self.stack)
-    }
-
-    fn push_context(&mut self, brace: usize) {
-        // A full parser would know the brace owner directly. Here the nearby
-        // header is enough to separate body blocks from item-like blocks.
-        let header = Self::brace_header_before(&self.source[..brace]);
-        let context = if Self::header_has_any_word(
-            header,
-            &[
-                "fn", "if", "else", "match", "loop", "while", "for", "unsafe",
-            ],
-        ) || header.trim_end().ends_with("=>")
-        {
-            BraceContext::Body
-        } else if Self::header_has_any_word(header, &["struct", "enum", "trait", "impl", "mod"]) {
-            BraceContext::Item
-        } else if self.stack.is_body() {
-            BraceContext::Body
-        } else {
-            BraceContext::Item
-        };
-        self.stack.contexts.push(context);
-    }
-
-    fn brace_header_before(source_before_brace: &str) -> &str {
-        let start = source_before_brace
-            .rfind(|ch| matches!(ch, '{' | '}' | ';'))
-            .map(|idx| idx + 1)
-            .unwrap_or(0);
-        &source_before_brace[start..]
-    }
-
-    fn header_has_any_word(header: &str, words: &[&str]) -> bool {
-        header
-            .split(|ch: char| !(ch == '_' || ch.is_ascii_alphanumeric()))
-            .filter(|word| !word.is_empty())
-            .any(|word| words.contains(&word))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TextScanState {
-    Code,
-    LineComment,
-    BlockComment { depth: usize },
-    String { escaped: bool },
-}
-
-impl TextScanState {
-    /// Advances the lightweight lexer enough to avoid counting braces in trivia and literals.
-    fn advance(&mut self, ch: char, next: Option<char>) -> bool {
-        match (*self, ch, next) {
-            (Self::Code, '/', Some('/')) => {
-                *self = Self::LineComment;
-                true
-            }
-            (Self::Code, '/', Some('*')) => {
-                *self = Self::BlockComment { depth: 1 };
-                true
-            }
-            (Self::Code, '"', _) => {
-                *self = Self::String { escaped: false };
-                false
-            }
-            (Self::LineComment, '\n', _) => {
-                *self = Self::Code;
-                false
-            }
-            (Self::BlockComment { depth }, '/', Some('*')) => {
-                *self = Self::BlockComment { depth: depth + 1 };
-                true
-            }
-            (Self::BlockComment { depth }, '*', Some('/')) => {
-                if depth == 1 {
-                    *self = Self::Code;
-                } else {
-                    *self = Self::BlockComment { depth: depth - 1 };
-                }
-                true
-            }
-            (Self::String { escaped: true }, _, _) => {
-                *self = Self::String { escaped: false };
-                false
-            }
-            (Self::String { escaped: false }, '\\', _) => {
-                *self = Self::String { escaped: true };
-                false
-            }
-            (Self::String { escaped: false }, '"', _) => {
-                *self = Self::Code;
-                false
-            }
-            _ => false,
-        }
+        None
     }
 }
 
@@ -513,5 +385,80 @@ impl KeywordCandidate {
                 .unwrap_or(CompletionInsertText::Plain),
             edit: Some(edit),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{KeywordCompletionContext, KeywordCompletionSite};
+
+    #[test]
+    fn classifies_keyword_sites_from_speculative_syntax() {
+        let cases = [
+            (
+                "item position",
+                "f$0",
+                Some((KeywordCompletionContext::Item, "f")),
+            ),
+            (
+                "statement position",
+                "fn main() {\n    le$0\n}",
+                Some((KeywordCompletionContext::Statement, "le")),
+            ),
+            (
+                "expression position",
+                "fn main() {\n    let _ = ma$0;\n}",
+                Some((KeywordCompletionContext::Expression, "ma")),
+            ),
+            (
+                "bare expression position",
+                "fn main() {\n    let _ = $0;\n}",
+                Some((KeywordCompletionContext::Expression, "")),
+            ),
+        ];
+
+        for (label, fixture, expected) in cases {
+            let (source, offset) = source_with_cursor(fixture);
+            let actual = KeywordCompletionSite::from_source(&source, offset)
+                .map(|site| (site.context, site.prefix));
+
+            assert_eq!(actual, expected, "{label}");
+        }
+    }
+
+    #[test]
+    fn rejects_keyword_sites_inside_non_code_syntax() {
+        let cases = [
+            ("line comment", "fn main() {\n    // ma$0\n}"),
+            ("block comment", "fn main() {\n    /* ma$0 */\n}"),
+            ("string literal", r#"fn main() { let _ = "ma$0"; }"#),
+            (
+                "raw string literal",
+                r##"fn main() { let _ = r#"ma$0"#; }"##,
+            ),
+            ("use item", "use ma$0;"),
+            ("field access", "fn main() { value.ma$0 }"),
+        ];
+
+        for (label, fixture) in cases {
+            let (source, offset) = source_with_cursor(fixture);
+
+            assert!(
+                KeywordCompletionSite::from_source(&source, offset).is_none(),
+                "{label}"
+            );
+        }
+    }
+
+    fn source_with_cursor(fixture: &str) -> (String, u32) {
+        let offset = fixture
+            .find("$0")
+            .expect("keyword fixture should include a cursor marker");
+        let mut source = fixture.to_string();
+        source.replace_range(offset..offset + "$0".len(), "");
+        (
+            source,
+            u32::try_from(offset).expect("keyword fixture offset should fit into u32"),
+        )
     }
 }
