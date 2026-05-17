@@ -5,8 +5,8 @@
 //! or expression position. This module keeps those source-shape questions in
 //! one place so semantic resolvers can stay focused on producing candidates.
 
-use ra_syntax::{AstNode as _, Edition, SourceFile, SyntaxKind, SyntaxToken, TextSize, ast};
 use rg_parse::{Span, TextSpan};
+use rg_syntax::{AstNode as _, Edition, SourceFile, SyntaxKind, SyntaxToken, TextSize, ast};
 
 /// Lazily builds syntax context only for completion paths that need source recovery.
 pub(super) struct CompletionSyntaxContextCache<'source> {

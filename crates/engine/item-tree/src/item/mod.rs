@@ -1,4 +1,4 @@
-use ra_syntax::TextRange;
+use rg_syntax::TextRange;
 
 use rg_parse::{FileId, Span};
 use rg_text::Name;
@@ -91,7 +91,7 @@ impl ItemNode {
     }
 }
 
-pub(super) fn normalized_syntax(node: &impl ra_syntax::AstNode) -> String {
+pub(super) fn normalized_syntax(node: &impl rg_syntax::AstNode) -> String {
     node.syntax()
         .text()
         .to_string()

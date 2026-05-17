@@ -1,6 +1,6 @@
 use std::fmt;
 
-use ra_syntax::{
+use rg_syntax::{
     AstNode as _, SyntaxKind, algo,
     ast::{self, HasName},
 };

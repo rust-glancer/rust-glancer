@@ -1,0 +1,31 @@
+[package]
+name = "rg_parser"
+version = "0.0.0"
+description = "The Rust parser for rust-analyzer."
+
+authors = ["rust-analyzer developers"]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rust-lang/rust-analyzer"
+rust-version = "1.87"
+
+[lib]
+doctest = false
+
+[dependencies]
+drop_bomb.workspace = true
+ra-ap-rustc_lexer.workspace = true
+rustc-literal-escaper.workspace = true
+tracing.workspace = true
+
+edition.workspace = true
+winnow.workspace = true
+
+[dev-dependencies]
+expect-test.workspace = true
+
+stdx.workspace = true
+
+[features]
+default = []
+in-rust-tree = []

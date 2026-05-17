@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use ra_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
+use rg_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
 
 use crate::{FileId, Package};
 

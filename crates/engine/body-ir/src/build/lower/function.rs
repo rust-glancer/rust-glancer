@@ -1,6 +1,6 @@
 //! Shared lowering context for one function body.
 
-use ra_syntax::ast;
+use rg_syntax::ast;
 
 use rg_def_map::ModuleRef;
 use rg_parse::LineIndex;
@@ -62,7 +62,7 @@ impl<'a> FunctionBodyLowering<'a> {
 impl FunctionBodyLowering<'_> {
     pub(super) fn alloc_expr(
         &mut self,
-        syntax: &ra_syntax::SyntaxNode,
+        syntax: &rg_syntax::SyntaxNode,
         scope: ScopeId,
         kind: ExprKind,
     ) -> ExprId {
@@ -79,7 +79,7 @@ impl FunctionBodyLowering<'_> {
         })
     }
 
-    pub(super) fn source(&self, syntax: &ra_syntax::SyntaxNode) -> BodySource {
+    pub(super) fn source(&self, syntax: &rg_syntax::SyntaxNode) -> BodySource {
         source_for(self.function_source.file_id, syntax)
     }
 }

@@ -1,4 +1,4 @@
-use ra_syntax::{AstNode as _, ast};
+use rg_syntax::{AstNode as _, ast};
 
 #[derive(
     Debug, Clone, PartialEq, Eq, derive_more::Display, wincode::SchemaRead, wincode::SchemaWrite,

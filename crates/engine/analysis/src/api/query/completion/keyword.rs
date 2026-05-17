@@ -2,7 +2,7 @@
 //!
 //! Keyword completion runs on a speculative parse of the dirty editor snapshot.
 //! Incomplete source like `f$0` or `ma$0` often cannot lower into a semantic
-//! cursor site yet, but `ra_syntax` can still tell us whether a fake identifier
+//! cursor site yet, but `rg_syntax` can still tell us whether a fake identifier
 //! sits in item, statement, or expression position.
 
 use crate::model::{

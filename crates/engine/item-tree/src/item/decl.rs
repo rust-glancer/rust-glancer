@@ -5,7 +5,7 @@
 
 use std::fmt;
 
-use ra_syntax::{
+use rg_syntax::{
     AstNode as _,
     ast::{self, HasGenericParams, HasName, HasTypeBounds, HasVisibility},
 };
@@ -739,7 +739,7 @@ impl ImplItem {
         line_index: &LineIndex,
         interner: &mut NameInterner,
     ) -> (Option<TypeRef>, TypeRef) {
-        // `ra_syntax` exposes impl headers as child type nodes. The presence of `for` decides
+        // `rg_syntax` exposes impl headers as child type nodes. The presence of `for` decides
         // whether the first type is a trait path or the inherent self type.
         let types = item
             .syntax()

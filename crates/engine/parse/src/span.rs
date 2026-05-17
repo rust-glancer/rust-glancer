@@ -1,4 +1,4 @@
-use ra_syntax::TextRange;
+use rg_syntax::TextRange;
 
 use crate::LineIndex;
 
