@@ -1,6 +1,6 @@
 //! Lowering for function parameters, blocks, statements, and body-local items.
 
-use ra_syntax::{
+use rg_syntax::{
     AstNode as _,
     ast::{self, HasName as _},
 };

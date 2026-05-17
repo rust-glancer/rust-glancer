@@ -1,6 +1,6 @@
 //! Pattern lowering and binding allocation for destructuring syntax.
 
-use ra_syntax::{
+use rg_syntax::{
     AstNode as _,
     ast::{self, HasName as _},
 };
@@ -181,7 +181,7 @@ impl FunctionBodyLowering<'_> {
 
     fn push_pat_binding(
         &mut self,
-        syntax: &ra_syntax::SyntaxNode,
+        syntax: &rg_syntax::SyntaxNode,
         scope: ScopeId,
         kind: BindingKind,
         name: Name,
@@ -217,7 +217,7 @@ impl FunctionBodyLowering<'_> {
 
     fn lower_record_shorthand_pat(
         &mut self,
-        syntax: &ra_syntax::SyntaxNode,
+        syntax: &rg_syntax::SyntaxNode,
         scope: ScopeId,
         kind: BindingKind,
         name: Name,
@@ -233,7 +233,7 @@ impl FunctionBodyLowering<'_> {
         })
     }
 
-    fn alloc_unsupported_pat(&mut self, syntax: &ra_syntax::SyntaxNode) -> PatId {
+    fn alloc_unsupported_pat(&mut self, syntax: &rg_syntax::SyntaxNode) -> PatId {
         self.builder.alloc_pat(PatData {
             source: self.source(syntax),
             kind: PatKind::Unsupported,

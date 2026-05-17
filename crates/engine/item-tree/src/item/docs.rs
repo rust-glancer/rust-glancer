@@ -1,4 +1,4 @@
-use ra_syntax::{
+use rg_syntax::{
     AstNode as _,
     ast::{self},
 };
@@ -120,7 +120,7 @@ fn normalize_doc_text(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use ra_syntax::{AstNode as _, Edition, SourceFile, ast};
+    use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 
     use super::Documentation;
 

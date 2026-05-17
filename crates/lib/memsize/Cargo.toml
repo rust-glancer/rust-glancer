@@ -13,8 +13,8 @@ description.workspace = true
 [features]
 default = []
 ls_types = ["dep:ls_types"]
-ra_syntax = ["dep:ra_syntax"]
+rg_syntax = ["dep:rg_syntax"]
 
 [dependencies]
 ls_types = { workspace = true, optional = true }
-ra_syntax = { workspace = true, optional = true }
+rg_syntax = { workspace = true, optional = true }

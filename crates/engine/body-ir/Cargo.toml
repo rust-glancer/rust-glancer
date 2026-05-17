@@ -13,7 +13,7 @@ description.workspace = true
 [dependencies]
 anyhow.workspace = true
 derive_more = { workspace = true, features = ["display"] }
-ra_syntax.workspace = true
+rg_syntax.workspace = true
 rayon.workspace = true
 wincode.workspace = true
 rg_arena = { workspace = true, features = ["memsize"] }

@@ -7,11 +7,11 @@
 use std::collections::HashSet;
 
 use anyhow::Context as _;
-use ra_syntax::{
+use rg_arena::Arena;
+use rg_syntax::{
     AstNode as _,
     ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
 };
-use rg_arena::Arena;
 
 use rg_parse::{FileId, LineIndex, ModuleFileContext, Package as ParsePackage};
 use rg_text::{Name, NameInterner};
@@ -546,9 +546,9 @@ impl<'a> FileTreeBuilder<'a> {
         &mut self,
         kind: ItemKind,
         name: Option<Name>,
-        name_range: Option<ra_syntax::TextRange>,
+        name_range: Option<rg_syntax::TextRange>,
         visibility: VisibilityLevel,
-        text_range: ra_syntax::TextRange,
+        text_range: rg_syntax::TextRange,
     ) -> ItemTreeId {
         self.alloc_item_with_docs(kind, name, name_range, visibility, None, text_range)
     }
@@ -557,7 +557,7 @@ impl<'a> FileTreeBuilder<'a> {
         &mut self,
         kind: ItemKind,
         name: Option<Name>,
-        name_range: Option<ra_syntax::TextRange>,
+        name_range: Option<rg_syntax::TextRange>,
         visibility: VisibilityLevel,
         item: &T,
     ) -> ItemTreeId
@@ -578,10 +578,10 @@ impl<'a> FileTreeBuilder<'a> {
         &mut self,
         kind: ItemKind,
         name: Option<Name>,
-        name_range: Option<ra_syntax::TextRange>,
+        name_range: Option<rg_syntax::TextRange>,
         visibility: VisibilityLevel,
         docs: Option<Documentation>,
-        text_range: ra_syntax::TextRange,
+        text_range: rg_syntax::TextRange,
     ) -> ItemTreeId {
         self.items.alloc(ItemNode::new(
             kind,

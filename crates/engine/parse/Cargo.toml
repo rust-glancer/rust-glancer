@@ -12,10 +12,10 @@ description.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-ra_syntax.workspace = true
+rg_syntax.workspace = true
 wincode.workspace = true
 rg_arena = { workspace = true, features = ["memsize"] }
-rg_memsize = { workspace = true, features = ["ra_syntax"] }
+rg_memsize = { workspace = true, features = ["rg_syntax"] }
 rg_workspace.workspace = true
 
 [dev-dependencies]

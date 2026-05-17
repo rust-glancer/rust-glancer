@@ -1,7 +1,7 @@
 //! Target-level coordination before each function body is lowered.
 
 use anyhow::Context as _;
-use ra_syntax::{AstNode as _, ast};
+use rg_syntax::{AstNode as _, ast};
 
 use rg_def_map::{ModuleRef, PackageSlot};
 use rg_parse::{FileId, Span};

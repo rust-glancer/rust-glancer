@@ -1,6 +1,6 @@
 //! Syntax helpers shared by the function-body lowering modules.
 
-use ra_syntax::{
+use rg_syntax::{
     AstNode as _,
     ast::{self, PathSegmentKind},
 };
@@ -130,7 +130,7 @@ impl FunctionBodyLowering<'_> {
     }
 }
 
-pub(super) fn source_for(file_id: FileId, syntax: &ra_syntax::SyntaxNode) -> BodySource {
+pub(super) fn source_for(file_id: FileId, syntax: &rg_syntax::SyntaxNode) -> BodySource {
     BodySource {
         file_id,
         span: Span::from_text_range(syntax.text_range()),
@@ -139,7 +139,7 @@ pub(super) fn source_for(file_id: FileId, syntax: &ra_syntax::SyntaxNode) -> Bod
 
 #[cfg(test)]
 mod tests {
-    use ra_syntax::{AstNode as _, Edition, SourceFile, ast};
+    use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 
     use crate::ir::LiteralKind;
 

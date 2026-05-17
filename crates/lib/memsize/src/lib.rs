@@ -8,8 +8,8 @@ use std::{any, collections::BTreeMap, mem};
 mod default_impls;
 #[cfg(feature = "ls_types")]
 mod ls_types_impls;
-#[cfg(feature = "ra_syntax")]
-mod ra_syntax_impls;
+#[cfg(feature = "rg_syntax")]
+mod rg_syntax_impls;
 
 /// Records approximate retained memory for a value.
 ///

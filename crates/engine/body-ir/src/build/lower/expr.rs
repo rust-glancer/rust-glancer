@@ -1,6 +1,6 @@
 //! Expression lowering for syntax that Body IR models directly.
 
-use ra_syntax::{
+use rg_syntax::{
     AstNode as _,
     ast::{self, HasArgList as _},
 };
@@ -263,7 +263,7 @@ impl FunctionBodyLowering<'_> {
 
     fn lower_wrapper_expr(
         &mut self,
-        syntax: &ra_syntax::SyntaxNode,
+        syntax: &rg_syntax::SyntaxNode,
         inner: Option<ast::Expr>,
         scope: ScopeId,
         kind: ExprWrapperKind,
@@ -275,7 +275,7 @@ impl FunctionBodyLowering<'_> {
 
     fn lower_passthrough_unknown(
         &mut self,
-        syntax: &ra_syntax::SyntaxNode,
+        syntax: &rg_syntax::SyntaxNode,
         children: Vec<ast::Expr>,
         scope: ScopeId,
     ) -> ExprId {
@@ -289,7 +289,7 @@ impl FunctionBodyLowering<'_> {
 
     fn lower_unknown_with_direct_children(
         &mut self,
-        syntax: &ra_syntax::SyntaxNode,
+        syntax: &rg_syntax::SyntaxNode,
         scope: ScopeId,
     ) -> ExprId {
         let children = syntax
@@ -301,7 +301,7 @@ impl FunctionBodyLowering<'_> {
         self.alloc_expr(syntax, scope, ExprKind::Unknown { children })
     }
 
-    fn lower_unknown_expr(&mut self, syntax: &ra_syntax::SyntaxNode, scope: ScopeId) -> ExprId {
+    fn lower_unknown_expr(&mut self, syntax: &rg_syntax::SyntaxNode, scope: ScopeId) -> ExprId {
         self.alloc_expr(
             syntax,
             scope,
