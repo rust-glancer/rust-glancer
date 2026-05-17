@@ -6,14 +6,65 @@ use test_fixture::fixture_crate;
 
 use crate::{Package, ParseDb, Target};
 
+/// Builds the named test fixture crate, parses it with `ParseDb` using `RootsOnly` mode,
+/// renders a project parse snapshot, and asserts the rendered output equals `expect`.
+///
+/// `fixture` is the path or name of the fixture crate (relative to the test fixtures root).
+/// `expect` is an `insta::Expect` that contains the expected snapshot text.
+///
+/// # Examples
+///
+/// ```
+/// // inside a test
+/// use insta::assert_display_snapshot;
+/// // `expect!` is provided by the insta crate's macro for inline snapshots
+/// check_parse_db("basic_crate", expect![[r#"
+/// packages: 1 workspace member, 0 dependencies
+/// ...
+/// "#]]);
+/// ```
 pub(super) fn check_parse_db(fixture: &str, expect: Expect) {
     check_parse_db_with(fixture, ParseFixtureMode::RootsOnly, expect);
 }
 
+/// Builds the test fixture, runs module discovery for each parsed workspace package, renders a parse snapshot, and asserts it matches `expect`.
+///
+/// This triggers `ParseFixtureMode::DiscoverModules` so packages will run module discovery before the snapshot is produced.
+///
+/// # Examples
+///
+/// ```
+/// // Assert the parsed project (after module discovery) matches the stored snapshot.
+/// check_parse_db_after_module_discovery("my_fixture", expect![[r#"
+/// packages: 1 workspace members: 1 dependencies: 0
+/// - my_crate (member)
+///   targets:
+///     - my_crate lib src/lib.rs
+///   files:
+///     - src/lib.rs
+/// "#]]);
+/// ```
 pub(super) fn check_parse_db_after_module_discovery(fixture: &str, expect: Expect) {
     check_parse_db_with(fixture, ParseFixtureMode::DiscoverModules, expect);
 }
 
+/// Builds a parse database from a test fixture, optionally runs module discovery, and asserts the rendered project snapshot matches `expect`.
+///
+/// This helper:
+/// - creates the fixture crate and canonicalizes its root paths,
+/// - constructs `WorkspaceMetadata` from the fixture's Cargo metadata and builds a `ParseDb`,
+/// - if `mode` is `ParseFixtureMode::DiscoverModules`, runs `discover_modules()` for each mutable package,
+/// - renders a `ProjectParseSnapshot` and compares the sanitized output against `expect`.
+///
+/// # Examples
+///
+/// ```no_run
+/// # use crate::tests::utils::{check_parse_db_with, ParseFixtureMode};
+/// # use expect_test::Expect;
+/// # fn demo() {
+/// check_parse_db_with("my_fixture", ParseFixtureMode::RootsOnly, Expect::new());
+/// # }
+/// ```
 fn check_parse_db_with(fixture: &str, mode: ParseFixtureMode, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let root = fixture

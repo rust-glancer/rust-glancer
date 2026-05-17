@@ -364,7 +364,22 @@ impl<'db> PackageLowering<'db> {
         Ok(item_id)
     }
 
-    /// Lowers one module declaration into either an inline item list or an out-of-line file link.
+    /// Lowers a module declaration into either an inline item list or an out-of-line file reference.
+    ///
+    /// If the module contains an inline item list, this collects and lowers those items and returns
+    /// a `ModuleItem` whose `source` is `ModuleSource::Inline { items }`. If the module is out-of-line,
+    /// resolution is delegated to `ModuleFileContext::resolve_module_file`: when resolution fails the
+    /// returned `ModuleItem` has `ModuleSource::OutOfLine { definition_file: None }`; when resolution
+    /// yields a path the file is parsed and lowered eagerly and the returned `ModuleItem` has
+    /// `ModuleSource::OutOfLine { definition_file: Some(file_id) }`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // Pseudocode example showing intent:
+    /// // let module_item = package_lowering.collect_module(&mut builder, &ast_module, &module_file_context)?;
+    /// // match module_item.source { ModuleSource::Inline { items } => { ... }, ModuleSource::OutOfLine { definition_file } => { ... } }
+    /// ```
     fn collect_module(
         &mut self,
         builder: &mut FileTreeBuilder<'_>,
@@ -574,6 +589,30 @@ impl<'a> FileTreeBuilder<'a> {
         )
     }
 
+    /// Allocate a new item node with attached documentation and return its `ItemTreeId`.
+    ///
+    /// The created node records kind, optional name and its range, visibility, optional documentation,
+    /// the item's full text range, and the builder's current file id.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use crate::{FileTreeBuilder, ItemKind, VisibilityLevel, Documentation};
+    /// # use ra_syntax::TextRange;
+    /// # // The following is a conceptual example; constructing a real FileTreeBuilder requires a LineIndex and a FileId.
+    /// # let line_index = &crate::line_index::LineIndex::default();
+    /// # let mut builder = FileTreeBuilder::new(crate::FileId(0), line_index);
+    /// let id = builder.alloc_item_with_docs(
+    ///     ItemKind::ExternBlock,
+    ///     None,
+    ///     None,
+    ///     VisibilityLevel::Private,
+    ///     None,
+    ///     TextRange::default(),
+    /// );
+    /// // `id` can be used to index into `builder.items`.
+    /// assert!(builder.items.get(id).is_some());
+    /// ```
     fn alloc_item_with_docs(
         &mut self,
         kind: ItemKind,

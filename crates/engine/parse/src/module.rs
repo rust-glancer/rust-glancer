@@ -29,7 +29,20 @@ pub struct ModuleFileContext {
 }
 
 impl ModuleFileContext {
-    /// Builds the child-module directory for a file-backed module.
+    /// Compute the directory used to resolve child modules for a given source file.
+    ///
+    /// Uses Rust's file conventions: if the file name is `lib.rs`, `main.rs`, or `mod.rs`,
+    /// the child-module directory is the file's parent directory; otherwise it is
+    /// the parent directory joined with the file stem (e.g., `src/foo.rs` -> `src/foo`).
+    ///
+    /// Panics if the provided path has no parent, or if the file name or file stem are not UTF‑8.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// let _ctx = ModuleFileContext::from_definition_file(Path::new("src/lib.rs"));
+    /// ```
     pub fn from_definition_file(definition_file: &Path) -> Self {
         let parent_dir = definition_file
             .parent()
@@ -51,7 +64,15 @@ impl ModuleFileContext {
         Self { child_module_dir }
     }
 
-    /// Builds the child-module directory for an inline child module.
+    /// Creates a new module-file context for a named child by appending `module_name` to the current child-module directory.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let ctx = ModuleFileContext { child_module_dir: std::path::PathBuf::from("src") };
+    /// let child = ctx.descend("foo");
+    /// assert_eq!(child.child_module_dir, std::path::PathBuf::from("src").join("foo"));
+    /// ```
     pub fn descend(&self, module_name: &str) -> Self {
         Self {
             child_module_dir: self.child_module_dir.join(module_name),
@@ -71,7 +92,30 @@ impl ModuleFileContext {
         self.resolve_child_file(&module_name)
     }
 
-    /// Resolves `mod name;` according to conventional Rust module file rules.
+    /// Resolve a child module declared with `mod name;` using Rust's file-layout conventions.
+    ///
+    /// Checks for a sibling file named `<child_module_dir>/<module_name>.rs` first, then for a nested
+    /// module file `<child_module_dir>/<module_name>/mod.rs`. Returns the first existing path found,
+    /// or `None` if neither exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::fs;
+    /// use std::path::PathBuf;
+    /// use tempfile::tempdir;
+    ///
+    /// // create temporary directory structure
+    /// let dir = tempdir().unwrap();
+    /// let child_dir = dir.path().join("foo");
+    /// fs::create_dir_all(&child_dir).unwrap();
+    /// // create nested mod.rs
+    /// fs::write(child_dir.join("mod.rs"), "// mod foo").unwrap();
+    ///
+    /// let ctx = ModuleFileContext { child_module_dir: PathBuf::from(dir.path()) };
+    /// let resolved = ctx.resolve_child_file("foo").unwrap();
+    /// assert!(resolved.ends_with("foo/mod.rs"));
+    /// ```
     fn resolve_child_file(&self, module_name: &str) -> Option<PathBuf> {
         let flat_file = self.child_module_dir.join(format!("{module_name}.rs"));
         if flat_file.exists() {
@@ -86,7 +130,19 @@ impl ModuleFileContext {
         None
     }
 
-    /// Resolves the basic literal form of `#[path = "..."]` relative to the current module.
+    /// Resolve a `#[path = "..."]` attribute value to a filesystem path relative to the current module context.
+    ///
+    /// This accepts only a non-empty, relative path string and returns the resolved path joined against
+    /// the context's child module directory only if that path exists on disk. Absolute paths or an
+    /// empty string are rejected and yield `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Given a ModuleFileContext with child_module_dir = "/project/src/lib"
+    /// // resolve_path_attr_file("sub/mod.rs") -> Some("/project/src/lib/sub/mod.rs")
+    /// // resolve_path_attr_file("/etc/passwd") -> None
+    /// ```
     fn resolve_path_attr_file(&self, path_attr: &str) -> Option<PathBuf> {
         let path_attr = Path::new(path_attr);
         if path_attr.as_os_str().is_empty() || path_attr.is_absolute() {
@@ -105,6 +161,18 @@ struct ModuleDiscovery<'db> {
 }
 
 impl<'db> ModuleDiscovery<'db> {
+    /// Create a new module discovery context bound to the given package.
+    ///
+    /// The returned `ModuleDiscovery` is ready to traverse the package's crate root files
+    /// and populate the package's module-file cache.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // Prepare a mutable Package instance (omitted).
+    /// let mut package = /* ... */ ;
+    /// let discovery = ModuleDiscovery::new(&mut package);
+    /// ```
     fn new(package: &'db mut Package) -> Self {
         Self {
             package,
@@ -113,6 +181,23 @@ impl<'db> ModuleDiscovery<'db> {
         }
     }
 
+    /// Discover all out-of-line module files reachable from the package's Cargo targets and
+    /// populate the package's file cache accordingly.
+    ///
+    /// The method iterates each target's root file and walks its module graph, delegating
+    /// per-file discovery to `discover_file`. Errors produced while processing a target are
+    /// annotated with that target's name for easier diagnosis.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` if discovery completes for all targets, `Err` with context otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // given `package: &mut Package`
+    /// ModuleDiscovery::new(package).discover().unwrap();
+    /// ```
     fn discover(mut self) -> anyhow::Result<()> {
         let roots = self
             .package
@@ -130,6 +215,25 @@ impl<'db> ModuleDiscovery<'db> {
         Ok(())
     }
 
+    /// Discover and register all out-of-line modules reachable from a single source file.
+    ///
+    /// Traverses module declarations in the file identified by `current_file_id`, recursively
+    /// discovering any out-of-line module files referenced by `mod` declarations or `#[path = "..."]`
+    /// overrides and adding them to the package cache. This method is idempotent for files already
+    /// visited and guards against infinite recursion using an active traversal stack.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success. Returns an `Err` if loading retained syntax, fetching the parsed file,
+    /// or discovering module items fails; errors carry contextual messages describing the failing step.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// // Given a mutable `discovery: ModuleDiscovery` and a `file_id: FileId`,
+    /// // call `discovery.discover_file(file_id)` to populate the module cache for that file.
+    /// // discovery.discover_file(file_id).unwrap();
+    /// ```
     fn discover_file(&mut self, current_file_id: FileId) -> anyhow::Result<()> {
         if self.visited.contains(&current_file_id) {
             return Ok(());
@@ -178,6 +282,21 @@ impl<'db> ModuleDiscovery<'db> {
         Ok(())
     }
 
+    /// Traverse the provided AST items and discover any module declarations using the given module file context.
+    ///
+    /// For each `mod` item in `items`, delegates discovery to `discover_module`, skipping non-module items. Errors from
+    /// discovering an individual module are propagated.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // Construct a ModuleDiscovery and ModuleFileContext according to your test setup.
+    /// // Call discover_items with a list of parsed `ast::Item`s to process module declarations.
+    /// let mut discovery = /* ModuleDiscovery::new(&mut package) */ todo!();
+    /// let items: Vec<ast::Item> = Vec::new();
+    /// let ctx: ModuleFileContext = /* context built from a file path */ todo!();
+    /// discovery.discover_items(items, &ctx).unwrap();
+    /// ```
     fn discover_items(
         &mut self,
         items: Vec<ast::Item>,
@@ -195,6 +314,27 @@ impl<'db> ModuleDiscovery<'db> {
         Ok(())
     }
 
+    /// Discovers submodules declared by a given `mod` AST node, recursing into inline item lists or resolving and processing out-of-line module files.
+    ///
+    /// If `module` has an inline item list, the function descends the module file context (using the module's name when present) and discovers items within that inline list. Otherwise it resolves the module's source file (honoring a `#[path = "..."]` string-literal override when present), parses that file, and continues discovery from the parsed file.
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on success; an error containing contextual information if parsing or file discovery fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // Illustrative usage (context-dependent): obtain a ModuleDiscovery and call discover_module
+    /// # use anyhow::Result;
+    /// # fn _example() -> Result<()> {
+    /// // let mut discovery = ModuleDiscovery::new(&mut package);
+    /// // let module: ast::Module = /* obtained from parsed syntax */ unimplemented!();
+    /// // let ctx = ModuleFileContext::from_definition_file(path);
+    /// // discovery.discover_module(&module, &ctx)?;
+    /// # Ok(())
+    /// # }
+    /// ```
     fn discover_module(
         &mut self,
         module: &ast::Module,
@@ -235,10 +375,29 @@ impl<'db> ModuleDiscovery<'db> {
     }
 }
 
-/// Extracts the basic `#[path = "..."]` module override.
+/// Extracts a direct outer `#[path = "..."]` attribute value from a module.
+
 ///
-/// This intentionally handles only direct string-literal attributes. More advanced forms such as
-/// `cfg_attr` can be added later when the rest of the module system needs them.
+
+/// This only recognizes an outer attribute named exactly `path` whose meta is a key-value
+
+/// with a string literal (e.g. `#[path = "foo.rs"]`). Other forms (including `cfg_attr` or
+
+/// non-literal/indirect expressions) are ignored and will return `None`.
+
+///
+
+/// # Examples
+
+///
+
+/// ```no_run
+
+/// // Given an `ast::Module` `m` that has `#[path = "sub/mod.rs"]`, this returns that string.
+
+/// let _path_opt = module_path_attr(&m);
+
+/// ```
 fn module_path_attr(item: &ast::Module) -> Option<String> {
     for attr in item.attrs() {
         if !attr.kind().is_outer() || attr.simple_name().as_deref() != Some("path") {

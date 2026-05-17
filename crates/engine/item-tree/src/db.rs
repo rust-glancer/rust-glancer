@@ -120,6 +120,21 @@ impl ItemTreeDb {
         })
     }
 
+    /// Lowers a parsed package into its item-tree representation.
+    ///
+    /// Discovers the package's modules and then builds its item trees using the provided name interner.
+    /// Any error returned is annotated with contextual information that includes the package name and
+    /// the package slot index.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// // Given a `parse` and `interners` context:
+    /// let package_slot = 0;
+    /// let package = parse.package_mut(package_slot).unwrap();
+    /// let interner = interners.package_mut(package_slot).unwrap();
+    /// let item_tree_package = lower_package(package_slot, package, interner)?;
+    /// ```
     fn lower_package(
         package_slot: usize,
         package: &mut rg_parse::Package,

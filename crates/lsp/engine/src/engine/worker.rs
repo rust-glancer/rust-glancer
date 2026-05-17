@@ -295,6 +295,30 @@ impl EngineWorker {
         tracing::debug!("LSP engine worker stopped");
     }
 
+    /// Initializes the workspace at `root` and performs a full indexing run using `analysis`.
+    ///
+    /// This loads Cargo metadata, discovers sysroot sources, builds and installs the analysis
+    /// `Project`, purges retained startup allocation noise, and records an initial project snapshot.
+    /// Errors are returned if Cargo metadata cannot be loaded, the workspace manifest is missing,
+    /// or project build/indexing fails.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use std::path::PathBuf;
+    /// # use std::time::Duration;
+    /// # use anyhow::Result;
+    /// # // The surrounding test harness would construct a real EngineWorker and AnalysisConfig.
+    /// # fn example(mut worker: crate::EngineWorker, analysis: crate::AnalysisConfig) -> Result<()> {
+    /// let root = PathBuf::from("/path/to/workspace");
+    /// worker.initialize(root, analysis)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Returns
+    ///
+    /// `Ok(())` on successful initialization and indexing, or an `Err` describing the failure.
     fn initialize(&mut self, root: PathBuf, analysis: AnalysisConfig) -> anyhow::Result<()> {
         let package_residency_policy = analysis.package_residency_policy;
         let cargo_metadata_config = analysis.cargo_metadata_config;
@@ -372,6 +396,28 @@ impl EngineWorker {
         Ok(())
     }
 
+    /// Performs a manual reindex of the saved workspace, purges reported retained memory, and logs the updated project snapshot and elapsed time.
+    ///
+    /// This triggers a full workspace reindex on the currently saved `Project`, then calls the memory reporter to purge and report retained memory under the label `"after manual reindex"`, and finally logs the new saved snapshot with the label `"manual reindex"`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the project reindex operation or retrieving the saved snapshot fails.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use anyhow::Result;
+    /// # struct EngineWorker { /* ... */ }
+    /// # impl EngineWorker {
+    /// #     fn reindex_workspace(&mut self) -> Result<(), anyhow::Error> { Ok(()) }
+    /// # }
+    /// # fn example() -> Result<()> {
+    /// let mut worker = /* obtain EngineWorker */ unimplemented!();
+    /// worker.reindex_workspace()?;
+    /// # Ok(())
+    /// # }
+    /// ```
     fn reindex_workspace(&mut self) -> anyhow::Result<()> {
         let started = Instant::now();
 

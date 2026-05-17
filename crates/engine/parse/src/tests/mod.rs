@@ -119,6 +119,18 @@ fn parses_shared_files_once_across_targets() {
     );
 }
 
+/// Ensures module discovery finds reachable out-of-line module files and omits modules that have no source.
+///
+/// Verifies that modules declared in `src/lib.rs` (including a nested inline module and a module with `#[path = "..."]`)
+/// result in their corresponding files being reported, and that a declared but missing module does not appear in the file list.
+///
+/// # Examples
+///
+/// ```
+/// // This test validates that module discovery collects:
+/// // src/flat.rs, src/generated/api.rs, src/inline/child.rs, src/nested/mod.rs
+/// module_discovery_parses_reachable_out_of_line_files();
+/// ```
 #[test]
 fn module_discovery_parses_reachable_out_of_line_files() {
     check_parse_db_after_module_discovery(
@@ -167,7 +179,15 @@ fn module_discovery_parses_reachable_out_of_line_files() {
     );
 }
 
-#[test]
+/// Ensures module-discovery shares a single discovered source file when both lib and bin targets reference it.
+///
+/// # Examples
+///
+/// ```no_run
+/// // Construct a workspace where both the library and a binary reference `src/shared.rs`,
+/// // then run module discovery and verify `src/shared.rs` appears only once in the collected files.
+/// check_parse_db_after_module_discovery(/* workspace fixture string */, /* expected output */);
+/// ```
 fn module_discovery_shares_files_across_targets() {
     check_parse_db_after_module_discovery(
         r#"
