@@ -13,6 +13,8 @@
 //!     - "+" Token(Add)
 //!     - "4" Token(Number)
 
+#![allow(clippy::upper_case_acronyms, clippy::useless_conversion)]
+
 use rg_rowan as rowan;
 use rowan::{GreenNodeBuilder, NodeOrToken};
 use std::iter::Peekable;

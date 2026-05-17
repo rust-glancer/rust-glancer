@@ -9,6 +9,8 @@
 //! alongside this tutorial:
 //! https://github.com/rust-analyzer/rust-analyzer/blob/master/docs/dev/syntax.md
 
+#![allow(clippy::empty_line_after_doc_comments, clippy::upper_case_acronyms)]
+
 use rg_rowan as rowan;
 
 /// Let's start with defining all kinds of tokens and

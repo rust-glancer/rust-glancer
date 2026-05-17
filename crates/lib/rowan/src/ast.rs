@@ -145,7 +145,7 @@ impl<N: AstNode> AstPtr<N> {
 
     /// Returns the underlying [`SyntaxNodePtr`].
     pub fn syntax_node_ptr(&self) -> SyntaxNodePtr<N::Language> {
-        self.raw.clone()
+        self.raw
     }
 
     /// Casts this to an [`AstPtr`] to the given node type if possible.
@@ -165,9 +165,7 @@ impl<N: AstNode> fmt::Debug for AstPtr<N> {
 
 impl<N: AstNode> Clone for AstPtr<N> {
     fn clone(&self) -> Self {
-        Self {
-            raw: self.raw.clone(),
-        }
+        Self { raw: self.raw }
     }
 }
 

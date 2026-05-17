@@ -44,7 +44,6 @@ impl SyntaxText {
     }
 
     pub fn char_at(&self, offset: TextSize) -> Option<char> {
-        let offset = offset.into();
         let mut start: TextSize = 0.into();
         let res = self.try_for_each_chunk(|chunk| {
             let end = start + TextSize::of(chunk);
@@ -103,7 +102,10 @@ impl SyntaxText {
 
     pub fn for_each_chunk<F: FnMut(&str)>(&self, mut f: F) {
         enum Void {}
-        match self.try_for_each_chunk(|chunk| Ok::<(), Void>(f(chunk))) {
+        match self.try_for_each_chunk(|chunk| {
+            f(chunk);
+            Ok::<(), Void>(())
+        }) {
             Ok(()) => (),
             Err(void) => match void {},
         }
@@ -123,10 +125,7 @@ impl SyntaxText {
 }
 
 fn found<T>(res: Result<(), T>) -> Option<T> {
-    match res {
-        Ok(()) => None,
-        Err(it) => Some(it),
-    }
+    res.err()
 }
 
 impl fmt::Debug for SyntaxText {
@@ -281,7 +280,7 @@ mod tests {
         let mut builder = GreenNodeBuilder::new();
         builder.start_node(SyntaxKind(62));
         for &chunk in chunks.iter() {
-            builder.token(SyntaxKind(92), chunk.into())
+            builder.token(SyntaxKind(92), chunk)
         }
         builder.finish_node();
         SyntaxNode::new_root(builder.finish())
@@ -299,7 +298,8 @@ mod tests {
                 "`{}` (SyntaxText) `{}` (SyntaxText)",
                 t1, t2
             );
-            let actual = t1 == &*t2.to_string();
+            let t2_string = t2.to_string();
+            let actual = t1 == t2_string.as_str();
             assert_eq!(expected, actual, "`{}` (SyntaxText) `{}` (&str)", t1, t2);
         }
         fn check(t1: &[&str], t2: &[&str]) {

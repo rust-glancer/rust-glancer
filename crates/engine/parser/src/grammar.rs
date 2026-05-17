@@ -236,6 +236,7 @@ fn opt_visibility(p: &mut Parser<'_>, in_tuple_field: bool) -> bool {
     true
 }
 
+#[allow(clippy::collapsible_match)]
 fn opt_visibility_inner(p: &mut Parser<'_>, in_tuple_field: bool) -> bool {
     if !p.at(T!['(']) {
         return false;

@@ -7,7 +7,7 @@ authors = ["rust-analyzer developers"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/rust-lang/rust-analyzer"
-rust-version = "1.85"
+rust-version = "1.87"
 
 [lib]
 doctest = false

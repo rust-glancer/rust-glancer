@@ -20,6 +20,13 @@
 //! [Swift]: <https://github.com/apple/swift/blob/13d593df6f359d0cb2fc81cfaac273297c539455/lib/Syntax/README.md>
 
 #![cfg_attr(feature = "in-rust-tree", feature(rustc_private))]
+#![allow(
+    clippy::collapsible_match,
+    clippy::iter_kv_map,
+    clippy::mutable_key_type,
+    clippy::too_many_arguments,
+    clippy::vec_init_then_push
+)]
 
 #[cfg(feature = "in-rust-tree")]
 extern crate rustc_driver as _;

@@ -103,4 +103,8 @@ impl Input {
     pub fn len(&self) -> usize {
         self.kind.len()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.kind.is_empty()
+    }
 }
