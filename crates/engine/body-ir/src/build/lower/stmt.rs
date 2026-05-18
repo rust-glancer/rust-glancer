@@ -91,10 +91,12 @@ impl FunctionBodyLowering<'_> {
                 .map(|tail_expr| self.lower_expr(tail_expr, block_scope));
         }
 
+        let label = self.lower_label(block.label());
         self.alloc_expr(
             block.syntax(),
             block_scope,
             ExprKind::Block {
+                label,
                 scope: block_scope,
                 statements,
                 tail,

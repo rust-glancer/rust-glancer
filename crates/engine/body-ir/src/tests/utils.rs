@@ -9,8 +9,8 @@ use expect_test::Expect;
 use crate::{
     BindingData, BodyData, BodyFunctionData, BodyGenericArg, BodyImplData, BodyIrBuildPolicy,
     BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy, BodyResolution,
-    BodySource, BodyTy, ExprData, ExprKind, ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
-    TargetBodiesStatus,
+    BodySource, BodyTy, ExprData, ExprKind, LabelData, ResolvedFieldRef, ResolvedFunctionRef,
+    StmtKind, TargetBodiesStatus,
     ir::ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
         BodyItemRef, ExprId, StmtId,
@@ -525,6 +525,82 @@ impl TargetBodyIrSnapshot<'_> {
                     }
                 }
             }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                if let Some(condition) = condition {
+                    writeln!(dump, "{}condition", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *condition, depth + 2, dump);
+                }
+                if let Some(then_branch) = then_branch {
+                    writeln!(dump, "{}then", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *then_branch, depth + 2, dump);
+                }
+                if let Some(else_branch) = else_branch {
+                    writeln!(dump, "{}else", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *else_branch, depth + 2, dump);
+                }
+            }
+            ExprKind::Let { initializer, .. } => {
+                if let Some(initializer) = initializer {
+                    writeln!(dump, "{}initializer", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *initializer, depth + 2, dump);
+                }
+            }
+            ExprKind::Loop {
+                body: loop_body, ..
+            } => {
+                if let Some(loop_body) = loop_body {
+                    writeln!(dump, "{}body", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *loop_body, depth + 2, dump);
+                }
+            }
+            ExprKind::While {
+                condition,
+                body: loop_body,
+                ..
+            } => {
+                if let Some(condition) = condition {
+                    writeln!(dump, "{}condition", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *condition, depth + 2, dump);
+                }
+                if let Some(loop_body) = loop_body {
+                    writeln!(dump, "{}body", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *loop_body, depth + 2, dump);
+                }
+            }
+            ExprKind::For {
+                iterable,
+                body: loop_body,
+                ..
+            } => {
+                if let Some(iterable) = iterable {
+                    writeln!(dump, "{}iterable", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *iterable, depth + 2, dump);
+                }
+                if let Some(loop_body) = loop_body {
+                    writeln!(dump, "{}body", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *loop_body, depth + 2, dump);
+                }
+            }
+            ExprKind::Break { value, .. } => {
+                if let Some(value) = value {
+                    writeln!(dump, "{}value", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *value, depth + 2, dump);
+                }
+            }
             ExprKind::MethodCall { receiver, args, .. } => {
                 if let Some(receiver) = receiver {
                     writeln!(dump, "{}receiver", indent(depth + 1))
@@ -573,15 +649,49 @@ impl TargetBodyIrSnapshot<'_> {
                 }
             }
             ExprKind::Path { .. } | ExprKind::Literal { .. } => {}
+            ExprKind::Continue { .. } => {}
         }
     }
 
     fn render_expr_head(&self, data: &ExprData) -> String {
         match &data.kind {
-            ExprKind::Block { scope, .. } => format!("block s{}", scope.0),
+            ExprKind::Block { label, scope, .. } => {
+                format!("block{} s{}", render_label_suffix(label.as_ref()), scope.0)
+            }
             ExprKind::Path { path } => format!("path {path}"),
             ExprKind::Call { .. } => "call".to_string(),
             ExprKind::Match { .. } => "match".to_string(),
+            ExprKind::If { .. } => "if".to_string(),
+            ExprKind::Let {
+                scope, bindings, ..
+            } => {
+                format!("let s{} {}", scope.0, render_binding_list(bindings))
+            }
+            ExprKind::Loop { label, .. } => {
+                format!("loop{}", render_label_suffix(label.as_ref()))
+            }
+            ExprKind::While { label, .. } => {
+                format!("while{}", render_label_suffix(label.as_ref()))
+            }
+            ExprKind::For {
+                label,
+                scope,
+                bindings,
+                ..
+            } => {
+                format!(
+                    "for{} s{} {}",
+                    render_label_suffix(label.as_ref()),
+                    scope.0,
+                    render_binding_list(bindings)
+                )
+            }
+            ExprKind::Break { label, .. } => {
+                format!("break{}", render_label_suffix(label.as_ref()))
+            }
+            ExprKind::Continue { label } => {
+                format!("continue{}", render_label_suffix(label.as_ref()))
+            }
             ExprKind::MethodCall { method_name, .. } => {
                 format!("method_call {method_name}")
             }
@@ -1108,6 +1218,24 @@ impl TargetBodyIrSnapshot<'_> {
             .collect::<Vec<_>>()
             .join(" ")
     }
+}
+
+fn render_binding_list(bindings: &[BindingId]) -> String {
+    if bindings.is_empty() {
+        return "<none>".to_string();
+    }
+
+    bindings
+        .iter()
+        .map(|binding| format!("v{}", binding.0))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_label_suffix(label: Option<&LabelData>) -> String {
+    label
+        .map(|label| format!(" {}", label.name))
+        .unwrap_or_default()
 }
 
 fn indent(depth: usize) -> String {

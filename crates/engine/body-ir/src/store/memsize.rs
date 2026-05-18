@@ -6,7 +6,7 @@ use crate::{
     BodyTypePathResolution, ExprData, ExprId, ExprKind, LiteralKind, PackageBodies, PatData, PatId,
     PatKind, RecordExprField, RecordPatField, ResolvedFieldRef, ResolvedFunctionRef, ScopeData,
     ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
-    ir::expr::{ExprWrapperKind, MatchArmData},
+    ir::expr::{ExprWrapperKind, LabelData, MatchArmData},
     ir::ids::StmtId,
 };
 use rg_memsize::{MemoryRecorder, MemorySize};
@@ -39,6 +39,7 @@ rg_memsize::impl_memory_size_children! {
     ScopeData => parent, local_items, local_impls, bindings;
     ExprData => source, scope, visible_bindings, kind, resolution, ty;
     MatchArmData => pat, scope, expr;
+    LabelData => name, span;
     RecordExprField => key, key_span, source_span, value;
     BodyPath => source_span, path, segment_spans;
     BodyLocalNominalTy => item, args;
@@ -71,10 +72,12 @@ impl MemorySize for ExprKind {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
             Self::Block {
+                label,
                 scope,
                 statements,
                 tail,
             } => {
+                recorder.scope("label", |recorder| label.record_memory_children(recorder));
                 recorder.scope("scope", |recorder| scope.record_memory_children(recorder));
                 recorder.scope("statements", |recorder| {
                     statements.record_memory_children(recorder);
@@ -91,6 +94,77 @@ impl MemorySize for ExprKind {
                     scrutinee.record_memory_children(recorder);
                 });
                 recorder.scope("arms", |recorder| arms.record_memory_children(recorder));
+            }
+            Self::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                recorder.scope("condition", |recorder| {
+                    condition.record_memory_children(recorder);
+                });
+                recorder.scope("then_branch", |recorder| {
+                    then_branch.record_memory_children(recorder);
+                });
+                recorder.scope("else_branch", |recorder| {
+                    else_branch.record_memory_children(recorder);
+                });
+            }
+            Self::Let {
+                scope,
+                pat,
+                bindings,
+                initializer,
+            } => {
+                recorder.scope("scope", |recorder| scope.record_memory_children(recorder));
+                recorder.scope("pat", |recorder| pat.record_memory_children(recorder));
+                recorder.scope("bindings", |recorder| {
+                    bindings.record_memory_children(recorder);
+                });
+                recorder.scope("initializer", |recorder| {
+                    initializer.record_memory_children(recorder);
+                });
+            }
+            Self::Loop { label, body } => {
+                recorder.scope("label", |recorder| label.record_memory_children(recorder));
+                recorder.scope("body", |recorder| body.record_memory_children(recorder));
+            }
+            Self::While {
+                label,
+                condition,
+                body,
+            } => {
+                recorder.scope("label", |recorder| label.record_memory_children(recorder));
+                recorder.scope("condition", |recorder| {
+                    condition.record_memory_children(recorder);
+                });
+                recorder.scope("body", |recorder| body.record_memory_children(recorder));
+            }
+            Self::For {
+                label,
+                scope,
+                pat,
+                bindings,
+                iterable,
+                body,
+            } => {
+                recorder.scope("label", |recorder| label.record_memory_children(recorder));
+                recorder.scope("scope", |recorder| scope.record_memory_children(recorder));
+                recorder.scope("pat", |recorder| pat.record_memory_children(recorder));
+                recorder.scope("bindings", |recorder| {
+                    bindings.record_memory_children(recorder);
+                });
+                recorder.scope("iterable", |recorder| {
+                    iterable.record_memory_children(recorder);
+                });
+                recorder.scope("body", |recorder| body.record_memory_children(recorder));
+            }
+            Self::Break { label, value } => {
+                recorder.scope("label", |recorder| label.record_memory_children(recorder));
+                recorder.scope("value", |recorder| value.record_memory_children(recorder));
+            }
+            Self::Continue { label } => {
+                recorder.scope("label", |recorder| label.record_memory_children(recorder));
             }
             Self::MethodCall {
                 receiver,

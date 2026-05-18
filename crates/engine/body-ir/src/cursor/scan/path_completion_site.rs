@@ -186,13 +186,25 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             if expr.source.file_id != self.file_id {
                 continue;
             }
-            let ExprKind::Match { arms, .. } = &expr.kind else {
-                continue;
-            };
-            for arm in arms {
-                if let Some(pat) = arm.pat {
-                    self.scan_pat(body_ref, body, arm.scope, pat, best);
+            match &expr.kind {
+                ExprKind::Match { arms, .. } => {
+                    for arm in arms {
+                        if let Some(pat) = arm.pat {
+                            self.scan_pat(body_ref, body, arm.scope, pat, best);
+                        }
+                    }
                 }
+                ExprKind::Let {
+                    scope,
+                    pat: Some(pat),
+                    ..
+                }
+                | ExprKind::For {
+                    scope,
+                    pat: Some(pat),
+                    ..
+                } => self.scan_pat(body_ref, body, *scope, *pat, best),
+                _ => {}
             }
         }
     }

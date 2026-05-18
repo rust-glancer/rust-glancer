@@ -4,7 +4,7 @@ use rg_text::Name;
 
 use super::{
     body::BodySource,
-    ids::{ExprId, PatId, ScopeId, StmtId},
+    ids::{BindingId, ExprId, PatId, ScopeId, StmtId},
     path::BodyPath,
     resolved::BodyResolution,
     ty::BodyTy,
@@ -46,6 +46,7 @@ pub struct RecordExprField {
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum ExprKind {
     Block {
+        label: Option<LabelData>,
         scope: ScopeId,
         statements: Vec<StmtId>,
         tail: Option<ExprId>,
@@ -60,6 +61,41 @@ pub enum ExprKind {
     Match {
         scrutinee: Option<ExprId>,
         arms: Vec<MatchArmData>,
+    },
+    If {
+        condition: Option<ExprId>,
+        then_branch: Option<ExprId>,
+        else_branch: Option<ExprId>,
+    },
+    Let {
+        scope: ScopeId,
+        pat: Option<PatId>,
+        bindings: Vec<BindingId>,
+        initializer: Option<ExprId>,
+    },
+    Loop {
+        label: Option<LabelData>,
+        body: Option<ExprId>,
+    },
+    While {
+        label: Option<LabelData>,
+        condition: Option<ExprId>,
+        body: Option<ExprId>,
+    },
+    For {
+        label: Option<LabelData>,
+        scope: ScopeId,
+        pat: Option<PatId>,
+        bindings: Vec<BindingId>,
+        iterable: Option<ExprId>,
+        body: Option<ExprId>,
+    },
+    Break {
+        label: Option<LabelData>,
+        value: Option<ExprId>,
+    },
+    Continue {
+        label: Option<LabelData>,
     },
     MethodCall {
         receiver: Option<ExprId>,
@@ -124,6 +160,13 @@ pub struct MatchArmData {
     pub expr: Option<ExprId>,
 }
 
+/// A loop label written on loop-like syntax or referenced from a jump expression.
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct LabelData {
+    pub name: Name,
+    pub span: Span,
+}
+
 /// Literal category used for display and future cheap inference.
 #[derive(
     Debug,
@@ -154,8 +197,14 @@ impl ExprKind {
     fn shrink_to_fit(&mut self) {
         match self {
             Self::Block {
-                statements, tail, ..
+                label,
+                statements,
+                tail,
+                ..
             } => {
+                if let Some(label) = label {
+                    label.shrink_to_fit();
+                }
                 statements.shrink_to_fit();
                 let _ = tail;
             }
@@ -167,6 +216,34 @@ impl ExprKind {
             Self::Match { scrutinee, arms } => {
                 let _ = scrutinee;
                 arms.shrink_to_fit();
+            }
+            Self::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let _ = condition;
+                let _ = then_branch;
+                let _ = else_branch;
+            }
+            Self::Let { bindings, .. } => {
+                bindings.shrink_to_fit();
+            }
+            Self::For {
+                label, bindings, ..
+            } => {
+                if let Some(label) = label {
+                    label.shrink_to_fit();
+                }
+                bindings.shrink_to_fit();
+            }
+            Self::Loop { label, .. }
+            | Self::While { label, .. }
+            | Self::Break { label, .. }
+            | Self::Continue { label } => {
+                if let Some(label) = label {
+                    label.shrink_to_fit();
+                }
             }
             Self::MethodCall {
                 receiver,
@@ -201,5 +278,11 @@ impl ExprKind {
 impl RecordExprField {
     fn shrink_to_fit(&mut self) {
         self.key.shrink_to_fit();
+    }
+}
+
+impl LabelData {
+    fn shrink_to_fit(&mut self) {
+        self.name.shrink_to_fit();
     }
 }

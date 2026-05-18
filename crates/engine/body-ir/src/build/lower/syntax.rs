@@ -9,7 +9,7 @@ use rg_def_map::{Path, PathSegment};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
-use crate::ir::{BodyPath, BodySource, LiteralKind};
+use crate::ir::{BodyPath, BodySource, LabelData, LiteralKind};
 
 use super::function::FunctionBodyLowering;
 
@@ -59,6 +59,25 @@ impl FunctionBodyLowering<'_> {
 
     pub(super) fn intern_ast_name_or_name_ref(&mut self, name: ast::NameOrNameRef) -> Name {
         self.intern_name_text(name.text())
+    }
+
+    pub(super) fn intern_ast_lifetime(&mut self, lifetime: ast::Lifetime) -> Name {
+        self.intern_name_text(lifetime.text())
+    }
+
+    pub(super) fn lower_label(&mut self, label: Option<ast::Label>) -> Option<LabelData> {
+        self.lower_lifetime_label(label.and_then(|label| label.lifetime()))
+    }
+
+    pub(super) fn lower_lifetime_label(
+        &mut self,
+        lifetime: Option<ast::Lifetime>,
+    ) -> Option<LabelData> {
+        let lifetime = lifetime?;
+        Some(LabelData {
+            name: self.intern_ast_lifetime(lifetime.clone()),
+            span: self.source(lifetime.syntax()).span,
+        })
     }
 
     fn collect_path_segments(

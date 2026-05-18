@@ -15,7 +15,9 @@ pub use self::{
         BodyData, BodyIrStats, BodySource, PackageBodies, ScopeData, TargetBodies,
         TargetBodiesStatus,
     },
-    expr::{ExprData, ExprKind, ExprWrapperKind, LiteralKind, MatchArmData, RecordExprField},
+    expr::{
+        ExprData, ExprKind, ExprWrapperKind, LabelData, LiteralKind, MatchArmData, RecordExprField,
+    },
     ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
         BodyItemRef, BodyRef, ExprId, PatId, ScopeId, StmtId,

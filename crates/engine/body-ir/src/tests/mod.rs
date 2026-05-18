@@ -1,6 +1,7 @@
 mod utils;
 
 mod body_local_items;
+mod control_flow;
 mod expressions;
 mod package_policy;
 mod patterns;

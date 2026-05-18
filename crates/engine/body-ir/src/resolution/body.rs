@@ -171,6 +171,28 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                     BodyTy::Unknown
                 };
             }
+            ExprKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.body.exprs[expr].ty = match else_branch {
+                    Some(else_branch) => {
+                        let mut branch_tys = Vec::new();
+                        if let Some(then_branch) = then_branch {
+                            push_unique(&mut branch_tys, self.body.exprs[then_branch].ty.clone());
+                        }
+                        push_unique(&mut branch_tys, self.body.exprs[else_branch].ty.clone());
+
+                        if branch_tys.len() == 1 {
+                            branch_tys.pop().expect("one branch type should exist")
+                        } else {
+                            BodyTy::Unknown
+                        }
+                    }
+                    None => BodyTy::Unit,
+                };
+            }
             ExprKind::Block { tail, .. } => {
                 self.body.exprs[expr].ty = tail
                     .map(|tail| self.body.exprs[tail].ty.clone())
@@ -209,7 +231,16 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 data.resolution = resolution;
                 data.ty = ty;
             }
-            ExprKind::Literal { .. } | ExprKind::Unknown { .. } => {}
+            ExprKind::While { .. } | ExprKind::For { .. } => {
+                self.body.exprs[expr].ty = BodyTy::Unit;
+            }
+            ExprKind::Break { .. } | ExprKind::Continue { .. } => {
+                self.body.exprs[expr].ty = BodyTy::Never;
+            }
+            ExprKind::Let { .. }
+            | ExprKind::Loop { .. }
+            | ExprKind::Literal { .. }
+            | ExprKind::Unknown { .. } => {}
         }
 
         Ok(

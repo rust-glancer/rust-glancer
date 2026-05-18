@@ -2,7 +2,7 @@
 
 use rg_syntax::{
     AstNode as _,
-    ast::{self, HasArgList as _},
+    ast::{self, BinaryOp, ElseBranch, HasArgList as _, HasLoopBody as _, LogicOp},
 };
 
 use rg_item_tree::FieldKey;
@@ -21,10 +21,21 @@ impl FunctionBodyLowering<'_> {
             ast::Expr::BlockExpr(block) => self.lower_block_expr(block, scope),
             ast::Expr::CallExpr(call) => self.lower_call_expr(call, scope),
             ast::Expr::FieldExpr(field) => self.lower_field_expr(field, scope),
+            ast::Expr::ForExpr(for_expr) => self.lower_for_expr(for_expr, scope),
+            ast::Expr::IfExpr(if_expr) => self.lower_if_expr(if_expr, scope),
+            ast::Expr::LetExpr(let_expr) => {
+                let let_scope = self.builder.alloc_scope(Some(scope));
+                self.lower_let_expr(let_expr, let_scope)
+            }
             ast::Expr::Literal(literal) => self.lower_literal(literal, scope),
+            ast::Expr::LoopExpr(loop_expr) => self.lower_loop_expr(loop_expr, scope),
             ast::Expr::MatchExpr(match_expr) => self.lower_match_expr(match_expr, scope),
             ast::Expr::MethodCallExpr(method_call) => {
                 self.lower_method_call_expr(method_call, scope)
+            }
+            ast::Expr::BreakExpr(break_expr) => self.lower_break_expr(break_expr, scope),
+            ast::Expr::ContinueExpr(continue_expr) => {
+                self.lower_continue_expr(continue_expr, scope)
             }
             ast::Expr::RecordExpr(record) => self.lower_record_expr(record, scope),
             ast::Expr::AwaitExpr(await_expr) => self.lower_wrapper_expr(
@@ -80,6 +91,7 @@ impl FunctionBodyLowering<'_> {
                 scope,
                 ExprWrapperKind::Try,
             ),
+            ast::Expr::WhileExpr(while_expr) => self.lower_while_expr(while_expr, scope),
             // Unsupported expressions still lower their direct expression children so cursor and
             // type queries can work inside syntax the IR does not model yet.
             expr => self.lower_unknown_with_direct_children(expr.syntax(), scope),
@@ -96,6 +108,149 @@ impl FunctionBodyLowering<'_> {
             .collect();
 
         self.alloc_expr(call.syntax(), scope, ExprKind::Call { callee, args })
+    }
+
+    fn lower_if_expr(&mut self, if_expr: ast::IfExpr, scope: ScopeId) -> ExprId {
+        let (condition, then_parent_scope) = self.lower_condition_expr(if_expr.condition(), scope);
+        let then_branch = if_expr
+            .then_branch()
+            .map(|then_branch| self.lower_block_expr(then_branch, then_parent_scope));
+        let else_branch = if_expr.else_branch().map(|else_branch| match else_branch {
+            ElseBranch::Block(block) => self.lower_block_expr(block, scope),
+            ElseBranch::IfExpr(if_expr) => self.lower_if_expr(if_expr, scope),
+        });
+
+        self.alloc_expr(
+            if_expr.syntax(),
+            scope,
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            },
+        )
+    }
+
+    fn lower_condition_expr(
+        &mut self,
+        condition: Option<ast::Expr>,
+        scope: ScopeId,
+    ) -> (Option<ExprId>, ScopeId) {
+        match condition {
+            Some(ast::Expr::LetExpr(let_expr)) => {
+                let condition_scope = self.builder.alloc_scope(Some(scope));
+                (
+                    Some(self.lower_let_expr(let_expr, condition_scope)),
+                    condition_scope,
+                )
+            }
+            Some(ast::Expr::BinExpr(bin_expr))
+                if matches!(bin_expr.op_kind(), Some(BinaryOp::LogicOp(LogicOp::And))) =>
+            {
+                let (lhs, rhs_scope) = self.lower_condition_expr(bin_expr.lhs(), scope);
+                let (rhs, success_scope) = self.lower_condition_expr(bin_expr.rhs(), rhs_scope);
+                let children = [lhs, rhs].into_iter().flatten().collect();
+
+                // Until we have real binary IR, preserve the source node as an unsupported
+                // expression while still lowering each side in its Rust lexical scope.
+                (
+                    Some(self.alloc_expr(bin_expr.syntax(), scope, ExprKind::Unknown { children })),
+                    success_scope,
+                )
+            }
+            Some(condition) => (Some(self.lower_expr(condition, scope)), scope),
+            None => (None, scope),
+        }
+    }
+
+    fn lower_let_expr(&mut self, let_expr: ast::LetExpr, scope: ScopeId) -> ExprId {
+        // The scrutinee is evaluated before the pattern bindings exist, which keeps
+        // `if let x = x` pointed at the outer `x` on the right-hand side.
+        let initializer = let_expr.expr().map(|expr| self.lower_expr(expr, scope));
+        let (pat, bindings) = let_expr
+            .pat()
+            .map(|pat| self.lower_pat(pat, scope, BindingKind::Let, None))
+            .unwrap_or_default();
+
+        self.alloc_expr(
+            let_expr.syntax(),
+            scope,
+            ExprKind::Let {
+                scope,
+                pat,
+                bindings,
+                initializer,
+            },
+        )
+    }
+
+    fn lower_loop_expr(&mut self, loop_expr: ast::LoopExpr, scope: ScopeId) -> ExprId {
+        let label = self.lower_label(loop_expr.label());
+        let body = loop_expr
+            .loop_body()
+            .map(|body| self.lower_block_expr(body, scope));
+
+        self.alloc_expr(loop_expr.syntax(), scope, ExprKind::Loop { label, body })
+    }
+
+    fn lower_while_expr(&mut self, while_expr: ast::WhileExpr, scope: ScopeId) -> ExprId {
+        let label = self.lower_label(while_expr.label());
+        let (condition, body_parent_scope) =
+            self.lower_condition_expr(while_expr.condition(), scope);
+        let body = while_expr
+            .loop_body()
+            .map(|body| self.lower_block_expr(body, body_parent_scope));
+
+        self.alloc_expr(
+            while_expr.syntax(),
+            scope,
+            ExprKind::While {
+                label,
+                condition,
+                body,
+            },
+        )
+    }
+
+    fn lower_for_expr(&mut self, for_expr: ast::ForExpr, scope: ScopeId) -> ExprId {
+        let label = self.lower_label(for_expr.label());
+        let iterable = for_expr
+            .iterable()
+            .map(|iterable| self.lower_expr(iterable, scope));
+        let loop_scope = self.builder.alloc_scope(Some(scope));
+        let (pat, bindings) = for_expr
+            .pat()
+            .map(|pat| self.lower_pat(pat, loop_scope, BindingKind::Let, None))
+            .unwrap_or_default();
+        let body = for_expr
+            .loop_body()
+            .map(|body| self.lower_block_expr(body, loop_scope));
+
+        self.alloc_expr(
+            for_expr.syntax(),
+            scope,
+            ExprKind::For {
+                label,
+                scope: loop_scope,
+                pat,
+                bindings,
+                iterable,
+                body,
+            },
+        )
+    }
+
+    fn lower_break_expr(&mut self, break_expr: ast::BreakExpr, scope: ScopeId) -> ExprId {
+        let label = self.lower_lifetime_label(break_expr.lifetime());
+        let value = break_expr.expr().map(|expr| self.lower_expr(expr, scope));
+
+        self.alloc_expr(break_expr.syntax(), scope, ExprKind::Break { label, value })
+    }
+
+    fn lower_continue_expr(&mut self, continue_expr: ast::ContinueExpr, scope: ScopeId) -> ExprId {
+        let label = self.lower_lifetime_label(continue_expr.lifetime());
+
+        self.alloc_expr(continue_expr.syntax(), scope, ExprKind::Continue { label })
     }
 
     fn lower_match_expr(&mut self, match_expr: ast::MatchExpr, scope: ScopeId) -> ExprId {

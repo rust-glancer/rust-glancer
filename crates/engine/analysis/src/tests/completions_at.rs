@@ -254,6 +254,57 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_qualified_paths_in_control_flow_patterns() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_control_flow_pattern_path_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod api {
+    pub struct Profile(pub u8);
+    pub struct User(pub u8);
+    pub fn build() {}
+}
+
+pub struct Users;
+
+pub fn use_it(user: api::User, users: Users) {
+    if let api::Us$if_path$er(id) = user {}
+
+    while let api::Us$while_path$er(id) = user {}
+
+    for api::Us$for_path$er(id) in users {}
+}
+"#,
+        &[
+            AnalysisQuery::complete("if let pattern path completions", "if_path"),
+            AnalysisQuery::complete("while let pattern path completions", "while_path"),
+            AnalysisQuery::complete("for pattern path completions", "for_path"),
+        ],
+        expect![[r#"
+            if let pattern path completions
+            - struct Profile
+            - struct User
+            - fn build
+
+            while let pattern path completions
+            - struct Profile
+            - struct User
+            - fn build
+
+            for pattern path completions
+            - struct Profile
+            - struct User
+            - fn build
+        "#]],
+    );
+}
+
+#[test]
 fn completes_unqualified_values_from_lexical_and_module_scope() {
     check_analysis_queries(
         r#"
@@ -361,6 +412,39 @@ pub fn use_it(c_a_outer: u8) {
               sort: 01-module|use_it|06|00|Function(Semantic(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: FunctionId(1) }))
               replace: 107..108
               snippet: use_it(${1:c_a_outer})$0
+        "#]],
+    );
+}
+
+#[test]
+fn completes_for_loop_pattern_bindings() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_for_pattern_binding_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Items;
+
+pub fn use_it(items: Items) {
+    for item in items {
+        it$0;
+    }
+}
+"#,
+        &[AnalysisQuery::complete(
+            "for pattern binding completions",
+            "0",
+        )],
+        expect![[r#"
+            for pattern binding completions
+            - struct Items
+            - variable item
+            - variable items
+            - fn use_it
         "#]],
     );
 }
@@ -1400,6 +1484,10 @@ pub struct User {
 }
 
 impl User {
+    fn is_valid(&self) -> bool {
+        true
+    }
+
     fn label(&self) {}
 }
 
@@ -1412,6 +1500,14 @@ pub fn use_it(maybe: Option<User>) {
     let Some(value) = maybe else { return; };
     value.$let_payload$;
 
+    if let Some(found) = maybe && found.$if_rhs$is_valid() {
+        found.$if_payload$;
+    }
+
+    while let Some(next) = maybe {
+        next.$while_payload$;
+    }
+
     match maybe {
         Some(user) => user.$match_payload$,
         None => {}
@@ -1420,15 +1516,35 @@ pub fn use_it(maybe: Option<User>) {
 "#,
         &[
             AnalysisQuery::complete("let pattern payload completions", "let_payload"),
+            AnalysisQuery::complete("if let-chain rhs completions", "if_rhs"),
+            AnalysisQuery::complete("if let pattern payload completions", "if_payload"),
+            AnalysisQuery::complete("while let pattern payload completions", "while_payload"),
             AnalysisQuery::complete("match pattern payload completions", "match_payload"),
         ],
         expect![[r#"
             let pattern payload completions
             - field id
+            - inherent_method is_valid
+            - inherent_method label
+
+            if let-chain rhs completions
+            - field id
+            - inherent_method is_valid
+            - inherent_method label
+
+            if let pattern payload completions
+            - field id
+            - inherent_method is_valid
+            - inherent_method label
+
+            while let pattern payload completions
+            - field id
+            - inherent_method is_valid
             - inherent_method label
 
             match pattern payload completions
             - field id
+            - inherent_method is_valid
             - inherent_method label
         "#]],
     );
@@ -1575,6 +1691,55 @@ pub fn use_it(user: User) {
         )],
         expect![[r#"
             record pattern prefix completions
+            - field active
+            - field name
+        "#]],
+    );
+}
+
+#[test]
+fn completes_record_pattern_fields_in_control_flow() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_control_flow_record_pattern_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User {
+    pub id: u8,
+    pub name: u8,
+    pub active: bool,
+}
+
+pub struct Users;
+
+pub fn use_it(user: User, users: Users) {
+    if let User { id, na$if_field$ } = user {}
+
+    while let User { ac$while_field$ } = user {}
+
+    for User { id, na$for_field$ } in users {}
+}
+"#,
+        &[
+            AnalysisQuery::complete("if let record pattern fields", "if_field"),
+            AnalysisQuery::complete("while let record pattern fields", "while_field"),
+            AnalysisQuery::complete("for record pattern fields", "for_field"),
+        ],
+        expect![[r#"
+            if let record pattern fields
+            - field active
+            - field name
+
+            while let record pattern fields
+            - field active
+            - field id
+            - field name
+
+            for record pattern fields
             - field active
             - field name
         "#]],

@@ -898,6 +898,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             ExprKind::Path { path } => format!("path {path}"),
             ExprKind::Call { .. } => "call".to_string(),
             ExprKind::Match { .. } => "match".to_string(),
+            ExprKind::If { .. } => "if".to_string(),
+            ExprKind::Let { .. } => "let".to_string(),
+            ExprKind::Loop { .. } => "loop".to_string(),
+            ExprKind::While { .. } => "while".to_string(),
+            ExprKind::For { .. } => "for".to_string(),
+            ExprKind::Break { .. } => "break".to_string(),
+            ExprKind::Continue { .. } => "continue".to_string(),
             ExprKind::MethodCall { method_name, .. } => {
                 format!("method_call {method_name}")
             }

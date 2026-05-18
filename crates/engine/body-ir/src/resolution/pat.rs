@@ -69,17 +69,43 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
 
         for expr_idx in 0..self.body.exprs.len() {
             let expr = ExprId(expr_idx);
-            let ExprKind::Match { scrutinee, arms } = self.body.exprs[expr].kind.clone() else {
-                continue;
-            };
-            let Some(scrutinee) = scrutinee else {
-                continue;
-            };
-            let expected_ty = self.body.exprs[scrutinee].ty.clone();
-            for arm in arms {
-                if let Some(pat) = arm.pat {
+            match self.body.exprs[expr].kind.clone() {
+                ExprKind::Match { scrutinee, arms } => {
+                    let Some(scrutinee) = scrutinee else {
+                        continue;
+                    };
+                    let expected_ty = self.body.exprs[scrutinee].ty.clone();
+                    for arm in arms {
+                        if let Some(pat) = arm.pat {
+                            changed |= self.propagate_pat(pat, &expected_ty)?;
+                        }
+                    }
+                }
+                ExprKind::Let {
+                    scope,
+                    pat: Some(pat),
+                    initializer,
+                    ..
+                } => {
+                    let expected_ty = self.expected_ty_for_let(scope, None, initializer)?;
                     changed |= self.propagate_pat(pat, &expected_ty)?;
                 }
+                ExprKind::Path { .. }
+                | ExprKind::Call { .. }
+                | ExprKind::If { .. }
+                | ExprKind::Loop { .. }
+                | ExprKind::While { .. }
+                | ExprKind::For { .. }
+                | ExprKind::Break { .. }
+                | ExprKind::Continue { .. }
+                | ExprKind::Block { .. }
+                | ExprKind::Field { .. }
+                | ExprKind::Record { .. }
+                | ExprKind::MethodCall { .. }
+                | ExprKind::Wrapper { .. }
+                | ExprKind::Literal { .. }
+                | ExprKind::Let { pat: None, .. }
+                | ExprKind::Unknown { .. } => {}
             }
         }
 

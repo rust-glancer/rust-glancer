@@ -157,13 +157,25 @@ impl ValuePathCursorScanner<'_> {
             if !self.file_matches(expr.source.file_id) {
                 continue;
             }
-            let ExprKind::Match { arms, .. } = &expr.kind else {
-                continue;
-            };
-            for arm in arms {
-                if let Some(pat) = arm.pat {
-                    self.scan_pat(arm.scope, pat);
+            match &expr.kind {
+                ExprKind::Match { arms, .. } => {
+                    for arm in arms {
+                        if let Some(pat) = arm.pat {
+                            self.scan_pat(arm.scope, pat);
+                        }
+                    }
                 }
+                ExprKind::Let {
+                    scope,
+                    pat: Some(pat),
+                    ..
+                }
+                | ExprKind::For {
+                    scope,
+                    pat: Some(pat),
+                    ..
+                } => self.scan_pat(*scope, *pat),
+                _ => {}
             }
         }
     }
