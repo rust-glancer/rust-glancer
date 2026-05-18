@@ -13,6 +13,9 @@ codegen:
 codegen-check:
     cargo run -p rg_codegen -- all --check
 
+analyze *args:
+    cargo run --release -p rust-glancer -- analyze {{args}}
+
 deny:
     cargo deny check
 
