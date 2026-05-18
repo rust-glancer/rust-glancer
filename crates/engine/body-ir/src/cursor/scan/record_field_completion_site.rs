@@ -166,14 +166,16 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
                 path: Some(path),
                 field_list_span: Some(field_list_span),
                 fields,
+                rest,
             } => {
+                let rest_span = rest.and_then(|rest| body.pat(rest).map(|pat| pat.source.span));
                 if let Some(site) = self.site_for_record_fields(
                     body_ref,
                     scope,
                     path,
                     *field_list_span,
                     fields.iter().map(RecordFieldSpan::from_pat_field),
-                    None,
+                    rest_span,
                 ) {
                     Self::remember_site(site, data.source.span.len(), best);
                 }
@@ -199,10 +201,21 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
                 subpat: Some(subpat),
                 ..
             }
-            | PatKind::Ref { pat: subpat }
+            | PatKind::Ref { pat: subpat, .. }
             | PatKind::Box { pat: subpat } => self.scan_pat(body_ref, body, scope, *subpat, best),
+            PatKind::Range { start, end, .. } => {
+                if let Some(start) = start {
+                    self.scan_pat(body_ref, body, scope, *start, best);
+                }
+                if let Some(end) = end {
+                    self.scan_pat(body_ref, body, scope, *end, best);
+                }
+            }
             PatKind::Binding { subpat: None, .. }
             | PatKind::Path { .. }
+            | PatKind::Rest
+            | PatKind::Literal { .. }
+            | PatKind::ConstBlock { .. }
             | PatKind::Wildcard
             | PatKind::Unsupported => {}
         }

@@ -1683,16 +1683,20 @@ pub struct User {
 
 pub fn use_it(user: User) {
     let User { id, na$pattern_prefix$ } = user;
+    let User { ..$pattern_rest$ } = user;
 }
 "#,
-        &[AnalysisQuery::complete(
-            "record pattern prefix completions",
-            "pattern_prefix",
-        )],
+        &[
+            AnalysisQuery::complete("record pattern prefix completions", "pattern_prefix"),
+            AnalysisQuery::complete("record pattern rest completions", "pattern_rest"),
+        ],
         expect![[r#"
             record pattern prefix completions
             - field active
             - field name
+
+            record pattern rest completions
+            - <none>
         "#]],
     );
 }

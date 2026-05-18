@@ -244,7 +244,17 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                     self.scan_body_path(body_ref, scope, path, best);
                 }
             }
-            PatKind::Binding { subpat, .. } => {
+            PatKind::Binding {
+                binding,
+                path,
+                subpat,
+                ..
+            } => {
+                if binding.is_none()
+                    && let Some(path) = path
+                {
+                    self.scan_body_path(body_ref, scope, path, best);
+                }
                 if let Some(subpat) = subpat {
                     self.scan_pat(body_ref, body, scope, *subpat, best);
                 }
@@ -256,10 +266,22 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                     self.scan_pat(body_ref, body, scope, *field, best);
                 }
             }
-            PatKind::Ref { pat } | PatKind::Box { pat } => {
+            PatKind::Ref { pat, .. } | PatKind::Box { pat } => {
                 self.scan_pat(body_ref, body, scope, *pat, best);
             }
-            PatKind::Wildcard | PatKind::Unsupported => {}
+            PatKind::Range { start, end, .. } => {
+                if let Some(start) = start {
+                    self.scan_pat(body_ref, body, scope, *start, best);
+                }
+                if let Some(end) = end {
+                    self.scan_pat(body_ref, body, scope, *end, best);
+                }
+            }
+            PatKind::Rest
+            | PatKind::Literal { .. }
+            | PatKind::ConstBlock { .. }
+            | PatKind::Wildcard
+            | PatKind::Unsupported => {}
         }
     }
 

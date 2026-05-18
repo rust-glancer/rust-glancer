@@ -9,8 +9,8 @@ use expect_test::Expect;
 use crate::{
     BindingData, BodyData, BodyFunctionData, BodyGenericArg, BodyImplData, BodyIrBuildPolicy,
     BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy, BodyResolution,
-    BodySource, BodyTy, ExprData, ExprKind, LabelData, ResolvedFieldRef, ResolvedFunctionRef,
-    StmtKind, TargetBodiesStatus,
+    BodySource, BodyTy, ExprData, ExprKind, LabelData, PatBindingMode, PatData, PatId, PatKind,
+    ResolvedFieldRef, ResolvedFunctionRef, StmtKind, TargetBodiesStatus,
     ir::ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
         BodyItemRef, ExprId, StmtId,
@@ -30,6 +30,13 @@ use test_fixture::{CrateFixture, fixture_crate};
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build(fixture);
     let actual = ProjectBodyIrSnapshot::new(&db).render();
+    let actual = format!("{}\n", actual.trim_end());
+    expect.assert_eq(&actual);
+}
+
+pub(super) fn check_project_body_ir_patterns(fixture: &str, expect: Expect) {
+    let db = BodyIrFixtureDb::build(fixture);
+    let actual = ProjectBodyIrSnapshot::new(&db).render_patterns();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
@@ -149,6 +156,33 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
             .collect::<Vec<_>>()
             .join("\n\n")
     }
+
+    fn render_patterns(&self) -> String {
+        sorted_packages(self.project.parse_db())
+            .into_iter()
+            .map(|(package_slot, package)| {
+                let target_dumps = sorted_targets(package)
+                    .into_iter()
+                    .map(|target| {
+                        TargetBodyIrSnapshot {
+                            project: self.project,
+                            target_ref: TargetRef {
+                                package: rg_def_map::PackageSlot(package_slot),
+                                target: target.id,
+                            },
+                            target_name: &target.name,
+                            target_kind: target.kind.to_string(),
+                        }
+                        .render_patterns()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+
+                format!("package {}\n\n{target_dumps}", package.package_name())
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
 }
 
 struct TargetBodyIrSnapshot<'a> {
@@ -193,6 +227,45 @@ impl TargetBodyIrSnapshot<'_> {
                 .body(body_id)
                 .expect("body id should exist while rendering body IR");
             self.render_body(body, body_id, &mut dump);
+        }
+
+        dump
+    }
+
+    fn render_patterns(&self) -> String {
+        let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
+        let body_ir = self.body_ir_txn();
+        let Some(target_bodies) = body_ir
+            .target_bodies(self.target_ref)
+            .expect("target body IR should load while rendering body IR patterns")
+        else {
+            return dump;
+        };
+
+        if matches!(target_bodies.status(), TargetBodiesStatus::Skipped) {
+            dump.push_str("\nskipped");
+            return dump;
+        }
+
+        let mut bodies = target_bodies
+            .bodies()
+            .iter()
+            .enumerate()
+            .map(|(idx, body)| (self.render_function_ref(body.owner), BodyId(idx)))
+            .collect::<Vec<_>>();
+        bodies.sort_by(|left, right| left.0.cmp(&right.0));
+
+        for (idx, (_, body_id)) in bodies.into_iter().enumerate() {
+            if idx == 0 {
+                dump.push('\n');
+            } else {
+                dump.push_str("\n\n");
+            }
+
+            let body = target_bodies
+                .body(body_id)
+                .expect("body id should exist while rendering body IR patterns");
+            self.render_body_patterns(body, body_id, &mut dump);
         }
 
         dump
@@ -275,6 +348,27 @@ impl TargetBodyIrSnapshot<'_> {
 
         writeln!(dump, "body").expect("string writes should not fail");
         self.render_expr(body, body.root_expr, 0, dump);
+    }
+
+    fn render_body_patterns(&self, body: &BodyData, body_id: BodyId, dump: &mut String) {
+        writeln!(
+            dump,
+            "body b{} {} @ {}",
+            body_id.0,
+            self.render_function_ref(body.owner),
+            self.render_source(body.source),
+        )
+        .expect("string writes should not fail");
+
+        writeln!(dump, "patterns").expect("string writes should not fail");
+        if body.pats.is_empty() {
+            writeln!(dump, "<none>").expect("string writes should not fail");
+            return;
+        }
+
+        for (idx, pat) in body.pats.iter().enumerate() {
+            self.render_pat(PatId(idx), pat, dump);
+        }
     }
 
     fn render_local_item(&self, id: BodyItemId, item: &BodyItemData, dump: &mut String) {
@@ -376,6 +470,105 @@ impl TargetBodyIrSnapshot<'_> {
             body.scope(binding.scope).is_some(),
             "binding scope should exist while rendering"
         );
+    }
+
+    fn render_pat(&self, id: PatId, pat: &PatData, dump: &mut String) {
+        writeln!(
+            dump,
+            "- p{} {} `{}` @ {}",
+            id.0,
+            self.render_pat_head(pat),
+            self.render_source_text(pat.source),
+            self.render_source(pat.source),
+        )
+        .expect("string writes should not fail");
+    }
+
+    fn render_pat_head(&self, pat: &PatData) -> String {
+        match &pat.kind {
+            PatKind::Binding {
+                mode,
+                binding,
+                subpat,
+                path,
+            } => {
+                let binding = binding
+                    .map(|binding| format!("v{}", binding.0))
+                    .unwrap_or_else(|| "<none>".to_string());
+                let subpat = subpat
+                    .map(|pat| format!(" subpat p{}", pat.0))
+                    .unwrap_or_default();
+                let path = path
+                    .as_ref()
+                    .map(|path| format!(" path {path}"))
+                    .unwrap_or_default();
+                format!(
+                    "binding {} {binding}{path}{subpat}",
+                    render_pat_binding_mode(*mode)
+                )
+            }
+            PatKind::Tuple { fields } => format!("tuple {}", render_pat_list(fields)),
+            PatKind::TupleStruct { path, fields } => {
+                let path = path
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("tuple_struct {path} {}", render_pat_list(fields))
+            }
+            PatKind::Record {
+                path, fields, rest, ..
+            } => {
+                let path = path
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                let fields = fields
+                    .iter()
+                    .map(|field| format!("{}=p{}", field.key, field.pat.0))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let rest = rest
+                    .map(|rest| format!(" rest p{}", rest.0))
+                    .unwrap_or_default();
+                format!("record {path} [{fields}]{rest}")
+            }
+            PatKind::Or { pats } => format!("or {}", render_pat_list(pats)),
+            PatKind::Slice { fields } => format!("slice {}", render_pat_list(fields)),
+            PatKind::Ref { mutability, pat } => format!("ref {mutability} p{}", pat.0),
+            PatKind::Box { pat } => format!("box p{}", pat.0),
+            PatKind::Path { path } => {
+                let path = path
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("path {path}")
+            }
+            PatKind::Rest => "rest".to_string(),
+            PatKind::Literal { kind, negated } => {
+                let prefix = if *negated { "-" } else { "" };
+                format!("literal {prefix}{kind}")
+            }
+            PatKind::Range { start, end, kind } => {
+                let start = start
+                    .map(|pat| format!("p{}", pat.0))
+                    .unwrap_or_else(|| "<open>".to_string());
+                let end = end
+                    .map(|pat| format!("p{}", pat.0))
+                    .unwrap_or_else(|| "<open>".to_string());
+                let kind = kind
+                    .map(|kind| kind.to_string())
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("range {start} {kind} {end}")
+            }
+            PatKind::ConstBlock { expr } => {
+                let expr = expr
+                    .map(|expr| format!("e{}", expr.0))
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("const_block {expr}")
+            }
+            PatKind::Wildcard => "wildcard".to_string(),
+            PatKind::Unsupported => "unsupported".to_string(),
+        }
     }
 
     fn render_statement(
@@ -1230,6 +1423,29 @@ fn render_binding_list(bindings: &[BindingId]) -> String {
         .map(|binding| format!("v{}", binding.0))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn render_pat_list(pats: &[PatId]) -> String {
+    if pats.is_empty() {
+        return "[]".to_string();
+    }
+
+    format!(
+        "[{}]",
+        pats.iter()
+            .map(|pat| format!("p{}", pat.0))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn render_pat_binding_mode(mode: PatBindingMode) -> &'static str {
+    match (mode.by_ref, mode.mutable) {
+        (false, false) => "move",
+        (false, true) => "move mut",
+        (true, false) => "ref",
+        (true, true) => "ref mut",
+    }
 }
 
 fn render_label_suffix(label: Option<&LabelData>) -> String {

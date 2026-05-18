@@ -24,9 +24,9 @@ pub use self::{
         BodyId, BodyImplData, BodyImplId, BodyIrStats, BodyItemData, BodyItemId, BodyItemKind,
         BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef, BodyResolution,
         BodySource, BodyTy, BodyTypePathResolution, ExprData, ExprId, ExprKind, LabelData,
-        LiteralKind, PackageBodies, PatData, PatId, PatKind, RecordExprField, RecordPatField,
-        ResolvedFieldRef, ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind,
-        TargetBodies, TargetBodiesStatus,
+        LiteralKind, PackageBodies, PatBindingMode, PatData, PatId, PatKind, PatMutability,
+        PatRangeKind, RecordExprField, RecordPatField, ResolvedFieldRef, ResolvedFunctionRef,
+        ScopeData, ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
     },
     store::{BodyIrDb, BodyIrReadTxn},
 };

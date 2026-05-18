@@ -3,9 +3,10 @@ use crate::{
     BodyFunctionOwner, BodyFunctionRef, BodyGenericArg, BodyId, BodyImplData, BodyImplId,
     BodyIrBuildPolicy, BodyIrDb, BodyIrStats, BodyItemData, BodyItemId, BodyItemKind, BodyItemRef,
     BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef, BodyResolution, BodySource, BodyTy,
-    BodyTypePathResolution, ExprData, ExprId, ExprKind, LiteralKind, PackageBodies, PatData, PatId,
-    PatKind, RecordExprField, RecordPatField, ResolvedFieldRef, ResolvedFunctionRef, ScopeData,
-    ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
+    BodyTypePathResolution, ExprData, ExprId, ExprKind, LiteralKind, PackageBodies, PatBindingMode,
+    PatData, PatId, PatKind, PatMutability, PatRangeKind, RecordExprField, RecordPatField,
+    ResolvedFieldRef, ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
+    TargetBodiesStatus,
     ir::expr::{ExprWrapperKind, LabelData, MatchArmData},
     ir::ids::StmtId,
 };
@@ -16,6 +17,9 @@ rg_memsize::impl_memory_size_leaf!(
     TargetBodiesStatus,
     ExprWrapperKind,
     LiteralKind,
+    PatBindingMode,
+    PatMutability,
+    PatRangeKind,
     BodyItemKind,
     BindingKind,
     BodyId,
@@ -308,11 +312,18 @@ impl MemorySize for BodyFunctionOwner {
 impl MemorySize for PatKind {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
-            Self::Binding { binding, subpat } => {
+            Self::Binding {
+                mode,
+                binding,
+                subpat,
+                path,
+            } => {
+                recorder.scope("mode", |recorder| mode.record_memory_children(recorder));
                 recorder.scope("binding", |recorder| {
                     binding.record_memory_children(recorder)
                 });
                 recorder.scope("subpat", |recorder| subpat.record_memory_children(recorder));
+                recorder.scope("path", |recorder| path.record_memory_children(recorder));
             }
             Self::Tuple { fields } | Self::Or { pats: fields } | Self::Slice { fields } => {
                 fields.record_memory_children(recorder);
@@ -325,16 +336,38 @@ impl MemorySize for PatKind {
                 path,
                 field_list_span,
                 fields,
+                rest,
             } => {
                 recorder.scope("path", |recorder| path.record_memory_children(recorder));
                 recorder.scope("field_list_span", |recorder| {
                     field_list_span.record_memory_children(recorder);
                 });
                 recorder.scope("fields", |recorder| fields.record_memory_children(recorder));
+                recorder.scope("rest", |recorder| rest.record_memory_children(recorder));
             }
-            Self::Ref { pat } | Self::Box { pat } => pat.record_memory_children(recorder),
+            Self::Ref { mutability, pat } => {
+                recorder.scope("mutability", |recorder| {
+                    mutability.record_memory_children(recorder);
+                });
+                recorder.scope("pat", |recorder| pat.record_memory_children(recorder));
+            }
+            Self::Box { pat } => pat.record_memory_children(recorder),
             Self::Path { path } => path.record_memory_children(recorder),
-            Self::Wildcard | Self::Unsupported => {}
+            Self::Literal { kind, negated } => {
+                recorder.scope("kind", |recorder| kind.record_memory_children(recorder));
+                recorder.scope("negated", |recorder| {
+                    negated.record_memory_children(recorder)
+                });
+            }
+            Self::Range { start, end, kind } => {
+                recorder.scope("start", |recorder| start.record_memory_children(recorder));
+                recorder.scope("end", |recorder| end.record_memory_children(recorder));
+                recorder.scope("kind", |recorder| kind.record_memory_children(recorder));
+            }
+            Self::ConstBlock { expr } => {
+                recorder.scope("expr", |recorder| expr.record_memory_children(recorder));
+            }
+            Self::Rest | Self::Wildcard | Self::Unsupported => {}
         }
     }
 }

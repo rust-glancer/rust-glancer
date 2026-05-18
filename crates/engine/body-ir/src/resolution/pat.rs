@@ -146,7 +146,9 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         };
 
         match data.kind {
-            PatKind::Binding { binding, subpat } => {
+            PatKind::Binding {
+                binding, subpat, ..
+            } => {
                 let mut changed = binding
                     .map(|binding| self.set_binding_ty(binding, expected_ty.clone()))
                     .unwrap_or(false);
@@ -168,10 +170,14 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
                 }
                 Ok(changed)
             }
-            PatKind::Ref { pat } | PatKind::Box { pat } => self.propagate_pat(pat, expected_ty),
+            PatKind::Ref { pat, .. } | PatKind::Box { pat } => self.propagate_pat(pat, expected_ty),
             PatKind::Tuple { .. }
             | PatKind::Slice { .. }
             | PatKind::Path { .. }
+            | PatKind::Rest
+            | PatKind::Literal { .. }
+            | PatKind::Range { .. }
+            | PatKind::ConstBlock { .. }
             | PatKind::Wildcard
             | PatKind::Unsupported => Ok(false),
         }

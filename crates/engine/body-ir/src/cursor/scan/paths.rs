@@ -208,7 +208,17 @@ impl ValuePathCursorScanner<'_> {
                     self.scan_body_path(scope, path, data.source.file_id);
                 }
             }
-            PatKind::Binding { subpat, .. } => {
+            PatKind::Binding {
+                binding,
+                path,
+                subpat,
+                ..
+            } => {
+                if binding.is_none()
+                    && let Some(path) = path
+                {
+                    self.scan_body_path(scope, path, data.source.file_id);
+                }
                 if let Some(subpat) = subpat {
                     self.scan_pat(scope, *subpat);
                 }
@@ -220,8 +230,20 @@ impl ValuePathCursorScanner<'_> {
                     self.scan_pat(scope, *field);
                 }
             }
-            PatKind::Ref { pat } | PatKind::Box { pat } => self.scan_pat(scope, *pat),
-            PatKind::Wildcard | PatKind::Unsupported => {}
+            PatKind::Ref { pat, .. } | PatKind::Box { pat } => self.scan_pat(scope, *pat),
+            PatKind::Range { start, end, .. } => {
+                if let Some(start) = start {
+                    self.scan_pat(scope, *start);
+                }
+                if let Some(end) = end {
+                    self.scan_pat(scope, *end);
+                }
+            }
+            PatKind::Rest
+            | PatKind::Literal { .. }
+            | PatKind::ConstBlock { .. }
+            | PatKind::Wildcard
+            | PatKind::Unsupported => {}
         }
     }
 

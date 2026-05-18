@@ -26,7 +26,7 @@ pub use self::{
         BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyItemData,
         BodyItemKind,
     },
-    pat::{PatData, PatKind, RecordPatField},
+    pat::{PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordPatField},
     path::BodyPath,
     resolved::{BodyResolution, BodyTypePathResolution, ResolvedFieldRef, ResolvedFunctionRef},
     stmt::{BindingData, BindingKind, StmtData, StmtKind},

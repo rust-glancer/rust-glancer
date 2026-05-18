@@ -223,7 +223,15 @@ pub enum Action {
     Quit,
 }
 
-pub fn use_it(action: Action) {
+pub const EXACT: i32 = 5;
+pub const shadow: i32 = 7;
+
+pub mod limits {
+    pub const MIN: i32 = 0;
+    pub const MAX: i32 = 10;
+}
+
+pub fn use_it(action: Action, value: i32) {
     let widget = Wi$goto_assoc_type$dget::cre$goto_assoc_fn$ate();
     let _action = A$goto_enum_expr$ction::Con$goto_expr_variant$figure(Widget::create());
 
@@ -231,6 +239,17 @@ pub fn use_it(action: Action) {
         A$goto_enum_tuple_pattern$ction::Con$goto_tuple_variant$figure(widget) => widget,
         Action::Pro$goto_record_variant$ject { widget } => widget,
         Action::Quit => Widget,
+    };
+
+    match value {
+        limits::MI$goto_range_start$N..=limits::MA$goto_range_end$X => Widget,
+        const { EX$goto_const_block$ACT } => Widget,
+        _ => Widget,
+    };
+
+    match (value, value) {
+        (shadow, const { sha$goto_const_shadow$dow }) => Widget,
+        _ => Widget,
     };
 }
 "#,
@@ -242,6 +261,10 @@ pub fn use_it(action: Action) {
             AnalysisQuery::goto("goto tuple pattern enum prefix", "goto_enum_tuple_pattern"),
             AnalysisQuery::goto("goto tuple pattern variant", "goto_tuple_variant"),
             AnalysisQuery::goto("goto record pattern variant", "goto_record_variant"),
+            AnalysisQuery::goto("goto range pattern start", "goto_range_start"),
+            AnalysisQuery::goto("goto range pattern end", "goto_range_end"),
+            AnalysisQuery::goto("goto const block pattern path", "goto_const_block"),
+            AnalysisQuery::goto("goto const block shadowed path", "goto_const_shadow"),
         ],
         expect![[r#"
             goto associated type prefix
@@ -264,6 +287,18 @@ pub fn use_it(action: Action) {
 
             goto record pattern variant
             - variant Project @ 11:5-11:12
+
+            goto range pattern start
+            - const MIN @ 19:15-19:18
+
+            goto range pattern end
+            - const MAX @ 20:15-20:18
+
+            goto const block pattern path
+            - const EXACT @ 15:11-15:16
+
+            goto const block shadowed path
+            - const shadow @ 16:11-16:17
         "#]],
     );
 }

@@ -2,7 +2,8 @@ use rg_item_tree::FieldKey;
 
 use super::{
     body::BodySource,
-    ids::{BindingId, PatId},
+    expr::LiteralKind,
+    ids::{BindingId, ExprId, PatId},
     path::BodyPath,
 };
 
@@ -23,8 +24,10 @@ impl PatData {
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum PatKind {
     Binding {
+        mode: PatBindingMode,
         binding: Option<BindingId>,
         subpat: Option<PatId>,
+        path: Option<BodyPath>,
     },
     Tuple {
         fields: Vec<PatId>,
@@ -37,6 +40,7 @@ pub enum PatKind {
         path: Option<BodyPath>,
         field_list_span: Option<rg_parse::Span>,
         fields: Vec<RecordPatField>,
+        rest: Option<PatId>,
     },
     Or {
         pats: Vec<PatId>,
@@ -45,6 +49,7 @@ pub enum PatKind {
         fields: Vec<PatId>,
     },
     Ref {
+        mutability: PatMutability,
         pat: PatId,
     },
     Box {
@@ -53,8 +58,71 @@ pub enum PatKind {
     Path {
         path: Option<BodyPath>,
     },
+    Rest,
+    Literal {
+        kind: LiteralKind,
+        negated: bool,
+    },
+    Range {
+        start: Option<PatId>,
+        end: Option<PatId>,
+        kind: Option<PatRangeKind>,
+    },
+    ConstBlock {
+        expr: Option<ExprId>,
+    },
     Wildcard,
     Unsupported,
+}
+
+/// Binding mode written on an identifier pattern.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct PatBindingMode {
+    pub by_ref: bool,
+    pub mutable: bool,
+}
+
+impl PatBindingMode {
+    pub const DEFAULT: Self = Self {
+        by_ref: false,
+        mutable: false,
+    };
+}
+
+/// Mutability written on a reference pattern.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+)]
+pub enum PatMutability {
+    #[display("shared")]
+    Shared,
+    #[display("mut")]
+    Mut,
+}
+
+/// Range operator written in a range pattern.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+)]
+pub enum PatRangeKind {
+    #[display("..")]
+    Exclusive,
+    #[display("..=")]
+    Inclusive,
 }
 
 /// One field inside a record pattern.
@@ -76,7 +144,9 @@ impl PatKind {
                 }
                 fields.shrink_to_fit();
             }
-            Self::Record { path, fields, .. } => {
+            Self::Record {
+                path, fields, rest, ..
+            } => {
                 if let Some(path) = path {
                     path.shrink_to_fit();
                 }
@@ -84,6 +154,7 @@ impl PatKind {
                 for field in fields {
                     field.shrink_to_fit();
                 }
+                let _ = rest;
             }
             Self::Or { pats } => pats.shrink_to_fit(),
             Self::Path { path } => {
@@ -91,9 +162,17 @@ impl PatKind {
                     path.shrink_to_fit();
                 }
             }
-            Self::Binding { .. }
-            | Self::Ref { .. }
+            Self::Binding { path, .. } => {
+                if let Some(path) = path {
+                    path.shrink_to_fit();
+                }
+            }
+            Self::Ref { .. }
             | Self::Box { .. }
+            | Self::Range { .. }
+            | Self::ConstBlock { .. }
+            | Self::Rest
+            | Self::Literal { .. }
             | Self::Wildcard
             | Self::Unsupported => {}
         }
