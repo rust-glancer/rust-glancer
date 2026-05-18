@@ -429,11 +429,11 @@ mod tests {
     #[test]
     fn recorder_can_attach_custom_type_names() {
         let mut recorder = MemoryRecorder::new("root");
-        recorder.record_type_name(MemoryRecordKind::Approximate, "rowan::GreenToken", 21);
+        recorder.record_type_name(MemoryRecordKind::Approximate, "example::TokenData", 21);
 
         let records = recorder.records();
         let record = &records[0];
-        assert_eq!(record.type_name, "rowan::GreenToken");
+        assert_eq!(record.type_name, "example::TokenData");
         assert_eq!(record.bytes, 21);
     }
 

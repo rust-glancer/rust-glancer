@@ -840,15 +840,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "m_lexer"
-version = "0.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7e51ebf91162d585a5bae05e4779efc4a276171cb880d61dd6fab11c98467a7"
-dependencies = [
- "regex",
-]
-
-[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1241,18 +1232,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "regex"
-version = "1.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e10754a14b9137dd7b1e3e5b0493cc9171fdd105e0ab477f51b72e7f3ac0e276"
-dependencies = [
- "aho-corasick",
- "memchr",
- "regex-automata",
- "regex-syntax",
-]
-
-[[package]]
 name = "regex-automata"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1479,16 +1458,6 @@ dependencies = [
  "serde",
  "test_fixture",
  "wincode",
-]
-
-[[package]]
-name = "rg_rowan"
-version = "0.15.18"
-dependencies = [
- "bumpalo",
- "m_lexer",
- "serde",
- "text-size",
 ]
 
 [[package]]
@@ -1873,9 +1842,6 @@ name = "text-size"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f18aa187839b2bdb1ad2fa35ead8c4c2976b64e4363c386d45ac0f7ee85c9233"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "thiserror"

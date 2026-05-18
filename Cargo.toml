@@ -18,7 +18,6 @@ members = [
   "crates/lib/text",
   "crates/lib/arena",
   "crates/lib/memsize",
-  "crates/lib/rowan",
   "crates/lib/wincode-utils",
   "crates/lib/test-fixture",
 ]
@@ -65,7 +64,6 @@ futures = "0.3.32"
 gungraun = "0.18.2"
 itertools = "0.14.0"
 ls_types = { package = "ls-types", version = "0.0.6" }
-m_lexer = "0.0.4"
 parser = { package = "rg_parser", path = "crates/engine/parser" }
 ra-ap-rustc_lexer = "0.160"
 wincode = { version = "0.5.3", features = ["derive"] }
