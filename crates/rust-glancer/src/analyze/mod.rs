@@ -136,6 +136,7 @@ pub(crate) fn analyze(
         .stage_memory_target(include_memory.then(|| memory_stage.build_stage()).flatten());
     let builder = if include_memory {
         builder
+            .memory_hooks(crate::memory::project_memory_hooks())
             .measure_retained_memory(true)
             .process_memory_sampler(move || {
                 memory_control

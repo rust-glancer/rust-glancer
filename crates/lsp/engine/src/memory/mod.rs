@@ -1,5 +1,9 @@
 mod report;
 
+use std::sync::Arc;
+
+use rg_project::{ProjectMemoryHooks, ProjectMemoryPurgePoint};
+
 pub(crate) use self::report::MemoryReporter;
 
 /// Runtime memory controls supplied by the executable.
@@ -25,6 +29,23 @@ pub trait MemoryControl: std::fmt::Debug + Send + Sync {
 }
 
 impl MemoryControl for () {}
+
+#[derive(Debug)]
+pub(crate) struct ProjectMemoryReporter {
+    memory_control: Arc<dyn MemoryControl>,
+}
+
+impl ProjectMemoryReporter {
+    pub(crate) fn new(memory_control: Arc<dyn MemoryControl>) -> Self {
+        Self { memory_control }
+    }
+}
+
+impl ProjectMemoryHooks for ProjectMemoryReporter {
+    fn purge(&self, point: ProjectMemoryPurgePoint) {
+        MemoryReporter::purge_and_report(self.memory_control.as_ref(), point.label());
+    }
+}
 
 /// Allocator counters collected by the executable that selected the allocator.
 ///

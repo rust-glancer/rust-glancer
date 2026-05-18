@@ -4,7 +4,10 @@
 //! allocator-agnostic, while release builds can still compare jemalloc and the platform allocator
 //! by toggling the `jemalloc` Cargo feature.
 
+use std::sync::Arc;
+
 use rg_lsp_engine::{AllocatorPurgeResult, AllocatorStats, MemoryControl};
+use rg_project::{ProjectMemoryHooks, ProjectMemoryPurgePoint};
 
 const JEMALLOC_PURGE_AFTER_BUILD_ENV: &str = "RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD";
 
@@ -35,6 +38,23 @@ impl MemoryControl for ProcessMemoryControl {
 
 pub(crate) fn memory_control() -> ProcessMemoryControl {
     ProcessMemoryControl
+}
+
+pub(crate) fn project_memory_hooks() -> Arc<dyn ProjectMemoryHooks> {
+    Arc::new(ProjectProcessMemoryHooks {
+        memory_control: memory_control(),
+    })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ProjectProcessMemoryHooks {
+    memory_control: ProcessMemoryControl,
+}
+
+impl ProjectMemoryHooks for ProjectProcessMemoryHooks {
+    fn purge(&self, _point: ProjectMemoryPurgePoint) {
+        let _ = self.memory_control.try_purge_allocator();
+    }
 }
 
 impl ProcessMemoryControl {

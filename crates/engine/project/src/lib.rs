@@ -1,9 +1,11 @@
 pub(crate) mod cache;
+mod memory;
 mod profile;
 mod project;
 mod residency;
 
 pub use self::{
+    memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{
         BuildCheckpoint, BuildProcessMemory, BuildProfile, BuildProfileStage,
         BuildStageMemorySnapshot, CacheProbeProfile, ProcessMemorySampler,

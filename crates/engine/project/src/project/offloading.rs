@@ -4,12 +4,14 @@
 //! level lifecycle: deciding which resident packages need durable artifacts, writing them, and then
 //! dropping phase data so the project returns to its selected memory profile.
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_def_map::PackageSlot;
 
 use crate::{
-    PackageResidency,
+    PackageResidency, ProjectMemoryPurgePoint,
     cache::{PackageCacheArtifact, PackageCachePayload},
 };
 
@@ -71,9 +73,11 @@ impl<'a> ResidencyApplication<'a> {
             .context("while attempting to invalidate package cache namespace")?;
         update::rebuild_resident_from_source(project)
             .context("while attempting to rebuild resident analysis project from source")?;
+        let memory_hooks = Arc::clone(&project.memory_hooks);
         Self::fresh(project)
             .apply()
             .context("while attempting to reapply package cache residency")?;
+        memory_hooks.purge(ProjectMemoryPurgePoint::AfterProjectBuild);
 
         Ok(())
     }

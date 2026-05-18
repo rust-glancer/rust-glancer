@@ -58,10 +58,6 @@ impl DirtyOverlayCache {
                 "after_rebuild",
                 memory_before,
             );
-            // Dirty overlay rebuilds can temporarily materialize much more allocator memory than
-            // the retained overlay needs. Purge at this rebuild boundary without making every
-            // read-only query pay the same cost.
-            MemoryReporter::purge_and_report(memory_control, "after dirty overlay");
             let changed_known_file = overlay.is_some();
             let project = overlay.unwrap_or_else(|| base.clone());
             tracing::debug!(

@@ -1,11 +1,68 @@
 mod utils;
 
+use std::sync::{Arc, Mutex};
+
 use expect_test::expect;
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
 use self::utils::{HostFixture, HostObservation, parse_dirty_text};
-use crate::{BuildProfileStage, PackageResidencyPolicy, Project};
+use crate::{
+    BuildProfileStage, PackageResidencyPolicy, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint,
+};
+
+#[derive(Debug)]
+struct RecordingMemoryHooks {
+    points: Arc<Mutex<Vec<ProjectMemoryPurgePoint>>>,
+}
+
+impl ProjectMemoryHooks for RecordingMemoryHooks {
+    fn purge(&self, point: ProjectMemoryPurgePoint) {
+        self.points
+            .lock()
+            .expect("recorded memory hook points should not be poisoned")
+            .push(point);
+    }
+}
+
+#[test]
+fn project_memory_hooks_report_fresh_build_lifecycle_points() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "memory_hooks_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+"#,
+    );
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should build");
+    let points = Arc::new(Mutex::new(Vec::new()));
+    let hooks: Arc<dyn ProjectMemoryHooks> = Arc::new(RecordingMemoryHooks {
+        points: Arc::clone(&points),
+    });
+
+    Project::builder(workspace)
+        .memory_hooks(hooks)
+        .build()
+        .expect("project build with memory hooks should succeed");
+
+    let points = points
+        .lock()
+        .expect("recorded memory hook points should not be poisoned");
+    assert_eq!(
+        points.as_slice(),
+        [
+            ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction,
+            ProjectMemoryPurgePoint::AfterProjectBuild,
+        ],
+        "fresh builds should expose the high-value transient memory boundaries",
+    );
+}
 
 #[test]
 fn timing_profile_reports_phase_checkpoints_without_memory_sampling() {

@@ -15,6 +15,7 @@ use rg_workspace::WorkspaceMetadata;
 use crate::{
     PackageResidencyPlan,
     cache::{Fingerprint, PackageCacheStore, WorkspaceCachePlan},
+    memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BuildProfileStage, BuildProfiler, CacheProbeProfile},
     project::{StartupCacheLoad, loading::PackageReadLoaders, subset},
 };
@@ -119,6 +120,7 @@ pub(super) fn build(
     cache_plan: &WorkspaceCachePlan,
     cache_store: &PackageCacheStore,
     startup_cache_load: StartupCacheLoad,
+    memory_hooks: &dyn ProjectMemoryHooks,
     profiler: &mut BuildProfiler,
 ) -> anyhow::Result<BuiltPhases> {
     let mut stage_memory = StageMemory::default();
@@ -182,6 +184,7 @@ pub(super) fn build(
     // databases start overlapping in memory.
     parse.evict_syntax_trees();
     parse.shrink_to_fit();
+    memory_hooks.purge(ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction);
     let process_memory = profiler.sample_process_memory();
     let parse_bytes = profiler.measure(&parse);
     profiler.record(

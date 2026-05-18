@@ -4,6 +4,8 @@
 //! dangerous than useful. This path reloads metadata and rebuilds every non-sysroot package so the
 //! downstream phase databases return to a single consistent snapshot.
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 
 use rg_workspace::WorkspaceMetadata;
@@ -21,6 +23,7 @@ pub(super) fn rebuild_workspace_graph(
         .join("Cargo.toml");
     let sysroot = project.state.workspace().sysroot_sources();
     let cargo_metadata_config = project.state.cargo_metadata_config.clone();
+    let memory_hooks = Arc::clone(&project.state.memory_hooks);
     let workspace =
         WorkspaceMetadata::from_manifest_path_with_config(&manifest_path, &cargo_metadata_config)
             .with_context(|| format!("while attempting to load {}", manifest_path.display()))?
@@ -35,6 +38,7 @@ pub(super) fn rebuild_workspace_graph(
         .cargo_metadata_config(cargo_metadata_config)
         .body_ir_policy(body_ir_policy)
         .package_residency_policy(package_residency_policy)
+        .memory_hooks(memory_hooks)
         .build()
         .context("while attempting to build refreshed analysis project")?
         .into_project()

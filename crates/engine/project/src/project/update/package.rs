@@ -1,5 +1,7 @@
 //! Rebuilds selected packages inside an existing project snapshot.
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
 
 use rg_body_ir::BodyIrFile;
@@ -7,6 +9,7 @@ use rg_def_map::PackageSlot;
 use rg_item_tree::ItemTreeDb;
 
 use crate::{
+    ProjectMemoryPurgePoint,
     profile::BuildProfiler,
     project::{
         StartupCacheLoad, build, loading::PackageReadLoaders, offloading::ResidencyApplication,
@@ -79,6 +82,9 @@ fn try_rebuild_packages(
     // declarations, and body lowering reparses only the files it needs.
     state.parse.evict_syntax_trees();
     state.parse.shrink_to_fit();
+    state
+        .memory_hooks
+        .purge(ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction);
 
     let def_map = state
         .def_map
@@ -137,6 +143,10 @@ fn try_rebuild_packages(
             .apply()
             .context("while attempting to apply package cache residency after package rebuild")?;
     }
+    state.memory_hooks.purge(match plan.residency {
+        RebuildResidency::RestoreSavedState => ProjectMemoryPurgePoint::AfterPackageRebuild,
+        RebuildResidency::KeepResident => ProjectMemoryPurgePoint::AfterDirtyOverlayBuild,
+    });
 
     Ok(())
 }
@@ -195,6 +205,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
     let body_ir_policy = state.body_ir_policy;
     let package_residency_policy = state.package_residency_policy;
     let cache_store = state.cache_store.clone();
+    let memory_hooks = Arc::clone(&state.memory_hooks);
     let mut profiler = BuildProfiler::disabled();
     let mut rebuilt = build::build_resident_state(
         workspace,
@@ -202,6 +213,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
         body_ir_policy,
         package_residency_policy,
         StartupCacheLoad::Disabled,
+        memory_hooks,
         &mut profiler,
     )
     .context("while attempting to rebuild resident analysis project")?;

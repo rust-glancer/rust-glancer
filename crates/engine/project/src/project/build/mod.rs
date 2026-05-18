@@ -4,14 +4,16 @@ mod cache_probe;
 mod phases;
 
 use anyhow::Context as _;
+use std::sync::Arc;
 
 use rg_body_ir::BodyIrBuildPolicy;
 use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::{
     BuildProcessMemory, BuildProfile, BuildProfileStage, PackageResidencyPlan,
-    PackageResidencyPolicy,
+    PackageResidencyPolicy, ProjectMemoryHooks, ProjectMemoryPurgePoint,
     cache::{PackageCacheStore, WorkspaceCachePlan},
+    memory::NoopProjectMemoryHooks,
     profile::{BuildProfiler, ProcessMemorySampler},
 };
 
@@ -62,6 +64,7 @@ pub struct ProjectBuilder {
     measure_retained_memory: bool,
     process_memory_sampler: Option<ProcessMemorySampler>,
     stage_memory_target: Option<BuildProfileStage>,
+    memory_hooks: Arc<dyn ProjectMemoryHooks>,
 }
 
 impl ProjectBuilder {
@@ -76,6 +79,7 @@ impl ProjectBuilder {
             measure_retained_memory: false,
             process_memory_sampler: None,
             stage_memory_target: None,
+            memory_hooks: Arc::new(NoopProjectMemoryHooks),
         }
     }
 
@@ -122,6 +126,11 @@ impl ProjectBuilder {
         self
     }
 
+    pub fn memory_hooks(mut self, hooks: Arc<dyn ProjectMemoryHooks>) -> Self {
+        self.memory_hooks = hooks;
+        self
+    }
+
     pub fn build(self) -> anyhow::Result<ProjectBuild> {
         let profile_requested = self.profile_build_timing
             || self.measure_retained_memory
@@ -139,12 +148,15 @@ impl ProjectBuilder {
             self.body_ir_policy,
             self.package_residency_policy,
             self.startup_cache_load,
+            Arc::clone(&self.memory_hooks),
             &mut profiler,
         )
         .context("while attempting to build resident analysis project")?;
         ResidencyApplication::fresh(&mut state)
             .apply()
             .context("while attempting to apply package cache residency")?;
+        self.memory_hooks
+            .purge(ProjectMemoryPurgePoint::AfterProjectBuild);
 
         let process_memory = profiler.sample_process_memory();
         let project_bytes = profiler.measure(&state);
@@ -169,6 +181,7 @@ pub(crate) fn build_resident_state(
     body_ir_policy: BodyIrBuildPolicy,
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
+    memory_hooks: Arc<dyn ProjectMemoryHooks>,
     profiler: &mut BuildProfiler,
 ) -> anyhow::Result<ProjectState> {
     let package_residency = PackageResidencyPlan::build(&workspace, package_residency_policy);
@@ -181,6 +194,7 @@ pub(crate) fn build_resident_state(
         &cache_plan,
         &cache_store,
         startup_cache_load,
+        memory_hooks.as_ref(),
         profiler,
     )?;
 
@@ -193,6 +207,7 @@ pub(crate) fn build_resident_state(
         body_ir_policy,
         package_residency_policy,
         package_residency,
+        memory_hooks,
         names: phases.names,
         parse: phases.parse,
         def_map: phases.def_map,

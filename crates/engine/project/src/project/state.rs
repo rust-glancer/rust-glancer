@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use rg_analysis::Analysis;
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
@@ -10,7 +10,7 @@ use rg_text::PackageNameInterners;
 use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::{
-    PackageResidencyPlan, PackageResidencyPolicy,
+    PackageResidencyPlan, PackageResidencyPolicy, ProjectMemoryHooks,
     cache::{Fingerprint, PackageCacheStore, WorkspaceCachePlan},
 };
 
@@ -27,6 +27,7 @@ pub(crate) struct ProjectState {
     pub(crate) body_ir_policy: BodyIrBuildPolicy,
     pub(crate) package_residency_policy: PackageResidencyPolicy,
     pub(crate) package_residency: PackageResidencyPlan,
+    pub(crate) memory_hooks: Arc<dyn ProjectMemoryHooks>,
     pub(crate) names: PackageNameInterners,
     pub(crate) parse: ParseDb,
     pub(crate) def_map: DefMapDb,
