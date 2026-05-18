@@ -40,6 +40,11 @@ impl DirtyOverlayCache {
         };
 
         if should_rebuild {
+            // A cache miss means the stored overlay was built for a different document snapshot.
+            // Drop it before constructing the replacement so edit bursts do not keep two overlays
+            // live across the expensive package rebuild.
+            self.cached = None;
+
             let started = Instant::now();
             let memory_control = self.memory_control.as_ref();
             let memory_before =

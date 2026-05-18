@@ -27,7 +27,12 @@ pub(super) fn rebuild_packages(
 
     let plan = PackageRebuildPlan::saved(packages);
     match try_rebuild_packages(state, plan) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            state
+                .memory_hooks
+                .purge(ProjectMemoryPurgePoint::AfterPackageRebuild);
+            Ok(())
+        }
         Err(error) if ProjectState::is_recoverable_cache_load_failure(&error) => {
             ResidencyApplication::failure_recovery(state).with_context(|| {
                 format!(
@@ -51,7 +56,11 @@ pub(super) fn rebuild_dirty_overlay_packages(
     try_rebuild_packages(
         state,
         PackageRebuildPlan::dirty_overlay(packages, body_files),
-    )
+    )?;
+    state
+        .memory_hooks
+        .purge(ProjectMemoryPurgePoint::AfterDirtyOverlayBuild);
+    Ok(())
 }
 
 fn try_rebuild_packages(
@@ -143,10 +152,6 @@ fn try_rebuild_packages(
             .apply()
             .context("while attempting to apply package cache residency after package rebuild")?;
     }
-    state.memory_hooks.purge(match plan.residency {
-        RebuildResidency::RestoreSavedState => ProjectMemoryPurgePoint::AfterPackageRebuild,
-        RebuildResidency::KeepResident => ProjectMemoryPurgePoint::AfterDirtyOverlayBuild,
-    });
 
     Ok(())
 }
