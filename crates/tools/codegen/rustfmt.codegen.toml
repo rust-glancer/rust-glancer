@@ -1,0 +1,10 @@
+# This config is intentionally local to the code generator.
+#
+# The parser and syntax generated files are vendored from rust-analyzer and are
+# easiest to audit when regenerated output stays byte-for-byte close to the
+# upstream generator. Applying these options through `rg_codegen` keeps that
+# generated formatting stable without changing the formatting policy for the
+# hand-written rust-glancer workspace.
+edition = "2024"
+reorder_modules = true
+use_small_heuristics = "Max"

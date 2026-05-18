@@ -7,6 +7,12 @@ lint:
     cargo fmt --check
     cargo clippy --workspace --all-targets -- -D warnings
 
+codegen:
+    cargo run -p rg_codegen -- all
+
+codegen-check:
+    cargo run -p rg_codegen -- all --check
+
 deny:
     cargo deny check
 
@@ -28,4 +34,4 @@ check-test-targets:
     cargo check --manifest-path test_targets/bench_fixtures/synthetic_def_map_heavy/Cargo.toml --workspace --locked
     cargo check --manifest-path test_targets/bench_fixtures/synthetic_body_heavy/Cargo.toml --workspace --locked
 
-pr-ready: test lint deny check-test-targets client::pr-ready
+pr-ready: test lint deny codegen-check check-test-targets client::pr-ready

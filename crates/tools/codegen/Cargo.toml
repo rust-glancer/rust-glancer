@@ -1,0 +1,22 @@
+[package]
+name = "rg_codegen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description.workspace = true
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+clap = { workspace = true, features = ["derive"] }
+either.workspace = true
+itertools.workspace = true
+proc-macro2.workspace = true
+quote.workspace = true
+stdx.workspace = true
+ungrammar.workspace = true
