@@ -32,5 +32,7 @@ pub use self::{
     store::PackageCacheStore,
 };
 
+pub(crate) use self::store::PreparedPackageCacheWriter;
+
 #[cfg(test)]
 mod tests;

@@ -185,21 +185,21 @@ impl PackageCacheStore {
         Ok(())
     }
 
-    pub fn write_artifact(&self, artifact: &PackageCacheArtifact) -> anyhow::Result<()> {
-        let bytes = PackageCacheCodec::encode_artifact(artifact)?;
-        let path = self.package_artifact_path(&artifact.header.package);
-        let package_dir = path
-            .parent()
-            .expect("package cache artifact paths should always have a parent directory");
+    #[cfg(test)]
+    pub(crate) fn write_artifact(&self, artifact: &PackageCacheArtifact) -> anyhow::Result<()> {
+        self.prepare_artifact_writes()?.write_artifact(artifact)
+    }
 
-        fs::create_dir_all(package_dir).with_context(|| {
+    pub(crate) fn prepare_artifact_writes(&self) -> anyhow::Result<PreparedPackageCacheWriter<'_>> {
+        let package_dir = self.generation_dir();
+        fs::create_dir_all(&package_dir).with_context(|| {
             format!(
                 "while attempting to create package cache directory {}",
                 package_dir.display(),
             )
         })?;
 
-        Self::write_artifact_bytes(&path, bytes.as_ref())
+        Ok(PreparedPackageCacheWriter { store: self })
     }
 
     pub fn read_artifact(
@@ -312,5 +312,18 @@ impl PackageCacheStore {
 
     fn generation_dir_name(&self) -> String {
         format!("{CACHE_GENERATION_DIR_PREFIX}{}", self.generation)
+    }
+}
+
+/// Package artifact writer for a cache generation whose directory is already prepared.
+pub(crate) struct PreparedPackageCacheWriter<'a> {
+    store: &'a PackageCacheStore,
+}
+
+impl PreparedPackageCacheWriter<'_> {
+    pub(crate) fn write_artifact(&self, artifact: &PackageCacheArtifact) -> anyhow::Result<()> {
+        let bytes = PackageCacheCodec::encode_artifact(artifact)?;
+        let path = self.store.package_artifact_path(&artifact.header.package);
+        PackageCacheStore::write_artifact_bytes(&path, bytes.as_ref())
     }
 }
