@@ -9,7 +9,8 @@ use rg_body_ir::BodyIrBuildPolicy;
 use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::{
-    BuildProcessMemory, BuildProfile, PackageResidencyPlan, PackageResidencyPolicy,
+    BuildProcessMemory, BuildProfile, BuildProfileStage, PackageResidencyPlan,
+    PackageResidencyPolicy,
     cache::{PackageCacheStore, WorkspaceCachePlan},
     profile::{BuildProfiler, ProcessMemorySampler},
 };
@@ -60,6 +61,7 @@ pub struct ProjectBuilder {
     startup_cache_load: StartupCacheLoad,
     measure_retained_memory: bool,
     process_memory_sampler: Option<ProcessMemorySampler>,
+    stage_memory_target: Option<BuildProfileStage>,
 }
 
 impl ProjectBuilder {
@@ -73,6 +75,7 @@ impl ProjectBuilder {
             startup_cache_load: StartupCacheLoad::default(),
             measure_retained_memory: false,
             process_memory_sampler: None,
+            stage_memory_target: None,
         }
     }
 
@@ -114,14 +117,21 @@ impl ProjectBuilder {
         self
     }
 
+    pub fn stage_memory_target(mut self, stage: Option<BuildProfileStage>) -> Self {
+        self.stage_memory_target = stage;
+        self
+    }
+
     pub fn build(self) -> anyhow::Result<ProjectBuild> {
         let profile_requested = self.profile_build_timing
             || self.measure_retained_memory
-            || self.process_memory_sampler.is_some();
+            || self.process_memory_sampler.is_some()
+            || self.stage_memory_target.is_some();
         let mut profiler = BuildProfiler::new(
             self.profile_build_timing,
             self.measure_retained_memory,
             self.process_memory_sampler,
+            self.stage_memory_target,
         );
         let mut state = build_resident_state(
             self.workspace,

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use rg_memsize::MemorySize;
+use rg_memsize::{MemoryRecord, MemoryRecorder, MemorySize};
 
 /// Build-time memory and timing report for the project pipeline.
 ///
@@ -10,16 +10,19 @@ use rg_memsize::MemorySize;
 pub struct BuildProfile {
     checkpoints: Vec<BuildCheckpoint>,
     cache_probe: Option<CacheProbeProfile>,
+    stage_memory: Option<BuildStageMemorySnapshot>,
 }
 
 impl BuildProfile {
     pub(crate) fn new(
         checkpoints: Vec<BuildCheckpoint>,
         cache_probe: Option<CacheProbeProfile>,
+        stage_memory: Option<BuildStageMemorySnapshot>,
     ) -> Self {
         Self {
             checkpoints,
             cache_probe,
+            stage_memory,
         }
     }
 
@@ -29,6 +32,10 @@ impl BuildProfile {
 
     pub fn cache_probe(&self) -> Option<&CacheProbeProfile> {
         self.cache_probe.as_ref()
+    }
+
+    pub fn stage_memory(&self) -> Option<&BuildStageMemorySnapshot> {
+        self.stage_memory.as_ref()
     }
 }
 
@@ -61,6 +68,64 @@ pub struct BuildProcessMemory {
 }
 
 pub type ProcessMemorySampler = Box<dyn FnMut() -> Option<BuildProcessMemory>>;
+
+/// Build checkpoint where callers can request a detailed retained-memory breakdown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildProfileStage {
+    Parse,
+    CacheProbe,
+    ItemTree,
+    ItemTreeSyntaxEviction,
+    CacheSourceFingerprints,
+    DefMap,
+    SemanticIr,
+    ItemTreeDrop,
+    BodyIr,
+    ParseSyntaxEviction,
+}
+
+impl BuildProfileStage {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Parse => "after parse",
+            Self::CacheProbe => "after cache probe",
+            Self::ItemTree => "after item-tree",
+            Self::ItemTreeSyntaxEviction => "after item-tree syntax eviction",
+            Self::CacheSourceFingerprints => "after cache source fingerprints",
+            Self::DefMap => "after def-map",
+            Self::SemanticIr => "after semantic-ir",
+            Self::ItemTreeDrop => "after item-tree drop",
+            Self::BodyIr => "after body-ir",
+            Self::ParseSyntaxEviction => "after parse syntax eviction",
+        }
+    }
+}
+
+/// Detailed memory accounting captured while a transient build stage is still alive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildStageMemorySnapshot {
+    stage: BuildProfileStage,
+    retained_bytes: usize,
+    records: Vec<MemoryRecord>,
+}
+
+impl BuildStageMemorySnapshot {
+    pub fn stage(&self) -> BuildProfileStage {
+        self.stage
+    }
+
+    pub fn label(&self) -> &'static str {
+        self.stage.label()
+    }
+
+    pub fn retained_bytes(&self) -> usize {
+        self.retained_bytes
+    }
+
+    pub fn records(&self) -> &[MemoryRecord] {
+        &self.records
+    }
+}
 
 /// Startup-cache probe summary collected while selecting packages to rebuild from source.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -180,6 +245,8 @@ pub(crate) struct BuildProfiler {
     timing: bool,
     retained_memory: bool,
     process_memory_sampler: Option<ProcessMemorySampler>,
+    stage_memory_target: Option<BuildProfileStage>,
+    stage_memory: Option<BuildStageMemorySnapshot>,
     checkpoints: Vec<BuildCheckpoint>,
     cache_probe: Option<CacheProbeProfile>,
 }
@@ -191,6 +258,8 @@ impl BuildProfiler {
             timing: false,
             retained_memory: false,
             process_memory_sampler: None,
+            stage_memory_target: None,
+            stage_memory: None,
             checkpoints: Vec::new(),
             cache_probe: None,
         }
@@ -200,12 +269,15 @@ impl BuildProfiler {
         timing: bool,
         retained_memory: bool,
         process_memory_sampler: Option<ProcessMemorySampler>,
+        stage_memory_target: Option<BuildProfileStage>,
     ) -> Self {
         Self {
             started_at: Instant::now(),
             timing,
             retained_memory,
             process_memory_sampler,
+            stage_memory_target,
+            stage_memory: None,
             checkpoints: Vec::new(),
             cache_probe: None,
         }
@@ -227,6 +299,36 @@ impl BuildProfiler {
         self.process_memory_sampler
             .as_mut()
             .and_then(|sampler| sampler())
+    }
+
+    pub(crate) fn capture_stage_memory(
+        &mut self,
+        stage: BuildProfileStage,
+        capture: impl FnOnce(&mut MemoryRecorder),
+    ) {
+        if self.stage_memory_target != Some(stage) || self.stage_memory.is_some() {
+            return;
+        }
+
+        let mut recorder = MemoryRecorder::new("stage");
+        capture(&mut recorder);
+        self.stage_memory = Some(BuildStageMemorySnapshot {
+            stage,
+            retained_bytes: recorder.total_bytes(),
+            records: recorder.records(),
+        });
+    }
+
+    pub(crate) fn record_stage_value<T>(
+        recorder: &mut MemoryRecorder,
+        label: &'static str,
+        value: Option<&T>,
+    ) where
+        T: MemorySize,
+    {
+        if let Some(value) = value {
+            recorder.scope(label, |recorder| value.record_memory_size(recorder));
+        }
     }
 
     pub(crate) fn record(
@@ -268,10 +370,13 @@ impl BuildProfiler {
     }
 
     pub(crate) fn finish(self) -> BuildProfile {
-        BuildProfile::new(self.checkpoints, self.cache_probe)
+        BuildProfile::new(self.checkpoints, self.cache_probe, self.stage_memory)
     }
 
     fn is_enabled(&self) -> bool {
-        self.timing || self.retained_memory || self.process_memory_sampler.is_some()
+        self.timing
+            || self.retained_memory
+            || self.process_memory_sampler.is_some()
+            || self.stage_memory_target.is_some()
     }
 }

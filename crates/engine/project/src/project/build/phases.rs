@@ -5,6 +5,7 @@ use anyhow::Context as _;
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
 use rg_def_map::{DefMapDb, PackageSlot};
 use rg_item_tree::ItemTreeDb;
+use rg_memsize::MemoryRecorder;
 use rg_package_store::{PackageEntry, PackageStore};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
@@ -14,7 +15,7 @@ use rg_workspace::WorkspaceMetadata;
 use crate::{
     PackageResidencyPlan,
     cache::{Fingerprint, PackageCacheStore, WorkspaceCachePlan},
-    profile::{BuildProfiler, CacheProbeProfile},
+    profile::{BuildProfileStage, BuildProfiler, CacheProbeProfile},
     project::{StartupCacheLoad, loading::PackageReadLoaders, subset},
 };
 
@@ -29,6 +30,88 @@ pub(super) struct BuiltPhases {
     pub(super) body_ir: BodyIrDb,
 }
 
+/// Snapshot of the phase locals that are still alive at a build checkpoint.
+///
+/// Each checkpoint fills the objects that exist at that moment; recording skips absent fields so
+/// the call sites read as a compact list of live phase state instead of repeating recorder plumbing.
+#[derive(Default)]
+struct StageMemory<'a> {
+    names: Option<&'a PackageNameInterners>,
+    parse: Option<&'a ParseDb>,
+    build_plan: Option<&'a Vec<PackageSlot>>,
+    item_tree: Option<&'a ItemTreeDb>,
+    source_fingerprints: Option<&'a Vec<Option<Fingerprint>>>,
+    def_map: Option<&'a DefMapDb>,
+    semantic_ir: Option<&'a SemanticIrDb>,
+    body_ir: Option<&'a BodyIrDb>,
+}
+
+impl<'a> StageMemory<'a> {
+    fn names(mut self, names: &'a PackageNameInterners) -> Self {
+        self.names = Some(names);
+        self
+    }
+
+    fn parse(mut self, parse: &'a ParseDb) -> Self {
+        self.parse = Some(parse);
+        self
+    }
+
+    fn build_plan(mut self, build_plan: &'a Vec<PackageSlot>) -> Self {
+        self.build_plan = Some(build_plan);
+        self
+    }
+
+    fn item_tree(mut self, item_tree: &'a ItemTreeDb) -> Self {
+        self.item_tree = Some(item_tree);
+        self
+    }
+
+    fn source_fingerprints(mut self, source_fingerprints: &'a Vec<Option<Fingerprint>>) -> Self {
+        self.source_fingerprints = Some(source_fingerprints);
+        self
+    }
+
+    fn def_map(mut self, def_map: &'a DefMapDb) -> Self {
+        self.def_map = Some(def_map);
+        self
+    }
+
+    fn semantic_ir(mut self, semantic_ir: &'a SemanticIrDb) -> Self {
+        self.semantic_ir = Some(semantic_ir);
+        self
+    }
+
+    fn body_ir(mut self, body_ir: &'a BodyIrDb) -> Self {
+        self.body_ir = Some(body_ir);
+        self
+    }
+
+    fn capture(
+        self,
+        profiler: &mut BuildProfiler,
+        stage: BuildProfileStage,
+    ) -> StageMemory<'static> {
+        profiler.capture_stage_memory(stage, |recorder| self.record(recorder));
+        StageMemory::default()
+    }
+
+    fn record(&self, recorder: &mut MemoryRecorder) {
+        BuildProfiler::record_stage_value(recorder, "names", self.names);
+        BuildProfiler::record_stage_value(recorder, "parse", self.parse);
+        BuildProfiler::record_stage_value(recorder, "build_plan", self.build_plan);
+        BuildProfiler::record_stage_value(recorder, "item_tree", self.item_tree);
+        BuildProfiler::record_stage_value(
+            recorder,
+            "source_fingerprints",
+            self.source_fingerprints,
+        );
+        BuildProfiler::record_stage_value(recorder, "def_map", self.def_map);
+        BuildProfiler::record_stage_value(recorder, "semantic_ir", self.semantic_ir);
+        BuildProfiler::record_stage_value(recorder, "body_ir", self.body_ir);
+    }
+}
+
 pub(super) fn build(
     workspace: &WorkspaceMetadata,
     body_ir_policy: BodyIrBuildPolicy,
@@ -38,10 +121,15 @@ pub(super) fn build(
     startup_cache_load: StartupCacheLoad,
     profiler: &mut BuildProfiler,
 ) -> anyhow::Result<BuiltPhases> {
+    let mut stage_memory = StageMemory::default();
+
     let mut parse = ParseDb::build(workspace).context("while attempting to build parse db")?;
     let process_memory = profiler.sample_process_memory();
     let parse_bytes = profiler.measure(&parse);
     profiler.record("after parse", parse_bytes, parse_bytes, process_memory);
+    stage_memory = stage_memory
+        .parse(&parse)
+        .capture(profiler, BuildProfileStage::Parse);
 
     let build_plan = PackageBuildPlan::build(
         startup_cache_load,
@@ -62,6 +150,10 @@ pub(super) fn build(
         profiler.sum_retained(&[parse_bytes, build_plan_bytes]),
         process_memory,
     );
+    stage_memory = stage_memory
+        .parse(&parse)
+        .build_plan(&build_plan.packages)
+        .capture(profiler, BuildProfileStage::CacheProbe);
 
     let mut names = PackageNameInterners::new(parse.package_count());
 
@@ -78,6 +170,12 @@ pub(super) fn build(
         profiler.sum_retained(&[names_bytes, parse_bytes, build_plan_bytes, item_tree_bytes]),
         process_memory,
     );
+    stage_memory = stage_memory
+        .names(&names)
+        .parse(&parse)
+        .build_plan(&build_plan.packages)
+        .item_tree(&item_tree)
+        .capture(profiler, BuildProfileStage::ItemTree);
 
     // Later phases consume file ids, paths, line indexes, and lowered item trees. Body IR reparses
     // syntax file-by-file, so the global parse database can drop full trees before more phase
@@ -92,6 +190,12 @@ pub(super) fn build(
         profiler.sum_retained(&[names_bytes, parse_bytes, build_plan_bytes, item_tree_bytes]),
         process_memory,
     );
+    stage_memory = stage_memory
+        .names(&names)
+        .parse(&parse)
+        .build_plan(&build_plan.packages)
+        .item_tree(&item_tree)
+        .capture(profiler, BuildProfileStage::ItemTreeSyntaxEviction);
 
     let package_source_fingerprints = cache_plan
         .source_fingerprints(workspace.workspace_root(), &parse)
@@ -110,6 +214,13 @@ pub(super) fn build(
         ]),
         process_memory,
     );
+    stage_memory = stage_memory
+        .names(&names)
+        .parse(&parse)
+        .build_plan(&build_plan.packages)
+        .item_tree(&item_tree)
+        .source_fingerprints(&package_source_fingerprints)
+        .capture(profiler, BuildProfileStage::CacheSourceFingerprints);
 
     let loaders = PackageReadLoaders::from_cache(
         cache_plan.clone(),
@@ -150,6 +261,14 @@ pub(super) fn build(
         ]),
         process_memory,
     );
+    stage_memory = stage_memory
+        .names(&names)
+        .parse(&parse)
+        .build_plan(&build_plan.packages)
+        .item_tree(&item_tree)
+        .source_fingerprints(&package_source_fingerprints)
+        .def_map(&def_map)
+        .capture(profiler, BuildProfileStage::DefMap);
 
     let baseline_semantic_ir =
         SemanticIrDb::from_package_store(offloaded_package_store(parse.package_count()));
@@ -181,6 +300,15 @@ pub(super) fn build(
         ]),
         process_memory,
     );
+    stage_memory = stage_memory
+        .names(&names)
+        .parse(&parse)
+        .build_plan(&build_plan.packages)
+        .item_tree(&item_tree)
+        .source_fingerprints(&package_source_fingerprints)
+        .def_map(&def_map)
+        .semantic_ir(&semantic_ir)
+        .capture(profiler, BuildProfileStage::SemanticIr);
 
     // ItemTree is a lowering input, not retained project state. Cache-backed builds only populate
     // packages that missed the artifact cache, but even that sparse tree should disappear before
@@ -201,6 +329,14 @@ pub(super) fn build(
         ]),
         process_memory,
     );
+    stage_memory = stage_memory
+        .names(&names)
+        .parse(&parse)
+        .build_plan(&build_plan.packages)
+        .source_fingerprints(&package_source_fingerprints)
+        .def_map(&def_map)
+        .semantic_ir(&semantic_ir)
+        .capture(profiler, BuildProfileStage::ItemTreeDrop);
 
     let baseline_body_ir =
         BodyIrDb::from_package_store(offloaded_package_store(parse.package_count()));
@@ -235,6 +371,15 @@ pub(super) fn build(
         ]),
         process_memory,
     );
+    stage_memory = stage_memory
+        .names(&names)
+        .parse(&parse)
+        .build_plan(&build_plan.packages)
+        .source_fingerprints(&package_source_fingerprints)
+        .def_map(&def_map)
+        .semantic_ir(&semantic_ir)
+        .body_ir(&body_ir)
+        .capture(profiler, BuildProfileStage::BodyIr);
     drop(build_plan);
 
     parse.evict_syntax_trees();
@@ -256,6 +401,14 @@ pub(super) fn build(
         ]),
         process_memory,
     );
+    stage_memory
+        .names(&names)
+        .parse(&parse)
+        .source_fingerprints(&package_source_fingerprints)
+        .def_map(&def_map)
+        .semantic_ir(&semantic_ir)
+        .body_ir(&body_ir)
+        .capture(profiler, BuildProfileStage::ParseSyntaxEviction);
 
     Ok(BuiltPhases {
         package_source_fingerprints,

@@ -5,7 +5,7 @@ use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
 use self::utils::{HostFixture, HostObservation, parse_dirty_text};
-use crate::{PackageResidencyPolicy, Project};
+use crate::{BuildProfileStage, PackageResidencyPolicy, Project};
 
 #[test]
 fn timing_profile_reports_phase_checkpoints_without_memory_sampling() {
@@ -126,6 +126,55 @@ pub struct User;
     assert_eq!(
         item_tree_drop.retained_bytes, None,
         "process-only checkpoints should not pretend to sample a dropped phase object"
+    );
+}
+
+#[test]
+fn stage_memory_profile_captures_requested_transient_phase() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "stage_profile_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+"#,
+    );
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should build");
+    let (_project, profile) = Project::builder(workspace)
+        .measure_retained_memory(true)
+        .stage_memory_target(Some(BuildProfileStage::DefMap))
+        .build()
+        .expect("stage-profiled project build should succeed")
+        .into_parts();
+    let profile = profile.expect("stage profiling should produce a profile");
+    let snapshot = profile
+        .stage_memory()
+        .expect("requested stage should capture detailed memory");
+
+    assert_eq!(snapshot.stage(), BuildProfileStage::DefMap);
+    assert_eq!(snapshot.label(), "after def-map");
+    assert!(
+        snapshot.retained_bytes() > 0,
+        "stage memory should report retained bytes"
+    );
+
+    let paths = snapshot
+        .records()
+        .iter()
+        .map(|record| record.path.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        paths.iter().any(|path| path.starts_with("stage.def_map")),
+        "def-map stage snapshot should include def-map memory"
+    );
+    assert!(
+        paths.iter().any(|path| path.starts_with("stage.item_tree")),
+        "def-map stage snapshot should still include live item-tree memory"
     );
 }
 

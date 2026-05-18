@@ -1,7 +1,7 @@
 use std::fmt;
 
 use rg_memsize::{MemoryRecord, MemoryRecorder, MemorySize};
-use rg_project::Project;
+use rg_project::{BuildStageMemorySnapshot, Project};
 use serde::Serialize;
 
 use super::allocator::format_bytes;
@@ -10,6 +10,8 @@ const TOP_MEMORY_ROWS: usize = 12;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct MemoryReport {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) stage: Option<String>,
     pub(crate) retained_bytes: usize,
     pub(crate) aggregate_bucket_count: usize,
     pub(crate) by_component: Vec<MemoryRow>,
@@ -26,11 +28,28 @@ impl MemoryReport {
         project.record_memory_size(&mut recorder);
         let records = recorder.records();
 
+        Self::from_records(None, recorder.total_bytes(), &records)
+    }
+
+    pub(crate) fn capture_stage(snapshot: &BuildStageMemorySnapshot) -> Self {
+        Self::from_records(
+            Some(snapshot.label().to_string()),
+            snapshot.retained_bytes(),
+            snapshot.records(),
+        )
+    }
+
+    fn from_records(
+        stage: Option<String>,
+        retained_bytes: usize,
+        records: &[MemoryRecord],
+    ) -> Self {
         Self {
-            retained_bytes: recorder.total_bytes(),
+            stage,
+            retained_bytes,
             aggregate_bucket_count: records.len(),
-            by_component: memory_rows(top_level_totals(&records), usize::MAX),
-            by_kind: memory_rows(kind_totals(&records), usize::MAX),
+            by_component: memory_rows(top_level_totals(records), usize::MAX),
+            by_kind: memory_rows(kind_totals(records), usize::MAX),
             top_paths: memory_rows(
                 string_totals(
                     records
@@ -59,6 +78,9 @@ pub(crate) struct MemoryRow {
 
 impl fmt::Display for MemoryReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(stage) = &self.stage {
+            writeln!(f, "memory stage: {stage}")?;
+        }
         writeln!(
             f,
             "memory: {} retained across {} aggregate buckets",

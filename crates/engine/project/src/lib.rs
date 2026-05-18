@@ -5,7 +5,8 @@ mod residency;
 
 pub use self::{
     profile::{
-        BuildCheckpoint, BuildProcessMemory, BuildProfile, CacheProbeProfile, ProcessMemorySampler,
+        BuildCheckpoint, BuildProcessMemory, BuildProfile, BuildProfileStage,
+        BuildStageMemorySnapshot, CacheProbeProfile, ProcessMemorySampler,
     },
     project::{
         AnalysisChangeSummary, ChangedFile, DirtyFileChange, FileContext, Project, ProjectBuild,
