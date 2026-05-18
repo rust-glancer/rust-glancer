@@ -277,7 +277,9 @@ impl FileDb {
 
     pub(super) fn offload_line_indexes(&mut self) {
         for parsed_file in self.parsed_files.iter_mut() {
-            parsed_file.line_index.offload();
+            if matches!(parsed_file.source, ParsedSource::SavedFile) {
+                parsed_file.line_index.offload();
+            }
         }
     }
 

@@ -1,8 +1,11 @@
 mod utils;
 
 use expect_test::expect;
+use rg_workspace::WorkspaceMetadata;
+use test_fixture::fixture_crate;
 
 use self::utils::{check_parse_db, check_parse_db_after_module_discovery};
+use crate::ParseDb;
 
 #[test]
 fn dumps_workspace_packages_targets_and_dependencies() {
@@ -238,4 +241,51 @@ fn module_discovery_terminates_on_module_cycles() {
             - src/lib.rs
         "#]],
     );
+}
+
+#[test]
+fn in_memory_source_keeps_its_line_index_when_saved_indexes_are_offloaded() {
+    let fixture = fixture_crate(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "dirty_line_index"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub fn saved() {}
+        "#,
+    );
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should build");
+    let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
+    let file_path = fixture
+        .path("src/lib.rs")
+        .canonicalize()
+        .expect("fixture file should be canonicalizable");
+    let dirty_text = "pub fn dirty() {\n    changed();\n}\n";
+    let changed_files = parse
+        .reparse_file_from_source(&file_path, dirty_text)
+        .expect("known file should reparse from dirty text");
+    let changed_file = changed_files
+        .first()
+        .copied()
+        .expect("dirty reparse should touch one package file");
+
+    parse.offload_line_indexes_for_packages(&[changed_file.package]);
+
+    let parsed_file = parse.packages()[changed_file.package]
+        .parsed_file(changed_file.file)
+        .expect("changed file id should remain valid");
+    let changed_offset = dirty_text
+        .find("changed")
+        .expect("dirty text should contain marker");
+    let position = parsed_file
+        .line_index()
+        .expect("dirty line index should be available")
+        .position(u32::try_from(changed_offset).expect("marker offset should fit in u32"));
+
+    assert_eq!(position.line, 1);
+    assert_eq!(position.column, 4);
 }
