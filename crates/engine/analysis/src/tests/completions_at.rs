@@ -1509,7 +1509,7 @@ pub fn use_it(maybe: Option<User>) {
     }
 
     match maybe {
-        Some(user) => user.$match_payload$,
+        Some(user) if user.$match_guard$is_valid() => user.$match_payload$,
         None => {}
     }
 }
@@ -1519,6 +1519,7 @@ pub fn use_it(maybe: Option<User>) {
             AnalysisQuery::complete("if let-chain rhs completions", "if_rhs"),
             AnalysisQuery::complete("if let pattern payload completions", "if_payload"),
             AnalysisQuery::complete("while let pattern payload completions", "while_payload"),
+            AnalysisQuery::complete("match guard payload completions", "match_guard"),
             AnalysisQuery::complete("match pattern payload completions", "match_payload"),
         ],
         expect![[r#"
@@ -1538,6 +1539,11 @@ pub fn use_it(maybe: Option<User>) {
             - inherent_method label
 
             while let pattern payload completions
+            - field id
+            - inherent_method is_valid
+            - inherent_method label
+
+            match guard payload completions
             - field id
             - inherent_method is_valid
             - inherent_method label

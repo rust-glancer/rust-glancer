@@ -589,6 +589,7 @@ impl TargetBodyIrSnapshot<'_> {
                 bindings,
                 annotation,
                 initializer,
+                else_branch,
             } => {
                 let bindings = bindings
                     .iter()
@@ -611,6 +612,11 @@ impl TargetBodyIrSnapshot<'_> {
                     writeln!(dump, "{}initializer", indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *initializer, depth + 2, dump);
+                }
+                if let Some(else_branch) = else_branch {
+                    writeln!(dump, "{}else", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *else_branch, depth + 2, dump);
                 }
             }
             StmtKind::Expr {
@@ -713,6 +719,11 @@ impl TargetBodyIrSnapshot<'_> {
                 for arm in arms {
                     writeln!(dump, "{}arm s{}", indent(depth + 1), arm.scope.0)
                         .expect("string writes should not fail");
+                    if let Some(guard) = arm.guard {
+                        writeln!(dump, "{}guard", indent(depth + 2))
+                            .expect("string writes should not fail");
+                        self.render_expr(body, guard, depth + 3, dump);
+                    }
                     if let Some(expr) = arm.expr {
                         self.render_expr(body, expr, depth + 2, dump);
                     }

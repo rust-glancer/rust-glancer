@@ -157,6 +157,7 @@ pub enum ExprWrapperKind {
 pub struct MatchArmData {
     pub pat: Option<PatId>,
     pub scope: ScopeId,
+    pub guard: Option<ExprId>,
     pub expr: Option<ExprId>,
 }
 

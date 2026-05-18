@@ -207,11 +207,15 @@ impl FunctionBodyLowering<'_> {
     }
 
     fn lower_let_statement(&mut self, statement: ast::LetStmt, scope: ScopeId) -> StmtId {
-        // Initializers cannot see the binding introduced by their own `let`, so lower the
-        // initializer before allocating the binding.
+        // Initializers and `let else` blocks cannot see bindings introduced by the successful
+        // pattern, so lower them before allocating those bindings.
         let initializer = statement
             .initializer()
             .map(|initializer| self.lower_expr(initializer, scope));
+        let else_branch = statement
+            .let_else()
+            .and_then(|else_branch| else_branch.block_expr())
+            .map(|block| self.lower_block_expr(block, scope));
         let annotation = statement
             .ty()
             .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
@@ -229,6 +233,7 @@ impl FunctionBodyLowering<'_> {
                 bindings,
                 annotation,
                 initializer,
+                else_branch,
             },
         })
     }

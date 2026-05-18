@@ -42,7 +42,7 @@ rg_memsize::impl_memory_size_children! {
     BodySource => file_id, span;
     ScopeData => parent, local_items, local_impls, bindings;
     ExprData => source, scope, visible_bindings, kind, resolution, ty;
-    MatchArmData => pat, scope, expr;
+    MatchArmData => pat, scope, guard, expr;
     LabelData => name, span;
     RecordExprField => key, key_span, source_span, value;
     BodyPath => source_span, path, segment_spans;
@@ -381,6 +381,7 @@ impl MemorySize for StmtKind {
                 bindings,
                 annotation,
                 initializer,
+                else_branch,
             } => {
                 recorder.scope("scope", |recorder| scope.record_memory_children(recorder));
                 recorder.scope("pat", |recorder| pat.record_memory_children(recorder));
@@ -392,6 +393,9 @@ impl MemorySize for StmtKind {
                 });
                 recorder.scope("initializer", |recorder| {
                     initializer.record_memory_children(recorder);
+                });
+                recorder.scope("else_branch", |recorder| {
+                    else_branch.record_memory_children(recorder);
                 });
             }
             Self::Expr {

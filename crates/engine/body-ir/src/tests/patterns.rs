@@ -36,25 +36,30 @@ pub fn use_it(maybe: Option<User>) {
             scopes
             - s0 parent <none>: v0
             - s1 parent s0: v1
-            - s2 parent s1: v2
-            - s3 parent s1: <none>
+            - s2 parent s1: <none>
+            - s3 parent s1: v2
+            - s4 parent s1: <none>
             bindings
             - v0 param maybe `maybe`: Option<User> => nominal enum body_enum_pattern_fixture[lib]::crate::Option<nominal struct body_enum_pattern_fixture[lib]::crate::User> @ 8:15-8:20
             - v1 let value `value` => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 9:14-9:19
             - v2 let user `user` => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 11:14-11:18
             body
-            expr e5 block s1 => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 8:36-14:2
-              stmt s0 let v1 @ 9:5-9:46
+            expr e7 block s1 => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 8:36-14:2
+              stmt s1 let v1 @ 9:5-9:46
                 initializer
                   expr e0 path maybe -> local v0 => nominal enum body_enum_pattern_fixture[lib]::crate::Option<nominal struct body_enum_pattern_fixture[lib]::crate::User> @ 9:23-9:28
+                else
+                  expr e2 block s2 => () @ 9:34-9:45
+                    stmt s0 expr; @ 9:36-9:43
+                      expr e1 wrapper return => <unknown> @ 9:36-9:42
               tail
-                expr e4 match => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 10:5-13:6
+                expr e6 match => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 10:5-13:6
                   scrutinee
-                    expr e1 path maybe -> local v0 => nominal enum body_enum_pattern_fixture[lib]::crate::Option<nominal struct body_enum_pattern_fixture[lib]::crate::User> @ 10:11-10:16
-                  arm s2
-                    expr e2 path user -> local v2 => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 11:23-11:27
+                    expr e3 path maybe -> local v0 => nominal enum body_enum_pattern_fixture[lib]::crate::Option<nominal struct body_enum_pattern_fixture[lib]::crate::User> @ 10:11-10:16
                   arm s3
-                    expr e3 path value -> local v1 => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 12:17-12:22
+                    expr e4 path user -> local v2 => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 11:23-11:27
+                  arm s4
+                    expr e5 path value -> local v1 => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 12:17-12:22
         "#]],
     );
 }

@@ -277,9 +277,20 @@ impl FunctionBodyLowering<'_> {
             .pat()
             .map(|pat| self.lower_pat(pat, scope, BindingKind::Let, None).0)
             .unwrap_or_default();
+        // Guards can use arm-pattern bindings. Let-chain bindings inside the guard stay local to
+        // the guard condition and should not extend into the arm body expression.
+        let guard = arm.guard().and_then(|guard| {
+            let (guard, _success_scope) = self.lower_condition_expr(guard.condition(), scope);
+            guard
+        });
         let expr = arm.expr().map(|expr| self.lower_expr(expr, scope));
 
-        MatchArmData { pat, scope, expr }
+        MatchArmData {
+            pat,
+            scope,
+            guard,
+            expr,
+        }
     }
 
     fn lower_method_call_expr(

@@ -88,6 +88,96 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
 }
 
 #[test]
+fn lowers_let_else_and_match_guards() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_let_else_guard_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct UserId(u64);
+
+impl UserId {
+    pub fn is_valid(&self) -> bool {
+        true
+    }
+}
+
+pub enum Maybe {
+    Some(UserId),
+    None,
+}
+
+pub fn choose(input: Maybe, fallback: UserId) -> UserId {
+    let Maybe::Some(fallback) = input else {
+        return fallback;
+    };
+
+    match input {
+        Maybe::Some(user) if user.is_valid() => user,
+        Maybe::None => fallback,
+    }
+}
+"#,
+        expect![[r#"
+            package body_let_else_guard_fixture
+
+            body_let_else_guard_fixture [lib]
+            body b0 fn body_let_else_guard_fixture[lib]::crate::choose @ 14:1-23:2
+            scopes
+            - s0 parent <none>: v0, v1
+            - s1 parent s0: v2
+            - s2 parent s1: <none>
+            - s3 parent s1: v3
+            - s4 parent s1: <none>
+            bindings
+            - v0 param input `input`: Maybe => nominal enum body_let_else_guard_fixture[lib]::crate::Maybe @ 14:15-14:20
+            - v1 param fallback `fallback`: UserId => nominal struct body_let_else_guard_fixture[lib]::crate::UserId @ 14:29-14:37
+            - v2 let fallback `fallback` => nominal struct body_let_else_guard_fixture[lib]::crate::UserId @ 15:21-15:29
+            - v3 let user `user` => nominal struct body_let_else_guard_fixture[lib]::crate::UserId @ 20:21-20:25
+            body
+            expr e10 block s1 => nominal struct body_let_else_guard_fixture[lib]::crate::UserId @ 14:57-23:2
+              stmt s1 let v2 @ 15:5-17:7
+                initializer
+                  expr e0 path input -> local v0 => nominal enum body_let_else_guard_fixture[lib]::crate::Maybe @ 15:33-15:38
+                else
+                  expr e3 block s2 => () @ 15:44-17:6
+                    stmt s0 expr; @ 16:9-16:25
+                      expr e2 wrapper return => ! @ 16:9-16:24
+                        inner
+                          expr e1 path fallback -> local v1 => nominal struct body_let_else_guard_fixture[lib]::crate::UserId @ 16:16-16:24
+              tail
+                expr e9 match => nominal struct body_let_else_guard_fixture[lib]::crate::UserId @ 19:5-22:6
+                  scrutinee
+                    expr e4 path input -> local v0 => nominal enum body_let_else_guard_fixture[lib]::crate::Maybe @ 19:11-19:16
+                  arm s3
+                    guard
+                      expr e6 method_call is_valid -> fn impl UserId::is_valid => syntax bool @ 20:30-20:45
+                        receiver
+                          expr e5 path user -> local v3 => nominal struct body_let_else_guard_fixture[lib]::crate::UserId @ 20:30-20:34
+                    expr e7 path user -> local v3 => nominal struct body_let_else_guard_fixture[lib]::crate::UserId @ 20:49-20:53
+                  arm s4
+                    expr e8 path fallback -> local v2 => nominal struct body_let_else_guard_fixture[lib]::crate::UserId @ 21:24-21:32
+
+
+            body b1 fn impl UserId::is_valid @ 4:5-6:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `&self` => Self struct body_let_else_guard_fixture[lib]::crate::UserId @ 4:21-4:26
+            body
+            expr e1 block s1 => <unknown> @ 4:36-6:6
+              tail
+                expr e0 literal bool `true` => <unknown> @ 5:9-5:13
+        "#]],
+    );
+}
+
+#[test]
 fn lowers_loop_while_for_and_jumps() {
     check_project_body_ir(
         r#"

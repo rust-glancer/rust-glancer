@@ -72,6 +72,7 @@ pub enum StmtKind {
         bindings: Vec<BindingId>,
         annotation: Option<TypeRef>,
         initializer: Option<ExprId>,
+        else_branch: Option<ExprId>,
     },
     Expr {
         expr: ExprId,
