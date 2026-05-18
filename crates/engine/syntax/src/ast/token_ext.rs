@@ -690,13 +690,11 @@ mod tests {
     }
 
     fn check_string_value<'a>(lit: &str, expected: impl Into<Option<&'a str>>) {
-        assert_eq!(
-            string_literal(&format!("\"{lit}\""))
-                .value()
-                .as_deref()
-                .ok(),
-            expected.into()
-        );
+        let lit = format!("\"{lit}\"");
+        let string = ast::String {
+            syntax: literal_token(&lit),
+        };
+        assert_eq!(string.value().as_deref().ok(), expected.into());
     }
 
     #[test]
@@ -716,11 +714,12 @@ bcde", "abcde",
         lit: &str,
         expected: impl Into<Option<&'a [u8; N]>>,
     ) {
+        let lit = format!("b\"{lit}\"");
+        let byte_string = ast::ByteString {
+            syntax: literal_token(&lit),
+        };
         assert_eq!(
-            byte_string_literal(&format!("b\"{lit}\""))
-                .value()
-                .as_deref()
-                .ok(),
+            byte_string.value().as_deref().ok(),
             expected.into().map(|value| &value[..])
         );
     }
@@ -759,18 +758,6 @@ bcde", b"abcde",
 
     fn float_number(lit: &str) -> FloatNumber {
         FloatNumber {
-            syntax: literal_token(lit),
-        }
-    }
-
-    fn string_literal(lit: &str) -> ast::String {
-        ast::String {
-            syntax: literal_token(lit),
-        }
-    }
-
-    fn byte_string_literal(lit: &str) -> ast::ByteString {
-        ast::ByteString {
             syntax: literal_token(lit),
         }
     }

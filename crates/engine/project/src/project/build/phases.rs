@@ -113,6 +113,7 @@ impl<'a> StageMemory<'a> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build(
     workspace: &WorkspaceMetadata,
     body_ir_policy: BodyIrBuildPolicy,

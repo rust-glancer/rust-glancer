@@ -87,6 +87,7 @@ impl CliMemoryStage {
 }
 
 /// Runs project analysis for the Cargo manifest at `path` and prints a small build summary.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn analyze(
     path: PathBuf,
     profile: bool,
