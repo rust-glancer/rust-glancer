@@ -24,6 +24,13 @@ impl ExternCrateItem {
             alias: ImportAlias::from_rename(item.rename(), interner),
         }
     }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        if let Some(name) = &mut self.name {
+            name.shrink_to_fit();
+        }
+        self.alias.shrink_to_fit();
+    }
 }
 
 /// Syntactic `use` facts attached to `ItemKind::Use`.
@@ -41,6 +48,13 @@ impl UseItem {
         }
 
         Self { imports }
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.imports.shrink_to_fit();
+        for import in &mut self.imports {
+            import.shrink_to_fit();
+        }
     }
 
     fn lower_use_tree(
@@ -90,6 +104,13 @@ pub struct UseImport {
     pub alias: ImportAlias,
 }
 
+impl UseImport {
+    fn shrink_to_fit(&mut self) {
+        self.path.shrink_to_fit();
+        self.alias.shrink_to_fit();
+    }
+}
+
 /// Import form before name resolution.
 #[derive(
     Debug,
@@ -135,6 +156,13 @@ impl ImportAlias {
                 name: interner.intern(name.text()),
             })
             .unwrap_or(Self::Inferred)
+    }
+
+    fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Explicit { name, .. } => name.shrink_to_fit(),
+            Self::Inferred | Self::Hidden => {}
+        }
     }
 }
 
@@ -289,6 +317,13 @@ impl UsePath {
             Some(UsePathSegmentKind::SelfKw)
         )
     }
+
+    fn shrink_to_fit(&mut self) {
+        self.segments.shrink_to_fit();
+        for segment in &mut self.segments {
+            segment.shrink_to_fit();
+        }
+    }
 }
 
 impl fmt::Display for UsePath {
@@ -315,6 +350,12 @@ pub struct UsePathSegment {
     pub span: Span,
 }
 
+impl UsePathSegment {
+    fn shrink_to_fit(&mut self) {
+        self.kind.shrink_to_fit();
+    }
+}
+
 impl fmt::Display for UsePathSegment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.kind.fmt(f)
@@ -333,4 +374,13 @@ pub enum UsePathSegmentKind {
     SuperKw,
     #[display("crate")]
     CrateKw,
+}
+
+impl UsePathSegmentKind {
+    fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Name(name) => name.shrink_to_fit(),
+            Self::SelfKw | Self::SuperKw | Self::CrateKw => {}
+        }
+    }
 }

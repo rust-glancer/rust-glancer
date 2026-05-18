@@ -35,6 +35,14 @@ impl Package {
     pub fn target_root(&self, target_id: TargetId) -> Option<&TargetRoot> {
         self.target_roots.get(target_id)
     }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        for file in self.files.iter_mut().flatten() {
+            file.shrink_to_fit();
+        }
+        self.files.shrink_to_fit();
+        self.target_roots.shrink_to_fit();
+    }
 }
 
 /// File-local lowered item tree.
@@ -50,6 +58,17 @@ impl FileTree {
     /// Returns one file-local item-tree node by id.
     pub fn item(&self, item_id: ItemTreeId) -> Option<&ItemNode> {
         self.items.get(item_id)
+    }
+
+    fn shrink_to_fit(&mut self) {
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+        self.top_level.shrink_to_fit();
+        for item in self.items.iter_mut() {
+            item.shrink_to_fit();
+        }
+        self.items.shrink_to_fit();
     }
 }
 

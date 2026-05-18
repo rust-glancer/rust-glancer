@@ -46,4 +46,11 @@ impl VisibilityLevel {
             _ => Self::Unknown(visibility.syntax().text().to_string()),
         }
     }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        match self {
+            Self::Restricted(path) | Self::Unknown(path) => path.shrink_to_fit(),
+            Self::Private | Self::Public | Self::Crate | Self::Super | Self::Self_ => {}
+        }
+    }
 }

@@ -68,6 +68,24 @@ impl ItemKind {
             Self::Use(_) => ItemTag::Use,
         }
     }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        match self {
+            Self::AsmExpr | Self::ExternBlock | Self::MacroDefinition => {}
+            Self::Const(item) => item.shrink_to_fit(),
+            Self::Enum(item) => item.shrink_to_fit(),
+            Self::ExternCrate(item) => item.shrink_to_fit(),
+            Self::Function(item) => item.shrink_to_fit(),
+            Self::Impl(item) => item.shrink_to_fit(),
+            Self::Module(item) => item.shrink_to_fit(),
+            Self::Static(item) => item.shrink_to_fit(),
+            Self::Struct(item) => item.shrink_to_fit(),
+            Self::Trait(item) => item.shrink_to_fit(),
+            Self::TypeAlias(item) => item.shrink_to_fit(),
+            Self::Union(item) => item.shrink_to_fit(),
+            Self::Use(item) => item.shrink_to_fit(),
+        }
+    }
 }
 
 /// Payload-independent item classification.

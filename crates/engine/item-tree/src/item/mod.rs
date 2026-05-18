@@ -89,6 +89,17 @@ impl ItemNode {
             span: Span::from_text_range(text_range),
         }
     }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.kind.shrink_to_fit();
+        if let Some(name) = &mut self.name {
+            name.shrink_to_fit();
+        }
+        self.visibility.shrink_to_fit();
+        if let Some(docs) = &mut self.docs {
+            docs.shrink_to_fit();
+        }
+    }
 }
 
 pub(super) fn normalized_syntax(node: &impl rg_syntax::AstNode) -> String {
