@@ -162,17 +162,26 @@ pub mod api {
 
 pub fn use_it() {
     let _: crate::api::Ap$type_path$;
+    let _ = 0 as crate::api::Ap$cast_type_path$;
     let _ = crate::api::bu$value_path$();
 }
 "#,
         &[
             AnalysisQuery::complete("type path completions", "type_path"),
+            AnalysisQuery::complete("cast type path completions", "cast_type_path"),
             AnalysisQuery::complete("value path completions", "value_path"),
         ],
         // Value-position paths include type-namespace entries too because modules and nominal
         // types can be intermediate prefixes. Prefix filtering is left to the LSP client.
         expect![[r#"
             type path completions
+            - type_alias ApiAlias
+            - trait ApiNamed
+            - enum ApiState
+            - struct ApiUser
+            - module api_nested
+
+            cast type path completions
             - type_alias ApiAlias
             - trait ApiNamed
             - enum ApiState
@@ -959,9 +968,11 @@ pub async fn load_user_async() -> User {
 }
 
 pub async fn use_it(user: User) -> Result<(), Error> {
+    let raw = 0;
     (&user).$reference$;
     load_user()?.$try$;
     load_user_async().await.$await$;
+    (raw as User).$cast$;
     Result::Ok(())
 }
 "#,
@@ -969,6 +980,7 @@ pub async fn use_it(user: User) -> Result<(), Error> {
             AnalysisQuery::complete("reference completions", "reference"),
             AnalysisQuery::complete("try completions", "try"),
             AnalysisQuery::complete("await completions", "await"),
+            AnalysisQuery::complete("cast completions", "cast"),
         ],
         expect![[r#"
             reference completions
@@ -980,6 +992,10 @@ pub async fn use_it(user: User) -> Result<(), Error> {
             - field profile
 
             await completions
+            - inherent_method id
+            - field profile
+
+            cast completions
             - inherent_method id
             - field profile
         "#]],

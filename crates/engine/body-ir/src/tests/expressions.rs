@@ -164,6 +164,234 @@ pub fn use_it(id: u8, name: u8) -> User {
 }
 
 #[test]
+fn lowers_common_expression_forms() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_common_expr_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User {
+    pub id: u8,
+}
+
+pub fn never() -> ! {
+    loop {}
+}
+
+pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
+    let tuple = (value, user.id);
+    let array = [value, 1, 2];
+    let repeat = [value; 3];
+    let indexed = slots[0];
+    let exclusive = 1..value;
+    let inclusive = value..=value;
+    let full = ..;
+    let casted = user as User;
+    let field_after_cast = (user as User).id;
+    let unary = (!false, -1, *&value);
+    let binary = value + 1 == 2 && false || true;
+    (pair.0, pair.1) = (1, 2);
+    slots[0] += value;
+    let hole = _;
+    yield value;
+    do yeet value;
+    become never();
+}
+"#,
+        expect![[r#"
+            package body_common_expr_fixture
+
+            body_common_expr_fixture [lib]
+            body b0 fn body_common_expr_fixture[lib]::crate::never @ 5:1-7:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            - s2 parent s1: <none>
+            bindings
+            body
+            expr e2 block s1 => <unknown> @ 5:21-7:2
+              tail
+                expr e1 loop => <unknown> @ 6:5-6:12
+                  body
+                    expr e0 block s2 => () @ 6:10-6:12
+
+
+            body b1 fn body_common_expr_fixture[lib]::crate::use_it @ 9:1-27:2
+            scopes
+            - s0 parent <none>: v0, v1, v2, v3
+            - s1 parent s0: v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15
+            bindings
+            - v0 param pair `mut pair`: (u8, u8) => syntax (u8, u8) @ 9:15-9:23
+            - v1 param slots `mut slots`: [u8; 3] => syntax [u8; 3] @ 9:35-9:44
+            - v2 param value `value`: u8 => syntax u8 @ 9:55-9:60
+            - v3 param user `user`: User => nominal struct body_common_expr_fixture[lib]::crate::User @ 9:66-9:70
+            - v4 let tuple `tuple` => <unknown> @ 10:9-10:14
+            - v5 let array `array` => <unknown> @ 11:9-11:14
+            - v6 let repeat `repeat` => <unknown> @ 12:9-12:15
+            - v7 let indexed `indexed` => <unknown> @ 13:9-13:16
+            - v8 let exclusive `exclusive` => <unknown> @ 14:9-14:18
+            - v9 let inclusive `inclusive` => <unknown> @ 15:9-15:18
+            - v10 let full `full` => <unknown> @ 16:9-16:13
+            - v11 let casted `casted` => nominal struct body_common_expr_fixture[lib]::crate::User @ 17:9-17:15
+            - v12 let field_after_cast `field_after_cast` => syntax u8 @ 18:9-18:25
+            - v13 let unary `unary` => <unknown> @ 19:9-19:14
+            - v14 let binary `binary` => <unknown> @ 20:9-20:15
+            - v15 let hole `hole` => <unknown> @ 23:9-23:13
+            body
+            expr e66 block s1 => () @ 9:78-27:2
+              stmt s0 let v4 @ 10:5-10:34
+                initializer
+                  expr e3 tuple => <unknown> @ 10:17-10:33
+                    field
+                      expr e0 path value -> local v2 => syntax u8 @ 10:18-10:23
+                    field
+                      expr e2 field id -> field struct body_common_expr_fixture[lib]::crate::User::id => syntax u8 @ 10:25-10:32
+                        base
+                          expr e1 path user -> local v3 => nominal struct body_common_expr_fixture[lib]::crate::User @ 10:25-10:29
+              stmt s1 let v5 @ 11:5-11:31
+                initializer
+                  expr e7 array => <unknown> @ 11:17-11:30
+                    element
+                      expr e4 path value -> local v2 => syntax u8 @ 11:18-11:23
+                    element
+                      expr e5 literal int `1` => <unknown> @ 11:25-11:26
+                    element
+                      expr e6 literal int `2` => <unknown> @ 11:28-11:29
+              stmt s2 let v6 @ 12:5-12:29
+                initializer
+                  expr e10 repeat_array => <unknown> @ 12:18-12:28
+                    initializer
+                      expr e8 path value -> local v2 => syntax u8 @ 12:19-12:24
+                    repeat
+                      expr e9 literal int `3` => <unknown> @ 12:26-12:27
+              stmt s3 let v7 @ 13:5-13:28
+                initializer
+                  expr e13 index => <unknown> @ 13:19-13:27
+                    base
+                      expr e11 path slots -> local v1 => syntax [u8; 3] @ 13:19-13:24
+                    index
+                      expr e12 literal int `0` => <unknown> @ 13:25-13:26
+              stmt s4 let v8 @ 14:5-14:30
+                initializer
+                  expr e16 range .. => <unknown> @ 14:21-14:29
+                    start
+                      expr e14 literal int `1` => <unknown> @ 14:21-14:22
+                    end
+                      expr e15 path value -> local v2 => syntax u8 @ 14:24-14:29
+              stmt s5 let v9 @ 15:5-15:35
+                initializer
+                  expr e19 range ..= => <unknown> @ 15:21-15:34
+                    start
+                      expr e17 path value -> local v2 => syntax u8 @ 15:21-15:26
+                    end
+                      expr e18 path value -> local v2 => syntax u8 @ 15:29-15:34
+              stmt s6 let v10 @ 16:5-16:19
+                initializer
+                  expr e20 range .. => <unknown> @ 16:16-16:18
+              stmt s7 let v11 @ 17:5-17:31
+                initializer
+                  expr e22 cast as User => nominal struct body_common_expr_fixture[lib]::crate::User @ 17:18-17:30
+                    inner
+                      expr e21 path user -> local v3 => nominal struct body_common_expr_fixture[lib]::crate::User @ 17:18-17:22
+              stmt s8 let v12 @ 18:5-18:46
+                initializer
+                  expr e26 field id -> field struct body_common_expr_fixture[lib]::crate::User::id => syntax u8 @ 18:28-18:45
+                    base
+                      expr e25 wrapper paren => nominal struct body_common_expr_fixture[lib]::crate::User @ 18:28-18:42
+                        inner
+                          expr e24 cast as User => nominal struct body_common_expr_fixture[lib]::crate::User @ 18:29-18:41
+                            inner
+                              expr e23 path user -> local v3 => nominal struct body_common_expr_fixture[lib]::crate::User @ 18:29-18:33
+              stmt s9 let v13 @ 19:5-19:39
+                initializer
+                  expr e34 tuple => <unknown> @ 19:17-19:38
+                    field
+                      expr e28 unary ! => <unknown> @ 19:18-19:24
+                        inner
+                          expr e27 literal bool `false` => <unknown> @ 19:19-19:24
+                    field
+                      expr e30 unary - => <unknown> @ 19:26-19:28
+                        inner
+                          expr e29 literal int `1` => <unknown> @ 19:27-19:28
+                    field
+                      expr e33 unary * => <unknown> @ 19:30-19:37
+                        inner
+                          expr e32 wrapper ref => &syntax u8 @ 19:31-19:37
+                            inner
+                              expr e31 path value -> local v2 => syntax u8 @ 19:32-19:37
+              stmt s10 let v14 @ 20:5-20:50
+                initializer
+                  expr e43 binary || => <unknown> @ 20:18-20:49
+                    lhs
+                      expr e41 binary && => <unknown> @ 20:18-20:41
+                        lhs
+                          expr e39 binary == => <unknown> @ 20:18-20:32
+                            lhs
+                              expr e37 binary + => <unknown> @ 20:18-20:27
+                                lhs
+                                  expr e35 path value -> local v2 => syntax u8 @ 20:18-20:23
+                                rhs
+                                  expr e36 literal int `1` => <unknown> @ 20:26-20:27
+                            rhs
+                              expr e38 literal int `2` => <unknown> @ 20:31-20:32
+                        rhs
+                          expr e40 literal bool `false` => <unknown> @ 20:36-20:41
+                    rhs
+                      expr e42 literal bool `true` => <unknown> @ 20:45-20:49
+              stmt s11 expr; @ 21:5-21:31
+                expr e52 assign = => () @ 21:5-21:30
+                  target
+                    expr e48 tuple => <unknown> @ 21:5-21:21
+                      field
+                        expr e45 field 0 => <unknown> @ 21:6-21:12
+                          base
+                            expr e44 path pair -> local v0 => syntax (u8, u8) @ 21:6-21:10
+                      field
+                        expr e47 field 1 => <unknown> @ 21:14-21:20
+                          base
+                            expr e46 path pair -> local v0 => syntax (u8, u8) @ 21:14-21:18
+                  value
+                    expr e51 tuple => <unknown> @ 21:24-21:30
+                      field
+                        expr e49 literal int `1` => <unknown> @ 21:25-21:26
+                      field
+                        expr e50 literal int `2` => <unknown> @ 21:28-21:29
+              stmt s12 expr; @ 22:5-22:23
+                expr e57 assign += => () @ 22:5-22:22
+                  target
+                    expr e55 index => <unknown> @ 22:5-22:13
+                      base
+                        expr e53 path slots -> local v1 => syntax [u8; 3] @ 22:5-22:10
+                      index
+                        expr e54 literal int `0` => <unknown> @ 22:11-22:12
+                  value
+                    expr e56 path value -> local v2 => syntax u8 @ 22:17-22:22
+              stmt s13 let v15 @ 23:5-23:18
+                initializer
+                  expr e58 underscore => <unknown> @ 23:16-23:17
+              stmt s14 expr; @ 24:5-24:17
+                expr e60 yield => <unknown> @ 24:5-24:16
+                  value
+                    expr e59 path value -> local v2 => syntax u8 @ 24:11-24:16
+              stmt s15 expr; @ 25:5-25:19
+                expr e62 yeet => ! @ 25:5-25:18
+                  value
+                    expr e61 path value -> local v2 => syntax u8 @ 25:13-25:18
+              stmt s16 expr; @ 26:5-26:20
+                expr e65 become => ! @ 26:5-26:19
+                  value
+                    expr e64 call => ! @ 26:12-26:19
+                      callee
+                        expr e63 path never -> item fn body_common_expr_fixture[lib]::crate::never => <unknown> @ 26:12-26:17
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_associated_functions_and_enum_variant_calls() {
     check_project_body_ir(
         r#"

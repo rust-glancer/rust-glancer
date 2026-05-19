@@ -58,6 +58,43 @@ pub enum ExprKind {
         callee: Option<ExprId>,
         args: Vec<ExprId>,
     },
+    Tuple {
+        fields: Vec<ExprId>,
+    },
+    Array {
+        elements: Vec<ExprId>,
+    },
+    RepeatArray {
+        initializer: Option<ExprId>,
+        repeat: Option<ExprId>,
+    },
+    Index {
+        base: Option<ExprId>,
+        index: Option<ExprId>,
+    },
+    Range {
+        start: Option<ExprId>,
+        end: Option<ExprId>,
+        kind: Option<ExprRangeKind>,
+    },
+    Cast {
+        expr: Option<ExprId>,
+        ty: Option<TypeRef>,
+    },
+    Unary {
+        op: Option<ExprUnaryOp>,
+        expr: Option<ExprId>,
+    },
+    Binary {
+        lhs: Option<ExprId>,
+        op: Option<ExprBinaryOp>,
+        rhs: Option<ExprId>,
+    },
+    Assign {
+        target: Option<ExprId>,
+        op: Option<ExprAssignOp>,
+        value: Option<ExprId>,
+    },
     Match {
         scrutinee: Option<ExprId>,
         arms: Vec<MatchArmData>,
@@ -131,6 +168,16 @@ pub enum ExprKind {
     Literal {
         kind: LiteralKind,
     },
+    Underscore,
+    Yield {
+        value: Option<ExprId>,
+    },
+    Yeet {
+        value: Option<ExprId>,
+    },
+    Become {
+        value: Option<ExprId>,
+    },
     Unknown {
         children: Vec<ExprId>,
     },
@@ -170,6 +217,130 @@ pub enum ClosureKind {
     Normal,
     #[display("async")]
     Async,
+}
+
+/// Unary operator written before an expression.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+)]
+pub enum ExprUnaryOp {
+    #[display("*")]
+    Deref,
+    #[display("!")]
+    Not,
+    #[display("-")]
+    Neg,
+}
+
+/// Non-assignment binary operator written between two expressions.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+)]
+pub enum ExprBinaryOp {
+    #[display("||")]
+    LogicOr,
+    #[display("&&")]
+    LogicAnd,
+    #[display("==")]
+    Eq,
+    #[display("!=")]
+    NotEq,
+    #[display("<")]
+    Less,
+    #[display("<=")]
+    LessEq,
+    #[display(">")]
+    Greater,
+    #[display(">=")]
+    GreaterEq,
+    #[display("+")]
+    Add,
+    #[display("*")]
+    Mul,
+    #[display("-")]
+    Sub,
+    #[display("/")]
+    Div,
+    #[display("%")]
+    Rem,
+    #[display("<<")]
+    Shl,
+    #[display(">>")]
+    Shr,
+    #[display("^")]
+    BitXor,
+    #[display("|")]
+    BitOr,
+    #[display("&")]
+    BitAnd,
+}
+
+/// Assignment operator written between a target expression and a value expression.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+)]
+pub enum ExprAssignOp {
+    #[display("=")]
+    Assign,
+    #[display("+=")]
+    Add,
+    #[display("*=")]
+    Mul,
+    #[display("-=")]
+    Sub,
+    #[display("/=")]
+    Div,
+    #[display("%=")]
+    Rem,
+    #[display("<<=")]
+    Shl,
+    #[display(">>=")]
+    Shr,
+    #[display("^=")]
+    BitXor,
+    #[display("|=")]
+    BitOr,
+    #[display("&=")]
+    BitAnd,
+}
+
+/// Range operator written between optional range bounds.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+)]
+pub enum ExprRangeKind {
+    #[display("..")]
+    Exclusive,
+    #[display("..=")]
+    Inclusive,
 }
 
 /// Transparent or nearly-transparent expression wrapper understood by cheap type normalization.
@@ -267,6 +438,13 @@ impl ExprKind {
                 let _ = callee;
                 args.shrink_to_fit();
             }
+            Self::Tuple { fields } => fields.shrink_to_fit(),
+            Self::Array { elements } => elements.shrink_to_fit(),
+            Self::Cast { ty, .. } => {
+                if let Some(ty) = ty {
+                    ty.shrink_to_fit();
+                }
+            }
             Self::Match { scrutinee, arms } => {
                 let _ = scrutinee;
                 arms.shrink_to_fit();
@@ -332,7 +510,18 @@ impl ExprKind {
                     field.shrink_to_fit();
                 }
             }
-            Self::Wrapper { .. } | Self::Literal { .. } => {}
+            Self::RepeatArray { .. }
+            | Self::Index { .. }
+            | Self::Range { .. }
+            | Self::Unary { .. }
+            | Self::Binary { .. }
+            | Self::Assign { .. }
+            | Self::Wrapper { .. }
+            | Self::Literal { .. }
+            | Self::Underscore
+            | Self::Yield { .. }
+            | Self::Yeet { .. }
+            | Self::Become { .. } => {}
             Self::Unknown { children } => children.shrink_to_fit(),
         }
     }

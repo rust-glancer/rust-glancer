@@ -17,6 +17,10 @@ rg_memsize::impl_memory_size_leaf!(
     TargetBodiesStatus,
     ClosureCapture,
     ClosureKind,
+    crate::ExprAssignOp,
+    crate::ExprBinaryOp,
+    crate::ExprRangeKind,
+    crate::ExprUnaryOp,
     ExprWrapperKind,
     LiteralKind,
     PatBindingMode,
@@ -95,6 +99,46 @@ impl MemorySize for ExprKind {
             Self::Call { callee, args } => {
                 recorder.scope("callee", |recorder| callee.record_memory_children(recorder));
                 recorder.scope("args", |recorder| args.record_memory_children(recorder));
+            }
+            Self::Tuple { fields } => fields.record_memory_children(recorder),
+            Self::Array { elements } => elements.record_memory_children(recorder),
+            Self::RepeatArray {
+                initializer,
+                repeat,
+            } => {
+                recorder.scope("initializer", |recorder| {
+                    initializer.record_memory_children(recorder);
+                });
+                recorder.scope("repeat", |recorder| repeat.record_memory_children(recorder));
+            }
+            Self::Index { base, index } => {
+                recorder.scope("base", |recorder| base.record_memory_children(recorder));
+                recorder.scope("index", |recorder| index.record_memory_children(recorder));
+            }
+            Self::Range { start, end, kind } => {
+                recorder.scope("start", |recorder| start.record_memory_children(recorder));
+                recorder.scope("end", |recorder| end.record_memory_children(recorder));
+                recorder.scope("kind", |recorder| kind.record_memory_children(recorder));
+            }
+            Self::Cast { expr, ty } => {
+                recorder.scope("expr", |recorder| expr.record_memory_children(recorder));
+                recorder.scope("ty", |recorder| ty.record_memory_children(recorder));
+            }
+            Self::Unary { op, expr } => {
+                recorder.scope("op", |recorder| op.record_memory_children(recorder));
+                recorder.scope("expr", |recorder| expr.record_memory_children(recorder));
+            }
+            Self::Binary { lhs, op, rhs } => {
+                recorder.scope("lhs", |recorder| lhs.record_memory_children(recorder));
+                recorder.scope("op", |recorder| op.record_memory_children(recorder));
+                recorder.scope("rhs", |recorder| rhs.record_memory_children(recorder));
+            }
+            Self::Assign { target, op, value } => {
+                recorder.scope("target", |recorder| {
+                    target.record_memory_children(recorder);
+                });
+                recorder.scope("op", |recorder| op.record_memory_children(recorder));
+                recorder.scope("value", |recorder| value.record_memory_children(recorder));
             }
             Self::Match { scrutinee, arms } => {
                 recorder.scope("scrutinee", |recorder| {
@@ -246,6 +290,10 @@ impl MemorySize for ExprKind {
                 recorder.scope("inner", |recorder| inner.record_memory_children(recorder));
             }
             Self::Literal { kind } => kind.record_memory_children(recorder),
+            Self::Underscore => {}
+            Self::Yield { value } | Self::Yeet { value } | Self::Become { value } => {
+                value.record_memory_children(recorder);
+            }
             Self::Unknown { children } => children.record_memory_children(recorder),
         }
     }

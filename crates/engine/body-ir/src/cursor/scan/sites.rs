@@ -170,34 +170,42 @@ impl<'body> BodyScanSites<'body> {
         }
 
         for expr in self.body.exprs.iter() {
-            let ExprKind::Closure {
-                scope,
-                params,
-                ret_ty,
-                ..
-            } = &expr.kind
-            else {
-                continue;
-            };
+            match &expr.kind {
+                ExprKind::Closure {
+                    scope,
+                    params,
+                    ret_ty,
+                    ..
+                } => {
+                    for param in params {
+                        if let Some(annotation) = &param.annotation {
+                            visit(TypeRefSite {
+                                scope: *scope,
+                                visible_bindings,
+                                file_id: param.source.file_id,
+                                ty: annotation,
+                            });
+                        }
+                    }
 
-            for param in params {
-                if let Some(annotation) = &param.annotation {
+                    if let Some(ret_ty) = ret_ty {
+                        visit(TypeRefSite {
+                            scope: *scope,
+                            visible_bindings,
+                            file_id: expr.source.file_id,
+                            ty: ret_ty,
+                        });
+                    }
+                }
+                ExprKind::Cast { ty: Some(ty), .. } => {
                     visit(TypeRefSite {
-                        scope: *scope,
+                        scope: expr.scope,
                         visible_bindings,
-                        file_id: param.source.file_id,
-                        ty: annotation,
+                        file_id: expr.source.file_id,
+                        ty,
                     });
                 }
-            }
-
-            if let Some(ret_ty) = ret_ty {
-                visit(TypeRefSite {
-                    scope: *scope,
-                    visible_bindings,
-                    file_id: expr.source.file_id,
-                    ty: ret_ty,
-                });
+                _ => {}
             }
         }
     }

@@ -158,6 +158,14 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             ExprKind::Call { callee, .. } => {
                 self.body.exprs[expr].ty = self.call_ty(callee)?;
             }
+            ExprKind::Tuple { fields } if fields.is_empty() => {
+                self.body.exprs[expr].ty = BodyTy::Unit;
+            }
+            ExprKind::Cast { ty: Some(ty), .. } => {
+                self.body.exprs[expr].ty = self
+                    .type_path_resolver()
+                    .ty_from_type_ref_in_scope(&ty, self.body.exprs[expr].scope)?;
+            }
             ExprKind::Match { arms, .. } => {
                 let mut arm_tys = Vec::new();
                 for arm in arms {
@@ -234,13 +242,29 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             ExprKind::While { .. } | ExprKind::For { .. } => {
                 self.body.exprs[expr].ty = BodyTy::Unit;
             }
+            ExprKind::Assign { .. } => {
+                self.body.exprs[expr].ty = BodyTy::Unit;
+            }
             ExprKind::Break { .. } | ExprKind::Continue { .. } => {
+                self.body.exprs[expr].ty = BodyTy::Never;
+            }
+            ExprKind::Yeet { .. } | ExprKind::Become { .. } => {
                 self.body.exprs[expr].ty = BodyTy::Never;
             }
             ExprKind::Let { .. }
             | ExprKind::Closure { .. }
             | ExprKind::Loop { .. }
+            | ExprKind::Tuple { .. }
+            | ExprKind::Array { .. }
+            | ExprKind::RepeatArray { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Range { .. }
+            | ExprKind::Cast { ty: None, .. }
+            | ExprKind::Unary { .. }
+            | ExprKind::Binary { .. }
             | ExprKind::Literal { .. }
+            | ExprKind::Underscore
+            | ExprKind::Yield { .. }
             | ExprKind::Unknown { .. } => {}
         }
 

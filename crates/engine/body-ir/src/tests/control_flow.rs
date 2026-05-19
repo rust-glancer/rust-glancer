@@ -54,12 +54,12 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
               tail
                 expr e9 if => nominal struct body_if_let_fixture[lib]::crate::UserId @ 15:5-19:6
                   condition
-                    expr e4 unknown `let Maybe::Some(id) = input && id.is_valid()` => <unknown> @ 15:8-15:52
-                      child
+                    expr e4 binary && => <unknown> @ 15:8-15:52
+                      lhs
                         expr e1 let s2 v2 => <unknown> @ 15:8-15:35
                           initializer
                             expr e0 path input -> local v0 => nominal enum body_if_let_fixture[lib]::crate::Maybe @ 15:30-15:35
-                      child
+                      rhs
                         expr e3 method_call is_valid -> fn impl UserId::is_valid => syntax bool @ 15:39-15:52
                           receiver
                             expr e2 path id -> local v2 => nominal struct body_if_let_fixture[lib]::crate::UserId @ 15:39-15:41

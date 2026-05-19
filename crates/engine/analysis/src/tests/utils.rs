@@ -897,6 +897,45 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             ExprKind::Block { .. } => "block".to_string(),
             ExprKind::Path { path } => format!("path {path}"),
             ExprKind::Call { .. } => "call".to_string(),
+            ExprKind::Tuple { .. } => "tuple".to_string(),
+            ExprKind::Array { .. } => "array".to_string(),
+            ExprKind::RepeatArray { .. } => "repeat_array".to_string(),
+            ExprKind::Index { .. } => "index".to_string(),
+            ExprKind::Range { kind, .. } => {
+                let kind = kind
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("range {kind}")
+            }
+            ExprKind::Cast { ty, .. } => {
+                let ty = ty
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("cast as {ty}")
+            }
+            ExprKind::Unary { op, .. } => {
+                let op = op
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("unary {op}")
+            }
+            ExprKind::Binary { op, .. } => {
+                let op = op
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("binary {op}")
+            }
+            ExprKind::Assign { op, .. } => {
+                let op = op
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("assign {op}")
+            }
             ExprKind::Match { .. } => "match".to_string(),
             ExprKind::If { .. } => "if".to_string(),
             ExprKind::Let { .. } => "let".to_string(),
@@ -930,6 +969,10 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     self.render_source_text(package, expr.source)
                 )
             }
+            ExprKind::Underscore => "underscore".to_string(),
+            ExprKind::Yield { .. } => "yield".to_string(),
+            ExprKind::Yeet { .. } => "yeet".to_string(),
+            ExprKind::Become { .. } => "become".to_string(),
             ExprKind::Unknown { .. } => {
                 format!("unknown {}", self.render_source_text(package, expr.source))
             }

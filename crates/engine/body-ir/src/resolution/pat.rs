@@ -92,6 +92,15 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
                 }
                 ExprKind::Path { .. }
                 | ExprKind::Call { .. }
+                | ExprKind::Tuple { .. }
+                | ExprKind::Array { .. }
+                | ExprKind::RepeatArray { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::Range { .. }
+                | ExprKind::Cast { .. }
+                | ExprKind::Unary { .. }
+                | ExprKind::Binary { .. }
+                | ExprKind::Assign { .. }
                 | ExprKind::If { .. }
                 | ExprKind::Closure { .. }
                 | ExprKind::Loop { .. }
@@ -105,6 +114,10 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
                 | ExprKind::MethodCall { .. }
                 | ExprKind::Wrapper { .. }
                 | ExprKind::Literal { .. }
+                | ExprKind::Underscore
+                | ExprKind::Yield { .. }
+                | ExprKind::Yeet { .. }
+                | ExprKind::Become { .. }
                 | ExprKind::Let { pat: None, .. }
                 | ExprKind::Unknown { .. } => {}
             }

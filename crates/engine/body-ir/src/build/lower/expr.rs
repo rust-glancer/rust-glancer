@@ -2,15 +2,19 @@
 
 use rg_syntax::{
     AstNode as _,
-    ast::{self, BinaryOp, ElseBranch, HasArgList as _, HasLoopBody as _, LogicOp},
+    ast::{
+        self, ArrayExprKind, BinaryOp, ElseBranch, HasArgList as _, HasLoopBody as _, LogicOp,
+        RangeItem as _,
+    },
 };
 
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::Span;
 
 use crate::ir::{
-    BindingData, BindingKind, BodyTy, ClosureCapture, ClosureKind, ClosureParamData, ExprId,
-    ExprKind, ExprWrapperKind, LiteralKind, MatchArmData, RecordExprField, ScopeId,
+    BindingData, BindingKind, BodyTy, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
+    ExprBinaryOp, ExprId, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LiteralKind,
+    MatchArmData, RecordExprField, ScopeId,
 };
 
 use super::function::FunctionBodyLowering;
@@ -18,12 +22,17 @@ use super::function::FunctionBodyLowering;
 impl FunctionBodyLowering<'_> {
     pub(super) fn lower_expr(&mut self, expr: ast::Expr, scope: ScopeId) -> ExprId {
         match expr {
+            ast::Expr::ArrayExpr(array) => self.lower_array_expr(array, scope),
             ast::Expr::BlockExpr(block) => self.lower_block_expr(block, scope),
+            ast::Expr::BinExpr(bin_expr) => self.lower_binary_or_assign_expr(bin_expr, scope),
+            ast::Expr::CastExpr(cast) => self.lower_cast_expr(cast, scope),
             ast::Expr::CallExpr(call) => self.lower_call_expr(call, scope),
+            ast::Expr::BecomeExpr(become_expr) => self.lower_become_expr(become_expr, scope),
             ast::Expr::ClosureExpr(closure) => self.lower_closure_expr(closure, scope),
             ast::Expr::FieldExpr(field) => self.lower_field_expr(field, scope),
             ast::Expr::ForExpr(for_expr) => self.lower_for_expr(for_expr, scope),
             ast::Expr::IfExpr(if_expr) => self.lower_if_expr(if_expr, scope),
+            ast::Expr::IndexExpr(index) => self.lower_index_expr(index, scope),
             ast::Expr::LetExpr(let_expr) => {
                 let let_scope = self.builder.alloc_scope(Some(scope));
                 self.lower_let_expr(let_expr, let_scope)
@@ -38,6 +47,7 @@ impl FunctionBodyLowering<'_> {
             ast::Expr::ContinueExpr(continue_expr) => {
                 self.lower_continue_expr(continue_expr, scope)
             }
+            ast::Expr::RangeExpr(range) => self.lower_range_expr(range, scope),
             ast::Expr::RecordExpr(record) => self.lower_record_expr(record, scope),
             ast::Expr::AwaitExpr(await_expr) => self.lower_wrapper_expr(
                 await_expr.syntax(),
@@ -57,10 +67,7 @@ impl FunctionBodyLowering<'_> {
                 }
             },
             ast::Expr::PathExpr(path) => self.lower_path_expr(path, scope),
-            ast::Expr::PrefixExpr(prefix) => match prefix.expr() {
-                Some(inner) => self.lower_passthrough_unknown(prefix.syntax(), vec![inner], scope),
-                None => self.lower_unknown_expr(prefix.syntax(), scope),
-            },
+            ast::Expr::PrefixExpr(prefix) => self.lower_unary_expr(prefix, scope),
             ast::Expr::RefExpr(ref_expr) => match ref_expr.expr() {
                 Some(inner) => self.lower_wrapper_expr(
                     ref_expr.syntax(),
@@ -92,11 +99,132 @@ impl FunctionBodyLowering<'_> {
                 scope,
                 ExprWrapperKind::Try,
             ),
+            ast::Expr::TupleExpr(tuple) => self.lower_tuple_expr(tuple, scope),
+            ast::Expr::UnderscoreExpr(underscore) => {
+                self.alloc_expr(underscore.syntax(), scope, ExprKind::Underscore)
+            }
             ast::Expr::WhileExpr(while_expr) => self.lower_while_expr(while_expr, scope),
+            ast::Expr::YeetExpr(yeet) => self.lower_yeet_expr(yeet, scope),
+            ast::Expr::YieldExpr(yield_expr) => self.lower_yield_expr(yield_expr, scope),
             // Unsupported expressions still lower their direct expression children so cursor and
             // type queries can work inside syntax the IR does not model yet.
             expr => self.lower_unknown_with_direct_children(expr.syntax(), scope),
         }
+    }
+
+    fn lower_tuple_expr(&mut self, tuple: ast::TupleExpr, scope: ScopeId) -> ExprId {
+        let fields = tuple
+            .fields()
+            .map(|field| self.lower_expr(field, scope))
+            .collect();
+
+        self.alloc_expr(tuple.syntax(), scope, ExprKind::Tuple { fields })
+    }
+
+    fn lower_array_expr(&mut self, array: ast::ArrayExpr, scope: ScopeId) -> ExprId {
+        match array.kind() {
+            ArrayExprKind::ElementList(elements) => {
+                let elements = elements
+                    .map(|element| self.lower_expr(element, scope))
+                    .collect();
+                self.alloc_expr(array.syntax(), scope, ExprKind::Array { elements })
+            }
+            ArrayExprKind::Repeat {
+                initializer,
+                repeat,
+            } => {
+                let initializer =
+                    initializer.map(|initializer| self.lower_expr(initializer, scope));
+                let repeat = repeat.map(|repeat| self.lower_expr(repeat, scope));
+                self.alloc_expr(
+                    array.syntax(),
+                    scope,
+                    ExprKind::RepeatArray {
+                        initializer,
+                        repeat,
+                    },
+                )
+            }
+        }
+    }
+
+    fn lower_index_expr(&mut self, index: ast::IndexExpr, scope: ScopeId) -> ExprId {
+        let base = index.base().map(|base| self.lower_expr(base, scope));
+        let index_expr = index.index().map(|index| self.lower_expr(index, scope));
+
+        self.alloc_expr(
+            index.syntax(),
+            scope,
+            ExprKind::Index {
+                base,
+                index: index_expr,
+            },
+        )
+    }
+
+    fn lower_range_expr(&mut self, range: ast::RangeExpr, scope: ScopeId) -> ExprId {
+        let start = range.start().map(|start| self.lower_expr(start, scope));
+        let end = range.end().map(|end| self.lower_expr(end, scope));
+        let kind = range.op_kind().map(ExprRangeKind::from_ast);
+
+        self.alloc_expr(range.syntax(), scope, ExprKind::Range { start, end, kind })
+    }
+
+    fn lower_cast_expr(&mut self, cast: ast::CastExpr, scope: ScopeId) -> ExprId {
+        let expr = cast.expr().map(|expr| self.lower_expr(expr, scope));
+        let ty = cast
+            .ty()
+            .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
+
+        self.alloc_expr(cast.syntax(), scope, ExprKind::Cast { expr, ty })
+    }
+
+    fn lower_unary_expr(&mut self, prefix: ast::PrefixExpr, scope: ScopeId) -> ExprId {
+        let op = prefix.op_kind().map(ExprUnaryOp::from_ast);
+        let expr = prefix.expr().map(|expr| self.lower_expr(expr, scope));
+
+        self.alloc_expr(prefix.syntax(), scope, ExprKind::Unary { op, expr })
+    }
+
+    fn lower_binary_or_assign_expr(&mut self, bin_expr: ast::BinExpr, scope: ScopeId) -> ExprId {
+        let op = bin_expr.op_kind();
+        // Assignment targets are expression syntax in Rust; lowering the left side this way keeps
+        // destructuring assignment from allocating fresh pattern bindings.
+        let lhs = bin_expr.lhs().map(|lhs| self.lower_expr(lhs, scope));
+        let rhs = bin_expr.rhs().map(|rhs| self.lower_expr(rhs, scope));
+
+        self.alloc_binary_or_assign_expr(bin_expr.syntax(), scope, lhs, op, rhs)
+    }
+
+    fn alloc_binary_or_assign_expr(
+        &mut self,
+        syntax: &rg_syntax::SyntaxNode,
+        scope: ScopeId,
+        lhs: Option<ExprId>,
+        op: Option<BinaryOp>,
+        rhs: Option<ExprId>,
+    ) -> ExprId {
+        if let Some(assign_op) = op.and_then(ExprAssignOp::from_ast) {
+            return self.alloc_expr(
+                syntax,
+                scope,
+                ExprKind::Assign {
+                    target: lhs,
+                    op: Some(assign_op),
+                    value: rhs,
+                },
+            );
+        }
+
+        self.alloc_expr(
+            syntax,
+            scope,
+            ExprKind::Binary {
+                lhs,
+                op: op.and_then(ExprBinaryOp::from_ast),
+                rhs,
+            },
+        )
     }
 
     fn lower_call_expr(&mut self, call: ast::CallExpr, scope: ScopeId) -> ExprId {
@@ -219,12 +347,15 @@ impl FunctionBodyLowering<'_> {
             {
                 let (lhs, rhs_scope) = self.lower_condition_expr(bin_expr.lhs(), scope);
                 let (rhs, success_scope) = self.lower_condition_expr(bin_expr.rhs(), rhs_scope);
-                let children = [lhs, rhs].into_iter().flatten().collect();
 
-                // Until we have real binary IR, preserve the source node as an unsupported
-                // expression while still lowering each side in its Rust lexical scope.
                 (
-                    Some(self.alloc_expr(bin_expr.syntax(), scope, ExprKind::Unknown { children })),
+                    Some(self.alloc_binary_or_assign_expr(
+                        bin_expr.syntax(),
+                        scope,
+                        lhs,
+                        bin_expr.op_kind(),
+                        rhs,
+                    )),
                     success_scope,
                 )
             }
@@ -321,6 +452,24 @@ impl FunctionBodyLowering<'_> {
         let label = self.lower_lifetime_label(continue_expr.lifetime());
 
         self.alloc_expr(continue_expr.syntax(), scope, ExprKind::Continue { label })
+    }
+
+    fn lower_yield_expr(&mut self, yield_expr: ast::YieldExpr, scope: ScopeId) -> ExprId {
+        let value = yield_expr.expr().map(|expr| self.lower_expr(expr, scope));
+
+        self.alloc_expr(yield_expr.syntax(), scope, ExprKind::Yield { value })
+    }
+
+    fn lower_yeet_expr(&mut self, yeet: ast::YeetExpr, scope: ScopeId) -> ExprId {
+        let value = yeet.expr().map(|expr| self.lower_expr(expr, scope));
+
+        self.alloc_expr(yeet.syntax(), scope, ExprKind::Yeet { value })
+    }
+
+    fn lower_become_expr(&mut self, become_expr: ast::BecomeExpr, scope: ScopeId) -> ExprId {
+        let value = become_expr.expr().map(|expr| self.lower_expr(expr, scope));
+
+        self.alloc_expr(become_expr.syntax(), scope, ExprKind::Become { value })
     }
 
     fn lower_match_expr(&mut self, match_expr: ast::MatchExpr, scope: ScopeId) -> ExprId {
@@ -507,20 +656,6 @@ impl FunctionBodyLowering<'_> {
         let inner = inner.map(|inner| self.lower_expr(inner, scope));
 
         self.alloc_expr(syntax, scope, ExprKind::Wrapper { kind, inner })
-    }
-
-    fn lower_passthrough_unknown(
-        &mut self,
-        syntax: &rg_syntax::SyntaxNode,
-        children: Vec<ast::Expr>,
-        scope: ScopeId,
-    ) -> ExprId {
-        let children = children
-            .into_iter()
-            .map(|child| self.lower_expr(child, scope))
-            .collect();
-
-        self.alloc_expr(syntax, scope, ExprKind::Unknown { children })
     }
 
     fn lower_unknown_with_direct_children(

@@ -711,6 +711,90 @@ impl TargetBodyIrSnapshot<'_> {
                     self.render_expr(body, *arg, depth + 2, dump);
                 }
             }
+            ExprKind::Tuple { fields } => {
+                for field in fields {
+                    writeln!(dump, "{}field", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *field, depth + 2, dump);
+                }
+            }
+            ExprKind::Array { elements } => {
+                for element in elements {
+                    writeln!(dump, "{}element", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *element, depth + 2, dump);
+                }
+            }
+            ExprKind::RepeatArray {
+                initializer,
+                repeat,
+            } => {
+                if let Some(initializer) = initializer {
+                    writeln!(dump, "{}initializer", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *initializer, depth + 2, dump);
+                }
+                if let Some(repeat) = repeat {
+                    writeln!(dump, "{}repeat", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *repeat, depth + 2, dump);
+                }
+            }
+            ExprKind::Index { base, index } => {
+                if let Some(base) = base {
+                    writeln!(dump, "{}base", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *base, depth + 2, dump);
+                }
+                if let Some(index) = index {
+                    writeln!(dump, "{}index", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *index, depth + 2, dump);
+                }
+            }
+            ExprKind::Range { start, end, .. } => {
+                if let Some(start) = start {
+                    writeln!(dump, "{}start", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *start, depth + 2, dump);
+                }
+                if let Some(end) = end {
+                    writeln!(dump, "{}end", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *end, depth + 2, dump);
+                }
+            }
+            ExprKind::Cast { expr: inner, .. } | ExprKind::Unary { expr: inner, .. } => {
+                if let Some(inner) = inner {
+                    writeln!(dump, "{}inner", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *inner, depth + 2, dump);
+                }
+            }
+            ExprKind::Binary { lhs, rhs, .. } => {
+                if let Some(lhs) = lhs {
+                    writeln!(dump, "{}lhs", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *lhs, depth + 2, dump);
+                }
+                if let Some(rhs) = rhs {
+                    writeln!(dump, "{}rhs", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *rhs, depth + 2, dump);
+                }
+            }
+            ExprKind::Assign { target, value, .. } => {
+                if let Some(target) = target {
+                    writeln!(dump, "{}target", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *target, depth + 2, dump);
+                }
+                if let Some(value) = value {
+                    writeln!(dump, "{}value", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *value, depth + 2, dump);
+                }
+            }
             ExprKind::Match { scrutinee, arms } => {
                 if let Some(scrutinee) = scrutinee {
                     writeln!(dump, "{}scrutinee", indent(depth + 1))
@@ -855,6 +939,13 @@ impl TargetBodyIrSnapshot<'_> {
                     self.render_expr(body, *inner, depth + 2, dump);
                 }
             }
+            ExprKind::Yield { value } | ExprKind::Yeet { value } | ExprKind::Become { value } => {
+                if let Some(value) = value {
+                    writeln!(dump, "{}value", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *value, depth + 2, dump);
+                }
+            }
             ExprKind::Unknown { children, .. } => {
                 for child in children {
                     writeln!(dump, "{}child", indent(depth + 1))
@@ -863,7 +954,7 @@ impl TargetBodyIrSnapshot<'_> {
                 }
             }
             ExprKind::Path { .. } | ExprKind::Literal { .. } => {}
-            ExprKind::Continue { .. } => {}
+            ExprKind::Continue { .. } | ExprKind::Underscore => {}
         }
     }
 
@@ -874,6 +965,45 @@ impl TargetBodyIrSnapshot<'_> {
             }
             ExprKind::Path { path } => format!("path {path}"),
             ExprKind::Call { .. } => "call".to_string(),
+            ExprKind::Tuple { .. } => "tuple".to_string(),
+            ExprKind::Array { .. } => "array".to_string(),
+            ExprKind::RepeatArray { .. } => "repeat_array".to_string(),
+            ExprKind::Index { .. } => "index".to_string(),
+            ExprKind::Range { kind, .. } => {
+                let kind = kind
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("range {kind}")
+            }
+            ExprKind::Cast { ty, .. } => {
+                let ty = ty
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("cast as {ty}")
+            }
+            ExprKind::Unary { op, .. } => {
+                let op = op
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("unary {op}")
+            }
+            ExprKind::Binary { op, .. } => {
+                let op = op
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("binary {op}")
+            }
+            ExprKind::Assign { op, .. } => {
+                let op = op
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("assign {op}")
+            }
             ExprKind::Match { .. } => "match".to_string(),
             ExprKind::If { .. } => "if".to_string(),
             ExprKind::Let {
@@ -954,6 +1084,10 @@ impl TargetBodyIrSnapshot<'_> {
             ExprKind::Literal { kind } => {
                 format!("literal {kind} `{}`", self.render_source_text(data.source))
             }
+            ExprKind::Underscore => "underscore".to_string(),
+            ExprKind::Yield { .. } => "yield".to_string(),
+            ExprKind::Yeet { .. } => "yeet".to_string(),
+            ExprKind::Become { .. } => "become".to_string(),
             ExprKind::Unknown { .. } => {
                 format!("unknown `{}`", self.render_source_text(data.source))
             }
