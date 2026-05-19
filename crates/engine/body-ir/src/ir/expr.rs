@@ -42,7 +42,7 @@ pub struct RecordExprField {
     pub value: Option<ExprId>,
 }
 
-/// Functional update or default-field syntax written after record fields.
+/// `..` or `..base` written after record fields.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct RecordExprSpread {
     pub source_span: Span,
@@ -52,71 +52,81 @@ pub struct RecordExprSpread {
 /// Expression forms that the first Body IR pass understands.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum ExprKind {
+    /// `{ ... }` or `'label: { ... }`.
     Block {
         label: Option<LabelData>,
         scope: ScopeId,
         statements: Vec<StmtId>,
         tail: Option<ExprId>,
     },
-    Path {
-        path: BodyPath,
-    },
+    /// `value`, `module::item`, or another expression path.
+    Path { path: BodyPath },
+    /// `<callee>(<arg>, ...)`.
     Call {
         callee: Option<ExprId>,
         args: Vec<ExprId>,
     },
-    Tuple {
-        fields: Vec<ExprId>,
-    },
-    Array {
-        elements: Vec<ExprId>,
-    },
+    /// `()`, `(<expr>,)`, or `(<expr>, <expr>)`.
+    Tuple { fields: Vec<ExprId> },
+    /// `[<expr>, ...]`.
+    Array { elements: Vec<ExprId> },
+    /// `[<expr>; <len>]`.
     RepeatArray {
         initializer: Option<ExprId>,
         repeat: Option<ExprId>,
     },
+    /// `<base>[<index>]`.
     Index {
         base: Option<ExprId>,
         index: Option<ExprId>,
     },
+    /// `<start>..<end>`, `<start>..=<end>`, `..<end>`, or `<start>..`.
     Range {
         start: Option<ExprId>,
         end: Option<ExprId>,
         kind: Option<ExprRangeKind>,
     },
+    /// `<expr> as Type`.
     Cast {
         expr: Option<ExprId>,
         ty: Option<TypeRef>,
     },
+    /// `*<expr>`, `!<expr>`, or `-<expr>`.
     Unary {
         op: Option<ExprUnaryOp>,
         expr: Option<ExprId>,
     },
+    /// `<lhs> + <rhs>`, `<lhs> == <rhs>`, or another non-assignment binary expression.
     Binary {
         lhs: Option<ExprId>,
         op: Option<ExprBinaryOp>,
         rhs: Option<ExprId>,
     },
+    /// `<target> = <value>` or `<target> += <value>`.
     Assign {
         target: Option<ExprId>,
         op: Option<ExprAssignOp>,
         value: Option<ExprId>,
     },
+    /// `match <scrutinee> { ... }`.
     Match {
         scrutinee: Option<ExprId>,
         arms: Vec<MatchArmData>,
     },
+    /// `if <condition> { ... } else { ... }`.
     If {
         condition: Option<ExprId>,
         then_branch: Option<ExprId>,
         else_branch: Option<ExprId>,
     },
+    /// `let <pat> = <expr>` in expression position, such as an `if` condition.
     Let {
         scope: ScopeId,
         pat: Option<PatId>,
         bindings: Vec<BindingId>,
         initializer: Option<ExprId>,
     },
+    /// `|params| body`, `move |params| body`, or `async |params| body`.
     Closure {
         scope: ScopeId,
         capture: ClosureCapture,
@@ -125,15 +135,18 @@ pub enum ExprKind {
         ret_ty: Option<TypeRef>,
         body: Option<ExprId>,
     },
+    /// `loop { ... }` or `'label: loop { ... }`.
     Loop {
         label: Option<LabelData>,
         body: Option<ExprId>,
     },
+    /// `while <condition> { ... }` or `'label: while <condition> { ... }`.
     While {
         label: Option<LabelData>,
         condition: Option<ExprId>,
         body: Option<ExprId>,
     },
+    /// `for <pat> in <iterable> { ... }` or `'label: for <pat> in <iterable> { ... }`.
     For {
         label: Option<LabelData>,
         scope: ScopeId,
@@ -142,13 +155,14 @@ pub enum ExprKind {
         iterable: Option<ExprId>,
         body: Option<ExprId>,
     },
+    /// `break`, `break 'label`, or `break <value>`.
     Break {
         label: Option<LabelData>,
         value: Option<ExprId>,
     },
-    Continue {
-        label: Option<LabelData>,
-    },
+    /// `continue` or `continue 'label`.
+    Continue { label: Option<LabelData> },
+    /// `<receiver>.<method>(<arg>, ...)`.
     MethodCall {
         receiver: Option<ExprId>,
         dot_span: Option<Span>,
@@ -156,38 +170,37 @@ pub enum ExprKind {
         method_name_span: Option<Span>,
         args: Vec<ExprId>,
     },
+    /// `<base>.field` or `<base>.0`.
     Field {
         base: Option<ExprId>,
         dot_span: Option<Span>,
         field: Option<FieldKey>,
         field_span: Option<Span>,
     },
+    /// `Path { field, other: <expr>, ..base }` or `Path { .. }`.
     Record {
         path: Option<BodyPath>,
         field_list_span: Option<Span>,
         fields: Vec<RecordExprField>,
         spread: Option<RecordExprSpread>,
     },
+    /// Parentheses, reference, await, try, or return syntax around another expression.
     Wrapper {
         kind: ExprWrapperKind,
         inner: Option<ExprId>,
     },
-    Literal {
-        kind: LiteralKind,
-    },
+    /// `42`, `"text"`, `true`, or another literal token.
+    Literal { kind: LiteralKind },
+    /// `_` in expression position.
     Underscore,
-    Yield {
-        value: Option<ExprId>,
-    },
-    Yeet {
-        value: Option<ExprId>,
-    },
-    Become {
-        value: Option<ExprId>,
-    },
-    Unknown {
-        children: Vec<ExprId>,
-    },
+    /// `yield` or `yield <value>`.
+    Yield { value: Option<ExprId> },
+    /// `do yeet` or `do yeet <value>`.
+    Yeet { value: Option<ExprId> },
+    /// `become <value>`.
+    Become { value: Option<ExprId> },
+    /// Expression syntax that Body IR does not model directly.
+    Unknown { children: Vec<ExprId> },
 }
 
 /// Closure capture mode written before the closure parameter list.
@@ -344,8 +357,10 @@ pub enum ExprAssignOp {
     wincode::SchemaWrite,
 )]
 pub enum ExprRangeKind {
+    /// `..`.
     #[display("..")]
     Exclusive,
+    /// `..=`.
     #[display("..=")]
     Inclusive,
 }
@@ -362,14 +377,19 @@ pub enum ExprRangeKind {
     wincode::SchemaWrite,
 )]
 pub enum ExprWrapperKind {
+    /// `(<expr>)`.
     #[display("paren")]
     Paren,
+    /// `&<expr>` or `&mut <expr>`.
     #[display("ref")]
     Ref,
+    /// `<expr>.await`.
     #[display("await")]
     Await,
+    /// `<expr>?`.
     #[display("try")]
     Try,
+    /// `return` or `return <expr>`.
     #[display("return")]
     Return,
 }

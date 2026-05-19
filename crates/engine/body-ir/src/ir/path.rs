@@ -29,13 +29,20 @@ pub(crate) struct BodyPathSegment {
 
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) enum BodyPathSegmentKind {
+    /// `name` in `module::name`.
     Name(Name),
+    /// `Self` in type position.
     SelfType,
+    /// `self` in value/module path position.
     SelfKw,
+    /// `super`.
     SuperKw,
+    /// `crate`.
     CrateKw,
-    // `<T>` / `<T as Trait>` is real path syntax, but it cannot be represented as a plain
-    // name-like DefMap segment without losing the anchor semantics.
+    /// `<T>` or `<T as Trait>`.
+    ///
+    /// This is real path syntax, but it cannot be represented as a plain name-like DefMap segment
+    /// without losing the anchor semantics.
     TypeAnchor {
         ty: Option<TypeRef>,
         trait_ref: Option<TypeRef>,
@@ -44,11 +51,13 @@ pub(crate) enum BodyPathSegmentKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) enum BodyPathSegmentArgs {
+    /// `<T>` or `::<T>`.
     Angle {
         colon_colon: bool,
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
         args: Vec<GenericArg>,
     },
+    /// `(A, B) -> C`.
     Parenthesized(String),
 }
 

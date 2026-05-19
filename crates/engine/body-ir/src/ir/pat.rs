@@ -23,55 +23,55 @@ impl PatData {
 /// Pattern forms that matter for binding and enum-payload type propagation.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum PatKind {
+    /// `name`, `ref mut name`, or `name @ <pat>`.
     Binding {
         mode: PatBindingMode,
         binding: Option<BindingId>,
         subpat: Option<PatId>,
         path: Option<BodyPath>,
     },
-    Tuple {
-        fields: Vec<PatId>,
-    },
+    /// `(<pat>, ...)`.
+    Tuple { fields: Vec<PatId> },
+    /// `Path(<pat>, ...)`.
     TupleStruct {
         path: Option<BodyPath>,
         fields: Vec<PatId>,
     },
+    /// `Path { field, other: <pat>, .. }`.
     Record {
         path: Option<BodyPath>,
         field_list_span: Option<rg_parse::Span>,
         fields: Vec<RecordPatField>,
         rest: Option<PatId>,
     },
-    Or {
-        pats: Vec<PatId>,
-    },
-    Slice {
-        fields: Vec<PatId>,
-    },
+    /// `<pat> | <pat>`.
+    Or { pats: Vec<PatId> },
+    /// `[<pat>, ...]`.
+    Slice { fields: Vec<PatId> },
+    /// `&<pat>` or `&mut <pat>`.
     Ref {
         mutability: PatMutability,
         pat: PatId,
     },
-    Box {
-        pat: PatId,
-    },
-    Path {
-        path: Option<BodyPath>,
-    },
+    /// `box <pat>`.
+    Box { pat: PatId },
+    /// `CONST`, `Enum::Variant`, or another path-only pattern.
+    Path { path: Option<BodyPath> },
+    /// `..`.
     Rest,
-    Literal {
-        kind: LiteralKind,
-        negated: bool,
-    },
+    /// `42`, `"text"`, `true`, or another literal token.
+    Literal { kind: LiteralKind, negated: bool },
+    /// `<start>..<end>`, `<start>..=<end>`, `..<end>`, or `<start>..`.
     Range {
         start: Option<PatId>,
         end: Option<PatId>,
         kind: Option<PatRangeKind>,
     },
-    ConstBlock {
-        expr: Option<ExprId>,
-    },
+    /// `const { ... }`.
+    ConstBlock { expr: Option<ExprId> },
+    /// `_`.
     Wildcard,
+    /// Pattern syntax that Body IR does not model directly.
     Unsupported,
 }
 
@@ -101,8 +101,10 @@ impl PatBindingMode {
     wincode::SchemaWrite,
 )]
 pub enum PatMutability {
+    /// `&<pat>`.
     #[display("shared")]
     Shared,
+    /// `&mut <pat>`.
     #[display("mut")]
     Mut,
 }
@@ -119,8 +121,10 @@ pub enum PatMutability {
     wincode::SchemaWrite,
 )]
 pub enum PatRangeKind {
+    /// `..`.
     #[display("..")]
     Exclusive,
+    /// `..=`.
     #[display("..=")]
     Inclusive,
 }

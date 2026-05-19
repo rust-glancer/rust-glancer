@@ -42,10 +42,13 @@ impl BindingData {
     wincode::SchemaWrite,
 )]
 pub enum BindingKind {
+    /// `param` in `fn f(param: Type)`.
     #[display("param")]
     Param,
+    /// `self`, `&self`, or another receiver parameter.
     #[display("self_param")]
     SelfParam,
+    /// `let name = value`.
     #[display("let")]
     Let,
 }
@@ -66,6 +69,7 @@ impl StmtData {
 /// Statement forms that matter for the first Body IR pass.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum StmtKind {
+    /// `let <pat>: Type = <expr>;` or `let <pat> = <expr> else { ... };`.
     Let {
         scope: ScopeId,
         pat: Option<PatId>,
@@ -74,16 +78,13 @@ pub enum StmtKind {
         initializer: Option<ExprId>,
         else_branch: Option<ExprId>,
     },
-    Expr {
-        expr: ExprId,
-        has_semicolon: bool,
-    },
-    Item {
-        item: BodyItemId,
-    },
-    Impl {
-        impl_id: BodyImplId,
-    },
+    /// `<expr>;` or an expression statement without a semicolon.
+    Expr { expr: ExprId, has_semicolon: bool },
+    /// A block-local item kept in Body IR, such as `struct Local;`.
+    Item { item: BodyItemId },
+    /// A block-local `impl`.
+    Impl { impl_id: BodyImplId },
+    /// An item statement that Body IR intentionally keeps only as source layout.
     ItemIgnored,
 }
 
