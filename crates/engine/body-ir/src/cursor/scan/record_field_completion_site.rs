@@ -83,8 +83,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
             else {
                 continue;
             };
-            let spread_span =
-                spread.and_then(|spread| body.expr(spread).map(|expr| expr.source.span));
+            let spread_span = spread.as_ref().map(|spread| spread.source_span);
             let Some(site) = self.site_for_record_fields(
                 body_ref,
                 expr.scope,

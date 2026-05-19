@@ -26,9 +26,9 @@ pub use self::{
         BodySource, BodyTy, BodyTypePathResolution, ClosureCapture, ClosureKind, ClosureParamData,
         ExprAssignOp, ExprBinaryOp, ExprData, ExprId, ExprKind, ExprRangeKind, ExprUnaryOp,
         LabelData, LiteralKind, PackageBodies, PatBindingMode, PatData, PatId, PatKind,
-        PatMutability, PatRangeKind, RecordExprField, RecordPatField, ResolvedFieldRef,
-        ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
-        TargetBodiesStatus,
+        PatMutability, PatRangeKind, RecordExprField, RecordExprSpread, RecordPatField,
+        ResolvedFieldRef, ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind,
+        TargetBodies, TargetBodiesStatus,
     },
     store::{BodyIrDb, BodyIrReadTxn},
 };

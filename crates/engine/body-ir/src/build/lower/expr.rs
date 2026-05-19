@@ -9,12 +9,12 @@ use rg_syntax::{
 };
 
 use rg_item_tree::{FieldKey, TypeRef};
-use rg_parse::Span;
+use rg_parse::{Span, TextSpan};
 
 use crate::ir::{
     BindingData, BindingKind, BodyTy, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
     ExprBinaryOp, ExprId, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LiteralKind,
-    MatchArmData, RecordExprField, ScopeId,
+    MatchArmData, RecordExprField, RecordExprSpread, ScopeId,
 };
 
 use super::function::FunctionBodyLowering;
@@ -585,20 +585,21 @@ impl FunctionBodyLowering<'_> {
 
     fn lower_record_expr(&mut self, record: ast::RecordExpr, scope: ScopeId) -> ExprId {
         let mut fields = Vec::new();
-        let mut spread = None;
-        let field_list_span = record
-            .record_expr_field_list()
+        let field_list = record.record_expr_field_list();
+        let field_list_span = field_list
             .as_ref()
             .map(|field_list| self.source(field_list.syntax()).span);
 
-        if let Some(field_list) = record.record_expr_field_list() {
+        if let Some(field_list) = &field_list {
             fields.extend(
                 field_list
                     .fields()
                     .filter_map(|field| self.lower_record_expr_field(field, scope)),
             );
-            spread = field_list.spread().map(|expr| self.lower_expr(expr, scope));
         }
+        let spread = field_list
+            .as_ref()
+            .and_then(|field_list| self.lower_record_expr_spread(field_list, scope));
         let path = record.path().and_then(|path| self.lower_body_path(path));
 
         self.alloc_expr(
@@ -629,6 +630,33 @@ impl FunctionBodyLowering<'_> {
             key_span,
             source_span,
             value,
+        })
+    }
+
+    fn lower_record_expr_spread(
+        &mut self,
+        field_list: &ast::RecordExprFieldList,
+        scope: ScopeId,
+    ) -> Option<RecordExprSpread> {
+        let dotdot = field_list.dotdot_token()?;
+        let dotdot_range = dotdot.text_range();
+        let spread_expr = field_list.spread();
+        // The AST exposes only the expression after `..`; the token span keeps bare `..`
+        // visible to cursor queries too.
+        let source_end = spread_expr
+            .as_ref()
+            .map(|expr| u32::from(expr.syntax().text_range().end()))
+            .unwrap_or_else(|| u32::from(dotdot_range.end()));
+        let expr = spread_expr.map(|expr| self.lower_expr(expr, scope));
+
+        Some(RecordExprSpread {
+            source_span: Span {
+                text: TextSpan {
+                    start: u32::from(dotdot_range.start()),
+                    end: source_end,
+                },
+            },
+            expr,
         })
     }
 

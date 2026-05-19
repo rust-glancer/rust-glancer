@@ -129,6 +129,7 @@ pub struct User {
 
 pub fn use_it(id: u8, name: u8) -> User {
     let base = User { id, name };
+    let defaults = User { id: 2, .. };
     User { id: 1, ..base }
 }
 "#,
@@ -136,16 +137,17 @@ pub fn use_it(id: u8, name: u8) -> User {
             package body_record_expr_fixture
 
             body_record_expr_fixture [lib]
-            body b0 fn body_record_expr_fixture[lib]::crate::use_it @ 6:1-9:2
+            body b0 fn body_record_expr_fixture[lib]::crate::use_it @ 6:1-10:2
             scopes
             - s0 parent <none>: v0, v1
-            - s1 parent s0: v2
+            - s1 parent s0: v2, v3
             bindings
             - v0 param id `id`: u8 => syntax u8 @ 6:15-6:17
             - v1 param name `name`: u8 => syntax u8 @ 6:23-6:27
             - v2 let base `base` => nominal struct body_record_expr_fixture[lib]::crate::User @ 7:9-7:13
+            - v3 let defaults `defaults` => nominal struct body_record_expr_fixture[lib]::crate::User @ 8:9-8:17
             body
-            expr e6 block s1 => nominal struct body_record_expr_fixture[lib]::crate::User @ 6:41-9:2
+            expr e8 block s1 => nominal struct body_record_expr_fixture[lib]::crate::User @ 6:41-10:2
               stmt s0 let v2 @ 7:5-7:34
                 initializer
                   expr e2 record User -> item struct body_record_expr_fixture[lib]::crate::User => nominal struct body_record_expr_fixture[lib]::crate::User @ 7:16-7:33
@@ -153,12 +155,18 @@ pub fn use_it(id: u8, name: u8) -> User {
                       expr e0 path id -> local v0 => syntax u8 @ 7:23-7:25
                     field name
                       expr e1 path name -> local v1 => syntax u8 @ 7:27-7:31
+              stmt s1 let v3 @ 8:5-8:39
+                initializer
+                  expr e4 record User -> item struct body_record_expr_fixture[lib]::crate::User => nominal struct body_record_expr_fixture[lib]::crate::User @ 8:20-8:38
+                    field id
+                      expr e3 literal int `2` => <unknown> @ 8:31-8:32
+                    spread @ 8:34-8:36
               tail
-                expr e5 record User -> item struct body_record_expr_fixture[lib]::crate::User => nominal struct body_record_expr_fixture[lib]::crate::User @ 8:5-8:27
+                expr e7 record User -> item struct body_record_expr_fixture[lib]::crate::User => nominal struct body_record_expr_fixture[lib]::crate::User @ 9:5-9:27
                   field id
-                    expr e3 literal int `1` => <unknown> @ 8:16-8:17
-                  spread
-                    expr e4 path base -> local v2 => nominal struct body_record_expr_fixture[lib]::crate::User @ 8:21-8:25
+                    expr e5 literal int `1` => <unknown> @ 9:16-9:17
+                  spread @ 9:19-9:25
+                    expr e6 path base -> local v2 => nominal struct body_record_expr_fixture[lib]::crate::User @ 9:21-9:25
         "#]],
     );
 }

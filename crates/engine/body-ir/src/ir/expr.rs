@@ -42,6 +42,13 @@ pub struct RecordExprField {
     pub value: Option<ExprId>,
 }
 
+/// Functional update or default-field syntax written after record fields.
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct RecordExprSpread {
+    pub source_span: Span,
+    pub expr: Option<ExprId>,
+}
+
 /// Expression forms that the first Body IR pass understands.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum ExprKind {
@@ -159,7 +166,7 @@ pub enum ExprKind {
         path: Option<BodyPath>,
         field_list_span: Option<Span>,
         fields: Vec<RecordExprField>,
-        spread: Option<ExprId>,
+        spread: Option<RecordExprSpread>,
     },
     Wrapper {
         kind: ExprWrapperKind,

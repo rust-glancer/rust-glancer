@@ -18,7 +18,7 @@ pub use self::{
     expr::{
         ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprData,
         ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LabelData, LiteralKind,
-        MatchArmData, RecordExprField,
+        MatchArmData, RecordExprField, RecordExprSpread,
     },
     ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,

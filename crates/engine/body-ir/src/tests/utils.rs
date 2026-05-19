@@ -927,9 +927,19 @@ impl TargetBodyIrSnapshot<'_> {
                     }
                 }
                 if let Some(spread) = spread {
-                    writeln!(dump, "{}spread", indent(depth + 1))
-                        .expect("string writes should not fail");
-                    self.render_expr(body, *spread, depth + 2, dump);
+                    writeln!(
+                        dump,
+                        "{}spread @ {}",
+                        indent(depth + 1),
+                        self.render_source(BodySource {
+                            file_id: data.source.file_id,
+                            span: spread.source_span,
+                        })
+                    )
+                    .expect("string writes should not fail");
+                    if let Some(expr) = spread.expr {
+                        self.render_expr(body, expr, depth + 2, dump);
+                    }
                 }
             }
             ExprKind::Wrapper { inner, .. } => {

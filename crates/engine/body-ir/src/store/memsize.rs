@@ -5,8 +5,8 @@ use crate::{
     BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef, BodyResolution, BodySource, BodyTy,
     BodyTypePathResolution, ClosureCapture, ClosureKind, ClosureParamData, ExprData, ExprId,
     ExprKind, LiteralKind, PackageBodies, PatBindingMode, PatData, PatId, PatKind, PatMutability,
-    PatRangeKind, RecordExprField, RecordPatField, ResolvedFieldRef, ResolvedFunctionRef,
-    ScopeData, ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
+    PatRangeKind, RecordExprField, RecordExprSpread, RecordPatField, ResolvedFieldRef,
+    ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
     ir::expr::{ExprWrapperKind, LabelData, MatchArmData},
     ir::ids::StmtId,
     ir::path::{BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind},
@@ -53,6 +53,7 @@ rg_memsize::impl_memory_size_children! {
     ClosureParamData => source, pat, bindings, annotation;
     LabelData => name, span;
     RecordExprField => key, key_span, source_span, value;
+    RecordExprSpread => source_span, expr;
     BodyPath => source_span, absolute, def_map_path, segments;
     BodyPathSegment => kind, span, args;
     BodyLocalNominalTy => item, args;

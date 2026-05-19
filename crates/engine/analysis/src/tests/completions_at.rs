@@ -1729,11 +1729,13 @@ pub struct User {
 pub fn use_it(id: u8) {
     let _with_prefix = User { id, na$literal_prefix$ };
     let _empty = User { id, $literal_empty$ };
+    let _defaults = User { ..$literal_defaults$ };
 }
 "#,
         &[
             AnalysisQuery::complete("record literal prefix completions", "literal_prefix"),
             AnalysisQuery::complete("record literal empty completions", "literal_empty"),
+            AnalysisQuery::complete("record literal defaults completions", "literal_defaults"),
         ],
         expect![[r#"
             record literal prefix completions
@@ -1743,6 +1745,9 @@ pub fn use_it(id: u8) {
             record literal empty completions
             - field active
             - field name
+
+            record literal defaults completions
+            - <none>
         "#]],
     );
 }
