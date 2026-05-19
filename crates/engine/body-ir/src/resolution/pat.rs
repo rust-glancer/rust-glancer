@@ -93,6 +93,7 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
                 ExprKind::Path { .. }
                 | ExprKind::Call { .. }
                 | ExprKind::If { .. }
+                | ExprKind::Closure { .. }
                 | ExprKind::Loop { .. }
                 | ExprKind::While { .. }
                 | ExprKind::For { .. }

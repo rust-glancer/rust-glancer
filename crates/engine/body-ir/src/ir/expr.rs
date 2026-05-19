@@ -1,4 +1,4 @@
-use rg_item_tree::FieldKey;
+use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::Span;
 use rg_text::Name;
 
@@ -73,6 +73,14 @@ pub enum ExprKind {
         bindings: Vec<BindingId>,
         initializer: Option<ExprId>,
     },
+    Closure {
+        scope: ScopeId,
+        capture: ClosureCapture,
+        kind: ClosureKind,
+        params: Vec<ClosureParamData>,
+        ret_ty: Option<TypeRef>,
+        body: Option<ExprId>,
+    },
     Loop {
         label: Option<LabelData>,
         body: Option<ExprId>,
@@ -128,6 +136,42 @@ pub enum ExprKind {
     },
 }
 
+/// Closure capture mode written before the closure parameter list.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+)]
+pub enum ClosureCapture {
+    #[display("inferred")]
+    Inferred,
+    #[display("move")]
+    Move,
+}
+
+/// Closure-level execution modifier that affects how its body is interpreted.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+)]
+pub enum ClosureKind {
+    #[display("normal")]
+    Normal,
+    #[display("async")]
+    Async,
+}
+
 /// Transparent or nearly-transparent expression wrapper understood by cheap type normalization.
 #[derive(
     Debug,
@@ -159,6 +203,15 @@ pub struct MatchArmData {
     pub scope: ScopeId,
     pub guard: Option<ExprId>,
     pub expr: Option<ExprId>,
+}
+
+/// One closure parameter pattern and its lowered bindings.
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct ClosureParamData {
+    pub source: BodySource,
+    pub pat: Option<PatId>,
+    pub bindings: Vec<BindingId>,
+    pub annotation: Option<TypeRef>,
 }
 
 /// A loop label written on loop-like syntax or referenced from a jump expression.
@@ -230,6 +283,15 @@ impl ExprKind {
             Self::Let { bindings, .. } => {
                 bindings.shrink_to_fit();
             }
+            Self::Closure { params, ret_ty, .. } => {
+                params.shrink_to_fit();
+                for param in params {
+                    param.shrink_to_fit();
+                }
+                if let Some(ret_ty) = ret_ty {
+                    ret_ty.shrink_to_fit();
+                }
+            }
             Self::For {
                 label, bindings, ..
             } => {
@@ -279,6 +341,15 @@ impl ExprKind {
 impl RecordExprField {
     fn shrink_to_fit(&mut self) {
         self.key.shrink_to_fit();
+    }
+}
+
+impl ClosureParamData {
+    fn shrink_to_fit(&mut self) {
+        self.bindings.shrink_to_fit();
+        if let Some(annotation) = &mut self.annotation {
+            annotation.shrink_to_fit();
+        }
     }
 }
 

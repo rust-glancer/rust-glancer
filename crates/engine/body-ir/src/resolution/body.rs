@@ -238,6 +238,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 self.body.exprs[expr].ty = BodyTy::Never;
             }
             ExprKind::Let { .. }
+            | ExprKind::Closure { .. }
             | ExprKind::Loop { .. }
             | ExprKind::Literal { .. }
             | ExprKind::Unknown { .. } => {}

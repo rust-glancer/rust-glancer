@@ -9,8 +9,9 @@ use expect_test::Expect;
 use crate::{
     BindingData, BodyData, BodyFunctionData, BodyGenericArg, BodyImplData, BodyIrBuildPolicy,
     BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy, BodyResolution,
-    BodySource, BodyTy, ExprData, ExprKind, LabelData, PatBindingMode, PatData, PatId, PatKind,
-    ResolvedFieldRef, ResolvedFunctionRef, StmtKind, TargetBodiesStatus,
+    BodySource, BodyTy, ClosureCapture, ClosureKind, ClosureParamData, ExprData, ExprKind,
+    LabelData, PatBindingMode, PatData, PatId, PatKind, ResolvedFieldRef, ResolvedFunctionRef,
+    StmtKind, TargetBodiesStatus,
     ir::ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
         BodyItemRef, ExprId, StmtId,
@@ -757,6 +758,15 @@ impl TargetBodyIrSnapshot<'_> {
                     self.render_expr(body, *initializer, depth + 2, dump);
                 }
             }
+            ExprKind::Closure {
+                body: closure_body, ..
+            } => {
+                if let Some(closure_body) = closure_body {
+                    writeln!(dump, "{}body", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *closure_body, depth + 2, dump);
+                }
+            }
             ExprKind::Loop {
                 body: loop_body, ..
             } => {
@@ -870,6 +880,33 @@ impl TargetBodyIrSnapshot<'_> {
                 scope, bindings, ..
             } => {
                 format!("let s{} {}", scope.0, render_binding_list(bindings))
+            }
+            ExprKind::Closure {
+                scope,
+                capture,
+                kind,
+                params,
+                ret_ty,
+                ..
+            } => {
+                let capture = match capture {
+                    ClosureCapture::Inferred => "",
+                    ClosureCapture::Move => " move",
+                };
+                let kind = match kind {
+                    ClosureKind::Normal => "",
+                    ClosureKind::Async => " async",
+                };
+                let params = params
+                    .iter()
+                    .map(render_closure_param)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let ret_ty = ret_ty
+                    .as_ref()
+                    .map(|ty| format!(" -> {ty}"))
+                    .unwrap_or_default();
+                format!("closure{kind}{capture} s{} ({params}){ret_ty}", scope.0)
             }
             ExprKind::Loop { label, .. } => {
                 format!("loop{}", render_label_suffix(label.as_ref()))
@@ -1434,6 +1471,15 @@ fn render_binding_list(bindings: &[BindingId]) -> String {
         .map(|binding| format!("v{}", binding.0))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn render_closure_param(param: &ClosureParamData) -> String {
+    let annotation = param
+        .annotation
+        .as_ref()
+        .map(|ty| format!(": {ty}"))
+        .unwrap_or_default();
+    format!("{}{}", render_binding_list(&param.bindings), annotation)
 }
 
 fn render_pat_list(pats: &[PatId]) -> String {

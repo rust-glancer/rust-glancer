@@ -21,7 +21,7 @@ pub(super) struct TypePathCursorScanner<'a> {
 }
 
 impl TypePathCursorScanner<'_> {
-    /// Scans let annotations; these are the body-local places that carry type paths today.
+    /// Scans body-local type annotations that can contain navigable type paths.
     pub(super) fn scan(&mut self) {
         for statement in self.body.statements.iter() {
             if !self.file_matches(statement.source.file_id) {
@@ -36,6 +36,29 @@ impl TypePathCursorScanner<'_> {
                 continue;
             };
             self.scan_type_ref(*scope, annotation, statement.source.file_id);
+        }
+
+        for expr in self.body.exprs.iter() {
+            if !self.file_matches(expr.source.file_id) {
+                continue;
+            }
+            let ExprKind::Closure {
+                scope,
+                params,
+                ret_ty,
+                ..
+            } = &expr.kind
+            else {
+                continue;
+            };
+            for param in params {
+                if let Some(annotation) = &param.annotation {
+                    self.scan_type_ref(*scope, annotation, param.source.file_id);
+                }
+            }
+            if let Some(ret_ty) = ret_ty {
+                self.scan_type_ref(*scope, ret_ty, expr.source.file_id);
+            }
         }
     }
 
@@ -175,6 +198,13 @@ impl ValuePathCursorScanner<'_> {
                     pat: Some(pat),
                     ..
                 } => self.scan_pat(*scope, *pat),
+                ExprKind::Closure { scope, params, .. } => {
+                    for param in params {
+                        if let Some(pat) = param.pat {
+                            self.scan_pat(*scope, pat);
+                        }
+                    }
+                }
                 _ => {}
             }
         }

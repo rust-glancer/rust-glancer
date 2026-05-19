@@ -3,10 +3,10 @@ use crate::{
     BodyFunctionOwner, BodyFunctionRef, BodyGenericArg, BodyId, BodyImplData, BodyImplId,
     BodyIrBuildPolicy, BodyIrDb, BodyIrStats, BodyItemData, BodyItemId, BodyItemKind, BodyItemRef,
     BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef, BodyResolution, BodySource, BodyTy,
-    BodyTypePathResolution, ExprData, ExprId, ExprKind, LiteralKind, PackageBodies, PatBindingMode,
-    PatData, PatId, PatKind, PatMutability, PatRangeKind, RecordExprField, RecordPatField,
-    ResolvedFieldRef, ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
-    TargetBodiesStatus,
+    BodyTypePathResolution, ClosureCapture, ClosureKind, ClosureParamData, ExprData, ExprId,
+    ExprKind, LiteralKind, PackageBodies, PatBindingMode, PatData, PatId, PatKind, PatMutability,
+    PatRangeKind, RecordExprField, RecordPatField, ResolvedFieldRef, ResolvedFunctionRef,
+    ScopeData, ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
     ir::expr::{ExprWrapperKind, LabelData, MatchArmData},
     ir::ids::StmtId,
 };
@@ -15,6 +15,8 @@ use rg_memsize::{MemoryRecorder, MemorySize};
 rg_memsize::impl_memory_size_leaf!(
     crate::BodyIrPackageScope,
     TargetBodiesStatus,
+    ClosureCapture,
+    ClosureKind,
     ExprWrapperKind,
     LiteralKind,
     PatBindingMode,
@@ -43,6 +45,7 @@ rg_memsize::impl_memory_size_children! {
     ScopeData => parent, local_items, local_impls, bindings;
     ExprData => source, scope, visible_bindings, kind, resolution, ty;
     MatchArmData => pat, scope, guard, expr;
+    ClosureParamData => source, pat, bindings, annotation;
     LabelData => name, span;
     RecordExprField => key, key_span, source_span, value;
     BodyPath => source_span, path, segment_spans;
@@ -128,6 +131,25 @@ impl MemorySize for ExprKind {
                 recorder.scope("initializer", |recorder| {
                     initializer.record_memory_children(recorder);
                 });
+            }
+            Self::Closure {
+                scope,
+                capture,
+                kind,
+                params,
+                ret_ty,
+                body,
+            } => {
+                recorder.scope("scope", |recorder| scope.record_memory_children(recorder));
+                recorder.scope("capture", |recorder| {
+                    capture.record_memory_children(recorder);
+                });
+                recorder.scope("kind", |recorder| kind.record_memory_children(recorder));
+                recorder.scope("params", |recorder| {
+                    params.record_memory_children(recorder);
+                });
+                recorder.scope("ret_ty", |recorder| ret_ty.record_memory_children(recorder));
+                recorder.scope("body", |recorder| body.record_memory_children(recorder));
             }
             Self::Loop { label, body } => {
                 recorder.scope("label", |recorder| label.record_memory_children(recorder));

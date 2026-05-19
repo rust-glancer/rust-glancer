@@ -16,7 +16,8 @@ pub use self::{
         TargetBodiesStatus,
     },
     expr::{
-        ExprData, ExprKind, ExprWrapperKind, LabelData, LiteralKind, MatchArmData, RecordExprField,
+        ClosureCapture, ClosureKind, ClosureParamData, ExprData, ExprKind, ExprWrapperKind,
+        LabelData, LiteralKind, MatchArmData, RecordExprField,
     },
     ids::{
         BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,

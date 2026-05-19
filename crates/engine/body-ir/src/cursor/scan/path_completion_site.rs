@@ -82,6 +82,29 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             };
             self.scan_type_ref(body_ref, *scope, annotation, best);
         }
+
+        for expr in body.exprs.iter() {
+            if expr.source.file_id != self.file_id {
+                continue;
+            }
+            let ExprKind::Closure {
+                scope,
+                params,
+                ret_ty,
+                ..
+            } = &expr.kind
+            else {
+                continue;
+            };
+            for param in params {
+                if let Some(annotation) = &param.annotation {
+                    self.scan_type_ref(body_ref, *scope, annotation, best);
+                }
+            }
+            if let Some(ret_ty) = ret_ty {
+                self.scan_type_ref(body_ref, *scope, ret_ty, best);
+            }
+        }
     }
 
     /// Recurses through type syntax because the completion site may be in a generic argument.
@@ -204,6 +227,13 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
                     pat: Some(pat),
                     ..
                 } => self.scan_pat(body_ref, body, *scope, *pat, best),
+                ExprKind::Closure { scope, params, .. } => {
+                    for param in params {
+                        if let Some(pat) = param.pat {
+                            self.scan_pat(body_ref, body, *scope, pat, best);
+                        }
+                    }
+                }
                 _ => {}
             }
         }

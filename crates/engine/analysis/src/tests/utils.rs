@@ -900,6 +900,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             ExprKind::Match { .. } => "match".to_string(),
             ExprKind::If { .. } => "if".to_string(),
             ExprKind::Let { .. } => "let".to_string(),
+            ExprKind::Closure { .. } => "closure".to_string(),
             ExprKind::Loop { .. } => "loop".to_string(),
             ExprKind::While { .. } => "while".to_string(),
             ExprKind::For { .. } => "for".to_string(),

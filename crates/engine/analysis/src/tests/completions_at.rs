@@ -1557,6 +1557,48 @@ pub fn use_it(maybe: Option<User>) {
 }
 
 #[test]
+fn completes_fields_and_methods_after_closure_params() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_closure_pattern_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Id;
+
+pub struct User {
+    id: Id,
+}
+
+impl User {
+    fn is_valid(&self) -> bool {
+        true
+    }
+
+    fn label(&self) {}
+}
+
+pub fn use_it() {
+    let _closure = |user: User| user.$closure_payload$;
+}
+"#,
+        &[AnalysisQuery::complete(
+            "closure param payload completions",
+            "closure_payload",
+        )],
+        expect![[r#"
+            closure param payload completions
+            - field id
+            - inherent_method is_valid
+            - inherent_method label
+        "#]],
+    );
+}
+
+#[test]
 fn completes_tuple_fields_at_dot() {
     check_analysis_queries(
         r#"

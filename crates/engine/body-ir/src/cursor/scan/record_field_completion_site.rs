@@ -143,6 +143,13 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
                     pat: Some(pat),
                     ..
                 } => self.scan_pat(body_ref, body, *scope, *pat, best),
+                ExprKind::Closure { scope, params, .. } => {
+                    for param in params {
+                        if let Some(pat) = param.pat {
+                            self.scan_pat(body_ref, body, *scope, pat, best);
+                        }
+                    }
+                }
                 _ => {}
             }
         }

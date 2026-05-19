@@ -5,12 +5,12 @@ use rg_syntax::{
     ast::{self, BinaryOp, ElseBranch, HasArgList as _, HasLoopBody as _, LogicOp},
 };
 
-use rg_item_tree::FieldKey;
+use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::Span;
 
 use crate::ir::{
-    BindingKind, ExprId, ExprKind, ExprWrapperKind, LiteralKind, MatchArmData, RecordExprField,
-    ScopeId,
+    BindingData, BindingKind, BodyTy, ClosureCapture, ClosureKind, ClosureParamData, ExprId,
+    ExprKind, ExprWrapperKind, LiteralKind, MatchArmData, RecordExprField, ScopeId,
 };
 
 use super::function::FunctionBodyLowering;
@@ -20,6 +20,7 @@ impl FunctionBodyLowering<'_> {
         match expr {
             ast::Expr::BlockExpr(block) => self.lower_block_expr(block, scope),
             ast::Expr::CallExpr(call) => self.lower_call_expr(call, scope),
+            ast::Expr::ClosureExpr(closure) => self.lower_closure_expr(closure, scope),
             ast::Expr::FieldExpr(field) => self.lower_field_expr(field, scope),
             ast::Expr::ForExpr(for_expr) => self.lower_for_expr(for_expr, scope),
             ast::Expr::IfExpr(if_expr) => self.lower_if_expr(if_expr, scope),
@@ -108,6 +109,75 @@ impl FunctionBodyLowering<'_> {
             .collect();
 
         self.alloc_expr(call.syntax(), scope, ExprKind::Call { callee, args })
+    }
+
+    fn lower_closure_expr(&mut self, closure: ast::ClosureExpr, scope: ScopeId) -> ExprId {
+        let closure_scope = self.builder.alloc_scope(Some(scope));
+        let params = closure
+            .param_list()
+            .into_iter()
+            .flat_map(|param_list| param_list.params())
+            .map(|param| self.lower_closure_param(param, closure_scope))
+            .collect();
+        let ret_ty = closure
+            .ret_type()
+            .and_then(|ret_ty| ret_ty.ty())
+            .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
+        let body = closure
+            .body()
+            .map(|body| self.lower_expr(body, closure_scope));
+        let capture = if closure.move_token().is_some() {
+            ClosureCapture::Move
+        } else {
+            ClosureCapture::Inferred
+        };
+        let kind = if closure.async_token().is_some() {
+            ClosureKind::Async
+        } else {
+            ClosureKind::Normal
+        };
+
+        self.alloc_expr(
+            closure.syntax(),
+            scope,
+            ExprKind::Closure {
+                scope: closure_scope,
+                capture,
+                kind,
+                params,
+                ret_ty,
+                body,
+            },
+        )
+    }
+
+    fn lower_closure_param(&mut self, param: ast::Param, scope: ScopeId) -> ClosureParamData {
+        // Closure parameters introduce bindings only inside the closure-owned scope.
+        let source = self.source(param.syntax());
+        let annotation = param
+            .ty()
+            .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
+        let (pat, bindings) = match param.pat() {
+            Some(pat) => self.lower_pat(pat, scope, BindingKind::Param, annotation.clone()),
+            None => {
+                let binding = self.builder.alloc_binding(BindingData {
+                    source,
+                    scope,
+                    kind: BindingKind::Param,
+                    name: None,
+                    annotation: annotation.clone(),
+                    ty: BodyTy::Unknown,
+                });
+                (None, vec![binding])
+            }
+        };
+
+        ClosureParamData {
+            source,
+            pat,
+            bindings,
+            annotation,
+        }
     }
 
     fn lower_if_expr(&mut self, if_expr: ast::IfExpr, scope: ScopeId) -> ExprId {
