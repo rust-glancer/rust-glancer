@@ -135,6 +135,49 @@ pub struct RecordPatField {
 }
 
 impl PatKind {
+    /// Returns any path syntactically owned by this pattern node.
+    pub(crate) fn path(&self) -> Option<&BodyPath> {
+        match self {
+            Self::TupleStruct { path, .. }
+            | Self::Record { path, .. }
+            | Self::Path { path }
+            | Self::Binding { path, .. } => path.as_ref(),
+            Self::Tuple { .. }
+            | Self::Or { .. }
+            | Self::Slice { .. }
+            | Self::Ref { .. }
+            | Self::Box { .. }
+            | Self::Range { .. }
+            | Self::ConstBlock { .. }
+            | Self::Rest
+            | Self::Literal { .. }
+            | Self::Wildcard
+            | Self::Unsupported => None,
+        }
+    }
+
+    /// Returns the pattern path when it should behave as an editor-visible value path.
+    pub(crate) fn value_path(&self) -> Option<&BodyPath> {
+        match self {
+            Self::TupleStruct { path, .. } | Self::Record { path, .. } | Self::Path { path } => {
+                path.as_ref()
+            }
+            Self::Binding { binding, path, .. } if binding.is_none() => path.as_ref(),
+            Self::Binding { .. }
+            | Self::Tuple { .. }
+            | Self::Or { .. }
+            | Self::Slice { .. }
+            | Self::Ref { .. }
+            | Self::Box { .. }
+            | Self::Range { .. }
+            | Self::ConstBlock { .. }
+            | Self::Rest
+            | Self::Literal { .. }
+            | Self::Wildcard
+            | Self::Unsupported => None,
+        }
+    }
+
     fn shrink_to_fit(&mut self) {
         match self {
             Self::Tuple { fields } | Self::Slice { fields } => fields.shrink_to_fit(),

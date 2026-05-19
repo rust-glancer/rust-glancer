@@ -8,7 +8,7 @@
 use rg_item_tree::{GenericArg, TypeBound, TypePath, TypeRef};
 use rg_parse::{FileId, Span};
 
-use crate::{BodyData, ExprKind, PatData, PatId, PatKind, ScopeId, StmtKind};
+use crate::{BodyData, BodyPath, ExprKind, PatData, PatId, PatKind, ScopeId, StmtKind};
 
 /// A source-owned pattern root together with the scope where its bindings live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,9 +205,60 @@ impl<'body> BodyScanSites<'body> {
                         ty,
                     });
                 }
+                ExprKind::Path { path } => {
+                    Self::visit_body_path_type_refs(
+                        path,
+                        expr.scope,
+                        expr.visible_bindings,
+                        expr.source.file_id,
+                        &mut visit,
+                    );
+                }
+                ExprKind::Record {
+                    path: Some(path), ..
+                } => {
+                    Self::visit_body_path_type_refs(
+                        path,
+                        expr.scope,
+                        expr.visible_bindings,
+                        expr.source.file_id,
+                        &mut visit,
+                    );
+                }
                 _ => {}
             }
         }
+
+        self.for_each_pattern_site(|site| {
+            self.walk_pat_inner(site.scope, site.pat, None, &mut |walk_site| {
+                if let Some(path) = walk_site.data.kind.path() {
+                    Self::visit_body_path_type_refs(
+                        path,
+                        walk_site.scope,
+                        visible_bindings,
+                        walk_site.data.source.file_id,
+                        &mut visit,
+                    );
+                }
+            });
+        });
+    }
+
+    fn visit_body_path_type_refs(
+        path: &'body BodyPath,
+        scope: ScopeId,
+        visible_bindings: usize,
+        file_id: FileId,
+        visit: &mut impl FnMut(TypeRefSite<'body>),
+    ) {
+        path.walk_type_refs(&mut |ty| {
+            visit(TypeRefSite {
+                scope,
+                visible_bindings,
+                file_id,
+                ty,
+            });
+        });
     }
 
     fn walk_type_ref(&self, ty: &'body TypeRef, visit: &mut impl FnMut(&'body TypePath)) {

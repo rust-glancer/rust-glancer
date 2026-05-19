@@ -5,13 +5,13 @@ use rg_syntax::{
     ast::{self, HasName as _, RangeItem as _},
 };
 
-use rg_def_map::{Path, PathSegment};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_text::Name;
 
 use crate::ir::{
     BindingData, BindingId, BindingKind, BodyPath, BodyTy, ExprId, LiteralKind, PatBindingMode,
     PatData, PatId, PatKind, PatMutability, PatRangeKind, RecordPatField, ScopeId,
+    path::{BodyPathSegment, BodyPathSegmentKind},
 };
 
 use super::function::FunctionBodyLowering;
@@ -64,11 +64,12 @@ impl FunctionBodyLowering<'_> {
                 let ambiguous_path = pat.is_simple_ident().then(|| {
                     BodyPath::new(
                         name_span,
-                        Path {
-                            absolute: false,
-                            segments: vec![PathSegment::Name(name.clone())],
-                        },
-                        vec![name_span],
+                        false,
+                        vec![BodyPathSegment::new(
+                            BodyPathSegmentKind::Name(name.clone()),
+                            name_span,
+                            None,
+                        )],
                     )
                 });
                 let subpat = pat.pat().map(|pat| {

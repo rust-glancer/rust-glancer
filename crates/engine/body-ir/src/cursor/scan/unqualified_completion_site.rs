@@ -136,7 +136,10 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         path: &BodyPath,
         best: &mut Option<(UnqualifiedCompletionSite, u32)>,
     ) {
-        if path.path.absolute || path.segment_count() != 1 {
+        let Some(def_map_path) = path.as_def_map_path() else {
+            return;
+        };
+        if def_map_path.absolute || path.segment_count() != 1 {
             return;
         }
         let Some(span) = path.segment_span(0) else {

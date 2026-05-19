@@ -477,7 +477,11 @@ pub enum GenericArg {
 }
 
 impl GenericArg {
-    fn from_ast(arg: ast::GenericArg, line_index: &LineIndex, interner: &mut NameInterner) -> Self {
+    pub fn from_ast(
+        arg: ast::GenericArg,
+        line_index: &LineIndex,
+        interner: &mut NameInterner,
+    ) -> Self {
         match arg {
             ast::GenericArg::AssocTypeArg(arg) => Self::AssocType {
                 name: arg

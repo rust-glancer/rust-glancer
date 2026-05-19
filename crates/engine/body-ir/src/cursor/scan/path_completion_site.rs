@@ -8,9 +8,7 @@ use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{
-    BodyData, BodyId, BodyIrReadTxn, BodyPath, BodyRef, ExprKind, PatData, PatKind, ScopeId,
-};
+use crate::{BodyData, BodyId, BodyIrReadTxn, BodyPath, BodyRef, ExprKind, PatData, ScopeId};
 
 use super::{
     super::{PathCompletionNamespace, PathCompletionSite},
@@ -110,35 +108,8 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         data: &PatData,
         best: &mut Option<(PathCompletionSite, u32)>,
     ) {
-        match &data.kind {
-            PatKind::TupleStruct { path, .. } | PatKind::Record { path, .. } => {
-                if let Some(path) = path {
-                    self.scan_body_path(body_ref, scope, path, best);
-                }
-            }
-            PatKind::Path { path } => {
-                if let Some(path) = path {
-                    self.scan_body_path(body_ref, scope, path, best);
-                }
-            }
-            PatKind::Binding { binding, path, .. } => {
-                if binding.is_none()
-                    && let Some(path) = path
-                {
-                    self.scan_body_path(body_ref, scope, path, best);
-                }
-            }
-            PatKind::Tuple { .. }
-            | PatKind::Or { .. }
-            | PatKind::Slice { .. }
-            | PatKind::Ref { .. }
-            | PatKind::Box { .. }
-            | PatKind::Range { .. }
-            | PatKind::Rest
-            | PatKind::Literal { .. }
-            | PatKind::ConstBlock { .. }
-            | PatKind::Wildcard
-            | PatKind::Unsupported => {}
+        if let Some(path) = data.kind.value_path() {
+            self.scan_body_path(body_ref, scope, path, best);
         }
     }
 
@@ -211,13 +182,14 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     ) -> Option<PathCompletionSite> {
         let last_segment_span = path.segment_span(path.segment_count().checked_sub(1)?)?;
         let span = self.empty_member_span(path.source_span, last_segment_span)?;
+        let qualifier = path.prefix_through(path.segment_count() - 1)?;
 
         // Expression and pattern paths can use modules and types as intermediate qualifiers, even
         // when the final completed path must eventually denote a value.
         Some(PathCompletionSite {
             body,
             scope,
-            qualifier: path.prefix_through(path.segment_count() - 1),
+            qualifier,
             member_prefix_span: span,
             namespace: PathCompletionNamespace::Values,
         })
@@ -238,12 +210,15 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             if !span.touches(self.offset) {
                 continue;
             }
+            let Some(qualifier) = path.prefix_through(idx - 1) else {
+                continue;
+            };
 
             Self::remember_site(
                 PathCompletionSite {
                     body,
                     scope,
-                    qualifier: path.prefix_through(idx - 1),
+                    qualifier,
                     member_prefix_span: span,
                     namespace: PathCompletionNamespace::Values,
                 },

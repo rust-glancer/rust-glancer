@@ -7,7 +7,7 @@ use rg_def_map::Path;
 use rg_item_tree::TypePath;
 use rg_parse::{FileId, Span};
 
-use crate::{BodyData, BodyPath, BodyRef, ExprKind, PatData, PatKind, ScopeId};
+use crate::{BodyData, BodyPath, BodyRef, ExprKind, PatData, ScopeId};
 
 use super::{super::BodyCursorCandidate, sites::BodyScanSites};
 
@@ -85,35 +85,8 @@ impl ValuePathCursorScanner<'_> {
 
     /// Visits value paths directly owned by one pattern node.
     fn scan_pat_data(&mut self, scope: ScopeId, data: &PatData) {
-        match &data.kind {
-            PatKind::TupleStruct { path, .. } | PatKind::Record { path, .. } => {
-                if let Some(path) = path {
-                    self.scan_body_path(scope, path, data.source.file_id);
-                }
-            }
-            PatKind::Path { path } => {
-                if let Some(path) = path {
-                    self.scan_body_path(scope, path, data.source.file_id);
-                }
-            }
-            PatKind::Binding { binding, path, .. } => {
-                if binding.is_none()
-                    && let Some(path) = path
-                {
-                    self.scan_body_path(scope, path, data.source.file_id);
-                }
-            }
-            PatKind::Tuple { .. }
-            | PatKind::Or { .. }
-            | PatKind::Slice { .. }
-            | PatKind::Ref { .. }
-            | PatKind::Box { .. }
-            | PatKind::Range { .. }
-            | PatKind::Rest
-            | PatKind::Literal { .. }
-            | PatKind::ConstBlock { .. }
-            | PatKind::Wildcard
-            | PatKind::Unsupported => {}
+        if let Some(path) = data.kind.value_path() {
+            self.scan_body_path(scope, path, data.source.file_id);
         }
     }
 
@@ -131,10 +104,13 @@ impl ValuePathCursorScanner<'_> {
                 continue;
             };
             if self.offset_matches(span) {
+                let Some(path) = path.prefix_through(idx) else {
+                    continue;
+                };
                 self.candidates.push(BodyCursorCandidate::ValuePath {
                     body: self.body_ref,
                     scope,
-                    path: path.prefix_through(idx),
+                    path,
                     file_id,
                     span,
                 });

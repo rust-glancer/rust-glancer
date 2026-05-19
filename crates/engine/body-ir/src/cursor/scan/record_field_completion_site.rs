@@ -161,11 +161,12 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
         let member_prefix_span =
             self.member_prefix_span_for_record_fields(&fields, blocked_span)?;
         let existing_fields = fields.iter().map(|field| field.key.clone()).collect();
+        let owner = owner.as_def_map_path()?.clone();
 
         Some(RecordFieldCompletionSite {
             body,
             scope,
-            owner: owner.path.clone(),
+            owner,
             member_prefix_span,
             existing_fields,
         })

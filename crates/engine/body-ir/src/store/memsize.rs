@@ -9,6 +9,7 @@ use crate::{
     ScopeData, ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
     ir::expr::{ExprWrapperKind, LabelData, MatchArmData},
     ir::ids::StmtId,
+    ir::path::{BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind},
 };
 use rg_memsize::{MemoryRecorder, MemorySize};
 
@@ -52,7 +53,8 @@ rg_memsize::impl_memory_size_children! {
     ClosureParamData => source, pat, bindings, annotation;
     LabelData => name, span;
     RecordExprField => key, key_span, source_span, value;
-    BodyPath => source_span, path, segment_spans;
+    BodyPath => source_span, absolute, def_map_path, segments;
+    BodyPathSegment => kind, span, args;
     BodyLocalNominalTy => item, args;
     BodyNominalTy => def, args;
     BodyItemData => source, name_source, scope, kind, name, docs, generics, fields;
@@ -69,6 +71,35 @@ rg_memsize::impl_memory_size_children! {
     BodyIrStats => target_count, built_target_count, skipped_target_count, body_count,
         scope_count, local_item_count, local_impl_count, local_function_count, binding_count,
         statement_count, expression_count;
+}
+
+impl MemorySize for BodyPathSegmentKind {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Name(name) => name.record_memory_children(recorder),
+            Self::TypeAnchor { ty, trait_ref } => {
+                recorder.scope("ty", |recorder| ty.record_memory_children(recorder));
+                recorder.scope("trait_ref", |recorder| {
+                    trait_ref.record_memory_children(recorder);
+                });
+            }
+            Self::SelfType | Self::SelfKw | Self::SuperKw | Self::CrateKw => {}
+        }
+    }
+}
+
+impl MemorySize for BodyPathSegmentArgs {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Angle { colon_colon, args } => {
+                recorder.scope("colon_colon", |recorder| {
+                    colon_colon.record_memory_children(recorder);
+                });
+                recorder.scope("args", |recorder| args.record_memory_children(recorder));
+            }
+            Self::Parenthesized(text) => text.record_memory_children(recorder),
+        }
+    }
 }
 
 impl MemorySize for BodyIrDb {

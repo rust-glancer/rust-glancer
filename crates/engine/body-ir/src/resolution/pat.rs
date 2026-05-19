@@ -203,7 +203,7 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         fields: &[PatId],
         expected_ty: &BodyTy,
     ) -> Result<bool, PackageStoreError> {
-        let Some(variant_name) = variant_name(path.map(|path| &path.path)) else {
+        let Some(variant_name) = variant_name(path.and_then(BodyPath::as_def_map_path)) else {
             return Ok(false);
         };
 
@@ -223,7 +223,7 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         fields: &[RecordPatField],
         expected_ty: &BodyTy,
     ) -> Result<bool, PackageStoreError> {
-        let Some(variant_name) = variant_name(path.map(|path| &path.path)) else {
+        let Some(variant_name) = variant_name(path.and_then(BodyPath::as_def_map_path)) else {
             return Ok(false);
         };
 

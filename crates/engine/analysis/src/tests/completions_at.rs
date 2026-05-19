@@ -550,8 +550,14 @@ pub struct Session;
 pub struct State;
 pub struct String;
 
+pub enum Maybe<T> {
+    Some(T),
+    None,
+}
+
 pub fn use_it() {
     let _values: std::collections::HashMap<String, S$value_arg$>;
+    let _variant = Maybe::<S$value_path_arg$>::None;
     let _keys: std::collections::HashMap<S$key_arg$
 }
 
@@ -571,9 +577,12 @@ pub mod collections {
                 .in_lib("analysis_unqualified_generic_type_arg_completions"),
             AnalysisQuery::complete("second generic arg completions", "value_arg")
                 .in_lib("analysis_unqualified_generic_type_arg_completions"),
+            AnalysisQuery::complete("value path generic arg completions", "value_path_arg")
+                .in_lib("analysis_unqualified_generic_type_arg_completions"),
         ],
         expect![[r#"
             first generic arg completions
+            - enum Maybe
             - struct Session
             - struct State
             - struct String
@@ -582,6 +591,16 @@ pub mod collections {
             - module std
 
             second generic arg completions
+            - enum Maybe
+            - struct Session
+            - struct State
+            - struct String
+            - module alloc
+            - module core
+            - module std
+
+            value path generic arg completions
+            - enum Maybe
             - struct Session
             - struct State
             - struct String

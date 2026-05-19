@@ -164,6 +164,80 @@ pub fn use_it(id: u8, name: u8) -> User {
 }
 
 #[test]
+fn preserves_rich_body_paths() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_rich_path_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum Maybe<T> {
+    Some(T),
+    None,
+}
+
+pub struct User;
+
+pub trait Factory<T> {
+    fn make() -> T;
+}
+
+impl Factory<User> for User {
+    fn make() -> User {
+        User
+    }
+}
+
+pub fn use_it(user: User) {
+    let variant = Maybe::<User>::Some(user);
+    let qualified = <User as Factory<User>>::make();
+}
+"#,
+        expect![[r#"
+            package body_rich_path_fixture
+
+            body_rich_path_fixture [lib]
+            body b0 fn body_rich_path_fixture[lib]::crate::use_it @ 18:1-21:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v2
+            bindings
+            - v0 param user `user`: User => nominal struct body_rich_path_fixture[lib]::crate::User @ 18:15-18:19
+            - v1 let variant `variant` => nominal enum body_rich_path_fixture[lib]::crate::Maybe @ 19:9-19:16
+            - v2 let qualified `qualified` => <unknown> @ 20:9-20:18
+            body
+            expr e5 block s1 => () @ 18:27-21:2
+              stmt s0 let v1 @ 19:5-19:45
+                initializer
+                  expr e2 call => nominal enum body_rich_path_fixture[lib]::crate::Maybe @ 19:19-19:44
+                    callee
+                      expr e0 path Maybe::<User>::Some -> variant enum body_rich_path_fixture[lib]::crate::Maybe::Some => nominal enum body_rich_path_fixture[lib]::crate::Maybe @ 19:19-19:38
+                    arg
+                      expr e1 path user -> local v0 => nominal struct body_rich_path_fixture[lib]::crate::User @ 19:39-19:43
+              stmt s1 let v2 @ 20:5-20:53
+                initializer
+                  expr e4 call => <unknown> @ 20:21-20:52
+                    callee
+                      expr e3 path <User as Factory<User>>::make => <unknown> @ 20:21-20:50
+
+
+            body b1 fn impl Factory<User> for User::make @ 13:5-15:6
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e1 block s1 => nominal struct body_rich_path_fixture[lib]::crate::User @ 13:23-15:6
+              tail
+                expr e0 path User -> item struct body_rich_path_fixture[lib]::crate::User => nominal struct body_rich_path_fixture[lib]::crate::User @ 14:9-14:13
+        "#]],
+    );
+}
+
+#[test]
 fn lowers_common_expression_forms() {
     check_project_body_ir(
         r#"

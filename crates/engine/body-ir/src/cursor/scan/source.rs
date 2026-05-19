@@ -149,7 +149,9 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             }
 
             let span = match &expr.kind {
-                ExprKind::Path { path } if path.segment_count() == 1 => {
+                ExprKind::Path { path }
+                    if path.segment_count() == 1 && path.as_def_map_path().is_some() =>
+                {
                     path.segment_span(0).unwrap_or(expr.source.span)
                 }
                 ExprKind::MethodCall {
