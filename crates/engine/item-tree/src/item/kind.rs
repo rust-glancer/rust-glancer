@@ -4,6 +4,7 @@ use super::{
         TypeAliasItem, UnionItem,
     },
     import::{ExternCrateItem, UseItem},
+    macro_item::{MacroCallItem, MacroDefinitionItem},
     module::ModuleItem,
 };
 
@@ -29,8 +30,10 @@ pub enum ItemKind {
     Function(FunctionItem),
     #[display("impl")]
     Impl(ImplItem),
+    #[display("macro_call")]
+    MacroCall(MacroCallItem),
     #[display("macro_definition")]
-    MacroDefinition,
+    MacroDefinition(MacroDefinitionItem),
     #[display("module")]
     Module(ModuleItem),
     #[display("static")]
@@ -58,7 +61,8 @@ impl ItemKind {
             Self::ExternCrate(_) => ItemTag::ExternCrate,
             Self::Function(_) => ItemTag::Function,
             Self::Impl(_) => ItemTag::Impl,
-            Self::MacroDefinition => ItemTag::MacroDefinition,
+            Self::MacroCall(_) => ItemTag::MacroCall,
+            Self::MacroDefinition(_) => ItemTag::MacroDefinition,
             Self::Module(_) => ItemTag::Module,
             Self::Static(_) => ItemTag::Static,
             Self::Struct(_) => ItemTag::Struct,
@@ -71,12 +75,14 @@ impl ItemKind {
 
     pub(crate) fn shrink_to_fit(&mut self) {
         match self {
-            Self::AsmExpr | Self::ExternBlock | Self::MacroDefinition => {}
+            Self::AsmExpr | Self::ExternBlock => {}
             Self::Const(item) => item.shrink_to_fit(),
             Self::Enum(item) => item.shrink_to_fit(),
             Self::ExternCrate(item) => item.shrink_to_fit(),
             Self::Function(item) => item.shrink_to_fit(),
             Self::Impl(item) => item.shrink_to_fit(),
+            Self::MacroCall(item) => item.shrink_to_fit(),
+            Self::MacroDefinition(item) => item.shrink_to_fit(),
             Self::Module(item) => item.shrink_to_fit(),
             Self::Static(item) => item.shrink_to_fit(),
             Self::Struct(item) => item.shrink_to_fit(),
@@ -114,6 +120,8 @@ pub enum ItemTag {
     Function,
     #[display("impl")]
     Impl,
+    #[display("macro_call")]
+    MacroCall,
     #[display("macro_definition")]
     MacroDefinition,
     #[display("module")]

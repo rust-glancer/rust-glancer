@@ -463,6 +463,45 @@ pub fn decorate(input: &str) -> &str {
 }
 
 #[test]
+fn dumps_item_macro_calls() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+//- /Cargo.toml
+[package]
+name = "macro_crate"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! make_user {
+    () => {
+        pub struct User;
+    };
+}
+
+make_user!();
+"#,
+        expect![[r#"
+            package macro_crate
+
+            targets
+            - macro_crate [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - macro_definition make_user
+              - body {
+                () => {
+                    pub struct User;
+                };
+            }
+            - macro_call [make_user]
+              - args ()
+        "#]],
+    );
+}
+
+#[test]
 fn dumps_declaration_payloads() {
     utils::check_project_item_tree_with_declarations(
         r#"

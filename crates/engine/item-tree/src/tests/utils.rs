@@ -182,6 +182,11 @@ impl<'a> PackageItemTreeSnapshot<'a> {
             line.push_str(&format!(" [{name}{}]", extern_crate.alias));
         }
 
+        if let ItemKind::MacroCall(macro_call) = &item.kind {
+            let path = macro_call.path.as_deref().unwrap_or("<missing>");
+            line.push_str(&format!(" [{path}]"));
+        }
+
         if matches!(self.mode, SnapshotMode::Spans) {
             let line_column = item.span.line_column(
                 self.package
@@ -290,6 +295,22 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                         .item(*child_id)
                         .expect("impl child item id should exist while rendering declarations");
                     self.render_item(file_tree, child, depth + 1, dump);
+                }
+            }
+            ItemKind::MacroCall(macro_call) => {
+                if let Some(args) = &macro_call.args {
+                    writeln!(dump, "{indent}  - args {args}")
+                        .expect("string writes should not fail");
+                }
+            }
+            ItemKind::MacroDefinition(macro_definition) => {
+                if let Some(args) = &macro_definition.args {
+                    writeln!(dump, "{indent}  - args {args}")
+                        .expect("string writes should not fail");
+                }
+                if let Some(body) = &macro_definition.body {
+                    writeln!(dump, "{indent}  - body {body}")
+                        .expect("string writes should not fail");
                 }
             }
             ItemKind::Static(static_item) => {

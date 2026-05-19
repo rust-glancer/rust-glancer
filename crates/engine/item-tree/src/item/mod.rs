@@ -4,6 +4,7 @@ use rg_parse::{FileId, Span};
 use rg_text::Name;
 
 pub use self::{
+    cfg::{CfgExpr, CfgGate, CfgPredicate},
     decl::{
         ConstItem, EnumItem, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,
         FunctionQualifiers, GenericParams, ImplItem, ParamItem, ParamKind, StaticItem, StructItem,
@@ -15,6 +16,7 @@ pub use self::{
         UsePathSegmentKind,
     },
     kind::{ItemKind, ItemTag},
+    macro_item::{MacroCallItem, MacroDefinitionItem, MacroDefinitionSyntax},
     module::{ModuleItem, ModuleSource},
     type_ref::{GenericArg, Mutability, TypeBound, TypePath, TypePathSegment, TypeRef},
     visibility::VisibilityLevel,
@@ -22,10 +24,12 @@ pub use self::{
 
 pub(crate) use self::decl::{ConstParamData, LifetimeParamData, TypeParamData};
 
+mod cfg;
 mod decl;
 mod docs;
 mod import;
 mod kind;
+mod macro_item;
 mod module;
 mod type_ref;
 mod visibility;
@@ -60,6 +64,8 @@ pub struct ItemNode {
     /// Source span of the declaration name, when the item has one.
     pub name_span: Option<Span>,
     pub visibility: VisibilityLevel,
+    /// Target-dependent cfg gates attached to the item.
+    pub cfg: CfgExpr,
     /// User-facing documentation lowered from doc comments or `#[doc = "..."]`.
     pub docs: Option<Documentation>,
     /// File where this item is declared.
@@ -84,6 +90,7 @@ impl ItemNode {
             name,
             name_span: name_range.map(Span::from_text_range),
             visibility,
+            cfg: CfgExpr::default(),
             docs,
             file_id,
             span: Span::from_text_range(text_range),
@@ -96,6 +103,7 @@ impl ItemNode {
             name.shrink_to_fit();
         }
         self.visibility.shrink_to_fit();
+        self.cfg.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
         }

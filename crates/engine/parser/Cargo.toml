@@ -1,13 +1,17 @@
 [package]
 name = "rg_parser"
-version = "0.0.0"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors = [
+  "rust-analyzer developers",
+  "Igor Aleksanov <popzxc@yandex.ru>",
+]
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
 description = "The Rust parser for rust-analyzer."
-
-authors = ["rust-analyzer developers"]
-edition = "2024"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/rust-lang/rust-analyzer"
-rust-version = "1.87"
 
 [lib]
 doctest = false

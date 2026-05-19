@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use rg_arena::Arena;
 
 use crate::{FileId, LineIndex, ParsedFile, ParsedFileSnapshot, Target, TargetId, file::FileDb};
-use rg_workspace::{PackageId, PackageOrigin, RustEdition, TargetKind};
+use rg_workspace::{CfgOptions, PackageId, PackageOrigin, RustEdition, TargetKind};
 
 /// Parsed package, including package-local files and target entrypoints.
 #[derive(Debug, Clone)]
@@ -19,6 +19,8 @@ pub struct Package {
     pub(crate) is_workspace_member: bool,
     /// Where this package came from in the normalized workspace graph.
     pub(crate) origin: PackageOrigin,
+    /// Active cfg facts inherited from Cargo and the selected target platform.
+    pub(crate) cfg_options: CfgOptions,
     /// All parsed files known to this package.
     pub(crate) files: FileDb,
     /// Parsed targets rooted in this package.
@@ -150,6 +152,11 @@ impl Package {
         &self.package_name
     }
 
+    /// Returns the Rust edition used to parse this package.
+    pub fn edition(&self) -> RustEdition {
+        self.edition
+    }
+
     /// Returns the stable package id.
     pub fn id(&self) -> &PackageId {
         &self.id
@@ -163,6 +170,11 @@ impl Package {
     /// Returns where this package came from in the normalized workspace graph.
     pub fn origin(&self) -> &PackageOrigin {
         &self.origin
+    }
+
+    /// Returns active package/platform cfg facts.
+    pub fn cfg_options(&self) -> &CfgOptions {
+        &self.cfg_options
     }
 
     /// Returns all parsed targets for this package.
@@ -204,6 +216,7 @@ impl Package {
             edition: package.edition,
             is_workspace_member: package.is_workspace_member,
             origin: package.origin.clone(),
+            cfg_options: package.cfg_options.clone(),
             files,
             targets: parsed_targets,
         })

@@ -43,6 +43,7 @@ impl WorkspaceCachePlan {
                 source: CachedPackageSource::from(package.source),
                 edition: CachedRustEdition::from(package.edition),
                 manifest_path: CachedPath::from_workspace_path(&package.manifest_path),
+                cfg_options: super::CachedCfgOptions::from_workspace(&package.cfg_options),
                 targets: rg_parse::Package::analyzed_targets(package)
                     .iter()
                     .map(CachedTarget::from_workspace_target)

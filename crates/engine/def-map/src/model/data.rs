@@ -1,9 +1,13 @@
 use std::collections::HashMap;
 
 use rg_arena::Arena;
-use rg_item_tree::{Documentation, ItemTag, ItemTreeRef, VisibilityLevel};
+use rg_item_tree::{
+    Documentation, ItemTag, ItemTreeRef, MacroDefinitionItem, MacroDefinitionSyntax,
+    VisibilityLevel,
+};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
+use rg_workspace::RustEdition;
 
 use super::scope::Namespace;
 use super::{ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef, ModuleScope};
@@ -18,6 +22,7 @@ pub struct DefMap {
     prelude: Option<ModuleRef>,
     modules: Arena<ModuleId, ModuleData>,
     local_defs: Arena<LocalDefId, LocalDefData>,
+    macro_definitions: HashMap<LocalDefId, MacroDefinitionData>,
     local_impls: Arena<LocalImplId, LocalImplData>,
     imports: Arena<ImportId, ImportData>,
 }
@@ -74,6 +79,15 @@ impl DefMap {
         &self.local_defs
     }
 
+    /// Returns a declarative macro payload by its local definition id.
+    pub(crate) fn macro_definition(&self, local_def: LocalDefId) -> Option<&MacroDefinitionData> {
+        self.macro_definitions.get(&local_def)
+    }
+
+    pub(crate) fn macro_definitions_storage(&self) -> &HashMap<LocalDefId, MacroDefinitionData> {
+        &self.macro_definitions
+    }
+
     /// Returns impl block data by id.
     pub(crate) fn local_impl(&self, local_impl: LocalImplId) -> Option<&LocalImplData> {
         self.local_impls.get(local_impl)
@@ -109,6 +123,14 @@ impl DefMap {
         self.local_defs.alloc(local_def)
     }
 
+    pub(crate) fn insert_macro_definition(
+        &mut self,
+        local_def: LocalDefId,
+        macro_definition: MacroDefinitionData,
+    ) {
+        self.macro_definitions.insert(local_def, macro_definition);
+    }
+
     pub(crate) fn alloc_local_impl(&mut self, local_impl: LocalImplData) -> LocalImplId {
         self.local_impls.alloc(local_impl)
     }
@@ -138,6 +160,10 @@ impl DefMap {
         self.local_defs.shrink_to_fit();
         for local_def in self.local_defs.iter_mut() {
             local_def.shrink_to_fit();
+        }
+        self.macro_definitions.shrink_to_fit();
+        for macro_definition in self.macro_definitions.values_mut() {
+            macro_definition.shrink_to_fit();
         }
         self.local_impls.shrink_to_fit();
         self.imports.shrink_to_fit();
@@ -236,6 +262,51 @@ impl LocalDefData {
     }
 }
 
+/// Declarative macro definition payload retained for expansion after def-map freezing.
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct MacroDefinitionData {
+    pub kind: MacroDefinitionKind,
+    pub args: Option<String>,
+    pub body: Option<String>,
+    pub edition: RustEdition,
+}
+
+impl MacroDefinitionData {
+    pub(crate) fn from_item(item: &MacroDefinitionItem, edition: RustEdition) -> Self {
+        Self {
+            kind: MacroDefinitionKind::from_item_tree(item.syntax),
+            args: item.args.clone(),
+            body: item.body.clone(),
+            edition,
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {
+        if let Some(args) = &mut self.args {
+            args.shrink_to_fit();
+        }
+        if let Some(body) = &mut self.body {
+            body.shrink_to_fit();
+        }
+    }
+}
+
+/// Syntax form used to define a declarative macro.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub enum MacroDefinitionKind {
+    MacroRules,
+    MacroDef,
+}
+
+impl MacroDefinitionKind {
+    fn from_item_tree(syntax: MacroDefinitionSyntax) -> Self {
+        match syntax {
+            MacroDefinitionSyntax::MacroRules => Self::MacroRules,
+            MacroDefinitionSyntax::MacroDef => Self::MacroDef,
+        }
+    }
+}
+
 /// One module-owned impl block collected from source.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct LocalImplData {
@@ -293,6 +364,7 @@ impl LocalDefKind {
             | ItemTag::ExternBlock
             | ItemTag::ExternCrate
             | ItemTag::Impl
+            | ItemTag::MacroCall
             | ItemTag::Module
             | ItemTag::Use => None,
         }

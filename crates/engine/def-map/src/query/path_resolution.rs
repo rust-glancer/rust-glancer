@@ -9,8 +9,8 @@
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
 use crate::{
-    DefId, DefMapReadTxn, ImportPath, LocalDefKind, LocalDefRef, ModuleData, ModuleId, ModuleRef,
-    Path, PathSegment, ScopeBinding, TargetRef,
+    DefId, DefMapReadTxn, ImportPath, LocalDefData, LocalDefKind, LocalDefRef, MacroDefinitionData,
+    ModuleData, ModuleId, ModuleRef, Path, PathSegment, ScopeBinding, TargetRef,
     model::{ModuleScopeBuilder, Namespace, ScopeEntryRef},
 };
 use rg_item_tree::VisibilityLevel;
@@ -49,10 +49,24 @@ pub(crate) trait PathResolutionEnv {
         module_ref: ModuleRef,
     ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, PackageStoreError>;
 
+    fn local_def_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&LocalDefData>, PackageStoreError>;
+
+    fn macro_definition_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&MacroDefinitionData>, PackageStoreError>;
+
     fn local_def_kind(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<LocalDefKind>, PackageStoreError>;
+    ) -> Result<Option<LocalDefKind>, PackageStoreError> {
+        Ok(self
+            .local_def_data(local_def_ref)?
+            .map(|local_def| local_def.kind))
+    }
 
     fn parent_module(
         &self,
@@ -133,13 +147,20 @@ impl PathResolutionEnv for DefMapReadTxn<'_> {
             .unwrap_or_default())
     }
 
-    fn local_def_kind(
+    fn local_def_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<LocalDefKind>, PackageStoreError> {
+    ) -> Result<Option<&LocalDefData>, PackageStoreError> {
+        self.local_def(local_def_ref)
+    }
+
+    fn macro_definition_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&MacroDefinitionData>, PackageStoreError> {
         Ok(self
-            .local_def(local_def_ref)?
-            .map(|local_def| local_def.kind))
+            .def_map(local_def_ref.target)?
+            .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))
     }
 }
 

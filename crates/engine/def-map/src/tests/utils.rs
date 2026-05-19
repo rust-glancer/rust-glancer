@@ -3,8 +3,8 @@ use std::{fmt, marker::PhantomData, sync::Arc};
 use expect_test::Expect;
 
 use crate::{
-    DefId, DefMap, DefMapDb, ImportData, ImportKind, ModuleId, ModuleRef, Path, PathSegment,
-    ResolvePathResult, ScopeBinding, ScopeEntry, TargetRef,
+    DefId, DefMap, DefMapDb, DefMapFinalizationStats, ImportData, ImportKind, ModuleId, ModuleRef,
+    Path, PathSegment, ResolvePathResult, ScopeBinding, ScopeEntry, TargetRef,
 };
 use rg_item_tree::{ItemTreeDb, PackageNameInterners, VisibilityLevel};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
@@ -89,6 +89,15 @@ impl DefMapFixtureDb {
         Self::build_from_workspace(workspace)
     }
 
+    pub(super) fn build_with_finalization_stats(fixture: &str) -> (Self, DefMapFinalizationStats) {
+        let fixture = fixture_crate(fixture);
+        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+            .expect("fixture workspace metadata should build");
+        let mut stats = DefMapFinalizationStats::default();
+        let db = Self::build_from_workspace_with_finalization_stats(workspace, Some(&mut stats));
+        (db, stats)
+    }
+
     pub(super) fn build_with_sysroot(fixture: &str) -> Self {
         let fixture = fixture_crate(fixture);
         let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
@@ -100,14 +109,23 @@ impl DefMapFixtureDb {
     }
 
     fn build_from_workspace(workspace: WorkspaceMetadata) -> Self {
+        Self::build_from_workspace_with_finalization_stats(workspace, None)
+    }
+
+    fn build_from_workspace_with_finalization_stats(
+        workspace: WorkspaceMetadata,
+        finalization_stats: Option<&mut DefMapFinalizationStats>,
+    ) -> Self {
         let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
         let mut names = PackageNameInterners::new(parse.package_count());
         let item_tree =
             ItemTreeDb::build(&mut parse, &mut names).expect("fixture item tree db should build");
-        let def_map = DefMapDb::builder(&workspace, &parse, &item_tree)
-            .name_interners(&mut names)
-            .build()
-            .expect("fixture def map db should build");
+        let mut builder =
+            DefMapDb::builder(&workspace, &parse, &item_tree).name_interners(&mut names);
+        if let Some(stats) = finalization_stats {
+            builder = builder.finalization_stats(stats);
+        }
+        let def_map = builder.build().expect("fixture def map db should build");
         Self { parse, def_map }
     }
 

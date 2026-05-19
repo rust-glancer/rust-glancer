@@ -1324,11 +1324,14 @@ dependencies = [
  "anyhow",
  "derive_more",
  "expect-test",
+ "rayon",
  "rg_arena",
  "rg_item_tree",
+ "rg_macro_expand",
  "rg_memsize",
  "rg_package_store",
  "rg_parse",
+ "rg_syntax",
  "rg_text",
  "rg_workspace",
  "test_fixture",
@@ -1403,6 +1406,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rg_macro_expand"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "expect-test",
+ "ra-ap-rustc_lexer",
+ "rg_parser",
+ "rg_syntax",
+ "rustc-hash",
+ "smallvec",
+ "smol_str",
+ "stdx",
+ "text-size",
+]
+
+[[package]]
 name = "rg_memsize"
 version = "0.1.0"
 dependencies = [
@@ -1435,7 +1454,7 @@ dependencies = [
 
 [[package]]
 name = "rg_parser"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "drop_bomb",
  "edition",
@@ -1494,7 +1513,7 @@ dependencies = [
 
 [[package]]
 name = "rg_syntax"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "either",
  "expect-test",

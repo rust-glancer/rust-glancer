@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use rg_workspace::{PackageId, PackageSlot, PackageSource, RustEdition, TargetKind};
+use rg_workspace::{CfgOptions, PackageId, PackageSlot, PackageSource, RustEdition, TargetKind};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{Fingerprint, fingerprint};
@@ -156,6 +156,35 @@ impl CachedTargetKind {
     }
 }
 
+/// Active cfg facts that influence package-local analysis artifacts.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, SchemaRead, SchemaWrite)]
+pub struct CachedCfgOptions {
+    atoms: Vec<String>,
+    key_values: Vec<CachedCfgKeyValue>,
+}
+
+impl CachedCfgOptions {
+    pub(super) fn from_workspace(options: &CfgOptions) -> Self {
+        Self {
+            atoms: options.atoms().to_vec(),
+            key_values: options
+                .key_values()
+                .iter()
+                .map(|value| CachedCfgKeyValue {
+                    key: value.key().to_string(),
+                    value: value.value().to_string(),
+                })
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
+pub struct CachedCfgKeyValue {
+    pub key: String,
+    pub value: String,
+}
+
 /// Cached view of one package's artifact-selecting metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct CachedPackage {
@@ -165,6 +194,7 @@ pub struct CachedPackage {
     pub source: CachedPackageSource,
     pub edition: CachedRustEdition,
     pub manifest_path: CachedPath,
+    pub cfg_options: CachedCfgOptions,
     pub targets: Vec<CachedTarget>,
     pub dependencies: Vec<CachedDependency>,
 }

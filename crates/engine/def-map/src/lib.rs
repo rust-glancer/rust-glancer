@@ -6,11 +6,13 @@ mod store;
 pub use rg_workspace::PackageSlot;
 
 pub use self::{
+    build::DefMapFinalizationStats,
     model::{
         DefId, DefMap, ImportBinding, ImportData, ImportId, ImportKind, ImportPath, ImportRef,
         ImportSourcePath, LocalDefData, LocalDefId, LocalDefKind, LocalDefRef, LocalImplData,
-        LocalImplId, LocalImplRef, ModuleData, ModuleId, ModuleOrigin, ModuleRef, ModuleScope,
-        Package, Path, PathSegment, ScopeBinding, ScopeEntry, TargetRef,
+        LocalImplId, LocalImplRef, MacroDefinitionData, MacroDefinitionKind, ModuleData, ModuleId,
+        ModuleOrigin, ModuleRef, ModuleScope, Package, Path, PathSegment, ScopeBinding, ScopeEntry,
+        TargetRef,
     },
     query::{
         DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite,

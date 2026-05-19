@@ -1,8 +1,9 @@
 use crate::{
     DefId, DefMap, DefMapDb, DefMapStats, ImportBinding, ImportData, ImportId, ImportKind,
     ImportPath, ImportRef, ImportSourcePath, LocalDefData, LocalDefId, LocalDefKind, LocalDefRef,
-    LocalImplData, LocalImplId, LocalImplRef, ModuleData, ModuleId, ModuleOrigin, ModuleRef,
-    ModuleScope, Package, Path, PathSegment, ScopeBinding, ScopeEntry, TargetRef,
+    LocalImplData, LocalImplId, LocalImplRef, MacroDefinitionData, MacroDefinitionKind, ModuleData,
+    ModuleId, ModuleOrigin, ModuleRef, ModuleScope, Package, Path, PathSegment, ScopeBinding,
+    ScopeEntry, TargetRef,
     model::{ImportSourcePathSegment, ScopeNameEntry},
 };
 use rg_memsize::{MemoryRecorder, MemorySize};
@@ -10,6 +11,7 @@ use rg_memsize::{MemoryRecorder, MemorySize};
 rg_memsize::impl_memory_size_leaf!(
     LocalDefKind,
     ImportKind,
+    MacroDefinitionKind,
     ModuleId,
     LocalDefId,
     LocalImplId,
@@ -21,6 +23,7 @@ rg_memsize::impl_memory_size_children! {
     ModuleData => name, name_span, docs, parent, children, local_defs, impls, imports,
         unresolved_imports, scope, origin;
     LocalDefData => module, name, kind, visibility, source, file_id, name_span, span;
+    MacroDefinitionData => kind, args, body, edition;
     LocalImplData => module, source, file_id, span;
     ModuleScope => entries;
     ScopeNameEntry => name, entry;
@@ -65,6 +68,10 @@ impl MemorySize for DefMap {
         });
         recorder.scope("local_defs", |recorder| {
             self.local_defs_storage().record_memory_children(recorder);
+        });
+        recorder.scope("macro_definitions", |recorder| {
+            self.macro_definitions_storage()
+                .record_memory_children(recorder);
         });
         recorder.scope("local_impls", |recorder| {
             self.local_impls_storage().record_memory_children(recorder);

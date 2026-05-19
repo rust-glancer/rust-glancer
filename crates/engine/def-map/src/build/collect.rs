@@ -16,16 +16,26 @@ use anyhow::Context as _;
 
 use rg_item_tree::{
     Documentation, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
-    ModuleItem, ModuleSource, Package as ItemTreePackage, UseImport, UseItem,
+    MacroCallItem, MacroDefinitionItem, ModuleItem, ModuleSource, Package as ItemTreePackage,
+    UseImport, UseItem,
 };
 use rg_parse::{Package, Target};
 use rg_text::Name;
+use rg_workspace::{CfgOptions, RustEdition, TargetKind};
 
 use crate::{
     DefId, DefMap, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
-    LocalDefData, LocalDefKind, LocalDefRef, LocalImplData, ModuleData, ModuleId, ModuleOrigin,
-    ModuleRef, ModuleScope, PackageSlot, ScopeBinding, TargetRef,
+    LocalDefData, LocalDefId, LocalDefKind, LocalDefRef, LocalImplData, MacroDefinitionData,
+    ModuleData, ModuleId, ModuleOrigin, ModuleRef, ModuleScope, PackageSlot, ScopeBinding,
+    TargetRef,
     model::{ModuleScopeBuilder, Namespace},
+};
+
+use super::{
+    cfg::CfgEvaluator,
+    macros::{
+        ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
+    },
 };
 
 /// Collected state for one target before fixed-point import resolution.
@@ -35,10 +45,25 @@ use crate::{
 pub(super) struct TargetState {
     pub(super) target: TargetRef,
     pub(super) target_name: String,
+    pub(super) edition: RustEdition,
+    /// Target-specific cfg values used to decide which collected items really exist.
+    pub(super) cfg_options: CfgOptions,
+    pub(super) target_kind: TargetKind,
     pub(super) def_map: DefMap,
     pub(super) base_scopes: Vec<ModuleScopeBuilder>,
     pub(super) implicit_roots: HashMap<Name, ModuleRef>,
     pub(super) prelude: Option<ModuleRef>,
+    pub(super) macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
+    pub(super) macro_directives: Vec<MacroDirective>,
+}
+
+impl TargetState {
+    pub(super) fn push_macro_call(&mut self, call: MacroCallSite) {
+        self.macro_directives.push(MacroDirective {
+            call,
+            state: MacroDirectiveState::Pending,
+        });
+    }
 }
 
 /// Collects unresolved target states for every package/target pair.
@@ -94,7 +119,13 @@ pub(super) fn collect_package_target_states(
             )
         })?;
 
-        let collector = TargetScopeCollector::new(target_ref, target_roots);
+        let collector = TargetScopeCollector::new(
+            target_ref,
+            package.edition(),
+            package.cfg_options(),
+            target.kind.clone(),
+            target_roots,
+        );
         let state = collector
             .collect(item_tree_package, target, target_root.root_file)
             .with_context(|| {
@@ -116,18 +147,34 @@ pub(super) fn collect_package_target_states(
 /// - `base_scopes`, which starts with only directly known bindings and is enriched later
 struct TargetScopeCollector<'db> {
     target: TargetRef,
+    edition: RustEdition,
+    cfg_options: &'db CfgOptions,
+    target_kind: TargetKind,
     implicit_roots: &'db HashMap<Name, ModuleRef>,
     def_map: DefMap,
     base_scopes: Vec<ModuleScopeBuilder>,
+    macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
+    macro_directives: Vec<MacroDirective>,
 }
 
 impl<'db> TargetScopeCollector<'db> {
-    fn new(target: TargetRef, implicit_roots: &'db HashMap<Name, ModuleRef>) -> Self {
+    fn new(
+        target: TargetRef,
+        edition: RustEdition,
+        cfg_options: &'db CfgOptions,
+        target_kind: TargetKind,
+        implicit_roots: &'db HashMap<Name, ModuleRef>,
+    ) -> Self {
         Self {
             target,
+            edition,
+            cfg_options,
+            target_kind,
             implicit_roots,
             def_map: DefMap::default(),
             base_scopes: Vec::new(),
+            macro_definitions: HashMap::new(),
+            macro_directives: Vec::new(),
         }
     }
 
@@ -162,10 +209,15 @@ impl<'db> TargetScopeCollector<'db> {
         Ok(TargetState {
             target: self.target,
             target_name: target.name.clone(),
+            edition: self.edition,
+            cfg_options: self.cfg_options.clone(),
+            target_kind: self.target_kind.clone(),
             def_map: self.def_map,
             base_scopes: self.base_scopes,
             implicit_roots: self.implicit_roots.clone(),
             prelude: None,
+            macro_definitions: self.macro_definitions,
+            macro_directives: self.macro_directives,
         })
     }
 
@@ -203,14 +255,20 @@ impl<'db> TargetScopeCollector<'db> {
         file_id: rg_parse::FileId,
         items: &[ItemTreeId],
     ) -> anyhow::Result<()> {
-        for item_id in items {
+        for (item_index, item_id) in items.iter().enumerate() {
             let source = ItemTreeRef {
                 file_id,
                 item: *item_id,
             };
+            let order = ItemOrder::real(item_index);
             let item = item_tree
                 .item(source)
                 .expect("item tree id should exist while collecting def map");
+            if !self.is_item_enabled(item) {
+                // Disabled items should not leave partial scope data behind. This removes the item
+                // itself together with nested modules, imports, and macro directives.
+                continue;
+            }
             match &item.kind {
                 ItemKind::ExternCrate(extern_crate) => {
                     self.collect_extern_crate(module_id, item, extern_crate);
@@ -228,21 +286,38 @@ impl<'db> TargetScopeCollector<'db> {
                     self.collect_use(module_id, item, source, use_item);
                 }
                 ItemKind::Impl(_) => self.collect_local_impl(module_id, item, source),
-                _ => self.collect_local_def(module_id, item, source),
+                ItemKind::MacroCall(macro_call) => {
+                    self.collect_macro_call(module_id, item, source, macro_call, order);
+                }
+                ItemKind::MacroDefinition(macro_definition) => {
+                    self.collect_macro_definition(module_id, item, source, macro_definition, order);
+                }
+                _ => {
+                    self.collect_local_def(module_id, item, source);
+                }
             }
         }
 
         Ok(())
     }
 
+    fn is_item_enabled(&self, item: &ItemNode) -> bool {
+        CfgEvaluator::new(self.cfg_options, &self.target_kind).is_enabled(&item.cfg)
+    }
+
     /// Records one module-scope local definition and inserts its direct binding into the base scope.
-    fn collect_local_def(&mut self, module_id: ModuleId, item: &ItemNode, source: ItemTreeRef) {
+    fn collect_local_def(
+        &mut self,
+        module_id: ModuleId,
+        item: &ItemNode,
+        source: ItemTreeRef,
+    ) -> Option<LocalDefId> {
         let Some(kind) = LocalDefKind::from_item_tag(item.kind.tag()) else {
-            return;
+            return None;
         };
         let namespace = kind.namespace();
         let Some(name) = item.name.clone() else {
-            return;
+            return None;
         };
 
         let local_def_id = self.def_map.alloc_local_def(LocalDefData {
@@ -278,6 +353,53 @@ impl<'db> TargetScopeCollector<'db> {
                     },
                 },
             );
+        Some(local_def_id)
+    }
+
+    /// Records a macro definition both as a normal macro-namespace binding and as macro payload
+    /// that can be compiled later if a call resolves to it.
+    fn collect_macro_definition(
+        &mut self,
+        module_id: ModuleId,
+        item: &ItemNode,
+        source: ItemTreeRef,
+        macro_definition: &MacroDefinitionItem,
+        order: ItemOrder,
+    ) {
+        let Some(local_def_id) = self.collect_local_def(module_id, item, source) else {
+            return;
+        };
+
+        self.macro_definitions
+            .insert(local_def_id, MacroDefinitionRecord { order });
+        self.def_map.insert_macro_definition(
+            local_def_id,
+            MacroDefinitionData::from_item(macro_definition, self.edition),
+        );
+    }
+
+    /// Keeps item-position macro calls for the later def-map expansion loop.
+    fn collect_macro_call(
+        &mut self,
+        module_id: ModuleId,
+        item: &ItemNode,
+        source: ItemTreeRef,
+        macro_call: &MacroCallItem,
+        order: ItemOrder,
+    ) {
+        self.macro_directives.push(MacroDirective {
+            call: MacroCallSite {
+                module: module_id,
+                source,
+                path: macro_call.path.clone(),
+                callee: macro_call.callee.clone(),
+                args: macro_call.args.clone(),
+                file_id: item.file_id,
+                span: item.span,
+                order,
+            },
+            state: MacroDirectiveState::Pending,
+        });
     }
 
     /// Records one module-scope impl block without inserting a namespace binding.

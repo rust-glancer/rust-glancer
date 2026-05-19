@@ -13,10 +13,10 @@ use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
 use crate::cache::{
-    CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, CachedDependency, CachedPackage, CachedPackageId,
-    CachedPackageSlot, CachedPackageSource, CachedPath, CachedRustEdition, CachedTarget,
-    CachedTargetKind, Fingerprint, PackageCacheArtifact, PackageCacheCodec, PackageCacheHeader,
-    PackageCachePayload, PackageCacheStore, WorkspaceCachePlan,
+    CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, CachedCfgOptions, CachedDependency, CachedPackage,
+    CachedPackageId, CachedPackageSlot, CachedPackageSource, CachedPath, CachedRustEdition,
+    CachedTarget, CachedTargetKind, Fingerprint, PackageCacheArtifact, PackageCacheCodec,
+    PackageCacheHeader, PackageCachePayload, PackageCacheStore, WorkspaceCachePlan,
 };
 use crate::{PackageResidencyPolicy, Project, project::state::ProjectState};
 
@@ -73,6 +73,7 @@ pub(super) fn check_cache_header_codec(expect: Expect) {
             source: CachedPackageSource::Workspace,
             edition: CachedRustEdition::Edition2024,
             manifest_path: CachedPath("/workspace/Cargo.toml".into()),
+            cfg_options: CachedCfgOptions::default(),
             targets: vec![
                 CachedTarget {
                     name: "app".to_string(),
@@ -122,6 +123,7 @@ pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
                 source: CachedPackageSource::Workspace,
                 edition: CachedRustEdition::Edition2024,
                 manifest_path: CachedPath("/workspace/Cargo.toml".into()),
+                cfg_options: CachedCfgOptions::default(),
                 targets: Vec::new(),
                 dependencies: Vec::new(),
             },

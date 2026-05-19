@@ -62,7 +62,8 @@ impl CargoMetadataConfig {
         &self,
         manifest_path: impl AsRef<Path>,
     ) -> WorkspaceMetadataResult<cargo_metadata::Metadata> {
-        self.metadata_command(manifest_path.as_ref())?
+        let target_triple = self.resolved_target_triple()?;
+        self.metadata_command_for_target(manifest_path.as_ref(), &target_triple)?
             .exec()
             .map_err(WorkspaceMetadataError::CargoMetadata)
     }
@@ -76,7 +77,7 @@ impl CargoMetadataConfig {
         manifest_path: impl AsRef<Path>,
     ) -> WorkspaceMetadataResult<Vec<PathBuf>> {
         let metadata = self
-            .metadata_command(manifest_path.as_ref())?
+            .metadata_command_for_target(manifest_path.as_ref(), &self.resolved_target_triple()?)?
             .no_deps()
             .exec()
             .map_err(WorkspaceMetadataError::CargoMetadata)?;
@@ -97,14 +98,17 @@ impl CargoMetadataConfig {
             .collect()
     }
 
-    fn metadata_command(
+    fn metadata_command_for_target(
         &self,
         manifest_path: &Path,
+        target_triple: &str,
     ) -> WorkspaceMetadataResult<cargo_metadata::MetadataCommand> {
-        let target_triple = self.resolved_target_triple()?;
         let mut command = cargo_metadata::MetadataCommand::new();
         command.manifest_path(manifest_path.to_path_buf());
-        command.other_options(vec!["--filter-platform".to_string(), target_triple]);
+        command.other_options(vec![
+            "--filter-platform".to_string(),
+            target_triple.to_string(),
+        ]);
         Ok(command)
     }
 
@@ -144,13 +148,26 @@ impl WorkspaceMetadata {
         manifest_path: impl AsRef<Path>,
         config: &CargoMetadataConfig,
     ) -> WorkspaceMetadataResult<Self> {
-        let metadata = config.load_metadata(manifest_path)?;
+        let target_triple = config.resolved_target_triple()?;
+        let target_cfg = CfgOptions::from_rustc_target(&target_triple)?;
+        let metadata = config
+            .metadata_command_for_target(manifest_path.as_ref(), &target_triple)?
+            .exec()
+            .map_err(WorkspaceMetadataError::CargoMetadata)?;
 
-        Self::from_cargo(metadata)
+        Self::from_cargo_with_target_cfg(metadata, target_cfg)
     }
 
     /// Lowers raw `cargo metadata` output into the project's normalized metadata model.
     pub fn from_cargo(metadata: cargo_metadata::Metadata) -> WorkspaceMetadataResult<Self> {
+        Self::from_cargo_with_target_cfg(metadata, CfgOptions::current_host())
+    }
+
+    /// Lowers raw Cargo metadata with an already-resolved target cfg environment.
+    pub fn from_cargo_with_target_cfg(
+        metadata: cargo_metadata::Metadata,
+        target_cfg: CfgOptions,
+    ) -> WorkspaceMetadataResult<Self> {
         let workspace_root = canonicalize_path(metadata.workspace_root.as_std_path())
             .map_err(WorkspaceMetadataError::Path)?;
         let workspace_members = metadata
@@ -163,12 +180,21 @@ impl WorkspaceMetadata {
             .as_ref()
             .map(Self::lower_dependencies)
             .unwrap_or_default();
+        let features_by_package = metadata
+            .resolve
+            .as_ref()
+            .map(Self::lower_active_features)
+            .unwrap_or_default();
 
         let packages = metadata
             .packages
             .into_iter()
             .map(|package| {
                 let package_id = PackageId::from_cargo(&package.id);
+                let mut cfg_options = target_cfg.clone();
+                for feature in features_by_package.get(&package_id).into_iter().flatten() {
+                    cfg_options.insert_key_value("feature", feature);
+                }
                 let is_workspace_member = workspace_members.contains(&package_id);
                 let raw_manifest_path = package.manifest_path.as_std_path();
                 let manifest_path =
@@ -212,6 +238,7 @@ impl WorkspaceMetadata {
                     source,
                     is_workspace_member,
                     manifest_path,
+                    cfg_options,
                     targets,
                     dependencies: dependencies_by_package
                         .get(&package_id)
@@ -262,10 +289,15 @@ impl WorkspaceMetadata {
             return;
         }
 
+        let target_cfg = self
+            .packages
+            .first()
+            .map(|package| package.cfg_options.clone())
+            .unwrap_or_else(CfgOptions::current_host);
         let mut sysroot_packages = SysrootCrate::ALL
             .iter()
             .copied()
-            .map(|krate| Self::sysroot_package(&sources, krate))
+            .map(|krate| Self::sysroot_package(&sources, krate, target_cfg.clone()))
             .collect::<Vec<_>>();
 
         for package in &mut self.packages {
@@ -294,7 +326,11 @@ impl WorkspaceMetadata {
         self.rebuild_package_index();
     }
 
-    fn sysroot_package(sources: &SysrootSources, krate: SysrootCrate) -> Package {
+    fn sysroot_package(
+        sources: &SysrootSources,
+        krate: SysrootCrate,
+        cfg_options: CfgOptions,
+    ) -> Package {
         let dependencies = match krate {
             SysrootCrate::Core => Vec::new(),
             SysrootCrate::Alloc => vec![PackageDependency::normal(
@@ -315,6 +351,7 @@ impl WorkspaceMetadata {
             source: PackageSource::Sysroot,
             is_workspace_member: false,
             manifest_path: sources.library_root().join(krate.name()).join("Cargo.toml"),
+            cfg_options,
             targets: vec![Target {
                 name: krate.name().to_string(),
                 kind: TargetKind::Lib,
@@ -347,6 +384,23 @@ impl WorkspaceMetadata {
                         .map(PackageDependency::from_cargo)
                         .collect::<Vec<_>>(),
                 )
+            })
+            .collect()
+    }
+
+    fn lower_active_features(resolve: &cargo_metadata::Resolve) -> HashMap<PackageId, Vec<String>> {
+        resolve
+            .nodes
+            .iter()
+            .map(|node| {
+                let mut features = node
+                    .features
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>();
+                features.sort();
+                features.dedup();
+                (PackageId::from_cargo(&node.id), features)
             })
             .collect()
     }
@@ -435,10 +489,29 @@ pub type WorkspaceMetadataResult<T> = Result<T, WorkspaceMetadataError>;
 pub enum WorkspaceMetadataError {
     CargoMetadata(cargo_metadata::Error),
     Path(io::Error),
-    RustcHostTarget { error: io::Error },
-    RustcHostTargetCommandFailed { status: String, stderr: String },
-    RustcHostTargetMissing { stdout: String },
-    UnsupportedPackageSource { package: PackageId, source: String },
+    RustcHostTarget {
+        error: io::Error,
+    },
+    RustcHostTargetCommandFailed {
+        status: String,
+        stderr: String,
+    },
+    RustcHostTargetMissing {
+        stdout: String,
+    },
+    RustcTargetCfg {
+        target: String,
+        error: io::Error,
+    },
+    RustcTargetCfgCommandFailed {
+        target: String,
+        status: String,
+        stderr: String,
+    },
+    UnsupportedPackageSource {
+        package: PackageId,
+        source: String,
+    },
 }
 
 impl fmt::Display for WorkspaceMetadataError {
@@ -461,6 +534,22 @@ impl fmt::Display for WorkspaceMetadataError {
                 f,
                 "rustc -vV output did not contain a host target line: {stdout:?}"
             ),
+            Self::RustcTargetCfg { target, error } => {
+                write!(
+                    f,
+                    "while attempting to detect cfg options for {target}: {error}"
+                )
+            }
+            Self::RustcTargetCfgCommandFailed {
+                target,
+                status,
+                stderr,
+            } => {
+                write!(
+                    f,
+                    "rustc --print cfg failed for {target}: status {status}, stderr: {stderr}"
+                )
+            }
             Self::UnsupportedPackageSource { package, source } => write!(
                 f,
                 "unsupported Cargo source `{source}` for package {package}"
@@ -475,7 +564,10 @@ impl Error for WorkspaceMetadataError {
             Self::CargoMetadata(error) => Some(error),
             Self::Path(error) => Some(error),
             Self::RustcHostTarget { error } => Some(error),
-            Self::RustcHostTargetCommandFailed { .. } | Self::RustcHostTargetMissing { .. } => None,
+            Self::RustcTargetCfg { error, .. } => Some(error),
+            Self::RustcHostTargetCommandFailed { .. }
+            | Self::RustcHostTargetMissing { .. }
+            | Self::RustcTargetCfgCommandFailed { .. } => None,
             Self::UnsupportedPackageSource { .. } => None,
         }
     }
@@ -628,7 +720,17 @@ impl PackageSource {
 ///
 /// We keep this normalized instead of leaking `cargo_metadata::Edition` so later phases can ask
 /// edition-shaped questions without depending on Cargo's transport model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+)]
 pub enum RustEdition {
     #[display("2015")]
     Edition2015,
@@ -673,6 +775,7 @@ pub struct Package {
     pub source: PackageSource,
     pub is_workspace_member: bool,
     pub manifest_path: PathBuf,
+    pub cfg_options: CfgOptions,
     pub targets: Vec<Target>,
     pub dependencies: Vec<PackageDependency>,
 }
@@ -688,6 +791,148 @@ impl Package {
     fn contains_path(&self, path: &Path) -> bool {
         path.starts_with(self.root_dir())
     }
+}
+
+/// Active cfg facts for one package under one Cargo target selection.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+pub struct CfgOptions {
+    atoms: Vec<String>,
+    key_values: Vec<CfgKeyValue>,
+}
+
+impl CfgOptions {
+    fn from_rustc_target(target: &str) -> WorkspaceMetadataResult<Self> {
+        let output = Command::new("rustc")
+            .args(["--print", "cfg", "--target", target])
+            .output()
+            .map_err(|error| WorkspaceMetadataError::RustcTargetCfg {
+                target: target.to_string(),
+                error,
+            })?;
+
+        if !output.status.success() {
+            return Err(WorkspaceMetadataError::RustcTargetCfgCommandFailed {
+                target: target.to_string(),
+                status: output.status.to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            });
+        }
+
+        Ok(Self::from_rustc_cfg_output(&String::from_utf8_lossy(
+            &output.stdout,
+        )))
+    }
+
+    fn current_host() -> Self {
+        let mut options = Self::default();
+
+        if cfg!(unix) {
+            options.insert_atom("unix");
+        }
+        if cfg!(windows) {
+            options.insert_atom("windows");
+        }
+
+        options.insert_key_value("target_arch", std::env::consts::ARCH);
+        options.insert_key_value("target_os", std::env::consts::OS);
+        options.insert_key_value("target_family", std::env::consts::FAMILY);
+        options.insert_key_value("target_pointer_width", usize::BITS.to_string());
+
+        #[cfg(target_env = "gnu")]
+        options.insert_key_value("target_env", "gnu");
+        #[cfg(target_env = "msvc")]
+        options.insert_key_value("target_env", "msvc");
+        #[cfg(target_env = "musl")]
+        options.insert_key_value("target_env", "musl");
+        #[cfg(target_env = "")]
+        options.insert_key_value("target_env", "");
+
+        #[cfg(target_vendor = "apple")]
+        options.insert_key_value("target_vendor", "apple");
+        #[cfg(target_vendor = "pc")]
+        options.insert_key_value("target_vendor", "pc");
+        #[cfg(target_vendor = "unknown")]
+        options.insert_key_value("target_vendor", "unknown");
+
+        options
+    }
+
+    fn from_rustc_cfg_output(output: &str) -> Self {
+        let mut options = Self::default();
+
+        for line in output
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
+            if let Some((key, value)) = line.split_once('=') {
+                options.insert_key_value(key, cfg_value_from_rustc(value));
+            } else {
+                options.insert_atom(line);
+            }
+        }
+
+        options
+    }
+
+    pub fn insert_atom(&mut self, atom: impl Into<String>) {
+        let atom = atom.into();
+        if !self.atoms.contains(&atom) {
+            self.atoms.push(atom);
+        }
+    }
+
+    pub fn insert_key_value(&mut self, key: impl Into<String>, value: impl Into<String>) {
+        let key_value = CfgKeyValue {
+            key: key.into(),
+            value: value.into(),
+        };
+        if !self.key_values.contains(&key_value) {
+            self.key_values.push(key_value);
+        }
+    }
+
+    pub fn contains_atom(&self, atom: &str) -> bool {
+        self.atoms.iter().any(|known| known == atom)
+    }
+
+    pub fn contains_key_value(&self, key: &str, value: &str) -> bool {
+        self.key_values
+            .iter()
+            .any(|known| known.key == key && known.value == value)
+    }
+
+    pub fn atoms(&self) -> &[String] {
+        &self.atoms
+    }
+
+    pub fn key_values(&self) -> &[CfgKeyValue] {
+        &self.key_values
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CfgKeyValue {
+    key: String,
+    value: String,
+}
+
+impl CfgKeyValue {
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+}
+
+fn cfg_value_from_rustc(value: &str) -> String {
+    value
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(value)
+        .to_string()
 }
 
 /// Normalized target metadata with one target kind per target.

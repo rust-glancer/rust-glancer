@@ -97,6 +97,7 @@ pub(crate) fn analyze(
     target: Option<String>,
     output_format: OutputFormat,
     memory_stage: CliMemoryStage,
+    include_def_map_finalization_stats: bool,
 ) -> anyhow::Result<()> {
     if !path.exists() {
         anyhow::bail!("folder {} does not exist", path.display());
@@ -133,6 +134,7 @@ pub(crate) fn analyze(
         .cargo_metadata_config(cargo_metadata_config)
         .package_residency_policy(package_residency_policy)
         .startup_cache_load(startup_cache_load)
+        .collect_def_map_finalization_stats(include_def_map_finalization_stats)
         .profile_build_timing(profile || include_memory)
         .stage_memory_target(include_memory.then(|| memory_stage.build_stage()).flatten());
     let builder = if include_memory {
@@ -157,6 +159,7 @@ pub(crate) fn analyze(
         "while attempting to build project"
     })?;
 
+    let finalization_stats = project_build.def_map_finalization_stats().cloned();
     let (project, build_profile) = project_build.into_parts();
     let allocator_name = memory_control.allocator_name();
 
@@ -175,6 +178,7 @@ pub(crate) fn analyze(
         analysis_setup,
         build_profile.as_ref(),
         allocator,
+        finalization_stats.as_ref(),
         include_memory,
         memory_stage,
     );

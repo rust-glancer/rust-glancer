@@ -17,9 +17,10 @@ use rg_parse::{FileId, LineIndex, ModuleFileContext, Package as ParsePackage};
 use rg_text::{Name, NameInterner};
 
 use super::{
-    ConstItem, Documentation, EnumItem, ExternCrateItem, FileTree, FunctionItem, ImplItem,
-    ItemKind, ItemNode, ItemTreeId, ModuleItem, ModuleSource, Package, StaticItem, StructItem,
-    TargetRoot, TraitItem, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
+    CfgExpr, ConstItem, Documentation, EnumItem, ExternCrateItem, FileTree, FunctionItem, ImplItem,
+    ItemKind, ItemNode, ItemTreeId, MacroCallItem, MacroDefinitionItem, ModuleItem, ModuleSource,
+    Package, StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, UnionItem, UseItem,
+    VisibilityLevel,
 };
 
 /// Lowers all known files for one parsed package and records target entrypoints into them.
@@ -259,16 +260,22 @@ impl<'db> PackageLowering<'db> {
                     &item,
                 ))
             }
-            ast::Item::MacroCall(_) => None,
+            ast::Item::MacroCall(item) => Some(builder.alloc_documented_item(
+                ItemKind::MacroCall(MacroCallItem::from_ast(&item, self.interner)),
+                None,
+                None,
+                VisibilityLevel::Private,
+                &item,
+            )),
             ast::Item::MacroDef(item) => Some(builder.alloc_documented_item(
-                ItemKind::MacroDefinition,
+                ItemKind::MacroDefinition(MacroDefinitionItem::from_macro_def(&item)),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::Item::MacroRules(item) => Some(builder.alloc_documented_item(
-                ItemKind::MacroDefinition,
+                ItemKind::MacroDefinition(MacroDefinitionItem::from_macro_rules(&item)),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
@@ -564,14 +571,16 @@ impl<'a> FileTreeBuilder<'a> {
     where
         T: HasDocComments,
     {
-        self.alloc_item_with_docs(
+        let item_id = self.alloc_item_with_docs(
             kind,
             name,
             name_range,
             visibility,
             Documentation::from_ast(item),
             item.syntax().text_range(),
-        )
+        );
+        self.items[item_id].cfg = CfgExpr::from_attrs(item);
+        item_id
     }
 
     fn alloc_item_with_docs(
