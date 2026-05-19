@@ -5,14 +5,16 @@
 //! candidate set comes from the resolved qualifier rather than lexical scope.
 
 use rg_def_map::TargetRef;
-use rg_item_tree::{GenericArg, TypeBound, TypePath, TypeRef};
+use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
 use crate::{
-    BodyData, BodyId, BodyIrReadTxn, BodyPath, BodyRef, ExprKind, ScopeId, StmtKind,
+    BodyData, BodyId, BodyIrReadTxn, BodyPath, BodyRef, ExprKind, ScopeId,
     cursor::{UnqualifiedCompletionNamespace, UnqualifiedCompletionSite},
 };
+
+use super::sites::BodyScanSites;
 
 /// Finds the source site that belongs to an unqualified completion offset.
 pub(crate) struct UnqualifiedCompletionSiteScanner<'txn, 'db> {
@@ -69,116 +71,14 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         body: &BodyData,
         best: &mut Option<(UnqualifiedCompletionSite, u32)>,
     ) {
-        for statement in body.statements.iter() {
-            if statement.source.file_id != self.file_id {
-                continue;
+        let sites = BodyScanSites::new(body);
+        sites.walk_type_paths(Some(self.file_id), |site| {
+            if let Some(completion_site) =
+                self.site_for_type_path(body_ref, site.scope, site.visible_bindings, site.path)
+            {
+                Self::remember_site(completion_site, site.path.source_span.len(), best);
             }
-            let StmtKind::Let {
-                scope,
-                annotation: Some(annotation),
-                ..
-            } = &statement.kind
-            else {
-                continue;
-            };
-            self.scan_type_ref(body_ref, *scope, body.bindings().len(), annotation, best);
-        }
-
-        for expr in body.exprs.iter() {
-            if expr.source.file_id != self.file_id {
-                continue;
-            }
-            let ExprKind::Closure {
-                scope,
-                params,
-                ret_ty,
-                ..
-            } = &expr.kind
-            else {
-                continue;
-            };
-            for param in params {
-                if let Some(annotation) = &param.annotation {
-                    self.scan_type_ref(body_ref, *scope, body.bindings().len(), annotation, best);
-                }
-            }
-            if let Some(ret_ty) = ret_ty {
-                self.scan_type_ref(body_ref, *scope, body.bindings().len(), ret_ty, best);
-            }
-        }
-    }
-
-    fn scan_type_ref(
-        &self,
-        body_ref: BodyRef,
-        scope: ScopeId,
-        visible_bindings: usize,
-        ty: &TypeRef,
-        best: &mut Option<(UnqualifiedCompletionSite, u32)>,
-    ) {
-        match ty {
-            TypeRef::Path(path) => {
-                if let Some(site) = self.site_for_type_path(body_ref, scope, visible_bindings, path)
-                {
-                    Self::remember_site(site, path.source_span.len(), best);
-                }
-
-                for segment in &path.segments {
-                    for arg in &segment.args {
-                        self.scan_generic_arg(body_ref, scope, visible_bindings, arg, best);
-                    }
-                }
-            }
-            TypeRef::Tuple(types) => {
-                for ty in types {
-                    self.scan_type_ref(body_ref, scope, visible_bindings, ty, best);
-                }
-            }
-            TypeRef::Reference { inner, .. }
-            | TypeRef::RawPointer { inner, .. }
-            | TypeRef::Slice(inner) => {
-                self.scan_type_ref(body_ref, scope, visible_bindings, inner, best);
-            }
-            TypeRef::Array { inner, .. } => {
-                self.scan_type_ref(body_ref, scope, visible_bindings, inner, best);
-            }
-            TypeRef::FnPointer { params, ret } => {
-                for param in params {
-                    self.scan_type_ref(body_ref, scope, visible_bindings, param, best);
-                }
-                self.scan_type_ref(body_ref, scope, visible_bindings, ret, best);
-            }
-            TypeRef::ImplTrait(bounds) | TypeRef::DynTrait(bounds) => {
-                for bound in bounds {
-                    if let TypeBound::Trait(ty) = bound {
-                        self.scan_type_ref(body_ref, scope, visible_bindings, ty, best);
-                    }
-                }
-            }
-            TypeRef::Unknown(_) | TypeRef::Never | TypeRef::Unit | TypeRef::Infer => {}
-        }
-    }
-
-    fn scan_generic_arg(
-        &self,
-        body_ref: BodyRef,
-        scope: ScopeId,
-        visible_bindings: usize,
-        arg: &GenericArg,
-        best: &mut Option<(UnqualifiedCompletionSite, u32)>,
-    ) {
-        match arg {
-            GenericArg::Type(ty) => {
-                self.scan_type_ref(body_ref, scope, visible_bindings, ty, best);
-            }
-            GenericArg::AssocType { ty: Some(ty), .. } => {
-                self.scan_type_ref(body_ref, scope, visible_bindings, ty, best);
-            }
-            GenericArg::Lifetime(_)
-            | GenericArg::Const(_)
-            | GenericArg::AssocType { ty: None, .. }
-            | GenericArg::Unsupported(_) => {}
-        }
+        });
     }
 
     /// Scans expression paths where value-namespace completions can appear.

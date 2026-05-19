@@ -4,12 +4,12 @@
 //! queries and whole-target scans after those queries choose their scope.
 
 use rg_def_map::Path;
-use rg_item_tree::{GenericArg, TypeBound, TypePath, TypeRef};
+use rg_item_tree::TypePath;
 use rg_parse::{FileId, Span};
 
-use crate::{BodyData, BodyPath, BodyRef, ExprKind, PatId, PatKind, ScopeId, StmtKind};
+use crate::{BodyData, BodyPath, BodyRef, ExprKind, PatData, PatKind, ScopeId};
 
-use super::super::BodyCursorCandidate;
+use super::{super::BodyCursorCandidate, sites::BodyScanSites};
 
 /// Adds type-namespace path candidates from body-local type annotations.
 pub(super) struct TypePathCursorScanner<'a> {
@@ -23,73 +23,10 @@ pub(super) struct TypePathCursorScanner<'a> {
 impl TypePathCursorScanner<'_> {
     /// Scans body-local type annotations that can contain navigable type paths.
     pub(super) fn scan(&mut self) {
-        for statement in self.body.statements.iter() {
-            if !self.file_matches(statement.source.file_id) {
-                continue;
-            }
-            let StmtKind::Let {
-                scope,
-                annotation: Some(annotation),
-                ..
-            } = &statement.kind
-            else {
-                continue;
-            };
-            self.scan_type_ref(*scope, annotation, statement.source.file_id);
-        }
-
-        for expr in self.body.exprs.iter() {
-            if !self.file_matches(expr.source.file_id) {
-                continue;
-            }
-            let ExprKind::Closure {
-                scope,
-                params,
-                ret_ty,
-                ..
-            } = &expr.kind
-            else {
-                continue;
-            };
-            for param in params {
-                if let Some(annotation) = &param.annotation {
-                    self.scan_type_ref(*scope, annotation, param.source.file_id);
-                }
-            }
-            if let Some(ret_ty) = ret_ty {
-                self.scan_type_ref(*scope, ret_ty, expr.source.file_id);
-            }
-        }
-    }
-
-    /// Recurses through a type reference and visits every nested path-like type.
-    fn scan_type_ref(&mut self, scope: ScopeId, ty: &TypeRef, file_id: FileId) {
-        match ty {
-            TypeRef::Path(path) => self.scan_type_path(scope, path, file_id),
-            TypeRef::Tuple(types) => {
-                for ty in types {
-                    self.scan_type_ref(scope, ty, file_id);
-                }
-            }
-            TypeRef::Reference { inner, .. }
-            | TypeRef::RawPointer { inner, .. }
-            | TypeRef::Slice(inner) => self.scan_type_ref(scope, inner, file_id),
-            TypeRef::Array { inner, .. } => self.scan_type_ref(scope, inner, file_id),
-            TypeRef::FnPointer { params, ret } => {
-                for param in params {
-                    self.scan_type_ref(scope, param, file_id);
-                }
-                self.scan_type_ref(scope, ret, file_id);
-            }
-            TypeRef::ImplTrait(bounds) | TypeRef::DynTrait(bounds) => {
-                for bound in bounds {
-                    if let TypeBound::Trait(ty) = bound {
-                        self.scan_type_ref(scope, ty, file_id);
-                    }
-                }
-            }
-            TypeRef::Unknown(_) | TypeRef::Never | TypeRef::Unit | TypeRef::Infer => {}
-        }
+        let sites = BodyScanSites::new(self.body);
+        sites.walk_type_paths(self.file_id, |site| {
+            self.scan_type_path(site.scope, site.path, site.file_id);
+        });
     }
 
     /// Adds one candidate per path segment so each prefix can resolve independently.
@@ -104,28 +41,7 @@ impl TypePathCursorScanner<'_> {
                     span: segment.span,
                 });
             }
-
-            for arg in &segment.args {
-                self.scan_generic_arg(scope, arg, file_id);
-            }
         }
-    }
-
-    fn scan_generic_arg(&mut self, scope: ScopeId, arg: &GenericArg, file_id: FileId) {
-        match arg {
-            GenericArg::Type(ty) => self.scan_type_ref(scope, ty, file_id),
-            GenericArg::AssocType { ty: Some(ty), .. } => {
-                self.scan_type_ref(scope, ty, file_id);
-            }
-            GenericArg::Lifetime(_)
-            | GenericArg::Const(_)
-            | GenericArg::AssocType { ty: None, .. }
-            | GenericArg::Unsupported(_) => {}
-        }
-    }
-
-    fn file_matches(&self, file_id: FileId) -> bool {
-        self.file_id.is_none_or(|selected| selected == file_id)
     }
 
     fn offset_matches(&self, span: Span) -> bool {
@@ -161,76 +77,18 @@ impl ValuePathCursorScanner<'_> {
         // Pattern paths are not represented as expressions, but they are still editor-visible
         // value paths: `let Some(value) = option` and `Action::Start { .. }` should navigate from
         // both the enum name and the variant name.
-        for statement in self.body.statements.iter() {
-            if !self.file_matches(statement.source.file_id) {
-                continue;
-            }
-            let StmtKind::Let {
-                scope,
-                pat: Some(pat),
-                ..
-            } = &statement.kind
-            else {
-                continue;
-            };
-            self.scan_pat(*scope, *pat);
-        }
-
-        for expr in self.body.exprs.iter() {
-            if !self.file_matches(expr.source.file_id) {
-                continue;
-            }
-            match &expr.kind {
-                ExprKind::Match { arms, .. } => {
-                    for arm in arms {
-                        if let Some(pat) = arm.pat {
-                            self.scan_pat(arm.scope, pat);
-                        }
-                    }
-                }
-                ExprKind::Let {
-                    scope,
-                    pat: Some(pat),
-                    ..
-                }
-                | ExprKind::For {
-                    scope,
-                    pat: Some(pat),
-                    ..
-                } => self.scan_pat(*scope, *pat),
-                ExprKind::Closure { scope, params, .. } => {
-                    for param in params {
-                        if let Some(pat) = param.pat {
-                            self.scan_pat(*scope, pat);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+        let sites = BodyScanSites::new(self.body);
+        sites.walk_pats(self.file_id, self.offset, |site| {
+            self.scan_pat_data(site.scope, site.data);
+        });
     }
 
-    /// Recurses through nested patterns and visits value paths they expose.
-    fn scan_pat(&mut self, scope: ScopeId, pat: PatId) {
-        let Some(data) = self.body.pat(pat) else {
-            return;
-        };
-
+    /// Visits value paths directly owned by one pattern node.
+    fn scan_pat_data(&mut self, scope: ScopeId, data: &PatData) {
         match &data.kind {
-            PatKind::TupleStruct { path, fields } => {
+            PatKind::TupleStruct { path, .. } | PatKind::Record { path, .. } => {
                 if let Some(path) = path {
                     self.scan_body_path(scope, path, data.source.file_id);
-                }
-                for field in fields {
-                    self.scan_pat(scope, *field);
-                }
-            }
-            PatKind::Record { path, fields, .. } => {
-                if let Some(path) = path {
-                    self.scan_body_path(scope, path, data.source.file_id);
-                }
-                for field in fields {
-                    self.scan_pat(scope, field.pat);
                 }
             }
             PatKind::Path { path } => {
@@ -238,38 +96,20 @@ impl ValuePathCursorScanner<'_> {
                     self.scan_body_path(scope, path, data.source.file_id);
                 }
             }
-            PatKind::Binding {
-                binding,
-                path,
-                subpat,
-                ..
-            } => {
+            PatKind::Binding { binding, path, .. } => {
                 if binding.is_none()
                     && let Some(path) = path
                 {
                     self.scan_body_path(scope, path, data.source.file_id);
                 }
-                if let Some(subpat) = subpat {
-                    self.scan_pat(scope, *subpat);
-                }
             }
-            PatKind::Tuple { fields }
-            | PatKind::Or { pats: fields }
-            | PatKind::Slice { fields } => {
-                for field in fields {
-                    self.scan_pat(scope, *field);
-                }
-            }
-            PatKind::Ref { pat, .. } | PatKind::Box { pat } => self.scan_pat(scope, *pat),
-            PatKind::Range { start, end, .. } => {
-                if let Some(start) = start {
-                    self.scan_pat(scope, *start);
-                }
-                if let Some(end) = end {
-                    self.scan_pat(scope, *end);
-                }
-            }
-            PatKind::Rest
+            PatKind::Tuple { .. }
+            | PatKind::Or { .. }
+            | PatKind::Slice { .. }
+            | PatKind::Ref { .. }
+            | PatKind::Box { .. }
+            | PatKind::Range { .. }
+            | PatKind::Rest
             | PatKind::Literal { .. }
             | PatKind::ConstBlock { .. }
             | PatKind::Wildcard

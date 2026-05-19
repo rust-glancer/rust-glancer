@@ -9,11 +9,11 @@ use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
 use crate::{
-    BodyData, BodyId, BodyIrReadTxn, BodyPath, BodyRef, ExprKind, PatId, PatKind, RecordExprField,
-    RecordPatField, ScopeId, StmtKind,
+    BodyData, BodyId, BodyIrReadTxn, BodyPath, BodyRef, ExprKind, PatData, PatKind,
+    RecordExprField, RecordPatField, ScopeId,
 };
 
-use super::super::RecordFieldCompletionSite;
+use super::{super::RecordFieldCompletionSite, sites::BodyScanSites};
 
 /// Finds the record field-list site that belongs to a completion offset.
 pub(crate) struct RecordFieldCompletionSiteScanner<'txn, 'db> {
@@ -106,125 +106,41 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
         body: &BodyData,
         best: &mut Option<(RecordFieldCompletionSite, u32)>,
     ) {
-        for statement in body.statements.iter() {
-            if statement.source.file_id != self.file_id {
-                continue;
-            }
-            let StmtKind::Let {
-                scope,
-                pat: Some(pat),
-                ..
-            } = &statement.kind
-            else {
-                continue;
-            };
-            self.scan_pat(body_ref, body, *scope, *pat, best);
-        }
-
-        for expr in body.exprs.iter() {
-            if expr.source.file_id != self.file_id {
-                continue;
-            }
-            match &expr.kind {
-                ExprKind::Match { arms, .. } => {
-                    for arm in arms {
-                        if let Some(pat) = arm.pat {
-                            self.scan_pat(body_ref, body, arm.scope, pat, best);
-                        }
-                    }
-                }
-                ExprKind::Let {
-                    scope,
-                    pat: Some(pat),
-                    ..
-                }
-                | ExprKind::For {
-                    scope,
-                    pat: Some(pat),
-                    ..
-                } => self.scan_pat(body_ref, body, *scope, *pat, best),
-                ExprKind::Closure { scope, params, .. } => {
-                    for param in params {
-                        if let Some(pat) = param.pat {
-                            self.scan_pat(body_ref, body, *scope, pat, best);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
+        let sites = BodyScanSites::new(body);
+        sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
+            self.scan_pat_data(body_ref, body, site.scope, site.data, best);
+        });
     }
 
-    /// Recurses through nested patterns and visits record field lists.
-    fn scan_pat(
+    /// Visits record field lists directly owned by one pattern node.
+    fn scan_pat_data(
         &self,
         body_ref: BodyRef,
         body: &BodyData,
         scope: ScopeId,
-        pat: PatId,
+        data: &PatData,
         best: &mut Option<(RecordFieldCompletionSite, u32)>,
     ) {
-        let Some(data) = body.pat(pat) else {
+        let PatKind::Record {
+            path: Some(path),
+            field_list_span: Some(field_list_span),
+            fields,
+            rest,
+        } = &data.kind
+        else {
             return;
         };
 
-        match &data.kind {
-            PatKind::Record {
-                path: Some(path),
-                field_list_span: Some(field_list_span),
-                fields,
-                rest,
-            } => {
-                let rest_span = rest.and_then(|rest| body.pat(rest).map(|pat| pat.source.span));
-                if let Some(site) = self.site_for_record_fields(
-                    body_ref,
-                    scope,
-                    path,
-                    *field_list_span,
-                    fields.iter().map(RecordFieldSpan::from_pat_field),
-                    rest_span,
-                ) {
-                    Self::remember_site(site, data.source.span.len(), best);
-                }
-
-                for field in fields {
-                    self.scan_pat(body_ref, body, scope, field.pat, best);
-                }
-            }
-            PatKind::Record { fields, .. } => {
-                for field in fields {
-                    self.scan_pat(body_ref, body, scope, field.pat, best);
-                }
-            }
-            PatKind::TupleStruct { fields, .. }
-            | PatKind::Tuple { fields }
-            | PatKind::Or { pats: fields }
-            | PatKind::Slice { fields } => {
-                for field in fields {
-                    self.scan_pat(body_ref, body, scope, *field, best);
-                }
-            }
-            PatKind::Binding {
-                subpat: Some(subpat),
-                ..
-            }
-            | PatKind::Ref { pat: subpat, .. }
-            | PatKind::Box { pat: subpat } => self.scan_pat(body_ref, body, scope, *subpat, best),
-            PatKind::Range { start, end, .. } => {
-                if let Some(start) = start {
-                    self.scan_pat(body_ref, body, scope, *start, best);
-                }
-                if let Some(end) = end {
-                    self.scan_pat(body_ref, body, scope, *end, best);
-                }
-            }
-            PatKind::Binding { subpat: None, .. }
-            | PatKind::Path { .. }
-            | PatKind::Rest
-            | PatKind::Literal { .. }
-            | PatKind::ConstBlock { .. }
-            | PatKind::Wildcard
-            | PatKind::Unsupported => {}
+        let rest_span = rest.and_then(|rest| body.pat(rest).map(|pat| pat.source.span));
+        if let Some(site) = self.site_for_record_fields(
+            body_ref,
+            scope,
+            path,
+            *field_list_span,
+            fields.iter().map(RecordFieldSpan::from_pat_field),
+            rest_span,
+        ) {
+            Self::remember_site(site, data.source.span.len(), best);
         }
     }
 
