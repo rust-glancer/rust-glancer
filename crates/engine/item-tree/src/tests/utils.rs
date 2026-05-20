@@ -305,7 +305,11 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                 }
             }
             ItemKind::MacroDefinition(macro_definition) => match macro_definition {
-                MacroDefinitionItem::MacroRules { body } => {
+                MacroDefinitionItem::MacroRules { attrs, body } => {
+                    if attrs.macro_export {
+                        writeln!(dump, "{indent}  - macro_export")
+                            .expect("string writes should not fail");
+                    }
                     if let Some(body) = body {
                         writeln!(dump, "{indent}  - body {body}")
                             .expect("string writes should not fail");

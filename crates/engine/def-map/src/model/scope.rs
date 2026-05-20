@@ -75,6 +75,7 @@ impl ModuleScopeBuilder {
                     def: binding.def,
                     visibility: visibility.clone(),
                     owner,
+                    origin: ScopeBindingOrigin::Import,
                 },
             );
         }
@@ -87,6 +88,7 @@ impl ModuleScopeBuilder {
                     def: binding.def,
                     visibility: visibility.clone(),
                     owner,
+                    origin: ScopeBindingOrigin::Import,
                 },
             );
         }
@@ -99,6 +101,7 @@ impl ModuleScopeBuilder {
                     def: binding.def,
                     visibility: visibility.clone(),
                     owner,
+                    origin: ScopeBindingOrigin::Import,
                 },
             );
         }
@@ -245,6 +248,7 @@ pub struct ScopeBinding {
     pub def: DefId,
     pub visibility: VisibilityLevel,
     pub owner: ModuleRef,
+    pub origin: ScopeBindingOrigin,
 }
 
 impl ScopeBinding {
@@ -262,6 +266,14 @@ impl ScopeBinding {
     }
 }
 
+/// How a binding entered a module scope.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub enum ScopeBindingOrigin {
+    Direct,
+    Import,
+    MacroExport,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Namespace {
     Types,
@@ -276,7 +288,7 @@ mod tests {
 
     use crate::{DefId, ModuleId, ModuleRef, PackageSlot, TargetRef};
 
-    use super::{ModuleScopeBuilder, Namespace, ScopeBinding};
+    use super::{ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin};
 
     #[test]
     fn builder_rejects_duplicate_bindings() {
@@ -335,6 +347,7 @@ mod tests {
             def: DefId::Module(owner(module)),
             visibility: VisibilityLevel::Public,
             owner: owner(0),
+            origin: ScopeBindingOrigin::Direct,
         }
     }
 

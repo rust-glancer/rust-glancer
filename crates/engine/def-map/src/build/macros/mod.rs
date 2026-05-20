@@ -16,7 +16,9 @@ use rg_text::{Name, PackageNameInterners};
 use rg_tt::{Span as TtSpan, TopSubtree, syntax_bridge::SpanFactory};
 use rg_workspace::RustEdition;
 
-use crate::{LocalDefId, ModuleId, TargetRef, query::path_resolution::PathResolutionEnv};
+use crate::{
+    LocalDefId, ModuleId, ScopeBindingOrigin, TargetRef, query::path_resolution::PathResolutionEnv,
+};
 
 use super::{
     collect::TargetState,
@@ -502,9 +504,11 @@ impl MacroExpansionAttempt {
             return Ok(Self::unresolved(state.target, call_id, call, path_text));
         };
 
-        // A macro cannot be used before a later definition in the same module. Imports and
-        // cross-module lookups have already gone through scope resolution.
-        if resolved.def_ref.target == state.target
+        // Direct `macro_rules!` bindings cannot be used before a later definition in the same
+        // module. Imported bindings and `#[macro_export]` root bindings are path-based and have
+        // already gone through ordinary scope resolution.
+        if resolved.origin == ScopeBindingOrigin::Direct
+            && resolved.def_ref.target == state.target
             && resolved.local_def.module == call.module
             && let Some(order) = resolved.order
             && order > &call.order

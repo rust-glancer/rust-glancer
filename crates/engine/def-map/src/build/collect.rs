@@ -17,7 +17,7 @@ use anyhow::Context as _;
 use rg_item_tree::{
     Documentation, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
     MacroCallItem, MacroDefinitionItem, ModuleItem, ModuleSource, Package as ItemTreePackage,
-    UseImport, UseItem,
+    UseImport, UseItem, VisibilityLevel,
 };
 use rg_parse::{Package, Target};
 use rg_text::Name;
@@ -27,7 +27,7 @@ use crate::{
     DefId, DefMap, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
     LocalDefData, LocalDefId, LocalDefKind, LocalDefRef, LocalImplData, MacroDefinitionData,
     ModuleData, ModuleId, ModuleOrigin, ModuleRef, ModuleScope, PackageSlot, ScopeBinding,
-    TargetRef,
+    ScopeBindingOrigin, TargetRef,
     model::{ModuleScopeBuilder, Namespace},
 };
 
@@ -356,6 +356,7 @@ impl<'db> TargetScopeCollector<'db> {
                         target: self.target,
                         module: module_id,
                     },
+                    origin: ScopeBindingOrigin::Direct,
                 },
             );
         Some(local_def_id)
@@ -387,10 +388,42 @@ impl<'db> TargetScopeCollector<'db> {
             self.textual_macro_scopes
                 .record_definition(module_id, name, local_def_id, order);
         }
+        if let MacroDefinitionItem::MacroRules { attrs, .. } = macro_definition
+            && attrs.macro_export
+            && let Some(name) = &item.name
+        {
+            self.export_macro_definition_to_root(name, local_def_id);
+        }
         self.def_map.insert_macro_definition(
             local_def_id,
             MacroDefinitionData::from_item(macro_definition, self.edition, self.target),
         );
+    }
+
+    /// Makes a `#[macro_export]` definition visible through the crate root macro namespace.
+    fn export_macro_definition_to_root(&mut self, name: &Name, local_def_id: LocalDefId) {
+        let Some(root_module) = self.def_map.root_module() else {
+            return;
+        };
+        self.base_scopes
+            .get_mut(root_module.0)
+            .expect("root scope should exist before macro export collection")
+            .insert_binding(
+                name,
+                Namespace::Macros,
+                ScopeBinding {
+                    def: DefId::Local(LocalDefRef {
+                        target: self.target,
+                        local_def: local_def_id,
+                    }),
+                    visibility: VisibilityLevel::Public,
+                    owner: ModuleRef {
+                        target: self.target,
+                        module: root_module,
+                    },
+                    origin: ScopeBindingOrigin::MacroExport,
+                },
+            );
     }
 
     /// Keeps item-position macro calls for the later def-map expansion loop.
@@ -554,6 +587,7 @@ impl<'db> TargetScopeCollector<'db> {
                         target: self.target,
                         module: parent_module,
                     },
+                    origin: ScopeBindingOrigin::Direct,
                 },
             );
     }
@@ -650,6 +684,7 @@ impl<'db> TargetScopeCollector<'db> {
                         target: self.target,
                         module: module_id,
                     },
+                    origin: ScopeBindingOrigin::Direct,
                 },
             );
     }

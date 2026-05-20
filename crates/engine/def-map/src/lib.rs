@@ -12,7 +12,7 @@ pub use self::{
         ImportSourcePath, LocalDefData, LocalDefId, LocalDefKind, LocalDefRef, LocalImplData,
         LocalImplId, LocalImplRef, MacroDefinitionData, MacroDefinitionPayload, ModuleData,
         ModuleId, ModuleOrigin, ModuleRef, ModuleScope, Package, Path, PathSegment, ScopeBinding,
-        ScopeEntry, TargetRef,
+        ScopeBindingOrigin, ScopeEntry, TargetRef,
     },
     query::{
         DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite,

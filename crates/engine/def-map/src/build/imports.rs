@@ -6,7 +6,7 @@
 //! the fixed point has stabilized.
 
 use crate::{
-    ImportData, ImportId, ImportKind, ModuleRef, ScopeBinding,
+    ImportData, ImportId, ImportKind, ModuleRef, ScopeBinding, ScopeBindingOrigin,
     query::path_resolution::{
         PathResolutionEnv, namespace_for_def_with_env, resolve_path_to_defs_with_env,
         resolve_path_to_modules_with_env, visible_module_scope_entry_set_with_env,
@@ -135,6 +135,7 @@ pub(super) fn apply_imports(
                                 target: state.target,
                                 module: import.module,
                             },
+                            origin: ScopeBindingOrigin::Import,
                         },
                     );
                 }

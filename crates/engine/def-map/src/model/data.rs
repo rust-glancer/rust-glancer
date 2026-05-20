@@ -302,7 +302,7 @@ pub enum MacroDefinitionPayload {
 impl MacroDefinitionPayload {
     fn from_item(item: &MacroDefinitionItem) -> Self {
         match item {
-            MacroDefinitionItem::MacroRules { body } => Self::MacroRules { body: body.clone() },
+            MacroDefinitionItem::MacroRules { body, .. } => Self::MacroRules { body: body.clone() },
             MacroDefinitionItem::MacroDef { args, body } => Self::MacroDef {
                 args: args.clone(),
                 body: body.clone(),

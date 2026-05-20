@@ -4,14 +4,21 @@ use crate::{
     CfgExpr, CfgGate, CfgPredicate, ConstItem, Documentation, EnumItem, EnumVariantItem,
     ExternCrateItem, FieldItem, FieldKey, FieldList, FunctionItem, GenericArg, GenericParams,
     ImplItem, ImportAlias, ItemKind, ItemNode, ItemTag, ItemTreeDb, ItemTreeId, ItemTreeRef,
-    MacroCallItem, MacroDefinitionItem, ModuleItem, ModuleSource, Mutability, Package, ParamItem,
-    ParamKind, StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, TypeBound, TypePath,
-    TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath,
-    UsePathSegment, UsePathSegmentKind, VisibilityLevel, WherePredicate,
+    MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource, Mutability,
+    Package, ParamItem, ParamKind, StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem,
+    TypeBound, TypePath, TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind, UseItem,
+    UsePath, UsePathSegment, UsePathSegmentKind, VisibilityLevel, WherePredicate,
     item::{ConstParamData, FunctionQualifiers, LifetimeParamData, TypeParamData},
 };
 
-rg_memsize::impl_memory_size_leaf!(ItemTreeId, ParamKind, Mutability, UseImportKind, ItemTag);
+rg_memsize::impl_memory_size_leaf!(
+    ItemTreeId,
+    ParamKind,
+    Mutability,
+    UseImportKind,
+    ItemTag,
+    MacroDefinitionAttrs,
+);
 
 rg_memsize::impl_memory_size_children! {
     ItemTreeDb => packages;
@@ -53,7 +60,10 @@ rg_memsize::impl_memory_size_children! {
 impl MemorySize for MacroDefinitionItem {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
-            MacroDefinitionItem::MacroRules { body } => {
+            MacroDefinitionItem::MacroRules { attrs, body } => {
+                recorder.scope("attrs", |recorder| {
+                    attrs.record_memory_children(recorder);
+                });
                 recorder.scope("body", |recorder| {
                     body.record_memory_children(recorder);
                 });

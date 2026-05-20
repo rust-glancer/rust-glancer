@@ -473,6 +473,7 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
+#[macro_export]
 macro_rules! make_user {
     () => {
         pub struct User;
@@ -490,6 +491,7 @@ make_user!();
             files
             file lib.rs
             - macro_definition make_user
+              - macro_export
               - body {() => {pub struct User ;} ;}
             - macro_call [make_user]
               - args ()

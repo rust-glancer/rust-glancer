@@ -9,9 +9,9 @@ use rg_text::Name;
 
 use crate::{
     DefId, ImportPath, LocalDefData, LocalDefKind, LocalDefRef, MacroDefinitionData, ModuleRef,
-    PathSegment, TargetRef,
+    PathSegment, ScopeBinding, ScopeBindingOrigin, TargetRef,
     build::{collect::TargetState, finalize::FinalizeTargetStates},
-    query::path_resolution::{PathResolutionEnv, resolve_path_to_defs_with_env},
+    query::path_resolution::{PathResolutionEnv, resolve_path_to_macro_bindings_with_env},
 };
 
 use super::{ItemOrder, MacroCallSite};
@@ -22,6 +22,7 @@ pub(super) struct ResolvedMacroDefinition<'a> {
     pub(super) local_def: &'a LocalDefData,
     pub(super) data: &'a MacroDefinitionData,
     pub(super) order: Option<&'a ItemOrder>,
+    pub(super) origin: ScopeBindingOrigin,
 }
 
 /// Finds the unique declarative macro definition visible at a macro call.
@@ -38,13 +39,14 @@ pub(super) fn resolve_macro_definition<'a>(
         return resolve_single_name_macro(env, states, state, call, name);
     }
 
-    // Qualified calls follow ordinary path resolution, then filter the result set down to macro
-    // definitions that still have their macro payload available in target state.
-    let resolved_defs = resolve_path_to_defs_with_env(env, state.target, call.module, path)?;
+    // Qualified calls follow ordinary path resolution for the prefix, then keep the final macro
+    // binding so order filtering can distinguish direct definitions from exports/imports.
+    let resolved_bindings =
+        resolve_path_to_macro_bindings_with_env(env, state.target, call.module, path)?;
     let mut macros = Vec::new();
 
-    for def in resolved_defs {
-        if let Some(resolved) = macro_record_for_def(env, states, def)? {
+    for binding in resolved_bindings {
+        if let Some(resolved) = macro_record_for_binding(env, states, &binding)? {
             macros.push(resolved);
         }
     }
@@ -85,7 +87,7 @@ fn resolve_single_name_macro<'a>(
     // macro namespace bindings in the current resolved scope snapshot.
     let mut macros = Vec::new();
     for binding in entry.macros() {
-        if let Some(resolved) = macro_record_for_def(env, states, binding.def)? {
+        if let Some(resolved) = macro_record_for_binding(env, states, binding)? {
             macros.push(resolved);
         }
     }
@@ -118,6 +120,7 @@ fn resolve_textual_macro_rules<'a>(
                     target: state.target,
                     local_def,
                 }),
+                ScopeBindingOrigin::Direct,
             );
         }
 
@@ -136,11 +139,21 @@ fn resolve_textual_macro_rules<'a>(
     }
 }
 
+/// Converts a resolved macro binding into the payload needed by expansion.
+fn macro_record_for_binding<'a>(
+    env: &'a impl PathResolutionEnv,
+    states: &'a FinalizeTargetStates,
+    binding: &ScopeBinding,
+) -> Result<Option<ResolvedMacroDefinition<'a>>> {
+    macro_record_for_def(env, states, binding.def, binding.origin)
+}
+
 /// Converts a resolved definition id into the macro payload needed by expansion.
 fn macro_record_for_def<'a>(
     env: &'a impl PathResolutionEnv,
     states: &'a FinalizeTargetStates,
     def: DefId,
+    origin: ScopeBindingOrigin,
 ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
     let DefId::Local(def_ref) = def else {
         return Ok(None);
@@ -165,6 +178,7 @@ fn macro_record_for_def<'a>(
         local_def,
         data,
         order,
+        origin,
     }))
 }
 
@@ -179,11 +193,17 @@ fn unique_visible_macro_definition<'a>(
         .filter(|macro_| macro_definition_is_visible_by_order(macro_, target, call))
         .collect::<Vec<_>>();
 
-    match macros.as_slice() {
-        [_] => macros.into_iter().next(),
-        [] => None,
-        _ => None,
+    let mut unique: Option<ResolvedMacroDefinition<'a>> = None;
+    for macro_ in macros {
+        // A root `#[macro_export]` macro can appear as both its ordinary definition and exported
+        // root binding. That is still one resolved macro, not an ambiguity.
+        match &unique {
+            Some(existing) if existing.def_ref == macro_.def_ref => {}
+            Some(_) => return None,
+            None => unique = Some(macro_),
+        }
     }
+    unique
 }
 
 /// Filters ordinary namespace candidates that are textually later than the call site.
@@ -192,6 +212,10 @@ fn macro_definition_is_visible_by_order(
     target: TargetRef,
     call: &MacroCallSite,
 ) -> bool {
+    if macro_.origin != ScopeBindingOrigin::Direct {
+        return true;
+    }
+
     !(macro_.def_ref.target == target
         && macro_.local_def.module == call.module
         && macro_.order.is_some_and(|order| order > &call.order))

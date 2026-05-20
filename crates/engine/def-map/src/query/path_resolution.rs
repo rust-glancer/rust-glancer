@@ -233,6 +233,61 @@ fn resolve_path_to_defs_with_filter(
     Ok(result.resolved)
 }
 
+/// Resolves a path whose terminal segment must be a macro binding.
+///
+/// Macro expansion needs the binding origin of the final segment, because direct local
+/// `macro_rules!` bindings are source-order sensitive while imports and `#[macro_export]` root
+/// bindings are not.
+pub(crate) fn resolve_path_to_macro_bindings_with_env(
+    env: &impl PathResolutionEnv,
+    importing_target: TargetRef,
+    importing_module: ModuleId,
+    path: &ImportPath,
+) -> Result<Vec<ScopeBinding>, PackageStoreError> {
+    let Some((terminal, prefix)) = path.segments.split_last() else {
+        return Ok(Vec::new());
+    };
+    let PathSegment::Name(name) = terminal else {
+        return Ok(Vec::new());
+    };
+
+    let importing_module_ref = ModuleRef {
+        target: importing_target,
+        module: importing_module,
+    };
+    let source_modules = if prefix.is_empty() {
+        if path.absolute {
+            Vec::new()
+        } else {
+            vec![importing_module_ref]
+        }
+    } else {
+        resolve_path_to_modules_with_env(
+            env,
+            importing_target,
+            importing_module,
+            &ImportPath {
+                absolute: path.absolute,
+                segments: prefix.to_vec(),
+            },
+        )?
+    };
+
+    let mut bindings = Vec::new();
+    for source_module in source_modules {
+        let Some(entry) = env.module_scope_entry(source_module, name.as_str())? else {
+            continue;
+        };
+        for binding in entry.macros() {
+            if binding_is_visible(env, importing_module_ref, binding)? {
+                bindings.push(binding.clone());
+            }
+        }
+    }
+
+    Ok(bindings)
+}
+
 /// Resolves a path and keeps only module results.
 ///
 /// This is used by glob imports, where the path must denote one or more source modules whose

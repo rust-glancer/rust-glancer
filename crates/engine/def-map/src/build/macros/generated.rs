@@ -15,7 +15,7 @@ use rg_syntax::{
     AstNode as _, TextRange,
     ast::{self, HasModuleItem, HasName, HasVisibility},
 };
-use rg_text::NameInterner;
+use rg_text::{Name, NameInterner};
 use rg_tt::{
     Span as TtSpan,
     syntax_bridge::{ExpansionSpanMap, SpanFactory},
@@ -23,8 +23,8 @@ use rg_tt::{
 
 use crate::{
     DefId, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
-    LocalDefKind, LocalDefRef, MacroDefinitionData, ModuleData, ModuleId, ModuleOrigin, ModuleRef,
-    ModuleScope, PathSegment, ScopeBinding, TargetRef,
+    LocalDefId, LocalDefKind, LocalDefRef, MacroDefinitionData, ModuleData, ModuleId, ModuleOrigin,
+    ModuleRef, ModuleScope, PathSegment, ScopeBinding, ScopeBindingOrigin, TargetRef,
     build::{
         cfg::CfgEvaluator, collect::TargetState, finalize::ScopeMatrix,
         stats::DefMapFinalizationStatsSink,
@@ -234,6 +234,7 @@ impl GeneratedCollector<'_> {
                 target: self.state.target,
                 module: module_id,
             },
+            origin: ScopeBindingOrigin::Direct,
         };
         // Update both the base scopes and the current snapshot. The base scopes make future import
         // refreshes see the generated name; the current snapshot lets later generated calls in this
@@ -263,6 +264,11 @@ impl GeneratedCollector<'_> {
                     order,
                 );
             }
+            if let MacroDefinitionItem::MacroRules { attrs, .. } = &item
+                && attrs.macro_export
+            {
+                self.export_macro_definition_to_root(&name, local_def_id);
+            }
             // Generated macro definitions inherit `$crate` from the macro that produced them, not
             // from the module where the generated definition is inserted.
             let dollar_crate_target = self.origin.dollar_crate_target.unwrap_or(self.state.target);
@@ -271,6 +277,35 @@ impl GeneratedCollector<'_> {
                 MacroDefinitionData::from_item(&item, self.state.edition, dollar_crate_target),
             );
         }
+    }
+
+    /// Updates both scope snapshots for a generated `#[macro_export]` definition.
+    fn export_macro_definition_to_root(&mut self, name: &Name, local_def_id: LocalDefId) {
+        let Some(root_module) = self.state.def_map.root_module() else {
+            return;
+        };
+        let binding = ScopeBinding {
+            def: DefId::Local(LocalDefRef {
+                target: self.state.target,
+                local_def: local_def_id,
+            }),
+            visibility: VisibilityLevel::Public,
+            owner: ModuleRef {
+                target: self.state.target,
+                module: root_module,
+            },
+            origin: ScopeBindingOrigin::MacroExport,
+        };
+
+        self.state
+            .base_scopes
+            .get_mut(root_module.0)
+            .expect("root scope should exist before generated macro export collection")
+            .insert_binding(name, Namespace::Macros, binding.clone());
+        self.current_scopes
+            .module_scope_mut(self.state.target, root_module)
+            .expect("current root scope should exist for generated macro export")
+            .insert_binding(name, Namespace::Macros, binding);
     }
 
     fn collect_inline_module(
@@ -332,6 +367,7 @@ impl GeneratedCollector<'_> {
                 target: self.state.target,
                 module: parent_module,
             },
+            origin: ScopeBindingOrigin::Direct,
         };
         self.state
             .base_scopes

@@ -19,7 +19,7 @@ pub use self::{
     import::{ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath},
     package::Package,
     path::{Path, PathSegment},
-    scope::{ModuleScope, ScopeBinding, ScopeEntry},
+    scope::{ModuleScope, ScopeBinding, ScopeBindingOrigin, ScopeEntry},
 };
 
 pub(crate) use self::{

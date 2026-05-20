@@ -3,7 +3,7 @@ use crate::{
     ImportPath, ImportRef, ImportSourcePath, LocalDefData, LocalDefId, LocalDefKind, LocalDefRef,
     LocalImplData, LocalImplId, LocalImplRef, MacroDefinitionData, MacroDefinitionPayload,
     ModuleData, ModuleId, ModuleOrigin, ModuleRef, ModuleScope, Package, Path, PathSegment,
-    ScopeBinding, ScopeEntry, TargetRef,
+    ScopeBinding, ScopeBindingOrigin, ScopeEntry, TargetRef,
     model::{ImportSourcePathSegment, ScopeNameEntry},
 };
 use rg_memsize::{MemoryRecorder, MemorySize};
@@ -15,6 +15,7 @@ rg_memsize::impl_memory_size_leaf!(
     LocalDefId,
     LocalImplId,
     ImportId,
+    ScopeBindingOrigin,
 );
 
 rg_memsize::impl_memory_size_children! {
@@ -27,7 +28,7 @@ rg_memsize::impl_memory_size_children! {
     ModuleScope => entries;
     ScopeNameEntry => name, entry;
     ScopeEntry => types, values, macros;
-    ScopeBinding => def, visibility, owner;
+    ScopeBinding => def, visibility, owner, origin;
     ImportData => module, visibility, kind, path, source_path, binding, alias_span, source,
         import_index;
     ImportPath => absolute, segments;

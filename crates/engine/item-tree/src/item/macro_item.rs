@@ -1,5 +1,8 @@
 use rg_parse::FileId;
-use rg_syntax::{TextRange, ast};
+use rg_syntax::{
+    TextRange,
+    ast::{self, HasAttrs as _},
+};
 use rg_text::{Name, NameInterner};
 use rg_tt::{
     Edition, Span, TopSubtree,
@@ -12,6 +15,7 @@ use super::normalized_syntax;
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum MacroDefinitionItem {
     MacroRules {
+        attrs: MacroDefinitionAttrs,
         body: Option<TopSubtree>,
     },
     MacroDef {
@@ -32,6 +36,7 @@ impl MacroDefinitionItem {
         span_for_range: &mut dyn FnMut(TextRange) -> Span,
     ) -> Self {
         Self::MacroRules {
+            attrs: MacroDefinitionAttrs::from_macro_rules(item),
             body: item
                 .token_tree()
                 .map(|token_tree| syntax_node_to_token_tree_with_span(&token_tree, span_for_range)),
@@ -59,6 +64,23 @@ impl MacroDefinitionItem {
     }
 
     pub(crate) fn shrink_to_fit(&mut self) {}
+}
+
+/// Macro-specific attributes that affect def-map visibility.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct MacroDefinitionAttrs {
+    pub macro_export: bool,
+}
+
+impl MacroDefinitionAttrs {
+    fn from_macro_rules(item: &ast::MacroRules) -> Self {
+        Self {
+            macro_export: item
+                .attrs()
+                .filter(|attr| attr.kind().is_outer())
+                .any(|attr| attr.simple_name().as_deref() == Some("macro_export")),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
