@@ -1,5 +1,7 @@
 # rust-glancer
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://codspeed.io/rust-glancer/rust-glancer?utm_source=badge)
+
 An incomplete-by-design LSP that trades completeness for speed and memory.
 `rust-analyzer` is great, but it is just too heavy.
 
