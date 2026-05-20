@@ -63,8 +63,8 @@
 
 use std::{rc::Rc, sync::Arc};
 
-use crate::span::{Edition, SyntaxContext};
-use crate::tt::{
+use rg_tt::span::{Edition, SyntaxContext};
+use rg_tt::tt::{
     self, DelimSpan,
     iter::{TtElement, TtIter},
     symbol::{Symbol, sym},

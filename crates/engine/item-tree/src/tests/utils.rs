@@ -3,8 +3,9 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::{
-    FieldItem, FieldList, FileTree, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ModuleSource,
-    Package as ItemTreePackage, PackageNameInterners, ParamKind, TargetRoot, VisibilityLevel,
+    FieldItem, FieldList, FileTree, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
+    MacroDefinitionItem, ModuleSource, Package as ItemTreePackage, PackageNameInterners, ParamKind,
+    TargetRoot, VisibilityLevel,
 };
 use rg_parse::{FileId, Package, ParseDb, Target};
 use rg_workspace::WorkspaceMetadata;
@@ -303,16 +304,24 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                         .expect("string writes should not fail");
                 }
             }
-            ItemKind::MacroDefinition(macro_definition) => {
-                if let Some(args) = &macro_definition.args {
-                    writeln!(dump, "{indent}  - args {args}")
-                        .expect("string writes should not fail");
+            ItemKind::MacroDefinition(macro_definition) => match macro_definition {
+                MacroDefinitionItem::MacroRules { body } => {
+                    if let Some(body) = body {
+                        writeln!(dump, "{indent}  - body {body}")
+                            .expect("string writes should not fail");
+                    }
                 }
-                if let Some(body) = &macro_definition.body {
-                    writeln!(dump, "{indent}  - body {body}")
-                        .expect("string writes should not fail");
+                MacroDefinitionItem::MacroDef { args, body } => {
+                    if let Some(args) = args {
+                        writeln!(dump, "{indent}  - args {args}")
+                            .expect("string writes should not fail");
+                    }
+                    if let Some(body) = body {
+                        writeln!(dump, "{indent}  - body {body}")
+                            .expect("string writes should not fail");
+                    }
                 }
-            }
+            },
             ItemKind::Static(static_item) => {
                 if let Some(ty) = &static_item.ty {
                     writeln!(dump, "{indent}  - ty {ty}").expect("string writes should not fail");

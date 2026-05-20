@@ -1,12 +1,10 @@
 use std::collections::HashMap;
 
 use rg_arena::Arena;
-use rg_item_tree::{
-    Documentation, ItemTag, ItemTreeRef, MacroDefinitionItem, MacroDefinitionSyntax,
-    VisibilityLevel,
-};
+use rg_item_tree::{Documentation, ItemTag, ItemTreeRef, MacroDefinitionItem, VisibilityLevel};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
+use rg_tt::TopSubtree;
 use rg_workspace::RustEdition;
 
 use super::scope::Namespace;
@@ -265,44 +263,41 @@ impl LocalDefData {
 /// Declarative macro definition payload retained for expansion after def-map freezing.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct MacroDefinitionData {
-    pub kind: MacroDefinitionKind,
-    pub args: Option<String>,
-    pub body: Option<String>,
     pub edition: RustEdition,
+    pub payload: MacroDefinitionPayload,
 }
 
 impl MacroDefinitionData {
     pub(crate) fn from_item(item: &MacroDefinitionItem, edition: RustEdition) -> Self {
         Self {
-            kind: MacroDefinitionKind::from_item_tree(item.syntax),
-            args: item.args.clone(),
-            body: item.body.clone(),
             edition,
+            payload: MacroDefinitionPayload::from_item(item),
         }
     }
 
-    fn shrink_to_fit(&mut self) {
-        if let Some(args) = &mut self.args {
-            args.shrink_to_fit();
-        }
-        if let Some(body) = &mut self.body {
-            body.shrink_to_fit();
-        }
-    }
+    fn shrink_to_fit(&mut self) {}
 }
 
-/// Syntax form used to define a declarative macro.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
-pub enum MacroDefinitionKind {
-    MacroRules,
-    MacroDef,
+/// Token-tree payload needed to compile a collected declarative macro.
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub enum MacroDefinitionPayload {
+    MacroRules {
+        body: Option<TopSubtree>,
+    },
+    MacroDef {
+        args: Option<TopSubtree>,
+        body: Option<TopSubtree>,
+    },
 }
 
-impl MacroDefinitionKind {
-    fn from_item_tree(syntax: MacroDefinitionSyntax) -> Self {
-        match syntax {
-            MacroDefinitionSyntax::MacroRules => Self::MacroRules,
-            MacroDefinitionSyntax::MacroDef => Self::MacroDef,
+impl MacroDefinitionPayload {
+    fn from_item(item: &MacroDefinitionItem) -> Self {
+        match item {
+            MacroDefinitionItem::MacroRules { body } => Self::MacroRules { body: body.clone() },
+            MacroDefinitionItem::MacroDef { args, body } => Self::MacroDef {
+                args: args.clone(),
+                body: body.clone(),
+            },
         }
     }
 }

@@ -10,9 +10,9 @@ pub use self::{
     model::{
         DefId, DefMap, ImportBinding, ImportData, ImportId, ImportKind, ImportPath, ImportRef,
         ImportSourcePath, LocalDefData, LocalDefId, LocalDefKind, LocalDefRef, LocalImplData,
-        LocalImplId, LocalImplRef, MacroDefinitionData, MacroDefinitionKind, ModuleData, ModuleId,
-        ModuleOrigin, ModuleRef, ModuleScope, Package, Path, PathSegment, ScopeBinding, ScopeEntry,
-        TargetRef,
+        LocalImplId, LocalImplRef, MacroDefinitionData, MacroDefinitionPayload, ModuleData,
+        ModuleId, ModuleOrigin, ModuleRef, ModuleScope, Package, Path, PathSegment, ScopeBinding,
+        ScopeEntry, TargetRef,
     },
     query::{
         DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite,

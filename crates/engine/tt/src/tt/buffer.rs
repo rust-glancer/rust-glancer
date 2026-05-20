@@ -3,7 +3,7 @@
 //! Stateful iteration over token trees.
 //!
 //! We use this as the source of tokens for parser.
-use crate::tt::{Subtree, TokenTree, TokenTreesView, dispatch_ref};
+use crate::tt::{Leaf, Subtree, TokenTree, TokenTreesView, dispatch_ref};
 
 pub struct Cursor<'a> {
     buffer: TokenTreesView<'a>,
@@ -98,6 +98,23 @@ impl<'a> Cursor<'a> {
             self.subtrees_stack.push(self.index);
         }
         self.index += 1;
+    }
+
+    pub fn peek_two_leaves(&self) -> Option<[Leaf; 2]> {
+        if let Some((last_subtree_idx, last_subtree)) = self.last_subtree() {
+            // +1 because `Subtree.len` excludes the subtree itself.
+            let last_end = last_subtree_idx + last_subtree.usize_len() + 1;
+            if last_end == self.index || last_end == self.index + 1 {
+                return None;
+            }
+        }
+
+        self.at(self.index)
+            .zip(self.at(self.index + 1))
+            .and_then(|(left, right)| match (left, right) {
+                (TokenTree::Leaf(left), TokenTree::Leaf(right)) => Some([left, right]),
+                _ => None,
+            })
     }
 
     pub fn crossed(&self) -> TokenTreesView<'a> {

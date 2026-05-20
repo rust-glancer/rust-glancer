@@ -4,22 +4,14 @@ use crate::{
     CfgExpr, CfgGate, CfgPredicate, ConstItem, Documentation, EnumItem, EnumVariantItem,
     ExternCrateItem, FieldItem, FieldKey, FieldList, FunctionItem, GenericArg, GenericParams,
     ImplItem, ImportAlias, ItemKind, ItemNode, ItemTag, ItemTreeDb, ItemTreeId, ItemTreeRef,
-    MacroCallItem, MacroDefinitionItem, MacroDefinitionSyntax, ModuleItem, ModuleSource,
-    Mutability, Package, ParamItem, ParamKind, StaticItem, StructItem, TargetRoot, TraitItem,
-    TypeAliasItem, TypeBound, TypePath, TypePathSegment, TypeRef, UnionItem, UseImport,
-    UseImportKind, UseItem, UsePath, UsePathSegment, UsePathSegmentKind, VisibilityLevel,
-    WherePredicate,
+    MacroCallItem, MacroDefinitionItem, ModuleItem, ModuleSource, Mutability, Package, ParamItem,
+    ParamKind, StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, TypeBound, TypePath,
+    TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath,
+    UsePathSegment, UsePathSegmentKind, VisibilityLevel, WherePredicate,
     item::{ConstParamData, FunctionQualifiers, LifetimeParamData, TypeParamData},
 };
 
-rg_memsize::impl_memory_size_leaf!(
-    ItemTreeId,
-    ParamKind,
-    Mutability,
-    UseImportKind,
-    ItemTag,
-    MacroDefinitionSyntax
-);
+rg_memsize::impl_memory_size_leaf!(ItemTreeId, ParamKind, Mutability, UseImportKind, ItemTag);
 
 rg_memsize::impl_memory_size_children! {
     ItemTreeDb => packages;
@@ -36,7 +28,6 @@ rg_memsize::impl_memory_size_children! {
     ConstParamData => name, ty, default;
     FunctionItem => generics, params, ret_ty, qualifiers;
     FunctionQualifiers => is_async, is_const, is_unsafe;
-    MacroDefinitionItem => syntax, args, body;
     MacroCallItem => path, callee, args;
     ParamItem => pat, ty, kind;
     StructItem => generics, fields;
@@ -57,6 +48,26 @@ rg_memsize::impl_memory_size_children! {
     UsePath => source_span, absolute, segments;
     UsePathSegment => kind, span;
     ModuleItem => inner_docs, source;
+}
+
+impl MemorySize for MacroDefinitionItem {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            MacroDefinitionItem::MacroRules { body } => {
+                recorder.scope("body", |recorder| {
+                    body.record_memory_children(recorder);
+                });
+            }
+            MacroDefinitionItem::MacroDef { args, body } => {
+                recorder.scope("args", |recorder| {
+                    args.record_memory_children(recorder);
+                });
+                recorder.scope("body", |recorder| {
+                    body.record_memory_children(recorder);
+                });
+            }
+        }
+    }
 }
 
 impl MemorySize for CfgGate {

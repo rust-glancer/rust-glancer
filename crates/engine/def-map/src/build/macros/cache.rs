@@ -12,17 +12,18 @@ use std::{
 
 use anyhow::Context as _;
 
-use rg_macro_expand::{DeclarativeMacro, Edition};
+use rg_macro_expand::{DeclarativeMacro, Edition, ExpansionSyntax};
+use rg_tt::{Span as TtSpan, TopSubtree};
 
-use crate::{LocalDefRef, MacroDefinitionData, MacroDefinitionKind};
+use crate::{LocalDefRef, MacroDefinitionData, MacroDefinitionPayload};
 
 use super::expand::MacroExpansionWork;
 
-/// Per-finalization cache for macro definitions and expanded source text.
+/// Per-finalization cache for macro definitions and expanded syntax.
 #[derive(Default)]
 pub(crate) struct MacroExpansionCache {
     compiled: HashMap<LocalDefRef, Option<Arc<DeclarativeMacro>>>,
-    expanded: HashMap<MacroExpansionCacheKey, Option<String>>,
+    expanded: HashMap<MacroExpansionCacheKey, Option<ExpansionSyntax>>,
 }
 
 impl MacroExpansionCache {
@@ -32,7 +33,6 @@ impl MacroExpansionCache {
         def_ref: LocalDefRef,
         macro_definition: &MacroDefinitionData,
         edition: Edition,
-        file_id: u32,
     ) -> MacroCompileResult {
         if self.compiled.contains_key(&def_ref) {
             let macro_ = self.compiled.get(&def_ref).and_then(Clone::clone);
@@ -47,7 +47,7 @@ impl MacroExpansionCache {
         }
 
         let started_at = Instant::now();
-        let compiled = compile_macro(macro_definition, edition, file_id);
+        let compiled = compile_macro(macro_definition, edition);
         let elapsed = started_at.elapsed();
 
         match compiled {
@@ -81,18 +81,18 @@ impl MacroExpansionCache {
         def_ref: LocalDefRef,
         macro_: Arc<DeclarativeMacro>,
         path_text: &str,
-        args: &str,
-        call_file_id: u32,
+        args: &TopSubtree,
+        call_site: TtSpan,
     ) -> PreparedMacroExpansionResult {
         let key = MacroExpansionCacheKey {
             def_ref,
-            path_text: path_text.to_string(),
-            args: args.to_string(),
+            args: args.clone(),
+            call_site,
         };
 
         if let Some(expanded) = self.expanded.get(&key) {
             let expansion = match expanded {
-                Some(source) => PreparedMacroExpansion::Source(source.clone()),
+                Some(syntax) => PreparedMacroExpansion::Syntax(syntax.clone()),
                 None => PreparedMacroExpansion::Failed,
             };
             return PreparedMacroExpansionResult {
@@ -108,16 +108,19 @@ impl MacroExpansionCache {
                 key,
                 macro_name: path_text.to_string(),
                 macro_,
-                path_text: path_text.to_string(),
-                args: args.to_string(),
-                call_file_id,
+                args: args.clone(),
+                call_site,
             }),
             record: MacroExpandRecord::Attempt,
         }
     }
 
-    pub(super) fn insert_expansion(&mut self, key: MacroExpansionCacheKey, source: Option<String>) {
-        self.expanded.insert(key, source);
+    pub(super) fn insert_expansion(
+        &mut self,
+        key: MacroExpansionCacheKey,
+        syntax: Option<ExpansionSyntax>,
+    ) {
+        self.expanded.insert(key, syntax);
     }
 }
 
@@ -137,8 +140,8 @@ pub(super) enum MacroCompileRecord {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(super) struct MacroExpansionCacheKey {
     pub(super) def_ref: LocalDefRef,
-    pub(super) path_text: String,
-    pub(super) args: String,
+    pub(super) args: TopSubtree,
+    pub(super) call_site: TtSpan,
 }
 
 /// Expansion payload together with the accounting event produced while preparing it.
@@ -147,9 +150,9 @@ pub(super) struct PreparedMacroExpansionResult {
     pub(super) record: MacroExpandRecord,
 }
 
-/// Either already-expanded source, a known failed expansion, or work to run in parallel.
+/// Either already-expanded syntax, a known failed expansion, or work to run in parallel.
 pub(super) enum PreparedMacroExpansion {
-    Source(String),
+    Syntax(ExpansionSyntax),
     Failed,
     Work(MacroExpansionWork),
 }
@@ -164,27 +167,19 @@ pub(super) enum MacroExpandRecord {
 fn compile_macro(
     macro_definition: &MacroDefinitionData,
     edition: Edition,
-    file_id: u32,
 ) -> anyhow::Result<DeclarativeMacro> {
-    match macro_definition.kind {
-        MacroDefinitionKind::MacroRules => {
-            let body = macro_definition
-                .body
-                .as_deref()
+    match &macro_definition.payload {
+        MacroDefinitionPayload::MacroRules { body } => {
+            let body = body
+                .as_ref()
                 .context("while attempting to fetch macro_rules body")?;
-            DeclarativeMacro::from_macro_rules_parts(body, edition, file_id)
+            DeclarativeMacro::from_macro_rules_tokens(body, edition)
         }
-        MacroDefinitionKind::MacroDef => {
-            let body = macro_definition
-                .body
-                .as_deref()
+        MacroDefinitionPayload::MacroDef { args, body } => {
+            let body = body
+                .as_ref()
                 .context("while attempting to fetch macro body")?;
-            DeclarativeMacro::from_macro_def_parts(
-                macro_definition.args.as_deref(),
-                body,
-                edition,
-                file_id,
-            )
+            DeclarativeMacro::from_macro_def_tokens(args.as_ref(), body, edition)
         }
     }
 }

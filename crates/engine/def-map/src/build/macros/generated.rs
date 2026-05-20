@@ -1,25 +1,30 @@
-//! Collects source produced by macro expansion back into mutable target state.
+//! Collects syntax produced by macro expansion back into mutable target state.
 //!
-//! Expansion is parsed as ordinary Rust source for this milestone. Generated definitions belong to
-//! the macro call's module and file identity, while their spans point at the call site.
+//! Generated definitions belong to the macro call's module and file identity, while their spans
+//! point at the call site until expansion span maps are threaded through later phases.
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 
 use rg_item_tree::{
     CfgExpr, Documentation, ImportAlias, ItemTreeRef, MacroCallItem, MacroDefinitionItem, UseItem,
     VisibilityLevel,
 };
+use rg_macro_expand::ExpansionSyntax;
 use rg_parse::{FileId, Span};
 use rg_syntax::{
-    SourceFile,
+    AstNode as _, TextRange,
     ast::{self, HasModuleItem, HasName, HasVisibility},
 };
 use rg_text::NameInterner;
+use rg_tt::{
+    Span as TtSpan,
+    syntax_bridge::{ExpansionSpanMap, SpanFactory},
+};
 
 use crate::{
     DefId, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
     LocalDefKind, LocalDefRef, MacroDefinitionData, ModuleData, ModuleId, ModuleOrigin, ModuleRef,
-    ModuleScope, ScopeBinding,
+    ModuleScope, PathSegment, ScopeBinding, TargetRef,
     build::{
         cfg::CfgEvaluator, collect::TargetState, finalize::ScopeMatrix,
         stats::DefMapFinalizationStatsSink,
@@ -27,9 +32,7 @@ use crate::{
     model::Namespace,
 };
 
-use super::{
-    ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroExpansionApplyResult, macro_edition,
-};
+use super::{ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroExpansionApplyResult};
 
 /// Call-site identity used for every item produced by one macro expansion.
 #[derive(Debug, Clone)]
@@ -39,9 +42,10 @@ pub(super) struct GeneratedOrigin {
     pub(super) file_id: FileId,
     pub(super) span: Span,
     pub(super) order: ItemOrder,
+    pub(super) dollar_crate_target: Option<TargetRef>,
 }
 
-/// Small collector that mirrors normal def-map collection for already-expanded source.
+/// Small collector that mirrors normal def-map collection for already-expanded syntax.
 pub(super) struct GeneratedCollector<'a> {
     pub(super) state: &'a mut TargetState,
     pub(super) interner: &'a mut NameInterner,
@@ -51,31 +55,27 @@ pub(super) struct GeneratedCollector<'a> {
 }
 
 impl GeneratedCollector<'_> {
-    pub(super) fn collect_source(
+    pub(super) fn collect_syntax(
         &mut self,
-        source: &str,
+        expansion: ExpansionSyntax,
         macro_name: Option<&str>,
         stats: &mut DefMapFinalizationStatsSink<'_>,
     ) -> Result<MacroExpansionApplyResult> {
-        // Parse generated text as a source file, then collect only item-position declarations from
-        // the resulting syntax tree.
+        let ExpansionSyntax { parse, span_map } = expansion;
+        // Macro expansion has already run the parser over token trees. At this point we only check
+        // syntax errors and collect item-position declarations from the generated root.
         let timer = stats.start_timer();
-        let parsed = SourceFile::parse(source, macro_edition(self.state.edition))
-            .ok()
-            .map_err(|errors| {
-                anyhow::anyhow!("macro expansion source has syntax errors: {errors:?}")
-            });
+        let errors = parse.errors();
         stats.finish_timer(timer, |timings, elapsed| {
             timings.parse_generated_sources += elapsed;
         });
-        let file = match parsed {
-            Ok(file) => file,
-            Err(error) => {
-                let macro_name = macro_name.unwrap_or("<unknown>");
-                stats.record(|stats| stats.record_generated_source_parse_failure(macro_name));
-                return Err(error);
-            }
-        };
+        if !errors.is_empty() {
+            let macro_name = macro_name.unwrap_or("<unknown>");
+            stats.record(|stats| stats.record_generated_source_parse_failure(macro_name));
+            anyhow::bail!("macro expansion syntax has errors: {errors:?}");
+        }
+        let file = ast::MacroItems::cast(parse.syntax_node())
+            .context("while attempting to cast macro expansion syntax root")?;
         stats.record(|stats| stats.generated_sources_parsed += 1);
         self.result.mark_changed();
 
@@ -89,6 +89,7 @@ impl GeneratedCollector<'_> {
                 self.origin.module,
                 item,
                 self.origin.order.generated_child(index),
+                &span_map,
                 stats,
             );
         }
@@ -104,6 +105,7 @@ impl GeneratedCollector<'_> {
         module_id: ModuleId,
         item: ast::Item,
         order: ItemOrder,
+        span_map: &ExpansionSpanMap,
         stats: &mut DefMapFinalizationStatsSink<'_>,
     ) {
         if !self.is_item_enabled(&item) {
@@ -122,20 +124,27 @@ impl GeneratedCollector<'_> {
                 self.collect_named_def(module_id, &item, LocalDefKind::Function, None);
             }
             ast::Item::MacroCall(item) => {
-                let macro_call = MacroCallItem::from_ast(&item, self.interner);
+                let fallback = self.origin_tt_span();
+                let mut span_for_range = |range| span_map.span_for_range(range).unwrap_or(fallback);
+                let macro_call =
+                    MacroCallItem::from_ast_with_span(&item, self.interner, &mut span_for_range);
                 self.state.push_macro_call(MacroCallSite {
                     module: module_id,
                     source: self.origin.source,
                     path: macro_call.path,
                     callee: macro_call.callee,
                     args: macro_call.args,
+                    dollar_crate_target: self.origin.dollar_crate_target,
                     file_id: self.origin.file_id,
                     span: self.origin.span,
                     order,
                 });
             }
             ast::Item::MacroDef(item) => {
-                let macro_definition = MacroDefinitionItem::from_macro_def(&item);
+                let fallback = self.origin_tt_span();
+                let mut span_for_range = |range| span_map.span_for_range(range).unwrap_or(fallback);
+                let macro_definition =
+                    MacroDefinitionItem::from_macro_def_with_span(&item, &mut span_for_range);
                 self.collect_named_def(
                     module_id,
                     &item,
@@ -144,7 +153,10 @@ impl GeneratedCollector<'_> {
                 );
             }
             ast::Item::MacroRules(item) => {
-                let macro_definition = MacroDefinitionItem::from_macro_rules(&item);
+                let fallback = self.origin_tt_span();
+                let mut span_for_range = |range| span_map.span_for_range(range).unwrap_or(fallback);
+                let macro_definition =
+                    MacroDefinitionItem::from_macro_rules_with_span(&item, &mut span_for_range);
                 self.collect_named_def(
                     module_id,
                     &item,
@@ -152,7 +164,9 @@ impl GeneratedCollector<'_> {
                     Some((macro_definition, order)),
                 );
             }
-            ast::Item::Module(item) => self.collect_inline_module(module_id, &item, order, stats),
+            ast::Item::Module(item) => {
+                self.collect_inline_module(module_id, &item, order, span_map, stats)
+            }
             ast::Item::Static(item) => {
                 self.collect_named_def(module_id, &item, LocalDefKind::Static, None);
             }
@@ -250,6 +264,7 @@ impl GeneratedCollector<'_> {
         parent_module: ModuleId,
         item: &ast::Module,
         order: ItemOrder,
+        span_map: &ExpansionSpanMap,
         stats: &mut DefMapFinalizationStatsSink<'_>,
     ) {
         let Some(module_name) = item.name().map(|name| self.interner.intern(name.text())) else {
@@ -316,9 +331,14 @@ impl GeneratedCollector<'_> {
                 child_module,
                 child_item,
                 order.generated_child(index),
+                span_map,
                 stats,
             );
         }
+    }
+
+    fn origin_tt_span(&self) -> TtSpan {
+        fallback_tt_span(self.origin.file_id, self.origin.span, self.state.edition)
     }
 
     fn collect_use(&mut self, module_id: ModuleId, item: &ast::Use) {
@@ -326,7 +346,8 @@ impl GeneratedCollector<'_> {
         let use_item = UseItem::from_ast(item, self.interner);
 
         for (import_index, import) in use_item.imports.iter().enumerate() {
-            let path = ImportPath::from_use_path(&import.path);
+            let mut path = ImportPath::from_use_path(&import.path);
+            self.rewrite_dollar_crate_path(&mut path);
             if path.segments.is_empty() {
                 continue;
             }
@@ -334,6 +355,7 @@ impl GeneratedCollector<'_> {
             // The generated import's textual source is synthetic. Keep spans at the macro call site
             // so diagnostics and navigation have a real file location to point at.
             let mut source_path = ImportSourcePath::from_use_path(&import.path);
+            self.rewrite_dollar_crate_source_path(&mut source_path);
             source_path.source_span = Some(self.origin.span);
             for segment in &mut source_path.segments {
                 segment.span = self.origin.span;
@@ -361,8 +383,54 @@ impl GeneratedCollector<'_> {
                 .push(import_id);
         }
     }
+
+    fn rewrite_dollar_crate_path(&self, path: &mut ImportPath) {
+        let Some(target) = self.origin.dollar_crate_target else {
+            return;
+        };
+        let Some(first) = path.segments.first_mut() else {
+            return;
+        };
+
+        if matches!(first, PathSegment::Name(name) if name.as_str() == "$crate") {
+            *first = PathSegment::DollarCrate(target);
+            path.absolute = false;
+        }
+    }
+
+    fn rewrite_dollar_crate_source_path(&self, path: &mut ImportSourcePath) {
+        let Some(target) = self.origin.dollar_crate_target else {
+            return;
+        };
+        let Some(first) = path.segments.first_mut() else {
+            return;
+        };
+
+        if matches!(&first.segment, PathSegment::Name(name) if name.as_str() == "$crate") {
+            first.segment = PathSegment::DollarCrate(target);
+            path.absolute = false;
+        }
+    }
 }
 
 trait AstNodeWithNameAndVisibility: ast::HasName + ast::HasVisibility {}
 
 impl<T> AstNodeWithNameAndVisibility for T where T: ast::HasName + ast::HasVisibility {}
+
+fn fallback_tt_span(file_id: FileId, span: Span, edition: rg_workspace::RustEdition) -> TtSpan {
+    let text_range = TextRange::new(span.text.start.into(), span.text.end.into());
+    SpanFactory::new(
+        u32::try_from(file_id.0).expect("file id should fit macro span storage"),
+        macro_edition(edition),
+    )
+    .span_for(text_range)
+}
+
+fn macro_edition(edition: rg_workspace::RustEdition) -> rg_tt::Edition {
+    match edition {
+        rg_workspace::RustEdition::Edition2015 => rg_tt::Edition::Edition2015,
+        rg_workspace::RustEdition::Edition2018 => rg_tt::Edition::Edition2018,
+        rg_workspace::RustEdition::Edition2021 => rg_tt::Edition::Edition2021,
+        rg_workspace::RustEdition::Edition2024 => rg_tt::Edition::Edition2024,
+    }
+}

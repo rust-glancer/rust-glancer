@@ -490,11 +490,7 @@ make_user!();
             files
             file lib.rs
             - macro_definition make_user
-              - body {
-                () => {
-                    pub struct User;
-                };
-            }
+              - body {() => {pub struct User ;} ;}
             - macro_call [make_user]
               - args ()
         "#]],

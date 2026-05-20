@@ -2,17 +2,18 @@
 //!
 //! Macro expansion is tied to import resolution: a call may need imports to find its definition,
 //! and its generated items may add new imports or new macros. This module keeps that loop local to
-//! def-map by expanding to source text, parsing the generated items, and collecting them into the
-//! macro call's module.
+//! def-map by parsing expanded token trees into generated syntax and collecting those items into
+//! the macro call's module.
 
 use std::collections::HashMap;
 
 use anyhow::Context as _;
 
 use rg_item_tree::ItemTreeRef;
-use rg_macro_expand::Edition;
+use rg_macro_expand::{Edition, ExpansionSyntax};
 use rg_parse::{FileId, Span};
 use rg_text::{Name, PackageNameInterners};
+use rg_tt::{Span as TtSpan, TopSubtree, syntax_bridge::SpanFactory};
 use rg_workspace::RustEdition;
 
 use crate::{ModuleId, TargetRef, query::path_resolution::PathResolutionEnv};
@@ -78,7 +79,8 @@ pub(super) struct MacroCallSite {
     pub(super) source: ItemTreeRef,
     pub(super) path: Option<String>,
     pub(super) callee: Option<Name>,
-    pub(super) args: Option<String>,
+    pub(super) args: Option<TopSubtree>,
+    pub(super) dollar_crate_target: Option<TargetRef>,
     pub(super) file_id: FileId,
     pub(super) span: Span,
     pub(super) order: ItemOrder,
@@ -236,7 +238,7 @@ pub(super) fn apply_expansion_attempts(
             continue;
         };
 
-        let source = match attempt.outcome {
+        let syntax = match attempt.outcome {
             MacroExpansionAttemptOutcome::NoSource(directive_state) => {
                 if let Some(directive) = state.macro_directives.get_mut(attempt.call_id) {
                     directive.state = directive_state;
@@ -266,7 +268,7 @@ pub(super) fn apply_expansion_attempts(
             origin: attempt.origin,
             result: MacroExpansionApplyResult::default(),
         }
-        .collect_source(&source, macro_name.as_deref(), stats);
+        .collect_syntax(syntax, macro_name.as_deref(), stats);
         let directive_state = match collected {
             Ok(collected) => {
                 result.merge(collected);
@@ -407,6 +409,7 @@ impl MacroExpansionAttempt {
                 file_id: call.file_id,
                 span: call.span,
                 order: call.order.clone(),
+                dollar_crate_target: None,
             },
             outcome,
             record,
@@ -426,10 +429,10 @@ impl MacroExpansionAttempt {
         let Some(path_text) = call.path.as_deref().or_else(|| call.callee.as_deref()) else {
             return Ok(Self::skipped(state.target, call_id, call));
         };
-        let Some(args) = call.args.as_deref() else {
+        let Some(args) = call.args.as_ref() else {
             return Ok(Self::skipped(state.target, call_id, call));
         };
-        let Some(path) = macro_path_from_text(path_text) else {
+        let Some(path) = macro_path_from_text(path_text, call.dollar_crate_target) else {
             return Ok(Self::skipped(state.target, call_id, call));
         };
 
@@ -460,9 +463,7 @@ impl MacroExpansionAttempt {
         // Finally compile the definition and either reuse cached output or prepare self-contained
         // expansion work for the worker pool.
         let edition = macro_edition(resolved.data.edition);
-        let file_id = u32::try_from(resolved.local_def.file_id.0)
-            .context("while attempting to convert macro definition file id")?;
-        let compile_result = cache.compile(resolved.def_ref, resolved.data, edition, file_id);
+        let compile_result = cache.compile(resolved.def_ref, resolved.data, edition);
         let Some(macro_) = compile_result.macro_ else {
             return Ok(Self::resolved(
                 state.target,
@@ -475,16 +476,13 @@ impl MacroExpansionAttempt {
             ));
         };
 
-        let prepared_expansion = cache.prepare_expansion(
-            resolved.def_ref,
-            macro_,
-            path_text,
-            args,
-            call.file_id.0 as u32,
-        );
+        let call_site =
+            tt_span_for_parse_span(call.file_id, call.span, macro_edition(state.edition));
+        let prepared_expansion =
+            cache.prepare_expansion(resolved.def_ref, macro_, path_text, args, call_site);
         let outcome = match prepared_expansion.expansion {
-            PreparedMacroExpansion::Source(source) => {
-                MacroExpansionAttemptOutcome::Generated(source)
+            PreparedMacroExpansion::Syntax(syntax) => {
+                MacroExpansionAttemptOutcome::Generated(syntax)
             }
             PreparedMacroExpansion::Failed => {
                 MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Failed)
@@ -494,7 +492,7 @@ impl MacroExpansionAttempt {
             }
         };
 
-        Ok(Self::resolved(
+        let mut attempt = Self::resolved(
             state.target,
             call_id,
             call,
@@ -502,7 +500,9 @@ impl MacroExpansionAttempt {
             outcome,
             compile_result.record,
             Some(prepared_expansion.record),
-        ))
+        );
+        attempt.origin.dollar_crate_target = Some(resolved.def_ref.target);
+        Ok(attempt)
     }
 
     pub(super) fn needs_expansion(&self) -> bool {
@@ -531,9 +531,9 @@ impl MacroExpansionAttempt {
         }
     }
 
-    fn set_expansion_result(&mut self, source: Option<String>) {
-        self.outcome = match source {
-            Some(source) => MacroExpansionAttemptOutcome::Generated(source),
+    fn set_expansion_result(&mut self, syntax: Option<ExpansionSyntax>) {
+        self.outcome = match syntax {
+            Some(syntax) => MacroExpansionAttemptOutcome::Generated(syntax),
             None => MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Failed),
         };
     }
@@ -635,7 +635,7 @@ impl MacroExpansionAttemptRecord {
 
 enum MacroExpansionAttemptOutcome {
     NoSource(MacroDirectiveState),
-    Generated(String),
+    Generated(ExpansionSyntax),
     PendingExpansion(MacroExpansionWork),
 }
 
@@ -646,4 +646,13 @@ fn macro_edition(edition: RustEdition) -> Edition {
         RustEdition::Edition2021 => Edition::Edition2021,
         RustEdition::Edition2024 => Edition::Edition2024,
     }
+}
+
+fn tt_span_for_parse_span(file_id: FileId, span: Span, edition: Edition) -> TtSpan {
+    let text_range = rg_syntax::TextRange::new(span.text.start.into(), span.text.end.into());
+    SpanFactory::new(
+        u32::try_from(file_id.0).expect("file id should fit macro span storage"),
+        edition,
+    )
+    .span_for(text_range)
 }

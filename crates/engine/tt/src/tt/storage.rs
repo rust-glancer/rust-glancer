@@ -25,6 +25,8 @@
 
 use std::fmt;
 
+use rg_memsize::{MemoryRecorder, MemorySize};
+
 use super::symbol::Symbol;
 use crate::span::{Span, SpanAnchor, SyntaxContext, TextRange, TextSize};
 
@@ -33,7 +35,7 @@ use crate::tt::{
     TokenTreesView, TtIter, dispatch_ref,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) struct CompressedSpanPart {
     pub(crate) anchor: SpanAnchor,
     pub(crate) ctx: SyntaxContext,
@@ -78,7 +80,7 @@ const fn n_bits_mask(n: u32) -> u32 {
     (1 << n) - 1
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) struct SpanStorage32(u32);
 
 impl SpanStorage32 {
@@ -143,7 +145,7 @@ impl fmt::Debug for SpanStorage32 {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) struct SpanStorage64 {
     offset: u32,
     len_and_parts: u32,
@@ -209,7 +211,7 @@ impl From<SpanStorage32> for SpanStorage64 {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) struct SpanStorage96 {
     offset: u32,
     len: u32,
@@ -272,7 +274,7 @@ impl From<SpanStorage64> for SpanStorage96 {
 }
 
 // We don't use structs or enum nesting here to save padding.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) enum TokenTree<S> {
     Literal {
         text_and_suffix: Symbol,
@@ -388,14 +390,14 @@ impl<S: SpanStorage> TokenTree<S> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub(crate) enum TopSubtreeRepr {
     SpanStorage32(Box<[TokenTree<SpanStorage32>]>),
     SpanStorage64(Box<[TokenTree<SpanStorage64>]>),
     SpanStorage96(Box<[TokenTree<SpanStorage96>]>),
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct TopSubtree {
     repr: TopSubtreeRepr,
     span_parts: Box<[CompressedSpanPart]>,
@@ -441,6 +443,93 @@ impl TopSubtree {
 
     pub fn top_subtree(&self) -> crate::tt::Subtree {
         self.view().top_subtree()
+    }
+}
+
+impl MemorySize for CompressedSpanPart {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
+}
+
+impl MemorySize for SpanStorage32 {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
+}
+
+impl MemorySize for SpanStorage64 {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
+}
+
+impl MemorySize for SpanStorage96 {
+    fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
+}
+
+impl<S: MemorySize> MemorySize for TokenTree<S> {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Literal {
+                text_and_suffix,
+                span,
+                kind: _,
+                suffix_len: _,
+            } => {
+                recorder.scope("text_and_suffix", |recorder| {
+                    text_and_suffix.record_memory_children(recorder);
+                });
+                recorder.scope("span", |recorder| span.record_memory_children(recorder));
+            }
+            Self::Punct {
+                char: _,
+                spacing: _,
+                span,
+            } => recorder.scope("span", |recorder| span.record_memory_children(recorder)),
+            Self::Ident {
+                sym,
+                span,
+                is_raw: _,
+            } => {
+                recorder.scope("sym", |recorder| sym.record_memory_children(recorder));
+                recorder.scope("span", |recorder| span.record_memory_children(recorder));
+            }
+            Self::Subtree {
+                len: _,
+                delim_kind: _,
+                open_span,
+                close_span,
+            } => {
+                recorder.scope("open_span", |recorder| {
+                    open_span.record_memory_children(recorder);
+                });
+                recorder.scope("close_span", |recorder| {
+                    close_span.record_memory_children(recorder);
+                });
+            }
+        }
+    }
+}
+
+impl MemorySize for TopSubtreeRepr {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::SpanStorage32(items) => recorder.scope("span_storage32", |recorder| {
+                items.record_memory_children(recorder);
+            }),
+            Self::SpanStorage64(items) => recorder.scope("span_storage64", |recorder| {
+                items.record_memory_children(recorder);
+            }),
+            Self::SpanStorage96(items) => recorder.scope("span_storage96", |recorder| {
+                items.record_memory_children(recorder);
+            }),
+        }
+    }
+}
+
+impl MemorySize for TopSubtree {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        recorder.scope("repr", |recorder| {
+            self.repr.record_memory_children(recorder);
+        });
+        recorder.scope("span_parts", |recorder| {
+            self.span_parts.record_memory_children(recorder);
+        });
     }
 }
 

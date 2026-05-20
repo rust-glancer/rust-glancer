@@ -6,9 +6,9 @@
 //! The `TokenTree` is semantically a tree, but for performance reasons it is stored as a flat structure.
 
 pub(crate) mod buffer;
-pub(crate) mod iter;
+pub mod iter;
 mod storage;
-pub(crate) mod symbol;
+pub mod symbol;
 
 use std::{fmt, slice::SliceIndex};
 
@@ -17,7 +17,6 @@ use buffer::Cursor;
 use stdx::{impl_from, itertools::Itertools as _};
 
 pub use crate::span::Span;
-pub use text_size::{TextRange, TextSize};
 
 use self::storage::{CompressedSpanPart, SpanStorage};
 
@@ -26,7 +25,7 @@ pub use self::storage::{TopSubtree, TopSubtreeBuilder};
 
 pub const MAX_GLUED_PUNCT_LEN: usize = 3;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum IdentIsRaw {
     No,
     Yes,
@@ -53,7 +52,7 @@ impl IdentIsRaw {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum LitKind {
     Byte,
     Char,
@@ -68,7 +67,7 @@ pub enum LitKind {
     Err(()),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum TokenTree {
     Leaf(Leaf),
     Subtree(Subtree),
@@ -83,7 +82,7 @@ impl TokenTree {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum Leaf {
     Literal(Literal),
     Punct(Punct),
@@ -101,7 +100,7 @@ impl Leaf {
 }
 impl_from!(Literal, Punct, Ident for Leaf);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct Subtree {
     pub delimiter: Delimiter,
     /// Number of following token trees that belong to this subtree, excluding this subtree.
@@ -334,7 +333,7 @@ impl fmt::Display for SubtreeView<'_> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct DelimSpan {
     pub open: Span,
     pub close: Span,
@@ -348,7 +347,7 @@ impl DelimSpan {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct Delimiter {
     pub open: Span,
     pub close: Span,
@@ -380,7 +379,7 @@ impl Delimiter {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum DelimiterKind {
     Parenthesis,
     Brace,
@@ -388,7 +387,7 @@ pub enum DelimiterKind {
     Invisible,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct Literal {
     /// Escaped, text then suffix concatenated.
     pub text_and_suffix: Symbol,
@@ -489,7 +488,7 @@ pub fn token_to_literal(text: &str, span: Span) -> Literal {
     Literal::new(lit, span, kind, suffix)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct Punct {
     pub char: char,
     pub spacing: Spacing,
@@ -498,7 +497,7 @@ pub struct Punct {
 
 /// Indicates whether a token can join with the following token to form a
 /// compound token.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum Spacing {
     /// The token cannot join with the following token to form a compound
     /// token.
@@ -529,7 +528,7 @@ pub enum Spacing {
 }
 
 /// Identifier or keyword.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct Ident {
     pub sym: Symbol,
     pub span: Span,
@@ -697,80 +696,5 @@ impl fmt::Display for Literal {
 impl fmt::Display for Punct {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(&self.char, f)
-    }
-}
-
-pub fn pretty(tkns: TokenTreesView<'_>) -> String {
-    return dispatch_ref! {
-        match tkns.repr => tt => pretty_impl(tt)
-    };
-
-    use crate::tt::storage::TokenTree;
-
-    fn tokentree_to_text<S: SpanStorage>(tkn: &TokenTree<S>, tkns: &mut &[TokenTree<S>]) -> String {
-        match tkn {
-            TokenTree::Ident { sym, is_raw, .. } => format!("{}{}", is_raw.as_str(), sym),
-            &TokenTree::Literal {
-                ref text_and_suffix,
-                kind,
-                suffix_len,
-                span: _,
-            } => {
-                format!(
-                    "{}",
-                    Literal {
-                        text_and_suffix: text_and_suffix.clone(),
-                        span: Span {
-                            range: TextRange::empty(TextSize::new(0)),
-                            anchor: crate::span::SpanAnchor {
-                                file_id: crate::span::EditionedFileId::from_raw(0),
-                                ast_id: crate::span::FIXUP_ERASED_FILE_AST_ID_MARKER
-                            },
-                            ctx: crate::span::SyntaxContext::root(
-                                crate::span::Edition::Edition2015
-                            )
-                        },
-                        kind,
-                        suffix_len
-                    }
-                )
-            }
-            TokenTree::Punct { char, .. } => format!("{}", char),
-            TokenTree::Subtree {
-                len, delim_kind, ..
-            } => {
-                let (subtree_content, rest) = tkns.split_at(*len as usize);
-                let content = pretty_impl(subtree_content);
-                *tkns = rest;
-                let (open, close) = match *delim_kind {
-                    DelimiterKind::Brace => ("{", "}"),
-                    DelimiterKind::Bracket => ("[", "]"),
-                    DelimiterKind::Parenthesis => ("(", ")"),
-                    DelimiterKind::Invisible => ("", ""),
-                };
-                format!("{open}{content}{close}")
-            }
-        }
-    }
-
-    fn pretty_impl<S: SpanStorage>(mut tkns: &[TokenTree<S>]) -> String {
-        let mut last = String::new();
-        let mut last_to_joint = true;
-
-        while let Some((tkn, rest)) = tkns.split_first() {
-            tkns = rest;
-            last = [last, tokentree_to_text(tkn, &mut tkns)].join(if last_to_joint {
-                ""
-            } else {
-                " "
-            });
-            last_to_joint = false;
-            if let TokenTree::Punct { spacing, .. } = tkn
-                && *spacing == Spacing::Joint
-            {
-                last_to_joint = true;
-            }
-        }
-        last
     }
 }

@@ -1333,6 +1333,7 @@ dependencies = [
  "rg_parse",
  "rg_syntax",
  "rg_text",
+ "rg_tt",
  "rg_workspace",
  "test_fixture",
  "wincode",
@@ -1351,6 +1352,7 @@ dependencies = [
  "rg_parse",
  "rg_syntax",
  "rg_text",
+ "rg_tt",
  "rg_wincode_utils",
  "rg_workspace",
  "test_fixture",
@@ -1414,6 +1416,7 @@ dependencies = [
  "ra-ap-rustc_lexer",
  "rg_parser",
  "rg_syntax",
+ "rg_tt",
  "rustc-hash",
  "smallvec",
  "smol_str",
@@ -1536,6 +1539,20 @@ name = "rg_text"
 version = "0.1.0"
 dependencies = [
  "rg_memsize",
+ "wincode",
+]
+
+[[package]]
+name = "rg_tt"
+version = "0.1.0"
+dependencies = [
+ "ra-ap-rustc_lexer",
+ "rg_memsize",
+ "rg_parser",
+ "rg_syntax",
+ "smol_str",
+ "stdx",
+ "text-size",
  "wincode",
 ]
 

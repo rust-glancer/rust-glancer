@@ -3,8 +3,8 @@
 //! Transcriber takes a template, like `fn $ident() {}`, a set of bindings like
 //! `$ident => foo`, interpolates variables in the template, to get `fn foo() {}`
 
-use crate::span::{Edition, Span};
-use crate::tt::{
+use rg_tt::span::{Edition, Span};
+use rg_tt::tt::{
     self, Delimiter, TopSubtreeBuilder,
     iter::TtElement,
     symbol::{Symbol, sym},

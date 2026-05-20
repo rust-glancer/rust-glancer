@@ -12,7 +12,8 @@ use std::{
 use anyhow::Context as _;
 use rayon::prelude::*;
 
-use rg_macro_expand::DeclarativeMacro;
+use rg_macro_expand::{DeclarativeMacro, ExpansionSyntax};
+use rg_tt::{Span as TtSpan, TopSubtree};
 
 use super::{
     MacroExpansionAttempt,
@@ -36,7 +37,7 @@ impl MacroExpansionExecutor {
     }
 }
 
-/// Executes all pending expansion work and writes the generated source back into each attempt.
+/// Executes all pending expansion work and writes the generated syntax back into each attempt.
 pub(crate) fn expand_expansion_attempts(
     executor: &MacroExpansionExecutor,
     attempts: &mut [MacroExpansionAttempt],
@@ -70,11 +71,11 @@ pub(crate) fn expand_expansion_attempts(
     // Keep result application deterministic even though the work finished in parallel.
     results.sort_by_key(|result| result.attempt_id);
     for result in results {
-        let source = result.generated_source;
-        cache.insert_expansion(result.key, source.clone());
+        let syntax = result.generated_syntax;
+        cache.insert_expansion(result.key, syntax.clone());
         stats.record(|stats| {
             stats.record_macro_expansion_elapsed(&result.macro_name, result.elapsed);
-            if source.is_some() {
+            if syntax.is_some() {
                 stats.macro_calls_expanded += 1;
             } else {
                 stats.record_expand_failure(&result.macro_name);
@@ -82,7 +83,7 @@ pub(crate) fn expand_expansion_attempts(
         });
 
         let attempt = &mut attempts[result.attempt_id];
-        attempt.set_expansion_result(source);
+        attempt.set_expansion_result(syntax);
     }
 }
 
@@ -91,19 +92,17 @@ pub(super) struct MacroExpansionWork {
     pub(super) key: MacroExpansionCacheKey,
     pub(super) macro_name: String,
     pub(super) macro_: Arc<DeclarativeMacro>,
-    pub(super) path_text: String,
-    pub(super) args: String,
-    pub(super) call_file_id: u32,
+    pub(super) args: TopSubtree,
+    pub(super) call_site: TtSpan,
 }
 
 impl MacroExpansionWork {
     fn expand(self, attempt_id: usize) -> MacroExpansionWorkResult {
         let started_at = Instant::now();
-        let generated_source = self
+        let generated_syntax = self
             .macro_
-            .expand_call_parts(&self.path_text, &self.args, self.call_file_id)
-            .ok()
-            .map(|expanded| expanded.source);
+            .expand_call_tokens(&self.args, self.call_site)
+            .ok();
         let elapsed = started_at.elapsed();
 
         MacroExpansionWorkResult {
@@ -111,7 +110,7 @@ impl MacroExpansionWork {
             key: self.key,
             macro_name: self.macro_name,
             elapsed,
-            generated_source,
+            generated_syntax,
         }
     }
 }
@@ -121,5 +120,5 @@ struct MacroExpansionWorkResult {
     key: MacroExpansionCacheKey,
     macro_name: String,
     elapsed: Duration,
-    generated_source: Option<String>,
+    generated_syntax: Option<ExpansionSyntax>,
 }

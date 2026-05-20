@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use crate::span::{Edition, Span, SyntaxContext};
-use crate::tt::{
+use rg_tt::span::{Edition, Span, SyntaxContext};
+use rg_tt::tt::{
     self, MAX_GLUED_PUNCT_LEN,
     iter::{TtElement, TtIter},
     symbol::{Symbol, sym},

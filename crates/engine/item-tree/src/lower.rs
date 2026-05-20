@@ -194,6 +194,7 @@ impl<'db> PackageLowering<'db> {
         item: ast::Item,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Option<ItemTreeId>> {
+        let edition = self.parse_package.edition();
         let item_id = match item {
             ast::Item::AsmExpr(item) => Some(builder.alloc_item(
                 ItemKind::AsmExpr,
@@ -261,21 +262,34 @@ impl<'db> PackageLowering<'db> {
                 ))
             }
             ast::Item::MacroCall(item) => Some(builder.alloc_documented_item(
-                ItemKind::MacroCall(MacroCallItem::from_ast(&item, self.interner)),
+                ItemKind::MacroCall(MacroCallItem::from_ast(
+                    &item,
+                    builder.current_file_id,
+                    edition,
+                    self.interner,
+                )),
                 None,
                 None,
                 VisibilityLevel::Private,
                 &item,
             )),
             ast::Item::MacroDef(item) => Some(builder.alloc_documented_item(
-                ItemKind::MacroDefinition(MacroDefinitionItem::from_macro_def(&item)),
+                ItemKind::MacroDefinition(MacroDefinitionItem::from_macro_def(
+                    &item,
+                    builder.current_file_id,
+                    edition,
+                )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),
                 &item,
             )),
             ast::Item::MacroRules(item) => Some(builder.alloc_documented_item(
-                ItemKind::MacroDefinition(MacroDefinitionItem::from_macro_rules(&item)),
+                ItemKind::MacroDefinition(MacroDefinitionItem::from_macro_rules(
+                    &item,
+                    builder.current_file_id,
+                    edition,
+                )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
                 VisibilityLevel::from_ast(item.visibility()),

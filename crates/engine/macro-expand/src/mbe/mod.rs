@@ -8,10 +8,10 @@ mod expander;
 mod macro_call_style;
 mod parser;
 
-use crate::span::{Edition, Span, SyntaxContext};
-use crate::tt;
-use crate::tt::DelimSpan;
-use crate::tt::iter::TtIter;
+use rg_tt::span::{Edition, Span, SyntaxContext};
+use rg_tt::tt;
+use rg_tt::tt::DelimSpan;
+use rg_tt::tt::iter::TtIter;
 
 use std::fmt;
 use std::sync::Arc;

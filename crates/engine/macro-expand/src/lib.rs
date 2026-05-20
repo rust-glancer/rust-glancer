@@ -1,26 +1,25 @@
 //! Declarative macro expansion for rust-glancer.
 //!
 //! This crate keeps the rust-analyzer-derived MBE engine behind a small API that
-//! works with rust-glancer's syntax and def-map data. Callers either pass parsed
-//! `rg_syntax` macro nodes or the stored macro pieces from def-map, then receive
-//! generated source text that can be parsed through the normal item pipeline.
-//!
-//! Expansion intentionally ends at text for now. That avoids coupling macro
-//! expansion to the private frozen-tree builder in `rg_syntax`, while still
-//! making generated items visible to later analysis phases.
+//! works with rust-glancer's syntax and def-map data. Callers pass parsed macro
+//! nodes or stored token trees, then receive generated syntax parsed directly
+//! from the expanded token tree.
 
 extern crate ra_ap_rustc_lexer as rustc_lexer;
 
 mod mbe;
-mod span;
-mod tt;
 
-use crate::tt::symbol::Symbol;
 use anyhow::Context as _;
-use rg_syntax::{AstNode as _, NodeOrToken, SyntaxKind, SyntaxToken, T, TextRange, TextSize, ast};
-use span::{EditionedFileId, ROOT_ERASED_FILE_AST_ID, Span, SpanAnchor, SyntaxContext};
+use rg_syntax::{AstNode as _, Parse, SyntaxNode, ast};
+use rg_tt::{
+    span::SyntaxContext,
+    syntax_bridge::{
+        ExpansionSpanMap, SpanFactory, syntax_node_to_token_tree, token_tree_to_syntax_node,
+    },
+};
 
-pub use crate::span::Edition;
+pub use rg_tt::span::Edition;
+pub use rg_tt::tt::TopSubtree;
 
 /// Compiled declarative macro ready to expand function-like calls.
 ///
@@ -34,37 +33,11 @@ pub struct DeclarativeMacro {
 }
 
 impl DeclarativeMacro {
-    /// Compiles a `macro_rules!` definition from the pieces stored in def-map.
-    ///
-    /// Def-map stores only the body token tree text, not a full source item. To
-    /// reuse the same parser path as source-backed definitions, this creates a
-    /// short-lived synthetic `SourceFile` containing a dummy macro name, finds
-    /// the parsed macro node inside it, and immediately converts that node into
-    /// the vendored token-tree representation.
-    pub fn from_macro_rules_parts(
-        body: &str,
-        edition: Edition,
-        file_id: u32,
-    ) -> anyhow::Result<Self> {
-        let source = format!("macro_rules! __rg_macro {body}");
-        let file = ast::SourceFile::parse(&source, edition)
-            .ok()
-            .map_err(|errors| {
-                anyhow::anyhow!("macro_rules source has syntax errors: {errors:?}")
-            })?;
-        let item = file
-            .syntax()
-            .descendants()
-            .find_map(ast::MacroRules::cast)
-            .context("while attempting to find parsed macro_rules item")?;
-        Self::from_macro_rules(&item, edition, file_id)
-    }
-
     /// Compiles a `macro_rules!` definition from a parsed syntax node.
     ///
-    /// `file_id` anchors spans created for the vendored expander. The first
-    /// integration path renders expanded tokens back to text, so these spans are
-    /// used mainly for matching, diagnostics, and future span-aware work.
+    /// `file_id` anchors spans created for the vendored expander. The generated
+    /// syntax keeps a span map, so callers can later map expanded tokens back to
+    /// the definition or call site.
     pub fn from_macro_rules(
         item: &ast::MacroRules,
         edition: Edition,
@@ -74,35 +47,15 @@ impl DeclarativeMacro {
             .token_tree()
             .context("while attempting to fetch macro_rules body")?;
         let span_factory = SpanFactory::new(file_id, edition);
-        let body = token_tree_to_tt(&body, span_factory);
+        let body = syntax_node_to_token_tree(&body, span_factory);
         let inner = mbe::DeclarativeMacro::parse_macro_rules(&body, move |ctx| ctx.edition());
         Ok(Self { inner, edition })
     }
 
-    /// Compiles a `macro` definition from the pieces stored in def-map.
-    ///
-    /// Like `from_macro_rules_parts`, this reconstructs a minimal synthetic item
-    /// only long enough for `rg_syntax` to parse token-tree boundaries exactly as
-    /// it would in real source.
-    pub fn from_macro_def_parts(
-        args: Option<&str>,
-        body: &str,
-        edition: Edition,
-        file_id: u32,
-    ) -> anyhow::Result<Self> {
-        let source = match args {
-            Some(args) => format!("macro __rg_macro {args} {body}"),
-            None => format!("macro __rg_macro {body}"),
-        };
-        let file = ast::SourceFile::parse(&source, edition)
-            .ok()
-            .map_err(|errors| anyhow::anyhow!("macro source has syntax errors: {errors:?}"))?;
-        let item = file
-            .syntax()
-            .descendants()
-            .find_map(ast::MacroDef::cast)
-            .context("while attempting to find parsed macro item")?;
-        Self::from_macro_def(&item, edition, file_id)
+    /// Compiles a `macro_rules!` definition from a stored token tree.
+    pub fn from_macro_rules_tokens(body: &TopSubtree, edition: Edition) -> anyhow::Result<Self> {
+        let inner = mbe::DeclarativeMacro::parse_macro_rules(body, move |ctx| ctx.edition());
+        Ok(Self { inner, edition })
     }
 
     /// Compiles a `macro` definition from a parsed syntax node.
@@ -114,32 +67,38 @@ impl DeclarativeMacro {
         let span_factory = SpanFactory::new(file_id, edition);
         let args = item
             .args()
-            .map(|args| token_tree_to_tt(&args, span_factory));
+            .map(|args| syntax_node_to_token_tree(&args, span_factory));
         let body = item
             .body()
             .context("while attempting to fetch macro body")?;
-        let body = token_tree_to_tt(&body, span_factory);
+        let body = syntax_node_to_token_tree(&body, span_factory);
         let inner =
             mbe::DeclarativeMacro::parse_macro2(args.as_ref(), &body, move |ctx| ctx.edition());
         Ok(Self { inner, edition })
     }
 
-    /// Expands a parsed function-like macro call into source text.
-    ///
-    /// The returned text is intentionally not parsed here. Def-map integration
-    /// decides the syntactic context of the expansion, such as wrapping generated
-    /// item text in a temporary source file before collecting item-tree data.
+    /// Compiles a `macro` definition from stored token trees.
+    pub fn from_macro_def_tokens(
+        args: Option<&TopSubtree>,
+        body: &TopSubtree,
+        edition: Edition,
+    ) -> anyhow::Result<Self> {
+        let inner = mbe::DeclarativeMacro::parse_macro2(args, body, move |ctx| ctx.edition());
+        Ok(Self { inner, edition })
+    }
+
+    /// Expands a parsed function-like macro call into parsed item-position syntax.
     pub fn expand_call(
         &self,
         call: &ast::MacroCall,
         file_id: u32,
-    ) -> anyhow::Result<ExpansionText> {
+    ) -> anyhow::Result<ExpansionSyntax> {
         let args = call
             .token_tree()
             .context("while attempting to fetch macro call arguments")?;
         let span_factory = SpanFactory::new(file_id, self.edition);
         let call_site = span_factory.span_for(call.syntax().text_range());
-        let args = token_tree_to_tt(&args, span_factory);
+        let args = syntax_node_to_token_tree(&args, span_factory);
         let expanded = self.inner.expand(
             &args,
             |_| {},
@@ -152,238 +111,50 @@ impl DeclarativeMacro {
             anyhow::bail!("macro expansion failed: {err}");
         }
 
-        Ok(ExpansionText {
-            source: render_expansion(expanded.value.0.view().token_trees()),
-        })
+        Ok(ExpansionSyntax::from_token_tree(expanded.value.0))
     }
 
-    /// Expands a macro call from stored path and argument text.
-    ///
-    /// This is the call-side twin of the `*_parts` constructors: it builds an
-    /// ephemeral source snippet containing the path, stored delimiter+argument
-    /// text, and a trailing semicolon. The snippet is parsed as a `SourceFile`,
-    /// the macro call AST node is converted to token trees, and the syntax tree
-    /// is then discarded. The snippet is not inserted into any database;
-    /// `file_id` is only the span anchor used while the vendored engine runs.
-    pub fn expand_call_parts(
+    /// Expands a function-like macro call from stored argument token trees.
+    pub fn expand_call_tokens(
         &self,
-        path: &str,
-        args: &str,
-        file_id: u32,
-    ) -> anyhow::Result<ExpansionText> {
-        let source = format!("{path}!{args};");
-        let file = ast::SourceFile::parse(&source, self.edition)
-            .ok()
-            .map_err(|errors| anyhow::anyhow!("macro call source has syntax errors: {errors:?}"))?;
-        let call = file
-            .syntax()
-            .descendants()
-            .find_map(ast::MacroCall::cast)
-            .context("while attempting to find parsed macro call")?;
-        self.expand_call(&call, file_id)
+        args: &TopSubtree,
+        call_site: rg_tt::Span,
+    ) -> anyhow::Result<ExpansionSyntax> {
+        let expanded = self.inner.expand(
+            args,
+            |_| {},
+            mbe::MacroCallStyle::FnLike,
+            call_site,
+            move |ctx| ctx.edition(),
+        );
+
+        if let Some(err) = expanded.err {
+            anyhow::bail!("macro expansion failed: {err}");
+        }
+
+        Ok(ExpansionSyntax::from_token_tree(expanded.value.0))
     }
 }
 
-/// Source text produced by a successful declarative macro expansion.
+/// Parsed syntax produced by a successful declarative macro expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ExpansionText {
-    /// Generated Rust source to parse in the caller's expected syntactic context.
-    pub source: String,
+pub struct ExpansionSyntax {
+    /// Generated item-position syntax parsed directly from the expanded token tree.
+    pub parse: Parse<SyntaxNode>,
+    /// Offset-to-span map for generated tokens.
+    pub span_map: ExpansionSpanMap,
 }
 
-/// Produces coarse spans for token trees passed into the vendored expander.
-///
-/// rust-glancer does not preserve macro-expanded syntax trees yet, but the
-/// matcher still needs stable span values for errors and syntax-context-aware
-/// operations. The factory keeps every generated span anchored to the caller's
-/// file id and edition.
-#[derive(Clone, Copy)]
-struct SpanFactory {
-    anchor: SpanAnchor,
-    ctx: SyntaxContext,
-}
-
-impl SpanFactory {
-    fn new(file_id: u32, edition: Edition) -> Self {
-        Self {
-            anchor: SpanAnchor {
-                file_id: EditionedFileId::new(file_id, edition),
-                ast_id: ROOT_ERASED_FILE_AST_ID,
-            },
-            ctx: SyntaxContext::root(edition),
-        }
+impl ExpansionSyntax {
+    fn from_token_tree(token_tree: TopSubtree) -> Self {
+        let mut span_to_edition = |ctx: SyntaxContext| ctx.edition();
+        let (parse, span_map) = token_tree_to_syntax_node(
+            &token_tree,
+            parser::TopEntryPoint::MacroItems,
+            &mut span_to_edition,
+        );
+        Self { parse, span_map }
     }
-
-    fn span_for(self, range: TextRange) -> Span {
-        Span {
-            range,
-            anchor: self.anchor,
-            ctx: self.ctx,
-        }
-    }
-}
-
-fn token_tree_to_tt(tree: &ast::TokenTree, span_factory: SpanFactory) -> tt::TopSubtree {
-    // `rg_syntax` exposes token trees as regular syntax nodes. The vendored MBE
-    // engine wants a compact tree with explicit delimiters, so conversion starts
-    // by recording the outer delimiter and then streams the children into the
-    // flat token-tree builder.
-    let delimiter = delimiter_for(tree, span_factory);
-    let mut builder = tt::TopSubtreeBuilder::new(delimiter);
-    push_token_tree_children(&mut builder, tree, span_factory);
-    builder.build()
-}
-
-fn push_nested_token_tree(
-    builder: &mut tt::TopSubtreeBuilder,
-    tree: &ast::TokenTree,
-    span_factory: SpanFactory,
-) {
-    let delimiter = delimiter_for(tree, span_factory);
-    builder.open(delimiter.kind, delimiter.open);
-    push_token_tree_children(builder, tree, span_factory);
-    builder.close(delimiter.close);
-}
-
-fn push_token_tree_children(
-    builder: &mut tt::TopSubtreeBuilder,
-    tree: &ast::TokenTree,
-    span_factory: SpanFactory,
-) {
-    // Delimiter tokens are represented by the subtree itself in `tt`, not by
-    // separate punctuation leaves. Skip the concrete syntax tokens after their
-    // ranges have been copied into the delimiter span.
-    let left = tree.left_delimiter_token().map(|token| token.text_range());
-    let right = tree.right_delimiter_token().map(|token| token.text_range());
-
-    for child in tree.token_trees_and_tokens() {
-        match child {
-            NodeOrToken::Node(tree) => push_nested_token_tree(builder, &tree, span_factory),
-            NodeOrToken::Token(token)
-                if Some(token.text_range()) == left || Some(token.text_range()) == right => {}
-            NodeOrToken::Token(token) => push_token(builder, &token, span_factory),
-        }
-    }
-}
-
-fn delimiter_for(tree: &ast::TokenTree, span_factory: SpanFactory) -> tt::Delimiter {
-    let Some(left) = tree.left_delimiter_token() else {
-        return tt::Delimiter::invisible_spanned(span_factory.span_for(tree.syntax().text_range()));
-    };
-    let Some(right) = tree.right_delimiter_token() else {
-        return tt::Delimiter::invisible_spanned(span_factory.span_for(tree.syntax().text_range()));
-    };
-
-    let kind = match left.kind() {
-        T!['('] => tt::DelimiterKind::Parenthesis,
-        T!['{'] => tt::DelimiterKind::Brace,
-        T!['['] => tt::DelimiterKind::Bracket,
-        _ => tt::DelimiterKind::Invisible,
-    };
-
-    tt::Delimiter {
-        open: span_factory.span_for(left.text_range()),
-        close: span_factory.span_for(right.text_range()),
-        kind,
-    }
-}
-
-fn push_token(builder: &mut tt::TopSubtreeBuilder, token: &SyntaxToken, span_factory: SpanFactory) {
-    let kind = token.kind();
-    if kind.is_trivia() {
-        return;
-    }
-
-    if kind == SyntaxKind::LIFETIME_IDENT {
-        push_lifetime(builder, token, span_factory);
-    } else if kind.is_any_identifier() || kind == T![_] {
-        builder.push(tt::Leaf::Ident(tt::Ident::new(
-            token.text(),
-            span_factory.span_for(token.text_range()),
-        )));
-    } else if kind.is_literal() {
-        builder.push(tt::Leaf::Literal(tt::token_to_literal(
-            token.text(),
-            span_factory.span_for(token.text_range()),
-        )));
-    } else if kind.is_punct() {
-        push_punct_token(builder, token, span_factory);
-    }
-}
-
-fn push_lifetime(
-    builder: &mut tt::TopSubtreeBuilder,
-    token: &SyntaxToken,
-    span_factory: SpanFactory,
-) {
-    // rust-analyzer's token-tree format represents lifetimes as a joint
-    // apostrophe punctuation followed by an identifier. Matching that shape keeps
-    // lifetime fragments compatible with the vendored parser.
-    let range = token.text_range();
-    let apostrophe = TextRange::at(range.start(), TextSize::of('\''));
-    builder.push(tt::Leaf::Punct(tt::Punct {
-        char: '\'',
-        spacing: tt::Spacing::Joint,
-        span: span_factory.span_for(apostrophe),
-    }));
-    builder.push(tt::Leaf::Ident(tt::Ident {
-        sym: Symbol::new(token.text().trim_start_matches('\'')),
-        span: span_factory.span_for(TextRange::new(
-            range.start() + TextSize::of('\''),
-            range.end(),
-        )),
-        is_raw: tt::IdentIsRaw::No,
-    }));
-}
-
-fn push_punct_token(
-    builder: &mut tt::TopSubtreeBuilder,
-    token: &SyntaxToken,
-    span_factory: SpanFactory,
-) {
-    let mut offset = token.text_range().start();
-    let chars = token.text().chars().collect::<Vec<_>>();
-    for (index, char) in chars.iter().copied().enumerate() {
-        let len = TextSize::of(char);
-        let spacing = if index + 1 == chars.len() {
-            tt::Spacing::Alone
-        } else {
-            tt::Spacing::Joint
-        };
-        builder.push(tt::Leaf::Punct(tt::Punct {
-            char,
-            spacing,
-            span: span_factory.span_for(TextRange::at(offset, len)),
-        }));
-        offset += len;
-    }
-}
-
-fn render_expansion(tokens: tt::TokenTreesView<'_>) -> String {
-    let mut source = tt::pretty(tokens);
-
-    // The vendored transcriber can lose joint spacing for punctuation in a few simple paths.
-    // Keep this renderer text-based for now, but repair the multi-character punctuators that must
-    // re-lex as one logical token for generated item syntax.
-    for (from, to) in [
-        (": :", "::"),
-        ("= >", "=>"),
-        ("- >", "->"),
-        ("! =", "!="),
-        ("= =", "=="),
-        ("< =", "<="),
-        ("> =", ">="),
-        ("& &", "&&"),
-        ("| |", "||"),
-        (". . =", "..="),
-        (". .", ".."),
-        ("< <", "<<"),
-        ("> >", ">>"),
-    ] {
-        source = source.replace(from, to);
-    }
-
-    source
 }
 
 #[cfg(test)]
@@ -394,7 +165,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn expands_simple_item_macro_to_text() {
+    fn expands_simple_item_macro_to_syntax() {
         check_expansion(
             r#"
 macro_rules! make_user {
@@ -410,7 +181,7 @@ make_user!();
     }
 
     #[test]
-    fn expands_repetition_to_text() {
+    fn expands_repetition_to_syntax() {
         check_expansion(
             r#"
 macro_rules! make_fields {
@@ -423,7 +194,7 @@ macro_rules! make_fields {
 
 make_fields!(id, age);
 "#,
-            expect!["struct User {id : u32 , age : u32 ,}"],
+            expect!["struct User{id : u32 ,age : u32 ,}"],
         );
     }
 
@@ -443,6 +214,77 @@ import_thing!();
         );
     }
 
+    #[test]
+    fn keeps_punctuation_inside_literals_untouched() {
+        check_expansion(
+            r#"
+macro_rules! make_const {
+    () => {
+        const TEXT: &str = "a : : b";
+    };
+}
+
+make_const!();
+"#,
+            expect!["const TEXT : & str = \"a : : b\" ;"],
+        );
+    }
+
+    #[test]
+    fn generated_dollar_crate_macro_call_keeps_full_path() {
+        let file = ast::SourceFile::parse(
+            r#"
+macro_rules! outer {
+    () => {
+        $crate::inner!();
+    };
+}
+
+outer!();
+"#,
+            Edition::CURRENT,
+        )
+        .ok()
+        .expect("test source should parse");
+        let macro_rules = file
+            .syntax()
+            .descendants()
+            .find_map(ast::MacroRules::cast)
+            .expect("test source should contain macro_rules");
+        let call = file
+            .syntax()
+            .descendants()
+            .filter_map(ast::MacroCall::cast)
+            .last()
+            .expect("test source should contain a macro call");
+
+        let macro_rules = stored_macro_rules_body(&macro_rules);
+        let (args, call_site) = stored_call_args(&call);
+        let mac = DeclarativeMacro::from_macro_rules_tokens(&macro_rules, Edition::CURRENT)
+            .expect("macro should compile");
+        let expanded = mac
+            .expand_call_tokens(&args, call_site)
+            .expect("macro should expand");
+        let generated_call = expanded
+            .parse
+            .syntax_node()
+            .descendants()
+            .find_map(ast::MacroCall::cast)
+            .expect("expansion should contain a macro call");
+
+        let path = generated_call
+            .path()
+            .expect("generated call should have a path")
+            .syntax()
+            .text()
+            .to_string()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        assert_eq!(path, "$crate :: inner");
+    }
+
     fn check_expansion(source: &str, expected: Expect) {
         let file = ast::SourceFile::parse(source, Edition::CURRENT)
             .ok()
@@ -459,25 +301,112 @@ import_thing!();
             .last()
             .expect("test source should contain a macro call");
 
-        let mac = DeclarativeMacro::from_macro_rules(&macro_rules, Edition::CURRENT, 0)
+        let macro_rules = stored_macro_rules_body(&macro_rules);
+        let (args, call_site) = stored_call_args(&call);
+        let mac = DeclarativeMacro::from_macro_rules_tokens(&macro_rules, Edition::CURRENT)
             .expect("macro should compile");
-        let expanded = mac.expand_call(&call, 0).expect("macro should expand");
+        let expanded = mac
+            .expand_call_tokens(&args, call_site)
+            .expect("macro should expand");
 
-        expected.assert_eq(&expanded.source);
+        expected.assert_eq(&expanded.parse.syntax_node().text().to_string());
     }
 
     #[test]
-    fn expands_from_stored_parts() {
-        let mac = DeclarativeMacro::from_macro_rules_parts(
-            "{ ($name:ident) => { struct $name; }; }",
+    fn preserves_dollar_crate_in_generated_syntax() {
+        let file = ast::SourceFile::parse(
+            r#"
+macro_rules! import_thing {
+    () => {
+        pub use $crate::source::Thing;
+    };
+}
+
+import_thing!();
+"#,
             Edition::CURRENT,
-            0,
         )
-        .expect("macro should compile");
+        .ok()
+        .expect("test source should parse");
+        let macro_rules = file
+            .syntax()
+            .descendants()
+            .find_map(ast::MacroRules::cast)
+            .expect("test source should contain macro_rules");
+        let call = file
+            .syntax()
+            .descendants()
+            .filter_map(ast::MacroCall::cast)
+            .last()
+            .expect("test source should contain a macro call");
+
+        let macro_rules = stored_macro_rules_body(&macro_rules);
+        let (args, call_site) = stored_call_args(&call);
+        let mac = DeclarativeMacro::from_macro_rules_tokens(&macro_rules, Edition::CURRENT)
+            .expect("macro should compile");
         let expanded = mac
-            .expand_call_parts("make", "(Generated)", 0)
+            .expand_call_tokens(&args, call_site)
             .expect("macro should expand");
 
-        assert_eq!(expanded.source, "struct Generated ;");
+        assert_eq!(
+            expanded.parse.syntax_node().text().to_string(),
+            "pub use $crate :: source :: Thing ;"
+        );
+    }
+
+    #[test]
+    fn expands_from_stored_token_trees() {
+        let file = ast::SourceFile::parse(
+            r#"
+macro_rules! make {
+    ($name:ident) => { struct $name; };
+}
+
+make!(Generated);
+"#,
+            Edition::CURRENT,
+        )
+        .ok()
+        .expect("test source should parse");
+        let macro_rules = file
+            .syntax()
+            .descendants()
+            .find_map(ast::MacroRules::cast)
+            .expect("test source should contain macro_rules");
+        let call = file
+            .syntax()
+            .descendants()
+            .filter_map(ast::MacroCall::cast)
+            .last()
+            .expect("test source should contain a macro call");
+
+        let macro_rules = stored_macro_rules_body(&macro_rules);
+        let (args, call_site) = stored_call_args(&call);
+        let mac = DeclarativeMacro::from_macro_rules_tokens(&macro_rules, Edition::CURRENT)
+            .expect("macro should compile");
+        let expanded = mac
+            .expand_call_tokens(&args, call_site)
+            .expect("macro should expand");
+
+        assert_eq!(
+            expanded.parse.syntax_node().text().to_string(),
+            "struct Generated ;"
+        );
+    }
+
+    fn stored_macro_rules_body(macro_rules: &ast::MacroRules) -> TopSubtree {
+        let body = macro_rules
+            .token_tree()
+            .expect("macro_rules fixture should have a body");
+        syntax_node_to_token_tree(&body, SpanFactory::new(0, Edition::CURRENT))
+    }
+
+    fn stored_call_args(call: &ast::MacroCall) -> (TopSubtree, rg_tt::Span) {
+        let span_factory = SpanFactory::new(0, Edition::CURRENT);
+        let call_site = span_factory.span_for(call.syntax().text_range());
+        let args = call
+            .token_tree()
+            .expect("macro call fixture should have arguments");
+        (syntax_node_to_token_tree(&args, span_factory), call_site)
     }
 }

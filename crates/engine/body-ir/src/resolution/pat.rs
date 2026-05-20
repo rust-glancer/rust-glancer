@@ -292,6 +292,9 @@ fn variant_field<'a>(fields: &'a FieldList, key: &FieldKey) -> Option<&'a FieldI
 fn variant_name(path: Option<&Path>) -> Option<&str> {
     match path?.segments.last()? {
         PathSegment::Name(name) => Some(name),
-        PathSegment::SelfKw | PathSegment::SuperKw | PathSegment::CrateKw => None,
+        PathSegment::SelfKw
+        | PathSegment::SuperKw
+        | PathSegment::CrateKw
+        | PathSegment::DollarCrate(_) => None,
     }
 }

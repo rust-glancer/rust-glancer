@@ -924,6 +924,10 @@ impl SyntaxTreeBuilder {
         }
     }
 
+    pub(crate) fn generated() -> Self {
+        Self::default()
+    }
+
     pub(crate) fn finish(self) -> Arc<SyntaxTree> {
         assert!(
             self.stack.is_empty(),
@@ -966,6 +970,15 @@ impl SyntaxTreeBuilder {
         });
         parent.children.push(ElementId::token(id));
         self.offset += TextSize::of(text);
+    }
+
+    pub(crate) fn generated_token(&mut self, kind: SyntaxKind, text: &str) {
+        self.source.push_str(text);
+        self.token(kind, text);
+    }
+
+    pub(crate) fn current_offset(&self) -> TextSize {
+        self.offset
     }
 
     pub(crate) fn start_node(&mut self, kind: SyntaxKind) {

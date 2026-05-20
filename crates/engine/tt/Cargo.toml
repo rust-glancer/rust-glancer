@@ -1,5 +1,5 @@
 [package]
-name = "rg_macro_expand"
+name = "rg_tt"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,19 +11,14 @@ license.workspace = true
 repository.workspace = true
 homepage.workspace = true
 readme.workspace = true
-description = "Rust Glancer declarative macro expansion facade."
+description = "Rust Glancer token-tree and macro syntax bridge primitives."
 
 [dependencies]
-anyhow.workspace = true
 parser.workspace = true
 ra-ap-rustc_lexer.workspace = true
-rg_tt.workspace = true
 rg_syntax.workspace = true
-rustc-hash.workspace = true
-smallvec.workspace = true
+rg_memsize.workspace = true
 smol_str.workspace = true
 stdx.workspace = true
 text-size.workspace = true
-
-[dev-dependencies]
-expect-test.workspace = true
+wincode.workspace = true

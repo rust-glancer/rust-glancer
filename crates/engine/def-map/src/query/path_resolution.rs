@@ -378,11 +378,19 @@ fn resolve_first_segment(
                 .extern_root(importing_module.target, name)?
                 .map(|module_ref| vec![DefId::Module(module_ref)])
                 .unwrap_or_default()),
-            PathSegment::SelfKw | PathSegment::SuperKw | PathSegment::CrateKw => Ok(Vec::new()),
+            PathSegment::SelfKw
+            | PathSegment::SuperKw
+            | PathSegment::CrateKw
+            | PathSegment::DollarCrate(_) => Ok(Vec::new()),
         };
     }
 
     match segment {
+        PathSegment::DollarCrate(target) => Ok(env
+            .root_module(*target)?
+            .map(DefId::Module)
+            .into_iter()
+            .collect()),
         PathSegment::SelfKw => Ok(vec![DefId::Module(importing_module)]),
         PathSegment::SuperKw => Ok(env
             .parent_module(importing_module.target, importing_module.module)?
@@ -448,6 +456,7 @@ fn resolve_next_segment(
                     push_unique_def(&mut next_defs, DefId::Module(root));
                 }
             }
+            PathSegment::DollarCrate(_) => {}
             PathSegment::Name(name) => {
                 for resolved_def in
                     resolve_name_in_module(env, importing_module, module_ref, name, filter)?

@@ -7,9 +7,9 @@
 mod matcher;
 mod transcriber;
 
-use crate::span::{Edition, Span, SyntaxContext};
-use crate::tt;
-use crate::tt::symbol::Symbol;
+use rg_tt::span::{Edition, Span, SyntaxContext};
+use rg_tt::tt;
+use rg_tt::tt::symbol::Symbol;
 use rustc_hash::FxHashMap;
 
 use super::parser::MetaVarKind;

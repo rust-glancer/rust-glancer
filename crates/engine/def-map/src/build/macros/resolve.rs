@@ -9,7 +9,7 @@ use rg_text::Name;
 
 use crate::{
     DefId, ImportPath, LocalDefData, LocalDefKind, LocalDefRef, MacroDefinitionData, ModuleRef,
-    PathSegment,
+    PathSegment, TargetRef,
     build::{collect::TargetState, finalize::FinalizeTargetStates},
     query::path_resolution::{PathResolutionEnv, resolve_path_to_defs_with_env},
 };
@@ -128,7 +128,10 @@ fn relative_single_name(path: &ImportPath) -> Option<&Name> {
 
     match path.segments.first()? {
         PathSegment::Name(name) => Some(name),
-        PathSegment::SelfKw | PathSegment::SuperKw | PathSegment::CrateKw => None,
+        PathSegment::SelfKw
+        | PathSegment::SuperKw
+        | PathSegment::CrateKw
+        | PathSegment::DollarCrate(_) => None,
     }
 }
 
@@ -162,16 +165,22 @@ pub(super) fn is_unsupported_builtin_macro_path(path: &ImportPath) -> bool {
 }
 
 /// Parses the textual callee path stored in item-tree macro-call data.
-pub(super) fn macro_path_from_text(path: &str) -> Option<ImportPath> {
+pub(super) fn macro_path_from_text(
+    path: &str,
+    dollar_crate_target: Option<TargetRef>,
+) -> Option<ImportPath> {
+    let path = path.trim();
     let absolute = path.starts_with("::");
     let path = path.trim_start_matches("::");
     let mut segments = Vec::new();
 
     for segment in path.split("::") {
+        let segment = segment.trim();
         if segment.is_empty() {
             return None;
         }
         segments.push(match segment {
+            "$crate" => PathSegment::DollarCrate(dollar_crate_target?),
             "self" => PathSegment::SelfKw,
             "super" => PathSegment::SuperKw,
             "crate" => PathSegment::CrateKw,

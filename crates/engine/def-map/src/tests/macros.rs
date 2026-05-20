@@ -59,6 +59,56 @@ import_thing!();
 }
 
 #[test]
+fn resolves_dollar_crate_in_generated_imports_to_macro_definition_crate() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub mod source {
+    pub struct Thing;
+}
+
+macro_rules! import_thing {
+    () => {
+        pub use $crate::source::Thing;
+    };
+}
+
+pub use import_thing;
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/app/src/lib.rs
+use dep::import_thing;
+
+import_thing!();
+"#,
+    );
+    let target = project.lib("app");
+
+    target
+        .entry("Thing")
+        .assert_type_exists("$crate in dependency macros should resolve to the defining crate");
+}
+
+#[test]
 fn expands_imported_macro_rules_items() {
     let project = utils::DefMapFixtureDb::build(
         r#"

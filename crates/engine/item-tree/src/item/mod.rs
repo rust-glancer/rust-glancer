@@ -16,7 +16,7 @@ pub use self::{
         UsePathSegmentKind,
     },
     kind::{ItemKind, ItemTag},
-    macro_item::{MacroCallItem, MacroDefinitionItem, MacroDefinitionSyntax},
+    macro_item::{MacroCallItem, MacroDefinitionItem},
     module::{ModuleItem, ModuleSource},
     type_ref::{GenericArg, Mutability, TypeBound, TypePath, TypePathSegment, TypeRef},
     visibility::VisibilityLevel,
