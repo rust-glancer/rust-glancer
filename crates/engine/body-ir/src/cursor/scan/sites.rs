@@ -6,14 +6,17 @@
 //! with the callers.
 
 use rg_item_tree::{
-    FieldItem, FieldList, FunctionItem, GenericArg, GenericParams, TypeBound, TypePath, TypeRef,
-    WherePredicate,
+    FieldItem, FieldList, FunctionItem, GenericParams, TypeBound, TypePath, TypeRef, WherePredicate,
 };
 use rg_parse::{FileId, Span};
 
 use crate::{
     BodyData, BodyFunctionData, BodyFunctionOwner, BodyItemDeclaration, BodyPath,
-    BodyValueItemDeclaration, ExprKind, PatData, PatId, PatKind, ScopeId, StmtKind,
+    BodyValueItemDeclaration, ExprKind, PatId, ScopeId, StmtKind,
+    walk::{
+        PatWalkSite, walk_body_path_type_refs as walk_embedded_body_path_type_refs, walk_pat,
+        walk_type_ref_paths,
+    },
 };
 
 /// A source-owned pattern root together with the scope where its bindings live.
@@ -40,16 +43,6 @@ struct TypeRefContext {
     scope: ScopeId,
     visible_bindings: usize,
     file_id: FileId,
-}
-
-/// One pattern node reached from a body-local pattern root.
-///
-/// Nested nodes inherit the root pattern scope because all bindings in one pattern are introduced
-/// into the same local scope.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct PatternWalkSite<'body> {
-    pub(super) scope: ScopeId,
-    pub(super) data: &'body PatData,
 }
 
 /// One type path reached from a body-local type reference.
@@ -79,7 +72,7 @@ impl<'body> BodyScanSites<'body> {
         &self,
         file_id: Option<FileId>,
         offset: Option<u32>,
-        mut visit: impl FnMut(PatternWalkSite<'body>),
+        mut visit: impl FnMut(PatWalkSite<'body>),
     ) {
         self.for_each_pattern_site(|site| {
             if !Self::file_matches(file_id, site.file_id) {
@@ -89,7 +82,11 @@ impl<'body> BodyScanSites<'body> {
                 return;
             }
 
-            self.walk_pat_inner(site.scope, site.pat, file_id, &mut visit);
+            walk_pat(self.body, site.scope, site.pat, &mut |walk_site| {
+                if Self::file_matches(file_id, walk_site.data.source.file_id) {
+                    visit(walk_site);
+                }
+            });
         });
     }
 
@@ -107,7 +104,7 @@ impl<'body> BodyScanSites<'body> {
                 return;
             }
 
-            self.walk_type_ref(site.ty, &mut |path| {
+            walk_type_ref_paths(site.ty, &mut |path| {
                 visit(TypePathSite {
                     scope: site.scope,
                     visible_bindings: site.visible_bindings,
@@ -166,43 +163,6 @@ impl<'body> BodyScanSites<'body> {
         TypeRefSiteWalker::new(self, &mut visit).walk();
     }
 
-    fn walk_type_ref(&self, ty: &'body TypeRef, visit: &mut impl FnMut(&'body TypePath)) {
-        match ty {
-            TypeRef::Path(path) => {
-                visit(path);
-
-                for segment in &path.segments {
-                    for arg in &segment.args {
-                        self.walk_generic_arg(arg, visit);
-                    }
-                }
-            }
-            TypeRef::Tuple(types) => {
-                for ty in types {
-                    self.walk_type_ref(ty, visit);
-                }
-            }
-            TypeRef::Reference { inner, .. }
-            | TypeRef::RawPointer { inner, .. }
-            | TypeRef::Slice(inner) => self.walk_type_ref(inner, visit),
-            TypeRef::Array { inner, .. } => self.walk_type_ref(inner, visit),
-            TypeRef::FnPointer { params, ret } => {
-                for param in params {
-                    self.walk_type_ref(param, visit);
-                }
-                self.walk_type_ref(ret, visit);
-            }
-            TypeRef::ImplTrait(bounds) | TypeRef::DynTrait(bounds) => {
-                for bound in bounds {
-                    if let TypeBound::Trait(ty) = bound {
-                        self.walk_type_ref(ty, visit);
-                    }
-                }
-            }
-            TypeRef::Unknown(_) | TypeRef::Never | TypeRef::Unit | TypeRef::Infer => {}
-        }
-    }
-
     fn visit_pattern_site(&self, visit: &mut impl FnMut(PatternSite), scope: ScopeId, pat: PatId) {
         let Some(data) = self.body.pat(pat) else {
             return;
@@ -214,75 +174,6 @@ impl<'body> BodyScanSites<'body> {
             file_id: data.source.file_id,
             source_span: data.source.span,
         });
-    }
-
-    fn walk_pat_inner(
-        &self,
-        scope: ScopeId,
-        pat: PatId,
-        file_id: Option<FileId>,
-        visit: &mut impl FnMut(PatternWalkSite<'body>),
-    ) {
-        let Some(data) = self.body.pat(pat) else {
-            return;
-        };
-
-        if Self::file_matches(file_id, data.source.file_id) {
-            visit(PatternWalkSite { scope, data });
-        }
-
-        match &data.kind {
-            PatKind::TupleStruct { fields, .. }
-            | PatKind::Tuple { fields }
-            | PatKind::Or { pats: fields }
-            | PatKind::Slice { fields } => {
-                for field in fields {
-                    self.walk_pat_inner(scope, *field, file_id, visit);
-                }
-            }
-            PatKind::Record { fields, rest, .. } => {
-                for field in fields {
-                    self.walk_pat_inner(scope, field.pat, file_id, visit);
-                }
-                if let Some(rest) = rest {
-                    self.walk_pat_inner(scope, *rest, file_id, visit);
-                }
-            }
-            PatKind::Binding {
-                subpat: Some(subpat),
-                ..
-            }
-            | PatKind::Ref { pat: subpat, .. }
-            | PatKind::Box { pat: subpat } => {
-                self.walk_pat_inner(scope, *subpat, file_id, visit);
-            }
-            PatKind::Range { start, end, .. } => {
-                if let Some(start) = start {
-                    self.walk_pat_inner(scope, *start, file_id, visit);
-                }
-                if let Some(end) = end {
-                    self.walk_pat_inner(scope, *end, file_id, visit);
-                }
-            }
-            PatKind::Binding { subpat: None, .. }
-            | PatKind::Path { .. }
-            | PatKind::Rest
-            | PatKind::Literal { .. }
-            | PatKind::ConstBlock { .. }
-            | PatKind::Wildcard
-            | PatKind::Unsupported => {}
-        }
-    }
-
-    fn walk_generic_arg(&self, arg: &'body GenericArg, visit: &mut impl FnMut(&'body TypePath)) {
-        match arg {
-            GenericArg::Type(ty) => self.walk_type_ref(ty, visit),
-            GenericArg::AssocType { ty: Some(ty), .. } => self.walk_type_ref(ty, visit),
-            GenericArg::Lifetime(_)
-            | GenericArg::Const(_)
-            | GenericArg::AssocType { ty: None, .. }
-            | GenericArg::Unsupported(_) => {}
-        }
     }
 
     fn file_matches(selected: Option<FileId>, file_id: FileId) -> bool {
@@ -426,7 +317,7 @@ where
     fn walk_pattern_path_type_refs(&mut self) {
         let sites = self.sites;
         sites.for_each_pattern_site(|site| {
-            sites.walk_pat_inner(site.scope, site.pat, None, &mut |walk_site| {
+            walk_pat(sites.body, site.scope, site.pat, &mut |walk_site| {
                 if let Some(path) = walk_site.data.kind.path() {
                     self.walk_decl_body_path_type_refs(
                         path,
@@ -587,7 +478,7 @@ where
     }
 
     fn walk_body_path_type_refs(&mut self, context: TypeRefContext, path: &'body BodyPath) {
-        path.walk_type_refs(&mut |ty| {
+        walk_embedded_body_path_type_refs(path, &mut |ty| {
             self.emit_type_ref(context, ty);
         });
     }

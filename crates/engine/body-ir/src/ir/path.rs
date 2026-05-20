@@ -107,12 +107,6 @@ impl BodyPath {
         self.segments.len()
     }
 
-    pub(crate) fn walk_type_refs<'path>(&'path self, visit: &mut impl FnMut(&'path TypeRef)) {
-        for segment in &self.segments {
-            segment.walk_type_refs(visit);
-        }
-    }
-
     pub(crate) fn shrink_to_fit(&mut self) {
         self.segments.shrink_to_fit();
         for segment in &mut self.segments {
@@ -138,21 +132,6 @@ impl BodyPathSegment {
             BodyPathSegmentKind::SuperKw => Some(PathSegment::SuperKw),
             BodyPathSegmentKind::CrateKw => Some(PathSegment::CrateKw),
             BodyPathSegmentKind::TypeAnchor { .. } => None,
-        }
-    }
-
-    fn walk_type_refs<'path>(&'path self, visit: &mut impl FnMut(&'path TypeRef)) {
-        if let BodyPathSegmentKind::TypeAnchor { ty, trait_ref } = &self.kind {
-            if let Some(ty) = ty {
-                visit(ty);
-            }
-            if let Some(trait_ref) = trait_ref {
-                visit(trait_ref);
-            }
-        }
-
-        if let Some(args) = &self.args {
-            args.walk_type_refs(visit);
         }
     }
 
@@ -182,23 +161,6 @@ impl BodyPathSegmentKind {
 }
 
 impl BodyPathSegmentArgs {
-    fn walk_type_refs<'path>(&'path self, visit: &mut impl FnMut(&'path TypeRef)) {
-        let Self::Angle { args, .. } = self else {
-            return;
-        };
-
-        for arg in args {
-            match arg {
-                GenericArg::Type(ty) => visit(ty),
-                GenericArg::AssocType { ty: Some(ty), .. } => visit(ty),
-                GenericArg::Lifetime(_)
-                | GenericArg::Const(_)
-                | GenericArg::AssocType { ty: None, .. }
-                | GenericArg::Unsupported(_) => {}
-            }
-        }
-    }
-
     fn shrink_to_fit(&mut self) {
         match self {
             Self::Angle { args, .. } => {

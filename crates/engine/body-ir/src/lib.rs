@@ -3,6 +3,7 @@ mod cursor;
 mod ir;
 mod resolution;
 mod store;
+mod walk;
 
 use rg_def_map::PackageSlot;
 use rg_parse::FileId;
