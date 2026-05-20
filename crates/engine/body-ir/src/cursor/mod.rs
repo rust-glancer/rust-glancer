@@ -6,10 +6,13 @@
 
 mod scan;
 
+use std::collections::HashSet;
+
 use rg_def_map::{Path, TargetRef};
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
+use rg_text::Name;
 
 use crate::{
     BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef, BodyIrReadTxn, BodyItemKind,
@@ -271,8 +274,8 @@ impl BodyIrReadTxn<'_> {
             return Ok(Vec::new());
         };
         let mut candidates = Vec::new();
-        let mut seen_values = Vec::new();
-        let mut seen_types = Vec::new();
+        let mut seen_values = HashSet::<Name>::new();
+        let mut seen_types = HashSet::<Name>::new();
         let mut scope = Some(site.scope);
         let mut scope_distance = 0;
 
@@ -290,16 +293,15 @@ impl BodyIrReadTxn<'_> {
                     let Some(binding) = body.binding(binding_id) else {
                         continue;
                     };
-                    let Some(label) = binding.name.as_ref().map(ToString::to_string) else {
+                    let Some(name) = binding.name.as_ref() else {
                         continue;
                     };
-                    if seen_values.contains(&label) {
+                    if !seen_values.insert(name.clone()) {
                         continue;
                     }
-                    seen_values.push(label.clone());
                     candidates.push(BodyUnqualifiedCompletionCandidate::Binding {
                         binding: binding_id,
-                        label,
+                        label: name.to_string(),
                         scope_distance,
                     });
                 }
@@ -308,17 +310,15 @@ impl BodyIrReadTxn<'_> {
                     let Some(function) = body.local_function(function_id) else {
                         continue;
                     };
-                    let label = function.name.to_string();
-                    if seen_values.contains(&label) {
+                    if !seen_values.insert(function.name.clone()) {
                         continue;
                     }
-                    seen_values.push(label.clone());
                     candidates.push(BodyUnqualifiedCompletionCandidate::LocalFunction {
                         function: BodyFunctionRef {
                             body: site.body,
                             function: function_id,
                         },
-                        label,
+                        label: function.name.to_string(),
                         scope_distance,
                     });
                 }
@@ -327,18 +327,16 @@ impl BodyIrReadTxn<'_> {
                     let Some(item) = body.local_value_item(item_id) else {
                         continue;
                     };
-                    let label = item.name.to_string();
-                    if seen_values.contains(&label) {
+                    if !seen_values.insert(item.name.clone()) {
                         continue;
                     }
-                    seen_values.push(label.clone());
                     candidates.push(BodyUnqualifiedCompletionCandidate::LocalValueItem {
                         item: BodyValueItemRef {
                             body: site.body,
                             item: item_id,
                         },
                         kind: item.kind,
-                        label,
+                        label: item.name.to_string(),
                         scope_distance,
                     });
                 }
@@ -348,20 +346,17 @@ impl BodyIrReadTxn<'_> {
                 let Some(item) = body.local_item(item_id) else {
                     continue;
                 };
-                let label = item.name.to_string();
 
                 match site.namespace {
                     UnqualifiedCompletionNamespace::Values => {
-                        if !item.has_value_constructor() || seen_values.contains(&label) {
+                        if !item.has_value_constructor() || !seen_values.insert(item.name.clone()) {
                             continue;
                         }
-                        seen_values.push(label.clone());
                     }
                     UnqualifiedCompletionNamespace::Types => {
-                        if seen_types.contains(&label) {
+                        if !seen_types.insert(item.name.clone()) {
                             continue;
                         }
-                        seen_types.push(label.clone());
                     }
                 }
 
@@ -371,7 +366,7 @@ impl BodyIrReadTxn<'_> {
                         item: item_id,
                     },
                     kind: item.kind,
-                    label,
+                    label: item.name.to_string(),
                     scope_distance,
                 });
             }
