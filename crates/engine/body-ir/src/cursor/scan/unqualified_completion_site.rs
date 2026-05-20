@@ -92,14 +92,20 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
             if expr_data.source.file_id != self.file_id {
                 continue;
             }
-            if let ExprKind::Path { path } = &expr_data.kind {
-                self.scan_body_path(
-                    body_ref,
-                    expr_data.scope,
-                    expr_data.visible_bindings,
-                    path,
-                    best,
-                );
+            match &expr_data.kind {
+                ExprKind::Path { path }
+                | ExprKind::Record {
+                    path: Some(path), ..
+                } => {
+                    self.scan_body_path(
+                        body_ref,
+                        expr_data.scope,
+                        expr_data.visible_bindings,
+                        path,
+                        best,
+                    );
+                }
+                _ => {}
             }
         }
     }

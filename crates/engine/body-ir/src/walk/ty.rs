@@ -11,7 +11,16 @@ pub(crate) fn walk_type_ref_paths<'ty>(ty: &'ty TypeRef, visit: &mut impl FnMut(
 
             for segment in &path.segments {
                 for arg in &segment.args {
-                    walk_generic_arg_paths(arg, visit);
+                    match arg {
+                        GenericArg::Type(ty) => walk_type_ref_paths(ty, visit),
+                        GenericArg::AssocType { ty: Some(ty), .. } => {
+                            walk_type_ref_paths(ty, visit);
+                        }
+                        GenericArg::Lifetime(_)
+                        | GenericArg::Const(_)
+                        | GenericArg::AssocType { ty: None, .. }
+                        | GenericArg::Unsupported(_) => {}
+                    }
                 }
             }
         }
@@ -38,16 +47,5 @@ pub(crate) fn walk_type_ref_paths<'ty>(ty: &'ty TypeRef, visit: &mut impl FnMut(
             }
         }
         TypeRef::Unknown(_) | TypeRef::Never | TypeRef::Unit | TypeRef::Infer => {}
-    }
-}
-
-fn walk_generic_arg_paths<'ty>(arg: &'ty GenericArg, visit: &mut impl FnMut(&'ty TypePath)) {
-    match arg {
-        GenericArg::Type(ty) => walk_type_ref_paths(ty, visit),
-        GenericArg::AssocType { ty: Some(ty), .. } => walk_type_ref_paths(ty, visit),
-        GenericArg::Lifetime(_)
-        | GenericArg::Const(_)
-        | GenericArg::AssocType { ty: None, .. }
-        | GenericArg::Unsupported(_) => {}
     }
 }

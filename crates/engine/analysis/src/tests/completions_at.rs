@@ -233,6 +233,75 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_record_constructor_paths() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_record_constructor_path_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod api {
+    pub struct User {
+        pub id: u8,
+    }
+
+    pub enum Action {
+        Start { id: u8 },
+    }
+
+    pub fn build_user() -> User {
+        User { id: 0 }
+    }
+}
+
+pub struct LocalUser {
+    id: u8,
+}
+
+pub fn use_it() {
+    enum LocalAction {
+        Start { id: u8 },
+    }
+
+    let _local = Local$local_ctor$ { id: 0 };
+    let _local_variant = LocalAction::Sta$local_variant_ctor$ { id: 0 };
+    let _record = api::Us$record_ctor$ { id: 0 };
+    let _variant = api::Action::Sta$variant_ctor$ { id: 0 };
+}
+"#,
+        &[
+            AnalysisQuery::complete("unqualified record constructor completions", "local_ctor"),
+            AnalysisQuery::complete(
+                "body-local record variant constructor completions",
+                "local_variant_ctor",
+            ),
+            AnalysisQuery::complete("qualified record constructor completions", "record_ctor"),
+            AnalysisQuery::complete("record variant constructor completions", "variant_ctor"),
+        ],
+        expect![[r#"
+            unqualified record constructor completions
+            - struct LocalUser
+            - module api
+            - fn use_it
+
+            body-local record variant constructor completions
+            - variant Start
+
+            qualified record constructor completions
+            - enum Action
+            - struct User
+            - fn build_user
+
+            record variant constructor completions
+            - variant Start
+        "#]],
+    );
+}
+
+#[test]
 fn completes_bare_qualified_paths_in_type_contexts_without_semicolon() {
     check_analysis_queries(
         r#"

@@ -1,7 +1,7 @@
 use rg_body_ir::{
     BindingData, BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionOwner, BodyFunctionRef,
     BodyItemKind, BodyItemRef, BodyRef, BodyValueItemKind, BodyValueItemRef, ExprId,
-    ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
+    ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
 };
 use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
@@ -337,6 +337,7 @@ pub enum CompletionTarget {
     Binding { body: BodyRef, binding: BindingId },
     BodyItem(BodyItemRef),
     BodyValueItem(BodyValueItemRef),
+    EnumVariant(ResolvedEnumVariantRef),
     Field(ResolvedFieldRef),
     Function(ResolvedFunctionRef),
     Def(DefId),
@@ -377,6 +378,8 @@ pub enum CompletionKind {
     Const,
     #[display("enum")]
     Enum,
+    #[display("variant")]
+    EnumVariant,
     #[display("field")]
     Field,
     #[display("fn")]
@@ -417,7 +420,12 @@ impl CompletionKind {
             Self::InherentMethod => 1,
             Self::TraitMethod => 2,
             Self::Module => 3,
-            Self::Struct | Self::Enum | Self::Trait | Self::TypeAlias | Self::Union => 4,
+            Self::Struct
+            | Self::Enum
+            | Self::EnumVariant
+            | Self::Trait
+            | Self::TypeAlias
+            | Self::Union => 4,
             Self::Const | Self::Static => 5,
             Self::Function | Self::Macro => 6,
             Self::Variable => 7,

@@ -1,11 +1,14 @@
 //! Qualified path completion assembly for body and import positions.
 
-use rg_body_ir::{PathCompletionNamespace, PathCompletionSite, ResolvedFunctionRef};
+use rg_body_ir::{
+    BodyEnumVariantRef, BodyTypePathResolution, PathCompletionNamespace, PathCompletionSite,
+    ResolvedEnumVariantRef, ResolvedFunctionRef,
+};
 use rg_def_map::{
     DefId, DefMapPathCompletionSite, ModuleRef, Path, ScopeNamespace, VisibleScopeDef,
 };
 use rg_parse::Span;
-use rg_semantic_ir::Documentation;
+use rg_semantic_ir::{Documentation, EnumVariantRef, TypeDefId};
 
 use crate::{
     Analysis,
@@ -42,13 +45,23 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             return Ok(Vec::new());
         };
 
-        self.module_path_completions(
+        let edit = CompletionEdit {
+            replace: site.member_prefix_span,
+        };
+        let mut completions = self.module_path_completions(
             body.owner_module(),
             &site.qualifier,
             site.member_prefix_span,
             PathCompletionFilter::from(site.namespace),
             FunctionCallCompletion::FunctionCall,
-        )
+        )?;
+
+        if matches!(site.namespace, PathCompletionNamespace::Values) {
+            self.enum_variant_completions(site, edit, &mut completions)?;
+            completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
+        }
+
+        Ok(completions)
     }
 
     /// Collects qualified import completions, such as `use crate::api::$0`.
@@ -109,6 +122,107 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
 
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
+    }
+
+    /// Adds enum variants for type-qualified value paths, such as `Action::Sta$0`.
+    fn enum_variant_completions(
+        &self,
+        site: PathCompletionSite,
+        edit: CompletionEdit,
+        completions: &mut Vec<CompletionItem>,
+    ) -> anyhow::Result<()> {
+        let resolution = self.analysis.body_ir.resolve_type_path_in_scope(
+            &self.analysis.def_map,
+            &self.analysis.semantic_ir,
+            site.body,
+            site.scope,
+            &site.qualifier,
+        )?;
+
+        match resolution {
+            BodyTypePathResolution::BodyLocal(item_ref) => {
+                let Some(body) = self.analysis.body_ir.body_data(item_ref.body)? else {
+                    return Ok(());
+                };
+                let Some(item) = body.local_item(item_ref.item) else {
+                    return Ok(());
+                };
+                for (index, variant) in item.enum_variants().iter().enumerate() {
+                    self.push_enum_variant_completion(
+                        ResolvedEnumVariantRef::BodyLocal(BodyEnumVariantRef {
+                            item: item_ref,
+                            index,
+                        }),
+                        variant.name.to_string(),
+                        variant.docs.as_ref().map(Documentation::text),
+                        edit,
+                        completions,
+                    );
+                }
+            }
+            BodyTypePathResolution::TypeDefs(type_defs)
+            | BodyTypePathResolution::SelfType(type_defs) => {
+                for ty in type_defs {
+                    let TypeDefId::Enum(enum_id) = ty.id else {
+                        continue;
+                    };
+                    let Some(data) = self.analysis.semantic_ir.enum_data_for_type_def(ty)? else {
+                        continue;
+                    };
+                    for (index, variant) in data.variants.iter().enumerate() {
+                        self.push_enum_variant_completion(
+                            ResolvedEnumVariantRef::Semantic(EnumVariantRef {
+                                target: ty.target,
+                                enum_id,
+                                index,
+                            }),
+                            variant.name.to_string(),
+                            variant.docs.as_ref().map(Documentation::text),
+                            edit,
+                            completions,
+                        );
+                    }
+                }
+            }
+            BodyTypePathResolution::Traits(_) | BodyTypePathResolution::Unknown => {}
+        }
+
+        Ok(())
+    }
+
+    fn push_enum_variant_completion(
+        &self,
+        variant: ResolvedEnumVariantRef,
+        label: String,
+        documentation: Option<String>,
+        edit: CompletionEdit,
+        completions: &mut Vec<CompletionItem>,
+    ) {
+        let target = CompletionTarget::EnumVariant(variant);
+        if completions
+            .iter()
+            .any(|completion| completion.target == target && completion.label == label)
+        {
+            return;
+        }
+
+        completions.push(CompletionItem {
+            label: label.clone(),
+            kind: CompletionKind::EnumVariant,
+            target,
+            applicability: CompletionApplicability::Known,
+            detail: Some(def_completion_detail(CompletionKind::EnumVariant, &label)),
+            documentation,
+            sort_text: CompletionSortPolicy::General.sort_text(
+                None,
+                &label,
+                CompletionKind::EnumVariant,
+                CompletionApplicability::Known,
+                target,
+            ),
+            insert_text: CompletionInsertText::Plain,
+            edit: Some(edit),
+        });
     }
 
     /// Adds one visible module-scope definition for path completion, such as

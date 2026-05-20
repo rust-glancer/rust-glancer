@@ -30,6 +30,7 @@ fn completion_kind(kind: CompletionKind) -> CompletionItemKind {
     match kind {
         CompletionKind::Const => CompletionItemKind::CONSTANT,
         CompletionKind::Enum => CompletionItemKind::ENUM,
+        CompletionKind::EnumVariant => CompletionItemKind::ENUM_MEMBER,
         CompletionKind::Field => CompletionItemKind::FIELD,
         CompletionKind::Function => CompletionItemKind::FUNCTION,
         CompletionKind::InherentMethod | CompletionKind::TraitMethod => CompletionItemKind::METHOD,

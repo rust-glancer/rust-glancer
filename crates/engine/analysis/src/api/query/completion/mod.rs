@@ -159,6 +159,7 @@ fn def_completion_detail(kind: CompletionKind, label: &str) -> String {
     match kind {
         CompletionKind::Const => format!("const {label}"),
         CompletionKind::Enum => format!("enum {label}"),
+        CompletionKind::EnumVariant => format!("variant {label}"),
         CompletionKind::Field => format!("field {label}"),
         CompletionKind::Function => format!("fn {label}"),
         CompletionKind::InherentMethod | CompletionKind::TraitMethod => format!("method {label}"),
