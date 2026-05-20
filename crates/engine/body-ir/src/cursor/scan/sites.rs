@@ -34,6 +34,14 @@ struct TypeRefSite<'body> {
     ty: &'body TypeRef,
 }
 
+/// Scope metadata carried by one written type reference.
+#[derive(Debug, Clone, Copy)]
+struct TypeRefContext {
+    scope: ScopeId,
+    visible_bindings: usize,
+    file_id: FileId,
+}
+
 /// One pattern node reached from a body-local pattern root.
 ///
 /// Nested nodes inherit the root pattern scope because all bindings in one pattern are introduced
@@ -155,421 +163,7 @@ impl<'body> BodyScanSites<'body> {
     }
 
     fn for_each_type_ref_site(&self, mut visit: impl FnMut(TypeRefSite<'body>)) {
-        let visible_bindings = self.body.bindings().len();
-
-        for statement in self.body.statements.iter() {
-            let StmtKind::Let {
-                scope,
-                annotation: Some(annotation),
-                ..
-            } = &statement.kind
-            else {
-                continue;
-            };
-
-            visit(TypeRefSite {
-                scope: *scope,
-                visible_bindings,
-                file_id: statement.source.file_id,
-                ty: annotation,
-            });
-        }
-
-        for item in self.body.local_items.iter() {
-            Self::visit_body_item_type_refs(
-                item.scope,
-                visible_bindings,
-                item.source.file_id,
-                item,
-                &mut visit,
-            );
-        }
-
-        for item in self.body.local_value_items.iter() {
-            Self::visit_body_value_item_type_refs(
-                item.scope,
-                visible_bindings,
-                item.source.file_id,
-                item,
-                &mut visit,
-            );
-        }
-
-        for impl_data in self.body.local_impls.iter() {
-            Self::visit_generic_params_type_refs(
-                impl_data.scope,
-                visible_bindings,
-                impl_data.source.file_id,
-                &impl_data.generics,
-                &mut visit,
-            );
-            if let Some(trait_ref) = &impl_data.trait_ref {
-                visit(TypeRefSite {
-                    scope: impl_data.scope,
-                    visible_bindings,
-                    file_id: impl_data.source.file_id,
-                    ty: trait_ref,
-                });
-            }
-            visit(TypeRefSite {
-                scope: impl_data.scope,
-                visible_bindings,
-                file_id: impl_data.source.file_id,
-                ty: &impl_data.self_ty,
-            });
-        }
-
-        for function in self.body.local_functions.iter() {
-            let Some(scope) = self.scope_for_body_function(function) else {
-                continue;
-            };
-            Self::visit_function_item_type_refs(
-                scope,
-                visible_bindings,
-                function.source.file_id,
-                &function.declaration,
-                &mut visit,
-            );
-        }
-
-        for expr in self.body.exprs.iter() {
-            match &expr.kind {
-                ExprKind::Closure {
-                    scope,
-                    params,
-                    ret_ty,
-                    ..
-                } => {
-                    for param in params {
-                        if let Some(annotation) = &param.annotation {
-                            visit(TypeRefSite {
-                                scope: *scope,
-                                visible_bindings,
-                                file_id: param.source.file_id,
-                                ty: annotation,
-                            });
-                        }
-                    }
-
-                    if let Some(ret_ty) = ret_ty {
-                        visit(TypeRefSite {
-                            scope: *scope,
-                            visible_bindings,
-                            file_id: expr.source.file_id,
-                            ty: ret_ty,
-                        });
-                    }
-                }
-                ExprKind::Cast { ty: Some(ty), .. } => {
-                    visit(TypeRefSite {
-                        scope: expr.scope,
-                        visible_bindings,
-                        file_id: expr.source.file_id,
-                        ty,
-                    });
-                }
-                ExprKind::Path { path } => {
-                    Self::visit_body_path_type_refs(
-                        path,
-                        expr.scope,
-                        expr.visible_bindings,
-                        expr.source.file_id,
-                        &mut visit,
-                    );
-                }
-                ExprKind::Record {
-                    path: Some(path), ..
-                } => {
-                    Self::visit_body_path_type_refs(
-                        path,
-                        expr.scope,
-                        expr.visible_bindings,
-                        expr.source.file_id,
-                        &mut visit,
-                    );
-                }
-                _ => {}
-            }
-        }
-
-        self.for_each_pattern_site(|site| {
-            self.walk_pat_inner(site.scope, site.pat, None, &mut |walk_site| {
-                if let Some(path) = walk_site.data.kind.path() {
-                    Self::visit_body_path_type_refs(
-                        path,
-                        walk_site.scope,
-                        visible_bindings,
-                        walk_site.data.source.file_id,
-                        &mut visit,
-                    );
-                }
-            });
-        });
-    }
-
-    fn visit_body_item_type_refs(
-        scope: ScopeId,
-        visible_bindings: usize,
-        file_id: FileId,
-        item: &'body crate::BodyItemData,
-        visit: &mut impl FnMut(TypeRefSite<'body>),
-    ) {
-        if let Some(generics) = item.generic_params() {
-            Self::visit_generic_params_type_refs(scope, visible_bindings, file_id, generics, visit);
-        }
-
-        match &item.declaration {
-            BodyItemDeclaration::Struct(item) => {
-                Self::visit_field_list_type_refs(
-                    scope,
-                    visible_bindings,
-                    file_id,
-                    &item.fields,
-                    visit,
-                );
-            }
-            BodyItemDeclaration::Enum(item) => {
-                for variant in &item.variants {
-                    Self::visit_field_list_type_refs(
-                        scope,
-                        visible_bindings,
-                        file_id,
-                        &variant.fields,
-                        visit,
-                    );
-                }
-            }
-            BodyItemDeclaration::Union(item) => {
-                Self::visit_field_type_refs(scope, visible_bindings, file_id, &item.fields, visit);
-            }
-            BodyItemDeclaration::TypeAlias(item) => {
-                Self::visit_type_bounds_type_refs(
-                    scope,
-                    visible_bindings,
-                    file_id,
-                    &item.bounds,
-                    visit,
-                );
-                if let Some(ty) = &item.aliased_ty {
-                    visit(TypeRefSite {
-                        scope,
-                        visible_bindings,
-                        file_id,
-                        ty,
-                    });
-                }
-            }
-            BodyItemDeclaration::Trait(item) => {
-                Self::visit_type_bounds_type_refs(
-                    scope,
-                    visible_bindings,
-                    file_id,
-                    &item.super_traits,
-                    visit,
-                );
-            }
-        }
-    }
-
-    fn visit_body_value_item_type_refs(
-        scope: ScopeId,
-        visible_bindings: usize,
-        file_id: FileId,
-        item: &'body crate::BodyValueItemData,
-        visit: &mut impl FnMut(TypeRefSite<'body>),
-    ) {
-        match &item.declaration {
-            BodyValueItemDeclaration::Const(item) => {
-                Self::visit_generic_params_type_refs(
-                    scope,
-                    visible_bindings,
-                    file_id,
-                    &item.generics,
-                    visit,
-                );
-                if let Some(ty) = &item.ty {
-                    visit(TypeRefSite {
-                        scope,
-                        visible_bindings,
-                        file_id,
-                        ty,
-                    });
-                }
-            }
-            BodyValueItemDeclaration::Static(item) => {
-                if let Some(ty) = &item.ty {
-                    visit(TypeRefSite {
-                        scope,
-                        visible_bindings,
-                        file_id,
-                        ty,
-                    });
-                }
-            }
-        }
-    }
-
-    fn visit_function_item_type_refs(
-        scope: ScopeId,
-        visible_bindings: usize,
-        file_id: FileId,
-        item: &'body FunctionItem,
-        visit: &mut impl FnMut(TypeRefSite<'body>),
-    ) {
-        Self::visit_generic_params_type_refs(
-            scope,
-            visible_bindings,
-            file_id,
-            &item.generics,
-            visit,
-        );
-        for param in &item.params {
-            if let Some(ty) = &param.ty {
-                visit(TypeRefSite {
-                    scope,
-                    visible_bindings,
-                    file_id,
-                    ty,
-                });
-            }
-        }
-        if let Some(ty) = &item.ret_ty {
-            visit(TypeRefSite {
-                scope,
-                visible_bindings,
-                file_id,
-                ty,
-            });
-        }
-    }
-
-    fn visit_generic_params_type_refs(
-        scope: ScopeId,
-        visible_bindings: usize,
-        file_id: FileId,
-        generics: &'body GenericParams,
-        visit: &mut impl FnMut(TypeRefSite<'body>),
-    ) {
-        for param in &generics.types {
-            Self::visit_type_bounds_type_refs(
-                scope,
-                visible_bindings,
-                file_id,
-                &param.bounds,
-                visit,
-            );
-            if let Some(ty) = &param.default {
-                visit(TypeRefSite {
-                    scope,
-                    visible_bindings,
-                    file_id,
-                    ty,
-                });
-            }
-        }
-        for param in &generics.consts {
-            if let Some(ty) = &param.ty {
-                visit(TypeRefSite {
-                    scope,
-                    visible_bindings,
-                    file_id,
-                    ty,
-                });
-            }
-        }
-        for predicate in &generics.where_predicates {
-            match predicate {
-                WherePredicate::Type { ty, bounds } => {
-                    visit(TypeRefSite {
-                        scope,
-                        visible_bindings,
-                        file_id,
-                        ty,
-                    });
-                    Self::visit_type_bounds_type_refs(
-                        scope,
-                        visible_bindings,
-                        file_id,
-                        bounds,
-                        visit,
-                    );
-                }
-                WherePredicate::Lifetime { .. } | WherePredicate::Unsupported(_) => {}
-            }
-        }
-    }
-
-    fn visit_type_bounds_type_refs(
-        scope: ScopeId,
-        visible_bindings: usize,
-        file_id: FileId,
-        bounds: &'body [TypeBound],
-        visit: &mut impl FnMut(TypeRefSite<'body>),
-    ) {
-        for bound in bounds {
-            if let TypeBound::Trait(ty) = bound {
-                visit(TypeRefSite {
-                    scope,
-                    visible_bindings,
-                    file_id,
-                    ty,
-                });
-            }
-        }
-    }
-
-    fn visit_field_list_type_refs(
-        scope: ScopeId,
-        visible_bindings: usize,
-        file_id: FileId,
-        fields: &'body FieldList,
-        visit: &mut impl FnMut(TypeRefSite<'body>),
-    ) {
-        Self::visit_field_type_refs(scope, visible_bindings, file_id, fields.fields(), visit);
-    }
-
-    fn visit_field_type_refs(
-        scope: ScopeId,
-        visible_bindings: usize,
-        file_id: FileId,
-        fields: &'body [FieldItem],
-        visit: &mut impl FnMut(TypeRefSite<'body>),
-    ) {
-        for field in fields {
-            visit(TypeRefSite {
-                scope,
-                visible_bindings,
-                file_id,
-                ty: &field.ty,
-            });
-        }
-    }
-
-    fn scope_for_body_function(&self, function: &BodyFunctionData) -> Option<ScopeId> {
-        match function.owner {
-            BodyFunctionOwner::LocalScope(scope) => Some(scope),
-            BodyFunctionOwner::LocalImpl(impl_id) => self
-                .body
-                .local_impl(impl_id)
-                .map(|impl_data| impl_data.scope),
-        }
-    }
-
-    fn visit_body_path_type_refs(
-        path: &'body BodyPath,
-        scope: ScopeId,
-        visible_bindings: usize,
-        file_id: FileId,
-        visit: &mut impl FnMut(TypeRefSite<'body>),
-    ) {
-        path.walk_type_refs(&mut |ty| {
-            visit(TypeRefSite {
-                scope,
-                visible_bindings,
-                file_id,
-                ty,
-            });
-        });
+        TypeRefSiteWalker::new(self, &mut visit).walk();
     }
 
     fn walk_type_ref(&self, ty: &'body TypeRef, visit: &mut impl FnMut(&'body TypePath)) {
@@ -693,5 +287,332 @@ impl<'body> BodyScanSites<'body> {
 
     fn file_matches(selected: Option<FileId>, file_id: FileId) -> bool {
         selected.is_none_or(|selected| selected == file_id)
+    }
+}
+
+/// Collects written type references while keeping scope policy close to each source form.
+struct TypeRefSiteWalker<'scan, 'body, V>
+where
+    V: FnMut(TypeRefSite<'body>),
+{
+    sites: &'scan BodyScanSites<'body>,
+    body_visible_bindings: usize,
+    visit: &'scan mut V,
+}
+
+impl<'scan, 'body, V> TypeRefSiteWalker<'scan, 'body, V>
+where
+    V: FnMut(TypeRefSite<'body>),
+{
+    fn new(sites: &'scan BodyScanSites<'body>, visit: &'scan mut V) -> Self {
+        Self {
+            sites,
+            body_visible_bindings: sites.body.bindings().len(),
+            visit,
+        }
+    }
+
+    fn walk(&mut self) {
+        self.walk_let_annotations();
+        self.walk_local_item_declarations();
+        self.walk_local_value_item_declarations();
+        self.walk_local_impl_declarations();
+        self.walk_local_function_declarations();
+        self.walk_expression_type_refs();
+        self.walk_pattern_path_type_refs();
+    }
+
+    fn walk_let_annotations(&mut self) {
+        let body = self.sites.body;
+        for statement in body.statements.iter() {
+            let StmtKind::Let {
+                scope,
+                annotation: Some(annotation),
+                ..
+            } = &statement.kind
+            else {
+                continue;
+            };
+
+            self.emit_decl_type_ref(*scope, statement.source.file_id, annotation);
+        }
+    }
+
+    fn walk_local_item_declarations(&mut self) {
+        let body = self.sites.body;
+        for item in body.local_items.iter() {
+            let context = self.decl_context(item.scope, item.source.file_id);
+            self.walk_body_item_type_refs(context, item);
+        }
+    }
+
+    fn walk_local_value_item_declarations(&mut self) {
+        let body = self.sites.body;
+        for item in body.local_value_items.iter() {
+            let context = self.decl_context(item.scope, item.source.file_id);
+            self.walk_body_value_item_type_refs(context, item);
+        }
+    }
+
+    fn walk_local_impl_declarations(&mut self) {
+        let body = self.sites.body;
+        for impl_data in body.local_impls.iter() {
+            let context = self.decl_context(impl_data.scope, impl_data.source.file_id);
+            self.walk_generic_params_type_refs(context, &impl_data.generics);
+            if let Some(trait_ref) = &impl_data.trait_ref {
+                self.emit_type_ref(context, trait_ref);
+            }
+            self.emit_type_ref(context, &impl_data.self_ty);
+        }
+    }
+
+    fn walk_local_function_declarations(&mut self) {
+        let body = self.sites.body;
+        for function in body.local_functions.iter() {
+            let Some(scope) = self.scope_for_body_function(function) else {
+                continue;
+            };
+            let context = self.decl_context(scope, function.source.file_id);
+            self.walk_function_item_type_refs(context, &function.declaration);
+        }
+    }
+
+    fn walk_expression_type_refs(&mut self) {
+        let body = self.sites.body;
+        for expr in body.exprs.iter() {
+            match &expr.kind {
+                ExprKind::Closure {
+                    scope,
+                    params,
+                    ret_ty,
+                    ..
+                } => {
+                    for param in params {
+                        if let Some(annotation) = &param.annotation {
+                            self.emit_decl_type_ref(*scope, param.source.file_id, annotation);
+                        }
+                    }
+
+                    if let Some(ret_ty) = ret_ty {
+                        self.emit_decl_type_ref(*scope, expr.source.file_id, ret_ty);
+                    }
+                }
+                ExprKind::Cast { ty: Some(ty), .. } => {
+                    self.emit_decl_type_ref(expr.scope, expr.source.file_id, ty);
+                }
+                ExprKind::Path { path } => {
+                    self.walk_expr_body_path_type_refs(
+                        path,
+                        expr.scope,
+                        expr.visible_bindings,
+                        expr.source.file_id,
+                    );
+                }
+                ExprKind::Record {
+                    path: Some(path), ..
+                } => {
+                    self.walk_expr_body_path_type_refs(
+                        path,
+                        expr.scope,
+                        expr.visible_bindings,
+                        expr.source.file_id,
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn walk_pattern_path_type_refs(&mut self) {
+        let sites = self.sites;
+        sites.for_each_pattern_site(|site| {
+            sites.walk_pat_inner(site.scope, site.pat, None, &mut |walk_site| {
+                if let Some(path) = walk_site.data.kind.path() {
+                    self.walk_decl_body_path_type_refs(
+                        path,
+                        walk_site.scope,
+                        walk_site.data.source.file_id,
+                    );
+                }
+            });
+        });
+    }
+
+    fn walk_body_item_type_refs(
+        &mut self,
+        context: TypeRefContext,
+        item: &'body crate::BodyItemData,
+    ) {
+        if let Some(generics) = item.generic_params() {
+            self.walk_generic_params_type_refs(context, generics);
+        }
+
+        match &item.declaration {
+            BodyItemDeclaration::Struct(item) => {
+                self.walk_field_list_type_refs(context, &item.fields);
+            }
+            BodyItemDeclaration::Enum(item) => {
+                for variant in &item.variants {
+                    self.walk_field_list_type_refs(context, &variant.fields);
+                }
+            }
+            BodyItemDeclaration::Union(item) => {
+                self.walk_field_type_refs(context, &item.fields);
+            }
+            BodyItemDeclaration::TypeAlias(item) => {
+                self.walk_type_bounds_type_refs(context, &item.bounds);
+                if let Some(ty) = &item.aliased_ty {
+                    self.emit_type_ref(context, ty);
+                }
+            }
+            BodyItemDeclaration::Trait(item) => {
+                self.walk_type_bounds_type_refs(context, &item.super_traits);
+            }
+        }
+    }
+
+    fn walk_body_value_item_type_refs(
+        &mut self,
+        context: TypeRefContext,
+        item: &'body crate::BodyValueItemData,
+    ) {
+        match &item.declaration {
+            BodyValueItemDeclaration::Const(item) => {
+                self.walk_generic_params_type_refs(context, &item.generics);
+                if let Some(ty) = &item.ty {
+                    self.emit_type_ref(context, ty);
+                }
+            }
+            BodyValueItemDeclaration::Static(item) => {
+                if let Some(ty) = &item.ty {
+                    self.emit_type_ref(context, ty);
+                }
+            }
+        }
+    }
+
+    fn walk_function_item_type_refs(&mut self, context: TypeRefContext, item: &'body FunctionItem) {
+        self.walk_generic_params_type_refs(context, &item.generics);
+        for param in &item.params {
+            if let Some(ty) = &param.ty {
+                self.emit_type_ref(context, ty);
+            }
+        }
+        if let Some(ty) = &item.ret_ty {
+            self.emit_type_ref(context, ty);
+        }
+    }
+
+    fn walk_generic_params_type_refs(
+        &mut self,
+        context: TypeRefContext,
+        generics: &'body GenericParams,
+    ) {
+        for param in &generics.types {
+            self.walk_type_bounds_type_refs(context, &param.bounds);
+            if let Some(ty) = &param.default {
+                self.emit_type_ref(context, ty);
+            }
+        }
+        for param in &generics.consts {
+            if let Some(ty) = &param.ty {
+                self.emit_type_ref(context, ty);
+            }
+        }
+        for predicate in &generics.where_predicates {
+            match predicate {
+                WherePredicate::Type { ty, bounds } => {
+                    self.emit_type_ref(context, ty);
+                    self.walk_type_bounds_type_refs(context, bounds);
+                }
+                WherePredicate::Lifetime { .. } | WherePredicate::Unsupported(_) => {}
+            }
+        }
+    }
+
+    fn walk_type_bounds_type_refs(&mut self, context: TypeRefContext, bounds: &'body [TypeBound]) {
+        for bound in bounds {
+            if let TypeBound::Trait(ty) = bound {
+                self.emit_type_ref(context, ty);
+            }
+        }
+    }
+
+    fn walk_field_list_type_refs(&mut self, context: TypeRefContext, fields: &'body FieldList) {
+        self.walk_field_type_refs(context, fields.fields());
+    }
+
+    fn walk_field_type_refs(&mut self, context: TypeRefContext, fields: &'body [FieldItem]) {
+        for field in fields {
+            self.emit_type_ref(context, &field.ty);
+        }
+    }
+
+    fn scope_for_body_function(&self, function: &BodyFunctionData) -> Option<ScopeId> {
+        match function.owner {
+            BodyFunctionOwner::LocalScope(scope) => Some(scope),
+            BodyFunctionOwner::LocalImpl(impl_id) => self
+                .sites
+                .body
+                .local_impl(impl_id)
+                .map(|impl_data| impl_data.scope),
+        }
+    }
+
+    fn walk_decl_body_path_type_refs(
+        &mut self,
+        path: &'body BodyPath,
+        scope: ScopeId,
+        file_id: FileId,
+    ) {
+        let context = self.decl_context(scope, file_id);
+        self.walk_body_path_type_refs(context, path);
+    }
+
+    fn walk_expr_body_path_type_refs(
+        &mut self,
+        path: &'body BodyPath,
+        scope: ScopeId,
+        visible_bindings: usize,
+        file_id: FileId,
+    ) {
+        // Type arguments inside a value path belong to a concrete expression, so they inherit that
+        // expression's binding cutoff rather than the body-wide declaration cutoff.
+        let context = TypeRefContext {
+            scope,
+            visible_bindings,
+            file_id,
+        };
+        self.walk_body_path_type_refs(context, path);
+    }
+
+    fn walk_body_path_type_refs(&mut self, context: TypeRefContext, path: &'body BodyPath) {
+        path.walk_type_refs(&mut |ty| {
+            self.emit_type_ref(context, ty);
+        });
+    }
+
+    fn emit_decl_type_ref(&mut self, scope: ScopeId, file_id: FileId, ty: &'body TypeRef) {
+        // Type syntax owned by declarations and annotations is not source-ordered against body
+        // expressions. The body-wide cutoff marks that no expression-local binding filter applies.
+        let context = self.decl_context(scope, file_id);
+        self.emit_type_ref(context, ty);
+    }
+
+    fn emit_type_ref(&mut self, context: TypeRefContext, ty: &'body TypeRef) {
+        (self.visit)(TypeRefSite {
+            scope: context.scope,
+            visible_bindings: context.visible_bindings,
+            file_id: context.file_id,
+            ty,
+        });
+    }
+
+    fn decl_context(&self, scope: ScopeId, file_id: FileId) -> TypeRefContext {
+        TypeRefContext {
+            scope,
+            visible_bindings: self.body_visible_bindings,
+            file_id,
+        }
     }
 }
