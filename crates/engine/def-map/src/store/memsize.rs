@@ -22,7 +22,7 @@ rg_memsize::impl_memory_size_children! {
     ModuleData => name, name_span, docs, parent, children, local_defs, impls, imports,
         unresolved_imports, scope, origin;
     LocalDefData => module, name, kind, visibility, source, file_id, name_span, span;
-    MacroDefinitionData => edition, payload;
+    MacroDefinitionData => edition, dollar_crate_target, payload;
     LocalImplData => module, source, file_id, span;
     ModuleScope => entries;
     ScopeNameEntry => name, entry;

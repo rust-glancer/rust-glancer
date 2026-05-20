@@ -250,6 +250,61 @@ import_thing!();
 }
 
 #[test]
+fn generated_macro_definitions_keep_dollar_crate_from_original_macro() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub mod source {
+    pub struct Thing;
+}
+
+macro_rules! define_inner {
+    () => {
+        macro_rules! inner {
+            () => {
+                pub use $crate::source::Thing;
+            };
+        }
+    };
+}
+
+pub use define_inner;
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/app/src/lib.rs
+use dep::define_inner;
+
+define_inner!();
+inner!();
+"#,
+    );
+    let target = project.lib("app");
+
+    target.entry("Thing").assert_type_exists(
+        "generated macro definitions should preserve the original macro's $crate target",
+    );
+}
+
+#[test]
 fn expands_imported_macro_rules_items() {
     let project = utils::DefMapFixtureDb::build(
         r#"

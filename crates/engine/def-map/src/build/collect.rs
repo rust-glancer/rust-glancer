@@ -389,7 +389,7 @@ impl<'db> TargetScopeCollector<'db> {
         }
         self.def_map.insert_macro_definition(
             local_def_id,
-            MacroDefinitionData::from_item(macro_definition, self.edition),
+            MacroDefinitionData::from_item(macro_definition, self.edition, self.target),
         );
     }
 

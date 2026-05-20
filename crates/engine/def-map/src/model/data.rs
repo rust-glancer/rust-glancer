@@ -8,7 +8,9 @@ use rg_tt::TopSubtree;
 use rg_workspace::RustEdition;
 
 use super::scope::Namespace;
-use super::{ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef, ModuleScope};
+use super::{
+    ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef, ModuleScope, TargetRef,
+};
 
 /// Frozen namespace map for one analyzed target.
 #[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
@@ -264,13 +266,20 @@ impl LocalDefData {
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct MacroDefinitionData {
     pub edition: RustEdition,
+    /// Target that `$crate` inside this macro body should resolve to when expanded.
+    pub dollar_crate_target: TargetRef,
     pub payload: MacroDefinitionPayload,
 }
 
 impl MacroDefinitionData {
-    pub(crate) fn from_item(item: &MacroDefinitionItem, edition: RustEdition) -> Self {
+    pub(crate) fn from_item(
+        item: &MacroDefinitionItem,
+        edition: RustEdition,
+        dollar_crate_target: TargetRef,
+    ) -> Self {
         Self {
             edition,
+            dollar_crate_target,
             payload: MacroDefinitionPayload::from_item(item),
         }
     }

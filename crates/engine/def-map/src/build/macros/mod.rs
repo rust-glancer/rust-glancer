@@ -558,7 +558,7 @@ impl MacroExpansionAttempt {
             compile_result.record,
             Some(prepared_expansion.record),
         );
-        attempt.origin.dollar_crate_target = Some(resolved.def_ref.target);
+        attempt.origin.dollar_crate_target = Some(resolved.data.dollar_crate_target);
         Ok(attempt)
     }
 

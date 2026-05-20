@@ -263,9 +263,12 @@ impl GeneratedCollector<'_> {
                     order,
                 );
             }
+            // Generated macro definitions inherit `$crate` from the macro that produced them, not
+            // from the module where the generated definition is inserted.
+            let dollar_crate_target = self.origin.dollar_crate_target.unwrap_or(self.state.target);
             self.state.def_map.insert_macro_definition(
                 local_def_id,
-                MacroDefinitionData::from_item(&item, self.state.edition),
+                MacroDefinitionData::from_item(&item, self.state.edition, dollar_crate_target),
             );
         }
     }
