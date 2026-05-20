@@ -38,6 +38,17 @@ pub struct BodyItemRef {
     pub item: BodyItemId,
 }
 
+/// Stable identifier for one value item declared inside a function body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct BodyValueItemId(pub usize);
+
+/// Stable reference to one value item declared inside a function body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct BodyValueItemRef {
+    pub body: BodyRef,
+    pub item: BodyValueItemId,
+}
+
 /// Stable identifier for one impl block declared inside a function body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct BodyImplId(pub usize);
@@ -45,6 +56,13 @@ pub struct BodyImplId(pub usize);
 /// Stable reference to one field declared on a body-local item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct BodyFieldRef {
+    pub item: BodyItemRef,
+    pub index: usize,
+}
+
+/// Stable reference to one variant declared on a body-local enum item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct BodyEnumVariantRef {
     pub item: BodyItemRef,
     pub index: usize,
 }
@@ -83,6 +101,7 @@ pub struct ScopeId(pub usize);
 impl_arena_id!(
     BodyId,
     BodyItemId,
+    BodyValueItemId,
     BodyImplId,
     BodyFunctionId,
     ExprId,

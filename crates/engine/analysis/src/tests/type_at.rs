@@ -868,6 +868,203 @@ pub fn outside() {
 }
 
 #[test]
+fn returns_body_local_enum_variant_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_local_enum_variant_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    enum Action {
+        Start(GlobalId),
+        Stop,
+    }
+
+    let _action = Action::Sta$type_local_variant$rt(GlobalId);
+}
+"#,
+        &[AnalysisQuery::ty(
+            "type at local enum variant",
+            "type_local_variant",
+        )],
+        expect![[r#"
+            type at local enum variant
+            - local nominal enum fn analysis_local_enum_variant_type[lib]::crate::make::Action
+        "#]],
+    );
+}
+
+#[test]
+fn returns_body_local_record_literal_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_local_record_literal_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct User {
+        id: GlobalId,
+    }
+
+    let user$type_record_binding$ = Us$type_record_literal$er { id: GlobalId };
+}
+"#,
+        &[
+            AnalysisQuery::ty("type at record binding", "type_record_binding"),
+            AnalysisQuery::ty("type at record literal", "type_record_literal"),
+        ],
+        expect![[r#"
+            type at record binding
+            - local nominal struct fn analysis_local_record_literal_type[lib]::crate::make::User
+
+            type at record literal
+            - local nominal struct fn analysis_local_record_literal_type[lib]::crate::make::User
+        "#]],
+    );
+}
+
+#[test]
+fn returns_scope_ordered_body_local_value_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_value_shadowing_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Outer;
+pub struct Inner;
+
+pub fn make() {
+    fn helper() -> Outer {
+        Outer
+    }
+    let value = Outer;
+
+    {
+        fn value() -> Inner {
+            Inner
+        }
+        let from_fn$type_inner_fn_binding$ = value();
+    };
+
+    {
+        const helper: Inner = Inner;
+        let from_const$type_inner_const_binding$ = helper;
+    };
+}
+"#,
+        &[
+            AnalysisQuery::ty("type at inner function result", "type_inner_fn_binding"),
+            AnalysisQuery::ty("type at inner const result", "type_inner_const_binding"),
+        ],
+        expect![[r#"
+            type at inner function result
+            - nominal struct analysis_body_value_shadowing_type[lib]::crate::Inner
+
+            type at inner const result
+            - nominal struct analysis_body_value_shadowing_type[lib]::crate::Inner
+        "#]],
+    );
+}
+
+#[test]
+fn returns_body_local_associated_item_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_assoc_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct User;
+
+    impl User {
+        const DEFAULT: GlobalId = GlobalId;
+        type Id = GlobalId;
+    }
+
+    let default$type_assoc_const_binding$ = User::DEFAULT;
+    let typed$type_assoc_type_binding$: User::Id = GlobalId;
+}
+"#,
+        &[
+            AnalysisQuery::ty(
+                "type at associated const result",
+                "type_assoc_const_binding",
+            ),
+            AnalysisQuery::ty("type at associated type result", "type_assoc_type_binding"),
+        ],
+        expect![[r#"
+            type at associated const result
+            - nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId
+
+            type at associated type result
+            - nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId
+        "#]],
+    );
+}
+
+#[test]
+fn returns_body_local_enum_pattern_payload_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_enum_pattern_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct GlobalId;
+
+pub fn make() {
+    enum Action {
+        Start(User),
+        Named { id: GlobalId },
+    }
+
+    let action: Action = Action::Start(User);
+    let Action::Start(user$type_tuple_payload$) = action;
+    let named: Action = Action::Start(User);
+    let Action::Named { id$type_record_payload$ } = named;
+}
+"#,
+        &[
+            AnalysisQuery::ty("type at tuple payload", "type_tuple_payload"),
+            AnalysisQuery::ty("type at record payload", "type_record_payload"),
+        ],
+        expect![[r#"
+            type at tuple payload
+            - nominal struct analysis_body_local_enum_pattern_type[lib]::crate::User
+
+            type at record payload
+            - nominal struct analysis_body_local_enum_pattern_type[lib]::crate::GlobalId
+        "#]],
+    );
+}
+
+#[test]
 fn returns_body_let_annotation_types_with_body_context() {
     check_analysis_queries(
         r#"

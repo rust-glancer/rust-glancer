@@ -1,15 +1,18 @@
 use crate::{
-    BindingData, BindingId, BindingKind, BodyData, BodyFieldRef, BodyFunctionData, BodyFunctionId,
-    BodyFunctionOwner, BodyFunctionRef, BodyGenericArg, BodyId, BodyImplData, BodyImplId,
-    BodyIrBuildPolicy, BodyIrDb, BodyIrStats, BodyItemData, BodyItemId, BodyItemKind, BodyItemRef,
-    BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef, BodyResolution, BodySource, BodyTy,
-    BodyTypePathResolution, ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData,
+    BindingData, BindingId, BindingKind, BodyData, BodyEnumVariantRef, BodyFieldRef,
+    BodyFunctionData, BodyFunctionId, BodyFunctionOwner, BodyFunctionRef, BodyGenericArg, BodyId,
+    BodyImplData, BodyImplId, BodyIrBuildPolicy, BodyIrDb, BodyIrStats, BodyItemData, BodyItemId,
+    BodyItemKind, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef,
+    BodyResolution, BodySource, BodyTy, BodyTypePathResolution, BodyValueItemData,
+    BodyValueItemDeclaration, BodyValueItemId, BodyValueItemKind, BodyValueItemOwner,
+    BodyValueItemRef, ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData,
     ExprId, ExprKind, LiteralKind, PackageBodies, PatBindingMode, PatData, PatId, PatKind,
     PatMutability, PatRangeKind, RecordExprField, RecordExprSpread, RecordPatField,
-    ResolvedFieldRef, ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
-    TargetBodiesStatus,
+    ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, ScopeData, ScopeId, StmtData,
+    StmtKind, TargetBodies, TargetBodiesStatus,
     ir::expr::{ExprWrapperKind, LabelData, MatchArmData},
     ir::ids::StmtId,
+    ir::item::{BodyItemDeclaration, BodyItemOwner},
     ir::path::{BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind},
 };
 use rg_memsize::{MemoryRecorder, MemorySize};
@@ -29,9 +32,13 @@ rg_memsize::impl_memory_size_leaf!(
     PatMutability,
     PatRangeKind,
     BodyItemKind,
+    BodyValueItemKind,
+    BodyItemOwner,
+    BodyValueItemOwner,
     BindingKind,
     BodyId,
     BodyItemId,
+    BodyValueItemId,
     BodyImplId,
     BodyFunctionId,
     ExprId,
@@ -46,9 +53,10 @@ rg_memsize::impl_memory_size_children! {
     PackageBodies => targets;
     TargetBodies => status, function_bodies, bodies;
     BodyData => owner, owner_module, source, param_scope, root_expr, params, scopes,
-        local_items, local_impls, local_functions, bindings, pats, statements, exprs;
+        local_items, local_value_items, local_impls, local_functions, bindings, pats, statements,
+        exprs;
     BodySource => file_id, span;
-    ScopeData => parent, local_items, local_impls, bindings;
+    ScopeData => parent, local_items, local_value_items, local_functions, local_impls, bindings;
     ExprData => source, scope, visible_bindings, kind, resolution, ty;
     MatchArmData => pat, scope, guard, expr;
     ClosureParamData => source, pat, bindings, annotation;
@@ -59,8 +67,10 @@ rg_memsize::impl_memory_size_children! {
     BodyPathSegment => kind, span, args;
     BodyLocalNominalTy => item, args;
     BodyNominalTy => def, args;
-    BodyItemData => source, name_source, scope, kind, name, docs, generics, fields;
-    BodyImplData => source, scope, generics, trait_ref, self_ty, self_item, functions;
+    BodyItemData => source, name_source, scope, owner, kind, name, docs, declaration;
+    BodyValueItemData => source, name_source, scope, owner, kind, name, docs, declaration;
+    BodyImplData => source, scope, generics, trait_ref, self_ty, self_item, functions, consts,
+        types;
     BodyFunctionData => source, name_source, owner, name, docs, declaration;
     PatData => source, kind;
     RecordPatField => key, key_span, source_span, pat;
@@ -68,11 +78,13 @@ rg_memsize::impl_memory_size_children! {
     StmtData => source, kind;
     BodyRef => target, body;
     BodyItemRef => body, item;
+    BodyValueItemRef => body, item;
     BodyFieldRef => item, index;
+    BodyEnumVariantRef => item, index;
     BodyFunctionRef => body, function;
     BodyIrStats => target_count, built_target_count, skipped_target_count, body_count,
-        scope_count, local_item_count, local_impl_count, local_function_count, binding_count,
-        statement_count, expression_count;
+        scope_count, local_item_count, local_value_item_count, local_impl_count,
+        local_function_count, binding_count, statement_count, expression_count;
 }
 
 impl MemorySize for ExprBlockKind {
@@ -127,6 +139,27 @@ impl MemorySize for BodyIrDb {
         recorder.scope("packages", |recorder| {
             self.record_packages_memory_children(recorder);
         });
+    }
+}
+
+impl MemorySize for BodyItemDeclaration {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Struct(item) => item.record_memory_children(recorder),
+            Self::Enum(item) => item.record_memory_children(recorder),
+            Self::Union(item) => item.record_memory_children(recorder),
+            Self::TypeAlias(item) => item.record_memory_children(recorder),
+            Self::Trait(item) => item.record_memory_children(recorder),
+        }
+    }
+}
+
+impl MemorySize for BodyValueItemDeclaration {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Const(item) => item.record_memory_children(recorder),
+            Self::Static(item) => item.record_memory_children(recorder),
+        }
     }
 }
 
@@ -357,6 +390,7 @@ impl MemorySize for BodyResolution {
         match self {
             Self::Local(binding) => binding.record_memory_children(recorder),
             Self::LocalItem(item) => item.record_memory_children(recorder),
+            Self::LocalValueItem(item) => item.record_memory_children(recorder),
             Self::Item(items) => items.record_memory_children(recorder),
             Self::Field(fields) => fields.record_memory_children(recorder),
             Self::Function(functions) | Self::Method(functions) => {
@@ -382,6 +416,15 @@ impl MemorySize for ResolvedFunctionRef {
         match self {
             Self::Semantic(function) => function.record_memory_children(recorder),
             Self::BodyLocal(function) => function.record_memory_children(recorder),
+        }
+    }
+}
+
+impl MemorySize for ResolvedEnumVariantRef {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Semantic(variant) => variant.record_memory_children(recorder),
+            Self::BodyLocal(variant) => variant.record_memory_children(recorder),
         }
     }
 }
@@ -427,6 +470,7 @@ impl MemorySize for BodyGenericArg {
 impl MemorySize for BodyFunctionOwner {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
+            Self::LocalScope(scope) => scope.record_memory_children(recorder),
             Self::LocalImpl(impl_id) => impl_id.record_memory_children(recorder),
         }
     }
@@ -531,6 +575,8 @@ impl MemorySize for StmtKind {
                 });
             }
             Self::Item { item } => item.record_memory_children(recorder),
+            Self::ValueItem { item } => item.record_memory_children(recorder),
+            Self::Function { function } => function.record_memory_children(recorder),
             Self::Impl { impl_id } => impl_id.record_memory_children(recorder),
             Self::ItemIgnored => {}
         }

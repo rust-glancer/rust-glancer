@@ -5,10 +5,16 @@
 //! This module keeps the structural walk in one place while leaving those query-specific meanings
 //! with the callers.
 
-use rg_item_tree::{GenericArg, TypeBound, TypePath, TypeRef};
+use rg_item_tree::{
+    FieldItem, FieldList, FunctionItem, GenericArg, GenericParams, TypeBound, TypePath, TypeRef,
+    WherePredicate,
+};
 use rg_parse::{FileId, Span};
 
-use crate::{BodyData, BodyPath, ExprKind, PatData, PatId, PatKind, ScopeId, StmtKind};
+use crate::{
+    BodyData, BodyFunctionData, BodyFunctionOwner, BodyItemDeclaration, BodyPath,
+    BodyValueItemDeclaration, ExprKind, PatData, PatId, PatKind, ScopeId, StmtKind,
+};
 
 /// A source-owned pattern root together with the scope where its bindings live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,6 +175,63 @@ impl<'body> BodyScanSites<'body> {
             });
         }
 
+        for item in self.body.local_items.iter() {
+            Self::visit_body_item_type_refs(
+                item.scope,
+                visible_bindings,
+                item.source.file_id,
+                item,
+                &mut visit,
+            );
+        }
+
+        for item in self.body.local_value_items.iter() {
+            Self::visit_body_value_item_type_refs(
+                item.scope,
+                visible_bindings,
+                item.source.file_id,
+                item,
+                &mut visit,
+            );
+        }
+
+        for impl_data in self.body.local_impls.iter() {
+            Self::visit_generic_params_type_refs(
+                impl_data.scope,
+                visible_bindings,
+                impl_data.source.file_id,
+                &impl_data.generics,
+                &mut visit,
+            );
+            if let Some(trait_ref) = &impl_data.trait_ref {
+                visit(TypeRefSite {
+                    scope: impl_data.scope,
+                    visible_bindings,
+                    file_id: impl_data.source.file_id,
+                    ty: trait_ref,
+                });
+            }
+            visit(TypeRefSite {
+                scope: impl_data.scope,
+                visible_bindings,
+                file_id: impl_data.source.file_id,
+                ty: &impl_data.self_ty,
+            });
+        }
+
+        for function in self.body.local_functions.iter() {
+            let Some(scope) = self.scope_for_body_function(function) else {
+                continue;
+            };
+            Self::visit_function_item_type_refs(
+                scope,
+                visible_bindings,
+                function.source.file_id,
+                &function.declaration,
+                &mut visit,
+            );
+        }
+
         for expr in self.body.exprs.iter() {
             match &expr.kind {
                 ExprKind::Closure {
@@ -242,6 +305,254 @@ impl<'body> BodyScanSites<'body> {
                 }
             });
         });
+    }
+
+    fn visit_body_item_type_refs(
+        scope: ScopeId,
+        visible_bindings: usize,
+        file_id: FileId,
+        item: &'body crate::BodyItemData,
+        visit: &mut impl FnMut(TypeRefSite<'body>),
+    ) {
+        if let Some(generics) = item.generic_params() {
+            Self::visit_generic_params_type_refs(scope, visible_bindings, file_id, generics, visit);
+        }
+
+        match &item.declaration {
+            BodyItemDeclaration::Struct(item) => {
+                Self::visit_field_list_type_refs(
+                    scope,
+                    visible_bindings,
+                    file_id,
+                    &item.fields,
+                    visit,
+                );
+            }
+            BodyItemDeclaration::Enum(item) => {
+                for variant in &item.variants {
+                    Self::visit_field_list_type_refs(
+                        scope,
+                        visible_bindings,
+                        file_id,
+                        &variant.fields,
+                        visit,
+                    );
+                }
+            }
+            BodyItemDeclaration::Union(item) => {
+                Self::visit_field_type_refs(scope, visible_bindings, file_id, &item.fields, visit);
+            }
+            BodyItemDeclaration::TypeAlias(item) => {
+                Self::visit_type_bounds_type_refs(
+                    scope,
+                    visible_bindings,
+                    file_id,
+                    &item.bounds,
+                    visit,
+                );
+                if let Some(ty) = &item.aliased_ty {
+                    visit(TypeRefSite {
+                        scope,
+                        visible_bindings,
+                        file_id,
+                        ty,
+                    });
+                }
+            }
+            BodyItemDeclaration::Trait(item) => {
+                Self::visit_type_bounds_type_refs(
+                    scope,
+                    visible_bindings,
+                    file_id,
+                    &item.super_traits,
+                    visit,
+                );
+            }
+        }
+    }
+
+    fn visit_body_value_item_type_refs(
+        scope: ScopeId,
+        visible_bindings: usize,
+        file_id: FileId,
+        item: &'body crate::BodyValueItemData,
+        visit: &mut impl FnMut(TypeRefSite<'body>),
+    ) {
+        match &item.declaration {
+            BodyValueItemDeclaration::Const(item) => {
+                Self::visit_generic_params_type_refs(
+                    scope,
+                    visible_bindings,
+                    file_id,
+                    &item.generics,
+                    visit,
+                );
+                if let Some(ty) = &item.ty {
+                    visit(TypeRefSite {
+                        scope,
+                        visible_bindings,
+                        file_id,
+                        ty,
+                    });
+                }
+            }
+            BodyValueItemDeclaration::Static(item) => {
+                if let Some(ty) = &item.ty {
+                    visit(TypeRefSite {
+                        scope,
+                        visible_bindings,
+                        file_id,
+                        ty,
+                    });
+                }
+            }
+        }
+    }
+
+    fn visit_function_item_type_refs(
+        scope: ScopeId,
+        visible_bindings: usize,
+        file_id: FileId,
+        item: &'body FunctionItem,
+        visit: &mut impl FnMut(TypeRefSite<'body>),
+    ) {
+        Self::visit_generic_params_type_refs(
+            scope,
+            visible_bindings,
+            file_id,
+            &item.generics,
+            visit,
+        );
+        for param in &item.params {
+            if let Some(ty) = &param.ty {
+                visit(TypeRefSite {
+                    scope,
+                    visible_bindings,
+                    file_id,
+                    ty,
+                });
+            }
+        }
+        if let Some(ty) = &item.ret_ty {
+            visit(TypeRefSite {
+                scope,
+                visible_bindings,
+                file_id,
+                ty,
+            });
+        }
+    }
+
+    fn visit_generic_params_type_refs(
+        scope: ScopeId,
+        visible_bindings: usize,
+        file_id: FileId,
+        generics: &'body GenericParams,
+        visit: &mut impl FnMut(TypeRefSite<'body>),
+    ) {
+        for param in &generics.types {
+            Self::visit_type_bounds_type_refs(
+                scope,
+                visible_bindings,
+                file_id,
+                &param.bounds,
+                visit,
+            );
+            if let Some(ty) = &param.default {
+                visit(TypeRefSite {
+                    scope,
+                    visible_bindings,
+                    file_id,
+                    ty,
+                });
+            }
+        }
+        for param in &generics.consts {
+            if let Some(ty) = &param.ty {
+                visit(TypeRefSite {
+                    scope,
+                    visible_bindings,
+                    file_id,
+                    ty,
+                });
+            }
+        }
+        for predicate in &generics.where_predicates {
+            match predicate {
+                WherePredicate::Type { ty, bounds } => {
+                    visit(TypeRefSite {
+                        scope,
+                        visible_bindings,
+                        file_id,
+                        ty,
+                    });
+                    Self::visit_type_bounds_type_refs(
+                        scope,
+                        visible_bindings,
+                        file_id,
+                        bounds,
+                        visit,
+                    );
+                }
+                WherePredicate::Lifetime { .. } | WherePredicate::Unsupported(_) => {}
+            }
+        }
+    }
+
+    fn visit_type_bounds_type_refs(
+        scope: ScopeId,
+        visible_bindings: usize,
+        file_id: FileId,
+        bounds: &'body [TypeBound],
+        visit: &mut impl FnMut(TypeRefSite<'body>),
+    ) {
+        for bound in bounds {
+            if let TypeBound::Trait(ty) = bound {
+                visit(TypeRefSite {
+                    scope,
+                    visible_bindings,
+                    file_id,
+                    ty,
+                });
+            }
+        }
+    }
+
+    fn visit_field_list_type_refs(
+        scope: ScopeId,
+        visible_bindings: usize,
+        file_id: FileId,
+        fields: &'body FieldList,
+        visit: &mut impl FnMut(TypeRefSite<'body>),
+    ) {
+        Self::visit_field_type_refs(scope, visible_bindings, file_id, fields.fields(), visit);
+    }
+
+    fn visit_field_type_refs(
+        scope: ScopeId,
+        visible_bindings: usize,
+        file_id: FileId,
+        fields: &'body [FieldItem],
+        visit: &mut impl FnMut(TypeRefSite<'body>),
+    ) {
+        for field in fields {
+            visit(TypeRefSite {
+                scope,
+                visible_bindings,
+                file_id,
+                ty: &field.ty,
+            });
+        }
+    }
+
+    fn scope_for_body_function(&self, function: &BodyFunctionData) -> Option<ScopeId> {
+        match function.owner {
+            BodyFunctionOwner::LocalScope(scope) => Some(scope),
+            BodyFunctionOwner::LocalImpl(impl_id) => self
+                .body
+                .local_impl(impl_id)
+                .map(|impl_data| impl_data.scope),
+        }
     }
 
     fn visit_body_path_type_refs(

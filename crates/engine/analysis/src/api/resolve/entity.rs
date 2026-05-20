@@ -4,13 +4,13 @@
 //! question: "what declaration-like entity does this cursor symbol denote?"
 
 use rg_body_ir::{
-    BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution, ResolvedFieldRef,
-    ResolvedFunctionRef, ScopeId,
+    BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution, ResolvedEnumVariantRef,
+    ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
 };
 use rg_def_map::{DefId, LocalDefRef, ModuleRef, Path};
 use rg_semantic_ir::{
-    ConstRef, EnumVariantRef, FunctionRef, ItemId, SemanticTypePathResolution, StaticRef, TraitRef,
-    TypeAliasRef, TypeDefId, TypeDefRef,
+    ConstRef, FunctionRef, ItemId, SemanticTypePathResolution, StaticRef, TraitRef, TypeAliasRef,
+    TypeDefId, TypeDefRef,
 };
 
 use crate::{api::Analysis, model::SymbolAt};
@@ -25,7 +25,7 @@ pub(crate) enum ResolvedEntity {
     Trait(TraitRef),
     Function(ResolvedFunctionRef),
     Field(ResolvedFieldRef),
-    EnumVariant(EnumVariantRef),
+    EnumVariant(ResolvedEnumVariantRef),
     TypeAlias(TypeAliasRef),
     Const(ConstRef),
     Static(StaticRef),
@@ -34,6 +34,7 @@ pub(crate) enum ResolvedEntity {
         binding: rg_body_ir::BindingId,
     },
     LocalItem(BodyItemRef),
+    LocalValueItem(rg_body_ir::BodyValueItemRef),
     LocalDef(LocalDefRef),
 }
 
@@ -75,8 +76,14 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
             SymbolAt::Function { function, .. } => Ok(vec![ResolvedEntity::Function(
                 ResolvedFunctionRef::Semantic(function),
             )]),
-            SymbolAt::EnumVariant { variant, .. } => Ok(vec![ResolvedEntity::EnumVariant(variant)]),
+            SymbolAt::EnumVariant { variant, .. } => Ok(vec![ResolvedEntity::EnumVariant(
+                ResolvedEnumVariantRef::Semantic(variant),
+            )]),
+            SymbolAt::LocalEnumVariant { variant, .. } => Ok(vec![ResolvedEntity::EnumVariant(
+                ResolvedEnumVariantRef::BodyLocal(variant),
+            )]),
             SymbolAt::LocalItem { item, .. } => Ok(vec![ResolvedEntity::LocalItem(item)]),
+            SymbolAt::LocalValueItem { item, .. } => Ok(vec![ResolvedEntity::LocalValueItem(item)]),
             SymbolAt::LocalField { field, .. } => Ok(vec![ResolvedEntity::Field(
                 ResolvedFieldRef::BodyLocal(field),
             )]),
@@ -240,6 +247,7 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
                 .into_iter()
                 .collect()),
             BodyResolution::LocalItem(item) => Ok(vec![ResolvedEntity::LocalItem(*item)]),
+            BodyResolution::LocalValueItem(item) => Ok(vec![ResolvedEntity::LocalValueItem(*item)]),
             BodyResolution::Item(defs) => {
                 let mut entities = Vec::new();
                 for def in defs {

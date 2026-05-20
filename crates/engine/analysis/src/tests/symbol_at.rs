@@ -121,3 +121,80 @@ pub fn make() {
         "#]],
     );
 }
+
+#[test]
+fn finds_more_body_local_item_symbols_at_offsets() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_more_body_local_symbols"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    type Al$symbol_alias_decl$ias = GlobalId;
+    const DE$symbol_const_decl$FAULT: Alias = GlobalId;
+    static CU$symbol_static_decl$RRENT: GlobalId = GlobalId;
+    fn hel$symbol_fn_decl$per() -> Alias {
+        DEFAULT
+    }
+    enum Action {
+        Sta$symbol_variant_decl$rt,
+        Stop,
+    }
+
+    let _typed: Al$symbol_alias_path$ias = hel$symbol_fn_path$per();
+    let _default = DE$symbol_const_path$FAULT;
+    let _current = CU$symbol_static_path$RRENT;
+    let _action = Action::Sta$symbol_variant_path$rt;
+}
+"#,
+        &[
+            AnalysisQuery::symbol("symbol at local alias declaration", "symbol_alias_decl"),
+            AnalysisQuery::symbol("symbol at local const declaration", "symbol_const_decl"),
+            AnalysisQuery::symbol("symbol at local static declaration", "symbol_static_decl"),
+            AnalysisQuery::symbol("symbol at local function declaration", "symbol_fn_decl"),
+            AnalysisQuery::symbol("symbol at local variant declaration", "symbol_variant_decl"),
+            AnalysisQuery::symbol("symbol at local alias path", "symbol_alias_path"),
+            AnalysisQuery::symbol("symbol at local function path", "symbol_fn_path"),
+            AnalysisQuery::symbol("symbol at local const path", "symbol_const_path"),
+            AnalysisQuery::symbol("symbol at local static path", "symbol_static_path"),
+            AnalysisQuery::symbol("symbol at local variant path", "symbol_variant_path"),
+        ],
+        expect![[r#"
+            symbol at local alias declaration
+            - type fn analysis_more_body_local_symbols[lib]::crate::use_it::Alias @ 4:10-4:15
+
+            symbol at local const declaration
+            - const DEFAULT @ 5:11-5:18
+
+            symbol at local static declaration
+            - static CURRENT @ 6:12-6:19
+
+            symbol at local function declaration
+            - fn helper @ 7:8-7:14
+
+            symbol at local variant declaration
+            - variant Start @ 11:9-11:14
+
+            symbol at local alias path
+            - body path Alias @ 15:17-15:22
+
+            symbol at local function path
+            - expr path helper @ 15:25-15:31
+
+            symbol at local const path
+            - expr path DEFAULT @ 16:20-16:27
+
+            symbol at local static path
+            - expr path CURRENT @ 17:20-17:27
+
+            symbol at local variant path
+            - body value path Action::Start @ 18:27-18:32
+        "#]],
+    );
+}

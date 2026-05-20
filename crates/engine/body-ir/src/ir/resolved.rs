@@ -3,7 +3,9 @@ use rg_semantic_ir::{
     EnumVariantRef, FieldRef, FunctionRef, SemanticTypePathResolution, TraitRef, TypeDefRef,
 };
 
-use super::ids::{BindingId, BodyFieldRef, BodyFunctionRef, BodyItemRef};
+use super::ids::{
+    BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef, BodyItemRef, BodyValueItemRef,
+};
 
 /// Stable field identity across module-level Semantic IR and body-local declarations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
@@ -19,11 +21,19 @@ pub enum ResolvedFunctionRef {
     BodyLocal(BodyFunctionRef),
 }
 
+/// Stable enum variant identity across module-level Semantic IR and body-local declarations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+pub enum ResolvedEnumVariantRef {
+    Semantic(EnumVariantRef),
+    BodyLocal(BodyEnumVariantRef),
+}
+
 /// Best-effort semantic resolution attached to body expressions.
 #[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum BodyResolution {
     Local(BindingId),
     LocalItem(BodyItemRef),
+    LocalValueItem(BodyValueItemRef),
     Item(Vec<DefId>),
     Field(Vec<ResolvedFieldRef>),
     /// Associated or free functions resolved through a qualified value path.
@@ -35,7 +45,7 @@ pub enum BodyResolution {
     ///
     /// Keeping them explicit here lets goto/type queries land on the variant declaration while
     /// still reporting the owning enum as the expression type.
-    EnumVariant(Vec<EnumVariantRef>),
+    EnumVariant(Vec<ResolvedEnumVariantRef>),
     Method(Vec<ResolvedFunctionRef>),
     #[default]
     Unknown,
@@ -69,7 +79,7 @@ impl BodyResolution {
             Self::Field(fields) => fields.shrink_to_fit(),
             Self::Function(functions) | Self::Method(functions) => functions.shrink_to_fit(),
             Self::EnumVariant(variants) => variants.shrink_to_fit(),
-            Self::Local(_) | Self::LocalItem(_) | Self::Unknown => {}
+            Self::Local(_) | Self::LocalItem(_) | Self::LocalValueItem(_) | Self::Unknown => {}
         }
     }
 }

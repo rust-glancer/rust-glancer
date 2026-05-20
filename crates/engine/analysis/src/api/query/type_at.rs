@@ -4,7 +4,8 @@
 //! body-local declarations. Signature-only resolutions are converted into that common shape here.
 
 use rg_body_ir::{
-    BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyTy, BodyTypePathResolution, ScopeId,
+    BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyTy, BodyTypePathResolution,
+    ResolvedEnumVariantRef, ScopeId,
 };
 use rg_def_map::{DefId, Path};
 use rg_semantic_ir::{
@@ -66,12 +67,24 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
             SymbolAt::LocalItem { item, .. } => {
                 Some(BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)]))
             }
+            SymbolAt::LocalValueItem { item, .. } => self
+                .0
+                .body_ir
+                .body_data(item.body)?
+                .and_then(|body_data| body_data.local_value_item(item.item))
+                .and_then(|data| data.ty().cloned())
+                .map(BodyTy::Syntax),
             SymbolAt::LocalField { .. } => None,
+            SymbolAt::LocalEnumVariant { variant, .. } => {
+                self.ty_for_enum_variant(ResolvedEnumVariantRef::BodyLocal(variant))?
+            }
             SymbolAt::LocalFunction { .. } => None,
             SymbolAt::TypePath { context, path, .. } => {
                 Some(self.ty_for_type_path(context, &path)?)
             }
-            SymbolAt::EnumVariant { variant, .. } => self.ty_for_enum_variant(variant)?,
+            SymbolAt::EnumVariant { variant, .. } => {
+                self.ty_for_enum_variant(ResolvedEnumVariantRef::Semantic(variant))?
+            }
             SymbolAt::UsePath { .. } | SymbolAt::Function { .. } => None,
             SymbolAt::Body { .. } => None,
         };
@@ -145,12 +158,21 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
 
     fn ty_for_enum_variant(
         &self,
-        variant: rg_semantic_ir::EnumVariantRef,
+        variant: ResolvedEnumVariantRef,
     ) -> anyhow::Result<Option<BodyTy>> {
-        let Some(data) = self.0.semantic_ir.enum_variant_data(variant)? else {
-            return Ok(None);
-        };
-        Ok(Some(BodyTy::Nominal(vec![BodyNominalTy::bare(data.owner)])))
+        match variant {
+            ResolvedEnumVariantRef::Semantic(variant) => {
+                let Some(data) = self.0.semantic_ir.enum_variant_data(variant)? else {
+                    return Ok(None);
+                };
+                Ok(Some(BodyTy::Nominal(vec![BodyNominalTy::bare(data.owner)])))
+            }
+            ResolvedEnumVariantRef::BodyLocal(variant) => {
+                Ok(Some(BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(
+                    variant.item,
+                )])))
+            }
+        }
     }
 }
 

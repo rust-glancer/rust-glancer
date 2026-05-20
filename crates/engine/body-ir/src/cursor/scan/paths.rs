@@ -69,8 +69,14 @@ impl ValuePathCursorScanner<'_> {
             if !self.file_matches(expr_data.source.file_id) {
                 continue;
             }
-            if let ExprKind::Path { path } = &expr_data.kind {
-                self.scan_body_path(expr_data.scope, path, expr_data.source.file_id);
+            match &expr_data.kind {
+                ExprKind::Path { path }
+                | ExprKind::Record {
+                    path: Some(path), ..
+                } => {
+                    self.scan_body_path(expr_data.scope, path, expr_data.source.file_id);
+                }
+                _ => {}
             }
         }
 

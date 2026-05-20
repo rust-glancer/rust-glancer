@@ -846,6 +846,23 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
+            SymbolAt::LocalValueItem { item, span } => {
+                let targets = self
+                    .db
+                    .analysis()
+                    .resolve_symbol(SymbolAt::LocalValueItem { item, span })
+                    .expect("fixture symbol resolution should resolve");
+                let label = targets
+                    .first()
+                    .map(|target| format!("{} {}", target.kind, target.name))
+                    .unwrap_or_else(|| "value <unresolved>".to_string());
+                writeln!(
+                    dump,
+                    "\n- {label} @ {}",
+                    self.render_source_span(item.body.target.package, file_id, span)
+                )
+                .expect("string writes should not fail");
+            }
             SymbolAt::LocalField { field, span } => {
                 let targets = self
                     .db
@@ -860,6 +877,23 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     dump,
                     "\n- {label} @ {}",
                     self.render_source_span(field.item.body.target.package, file_id, span)
+                )
+                .expect("string writes should not fail");
+            }
+            SymbolAt::LocalEnumVariant { variant, span } => {
+                let targets = self
+                    .db
+                    .analysis()
+                    .resolve_symbol(SymbolAt::LocalEnumVariant { variant, span })
+                    .expect("fixture symbol resolution should resolve");
+                let label = targets
+                    .first()
+                    .map(|target| format!("{} {}", target.kind, target.name))
+                    .unwrap_or_else(|| "variant <unresolved>".to_string());
+                writeln!(
+                    dump,
+                    "\n- {label} @ {}",
+                    self.render_source_span(variant.item.body.target.package, file_id, span)
                 )
                 .expect("string writes should not fail");
             }

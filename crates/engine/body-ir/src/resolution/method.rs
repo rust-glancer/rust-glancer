@@ -188,10 +188,26 @@ pub(super) fn local_function_applies_to_receiver(
     let Some(function_data) = body.local_function(function_ref.function) else {
         return Ok(false);
     };
-    let BodyFunctionOwner::LocalImpl(impl_id) = function_data.owner;
+    let BodyFunctionOwner::LocalImpl(impl_id) = function_data.owner else {
+        return Ok(false);
+    };
     let Some(impl_data) = body.local_impl(impl_id) else {
         return Ok(false);
     };
+
+    local_impl_applies_to_receiver(def_map, semantic_ir, body_ref, body, impl_data, receiver_ty)
+}
+
+pub(super) fn local_impl_applies_to_receiver(
+    def_map: &DefMapReadTxn<'_>,
+    semantic_ir: &SemanticIrReadTxn<'_>,
+    body_ref: BodyRef,
+    body: &BodyData,
+    impl_data: &BodyImplData,
+    receiver_ty: &BodyLocalNominalTy,
+) -> Result<bool, PackageStoreError> {
+    // Body-local inherent impls are selected by exact local item identity, then refined by the
+    // same shallow generic-argument compatibility rule used for module-level impls.
     if impl_data.self_item != Some(receiver_ty.item) || impl_data.trait_ref.is_some() {
         // Body-local trait impls are an explicit non-goal for now. They are rare enough that
         // modeling their lookup would add more complexity than useful LSP signal at this stage.
@@ -221,10 +237,25 @@ pub(super) fn local_impl_self_subst(
     let Some(function_data) = body.local_function(function_ref.function) else {
         return TypeSubst::new();
     };
-    let BodyFunctionOwner::LocalImpl(impl_id) = function_data.owner;
+    let BodyFunctionOwner::LocalImpl(impl_id) = function_data.owner else {
+        return TypeSubst::new();
+    };
     let Some(impl_data) = body.local_impl(impl_id) else {
         return TypeSubst::new();
     };
+
+    local_impl_self_subst_for_impl(impl_data, receiver_ty)
+}
+
+pub(super) fn local_impl_self_subst_for_impl(
+    impl_data: &BodyImplData,
+    receiver_ty: &BodyLocalNominalTy,
+) -> TypeSubst {
+    // Convert body-local impl generics into associated-item substitutions. For
+    // `impl<U> Wrapper<U>`, a `Wrapper<User>` receiver gives `U -> User`.
+    if impl_data.self_item != Some(receiver_ty.item) {
+        return TypeSubst::new();
+    }
     let TypeRef::Path(self_ty) = &impl_data.self_ty else {
         return TypeSubst::new();
     };

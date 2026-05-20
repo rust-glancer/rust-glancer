@@ -536,6 +536,60 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_more_body_local_type_and_value_items() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_more_body_local_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    struct LocalUnit;
+    enum LocalAction { Start }
+    union LocalBits { id: GlobalId }
+    type LocalAlias = GlobalId;
+    trait LocalNamed {}
+    const local_default: LocalAlias = GlobalId;
+    static local_current: GlobalId = GlobalId;
+    fn local_helper() -> LocalAlias {
+        GlobalId
+    }
+
+    let _typed: Loc$type$;
+    let _value = loc$value$;
+}
+"#,
+        &[
+            AnalysisQuery::complete("body-local type item completions", "type"),
+            AnalysisQuery::complete("body-local value item completions", "value"),
+        ],
+        expect![[r#"
+            body-local type item completions
+            - struct GlobalId
+            - enum LocalAction
+            - type_alias LocalAlias
+            - union LocalBits
+            - trait LocalNamed
+            - struct LocalUnit
+
+            body-local value item completions
+            - struct GlobalId
+            - struct LocalUnit
+            - variable _typed
+            - static local_current
+            - const local_default
+            - fn local_helper
+            - fn use_it
+        "#]],
+    );
+}
+
+#[test]
 fn completes_unqualified_type_args_in_generic_type_paths() {
     check_analysis_queries_with_sysroot(
         r#"

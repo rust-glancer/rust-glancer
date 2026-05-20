@@ -118,6 +118,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
             | ResolvedEntity::TypeAlias(_)
             | ResolvedEntity::Const(_)
             | ResolvedEntity::Static(_)
+            | ResolvedEntity::LocalValueItem(_)
             | ResolvedEntity::LocalDef(_) => Ok(()),
         }
     }

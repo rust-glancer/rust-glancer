@@ -1,6 +1,6 @@
 //! Builds hover payloads from resolved analysis entities.
 
-use rg_body_ir::{BodyTy, ResolvedFieldRef, ResolvedFunctionRef};
+use rg_body_ir::{BodyTy, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef};
 use rg_def_map::{LocalDefRef, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
@@ -66,18 +66,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             ResolvedEntity::Trait(trait_ref) => self.hover_for_trait(trait_ref),
             ResolvedEntity::Function(function) => self.hover_for_function(function),
             ResolvedEntity::Field(field) => self.hover_for_field(field),
-            ResolvedEntity::EnumVariant(variant) => {
-                let Some(data) = self.0.semantic_ir.enum_variant_data(variant)? else {
-                    return Ok(None);
-                };
-                Ok(Some(HoverBlock {
-                    kind: SymbolKind::EnumVariant,
-                    path: PathRenderer::new(self.0).enum_variant_path(variant)?,
-                    signature: Some(SignatureRenderer::new(self.0).enum_variant_signature(data)),
-                    ty: None,
-                    docs: data.variant.docs.as_ref().map(Documentation::text),
-                }))
-            }
+            ResolvedEntity::EnumVariant(variant) => self.hover_for_enum_variant(variant),
             ResolvedEntity::TypeAlias(type_alias_ref) => self.hover_for_type_alias(type_alias_ref),
             ResolvedEntity::Const(const_ref) => self.hover_for_const(const_ref),
             ResolvedEntity::Static(static_ref) => self.hover_for_static(static_ref),
@@ -109,6 +98,23 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     kind: SymbolKind::from_body_item_kind(item.kind),
                     path: None,
                     signature: Some(SignatureRenderer::new(self.0).local_item_signature(item)),
+                    ty: None,
+                    docs: item.docs.as_ref().map(Documentation::text),
+                }))
+            }
+            ResolvedEntity::LocalValueItem(item_ref) => {
+                let Some(body_data) = self.0.body_ir.body_data(item_ref.body)? else {
+                    return Ok(None);
+                };
+                let Some(item) = body_data.local_value_item(item_ref.item) else {
+                    return Ok(None);
+                };
+                Ok(Some(HoverBlock {
+                    kind: SymbolKind::from_body_value_item_kind(item.kind),
+                    path: None,
+                    signature: Some(
+                        SignatureRenderer::new(self.0).local_value_item_signature(item),
+                    ),
                     ty: None,
                     docs: item.docs.as_ref().map(Documentation::text),
                 }))
@@ -198,7 +204,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     return Ok(None);
                 };
                 Ok(Some(HoverBlock {
-                    kind: SymbolKind::Method,
+                    kind: SymbolKind::from_body_function_owner(data.owner),
                     path: None,
                     signature: Some(SignatureRenderer::new(self.0).local_function_signature(data)),
                     ty: None,
@@ -232,6 +238,40 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     signature: SignatureRenderer::new(self.0).local_field_signature(data),
                     ty: None,
                     docs: data.field.docs.as_ref().map(Documentation::text),
+                }))
+            }
+        }
+    }
+
+    fn hover_for_enum_variant(
+        &self,
+        variant: ResolvedEnumVariantRef,
+    ) -> anyhow::Result<Option<HoverBlock>> {
+        match variant {
+            ResolvedEnumVariantRef::Semantic(variant_ref) => {
+                let Some(data) = self.0.semantic_ir.enum_variant_data(variant_ref)? else {
+                    return Ok(None);
+                };
+                Ok(Some(HoverBlock {
+                    kind: SymbolKind::EnumVariant,
+                    path: PathRenderer::new(self.0).enum_variant_path(variant_ref)?,
+                    signature: Some(SignatureRenderer::new(self.0).enum_variant_signature(data)),
+                    ty: None,
+                    docs: data.variant.docs.as_ref().map(Documentation::text),
+                }))
+            }
+            ResolvedEnumVariantRef::BodyLocal(variant_ref) => {
+                let Some(data) = self.0.body_ir.local_enum_variant_data(variant_ref)? else {
+                    return Ok(None);
+                };
+                Ok(Some(HoverBlock {
+                    kind: SymbolKind::EnumVariant,
+                    path: None,
+                    signature: Some(
+                        SignatureRenderer::new(self.0).local_enum_variant_signature(data),
+                    ),
+                    ty: None,
+                    docs: data.variant.docs.as_ref().map(Documentation::text),
                 }))
             }
         }
@@ -352,7 +392,9 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             | SymbolAt::Function { span, .. }
             | SymbolAt::EnumVariant { span, .. }
             | SymbolAt::LocalItem { span, .. }
+            | SymbolAt::LocalValueItem { span, .. }
             | SymbolAt::LocalField { span, .. }
+            | SymbolAt::LocalEnumVariant { span, .. }
             | SymbolAt::LocalFunction { span, .. }
             | SymbolAt::TypePath { span, .. }
             | SymbolAt::UsePath { span, .. } => Ok(Some(*span)),

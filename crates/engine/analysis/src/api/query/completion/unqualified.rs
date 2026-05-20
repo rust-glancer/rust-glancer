@@ -161,13 +161,18 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 label,
                 scope_distance,
             } => {
-                hidden.insert((label.clone(), ScopeNamespace::Types));
                 let Some(body) = self.analysis.body_ir.body_data(item.body)? else {
                     return Ok(());
                 };
                 let Some(data) = body.local_item(item.item) else {
                     return Ok(());
                 };
+                hidden.insert((label.clone(), ScopeNamespace::Types));
+                if matches!(site.namespace, UnqualifiedCompletionNamespace::Values)
+                    && data.has_value_constructor()
+                {
+                    hidden.insert((label.clone(), ScopeNamespace::Values));
+                }
                 let kind = CompletionKind::from_body_item_kind(kind);
                 let target = CompletionTarget::BodyItem(item);
                 completions.push(CompletionItem {
@@ -176,6 +181,74 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                     target,
                     applicability: CompletionApplicability::Known,
                     detail: Some(SignatureRenderer::new(self.analysis).local_item_signature(data)),
+                    documentation: data.docs.as_ref().map(Documentation::text),
+                    sort_text: filter.sort_policy().sort_text(
+                        Some(CompletionSortPriority::body_scope(scope_distance)),
+                        &label,
+                        kind,
+                        CompletionApplicability::Known,
+                        target,
+                    ),
+                    insert_text: CompletionInsertText::Plain,
+                    edit: Some(edit),
+                });
+            }
+            BodyUnqualifiedCompletionCandidate::LocalValueItem {
+                item,
+                kind,
+                label,
+                scope_distance,
+            } => {
+                hidden.insert((label.clone(), ScopeNamespace::Values));
+                let Some(body) = self.analysis.body_ir.body_data(item.body)? else {
+                    return Ok(());
+                };
+                let Some(data) = body.local_value_item(item.item) else {
+                    return Ok(());
+                };
+                let kind = CompletionKind::from_body_value_item_kind(kind);
+                let target = CompletionTarget::BodyValueItem(item);
+                completions.push(CompletionItem {
+                    label: label.clone(),
+                    kind,
+                    target,
+                    applicability: CompletionApplicability::Known,
+                    detail: Some(
+                        SignatureRenderer::new(self.analysis).local_value_item_signature(data),
+                    ),
+                    documentation: data.docs.as_ref().map(Documentation::text),
+                    sort_text: filter.sort_policy().sort_text(
+                        Some(CompletionSortPriority::body_scope(scope_distance)),
+                        &label,
+                        kind,
+                        CompletionApplicability::Known,
+                        target,
+                    ),
+                    insert_text: CompletionInsertText::Plain,
+                    edit: Some(edit),
+                });
+            }
+            BodyUnqualifiedCompletionCandidate::LocalFunction {
+                function,
+                label,
+                scope_distance,
+            } => {
+                hidden.insert((label.clone(), ScopeNamespace::Values));
+                let Some(data) = self.analysis.body_ir.local_function_data(function)? else {
+                    return Ok(());
+                };
+                let kind = CompletionKind::Function;
+                let target = CompletionTarget::Function(
+                    rg_body_ir::ResolvedFunctionRef::BodyLocal(function),
+                );
+                completions.push(CompletionItem {
+                    label: label.clone(),
+                    kind,
+                    target,
+                    applicability: CompletionApplicability::Known,
+                    detail: Some(
+                        SignatureRenderer::new(self.analysis).local_function_signature(data),
+                    ),
                     documentation: data.docs.as_ref().map(Documentation::text),
                     sort_text: filter.sort_policy().sort_text(
                         Some(CompletionSortPriority::body_scope(scope_distance)),

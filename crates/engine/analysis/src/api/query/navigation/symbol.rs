@@ -72,9 +72,21 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
                 .navigation_target_for_enum_variant(variant)?
                 .into_iter()
                 .collect()),
+            SymbolAt::LocalEnumVariant { variant, .. } => Ok(self
+                .targets()
+                .navigation_target_for_resolved_enum_variant(
+                    rg_body_ir::ResolvedEnumVariantRef::BodyLocal(variant),
+                )?
+                .into_iter()
+                .collect()),
             SymbolAt::LocalItem { item, .. } => Ok(self
                 .targets()
                 .navigation_target_for_body_item(item)?
+                .into_iter()
+                .collect()),
+            SymbolAt::LocalValueItem { item, .. } => Ok(self
+                .targets()
+                .navigation_target_for_body_value_item(item)?
                 .into_iter()
                 .collect()),
             SymbolAt::LocalField { field, .. } => Ok(self
@@ -125,6 +137,11 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
                 .navigation_target_for_body_item(*item)?
                 .into_iter()
                 .collect()),
+            BodyResolution::LocalValueItem(item) => Ok(self
+                .targets()
+                .navigation_target_for_body_value_item(*item)?
+                .into_iter()
+                .collect()),
             BodyResolution::Item(defs) => {
                 let mut targets = Vec::new();
                 for def in defs {
@@ -163,7 +180,7 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
                 for variant in variants {
                     if let Some(target) = self
                         .targets()
-                        .navigation_target_for_enum_variant(*variant)?
+                        .navigation_target_for_resolved_enum_variant(*variant)?
                     {
                         targets.push(target);
                     }

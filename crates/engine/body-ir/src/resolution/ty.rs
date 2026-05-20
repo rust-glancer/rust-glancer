@@ -10,6 +10,7 @@ use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
 
 use crate::{
+    ir::body::BodyData,
     ir::resolved::BodyTypePathResolution,
     ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
@@ -111,6 +112,16 @@ pub(super) fn subst_from_generics(generics: &GenericParams, args: &[BodyGenericA
         .zip(type_args)
         .map(|(param, ty)| (param.name.clone(), ty))
         .collect()
+}
+
+pub(super) fn local_type_subst(body: &BodyData, ty: &BodyLocalNominalTy) -> TypeSubst {
+    let Some(item) = body.local_item(ty.item.item) else {
+        return TypeSubst::new();
+    };
+
+    item.generic_params()
+        .map(|generics| subst_from_generics(generics, &ty.args))
+        .unwrap_or_else(TypeSubst::new)
 }
 
 pub(super) fn body_generic_arg_ty(arg: &BodyGenericArg) -> Option<BodyTy> {

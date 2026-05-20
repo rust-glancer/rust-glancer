@@ -10,18 +10,19 @@ use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypeDefId, TypePathContext};
 
 use crate::{
+    BodyItemKind,
     ir::body::BodyData,
     ir::expr::ExprKind,
     ir::ids::{BindingId, BodyRef, ExprId, PatId, ScopeId, StmtId},
     ir::pat::{PatKind, RecordPatField},
     ir::path::BodyPath,
     ir::stmt::StmtKind,
-    ir::ty::{BodyNominalTy, BodyTy},
+    ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
 
 use super::{
     push_unique,
-    ty::{TypeSubst, subst_from_generics, ty_from_type_ref_in_context},
+    ty::{TypeSubst, local_type_subst, subst_from_generics, ty_from_type_ref_in_context},
     type_path::BodyTypePathResolver,
 };
 
@@ -251,6 +252,14 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
             };
             push_unique(&mut candidates, field_ty);
         }
+        for enum_ty in local_enum_ty_candidates(expected_ty) {
+            let Some(field_ty) =
+                self.variant_field_ty_for_local_enum(enum_ty, variant_name, field_key)?
+            else {
+                continue;
+            };
+            push_unique(&mut candidates, field_ty);
+        }
 
         match candidates.as_slice() {
             [ty] => Ok(Some(ty.clone())),
@@ -296,6 +305,39 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         )?))
     }
 
+    fn variant_field_ty_for_local_enum(
+        &self,
+        enum_ty: &BodyLocalNominalTy,
+        variant_name: &str,
+        field_key: &FieldKey,
+    ) -> Result<Option<BodyTy>, PackageStoreError> {
+        if enum_ty.item.body != self.body_ref {
+            return Ok(None);
+        }
+        let Some(enum_data) = self.body.local_item(enum_ty.item.item) else {
+            return Ok(None);
+        };
+        if !matches!(enum_data.kind, BodyItemKind::Enum) {
+            return Ok(None);
+        }
+        let Some(variant) = enum_data
+            .enum_variants()
+            .iter()
+            .find(|variant| variant.name == variant_name)
+        else {
+            return Ok(None);
+        };
+        let Some(field) = variant_field(&variant.fields, field_key) else {
+            return Ok(None);
+        };
+
+        let subst = local_type_subst(self.body, enum_ty);
+        Ok(Some(
+            BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+                .ty_from_type_ref_in_scope_with_subst(&field.ty, enum_data.scope, &subst)?,
+        ))
+    }
+
     fn set_binding_ty(&mut self, binding: BindingId, ty: BodyTy) -> bool {
         if matches!(ty, BodyTy::Unknown) {
             return false;
@@ -320,6 +362,10 @@ fn enum_ty_candidates(ty: &BodyTy) -> Vec<&BodyNominalTy> {
         .iter()
         .filter(|ty| matches!(ty.def.id, TypeDefId::Enum(_)))
         .collect()
+}
+
+fn local_enum_ty_candidates(ty: &BodyTy) -> Vec<&BodyLocalNominalTy> {
+    ty.local_nominals().iter().collect()
 }
 
 fn variant_field<'a>(fields: &'a FieldList, key: &FieldKey) -> Option<&'a FieldItem> {

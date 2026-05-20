@@ -776,6 +776,155 @@ pub fn outside() {
 }
 
 #[test]
+fn resolves_body_local_enum_variants() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_local_enum_variant_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn make() {
+    enum Action {
+        Start,
+        Stop,
+    }
+
+    let _action = Action::Sta$goto_local_variant$rt;
+}
+"#,
+        &[AnalysisQuery::goto(
+            "goto local enum variant",
+            "goto_local_variant",
+        )],
+        expect![[r#"
+            goto local enum variant
+            - variant Start @ 3:9-3:14
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_body_local_record_literals() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_local_record_literal_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct User {
+        id: GlobalId,
+    }
+
+    let _user = Us$goto_record_local_type$er { id: GlobalId };
+}
+"#,
+        &[AnalysisQuery::goto(
+            "goto local record literal",
+            "goto_record_local_type",
+        )],
+        expect![[r#"
+            goto local record literal
+            - struct User @ 4:12-4:16
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_body_local_value_shadowing_by_scope() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_value_shadowing_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Outer;
+pub struct Inner;
+
+pub fn make() {
+    fn helper() -> Outer {
+        Outer
+    }
+    let value = Outer;
+
+    {
+        fn value() -> Inner {
+            Inner
+        }
+        let _from_fn = val$goto_inner_fn$ue();
+    };
+
+    {
+        const helper: Inner = Inner;
+        let _from_const = hel$goto_inner_const$per;
+    };
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto inner function", "goto_inner_fn"),
+            AnalysisQuery::goto("goto inner const", "goto_inner_const"),
+        ],
+        expect![[r#"
+            goto inner function
+            - fn value @ 11:12-11:17
+
+            goto inner const
+            - const helper @ 18:15-18:21
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_body_local_associated_consts_and_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_assoc_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct User;
+
+    impl User {
+        const DEFAULT: GlobalId = GlobalId;
+        type Id = GlobalId;
+    }
+
+    let _default = User::DE$goto_assoc_const$FAULT;
+    let _typed: User::I$goto_assoc_type$d = GlobalId;
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto associated const", "goto_assoc_const"),
+            AnalysisQuery::goto("goto associated type", "goto_assoc_type"),
+        ],
+        expect![[r#"
+            goto associated const
+            - const DEFAULT @ 7:15-7:22
+
+            goto associated type
+            - type_alias Id @ 8:14-8:16
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_body_let_annotation_paths_with_body_context() {
     check_analysis_queries(
         r#"

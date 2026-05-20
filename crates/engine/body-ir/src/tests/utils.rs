@@ -7,14 +7,15 @@ use std::{
 use expect_test::Expect;
 
 use crate::{
-    BindingData, BodyData, BodyFunctionData, BodyGenericArg, BodyImplData, BodyIrBuildPolicy,
-    BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy, BodyResolution,
-    BodySource, BodyTy, ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData,
-    ExprKind, LabelData, PatBindingMode, PatData, PatId, PatKind, ResolvedFieldRef,
-    ResolvedFunctionRef, StmtKind, TargetBodiesStatus,
+    BindingData, BodyData, BodyFunctionData, BodyFunctionOwner, BodyGenericArg, BodyImplData,
+    BodyIrBuildPolicy, BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy,
+    BodyResolution, BodySource, BodyTy, BodyValueItemData, ClosureCapture, ClosureKind,
+    ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode, PatData, PatId,
+    PatKind, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
+    TargetBodiesStatus,
     ir::ids::{
-        BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
-        BodyItemRef, ExprId, StmtId,
+        BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId,
+        BodyImplId, BodyItemId, BodyItemRef, BodyValueItemId, BodyValueItemRef, ExprId, StmtId,
     },
 };
 use rg_def_map::{DefId, DefMapDb, LocalDefRef, ModuleRef, TargetRef};
@@ -311,6 +312,32 @@ impl TargetBodyIrSnapshot<'_> {
                         .join(", ")
                 )
             };
+            let values = if scope.local_value_items.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; values {}",
+                    scope
+                        .local_value_items
+                        .iter()
+                        .map(|item| format!("c{}", item.0))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            let functions = if scope.local_functions.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; functions {}",
+                    scope
+                        .local_functions
+                        .iter()
+                        .map(|function| format!("f{}", function.0))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
             let impls = if scope.local_impls.is_empty() {
                 String::new()
             } else {
@@ -324,14 +351,37 @@ impl TargetBodyIrSnapshot<'_> {
                         .join(", ")
                 )
             };
-            writeln!(dump, "- s{idx} parent {parent}: {bindings}{items}{impls}")
-                .expect("string writes should not fail");
+            writeln!(
+                dump,
+                "- s{idx} parent {parent}: {bindings}{items}{values}{functions}{impls}"
+            )
+            .expect("string writes should not fail");
         }
 
         if !body.local_items.is_empty() {
             writeln!(dump, "items").expect("string writes should not fail");
             for (idx, item) in body.local_items.iter().enumerate() {
                 self.render_local_item(BodyItemId(idx), item, dump);
+            }
+        }
+
+        if !body.local_value_items.is_empty() {
+            writeln!(dump, "value_items").expect("string writes should not fail");
+            for (idx, item) in body.local_value_items.iter().enumerate() {
+                self.render_local_value_item(BodyValueItemId(idx), item, dump);
+            }
+        }
+
+        let free_functions = body
+            .local_functions
+            .iter()
+            .enumerate()
+            .filter(|(_, function)| matches!(function.owner, BodyFunctionOwner::LocalScope(_)))
+            .collect::<Vec<_>>();
+        if !free_functions.is_empty() {
+            writeln!(dump, "functions").expect("string writes should not fail");
+            for (idx, function) in free_functions {
+                self.render_body_function(BodyFunctionId(idx), function, dump);
             }
         }
 
@@ -384,6 +434,28 @@ impl TargetBodyIrSnapshot<'_> {
         .expect("string writes should not fail");
     }
 
+    fn render_local_value_item(
+        &self,
+        id: BodyValueItemId,
+        item: &BodyValueItemData,
+        dump: &mut String,
+    ) {
+        let ty = item
+            .ty()
+            .map(|ty| format!(": {ty}"))
+            .unwrap_or_else(|| ": <unknown>".to_string());
+        writeln!(
+            dump,
+            "- c{} {} {}{} @ {}",
+            id.0,
+            item.kind,
+            item.name,
+            ty,
+            self.render_source(item.source),
+        )
+        .expect("string writes should not fail");
+    }
+
     fn render_local_impl(
         &self,
         body: &BodyData,
@@ -410,6 +482,20 @@ impl TargetBodyIrSnapshot<'_> {
                 .local_function(*function)
                 .expect("body function id should exist while rendering local impl");
             self.render_body_function(*function, data, dump);
+        }
+        for item in &impl_data.consts {
+            let data = body
+                .local_value_item(*item)
+                .expect("body value item id should exist while rendering local impl");
+            writeln!(dump, "  - c{} {} {}", item.0, data.kind, data.name)
+                .expect("string writes should not fail");
+        }
+        for item in &impl_data.types {
+            let data = body
+                .local_item(*item)
+                .expect("body item id should exist while rendering local impl");
+            writeln!(dump, "  - i{} {} {}", item.0, data.kind, data.name)
+                .expect("string writes should not fail");
         }
     }
 
@@ -642,6 +728,28 @@ impl TargetBodyIrSnapshot<'_> {
                     indent(depth),
                     statement.0,
                     item.0,
+                    self.render_source(data.source),
+                )
+                .expect("string writes should not fail");
+            }
+            StmtKind::ValueItem { item } => {
+                writeln!(
+                    dump,
+                    "{}stmt s{} value_item c{} @ {}",
+                    indent(depth),
+                    statement.0,
+                    item.0,
+                    self.render_source(data.source),
+                )
+                .expect("string writes should not fail");
+            }
+            StmtKind::Function { function } => {
+                writeln!(
+                    dump,
+                    "{}stmt s{} function f{} @ {}",
+                    indent(depth),
+                    statement.0,
+                    function.0,
                     self.render_source(data.source),
                 )
                 .expect("string writes should not fail");
@@ -1121,6 +1229,9 @@ impl TargetBodyIrSnapshot<'_> {
             BodyResolution::LocalItem(item) => {
                 format!(" -> local item {}", self.render_body_item_ref(*item))
             }
+            BodyResolution::LocalValueItem(item) => {
+                format!(" -> local value {}", self.render_body_value_item_ref(*item))
+            }
             BodyResolution::Item(defs) if defs.is_empty() => " -> item <unresolved>".to_string(),
             BodyResolution::Item(defs) => {
                 let mut defs = defs
@@ -1149,7 +1260,7 @@ impl TargetBodyIrSnapshot<'_> {
             BodyResolution::EnumVariant(variants) => {
                 let mut variants = variants
                     .iter()
-                    .map(|variant| self.render_enum_variant_ref(*variant))
+                    .map(|variant| self.render_resolved_enum_variant_ref(*variant))
                     .collect::<Vec<_>>();
                 variants.sort();
                 format!(" -> {}", variants.join(" | "))
@@ -1252,6 +1363,27 @@ impl TargetBodyIrSnapshot<'_> {
             return "<missing>".to_string();
         };
         let Some(item) = body.local_item(item_ref.item) else {
+            return "<missing>".to_string();
+        };
+
+        format!(
+            "{} {}::{} @ {}",
+            item.kind,
+            self.render_function_ref(body.owner),
+            item.name,
+            self.render_source(item.source),
+        )
+    }
+
+    fn render_body_value_item_ref(&self, item_ref: BodyValueItemRef) -> String {
+        let body_ir = self.body_ir_txn();
+        let Some(body) = body_ir
+            .body_data(item_ref.body)
+            .expect("body value item ref should load while rendering body IR")
+        else {
+            return "<missing>".to_string();
+        };
+        let Some(item) = body.local_value_item(item_ref.item) else {
             return "<missing>".to_string();
         };
 
@@ -1440,6 +1572,15 @@ impl TargetBodyIrSnapshot<'_> {
         )
     }
 
+    fn render_resolved_enum_variant_ref(&self, variant_ref: ResolvedEnumVariantRef) -> String {
+        match variant_ref {
+            ResolvedEnumVariantRef::Semantic(variant) => self.render_enum_variant_ref(variant),
+            ResolvedEnumVariantRef::BodyLocal(variant) => {
+                self.render_body_enum_variant_ref(variant)
+            }
+        }
+    }
+
     fn render_enum_variant_ref(&self, variant_ref: rg_semantic_ir::EnumVariantRef) -> String {
         let semantic_ir = self.semantic_ir_txn();
         let data = semantic_ir
@@ -1450,6 +1591,20 @@ impl TargetBodyIrSnapshot<'_> {
         format!(
             "variant {}::{}",
             self.render_type_def_ref(data.owner),
+            data.variant.name
+        )
+    }
+
+    fn render_body_enum_variant_ref(&self, variant_ref: BodyEnumVariantRef) -> String {
+        let body_ir = self.body_ir_txn();
+        let data = body_ir
+            .local_enum_variant_data(variant_ref)
+            .expect("body enum variant ref should load while rendering body IR")
+            .expect("body enum variant ref should exist while rendering body IR");
+
+        format!(
+            "variant {}::{}",
+            self.render_body_item_ref(variant_ref.item),
             data.variant.name
         )
     }
