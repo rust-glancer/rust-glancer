@@ -16,7 +16,7 @@ use rg_text::{Name, PackageNameInterners};
 use rg_tt::{Span as TtSpan, TopSubtree, syntax_bridge::SpanFactory};
 use rg_workspace::RustEdition;
 
-use crate::{ModuleId, TargetRef, query::path_resolution::PathResolutionEnv};
+use crate::{LocalDefId, ModuleId, TargetRef, query::path_resolution::PathResolutionEnv};
 
 use super::{
     collect::TargetState,
@@ -71,6 +71,63 @@ pub(super) enum MacroDirectiveState {
 #[derive(Debug, Clone)]
 pub(super) struct MacroDefinitionRecord {
     pub(super) order: ItemOrder,
+}
+
+/// Build-time textual scope for `macro_rules!` definitions.
+///
+/// Unlike ordinary macro namespace bindings, textual `macro_rules!` visibility depends on source
+/// order and on the declaration position of nested modules. We keep that ordering state only while
+/// expanding macros; generated items are collected into the frozen def-map afterwards.
+#[derive(Debug, Clone, Default)]
+pub(super) struct TextualMacroScopes {
+    definitions: HashMap<ModuleId, HashMap<Name, Vec<TextualMacroDefinition>>>,
+    module_declaration_orders: HashMap<ModuleId, ItemOrder>,
+}
+
+impl TextualMacroScopes {
+    pub(super) fn record_definition(
+        &mut self,
+        module: ModuleId,
+        name: Name,
+        local_def: LocalDefId,
+        order: ItemOrder,
+    ) {
+        self.definitions
+            .entry(module)
+            .or_default()
+            .entry(name)
+            .or_default()
+            .push(TextualMacroDefinition { local_def, order });
+    }
+
+    pub(super) fn record_module_declaration(&mut self, module: ModuleId, order: ItemOrder) {
+        self.module_declaration_orders.insert(module, order);
+    }
+
+    fn module_declaration_order(&self, module: ModuleId) -> Option<&ItemOrder> {
+        self.module_declaration_orders.get(&module)
+    }
+
+    fn latest_before(
+        &self,
+        module: ModuleId,
+        name: &Name,
+        boundary: &ItemOrder,
+    ) -> Option<LocalDefId> {
+        self.definitions
+            .get(&module)?
+            .get(name)?
+            .iter()
+            .filter(|definition| definition.order < *boundary)
+            .max_by_key(|definition| &definition.order)
+            .map(|definition| definition.local_def)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TextualMacroDefinition {
+    local_def: LocalDefId,
+    order: ItemOrder,
 }
 
 #[derive(Debug, Clone)]

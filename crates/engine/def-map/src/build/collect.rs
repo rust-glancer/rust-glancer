@@ -35,6 +35,7 @@ use super::{
     cfg::CfgEvaluator,
     macros::{
         ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
+        TextualMacroScopes,
     },
 };
 
@@ -54,6 +55,7 @@ pub(super) struct TargetState {
     pub(super) implicit_roots: HashMap<Name, ModuleRef>,
     pub(super) prelude: Option<ModuleRef>,
     pub(super) macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
+    pub(super) textual_macro_scopes: TextualMacroScopes,
     pub(super) macro_directives: Vec<MacroDirective>,
 }
 
@@ -154,6 +156,7 @@ struct TargetScopeCollector<'db> {
     def_map: DefMap,
     base_scopes: Vec<ModuleScopeBuilder>,
     macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
+    textual_macro_scopes: TextualMacroScopes,
     macro_directives: Vec<MacroDirective>,
 }
 
@@ -174,6 +177,7 @@ impl<'db> TargetScopeCollector<'db> {
             def_map: DefMap::default(),
             base_scopes: Vec::new(),
             macro_definitions: HashMap::new(),
+            textual_macro_scopes: TextualMacroScopes::default(),
             macro_directives: Vec::new(),
         }
     }
@@ -217,6 +221,7 @@ impl<'db> TargetScopeCollector<'db> {
             implicit_roots: self.implicit_roots.clone(),
             prelude: None,
             macro_definitions: self.macro_definitions,
+            textual_macro_scopes: self.textual_macro_scopes,
             macro_directives: self.macro_directives,
         })
     }
@@ -274,7 +279,7 @@ impl<'db> TargetScopeCollector<'db> {
                     self.collect_extern_crate(module_id, item, extern_crate);
                 }
                 ItemKind::Module(module_item) => {
-                    self.collect_module(item_tree, module_id, item, module_item)
+                    self.collect_module(item_tree, module_id, item, module_item, order)
                         .with_context(|| {
                             format!(
                                 "while attempting to collect module {}",
@@ -370,8 +375,18 @@ impl<'db> TargetScopeCollector<'db> {
             return;
         };
 
-        self.macro_definitions
-            .insert(local_def_id, MacroDefinitionRecord { order });
+        self.macro_definitions.insert(
+            local_def_id,
+            MacroDefinitionRecord {
+                order: order.clone(),
+            },
+        );
+        if matches!(macro_definition, MacroDefinitionItem::MacroRules { .. })
+            && let Some(name) = item.name.clone()
+        {
+            self.textual_macro_scopes
+                .record_definition(module_id, name, local_def_id, order);
+        }
         self.def_map.insert_macro_definition(
             local_def_id,
             MacroDefinitionData::from_item(macro_definition, self.edition),
@@ -425,6 +440,7 @@ impl<'db> TargetScopeCollector<'db> {
         parent_module: ModuleId,
         item: &ItemNode,
         module_item: &ModuleItem,
+        order: ItemOrder,
     ) -> anyhow::Result<()> {
         let Some(module_name) = item.name.clone() else {
             return Ok(());
@@ -474,6 +490,8 @@ impl<'db> TargetScopeCollector<'db> {
             &module_name,
             item.visibility.clone(),
         );
+        self.textual_macro_scopes
+            .record_module_declaration(child_module, order);
 
         match source {
             ModuleSource::Inline { items } => {

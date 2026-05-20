@@ -249,9 +249,20 @@ impl GeneratedCollector<'_> {
             .insert_binding(&name, kind.namespace(), binding);
 
         if let Some((item, order)) = macro_definition {
-            self.state
-                .macro_definitions
-                .insert(local_def_id, MacroDefinitionRecord { order });
+            self.state.macro_definitions.insert(
+                local_def_id,
+                MacroDefinitionRecord {
+                    order: order.clone(),
+                },
+            );
+            if matches!(item, MacroDefinitionItem::MacroRules { .. }) {
+                self.state.textual_macro_scopes.record_definition(
+                    module_id,
+                    name.clone(),
+                    local_def_id,
+                    order,
+                );
+            }
             self.state.def_map.insert_macro_definition(
                 local_def_id,
                 MacroDefinitionData::from_item(&item, self.state.edition),
@@ -296,6 +307,9 @@ impl GeneratedCollector<'_> {
         // Inline generated modules extend all scope matrices in lockstep with the def-map module
         // arena so later generated children can be collected into the new module.
         self.state.base_scopes.push(Default::default());
+        self.state
+            .textual_macro_scopes
+            .record_module_declaration(child_module, order.clone());
         self.current_scopes
             .push_module_scope(self.state.target, Default::default())
             .expect("current scopes should have a target slot for generated module");

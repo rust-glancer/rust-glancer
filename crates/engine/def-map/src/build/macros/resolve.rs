@@ -33,8 +33,8 @@ pub(super) fn resolve_macro_definition<'a>(
     path: &ImportPath,
 ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
     if let Some(name) = relative_single_name(path) {
-        // Unqualified macro calls first look in the macro namespace of the current module. This
-        // also keeps user-defined `include!`-style names from being mistaken for builtins.
+        // Unqualified calls have special `macro_rules!` textual visibility before they behave like
+        // ordinary macro-namespace lookups.
         return resolve_single_name_macro(env, states, state, call, name);
     }
 
@@ -49,9 +49,10 @@ pub(super) fn resolve_macro_definition<'a>(
         }
     }
 
-    Ok(unique_macro_definition(macros))
+    Ok(unique_visible_macro_definition(macros, state.target, call))
 }
 
+/// Resolves one-segment macro calls with Rust's `macro_rules!` lookup order.
 fn resolve_single_name_macro<'a>(
     env: &'a impl PathResolutionEnv,
     states: &'a FinalizeTargetStates,
@@ -59,6 +60,16 @@ fn resolve_single_name_macro<'a>(
     call: &MacroCallSite,
     name: &Name,
 ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
+    // Textual `macro_rules!` scope shadows ordinary macro bindings. This covers the source-order
+    // behavior that cannot be represented by a normal module-scope map.
+    if let Some(resolved) = resolve_textual_macro_rules(env, states, state, call, name)? {
+        return Ok(Some(resolved));
+    }
+
+    // From here on we use the ordinary macro namespace as an approximation for imported/exported
+    // macros. That may keep resolving some malformed source states that rustc rejects, but those
+    // states are already invalid Rust; precisely modeling them would complicate expansion without
+    // improving valid-code behavior.
     let Some(entry) = env.module_scope_entry(
         ModuleRef {
             target: state.target,
@@ -70,6 +81,8 @@ fn resolve_single_name_macro<'a>(
         return Ok(None);
     };
 
+    // If no textual macro applies, imports/reexports and exported macros are represented as normal
+    // macro namespace bindings in the current resolved scope snapshot.
     let mut macros = Vec::new();
     for binding in entry.macros() {
         if let Some(resolved) = macro_record_for_def(env, states, binding.def)? {
@@ -77,9 +90,53 @@ fn resolve_single_name_macro<'a>(
         }
     }
 
-    Ok(unique_macro_definition(macros))
+    Ok(unique_visible_macro_definition(macros, state.target, call))
 }
 
+/// Searches build-only textual `macro_rules!` scopes for the definition visible at this call.
+fn resolve_textual_macro_rules<'a>(
+    env: &'a impl PathResolutionEnv,
+    states: &'a FinalizeTargetStates,
+    state: &TargetState,
+    call: &MacroCallSite,
+    name: &Name,
+) -> Result<Option<ResolvedMacroDefinition<'a>>> {
+    let mut module = call.module;
+    let mut boundary = &call.order;
+
+    loop {
+        // In the current module, use the latest declaration that appears before the call. When we
+        // climb to a parent, `boundary` becomes the child module declaration instead.
+        if let Some(local_def) = state
+            .textual_macro_scopes
+            .latest_before(module, name, boundary)
+        {
+            return macro_record_for_def(
+                env,
+                states,
+                DefId::Local(LocalDefRef {
+                    target: state.target,
+                    local_def,
+                }),
+            );
+        }
+
+        // A parent module contributes only declarations that appeared before the child module was
+        // declared, matching the textual file view used by `macro_rules!`.
+        let Some(parent) = env.parent_module(state.target, module)? else {
+            return Ok(None);
+        };
+        let Some(parent_boundary) = state.textual_macro_scopes.module_declaration_order(module)
+        else {
+            return Ok(None);
+        };
+
+        boundary = parent_boundary;
+        module = parent.module;
+    }
+}
+
+/// Converts a resolved definition id into the macro payload needed by expansion.
 fn macro_record_for_def<'a>(
     env: &'a impl PathResolutionEnv,
     states: &'a FinalizeTargetStates,
@@ -111,9 +168,17 @@ fn macro_record_for_def<'a>(
     }))
 }
 
-fn unique_macro_definition(
-    macros: Vec<ResolvedMacroDefinition<'_>>,
-) -> Option<ResolvedMacroDefinition<'_>> {
+/// Selects a single visible macro from ordinary namespace resolution results.
+fn unique_visible_macro_definition<'a>(
+    macros: Vec<ResolvedMacroDefinition<'a>>,
+    target: TargetRef,
+    call: &MacroCallSite,
+) -> Option<ResolvedMacroDefinition<'a>> {
+    let macros = macros
+        .into_iter()
+        .filter(|macro_| macro_definition_is_visible_by_order(macro_, target, call))
+        .collect::<Vec<_>>();
+
     match macros.as_slice() {
         [_] => macros.into_iter().next(),
         [] => None,
@@ -121,6 +186,18 @@ fn unique_macro_definition(
     }
 }
 
+/// Filters ordinary namespace candidates that are textually later than the call site.
+fn macro_definition_is_visible_by_order(
+    macro_: &ResolvedMacroDefinition<'_>,
+    target: TargetRef,
+    call: &MacroCallSite,
+) -> bool {
+    !(macro_.def_ref.target == target
+        && macro_.local_def.module == call.module
+        && macro_.order.is_some_and(|order| order > &call.order))
+}
+
+/// Returns the macro name for unqualified calls such as `foo!()`.
 fn relative_single_name(path: &ImportPath) -> Option<&Name> {
     if path.absolute || path.segments.len() != 1 {
         return None;
