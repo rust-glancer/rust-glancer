@@ -10,7 +10,7 @@ use rg_tt::{
 };
 use rg_workspace::RustEdition;
 
-use super::normalized_syntax;
+use super::{CfgPredicate, normalized_syntax};
 
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum MacroDefinitionItem {
@@ -63,22 +63,74 @@ impl MacroDefinitionItem {
         }
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {}
+    pub(crate) fn shrink_to_fit(&mut self) {
+        match self {
+            Self::MacroRules { attrs, .. } => attrs.shrink_to_fit(),
+            Self::MacroDef { .. } => {}
+        }
+    }
 }
 
 /// Macro-specific attributes that affect def-map visibility.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct MacroDefinitionAttrs {
     pub macro_export: bool,
+    pub cfg_attr_macro_export: Vec<CfgPredicate>,
 }
 
 impl MacroDefinitionAttrs {
     fn from_macro_rules(item: &ast::MacroRules) -> Self {
-        Self {
-            macro_export: item
-                .attrs()
-                .filter(|attr| attr.kind().is_outer())
-                .any(|attr| attr.simple_name().as_deref() == Some("macro_export")),
+        let mut attrs = Self::default();
+
+        for attr in item.attrs().filter(|attr| attr.kind().is_outer()) {
+            let Some(meta) = attr.meta() else {
+                continue;
+            };
+            attrs.collect_macro_export_meta(meta, None);
+        }
+
+        attrs
+    }
+
+    fn collect_macro_export_meta(&mut self, meta: ast::Meta, predicate: Option<CfgPredicate>) {
+        if meta.simple_name().as_deref() == Some("macro_export") {
+            match predicate {
+                Some(predicate) => self.cfg_attr_macro_export.push(predicate),
+                None => self.macro_export = true,
+            }
+            return;
+        }
+
+        match meta {
+            ast::Meta::CfgAttrMeta(cfg_attr) => {
+                let cfg_attr_predicate = cfg_attr
+                    .cfg_predicate()
+                    .map(CfgPredicate::from_ast)
+                    .unwrap_or(CfgPredicate::Invalid);
+                let predicate = match predicate {
+                    Some(predicate) => CfgPredicate::All(vec![predicate, cfg_attr_predicate]),
+                    None => cfg_attr_predicate,
+                };
+                for nested in cfg_attr.metas() {
+                    self.collect_macro_export_meta(nested, Some(predicate.clone()));
+                }
+            }
+            ast::Meta::UnsafeMeta(meta) => {
+                if let Some(meta) = meta.meta() {
+                    self.collect_macro_export_meta(meta, predicate);
+                }
+            }
+            ast::Meta::CfgMeta(_)
+            | ast::Meta::PathMeta(_)
+            | ast::Meta::TokenTreeMeta(_)
+            | ast::Meta::KeyValueMeta(_) => {}
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.cfg_attr_macro_export.shrink_to_fit();
+        for predicate in &mut self.cfg_attr_macro_export {
+            predicate.shrink_to_fit();
         }
     }
 }

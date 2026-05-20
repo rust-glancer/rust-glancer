@@ -6,8 +6,8 @@
 use anyhow::{Context as _, Result};
 
 use rg_item_tree::{
-    CfgExpr, Documentation, ImportAlias, ItemTreeRef, MacroCallItem, MacroDefinitionItem, UseItem,
-    VisibilityLevel,
+    CfgExpr, Documentation, ImportAlias, ItemTreeRef, MacroCallItem, MacroDefinitionAttrs,
+    MacroDefinitionItem, UseItem, VisibilityLevel,
 };
 use rg_macro_expand::ExpansionSyntax;
 use rg_parse::{FileId, Span};
@@ -265,7 +265,7 @@ impl GeneratedCollector<'_> {
                 );
             }
             if let MacroDefinitionItem::MacroRules { attrs, .. } = &item
-                && attrs.macro_export
+                && self.macro_definition_is_exported(attrs)
             {
                 self.export_macro_definition_to_root(&name, local_def_id);
             }
@@ -306,6 +306,18 @@ impl GeneratedCollector<'_> {
             .module_scope_mut(self.state.target, root_module)
             .expect("current root scope should exist for generated macro export")
             .insert_binding(name, Namespace::Macros, binding);
+    }
+
+    fn macro_definition_is_exported(&self, attrs: &MacroDefinitionAttrs) -> bool {
+        if attrs.macro_export {
+            return true;
+        }
+
+        let cfg = CfgEvaluator::new(&self.state.cfg_options, &self.state.target_kind);
+        attrs
+            .cfg_attr_macro_export
+            .iter()
+            .any(|predicate| cfg.is_predicate_enabled(predicate))
     }
 
     fn collect_inline_module(

@@ -36,6 +36,10 @@ impl<'a> CfgEvaluator<'a> {
         }
     }
 
+    pub(super) fn is_predicate_enabled(&self, predicate: &CfgPredicate) -> bool {
+        self.evaluate_predicate(predicate)
+    }
+
     fn evaluate_predicate(&self, predicate: &CfgPredicate) -> bool {
         match predicate {
             CfgPredicate::True => true,

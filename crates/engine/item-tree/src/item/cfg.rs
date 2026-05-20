@@ -103,7 +103,7 @@ pub enum CfgPredicate {
 }
 
 impl CfgPredicate {
-    fn from_ast(predicate: ast::CfgPredicate) -> Self {
+    pub(crate) fn from_ast(predicate: ast::CfgPredicate) -> Self {
         match predicate {
             ast::CfgPredicate::CfgAtom(atom) => Self::from_atom(atom),
             ast::CfgPredicate::CfgComposite(composite) => Self::from_composite(composite),
@@ -145,7 +145,7 @@ impl CfgPredicate {
         }
     }
 
-    fn shrink_to_fit(&mut self) {
+    pub(crate) fn shrink_to_fit(&mut self) {
         match self {
             Self::Atom(atom) => atom.shrink_to_fit(),
             Self::KeyValue { key, value } => {

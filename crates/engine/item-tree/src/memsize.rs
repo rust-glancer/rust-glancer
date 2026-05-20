@@ -11,14 +11,7 @@ use crate::{
     item::{ConstParamData, FunctionQualifiers, LifetimeParamData, TypeParamData},
 };
 
-rg_memsize::impl_memory_size_leaf!(
-    ItemTreeId,
-    ParamKind,
-    Mutability,
-    UseImportKind,
-    ItemTag,
-    MacroDefinitionAttrs,
-);
+rg_memsize::impl_memory_size_leaf!(ItemTreeId, ParamKind, Mutability, UseImportKind, ItemTag,);
 
 rg_memsize::impl_memory_size_children! {
     ItemTreeDb => packages;
@@ -77,6 +70,14 @@ impl MemorySize for MacroDefinitionItem {
                 });
             }
         }
+    }
+}
+
+impl MemorySize for MacroDefinitionAttrs {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        recorder.scope("cfg_attr_macro_export", |recorder| {
+            self.cfg_attr_macro_export.record_memory_children(recorder);
+        });
     }
 }
 

@@ -16,8 +16,8 @@ use anyhow::Context as _;
 
 use rg_item_tree::{
     Documentation, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
-    MacroCallItem, MacroDefinitionItem, ModuleItem, ModuleSource, Package as ItemTreePackage,
-    UseImport, UseItem, VisibilityLevel,
+    MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource,
+    Package as ItemTreePackage, UseImport, UseItem, VisibilityLevel,
 };
 use rg_parse::{Package, Target};
 use rg_text::Name;
@@ -389,7 +389,7 @@ impl<'db> TargetScopeCollector<'db> {
                 .record_definition(module_id, name, local_def_id, order);
         }
         if let MacroDefinitionItem::MacroRules { attrs, .. } = macro_definition
-            && attrs.macro_export
+            && self.macro_definition_is_exported(attrs)
             && let Some(name) = &item.name
         {
             self.export_macro_definition_to_root(name, local_def_id);
@@ -424,6 +424,18 @@ impl<'db> TargetScopeCollector<'db> {
                     origin: ScopeBindingOrigin::MacroExport,
                 },
             );
+    }
+
+    fn macro_definition_is_exported(&self, attrs: &MacroDefinitionAttrs) -> bool {
+        if attrs.macro_export {
+            return true;
+        }
+
+        let cfg = CfgEvaluator::new(self.cfg_options, &self.target_kind);
+        attrs
+            .cfg_attr_macro_export
+            .iter()
+            .any(|predicate| cfg.is_predicate_enabled(predicate))
     }
 
     /// Keeps item-position macro calls for the later def-map expansion loop.
