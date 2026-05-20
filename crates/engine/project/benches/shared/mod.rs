@@ -291,7 +291,7 @@ pub(crate) fn bench_targets() -> Vec<BenchTarget> {
 }
 
 fn workspace_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
 fn count_source_files(parse: &ParseDb) -> usize {

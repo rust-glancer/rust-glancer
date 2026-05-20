@@ -1,0 +1,40 @@
+name: CodSpeed
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  benchmarks:
+    name: Run benchmarks
+    runs-on: ubuntu-latest
+    env:
+      CARGO_CODSPEED_VERSION: "4.6.0"
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Install cargo-codspeed
+        uses: taiki-e/install-action@3235f8901fd37ffed0052b276cec25a362fb82e9 # v2
+        with:
+          tool: cargo-codspeed@${{ env.CARGO_CODSPEED_VERSION }}
+          fallback: none
+
+      - name: Fetch rust-analyzer benchmark fixture
+        run: ./test_targets/bench_fixtures/fetch-rust-analyzer.sh
+
+      - name: Build benchmark targets
+        run: cargo codspeed build -p rg_project --bench analysis_pipeline
+
+      - name: Run benchmarks
+        uses: CodSpeedHQ/action@v4
+        with:
+          mode: simulation
+          run: cargo codspeed run -p rg_project --bench analysis_pipeline

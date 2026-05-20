@@ -21,7 +21,7 @@ fn main() {
 fn parse_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
     let fixture = BenchFixture::get(target);
     bencher
-        .counter(BytesCount::from(fixture.source_bytes))
+        .counter(BytesCount::new(fixture.source_bytes))
         .counter(ItemsCount::new(fixture.source_files))
         .bench_local(|| {
             let parse =
