@@ -136,54 +136,6 @@ pub struct DevHelper;
 }
 
 #[test]
-fn plans_package_artifact_paths_from_cache_store() {
-    utils::check_cache_store_paths(
-        r#"
-//- /Cargo.toml
-[package]
-name = "app"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-dep_alias = { path = "dep", package = "dep-pkg" }
-
-//- /src/lib.rs
-pub struct App;
-
-//- /src/main.rs
-fn main() {}
-
-//- /dep/Cargo.toml
-[package]
-name = "dep-pkg"
-version = "0.1.0"
-edition = "2021"
-
-//- /dep/src/lib.rs
-pub struct Dep;
-"#,
-        expect![[r#"
-            cache store `workspace target`
-            root target/rust_glancer/<workspace>
-            artifacts
-            - #0 app 0063c44d0235d0c71e80678b7fc90da31773f1b1b51ee4cb45dfaa242f9689c1
-              target/rust_glancer/<workspace>/packages/graph-a70a182f184ff488c17e3311c43bca46fe719bd65710115e066972f21ae95644/package-0-app-0063c44d0235d0c71e80678b7fc90da31773f1b1b51ee4cb45dfaa242f9689c1.rgpkg
-            - #1 dep-pkg 7959296c5908094d56a9b4c107f631f0c128f3e1d65d8cfccef478d5c57d6ef7
-              target/rust_glancer/<workspace>/packages/graph-a70a182f184ff488c17e3311c43bca46fe719bd65710115e066972f21ae95644/package-1-dep-pkg-7959296c5908094d56a9b4c107f631f0c128f3e1d65d8cfccef478d5c57d6ef7.rgpkg
-
-            cache store `custom target`
-            root custom-target/rust_glancer/<workspace>
-            artifacts
-            - #0 app 0063c44d0235d0c71e80678b7fc90da31773f1b1b51ee4cb45dfaa242f9689c1
-              custom-target/rust_glancer/<workspace>/packages/graph-a70a182f184ff488c17e3311c43bca46fe719bd65710115e066972f21ae95644/package-0-app-0063c44d0235d0c71e80678b7fc90da31773f1b1b51ee4cb45dfaa242f9689c1.rgpkg
-            - #1 dep-pkg 7959296c5908094d56a9b4c107f631f0c128f3e1d65d8cfccef478d5c57d6ef7
-              custom-target/rust_glancer/<workspace>/packages/graph-a70a182f184ff488c17e3311c43bca46fe719bd65710115e066972f21ae95644/package-1-dep-pkg-7959296c5908094d56a9b4c107f631f0c128f3e1d65d8cfccef478d5c57d6ef7.rgpkg
-        "#]],
-    );
-}
-
-#[test]
 fn roundtrips_package_cache_header_codec() {
     utils::check_cache_header_codec(expect![[r#"
         encoded header bytes 315

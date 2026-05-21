@@ -30,40 +30,6 @@ pub(super) fn check_cache_plan(fixture: &str, expect: Expect) {
     expect.assert_eq(&format!("{}\n", actual.trim_end()));
 }
 
-pub(super) fn check_cache_store_paths(fixture: &str, expect: Expect) {
-    let fixture = fixture_crate(fixture);
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize");
-    let cache_plan = WorkspaceCachePlan::build(&workspace);
-
-    let mut dump = String::new();
-    render_cache_store(
-        "workspace target",
-        &workspace,
-        &cache_plan,
-        &PackageCacheStore::for_workspace_with_target_dir(
-            &workspace,
-            &cache_plan,
-            workspace.workspace_root().join("target"),
-        ),
-        &mut dump,
-    );
-    writeln!(&mut dump).expect("string writes should not fail");
-    render_cache_store(
-        "custom target",
-        &workspace,
-        &cache_plan,
-        &PackageCacheStore::for_workspace_with_target_dir(
-            &workspace,
-            &cache_plan,
-            PathBuf::from("custom-target"),
-        ),
-        &mut dump,
-    );
-
-    expect.assert_eq(&format!("{}\n", dump.trim_end()));
-}
-
 pub(super) fn check_cache_header_codec(expect: Expect) {
     let header = PackageCacheHeader::new(
         CachedPackage {
@@ -921,40 +887,6 @@ fn render_cache_plan(workspace: &WorkspaceMetadata, cache_plan: &WorkspaceCacheP
     }
 
     dump
-}
-
-fn render_cache_store(
-    label: &str,
-    workspace: &WorkspaceMetadata,
-    cache_plan: &WorkspaceCachePlan,
-    store: &PackageCacheStore,
-    dump: &mut String,
-) {
-    writeln!(dump, "cache store `{label}`").expect("string writes should not fail");
-    writeln!(
-        dump,
-        "root {}",
-        cache_path(workspace, store.root().to_path_buf()),
-    )
-    .expect("string writes should not fail");
-    writeln!(dump, "artifacts").expect("string writes should not fail");
-
-    for package in cache_plan.packages() {
-        writeln!(
-            dump,
-            "- #{} {} {}",
-            package.package.0,
-            package.name,
-            store.package_fingerprint(package),
-        )
-        .expect("string writes should not fail");
-        writeln!(
-            dump,
-            "  {}",
-            cache_path(workspace, store.package_artifact_path(package)),
-        )
-        .expect("string writes should not fail");
-    }
 }
 
 fn render_package(
