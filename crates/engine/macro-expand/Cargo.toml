@@ -1,0 +1,30 @@
+[package]
+name = "rg_macro_expand"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors = [
+  "rust-analyzer developers",
+  "Igor Aleksanov <popzxc@yandex.ru>",
+]
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "Rust Glancer declarative macro expansion facade."
+
+[dependencies]
+anyhow.workspace = true
+parser.workspace = true
+ra-ap-rustc_lexer.workspace = true
+rg_cfg_eval.workspace = true
+rg_tt.workspace = true
+rg_syntax.workspace = true
+rustc-hash.workspace = true
+smallvec.workspace = true
+smol_str.workspace = true
+stdx.workspace = true
+text-size.workspace = true
+
+[dev-dependencies]
+expect-test.workspace = true

@@ -13,7 +13,7 @@ use std::{
 use anyhow::Context as _;
 use rg_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
 
-use crate::{FileId, Package};
+use crate::{FileId, Package, fs};
 
 impl Package {
     /// Discovers reachable out-of-line module files before AST-consuming lowering allocates.
@@ -88,13 +88,7 @@ impl ModuleFileContext {
 
     /// Resolves the basic literal form of `#[path = "..."]` relative to the current module.
     fn resolve_path_attr_file(&self, path_attr: &str) -> Option<PathBuf> {
-        let path_attr = Path::new(path_attr);
-        if path_attr.as_os_str().is_empty() || path_attr.is_absolute() {
-            return None;
-        }
-
-        let file = self.child_module_dir.join(path_attr);
-        file.exists().then_some(file)
+        fs::resolve_relative_path_literal(&self.child_module_dir, path_attr)
     }
 }
 

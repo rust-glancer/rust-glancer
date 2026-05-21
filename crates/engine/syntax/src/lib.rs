@@ -51,6 +51,53 @@ pub use parser::{Edition, SyntaxKind, T};
 pub use rustc_literal_escaper as unescape;
 pub use smol_str::{SmolStr, SmolStrBuilder, ToSmolStr, format_smolstr};
 
+/// Builder used by token-tree parsers that already know the parser input and token text.
+///
+/// Normal Rust files should still go through `SourceFile::parse`. This exists for macro
+/// expansions, where the parser consumes token trees instead of lexing source text.
+#[doc(hidden)]
+pub struct GeneratedSyntaxBuilder {
+    inner: syntax_node::SyntaxTreeBuilder,
+}
+
+impl GeneratedSyntaxBuilder {
+    pub fn new() -> Self {
+        Self {
+            inner: syntax_node::SyntaxTreeBuilder::generated(),
+        }
+    }
+
+    pub fn current_offset(&self) -> TextSize {
+        self.inner.current_offset()
+    }
+
+    pub fn token(&mut self, kind: SyntaxKind, text: &str) {
+        self.inner.generated_token(kind, text);
+    }
+
+    pub fn start_node(&mut self, kind: SyntaxKind) {
+        self.inner.start_node(kind);
+    }
+
+    pub fn finish_node(&mut self) {
+        self.inner.finish_node();
+    }
+
+    pub fn error(&mut self, error: String) {
+        self.inner.error(error, self.current_offset());
+    }
+
+    pub fn finish(self) -> Parse<SyntaxNode> {
+        Parse::new(self.inner.finish())
+    }
+}
+
+impl Default for GeneratedSyntaxBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// `Parse` is the result of the parsing: a syntax tree and a collection of
 /// errors.
 ///

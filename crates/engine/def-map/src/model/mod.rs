@@ -8,7 +8,10 @@ pub(crate) mod path;
 pub(crate) mod scope;
 
 pub use self::{
-    data::{DefMap, LocalDefData, LocalDefKind, LocalImplData, ModuleData, ModuleOrigin},
+    data::{
+        DefMap, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
+        MacroDefinitionPayload, ModuleData, ModuleOrigin,
+    },
     ids::{
         DefId, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
         ModuleRef, TargetRef,
@@ -16,7 +19,7 @@ pub use self::{
     import::{ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath},
     package::Package,
     path::{Path, PathSegment},
-    scope::{ModuleScope, ScopeBinding, ScopeEntry},
+    scope::{ModuleScope, ScopeBinding, ScopeBindingOrigin, ScopeEntry},
 };
 
 pub(crate) use self::{

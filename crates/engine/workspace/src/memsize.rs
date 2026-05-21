@@ -9,11 +9,11 @@ use crate::{
 rg_memsize::impl_memory_size_leaf!(PackageSlot, PackageSource, SysrootCrate, RustEdition);
 
 rg_memsize::impl_memory_size_children! {
-    WorkspaceMetadata => workspace_root, packages, package_by_id;
+    WorkspaceMetadata => workspace_root, target_cfg_options, packages, package_by_id;
     CargoMetadataConfig => target;
     SysrootSources => sysroot_root, library_root;
     Package => id, name, edition, origin, source, is_workspace_member, manifest_path, targets,
-        dependencies;
+        cfg_options, dependencies;
     Target => name, kind, src_path;
     PackageDependency => package, name, is_normal, is_build, is_dev;
 }

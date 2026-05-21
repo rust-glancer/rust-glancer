@@ -1,5 +1,4 @@
-use rg_syntax::TextRange;
-
+use rg_cfg_eval::CfgExpr;
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
@@ -15,6 +14,10 @@ pub use self::{
         UsePathSegmentKind,
     },
     kind::{ItemKind, ItemTag},
+    macro_item::{
+        BuiltinMacroItem, CfgAttrMacroUse, CfgSelectArmItem, CfgSelectArmPayload, MacroCallItem,
+        MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
+    },
     module::{ModuleItem, ModuleSource},
     type_ref::{GenericArg, Mutability, TypeBound, TypePath, TypePathSegment, TypeRef},
     visibility::VisibilityLevel,
@@ -26,6 +29,7 @@ mod decl;
 mod docs;
 mod import;
 mod kind;
+mod macro_item;
 mod module;
 mod type_ref;
 mod visibility;
@@ -60,6 +64,8 @@ pub struct ItemNode {
     /// Source span of the declaration name, when the item has one.
     pub name_span: Option<Span>,
     pub visibility: VisibilityLevel,
+    /// Target-dependent cfg gates attached to the item.
+    pub cfg: CfgExpr,
     /// User-facing documentation lowered from doc comments or `#[doc = "..."]`.
     pub docs: Option<Documentation>,
     /// File where this item is declared.
@@ -73,20 +79,21 @@ impl ItemNode {
     pub(super) fn new(
         kind: ItemKind,
         name: Option<Name>,
-        name_range: Option<TextRange>,
+        name_span: Option<Span>,
         visibility: VisibilityLevel,
         docs: Option<Documentation>,
-        text_range: TextRange,
+        span: Span,
         file_id: FileId,
     ) -> Self {
         Self {
             kind,
             name,
-            name_span: name_range.map(Span::from_text_range),
+            name_span,
             visibility,
+            cfg: CfgExpr::default(),
             docs,
             file_id,
-            span: Span::from_text_range(text_range),
+            span,
         }
     }
 
@@ -96,6 +103,7 @@ impl ItemNode {
             name.shrink_to_fit();
         }
         self.visibility.shrink_to_fit();
+        self.cfg.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
         }

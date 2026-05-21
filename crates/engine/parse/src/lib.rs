@@ -1,5 +1,6 @@
 mod db;
 mod file;
+mod fs;
 mod line_index;
 mod memsize;
 mod module;

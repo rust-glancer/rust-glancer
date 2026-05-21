@@ -358,11 +358,14 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
+#[macro_use(make_bar)]
 pub mod bar {
     pub mod foo {}
 }
 
+#[macro_use(current_macro)]
 extern crate self as current;
+#[macro_use]
 extern crate self as _;
 
 use bar::foo::{self, self as imported_foo, work as _, *};
@@ -377,10 +380,10 @@ use ::bar::foo;
 
             files
             file lib.rs
-            - pub module bar [inline]
+            - pub module bar [inline] [macro_use(make_bar)]
               - pub module foo [inline]
-            - extern_crate self [self as current]
-            - extern_crate self [self as _]
+            - extern_crate self [self as current] [macro_use(current_macro)]
+            - extern_crate self [self as _] [macro_use]
             - use bar::foo::{self, self as imported_foo, work as _, *}
               - import self bar::foo
               - import self bar::foo as imported_foo
@@ -458,6 +461,243 @@ pub fn decorate(input: &str) -> &str {
             file lib.rs
             - macro_definition label_result
             - pub fn decorate
+        "#]],
+    );
+}
+
+#[test]
+fn dumps_item_macro_calls() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+//- /Cargo.toml
+[package]
+name = "macro_crate"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+#[macro_export]
+macro_rules! make_user {
+    () => {
+        pub struct User;
+    };
+}
+
+make_user!();
+"#,
+        expect![[r#"
+            package macro_crate
+
+            targets
+            - macro_crate [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - macro_definition make_user
+              - macro_export
+              - body {() => {pub struct User ;} ;}
+            - macro_call [make_user]
+              - args ()
+        "#]],
+    );
+}
+
+#[test]
+fn lowers_literal_include_files_for_macro_calls() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+//- /Cargo.toml
+[package]
+name = "include_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+include!("included.rs");
+
+//- /src/included.rs
+pub struct Included;
+"#,
+        expect![[r#"
+            package include_fixture
+
+            targets
+            - include_fixture [lib] -> lib.rs
+
+            files
+            file included.rs
+            - pub struct Included
+
+            file lib.rs
+            - macro_call [include]
+              - args ("included.rs")
+              - include_file included.rs
+        "#]],
+    );
+}
+
+#[test]
+fn lowers_cfg_select_arms_as_source_fragments() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+//- /Cargo.toml
+[package]
+name = "cfg_select_item_tree_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+cfg_select! {
+    unix => {
+        mod os;
+    }
+    _ => {
+        pub struct Other;
+    }
+}
+
+//- /src/os.rs
+pub struct Unix;
+"#,
+        expect![[r#"
+            package cfg_select_item_tree_fixture
+
+            targets
+            - cfg_select_item_tree_fixture [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - macro_call [cfg_select]
+              - args {unix => {mod os ;} _ => {pub struct Other ;}}
+              - cfg_select_arm 0
+                - module os [out_of_line os.rs]
+              - cfg_select_arm 1
+                - pub struct Other
+
+            file os.rs
+            - pub struct Unix
+        "#]],
+    );
+}
+
+#[test]
+fn preserves_failed_cfg_select_arm_lowering_per_arm() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+//- /Cargo.toml
+[package]
+name = "cfg_select_failed_arm_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+cfg_select! {
+    false => {
+        mod ;
+    }
+    true => {
+        pub struct Selected;
+    }
+}
+"#,
+        expect![[r#"
+            package cfg_select_failed_arm_fixture
+
+            targets
+            - cfg_select_failed_arm_fixture [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - macro_call [cfg_select]
+              - args {false => {mod ;} true => {pub struct Selected ;}}
+              - cfg_select_arm 0 [lowering_failed]
+              - cfg_select_arm 1
+                - pub struct Selected
+        "#]],
+    );
+}
+
+#[test]
+fn literal_include_probe_ignores_unreadable_targets() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+//- /Cargo.toml
+[package]
+name = "shadowed_include_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! include {
+    ($path:literal) => {};
+}
+
+include!("foo");
+
+//- /src/foo/mod.rs
+pub struct Foo;
+"#,
+        expect![[r#"
+            package shadowed_include_fixture
+
+            targets
+            - shadowed_include_fixture [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - macro_definition include
+              - body {($ path : literal) => {} ;}
+            - macro_call [include]
+              - args ("foo")
+        "#]],
+    );
+}
+
+#[test]
+fn cyclic_literal_include_files_do_not_recurse_forever() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+//- /Cargo.toml
+[package]
+name = "cyclic_include_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+include!("foo.rs");
+
+//- /src/foo.rs
+pub struct Foo;
+
+include!("bar.rs");
+
+//- /src/bar.rs
+pub struct Bar;
+
+include!("foo.rs");
+"#,
+        expect![[r#"
+            package cyclic_include_fixture
+
+            targets
+            - cyclic_include_fixture [lib] -> lib.rs
+
+            files
+            file bar.rs
+            - pub struct Bar
+            - macro_call [include]
+              - args ("foo.rs")
+
+            file foo.rs
+            - pub struct Foo
+            - macro_call [include]
+              - args ("bar.rs")
+              - include_file bar.rs
+
+            file lib.rs
+            - macro_call [include]
+              - args ("foo.rs")
+              - include_file foo.rs
         "#]],
     );
 }

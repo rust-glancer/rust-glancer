@@ -6,15 +6,19 @@
 //! the settled scopes back into the target payloads. During package rebuilds, dirty package reads
 //! come from fresh target states while clean package reads fall through to the old frozen database.
 
+mod clean;
+mod rebuild;
+
 use anyhow::Context as _;
 
+use rg_item_tree::ItemTreeDb;
 use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    DefMap as FrozenDefMap, DefMapReadTxn, LocalDefKind, LocalDefRef, ModuleData, ModuleId,
-    ModuleRef, Package as DefMapPackage, PackageSlot, TargetRef,
+    DefMap as FrozenDefMap, DefMapReadTxn, LocalDefData, LocalDefRef, MacroDefinitionData,
+    ModuleData, ModuleId, ModuleRef, Package as DefMapPackage, PackageSlot, TargetRef,
     model::{ModuleScopeBuilder, ScopeEntryRef},
     query::path_resolution::{PathResolutionEnv, resolve_path_to_modules_with_env},
 };
@@ -22,7 +26,16 @@ use crate::{
 use super::{
     collect::TargetState,
     imports::{UnresolvedImports, apply_imports},
+    macros::{
+        MAX_MACRO_EXPANSION_PASSES, MacroExpansionCache, MacroExpansionCursors,
+        MacroExpansionExecutor, MacroExpansionScan, apply_expansion_attempts,
+        collect_expansion_attempts, expand_expansion_attempts,
+        mark_retryable_macros_skipped_by_limit,
+    },
+    stats::{DefMapFinalizationStats, DefMapFinalizationStatsSink},
 };
+
+pub(crate) use self::{clean::build_db, rebuild::rebuild_packages};
 
 /// Mutable target states for every target inside one package.
 pub(super) type PackageTargetStates = Vec<TargetState>;
@@ -75,12 +88,23 @@ impl FinalizeTargetStates {
         self.packages.iter().map(Option::as_deref)
     }
 
-    fn target(&self, target: TargetRef) -> Option<&TargetState> {
+    pub(super) fn target(&self, target: TargetRef) -> Option<&TargetState> {
         self.package(target.package)?.get(target.target.0)
     }
 
-    fn iter_dirty(&self) -> impl Iterator<Item = &[TargetState]> {
+    pub(super) fn target_mut(&mut self, target: TargetRef) -> Option<&mut TargetState> {
+        self.packages
+            .get_mut(target.package.0)?
+            .as_deref_mut()?
+            .get_mut(target.target.0)
+    }
+
+    pub(super) fn iter_dirty(&self) -> impl Iterator<Item = &[TargetState]> {
         self.packages.iter().filter_map(Option::as_deref)
+    }
+
+    pub(super) fn iter_dirty_mut(&mut self) -> impl Iterator<Item = &mut [TargetState]> {
+        self.packages.iter_mut().filter_map(Option::as_deref_mut)
     }
 
     fn iter_dirty_mut_enumerated(&mut self) -> impl Iterator<Item = (usize, &mut [TargetState])> {
@@ -146,6 +170,19 @@ impl ScopeMatrix {
             .as_mut()?
             .get_mut(target.target.0)?
             .get_mut(module.0)
+    }
+
+    pub(super) fn push_module_scope(
+        &mut self,
+        target: TargetRef,
+        scope: ModuleScopeBuilder,
+    ) -> Option<()> {
+        self.packages
+            .get_mut(target.package.0)?
+            .as_mut()?
+            .get_mut(target.target.0)?
+            .push(scope);
+        Some(())
     }
 }
 
@@ -282,59 +319,88 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
             .unwrap_or_default())
     }
 
-    fn local_def_kind(
+    fn local_def_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<LocalDefKind>, rg_package_store::PackageStoreError> {
+    ) -> Result<Option<&LocalDefData>, rg_package_store::PackageStoreError> {
         if let Some(state) = self.states.target(local_def_ref.target) {
-            return Ok(state
-                .def_map
-                .local_def(local_def_ref.local_def)
-                .map(|local_def| local_def.kind));
+            return Ok(state.def_map.local_def(local_def_ref.local_def));
+        }
+
+        self.old
+            .map(|old| old.local_def(local_def_ref))
+            .transpose()
+            .map(Option::flatten)
+    }
+
+    fn macro_definition_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&MacroDefinitionData>, rg_package_store::PackageStoreError> {
+        if let Some(state) = self.states.target(local_def_ref.target) {
+            return Ok(state.def_map.macro_definition(local_def_ref.local_def));
         }
 
         Ok(self
             .old
-            .map(|old| old.local_def(local_def_ref))
+            .map(|old| old.def_map(local_def_ref.target))
             .transpose()?
             .flatten()
-            .map(|local_def| local_def.kind))
+            .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))
     }
 }
 
+/// Completes mutable target states after collection and before freezing.
+///
+/// Collection records only local facts. This step attaches the edition prelude for each target,
+/// resolves imports and item-position macros against the package graph, and writes the final
+/// module scopes back into the collected states.
 pub(super) fn finalize_target_states(
     old: Option<&DefMapReadTxn<'_>>,
     workspace: &WorkspaceMetadata,
     packages: &[Package],
+    item_tree: &ItemTreeDb,
     target_states: &mut FinalizeTargetStates,
     interners: &mut PackageNameInterners,
+    finalization_stats: Option<&mut DefMapFinalizationStats>,
 ) -> anyhow::Result<()> {
+    // Prelude selection needs the directly declared root modules and implicit extern roots, but it
+    // must happen before import resolution because prelude imports participate in normal lookup.
     select_preludes(old, workspace, packages, target_states, interners)
         .context("while attempting to select target preludes")?;
-    finalize_scopes(old, target_states).context("while attempting to resolve target scopes")
+
+    // Once each target knows its prelude, imports and item-position macros can be resolved through
+    // the shared fixed-point loop.
+    finalize_scopes(old, item_tree, target_states, interners, finalization_stats)
+        .context("while attempting to resolve target scopes")
 }
 
-pub(super) fn freeze_package_states(
-    package: &Package,
-    package_states: &[TargetState],
-) -> DefMapPackage {
-    DefMapPackage {
-        name: package.package_name().to_string(),
-        target_names: rg_arena::Arena::from_vec(
-            package_states
-                .iter()
-                .map(|state| state.target_name.clone())
-                .collect(),
-        ),
-        targets: rg_arena::Arena::from_vec(
-            package_states
-                .iter()
-                .map(freeze_target_state)
-                .collect::<Vec<_>>(),
-        ),
+impl DefMapPackage {
+    /// Freezes collected target states into the package payload stored by `DefMapDb`.
+    pub(super) fn freeze(package: &Package, package_states: &[TargetState]) -> Self {
+        Self {
+            name: package.package_name().to_string(),
+            target_names: rg_arena::Arena::from_vec(
+                package_states
+                    .iter()
+                    .map(|state| state.target_name.clone())
+                    .collect(),
+            ),
+            targets: rg_arena::Arena::from_vec(
+                package_states
+                    .iter()
+                    .map(freeze_target_state)
+                    .collect::<Vec<_>>(),
+            ),
+        }
     }
 }
 
+/// Selects the standard prelude module visible from each dirty target.
+///
+/// The prelude path depends on the target edition, and the module it resolves to can live in a
+/// clean package. Resolution therefore uses the same dirty-state-plus-old-baseline environment as
+/// the later import fixed point.
 fn select_preludes(
     old: Option<&DefMapReadTxn<'_>>,
     workspace: &WorkspaceMetadata,
@@ -342,8 +408,13 @@ fn select_preludes(
     states: &mut FinalizeTargetStates,
     interners: &mut PackageNameInterners,
 ) -> anyhow::Result<()> {
+    // Prelude lookup only needs directly declared names and implicit extern roots. Using base
+    // scopes here keeps the operation independent from later import and macro expansion passes.
     let base_scopes = states.base_scopes();
     let env = FinalizeResolutionEnv::new(old, states, &base_scopes);
+
+    // Store selected preludes out-of-band first so path resolution can borrow all target states
+    // immutably while we inspect roots across packages.
     let mut selected_preludes = packages
         .iter()
         .enumerate()
@@ -369,6 +440,8 @@ fn select_preludes(
         })?;
         let prelude_path = crate::ImportPath::standard_prelude(workspace_package.edition, interner);
 
+        // Each target resolves its edition prelude from its own crate root. Targets without a root
+        // module are malformed enough that later phases will simply see no prelude.
         for (target_slot, state) in package_states.iter().enumerate() {
             let Some(root_module) = state.def_map.root_module() else {
                 continue;
@@ -388,6 +461,8 @@ fn select_preludes(
         }
     }
 
+    // Apply the selected modules after lookup is done so future import resolution can consult the
+    // prelude through `PathResolutionEnv::prelude_module`.
     for (package_slot, package_states) in states.iter_dirty_mut_enumerated() {
         let package_preludes = selected_preludes[package_slot]
             .as_ref()
@@ -400,14 +475,148 @@ fn select_preludes(
     Ok(())
 }
 
-/// Resolves imports until every dirty target scope stops changing.
+/// Resolves imports and item-position macros until every dirty target scope stops changing.
 ///
-/// Imports can depend on names introduced by other imports, so one pass is not enough. Each pass
-/// reads from the previous scope matrix and writes into a fresh matrix seeded from base scopes.
+/// Imports can depend on names introduced by other imports, and macro calls can depend on imports
+/// that make the macro definition visible. This function therefore runs a small fixed-point loop:
+/// resolve imports against the current target states, expand the macros that are now visible,
+/// splice generated items back into the mutable target states, and refresh imports whenever those
+/// generated items may have introduced new imports or exported names.
 fn finalize_scopes(
     old: Option<&DefMapReadTxn<'_>>,
+    item_tree: &ItemTreeDb,
     states: &mut FinalizeTargetStates,
+    interners: &mut PackageNameInterners,
+    finalization_stats: Option<&mut DefMapFinalizationStats>,
 ) -> anyhow::Result<()> {
+    let mut finalization_stats = DefMapFinalizationStatsSink::new(finalization_stats);
+    let mut macro_cache = MacroExpansionCache::default();
+    let mut macro_expansion_executor = None;
+    let mut expansion_passes = 0;
+    finalization_stats.record(|stats| stats.expansion_pass_limit = MAX_MACRO_EXPANSION_PASSES);
+
+    loop {
+        finalization_stats.record(|stats| stats.rounds += 1);
+
+        // Start each round by letting imports settle over the declarations collected so far. This
+        // includes items generated by earlier macro rounds, because those items were written back
+        // into `states` before the next round begins.
+        let timer = finalization_stats.start_timer();
+        let mut current_scopes = resolve_import_scopes(old, states)?;
+        finalization_stats.finish_timer(timer, |timings, elapsed| {
+            timings.resolve_import_scopes += elapsed;
+        });
+
+        // Macro expansion can introduce more macro calls that are visible in the same scope
+        // snapshot. Keep consuming that local queue before paying for another full import pass.
+        let mut needs_import_refresh = false;
+        let mut next_scan_cursors = None;
+        loop {
+            if expansion_passes >= MAX_MACRO_EXPANSION_PASSES {
+                // Stop expanding but still freeze a coherent def-map. The final import refresh lets
+                // names generated before the cap settle into module scopes.
+                mark_retryable_macros_skipped_by_limit(states, &mut finalization_stats);
+                let timer = finalization_stats.start_timer();
+                current_scopes = resolve_import_scopes(old, states)?;
+                finalization_stats.finish_timer(timer, |timings, elapsed| {
+                    timings.resolve_import_scopes += elapsed;
+                });
+                freeze_resolved_scopes(old, states, &current_scopes)?;
+                return Ok(());
+            }
+
+            expansion_passes += 1;
+            finalization_stats.record(|stats| stats.expansion_passes += 1);
+
+            let timer = finalization_stats.start_timer();
+            let mut expansion_attempts = {
+                let env = FinalizeResolutionEnv::new(old, states, &current_scopes);
+                // The first pass in a round visits all pending macro calls. Follow-up passes only
+                // visit calls appended by the previous expansion, because older unresolved calls
+                // need a fresh import snapshot before their answer can change.
+                let scan = next_scan_cursors
+                    .as_ref()
+                    .map(MacroExpansionScan::NewCallsSince)
+                    .unwrap_or(MacroExpansionScan::AllPending);
+                collect_expansion_attempts(
+                    &env,
+                    states,
+                    scan,
+                    &mut macro_cache,
+                    &mut finalization_stats,
+                )?
+            };
+            finalization_stats.finish_timer(timer, |timings, elapsed| {
+                timings.collect_expansion_attempts += elapsed;
+            });
+
+            if expansion_attempts
+                .iter()
+                .any(|attempt| attempt.needs_expansion())
+            {
+                if macro_expansion_executor.is_none() {
+                    macro_expansion_executor = Some(MacroExpansionExecutor::new()?);
+                }
+                // The executor owns the rust-analyzer expansion adapter. It is created lazily so
+                // projects without expandable declarative macros do not pay its setup cost.
+                let executor = macro_expansion_executor
+                    .as_ref()
+                    .expect("macro expansion executor should be initialized");
+                expand_expansion_attempts(
+                    executor,
+                    &mut expansion_attempts,
+                    &mut macro_cache,
+                    &mut finalization_stats,
+                );
+            }
+
+            let scan_cursors_before_apply = MacroExpansionCursors::capture(states);
+            let timer = finalization_stats.start_timer();
+            let expansion = if expansion_attempts.is_empty() {
+                Default::default()
+            } else {
+                // Expanded text is parsed into regular item-tree data and appended to the owning
+                // module. The same generated declarations are also added to `current_scopes`, which
+                // makes simple chains like `make_macro!(); generated_macro!();` work in one round.
+                apply_expansion_attempts(
+                    item_tree,
+                    states,
+                    interners,
+                    &mut current_scopes,
+                    expansion_attempts,
+                    &mut finalization_stats,
+                )?
+            };
+            finalization_stats.finish_timer(timer, |timings, elapsed| {
+                timings.apply_expansion_attempts += elapsed;
+            });
+
+            needs_import_refresh |= expansion.changed;
+            if expansion.changed {
+                // Generated calls can be resolved with the same scope snapshot, but generated
+                // imports cannot. Keep the cheap path going until no more direct expansion happens.
+                next_scan_cursors = Some(scan_cursors_before_apply);
+                continue;
+            }
+
+            if needs_import_refresh {
+                // At least one expansion happened in this round. Re-run import resolution so
+                // generated `use` items and newly exported names can participate in path lookup.
+                break;
+            }
+
+            // No imports and no macros changed the visible declarations, so this is the stable
+            // scope matrix that can be written into the frozen def maps.
+            freeze_resolved_scopes(old, states, &current_scopes)?;
+            return Ok(());
+        }
+    }
+}
+
+fn resolve_import_scopes(
+    old: Option<&DefMapReadTxn<'_>>,
+    states: &FinalizeTargetStates,
+) -> anyhow::Result<ScopeMatrix> {
     let mut current_scopes = states.base_scopes();
 
     loop {
@@ -428,8 +637,7 @@ fn finalize_scopes(
         }
 
         if next_scopes == current_scopes {
-            freeze_resolved_scopes(old, states, &current_scopes)?;
-            return Ok(());
+            return Ok(current_scopes);
         }
 
         current_scopes = next_scopes;

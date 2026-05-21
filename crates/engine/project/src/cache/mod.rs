@@ -21,8 +21,8 @@ mod store;
 
 pub use self::{
     cached::{
-        CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot, CachedPackageSource,
-        CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind,
+        CachedCfgOptions, CachedDependency, CachedPackage, CachedPackageId, CachedPackageSlot,
+        CachedPackageSource, CachedPath, CachedRustEdition, CachedTarget, CachedTargetKind,
     },
     codec::PackageCacheCodec,
     fingerprint::Fingerprint,

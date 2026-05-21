@@ -7,7 +7,10 @@ use std::{fmt, path::Path};
 
 use anyhow::Context as _;
 
-use super::{CachedDependency, CachedPackage, CachedPackageId, CachedTarget, WorkspaceCachePlan};
+use super::{
+    CachedCfgOptions, CachedDependency, CachedPackage, CachedPackageId, CachedTarget,
+    WorkspaceCachePlan, cached::CachedCfgKeyValue,
+};
 
 /// Stable BLAKE3 fingerprint used by cache keys.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
@@ -69,6 +72,7 @@ impl FingerprintBuilder {
             workspace_root,
             package.manifest_path.as_path(),
         );
+        builder.cfg_options(&package.cfg_options);
 
         let targets = CachedTarget::sorted(&package.targets);
         builder.usize("targets.len", targets.len());
@@ -170,6 +174,23 @@ impl FingerprintBuilder {
         self.bool("dependency.is_normal", dependency.is_normal);
         self.bool("dependency.is_build", dependency.is_build);
         self.bool("dependency.is_dev", dependency.is_dev);
+    }
+
+    fn cfg_options(&mut self, options: &CachedCfgOptions) {
+        let mut atoms = options.atoms().iter().collect::<Vec<_>>();
+        atoms.sort();
+
+        self.usize("cfg_options.atoms.len", atoms.len());
+        for atom in atoms {
+            self.str("cfg_options.atom", atom);
+        }
+
+        let key_values = CachedCfgKeyValue::sorted(options.key_values());
+        self.usize("cfg_options.key_values.len", key_values.len());
+        for key_value in key_values {
+            self.str("cfg_options.key_value.key", &key_value.key);
+            self.str("cfg_options.key_value.value", &key_value.value);
+        }
     }
 
     fn path(&mut self, field: &str, workspace_root: &Path, path: &Path) {

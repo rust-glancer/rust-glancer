@@ -1,0 +1,24 @@
+[package]
+name = "rg_tt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors = [
+  "rust-analyzer developers",
+  "Igor Aleksanov <popzxc@yandex.ru>",
+]
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "Rust Glancer token-tree and macro syntax bridge primitives."
+
+[dependencies]
+parser.workspace = true
+ra-ap-rustc_lexer.workspace = true
+rg_syntax.workspace = true
+rg_memsize.workspace = true
+smol_str.workspace = true
+stdx.workspace = true
+text-size.workspace = true
+wincode.workspace = true

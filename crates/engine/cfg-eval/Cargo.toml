@@ -1,0 +1,16 @@
+[package]
+name = "rg_cfg_eval"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description = "Rust Glancer cfg predicate lowering and evaluation."
+
+[dependencies]
+rg_memsize.workspace = true
+rg_syntax.workspace = true
+wincode.workspace = true

@@ -1,16 +1,18 @@
 use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::{
-    ConstItem, Documentation, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldKey,
-    FieldList, FunctionItem, GenericArg, GenericParams, ImplItem, ImportAlias, ItemKind, ItemNode,
-    ItemTag, ItemTreeDb, ItemTreeId, ItemTreeRef, ModuleItem, ModuleSource, Mutability, Package,
-    ParamItem, ParamKind, StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, TypeBound,
-    TypePath, TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath,
+    BuiltinMacroItem, CfgAttrMacroUse, CfgSelectArmItem, CfgSelectArmPayload, ConstItem,
+    Documentation, EnumItem, EnumVariantItem, ExternCrateItem, FieldItem, FieldKey, FieldList,
+    FunctionItem, GenericArg, GenericParams, ImplItem, ImportAlias, ItemKind, ItemNode, ItemTag,
+    ItemTreeDb, ItemTreeId, ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem,
+    MacroUseAttr, MacroUseSelector, ModuleItem, ModuleSource, Mutability, Package, ParamItem,
+    ParamKind, StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, TypeBound, TypePath,
+    TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath,
     UsePathSegment, UsePathSegmentKind, VisibilityLevel, WherePredicate,
     item::{ConstParamData, FunctionQualifiers, LifetimeParamData, TypeParamData},
 };
 
-rg_memsize::impl_memory_size_leaf!(ItemTreeId, ParamKind, Mutability, UseImportKind, ItemTag);
+rg_memsize::impl_memory_size_leaf!(ItemTreeId, ParamKind, Mutability, UseImportKind, ItemTag,);
 
 rg_memsize::impl_memory_size_children! {
     ItemTreeDb => packages;
@@ -18,7 +20,7 @@ rg_memsize::impl_memory_size_children! {
     crate::FileTree => file, docs, top_level, items;
     TargetRoot => target, root_file;
     ItemTreeRef => file_id, item;
-    ItemNode => kind, name, name_span, visibility, docs, file_id, span;
+    ItemNode => kind, name, name_span, visibility, cfg, docs, file_id, span;
     Documentation => text;
     GenericParams => lifetimes, types, consts, where_predicates;
     LifetimeParamData => name, bounds;
@@ -26,6 +28,7 @@ rg_memsize::impl_memory_size_children! {
     ConstParamData => name, ty, default;
     FunctionItem => generics, params, ret_ty, qualifiers;
     FunctionQualifiers => is_async, is_const, is_unsafe;
+    MacroCallItem => path, callee, args, builtin;
     ParamItem => pat, ty, kind;
     StructItem => generics, fields;
     UnionItem => generics, fields;
@@ -39,12 +42,68 @@ rg_memsize::impl_memory_size_children! {
     StaticItem => ty, mutability;
     TypePath => source_span, absolute, segments;
     TypePathSegment => name, args, span;
-    ExternCrateItem => name, alias;
+    ExternCrateItem => name, alias, macro_use;
+    MacroUseAttr => direct, cfg_attr_macro_use;
+    MacroUseSelector => names;
+    CfgAttrMacroUse => predicate, selector;
     UseItem => imports;
     UseImport => kind, path, alias;
     UsePath => source_span, absolute, segments;
     UsePathSegment => kind, span;
-    ModuleItem => inner_docs, source;
+    ModuleItem => inner_docs, macro_use, source;
+}
+
+rg_memsize::impl_memory_size_children! {
+    CfgSelectArmItem => predicate, payload;
+}
+
+impl MemorySize for CfgSelectArmPayload {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Items(items) => items.record_memory_children(recorder),
+            Self::LoweringFailed => {}
+        }
+    }
+}
+
+impl MemorySize for BuiltinMacroItem {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            Self::Include { file } => file.record_memory_children(recorder),
+            Self::CfgSelect { arms } => arms.record_memory_children(recorder),
+        }
+    }
+}
+
+impl MemorySize for MacroDefinitionItem {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        match self {
+            MacroDefinitionItem::MacroRules { attrs, body } => {
+                recorder.scope("attrs", |recorder| {
+                    attrs.record_memory_children(recorder);
+                });
+                recorder.scope("body", |recorder| {
+                    body.record_memory_children(recorder);
+                });
+            }
+            MacroDefinitionItem::MacroDef { args, body } => {
+                recorder.scope("args", |recorder| {
+                    args.record_memory_children(recorder);
+                });
+                recorder.scope("body", |recorder| {
+                    body.record_memory_children(recorder);
+                });
+            }
+        }
+    }
+}
+
+impl MemorySize for MacroDefinitionAttrs {
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        recorder.scope("cfg_attr_macro_export", |recorder| {
+            self.cfg_attr_macro_export.record_memory_children(recorder);
+        });
+    }
 }
 
 impl MemorySize for WherePredicate {
@@ -175,12 +234,14 @@ impl MemorySize for UsePathSegmentKind {
 impl MemorySize for ItemKind {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
-            Self::AsmExpr | Self::ExternBlock | Self::MacroDefinition => {}
+            Self::AsmExpr | Self::ExternBlock => {}
             Self::Const(item) => item.record_memory_children(recorder),
             Self::Enum(item) => item.record_memory_children(recorder),
             Self::ExternCrate(item) => item.record_memory_children(recorder),
             Self::Function(item) => item.record_memory_children(recorder),
             Self::Impl(item) => item.record_memory_children(recorder),
+            Self::MacroCall(item) => item.record_memory_children(recorder),
+            Self::MacroDefinition(item) => item.record_memory_children(recorder),
             Self::Module(item) => item.record_memory_children(recorder),
             Self::Static(item) => item.record_memory_children(recorder),
             Self::Struct(item) => item.record_memory_children(recorder),

@@ -7,6 +7,9 @@ members = [
   "crates/engine/workspace",
   "crates/engine/parser",
   "crates/engine/syntax",
+  "crates/engine/tt",
+  "crates/engine/cfg-eval",
+  "crates/engine/macro-expand",
   "crates/engine/parse",
   "crates/engine/item-tree",
   "crates/engine/def-map",
@@ -94,6 +97,9 @@ ungrammar = "1.16.1"
 winnow = "0.7.13"
 
 rg_syntax = { path = "crates/engine/syntax" }
+rg_tt = { path = "crates/engine/tt" }
+rg_cfg_eval = { path = "crates/engine/cfg-eval" }
+rg_macro_expand = { path = "crates/engine/macro-expand" }
 
 rg_lsp_server = { path = "crates/lsp/server" }
 rg_lsp_proto = { path = "crates/lsp/proto" }

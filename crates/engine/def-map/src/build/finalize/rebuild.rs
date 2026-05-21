@@ -10,14 +10,15 @@ use rg_item_tree::ItemTreeDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
-use super::{
-    collect::collect_package_target_states,
-    finalize::{FinalizeTargetStates, finalize_target_states, freeze_package_states},
-    implicit_roots::build_implicit_roots,
+use super::super::{
+    collect::collect_package_target_states, implicit_roots::build_implicit_roots,
+    stats::DefMapFinalizationStats,
 };
-use crate::{DefMapDb, DefMapReadTxn, PackageSlot};
+use super::{FinalizeTargetStates, finalize_target_states};
+use crate::{DefMapDb, DefMapReadTxn, Package as DefMapPackage, PackageSlot};
 
 /// Rebuilds selected package def maps against the previous frozen graph.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn rebuild_packages(
     old: &DefMapDb,
     old_read: &DefMapReadTxn<'_>,
@@ -26,6 +27,7 @@ pub(crate) fn rebuild_packages(
     item_tree: &ItemTreeDb,
     packages: &[PackageSlot],
     interners: &mut PackageNameInterners,
+    finalization_stats: Option<&mut DefMapFinalizationStats>,
 ) -> anyhow::Result<DefMapDb> {
     let packages = normalized_package_slots(packages);
     if packages.is_empty() {
@@ -81,8 +83,10 @@ pub(crate) fn rebuild_packages(
         Some(old_read),
         workspace,
         parse.packages(),
+        item_tree,
         &mut target_states,
         interners,
+        finalization_stats,
     )
     .context("while attempting to finish rebuilt target states")?;
 
@@ -102,7 +106,7 @@ pub(crate) fn rebuild_packages(
                 package_slot.0
             )
         })?;
-        let rebuilt = freeze_package_states(parse_package, &package_states);
+        let rebuilt = DefMapPackage::freeze(parse_package, &package_states);
         next.mutator()
             .replace_package(package_slot, rebuilt)
             .with_context(|| {

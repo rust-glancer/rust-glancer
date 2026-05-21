@@ -9,8 +9,8 @@
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
 use crate::{
-    DefId, DefMapReadTxn, ImportPath, LocalDefKind, LocalDefRef, ModuleData, ModuleId, ModuleRef,
-    Path, PathSegment, ScopeBinding, TargetRef,
+    DefId, DefMapReadTxn, ImportPath, LocalDefData, LocalDefKind, LocalDefRef, MacroDefinitionData,
+    ModuleData, ModuleId, ModuleRef, Path, PathSegment, ScopeBinding, TargetRef,
     model::{ModuleScopeBuilder, Namespace, ScopeEntryRef},
 };
 use rg_item_tree::VisibilityLevel;
@@ -49,10 +49,24 @@ pub(crate) trait PathResolutionEnv {
         module_ref: ModuleRef,
     ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, PackageStoreError>;
 
+    fn local_def_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&LocalDefData>, PackageStoreError>;
+
+    fn macro_definition_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&MacroDefinitionData>, PackageStoreError>;
+
     fn local_def_kind(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<LocalDefKind>, PackageStoreError>;
+    ) -> Result<Option<LocalDefKind>, PackageStoreError> {
+        Ok(self
+            .local_def_data(local_def_ref)?
+            .map(|local_def| local_def.kind))
+    }
 
     fn parent_module(
         &self,
@@ -133,13 +147,20 @@ impl PathResolutionEnv for DefMapReadTxn<'_> {
             .unwrap_or_default())
     }
 
-    fn local_def_kind(
+    fn local_def_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<LocalDefKind>, PackageStoreError> {
+    ) -> Result<Option<&LocalDefData>, PackageStoreError> {
+        self.local_def(local_def_ref)
+    }
+
+    fn macro_definition_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&MacroDefinitionData>, PackageStoreError> {
         Ok(self
-            .local_def(local_def_ref)?
-            .map(|local_def| local_def.kind))
+            .def_map(local_def_ref.target)?
+            .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))
     }
 }
 
@@ -170,6 +191,27 @@ pub(crate) fn visible_module_scope_entry_set_with_env(
     }
 
     Ok(visible_scope)
+}
+
+/// Returns visible macro bindings for one name without copying the whole source scope.
+pub(crate) fn visible_module_macro_bindings_with_env(
+    env: &impl PathResolutionEnv,
+    importing_module: ModuleRef,
+    source_module: ModuleRef,
+    name: &Name,
+) -> Result<Vec<ScopeBinding>, PackageStoreError> {
+    let Some(entry) = env.module_scope_entry(source_module, name.as_str())? else {
+        return Ok(Vec::new());
+    };
+
+    let mut bindings = Vec::new();
+    for binding in entry.macros() {
+        if binding_is_visible(env, importing_module, binding)? {
+            bindings.push(binding.clone());
+        }
+    }
+
+    Ok(bindings)
 }
 
 /// Resolves a path to the definitions it denotes in the current scope snapshot.
@@ -210,6 +252,61 @@ fn resolve_path_to_defs_with_filter(
     )?;
 
     Ok(result.resolved)
+}
+
+/// Resolves a path whose terminal segment must be a macro binding.
+///
+/// Macro expansion needs the binding origin of the final segment, because direct local
+/// `macro_rules!` bindings are source-order sensitive while imports and `#[macro_export]` root
+/// bindings are not.
+pub(crate) fn resolve_path_to_macro_bindings_with_env(
+    env: &impl PathResolutionEnv,
+    importing_target: TargetRef,
+    importing_module: ModuleId,
+    path: &ImportPath,
+) -> Result<Vec<ScopeBinding>, PackageStoreError> {
+    let Some((terminal, prefix)) = path.segments.split_last() else {
+        return Ok(Vec::new());
+    };
+    let PathSegment::Name(name) = terminal else {
+        return Ok(Vec::new());
+    };
+
+    let importing_module_ref = ModuleRef {
+        target: importing_target,
+        module: importing_module,
+    };
+    let source_modules = if prefix.is_empty() {
+        if path.absolute {
+            Vec::new()
+        } else {
+            vec![importing_module_ref]
+        }
+    } else {
+        resolve_path_to_modules_with_env(
+            env,
+            importing_target,
+            importing_module,
+            &ImportPath {
+                absolute: path.absolute,
+                segments: prefix.to_vec(),
+            },
+        )?
+    };
+
+    let mut bindings = Vec::new();
+    for source_module in source_modules {
+        let Some(entry) = env.module_scope_entry(source_module, name.as_str())? else {
+            continue;
+        };
+        for binding in entry.macros() {
+            if binding_is_visible(env, importing_module_ref, binding)? {
+                bindings.push(binding.clone());
+            }
+        }
+    }
+
+    Ok(bindings)
 }
 
 /// Resolves a path and keeps only module results.
@@ -357,11 +454,19 @@ fn resolve_first_segment(
                 .extern_root(importing_module.target, name)?
                 .map(|module_ref| vec![DefId::Module(module_ref)])
                 .unwrap_or_default()),
-            PathSegment::SelfKw | PathSegment::SuperKw | PathSegment::CrateKw => Ok(Vec::new()),
+            PathSegment::SelfKw
+            | PathSegment::SuperKw
+            | PathSegment::CrateKw
+            | PathSegment::DollarCrate(_) => Ok(Vec::new()),
         };
     }
 
     match segment {
+        PathSegment::DollarCrate(target) => Ok(env
+            .root_module(*target)?
+            .map(DefId::Module)
+            .into_iter()
+            .collect()),
         PathSegment::SelfKw => Ok(vec![DefId::Module(importing_module)]),
         PathSegment::SuperKw => Ok(env
             .parent_module(importing_module.target, importing_module.module)?
@@ -427,6 +532,7 @@ fn resolve_next_segment(
                     push_unique_def(&mut next_defs, DefId::Module(root));
                 }
             }
+            PathSegment::DollarCrate(_) => {}
             PathSegment::Name(name) => {
                 for resolved_def in
                     resolve_name_in_module(env, importing_module, module_ref, name, filter)?

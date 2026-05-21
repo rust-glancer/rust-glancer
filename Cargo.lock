@@ -1423,6 +1423,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rg_cfg_eval"
+version = "0.1.0"
+dependencies = [
+ "rg_memsize",
+ "rg_syntax",
+ "wincode",
+]
+
+[[package]]
 name = "rg_codegen"
 version = "0.1.0"
 dependencies = [
@@ -1443,12 +1452,17 @@ dependencies = [
  "anyhow",
  "derive_more",
  "expect-test",
+ "rayon",
  "rg_arena",
+ "rg_cfg_eval",
  "rg_item_tree",
+ "rg_macro_expand",
  "rg_memsize",
  "rg_package_store",
  "rg_parse",
+ "rg_syntax",
  "rg_text",
+ "rg_tt",
  "rg_workspace",
  "test_fixture",
  "wincode",
@@ -1463,10 +1477,13 @@ dependencies = [
  "expect-test",
  "rayon",
  "rg_arena",
+ "rg_cfg_eval",
+ "rg_macro_expand",
  "rg_memsize",
  "rg_parse",
  "rg_syntax",
  "rg_text",
+ "rg_tt",
  "rg_wincode_utils",
  "rg_workspace",
  "test_fixture",
@@ -1522,6 +1539,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rg_macro_expand"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "expect-test",
+ "ra-ap-rustc_lexer",
+ "rg_cfg_eval",
+ "rg_parser",
+ "rg_syntax",
+ "rg_tt",
+ "rustc-hash",
+ "smallvec",
+ "smol_str",
+ "stdx",
+ "text-size",
+]
+
+[[package]]
 name = "rg_memsize"
 version = "0.1.0"
 dependencies = [
@@ -1545,6 +1580,7 @@ dependencies = [
  "anyhow",
  "expect-test",
  "rg_arena",
+ "rg_cfg_eval",
  "rg_memsize",
  "rg_syntax",
  "rg_workspace",
@@ -1554,7 +1590,7 @@ dependencies = [
 
 [[package]]
 name = "rg_parser"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "drop_bomb",
  "edition",
@@ -1580,6 +1616,7 @@ dependencies = [
  "rayon",
  "rg_analysis",
  "rg_body_ir",
+ "rg_cfg_eval",
  "rg_def_map",
  "rg_item_tree",
  "rg_memsize",
@@ -1613,7 +1650,7 @@ dependencies = [
 
 [[package]]
 name = "rg_syntax"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "either",
  "expect-test",
@@ -1640,6 +1677,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rg_tt"
+version = "0.1.0"
+dependencies = [
+ "ra-ap-rustc_lexer",
+ "rg_memsize",
+ "rg_parser",
+ "rg_syntax",
+ "smol_str",
+ "stdx",
+ "text-size",
+ "wincode",
+]
+
+[[package]]
 name = "rg_wincode_utils"
 version = "0.1.0"
 dependencies = [
@@ -1653,6 +1704,7 @@ dependencies = [
  "cargo_metadata",
  "derive_more",
  "expect-test",
+ "rg_cfg_eval",
  "rg_memsize",
  "serde",
  "test_fixture",

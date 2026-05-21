@@ -3,8 +3,8 @@ use std::{fmt, marker::PhantomData, sync::Arc};
 use expect_test::Expect;
 
 use crate::{
-    DefId, DefMap, DefMapDb, ImportData, ImportKind, ModuleId, ModuleRef, Path, PathSegment,
-    ResolvePathResult, ScopeBinding, ScopeEntry, TargetRef,
+    DefId, DefMap, DefMapDb, DefMapFinalizationStats, ImportData, ImportKind, ModuleId, ModuleRef,
+    Path, PathSegment, ResolvePathResult, ScopeBinding, ScopeEntry, TargetRef,
 };
 use rg_item_tree::{ItemTreeDb, PackageNameInterners, VisibilityLevel};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
@@ -89,6 +89,15 @@ impl DefMapFixtureDb {
         Self::build_from_workspace(workspace)
     }
 
+    pub(super) fn build_with_finalization_stats(fixture: &str) -> (Self, DefMapFinalizationStats) {
+        let fixture = fixture_crate(fixture);
+        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+            .expect("fixture workspace metadata should build");
+        let mut stats = DefMapFinalizationStats::default();
+        let db = Self::build_from_workspace_with_finalization_stats(workspace, Some(&mut stats));
+        (db, stats)
+    }
+
     pub(super) fn build_with_sysroot(fixture: &str) -> Self {
         let fixture = fixture_crate(fixture);
         let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
@@ -100,14 +109,23 @@ impl DefMapFixtureDb {
     }
 
     fn build_from_workspace(workspace: WorkspaceMetadata) -> Self {
+        Self::build_from_workspace_with_finalization_stats(workspace, None)
+    }
+
+    fn build_from_workspace_with_finalization_stats(
+        workspace: WorkspaceMetadata,
+        finalization_stats: Option<&mut DefMapFinalizationStats>,
+    ) -> Self {
         let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
         let mut names = PackageNameInterners::new(parse.package_count());
         let item_tree =
             ItemTreeDb::build(&mut parse, &mut names).expect("fixture item tree db should build");
-        let def_map = DefMapDb::builder(&workspace, &parse, &item_tree)
-            .name_interners(&mut names)
-            .build()
-            .expect("fixture def map db should build");
+        let mut builder =
+            DefMapDb::builder(&workspace, &parse, &item_tree).name_interners(&mut names);
+        if let Some(stats) = finalization_stats {
+            builder = builder.finalization_stats(stats);
+        }
+        let def_map = builder.build().expect("fixture def map db should build");
         Self { parse, def_map }
     }
 
@@ -247,6 +265,20 @@ impl<'a> FixtureEntry<'a> {
         self
     }
 
+    /// Asserts that one type binding points at an item lowered from the requested source file.
+    pub(super) fn assert_type_source_file(&self, file_name: &str, reason: &str) -> &Self {
+        assert!(
+            self.scope_entry()
+                .types()
+                .iter()
+                .filter_map(|binding| self.binding_origin(binding))
+                .any(|origin| origin.source_file_name().as_deref() == Some(file_name)),
+            "{reason}: expected {} to have a type binding from `{file_name}`",
+            self.context(),
+        );
+        self
+    }
+
     fn context(&self) -> String {
         format!(
             "root scope entry `{}` in package `{}` target `{}` ({:?})",
@@ -294,6 +326,22 @@ impl FixtureBindingOrigin<'_> {
             .resident_def_map(module_ref.target)?
             .module(module_ref.module)
             .and_then(|module| module.name.as_deref())
+    }
+
+    fn source_file_name(&self) -> Option<String> {
+        let DefId::Local(local_def_ref) = self.def else {
+            return None;
+        };
+        let local_def = self
+            .db
+            .resident_def_map(local_def_ref.target)?
+            .local_def(local_def_ref.local_def)?;
+        self.db
+            .parse_db()
+            .package(local_def_ref.target.package.0)?
+            .file_path(local_def.file_id)?
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
     }
 }
 

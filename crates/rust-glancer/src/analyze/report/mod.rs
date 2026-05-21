@@ -1,14 +1,16 @@
 mod allocator;
+mod def_map_finalization_stats;
 mod memory;
 mod package;
 mod project;
 mod stages;
 
-use rg_project::{BuildProfile, Project};
+use rg_project::{BuildProfile, DefMapFinalizationStats, Project};
 use serde::Serialize;
 
 pub(crate) use self::{
     allocator::{AllocatorPurgeReport, AllocatorReport, format_bytes},
+    def_map_finalization_stats::DefMapFinalizationStatsReport,
     stages::{AnalysisSetupReport, BuildCheckpointReport, BuildProfileReport, format_duration_ms},
 };
 
@@ -30,6 +32,9 @@ pub(crate) struct AnalyzeReport {
     /// Optional allocator statistics captured around the memory profile boundary.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) allocator: Option<AllocatorReport>,
+    /// Optional counters and timings from def-map finalization.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) def_map_finalization_stats: Option<DefMapFinalizationStatsReport>,
     /// Optional retained-memory breakdown for the final project snapshot.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) memory: Option<MemoryReport>,
@@ -41,6 +46,7 @@ impl AnalyzeReport {
         analysis_setup: AnalysisSetupReport,
         build_profile: Option<&BuildProfile>,
         allocator: Option<AllocatorReport>,
+        finalization_stats: Option<&DefMapFinalizationStats>,
         include_memory: bool,
         memory_stage: CliMemoryStage,
     ) -> Self {
@@ -58,6 +64,8 @@ impl AnalyzeReport {
             analysis_setup,
             build_profile: build_profile.map(BuildProfileReport::capture),
             allocator,
+            def_map_finalization_stats: finalization_stats
+                .map(DefMapFinalizationStatsReport::capture),
             memory,
         }
     }

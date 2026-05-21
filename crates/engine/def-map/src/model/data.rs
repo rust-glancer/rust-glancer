@@ -1,12 +1,16 @@
 use std::collections::HashMap;
 
 use rg_arena::Arena;
-use rg_item_tree::{Documentation, ItemTag, ItemTreeRef, VisibilityLevel};
+use rg_item_tree::{Documentation, ItemTag, ItemTreeRef, MacroDefinitionItem, VisibilityLevel};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
+use rg_tt::TopSubtree;
+use rg_workspace::RustEdition;
 
 use super::scope::Namespace;
-use super::{ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef, ModuleScope};
+use super::{
+    ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef, ModuleScope, TargetRef,
+};
 
 /// Frozen namespace map for one analyzed target.
 #[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
@@ -18,6 +22,7 @@ pub struct DefMap {
     prelude: Option<ModuleRef>,
     modules: Arena<ModuleId, ModuleData>,
     local_defs: Arena<LocalDefId, LocalDefData>,
+    macro_definitions: HashMap<LocalDefId, MacroDefinitionData>,
     local_impls: Arena<LocalImplId, LocalImplData>,
     imports: Arena<ImportId, ImportData>,
 }
@@ -74,6 +79,15 @@ impl DefMap {
         &self.local_defs
     }
 
+    /// Returns a declarative macro payload by its local definition id.
+    pub(crate) fn macro_definition(&self, local_def: LocalDefId) -> Option<&MacroDefinitionData> {
+        self.macro_definitions.get(&local_def)
+    }
+
+    pub(crate) fn macro_definitions_storage(&self) -> &HashMap<LocalDefId, MacroDefinitionData> {
+        &self.macro_definitions
+    }
+
     /// Returns impl block data by id.
     pub(crate) fn local_impl(&self, local_impl: LocalImplId) -> Option<&LocalImplData> {
         self.local_impls.get(local_impl)
@@ -109,6 +123,14 @@ impl DefMap {
         self.local_defs.alloc(local_def)
     }
 
+    pub(crate) fn insert_macro_definition(
+        &mut self,
+        local_def: LocalDefId,
+        macro_definition: MacroDefinitionData,
+    ) {
+        self.macro_definitions.insert(local_def, macro_definition);
+    }
+
     pub(crate) fn alloc_local_impl(&mut self, local_impl: LocalImplData) -> LocalImplId {
         self.local_impls.alloc(local_impl)
     }
@@ -138,6 +160,10 @@ impl DefMap {
         self.local_defs.shrink_to_fit();
         for local_def in self.local_defs.iter_mut() {
             local_def.shrink_to_fit();
+        }
+        self.macro_definitions.shrink_to_fit();
+        for macro_definition in self.macro_definitions.values_mut() {
+            macro_definition.shrink_to_fit();
         }
         self.local_impls.shrink_to_fit();
         self.imports.shrink_to_fit();
@@ -236,6 +262,55 @@ impl LocalDefData {
     }
 }
 
+/// Declarative macro definition payload retained for expansion after def-map freezing.
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct MacroDefinitionData {
+    pub edition: RustEdition,
+    /// Target that `$crate` inside this macro body should resolve to when expanded.
+    pub dollar_crate_target: TargetRef,
+    pub payload: MacroDefinitionPayload,
+}
+
+impl MacroDefinitionData {
+    pub(crate) fn from_item(
+        item: &MacroDefinitionItem,
+        edition: RustEdition,
+        dollar_crate_target: TargetRef,
+    ) -> Self {
+        Self {
+            edition,
+            dollar_crate_target,
+            payload: MacroDefinitionPayload::from_item(item),
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {}
+}
+
+/// Token-tree payload needed to compile a collected declarative macro.
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub enum MacroDefinitionPayload {
+    MacroRules {
+        body: Option<TopSubtree>,
+    },
+    MacroDef {
+        args: Option<TopSubtree>,
+        body: Option<TopSubtree>,
+    },
+}
+
+impl MacroDefinitionPayload {
+    fn from_item(item: &MacroDefinitionItem) -> Self {
+        match item {
+            MacroDefinitionItem::MacroRules { body, .. } => Self::MacroRules { body: body.clone() },
+            MacroDefinitionItem::MacroDef { args, body } => Self::MacroDef {
+                args: args.clone(),
+                body: body.clone(),
+            },
+        }
+    }
+}
+
 /// One module-owned impl block collected from source.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct LocalImplData {
@@ -293,6 +368,7 @@ impl LocalDefKind {
             | ItemTag::ExternBlock
             | ItemTag::ExternCrate
             | ItemTag::Impl
+            | ItemTag::MacroCall
             | ItemTag::Module
             | ItemTag::Use => None,
         }

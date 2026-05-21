@@ -47,6 +47,11 @@ impl AnalyzeReport {
             build_profile.render_to(None, out)?;
         }
 
+        if let Some(finalization_stats) = &self.def_map_finalization_stats {
+            writeln!(out)?;
+            writeln!(out, "{finalization_stats}")?;
+        }
+
         Ok(())
     }
 }

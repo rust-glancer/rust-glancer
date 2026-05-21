@@ -1,11 +1,12 @@
 use rg_parse::FileId;
 
-use super::{Documentation, ItemTreeId};
+use super::{Documentation, ItemTreeId, MacroUseAttr};
 
 /// Syntactic module facts attached to `ItemKind::Module`.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ModuleItem {
     pub inner_docs: Option<Documentation>,
+    pub macro_use: Option<MacroUseAttr>,
     pub source: ModuleSource,
 }
 
@@ -13,6 +14,9 @@ impl ModuleItem {
     pub(crate) fn shrink_to_fit(&mut self) {
         if let Some(docs) = &mut self.inner_docs {
             docs.shrink_to_fit();
+        }
+        if let Some(macro_use) = &mut self.macro_use {
+            macro_use.shrink_to_fit();
         }
         self.source.shrink_to_fit();
     }

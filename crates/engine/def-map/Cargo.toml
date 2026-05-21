@@ -14,12 +14,17 @@ description.workspace = true
 anyhow.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 wincode.workspace = true
+rayon.workspace = true
 rg_arena = { workspace = true, features = ["memsize"] }
+rg_cfg_eval.workspace = true
+rg_macro_expand.workspace = true
 rg_memsize.workspace = true
 rg_package_store.workspace = true
 rg_item_tree.workspace = true
 rg_parse.workspace = true
+rg_syntax.workspace = true
 rg_text = { workspace = true, features = ["memsize"] }
+rg_tt.workspace = true
 rg_workspace.workspace = true
 
 [dev-dependencies]

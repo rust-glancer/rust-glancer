@@ -8,12 +8,12 @@
 //! - a clean build has no baseline and marks every package dirty;
 //! - a package rebuild has an old baseline and marks only affected packages dirty.
 
-mod clean;
 mod collect;
 mod finalize;
 mod implicit_roots;
 mod imports;
-mod rebuild;
+mod macros;
+mod stats;
 
 use rg_item_tree::ItemTreeDb;
 use rg_text::PackageNameInterners;
@@ -21,12 +21,15 @@ use rg_workspace::WorkspaceMetadata;
 
 use crate::{DefMapDb, DefMapReadTxn, PackageSlot};
 
+pub use self::stats::DefMapFinalizationStats;
+
 /// Builder for a fresh def-map snapshot.
 pub struct DefMapDbBuilder<'a, 'names> {
     workspace: &'a WorkspaceMetadata,
     parse: &'a rg_parse::ParseDb,
     item_tree: &'a ItemTreeDb,
     interners: NameInternerSource<'names>,
+    finalization_stats: Option<&'a mut DefMapFinalizationStats>,
 }
 
 impl<'a> DefMapDbBuilder<'a, 'static> {
@@ -40,6 +43,7 @@ impl<'a> DefMapDbBuilder<'a, 'static> {
             parse,
             item_tree,
             interners: NameInternerSource::Owned(PackageNameInterners::new(parse.package_count())),
+            finalization_stats: None,
         }
     }
 }
@@ -54,15 +58,22 @@ impl<'a, 'names> DefMapDbBuilder<'a, 'names> {
             parse: self.parse,
             item_tree: self.item_tree,
             interners: NameInternerSource::Borrowed(interners),
+            finalization_stats: self.finalization_stats,
         }
     }
 
+    pub fn finalization_stats(mut self, stats: &'a mut DefMapFinalizationStats) -> Self {
+        self.finalization_stats = Some(stats);
+        self
+    }
+
     pub fn build(mut self) -> anyhow::Result<DefMapDb> {
-        let mut db = clean::build_db(
+        let mut db = finalize::build_db(
             self.workspace,
             self.parse,
             self.item_tree,
             self.interners.as_mut(),
+            self.finalization_stats,
         )?;
         db.mutator().shrink_to_fit();
         Ok(db)
@@ -92,6 +103,7 @@ pub struct DefMapDbPackageRebuilder<'a, 'db> {
     item_tree: &'a ItemTreeDb,
     packages: &'a [PackageSlot],
     interners: &'a mut PackageNameInterners,
+    finalization_stats: Option<&'a mut DefMapFinalizationStats>,
 }
 
 impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
@@ -112,11 +124,17 @@ impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
             item_tree,
             packages,
             interners,
+            finalization_stats: None,
         }
     }
 
+    pub fn finalization_stats(mut self, stats: &'a mut DefMapFinalizationStats) -> Self {
+        self.finalization_stats = Some(stats);
+        self
+    }
+
     pub fn build(self) -> anyhow::Result<DefMapDb> {
-        let mut db = rebuild::rebuild_packages(
+        let mut db = finalize::rebuild_packages(
             self.old,
             self.old_read,
             self.workspace,
@@ -124,6 +142,7 @@ impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
             self.item_tree,
             self.packages,
             self.interners,
+            self.finalization_stats,
         )?;
         db.mutator().shrink_packages(self.packages);
         Ok(db)

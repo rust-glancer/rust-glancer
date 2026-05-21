@@ -3,6 +3,8 @@ use std::fmt;
 use rg_item_tree::{TypePath, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind};
 use rg_text::Name;
 
+use crate::TargetRef;
+
 /// Structured path used by def-map path resolution queries.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct Path {
@@ -83,7 +85,7 @@ impl Path {
         match self.segments.first()? {
             PathSegment::Name(name) => Some(name.as_str()),
             PathSegment::SelfKw => Some("self"),
-            PathSegment::SuperKw | PathSegment::CrateKw => None,
+            PathSegment::SuperKw | PathSegment::CrateKw | PathSegment::DollarCrate(_) => None,
         }
     }
 
@@ -139,6 +141,8 @@ pub enum PathSegment {
     SuperKw,
     #[display("crate")]
     CrateKw,
+    #[display("$crate")]
+    DollarCrate(TargetRef),
 }
 
 impl PathSegment {
@@ -173,6 +177,7 @@ pub(crate) fn last_segment_name(segments: &[PathSegment]) -> Option<Name> {
         PathSegment::SelfKw => Some(Name::new("self")),
         PathSegment::SuperKw => Some(Name::new("super")),
         PathSegment::CrateKw => Some(Name::new("crate")),
+        PathSegment::DollarCrate(_) => Some(Name::new("$crate")),
     }
 }
 

@@ -3,7 +3,8 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::{
-    FieldItem, FieldList, FileTree, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ModuleSource,
+    BuiltinMacroItem, CfgSelectArmPayload, FieldItem, FieldList, FileTree, ItemKind, ItemNode,
+    ItemTreeDb, ItemTreeId, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleSource,
     Package as ItemTreePackage, PackageNameInterners, ParamKind, TargetRoot, VisibilityLevel,
 };
 use rg_parse::{FileId, Package, ParseDb, Target};
@@ -175,11 +176,22 @@ impl<'a> PackageItemTreeSnapshot<'a> {
 
         if let ItemKind::Module(module) = &item.kind {
             line.push_str(&format!(" [{}]", self.render_module_source(&module.source)));
+            if let Some(macro_use) = &module.macro_use {
+                line.push_str(&format!(" [{}]", render_macro_use_attr(macro_use)));
+            }
         }
 
         if let ItemKind::ExternCrate(extern_crate) = &item.kind {
             let name = extern_crate.name.as_deref().unwrap_or("<missing>");
             line.push_str(&format!(" [{name}{}]", extern_crate.alias));
+            if let Some(macro_use) = &extern_crate.macro_use {
+                line.push_str(&format!(" [{}]", render_macro_use_attr(macro_use)));
+            }
+        }
+
+        if let ItemKind::MacroCall(macro_call) = &item.kind {
+            let path = macro_call.path.as_deref().unwrap_or("<missing>");
+            line.push_str(&format!(" [{path}]"));
         }
 
         if matches!(self.mode, SnapshotMode::Spans) {
@@ -292,6 +304,65 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                     self.render_item(file_tree, child, depth + 1, dump);
                 }
             }
+            ItemKind::MacroCall(macro_call) => {
+                if let Some(args) = &macro_call.args {
+                    writeln!(dump, "{indent}  - args {args}")
+                        .expect("string writes should not fail");
+                }
+                if let Some(builtin) = &macro_call.builtin {
+                    match builtin {
+                        BuiltinMacroItem::Include { file } => {
+                            writeln!(dump, "{indent}  - include_file {}", self.file_label(*file))
+                                .expect("string writes should not fail");
+                        }
+                        BuiltinMacroItem::CfgSelect { arms } => {
+                            for (arm_idx, arm) in arms.iter().enumerate() {
+                                match &arm.payload {
+                                    CfgSelectArmPayload::Items(items) => {
+                                        writeln!(dump, "{indent}  - cfg_select_arm {arm_idx}")
+                                            .expect("string writes should not fail");
+                                        for item_id in items {
+                                            let child = file_tree.item(*item_id).expect(
+                                                "cfg_select arm item id should exist while rendering",
+                                            );
+                                            self.render_item(file_tree, child, depth + 2, dump);
+                                        }
+                                    }
+                                    CfgSelectArmPayload::LoweringFailed => {
+                                        writeln!(
+                                            dump,
+                                            "{indent}  - cfg_select_arm {arm_idx} [lowering_failed]"
+                                        )
+                                        .expect("string writes should not fail");
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            ItemKind::MacroDefinition(macro_definition) => match macro_definition {
+                MacroDefinitionItem::MacroRules { attrs, body } => {
+                    if attrs.macro_export {
+                        writeln!(dump, "{indent}  - macro_export")
+                            .expect("string writes should not fail");
+                    }
+                    if let Some(body) = body {
+                        writeln!(dump, "{indent}  - body {body}")
+                            .expect("string writes should not fail");
+                    }
+                }
+                MacroDefinitionItem::MacroDef { args, body } => {
+                    if let Some(args) = args {
+                        writeln!(dump, "{indent}  - args {args}")
+                            .expect("string writes should not fail");
+                    }
+                    if let Some(body) = body {
+                        writeln!(dump, "{indent}  - body {body}")
+                            .expect("string writes should not fail");
+                    }
+                }
+            },
             ItemKind::Static(static_item) => {
                 if let Some(ty) = &static_item.ty {
                     writeln!(dump, "{indent}  - ty {ty}").expect("string writes should not fail");
@@ -434,6 +505,35 @@ fn visibility_prefix(visibility: &VisibilityLevel) -> String {
     match visibility {
         VisibilityLevel::Private => String::new(),
         _ => format!("{visibility} "),
+    }
+}
+
+fn render_macro_use_attr(attr: &MacroUseAttr) -> String {
+    let mut parts = Vec::new();
+    if let Some(direct) = &attr.direct {
+        parts.push(render_macro_use_selector(direct));
+    }
+    for cfg_attr in &attr.cfg_attr_macro_use {
+        parts.push(format!(
+            "cfg_attr({:?}, {})",
+            cfg_attr.predicate,
+            render_macro_use_selector(&cfg_attr.selector)
+        ));
+    }
+    parts.join(", ")
+}
+
+fn render_macro_use_selector(selector: &MacroUseSelector) -> String {
+    match &selector.names {
+        Some(names) => {
+            let names = names
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("macro_use({names})")
+        }
+        None => "macro_use".to_string(),
     }
 }
 

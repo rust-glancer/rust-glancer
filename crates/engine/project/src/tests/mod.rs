@@ -112,6 +112,63 @@ pub struct User;
 }
 
 #[test]
+fn def_map_finalization_stats_are_collected_only_when_requested() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "def_map_finalization_stats_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! make_item {
+    ($name:ident) => {
+        pub struct $name;
+    };
+}
+
+make_item!(User);
+make_item!(Admin);
+"#,
+    );
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should build");
+
+    let plain_build = Project::builder(workspace.clone())
+        .build()
+        .expect("plain project build should succeed");
+    assert!(
+        plain_build.def_map_finalization_stats().is_none(),
+        "def-map finalization stats should not be retained unless requested"
+    );
+
+    let stats_build = Project::builder(workspace)
+        .collect_def_map_finalization_stats(true)
+        .build()
+        .expect("stats-enabled project build should succeed");
+    let stats = stats_build
+        .def_map_finalization_stats()
+        .expect("requested def-map finalization stats should be retained");
+    assert_eq!(
+        stats.macro_calls_expanded, 2,
+        "the fixture should expand both macro calls"
+    );
+    assert_eq!(
+        stats.macro_compile_attempts, 1,
+        "multiple calls to one macro definition should share compiled macro data"
+    );
+    assert_eq!(
+        stats.macro_compile_cache_hits, 1,
+        "the second call should reuse the cached compiled macro"
+    );
+    assert_eq!(
+        stats.generated_sources_parsed, 2,
+        "each expanded generated item source should be parsed"
+    );
+}
+
+#[test]
 fn profiled_build_reports_phase_checkpoints_without_exposing_phase_dbs() {
     let fixture = fixture_crate(
         r#"

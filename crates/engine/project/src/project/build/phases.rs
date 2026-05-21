@@ -3,7 +3,7 @@
 use anyhow::Context as _;
 
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
-use rg_def_map::{DefMapDb, PackageSlot};
+use rg_def_map::{DefMapDb, DefMapFinalizationStats, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_memsize::MemoryRecorder;
 use rg_package_store::{PackageEntry, PackageStore};
@@ -122,6 +122,7 @@ pub(super) fn build(
     cache_store: &PackageCacheStore,
     startup_cache_load: StartupCacheLoad,
     memory_hooks: &dyn ProjectMemoryHooks,
+    finalization_stats: Option<&mut DefMapFinalizationStats>,
     profiler: &mut BuildProfiler,
 ) -> anyhow::Result<BuiltPhases> {
     let mut stage_memory = StageMemory::default();
@@ -237,17 +238,21 @@ pub(super) fn build(
         DefMapDb::from_package_store(offloaded_package_store(parse.package_count()));
     let old_def_map_txn =
         baseline_def_map.read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
-    let def_map = baseline_def_map
-        .package_rebuilder(
-            &old_def_map_txn,
-            workspace,
-            &parse,
-            &item_tree,
-            &build_plan.packages,
-            &mut names,
-        )
-        .build()
-        .context("while attempting to build def map db")?;
+    let def_map_rebuilder = baseline_def_map.package_rebuilder(
+        &old_def_map_txn,
+        workspace,
+        &parse,
+        &item_tree,
+        &build_plan.packages,
+        &mut names,
+    );
+    let def_map = match finalization_stats {
+        Some(finalization_stats) => def_map_rebuilder
+            .finalization_stats(finalization_stats)
+            .build(),
+        None => def_map_rebuilder.build(),
+    }
+    .context("while attempting to build def map db")?;
     drop(old_def_map_txn);
     let process_memory = profiler.sample_process_memory();
     let names_bytes = profiler.measure(&names);

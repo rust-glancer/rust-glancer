@@ -9,12 +9,12 @@ use rg_item_tree::ItemTreeDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
-use super::{
-    collect::collect_target_states,
-    finalize::{FinalizeTargetStates, finalize_target_states, freeze_package_states},
-    implicit_roots::build_implicit_roots,
+use super::super::{
+    collect::collect_target_states, implicit_roots::build_implicit_roots,
+    stats::DefMapFinalizationStats,
 };
-use crate::{DefMapDb, PackageSlot};
+use super::{FinalizeTargetStates, finalize_target_states};
+use crate::{DefMapDb, Package as DefMapPackage, PackageSlot};
 
 /// Builds the final `DefMapDb` from collected per-target states.
 ///
@@ -26,6 +26,7 @@ pub(crate) fn build_db(
     parse: &rg_parse::ParseDb,
     item_tree: &ItemTreeDb,
     interners: &mut PackageNameInterners,
+    finalization_stats: Option<&mut DefMapFinalizationStats>,
 ) -> anyhow::Result<DefMapDb> {
     // First compute every implicit crate root from the complete package graph. These roots are
     // needed while collecting target states because extern prelude bindings can point across
@@ -44,8 +45,10 @@ pub(crate) fn build_db(
         None,
         workspace,
         parse.packages(),
+        item_tree,
         &mut target_states,
         interners,
+        finalization_stats,
     )
     .context("while attempting to finish target states")?;
 
@@ -57,7 +60,7 @@ pub(crate) fn build_db(
             let package_states = target_states
                 .package(PackageSlot(package_slot))
                 .expect("clean build should finalize every package");
-            freeze_package_states(package, package_states)
+            DefMapPackage::freeze(package, package_states)
         })
         .collect::<Vec<_>>();
 

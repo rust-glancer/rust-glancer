@@ -6,6 +6,8 @@
   that all the commits and PRs are made by humans; it is a human responsibility to ensure the
   core quality.
 - Do not edit the `docs/` folder unless prompted explicitly.
+- Avoid using `pub(in ...)`, prefer simpler granularity. Use private visibility if possible,
+  `pub` for items that are a part of public API, and `pub(crate)` for everything else.
 
 ## Design
 

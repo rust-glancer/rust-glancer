@@ -4,6 +4,8 @@ mod profile;
 mod project;
 mod residency;
 
+pub use rg_def_map::DefMapFinalizationStats;
+
 pub use self::{
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{

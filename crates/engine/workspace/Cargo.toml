@@ -14,6 +14,7 @@ description.workspace = true
 cargo_metadata.workspace = true
 derive_more = { workspace = true, features = ["display"] }
 wincode.workspace = true
+rg_cfg_eval.workspace = true
 rg_memsize.workspace = true
 serde = { workspace = true, features = ["derive"] }
 

@@ -11,6 +11,7 @@ use rg_syntax::{Edition, Parse as SyntaxParse, SourceFile};
 use rg_workspace::RustEdition;
 
 use crate::{
+    fs,
     line_index::{LineIndex, LineIndexSnapshot},
     span::Span,
 };
@@ -123,6 +124,16 @@ impl<'a> ParsedFile<'a> {
     /// Returns the canonical path for this parsed source file.
     pub fn path(&self) -> &'a Path {
         self.data.path.as_path()
+    }
+
+    /// Resolves a Rust string literal path relative to this file's directory.
+    ///
+    /// Absolute paths are accepted as-is, while relative paths start next to this source file.
+    /// Missing or empty paths return `None` so callers can ignore unsupported syntax without
+    /// inventing a file identity.
+    pub fn resolve_path(&self, path_literal: &str) -> Option<PathBuf> {
+        let parent_dir = self.path().parent()?;
+        fs::resolve_path_literal(parent_dir, path_literal)
     }
 
     /// Returns the line index used for byte-offset to line/column conversion.
