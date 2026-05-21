@@ -1,8 +1,4 @@
-use std::{
-    fmt::Write as _,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fmt::Write as _, fs, path::Path};
 
 use expect_test::Expect;
 use rg_body_ir::{BodyIrBuildPolicy, PackageBodies};
@@ -208,12 +204,6 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     writeln!(&mut dump, "cache store artifact I/O").expect("string writes should not fail");
     writeln!(&mut dump, "missing before write {missing_before_write}")
         .expect("string writes should not fail");
-    writeln!(
-        &mut dump,
-        "artifact path {}",
-        cache_path(project.workspace(), path),
-    )
-    .expect("string writes should not fail");
     writeln!(&mut dump, "written artifact has bytes {}", written_len > 0)
         .expect("string writes should not fail");
     writeln!(
@@ -1128,17 +1118,6 @@ fn relative_path(root: &Path, path: &Path) -> String {
     } else {
         relative_path.display().to_string()
     }
-}
-
-fn cache_path(workspace: &WorkspaceMetadata, path: PathBuf) -> String {
-    let path = relative_path(workspace.workspace_root(), &path);
-    let workspace_name = workspace
-        .workspace_root()
-        .file_name()
-        .map(|name| name.to_string_lossy())
-        .unwrap_or_else(|| "workspace".into());
-
-    path.replace(workspace_name.as_ref(), "<workspace>")
 }
 
 fn render_hex(bytes: &[u8], dump: &mut String) {

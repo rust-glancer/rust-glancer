@@ -236,7 +236,6 @@ pub struct App;
         expect![[r#"
             cache store artifact I/O
             missing before write true
-            artifact path target/rust_glancer/<workspace>/packages/graph-60269cf867e324e1692c50e76fc0e33358a752cbde132bfc80e2d094533e5e9a/package-0-app-4384a0ddccc3e99dabe33c35cbe6a8e29ccacc4b05c8b2348bab2aedf28a882c.rgpkg
             written artifact has bytes true
             loaded package #0 app
             corrupt read has typed decode error true
