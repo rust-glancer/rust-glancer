@@ -10,7 +10,7 @@ use rg_semantic_ir::{FunctionRef, SemanticIrReadTxn, TypeDefId, TypePathContext}
 
 use crate::{
     ir::body::BodyData,
-    ir::expr::{ExprKind, ExprWrapperKind},
+    ir::expr::{ExprKind, ExprUnaryOp, ExprWrapperKind},
     ir::ids::{
         BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyImplId,
         BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ExprId, ScopeId,
@@ -26,6 +26,7 @@ use crate::{
 
 use super::{
     SemanticResolutionIndex,
+    autoderef::{Autoderef, AutoderefCandidate, AutoderefMode},
     method::{
         local_function_applies_to_receiver, local_impl_applies_to_receiver, local_impl_self_subst,
         local_impl_self_subst_for_impl, semantic_function_applies_to_receiver,
@@ -251,6 +252,12 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 data.resolution = resolution;
                 data.ty = ty;
             }
+            ExprKind::Unary {
+                op: Some(ExprUnaryOp::Deref),
+                expr: Some(inner),
+            } => {
+                self.body.exprs[expr].ty = self.explicit_deref_ty(inner);
+            }
             ExprKind::While { .. } | ExprKind::For { .. } => {
                 self.body.exprs[expr].ty = BodyTy::Unit;
             }
@@ -360,66 +367,65 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             return Ok((BodyResolution::Unknown, BodyTy::Unknown));
         };
 
-        let mut fields = Vec::new();
-        let mut field_tys = Vec::new();
-
-        // Local and semantic fields use the same substitution idea, but local items need their
-        // declaration scope so field types can mention body-local names.
-        for local_ty in self.body.exprs[base]
-            .ty
-            .local_nominals_after_reference_deref()
+        for candidate in
+            Autoderef::candidates(AutoderefMode::FieldLookup, &self.body.exprs[base].ty)
         {
-            let Some(field_ref) = self.local_field_for_type(local_ty.item, field) else {
-                continue;
-            };
-            push_unique(&mut fields, ResolvedFieldRef::BodyLocal(field_ref));
+            let mut fields = Vec::new();
+            let mut field_tys = Vec::new();
 
-            let Some(item) = self.body.local_item(field_ref.item.item) else {
-                continue;
-            };
-            let Some(field_data) = item.field(field_ref.index) else {
-                continue;
-            };
-            let subst = self.local_type_subst(local_ty);
-            let field_ty = self
-                .type_path_resolver()
-                .ty_from_type_ref_in_scope_with_subst(&field_data.ty, item.scope, &subst)?;
-            push_unique(&mut field_tys, field_ty);
+            // Local and semantic fields use the same substitution idea, but local items need their
+            // declaration scope so field types can mention body-local names.
+            for local_ty in candidate.ty().as_local_nominals() {
+                let Some(field_ref) = self.local_field_for_type(local_ty.item, field) else {
+                    continue;
+                };
+                push_unique(&mut fields, ResolvedFieldRef::BodyLocal(field_ref));
+
+                let Some(item) = self.body.local_item(field_ref.item.item) else {
+                    continue;
+                };
+                let Some(field_data) = item.field(field_ref.index) else {
+                    continue;
+                };
+                let subst = self.local_type_subst(local_ty);
+                let field_ty = self
+                    .type_path_resolver()
+                    .ty_from_type_ref_in_scope_with_subst(&field_data.ty, item.scope, &subst)?;
+                push_unique(&mut field_tys, field_ty);
+            }
+
+            for nominal_ty in candidate.ty().as_nominals() {
+                let Some(field_ref) = self.semantic_ir.field_for_type(nominal_ty.def, field)?
+                else {
+                    continue;
+                };
+                push_unique(&mut fields, ResolvedFieldRef::Semantic(field_ref));
+
+                let Some(field_data) = self.semantic_ir.field_data(field_ref)? else {
+                    continue;
+                };
+                let subst = self.semantic_type_subst(nominal_ty)?;
+                let field_ty = self
+                    .type_path_resolver()
+                    .ty_from_type_ref_in_context_with_subst(
+                        &field_data.field.ty,
+                        TypePathContext::module(field_data.owner_module),
+                        &subst,
+                    )?;
+                push_unique(&mut field_tys, field_ty);
+            }
+
+            if !fields.is_empty() {
+                let ty = if field_tys.len() == 1 {
+                    field_tys.pop().expect("one field type should exist")
+                } else {
+                    BodyTy::Unknown
+                };
+                return Ok((BodyResolution::Field(fields), ty));
+            }
         }
 
-        for nominal_ty in self.body.exprs[base].ty.nominals_after_reference_deref() {
-            let Some(field_ref) = self.semantic_ir.field_for_type(nominal_ty.def, field)? else {
-                continue;
-            };
-            push_unique(&mut fields, ResolvedFieldRef::Semantic(field_ref));
-
-            let Some(field_data) = self.semantic_ir.field_data(field_ref)? else {
-                continue;
-            };
-            let subst = self.semantic_type_subst(nominal_ty)?;
-            let field_ty = self
-                .type_path_resolver()
-                .ty_from_type_ref_in_context_with_subst(
-                    &field_data.field.ty,
-                    TypePathContext::module(field_data.owner_module),
-                    &subst,
-                )?;
-            push_unique(&mut field_tys, field_ty);
-        }
-
-        let resolution = if !fields.is_empty() {
-            BodyResolution::Field(fields)
-        } else {
-            BodyResolution::Unknown
-        };
-
-        let ty = if field_tys.len() == 1 {
-            field_tys.pop().expect("one field type should exist")
-        } else {
-            BodyTy::Unknown
-        };
-
-        Ok((resolution, ty))
+        Ok((BodyResolution::Unknown, BodyTy::Unknown))
     }
 
     fn resolve_method_call_expr(
@@ -431,58 +437,60 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             return Ok((BodyResolution::Unknown, BodyTy::Unknown));
         };
 
-        let mut functions = Vec::new();
-        let mut return_tys = Vec::new();
         let receiver_ty = &self.body.exprs[receiver].ty;
 
         // Method lookup is intentionally shallow: exact local item identity for body-local impls,
         // and nominal type plus lightweight impl-argument matching for semantic impls.
-        for local_ty in receiver_ty.local_nominals_after_reference_deref() {
-            for function_ref in self.local_functions_for_type(local_ty)? {
-                let Some(function_data) = self.body.local_function(function_ref.function) else {
-                    continue;
-                };
-                if function_data.name != method_name || !function_data.has_self_receiver() {
-                    continue;
-                }
+        for candidate in Autoderef::candidates(AutoderefMode::MethodReceiver, receiver_ty) {
+            let mut functions = Vec::new();
+            let mut return_tys = Vec::new();
 
-                push_unique(&mut functions, ResolvedFunctionRef::BodyLocal(function_ref));
-                push_unique(
-                    &mut return_tys,
-                    self.local_function_return_ty(function_ref, Some(local_ty))?,
-                );
+            for local_ty in candidate.ty().as_local_nominals() {
+                for function_ref in self.local_functions_for_type(local_ty)? {
+                    let Some(function_data) = self.body.local_function(function_ref.function)
+                    else {
+                        continue;
+                    };
+                    if function_data.name != method_name || !function_data.has_self_receiver() {
+                        continue;
+                    }
+
+                    push_unique(&mut functions, ResolvedFunctionRef::BodyLocal(function_ref));
+                    push_unique(
+                        &mut return_tys,
+                        self.local_function_return_ty(function_ref, Some(local_ty))?,
+                    );
+                }
+            }
+
+            for nominal_ty in candidate.ty().as_nominals() {
+                for function_ref in self.semantic_functions_for_type(nominal_ty, method_name)? {
+                    let Some(function_data) = self.semantic_ir.function_data(function_ref)? else {
+                        continue;
+                    };
+                    if function_data.name != method_name || !function_data.has_self_receiver() {
+                        continue;
+                    }
+
+                    push_unique(&mut functions, ResolvedFunctionRef::Semantic(function_ref));
+                    push_unique(
+                        &mut return_tys,
+                        self.semantic_function_return_ty(function_ref, Some(nominal_ty))?,
+                    );
+                }
+            }
+
+            if !functions.is_empty() {
+                let ty = if return_tys.len() == 1 {
+                    return_tys.pop().expect("one return type should exist")
+                } else {
+                    BodyTy::Unknown
+                };
+                return Ok((BodyResolution::Method(functions), ty));
             }
         }
 
-        for nominal_ty in receiver_ty.nominals_after_reference_deref() {
-            for function_ref in self.semantic_functions_for_type(nominal_ty, method_name)? {
-                let Some(function_data) = self.semantic_ir.function_data(function_ref)? else {
-                    continue;
-                };
-                if function_data.name != method_name || !function_data.has_self_receiver() {
-                    continue;
-                }
-
-                push_unique(&mut functions, ResolvedFunctionRef::Semantic(function_ref));
-                push_unique(
-                    &mut return_tys,
-                    self.semantic_function_return_ty(function_ref, Some(nominal_ty))?,
-                );
-            }
-        }
-
-        let resolution = if functions.is_empty() {
-            BodyResolution::Unknown
-        } else {
-            BodyResolution::Method(functions)
-        };
-        let ty = if return_tys.len() == 1 {
-            return_tys.pop().expect("one return type should exist")
-        } else {
-            BodyTy::Unknown
-        };
-
-        Ok((resolution, ty))
+        Ok((BodyResolution::Unknown, BodyTy::Unknown))
     }
 
     fn resolve_wrapper_expr(
@@ -503,6 +511,14 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         };
 
         (resolution, ty)
+    }
+
+    fn explicit_deref_ty(&self, inner: ExprId) -> BodyTy {
+        Autoderef::candidates(AutoderefMode::ExplicitDeref, &self.body.exprs[inner].ty)
+            .into_iter()
+            .next()
+            .map(AutoderefCandidate::into_ty)
+            .unwrap_or(BodyTy::Unknown)
     }
 
     fn local_field_for_type(&self, item_ref: BodyItemRef, key: &FieldKey) -> Option<BodyFieldRef> {

@@ -100,6 +100,65 @@ pub async fn use_it(mut user: User) -> Result<(), Error> {
 }
 
 #[test]
+fn autoderefs_references_for_member_lookup_and_explicit_deref() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_reference_autoderef"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Profile;
+pub struct Label;
+
+pub struct User {
+    pub profile: Profile,
+}
+
+impl User {
+    pub fn label(&self) -> Label {
+        missing()
+    }
+}
+
+pub fn use_it(mut user: User, value: u8) {
+    let shared: &&User = &&user;
+    let _profile = shared.pro$type_field$file;
+    let _label = shared.la$type_method$bel();
+    let _deref_shared = (*(&user))$type_deref_shared$;
+    let _deref_mut = (*(&mut user))$type_deref_mut$;
+    let _not_ref = (*value)$type_deref_non_ref$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("field through double reference", "type_field"),
+            AnalysisQuery::ty("method through double reference", "type_method"),
+            AnalysisQuery::ty("explicit shared deref", "type_deref_shared"),
+            AnalysisQuery::ty("explicit mutable deref", "type_deref_mut"),
+            AnalysisQuery::ty("explicit non-reference deref", "type_deref_non_ref"),
+        ],
+        expect![[r#"
+            field through double reference
+            - nominal struct analysis_reference_autoderef[lib]::crate::Profile
+
+            method through double reference
+            - nominal struct analysis_reference_autoderef[lib]::crate::Label
+
+            explicit shared deref
+            - nominal struct analysis_reference_autoderef[lib]::crate::User
+
+            explicit mutable deref
+            - nominal struct analysis_reference_autoderef[lib]::crate::User
+
+            explicit non-reference deref
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
 fn returns_binding_declaration_types() {
     check_analysis_queries(
         r#"

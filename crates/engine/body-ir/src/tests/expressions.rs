@@ -444,7 +444,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                         inner
                           expr e29 literal int `1` => <unknown> @ 19:27-19:28
                     field
-                      expr e33 unary * => <unknown> @ 19:30-19:37
+                      expr e33 unary * => u8 @ 19:30-19:37
                         inner
                           expr e32 wrapper ref => &u8 @ 19:31-19:37
                             inner

@@ -3,6 +3,7 @@
 //! The resolver consumes the already-lowered body store. It answers only cheap questions:
 //! local-vs-item path resolution and simple types that are already present in signatures.
 
+mod autoderef;
 mod body;
 mod index;
 mod method;
