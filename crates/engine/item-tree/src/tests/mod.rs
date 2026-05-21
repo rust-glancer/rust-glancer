@@ -537,6 +537,87 @@ pub struct Included;
 }
 
 #[test]
+fn lowers_cfg_select_arms_as_source_fragments() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+//- /Cargo.toml
+[package]
+name = "cfg_select_item_tree_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+cfg_select! {
+    unix => {
+        mod os;
+    }
+    _ => {
+        pub struct Other;
+    }
+}
+
+//- /src/os.rs
+pub struct Unix;
+"#,
+        expect![[r#"
+            package cfg_select_item_tree_fixture
+
+            targets
+            - cfg_select_item_tree_fixture [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - macro_call [cfg_select]
+              - args {unix => {mod os ;} _ => {pub struct Other ;}}
+              - cfg_select_arm 0
+                - module os [out_of_line os.rs]
+              - cfg_select_arm 1
+                - pub struct Other
+
+            file os.rs
+            - pub struct Unix
+        "#]],
+    );
+}
+
+#[test]
+fn preserves_failed_cfg_select_arm_lowering_per_arm() {
+    utils::check_project_item_tree_with_declarations(
+        r#"
+//- /Cargo.toml
+[package]
+name = "cfg_select_failed_arm_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+cfg_select! {
+    false => {
+        mod ;
+    }
+    true => {
+        pub struct Selected;
+    }
+}
+"#,
+        expect![[r#"
+            package cfg_select_failed_arm_fixture
+
+            targets
+            - cfg_select_failed_arm_fixture [lib] -> lib.rs
+
+            files
+            file lib.rs
+            - macro_call [cfg_select]
+              - args {false => {mod ;} true => {pub struct Selected ;}}
+              - cfg_select_arm 0 [lowering_failed]
+              - cfg_select_arm 1
+                - pub struct Selected
+        "#]],
+    );
+}
+
+#[test]
 fn literal_include_probe_ignores_unreadable_targets() {
     utils::check_project_item_tree_with_declarations(
         r#"

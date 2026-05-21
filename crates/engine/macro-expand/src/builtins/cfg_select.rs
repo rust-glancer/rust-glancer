@@ -1,23 +1,39 @@
-//! Small builtin expander for item-position `cfg_select!` calls.
+//! Parser for item-position `cfg_select!` calls.
 //!
-//! Rust accepts `cfg_select!` in expression and item positions. The macro engine exposes the item
-//! form needed by def-map: pick the first active cfg arm, strip the arm braces, and parse the
-//! resulting item stream.
+//! Rust accepts `cfg_select!` in expression and item positions. Def-map needs the item form, but
+//! target cfg is not known at item-tree lowering time, so this module preserves every parsed arm
+//! and leaves selection to the caller.
 
-use rg_cfg_eval::{CfgEvaluator, CfgPredicate};
+use rg_cfg_eval::CfgPredicate;
 use rg_tt::{
     TopSubtree,
     tt::{self, Delimiter, DelimiterKind, Leaf, TopSubtreeBuilder, TtElement, TtIter},
 };
 
-use crate::ExpansionSyntax;
+/// Parsed `cfg_select!` arms before a target cfg environment chooses one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CfgSelect {
+    arms: Vec<CfgSelectArm>,
+}
 
-/// Expands the supported item-position `cfg_select! { predicate => { ... } }` form.
-pub fn expand(args: &TopSubtree, cfg: &CfgEvaluator<'_>) -> Option<ExpansionSyntax> {
-    let mut parser = CfgSelectParser::new(args.view().token_trees().iter());
-    parser
-        .select_payload(cfg)
-        .map(ExpansionSyntax::from_token_tree)
+impl CfgSelect {
+    /// Parses the supported item-position `cfg_select! { predicate => { ... } }` form.
+    pub fn parse(args: &TopSubtree) -> Option<Self> {
+        let mut parser = CfgSelectParser::new(args.view().token_trees().iter());
+        parser.parse()
+    }
+
+    /// Returns the source-order arms parsed from the macro input.
+    pub fn arms(&self) -> &[CfgSelectArm] {
+        &self.arms
+    }
+}
+
+/// One `predicate => { items }` arm from `cfg_select!`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CfgSelectArm {
+    pub predicate: CfgPredicate,
+    pub payload: TopSubtree,
 }
 
 struct CfgSelectParser<'a> {
@@ -29,7 +45,9 @@ impl<'a> CfgSelectParser<'a> {
         Self { iter }
     }
 
-    fn select_payload(&mut self, cfg: &CfgEvaluator<'_>) -> Option<TopSubtree> {
+    fn parse(&mut self) -> Option<CfgSelect> {
+        let mut arms = Vec::new();
+
         while !self.iter.is_empty() {
             // Each arm starts with ordinary cfg predicate syntax, or `_` for the fallback arm.
             let predicate = self.parse_arm_predicate()?;
@@ -39,14 +57,12 @@ impl<'a> CfgSelectParser<'a> {
             // generated items.
             let payload = self.parse_braced_payload()?;
 
-            if cfg.is_predicate_enabled(&predicate) {
-                return Some(payload);
-            }
+            arms.push(CfgSelectArm { predicate, payload });
 
             self.eat_optional_comma();
         }
 
-        None
+        Some(CfgSelect { arms })
     }
 
     fn parse_arm_predicate(&mut self) -> Option<CfgPredicate> {
@@ -156,50 +172,73 @@ impl<'a> CfgSelectParser<'a> {
 mod tests {
     use rg_cfg_eval::{CfgEvaluator, CfgOptions};
     use rg_syntax::{AstNode as _, ast};
+    use rg_tt::TopSubtree;
     use rg_tt::syntax_bridge::{SpanFactory, syntax_node_to_token_tree};
 
     use crate::Edition;
 
     #[test]
-    fn expands_first_enabled_item_arm() {
-        let mut options = CfgOptions::default();
-        options.insert_atom("unix");
-
-        let expanded = expand_fixture(
+    fn parses_arm_payloads_without_outer_braces() {
+        let cfg_select = parse_fixture(
             r#"
 cfg_select! {
     unix => { pub struct Unix; },
     _ => { pub struct Other; },
 }
 "#,
-            &options,
         );
 
         assert_eq!(
-            expanded.parse.syntax_node().text().to_string(),
+            cfg_select.arms()[0].payload.to_string(),
             "pub struct Unix ;"
+        );
+        assert_eq!(
+            cfg_select.arms()[1].payload.to_string(),
+            "pub struct Other ;"
         );
     }
 
     #[test]
-    fn expands_wildcard_fallback() {
-        let expanded = expand_fixture(
+    fn parses_wildcard_fallback_as_always_enabled() {
+        let cfg_select = parse_fixture(
             r#"
 cfg_select! {
     windows => { pub struct Windows; },
     _ => { pub struct Other; },
 }
 "#,
-            &CfgOptions::default(),
+        );
+        let options = CfgOptions::default();
+        let cfg = CfgEvaluator::new(&options, false);
+
+        assert!(!cfg.is_predicate_enabled(&cfg_select.arms()[0].predicate));
+        assert!(cfg.is_predicate_enabled(&cfg_select.arms()[1].predicate));
+    }
+
+    #[test]
+    fn parses_all_arms_without_selecting() {
+        let cfg_select = parse_fixture(
+            r#"
+cfg_select! {
+    false => { pub struct Hidden; },
+    true => { pub struct Selected; },
+}
+"#,
         );
 
+        assert_eq!(cfg_select.arms().len(), 2);
         assert_eq!(
-            expanded.parse.syntax_node().text().to_string(),
-            "pub struct Other ;"
+            cfg_select.arms()[1].payload.to_string(),
+            "pub struct Selected ;"
         );
     }
 
-    fn expand_fixture(source: &str, options: &CfgOptions) -> crate::ExpansionSyntax {
+    fn parse_fixture(source: &str) -> super::CfgSelect {
+        let args = args_fixture(source);
+        super::CfgSelect::parse(&args).expect("cfg_select fixture should parse")
+    }
+
+    fn args_fixture(source: &str) -> TopSubtree {
         let file = ast::SourceFile::parse(source, Edition::CURRENT)
             .ok()
             .expect("test source should parse");
@@ -211,9 +250,6 @@ cfg_select! {
         let args = call
             .token_tree()
             .expect("macro call fixture should have arguments");
-        let args = syntax_node_to_token_tree(&args, SpanFactory::new(0, Edition::CURRENT));
-        let cfg = CfgEvaluator::new(options, false);
-
-        super::expand(&args, &cfg).expect("cfg_select fixture should expand")
+        syntax_node_to_token_tree(&args, SpanFactory::new(0, Edition::CURRENT))
     }
 }

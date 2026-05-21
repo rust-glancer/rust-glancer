@@ -1,8 +1,8 @@
-//! Splices source files referenced by literal `include!` calls into def-map state.
+//! Collects source-like builtin macro payloads into def-map state.
 //!
-//! Item-tree lowers supported include files ahead of time, so this collector can reuse real
-//! `ItemTreeRef`s and spans from the included file instead of treating the include as generated
-//! macro text.
+//! Item-tree lowers supported builtin payloads ahead of time, so this collector can reuse real
+//! `ItemTreeRef`s, file-relative module resolution, impl lowering, extern crates, and macro-use
+//! handling instead of treating them as arbitrary generated syntax.
 
 use anyhow::{Context as _, Result};
 
@@ -27,31 +27,46 @@ use super::{
     MacroUseImport,
 };
 
-/// Included-file collection starts at the macro call's module and textual order.
-pub(super) struct IncludedOrigin {
+/// Source-fragment collection starts at the macro call's module and textual order.
+pub(super) struct SourceFragmentOrigin {
     pub(super) module: ModuleId,
     pub(super) order: ItemOrder,
 }
 
-/// Collector for item-tree nodes that come from a real included source file.
-pub(super) struct IncludedCollector<'a> {
+/// Collector for item-tree nodes that should behave like ordinary source at the call site.
+pub(super) struct SourceFragmentCollector<'a> {
     pub(super) state: &'a mut TargetState,
     pub(super) current_scopes: &'a mut ScopeMatrix,
     pub(super) item_tree: &'a ItemTreePackage,
-    pub(super) origin: IncludedOrigin,
+    pub(super) origin: SourceFragmentOrigin,
     pub(super) result: MacroExpansionApplyResult,
 }
 
-impl IncludedCollector<'_> {
+impl SourceFragmentCollector<'_> {
     pub(super) fn collect_file(mut self, file_id: FileId) -> Result<MacroExpansionApplyResult> {
         let file_tree = self.item_tree.file(file_id).with_context(|| {
-            format!("while attempting to fetch included file item tree for {file_id:?}")
+            format!("while attempting to fetch source fragment item tree for {file_id:?}")
         })?;
 
         // `include!` inserts the referenced file at the call site. Top-level items therefore
         // belong to the caller's module, but their source refs and spans still point to `file_id`.
         let origin_order = self.origin.order.clone();
         self.collect_items(self.origin.module, file_id, &file_tree.top_level, |index| {
+            origin_order.generated_child(index)
+        })?;
+        Ok(self.result)
+    }
+
+    pub(super) fn collect_fragment(
+        mut self,
+        file_id: FileId,
+        items: &[ItemTreeId],
+    ) -> Result<MacroExpansionApplyResult> {
+        // Source-like builtins such as `cfg_select!` lower their item payloads into the caller's
+        // file tree ahead of time. Def-map only picks the active fragment and collects those item
+        // ids at the macro call position.
+        let origin_order = self.origin.order.clone();
+        self.collect_items(self.origin.module, file_id, items, |index| {
             origin_order.generated_child(index)
         })?;
         Ok(self.result)
@@ -84,14 +99,14 @@ impl IncludedCollector<'_> {
         let item = self
             .item_tree
             .item(source)
-            .expect("included item tree id should exist while collecting def map");
+            .expect("source fragment item tree id should exist while collecting def map");
         if !self.is_item_enabled(item) {
             return Ok(());
         }
         self.result.mark_changed();
 
         // From this point on the collector mirrors ordinary item collection. The main difference
-        // is that every allocated def keeps the included file's `ItemTreeRef` and source span.
+        // is that every allocated def keeps the fragment item's `ItemTreeRef` and source span.
         match &item.kind {
             ItemKind::ExternCrate(extern_crate) => {
                 self.collect_extern_crate(module_id, item, extern_crate);
@@ -100,7 +115,7 @@ impl IncludedCollector<'_> {
                 self.collect_module(module_id, item, module_item, order)
                     .with_context(|| {
                         format!(
-                            "while attempting to collect included module {}",
+                            "while attempting to collect source fragment module {}",
                             item.name.as_deref().unwrap_or("<unnamed>")
                         )
                     })?;
@@ -154,7 +169,7 @@ impl IncludedCollector<'_> {
         self.state
             .def_map
             .module_mut(module_id)
-            .expect("module should exist for included local definition")
+            .expect("module should exist for source fragment local definition")
             .local_defs
             .push(local_def_id);
         let binding = ScopeBinding {
@@ -172,11 +187,11 @@ impl IncludedCollector<'_> {
         self.state
             .base_scopes
             .get_mut(module_id.0)
-            .expect("base scope should exist for included local definition")
+            .expect("base scope should exist for source fragment local definition")
             .insert_binding(&name, namespace, binding.clone());
         self.current_scopes
             .module_scope_mut(self.state.target, module_id)
-            .expect("current scope should exist for included local definition")
+            .expect("current scope should exist for source fragment local definition")
             .insert_binding(&name, namespace, binding);
 
         Some(local_def_id)
@@ -245,11 +260,11 @@ impl IncludedCollector<'_> {
         self.state
             .base_scopes
             .get_mut(root_module.0)
-            .expect("root scope should exist before included macro export collection")
+            .expect("root scope should exist before source fragment macro export collection")
             .insert_binding(name, Namespace::Macros, binding.clone());
         self.current_scopes
             .module_scope_mut(self.state.target, root_module)
-            .expect("current root scope should exist for included macro export")
+            .expect("current root scope should exist for source fragment macro export")
             .insert_binding(name, Namespace::Macros, binding);
     }
 
@@ -273,8 +288,8 @@ impl IncludedCollector<'_> {
         macro_call: &rg_item_tree::MacroCallItem,
         order: ItemOrder,
     ) {
-        // Included files can contain further item-position macro calls. Queue them exactly like
-        // source-file calls so later expansion passes can resolve them against refreshed scopes.
+        // Source-like fragments can contain further item-position macro calls. Queue them exactly
+        // like source-file calls so later passes can resolve them against refreshed scopes.
         self.state.macro_directives.push(MacroDirective {
             call: MacroCallSite {
                 module: module_id,
@@ -282,7 +297,7 @@ impl IncludedCollector<'_> {
                 path: macro_call.path.clone(),
                 callee: macro_call.callee.clone(),
                 args: macro_call.args.clone(),
-                include_file: macro_call.include_file,
+                builtin: macro_call.builtin.clone(),
                 dollar_crate_target: None,
                 file_id: item.file_id,
                 span: item.span,
@@ -307,7 +322,7 @@ impl IncludedCollector<'_> {
         self.state
             .def_map
             .module_mut(module_id)
-            .expect("module should exist for included impl block")
+            .expect("module should exist for source fragment impl block")
             .impls
             .push(local_impl_id);
     }
@@ -323,8 +338,8 @@ impl IncludedCollector<'_> {
             return Ok(());
         };
 
-        // Modules declared inside an included file are real modules in the caller's module tree.
-        // Their declaration span stays in the included file, which keeps navigation precise.
+        // Modules declared inside a source-like fragment are real modules in the caller's module
+        // tree. Their declaration span stays with the fragment item, which keeps navigation precise.
         let source = &module_item.source;
         let origin = match source {
             ModuleSource::Inline { .. } => ModuleOrigin::Inline {
@@ -346,7 +361,7 @@ impl IncludedCollector<'_> {
                 .file(*definition_file)
                 .with_context(|| {
                     format!(
-                        "while attempting to fetch included out-of-line module docs for {:?}",
+                        "while attempting to fetch source fragment out-of-line module docs for {:?}",
                         definition_file
                     )
                 })?
@@ -378,14 +393,14 @@ impl IncludedCollector<'_> {
         match source {
             ModuleSource::Inline { items } => {
                 self.collect_items(child_module, item.file_id, items, ItemOrder::real)
-                    .context("while attempting to collect included inline module items")?;
+                    .context("while attempting to collect source fragment inline module items")?;
             }
             ModuleSource::OutOfLine {
                 definition_file: Some(definition_file),
             } => {
                 let file_tree = self.item_tree.file(*definition_file).with_context(|| {
                     format!(
-                        "while attempting to fetch included out-of-line module item tree for {:?}",
+                        "while attempting to fetch source fragment out-of-line module item tree for {:?}",
                         definition_file
                     )
                 })?;
@@ -395,7 +410,7 @@ impl IncludedCollector<'_> {
                     &file_tree.top_level,
                     ItemOrder::real,
                 )
-                .context("while attempting to collect included out-of-line module items")?;
+                .context("while attempting to collect source fragment out-of-line module items")?;
             }
             ModuleSource::OutOfLine {
                 definition_file: None,
@@ -442,7 +457,7 @@ impl IncludedCollector<'_> {
         self.state.base_scopes.push(Default::default());
         self.current_scopes
             .push_module_scope(self.state.target, Default::default())
-            .expect("current scopes should have a target slot for included module");
+            .expect("current scopes should have a target slot for source fragment module");
         module_id
     }
 
@@ -456,7 +471,7 @@ impl IncludedCollector<'_> {
         self.state
             .def_map
             .module_mut(parent_module)
-            .expect("parent module should exist for included child link")
+            .expect("parent module should exist for source fragment child link")
             .children
             .push((module_name.clone(), child_module));
         let binding = ScopeBinding {
@@ -474,11 +489,11 @@ impl IncludedCollector<'_> {
         self.state
             .base_scopes
             .get_mut(parent_module.0)
-            .expect("base scope should exist for included child link")
+            .expect("base scope should exist for source fragment child link")
             .insert_binding(module_name, Namespace::Types, binding.clone());
         self.current_scopes
             .module_scope_mut(self.state.target, parent_module)
-            .expect("current scope should exist for included child link")
+            .expect("current scope should exist for source fragment child link")
             .insert_binding(module_name, Namespace::Types, binding);
     }
 
@@ -514,7 +529,7 @@ impl IncludedCollector<'_> {
             self.state
                 .def_map
                 .module_mut(module_id)
-                .expect("module should exist for included import")
+                .expect("module should exist for source fragment import")
                 .imports
                 .push(import_id);
         }
@@ -535,11 +550,9 @@ impl IncludedCollector<'_> {
         let module_ref = if extern_name == "self" {
             ModuleRef {
                 target: self.state.target,
-                module: self
-                    .state
-                    .def_map
-                    .root_module()
-                    .expect("root module should exist before included extern crate collection"),
+                module: self.state.def_map.root_module().expect(
+                    "root module should exist before source fragment extern crate collection",
+                ),
             }
         } else {
             let Some(module_ref) = self.state.implicit_roots.get(&extern_name).copied() else {
@@ -576,11 +589,11 @@ impl IncludedCollector<'_> {
         self.state
             .base_scopes
             .get_mut(module_id.0)
-            .expect("base scope should exist for included extern crate binding")
+            .expect("base scope should exist for source fragment extern crate binding")
             .insert_binding(&binding_name, Namespace::Types, binding.clone());
         self.current_scopes
             .module_scope_mut(self.state.target, module_id)
-            .expect("current scope should exist for included extern crate binding")
+            .expect("current scope should exist for source fragment extern crate binding")
             .insert_binding(&binding_name, Namespace::Types, binding);
     }
 

@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use rg_item_tree::{ItemTreeRef, MacroUseSelector};
+use rg_item_tree::{BuiltinMacroItem, ItemTreeRef, MacroUseSelector};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 use rg_tt::TopSubtree;
@@ -20,8 +20,8 @@ mod attempts;
 mod cache;
 mod expand;
 mod generated;
-mod included;
 mod resolve;
+mod source_fragment;
 
 pub(super) use self::{
     attempts::{
@@ -179,7 +179,7 @@ pub(super) struct MacroCallSite {
     pub(super) path: Option<String>,
     pub(super) callee: Option<Name>,
     pub(super) args: Option<TopSubtree>,
-    pub(super) include_file: Option<FileId>,
+    pub(super) builtin: Option<BuiltinMacroItem>,
     pub(super) dollar_crate_target: Option<TargetRef>,
     pub(super) file_id: FileId,
     pub(super) span: Span,

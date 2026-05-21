@@ -138,7 +138,7 @@ impl GeneratedCollector<'_> {
                     path: macro_call.path,
                     callee: macro_call.callee,
                     args: macro_call.args,
-                    include_file: macro_call.include_file,
+                    builtin: macro_call.builtin,
                     dollar_crate_target: self.origin.dollar_crate_target,
                     file_id: self.origin.file_id,
                     span: self.origin.span,

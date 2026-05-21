@@ -1359,6 +1359,7 @@ dependencies = [
  "rayon",
  "rg_arena",
  "rg_cfg_eval",
+ "rg_macro_expand",
  "rg_memsize",
  "rg_parse",
  "rg_syntax",

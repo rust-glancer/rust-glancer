@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 
-use rg_item_tree::ItemTreeDb;
-use rg_macro_expand::{Edition, ExpansionSyntax, expand_cfg_select};
+use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
+use rg_macro_expand::{Edition, ExpansionSyntax};
 use rg_parse::{FileId, Span};
 use rg_text::PackageNameInterners;
 use rg_tt::{Span as TtSpan, syntax_bridge::SpanFactory};
@@ -30,11 +30,11 @@ use super::{
     cache::{MacroCompileRecord, MacroExpandRecord, MacroExpansionCache, PreparedMacroExpansion},
     expand::MacroExpansionWork,
     generated::{GeneratedCollector, GeneratedOrigin},
-    included::{IncludedCollector, IncludedOrigin},
     resolve::{
         BuiltinMacroDisposition, builtin_macro_disposition, macro_path_from_text,
         resolve_macro_definition,
     },
+    source_fragment::{SourceFragmentCollector, SourceFragmentOrigin},
 };
 
 /// Selects which part of the macro worklist one expansion pass should inspect.
@@ -163,7 +163,7 @@ pub(crate) fn apply_expansion_attempts(
                 continue;
             }
             MacroExpansionAttemptOutcome::Generated(source) => source,
-            MacroExpansionAttemptOutcome::IncludedFile(file_id) => {
+            MacroExpansionAttemptOutcome::ItemTreeFile(file_id) => {
                 let item_tree_package = item_tree.package(attempt.target.package.0).with_context(
                     || {
                         format!(
@@ -172,17 +172,49 @@ pub(crate) fn apply_expansion_attempts(
                         )
                     },
                 )?;
-                let collected = IncludedCollector {
+                let collected = SourceFragmentCollector {
                     state,
                     current_scopes,
                     item_tree: item_tree_package,
-                    origin: IncludedOrigin {
+                    origin: SourceFragmentOrigin {
                         module: attempt.origin.module,
                         order: attempt.origin.order,
                     },
                     result: MacroExpansionApplyResult::default(),
                 }
                 .collect_file(file_id);
+                let directive_state = match collected {
+                    Ok(collected) => {
+                        result.merge(collected);
+                        MacroDirectiveState::Expanded
+                    }
+                    Err(_) => MacroDirectiveState::Failed,
+                };
+                if let Some(directive) = state.macro_directives.get_mut(attempt.call_id) {
+                    directive.state = directive_state;
+                }
+                continue;
+            }
+            MacroExpansionAttemptOutcome::ItemTreeFragment { file_id, items } => {
+                let item_tree_package = item_tree.package(attempt.target.package.0).with_context(
+                    || {
+                        format!(
+                            "while attempting to fetch item tree package {} for builtin fragment",
+                            attempt.target.package.0
+                        )
+                    },
+                )?;
+                let collected = SourceFragmentCollector {
+                    state,
+                    current_scopes,
+                    item_tree: item_tree_package,
+                    origin: SourceFragmentOrigin {
+                        module: attempt.origin.module,
+                        order: attempt.origin.order,
+                    },
+                    result: MacroExpansionApplyResult::default(),
+                }
+                .collect_fragment(file_id, &items);
                 let directive_state = match collected {
                     Ok(collected) => {
                         result.merge(collected);
@@ -315,7 +347,7 @@ impl MacroExpansionAttempt {
         call: &MacroCallSite,
         path_text: &str,
     ) -> Self {
-        let Some(include_file) = call.include_file else {
+        let Some(BuiltinMacroItem::Include { file }) = call.builtin.as_ref() else {
             return Self::unsupported_builtin(target, call_id, call, path_text);
         };
 
@@ -324,7 +356,7 @@ impl MacroExpansionAttempt {
             call_id,
             call,
             Some(path_text.to_string()),
-            MacroExpansionAttemptOutcome::IncludedFile(include_file),
+            MacroExpansionAttemptOutcome::ItemTreeFile(*file),
             MacroExpansionAttemptRecord::builtin_expanded(),
         )
     }
@@ -335,11 +367,23 @@ impl MacroExpansionAttempt {
         call_id: usize,
         call: &MacroCallSite,
         state: &TargetState,
-        args: &rg_tt::TopSubtree,
         path_text: &str,
     ) -> Self {
+        let Some(BuiltinMacroItem::CfgSelect { arms }) = call.builtin.as_ref() else {
+            return Self::new(
+                target,
+                call_id,
+                call,
+                Some(path_text.to_string()),
+                MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Failed),
+                MacroExpansionAttemptRecord::builtin_failed(),
+            );
+        };
         let cfg = state.cfg_evaluator();
-        let Some(syntax) = expand_cfg_select(args, &cfg) else {
+        let Some(arm) = arms
+            .iter()
+            .find(|arm| cfg.is_predicate_enabled(&arm.predicate))
+        else {
             return Self::new(
                 target,
                 call_id,
@@ -350,13 +394,27 @@ impl MacroExpansionAttempt {
             );
         };
 
+        let (outcome, record) = match &arm.payload {
+            CfgSelectArmPayload::Items(items) => (
+                MacroExpansionAttemptOutcome::ItemTreeFragment {
+                    file_id: call.file_id,
+                    items: items.clone(),
+                },
+                MacroExpansionAttemptRecord::builtin_expanded(),
+            ),
+            CfgSelectArmPayload::LoweringFailed => (
+                MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Failed),
+                MacroExpansionAttemptRecord::builtin_failed(),
+            ),
+        };
+
         Self::new(
             target,
             call_id,
             call,
             Some(path_text.to_string()),
-            MacroExpansionAttemptOutcome::Generated(syntax),
-            MacroExpansionAttemptRecord::builtin_expanded(),
+            outcome,
+            record,
         )
     }
 
@@ -478,7 +536,6 @@ impl MacroExpansionAttempt {
                         call_id,
                         call,
                         state,
-                        args,
                         path_text,
                     ));
                 }
@@ -714,7 +771,11 @@ impl MacroExpansionAttemptRecord {
 enum MacroExpansionAttemptOutcome {
     NoSource(MacroDirectiveState),
     Generated(ExpansionSyntax),
-    IncludedFile(FileId),
+    ItemTreeFile(FileId),
+    ItemTreeFragment {
+        file_id: FileId,
+        items: Vec<ItemTreeId>,
+    },
     PendingExpansion(MacroExpansionWork),
 }
 

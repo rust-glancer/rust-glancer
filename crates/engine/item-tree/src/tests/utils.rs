@@ -3,9 +3,9 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::{
-    FieldItem, FieldList, FileTree, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
-    MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleSource, Package as ItemTreePackage,
-    PackageNameInterners, ParamKind, TargetRoot, VisibilityLevel,
+    BuiltinMacroItem, CfgSelectArmPayload, FieldItem, FieldList, FileTree, ItemKind, ItemNode,
+    ItemTreeDb, ItemTreeId, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleSource,
+    Package as ItemTreePackage, PackageNameInterners, ParamKind, TargetRoot, VisibilityLevel,
 };
 use rg_parse::{FileId, Package, ParseDb, Target};
 use rg_workspace::WorkspaceMetadata;
@@ -309,13 +309,36 @@ impl<'a> PackageItemTreeSnapshot<'a> {
                     writeln!(dump, "{indent}  - args {args}")
                         .expect("string writes should not fail");
                 }
-                if let Some(include_file) = macro_call.include_file {
-                    writeln!(
-                        dump,
-                        "{indent}  - include_file {}",
-                        self.file_label(include_file)
-                    )
-                    .expect("string writes should not fail");
+                if let Some(builtin) = &macro_call.builtin {
+                    match builtin {
+                        BuiltinMacroItem::Include { file } => {
+                            writeln!(dump, "{indent}  - include_file {}", self.file_label(*file))
+                                .expect("string writes should not fail");
+                        }
+                        BuiltinMacroItem::CfgSelect { arms } => {
+                            for (arm_idx, arm) in arms.iter().enumerate() {
+                                match &arm.payload {
+                                    CfgSelectArmPayload::Items(items) => {
+                                        writeln!(dump, "{indent}  - cfg_select_arm {arm_idx}")
+                                            .expect("string writes should not fail");
+                                        for item_id in items {
+                                            let child = file_tree.item(*item_id).expect(
+                                                "cfg_select arm item id should exist while rendering",
+                                            );
+                                            self.render_item(file_tree, child, depth + 2, dump);
+                                        }
+                                    }
+                                    CfgSelectArmPayload::LoweringFailed => {
+                                        writeln!(
+                                            dump,
+                                            "{indent}  - cfg_select_arm {arm_idx} [lowering_failed]"
+                                        )
+                                        .expect("string writes should not fail");
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
             ItemKind::MacroDefinition(macro_definition) => match macro_definition {

@@ -1,4 +1,5 @@
 use super::super::utils;
+use expect_test::expect;
 
 #[test]
 fn include_macro_splices_real_source_items() {
@@ -181,6 +182,117 @@ cfg_select! {
     target
         .entry("Fallback")
         .assert_missing("fallback should not be reached after a matching feature cfg");
+}
+
+#[test]
+fn cfg_select_collects_out_of_line_modules_relative_to_call_site() {
+    utils::check_project_path_resolution(
+        r#"
+//- /Cargo.toml
+[package]
+name = "cfg_select_module_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+cfg_select! {
+    true => {
+        mod os;
+    }
+}
+
+//- /src/os.rs
+pub struct Unix;
+"#,
+        &[utils::PathResolutionQuery::lib(
+            "cfg_select_module_fixture",
+            "crate::os",
+            "Unix",
+        )],
+        expect![[r#"
+            cfg_select_module_fixture [lib] crate::os resolves Unix -> struct cfg_select_module_fixture[lib]::crate::os::Unix
+        "#]],
+    );
+}
+
+#[test]
+fn cfg_select_collects_impls_and_extern_crates_as_source_items() {
+    utils::check_project_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "cfg_select_source_items_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+cfg_select! {
+    true => {
+        extern crate dep;
+
+        pub struct User;
+
+        impl User {}
+    }
+}
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Dep;
+"#,
+        expect![[r#"
+            package cfg_select_source_items_fixture
+
+            cfg_select_source_items_fixture [lib]
+            crate
+            - User : type [pub struct cfg_select_source_items_fixture[lib]::crate::User]
+            - dep : type [module dep[lib]::crate]
+            impls
+            - impl lib.rs#2
+
+            package dep
+
+            dep [lib]
+            crate
+            - Dep : type [pub struct dep[lib]::crate::Dep]
+        "#]],
+    );
+}
+
+#[test]
+fn cfg_select_ignores_failed_inactive_arm_lowering() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "cfg_select_failed_inactive_arm_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+cfg_select! {
+    false => {
+        mod ;
+    }
+    true => {
+        pub struct Selected;
+    }
+}
+"#,
+    );
+    let target = project.lib("cfg_select_failed_inactive_arm_fixture");
+
+    target.entry("Selected").assert_type_exists(
+        "inactive cfg_select arm lowering failures should not poison selected arms",
+    );
 }
 
 #[test]

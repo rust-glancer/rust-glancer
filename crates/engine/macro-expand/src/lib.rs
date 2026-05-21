@@ -22,7 +22,7 @@ use rg_tt::{
 pub use rg_tt::span::Edition;
 pub use rg_tt::tt::TopSubtree;
 
-pub use self::builtins::expand_cfg_select;
+pub use self::builtins::{CfgSelect, CfgSelectArm};
 
 /// Compiled declarative macro ready to expand function-like calls.
 ///

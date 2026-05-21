@@ -463,7 +463,7 @@ impl<'db> TargetScopeCollector<'db> {
                 path: macro_call.path.clone(),
                 callee: macro_call.callee.clone(),
                 args: macro_call.args.clone(),
-                include_file: macro_call.include_file,
+                builtin: macro_call.builtin.clone(),
                 dollar_crate_target: None,
                 file_id: item.file_id,
                 span: item.span,

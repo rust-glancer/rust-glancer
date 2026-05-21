@@ -13,6 +13,10 @@ use rg_workspace::RustEdition;
 
 use super::normalized_syntax;
 
+mod builtin;
+
+pub use self::builtin::{BuiltinMacroItem, CfgSelectArmItem, CfgSelectArmPayload};
+
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum MacroDefinitionItem {
     MacroRules {
@@ -304,30 +308,30 @@ pub struct MacroCallItem {
     pub path: Option<String>,
     pub callee: Option<Name>,
     pub args: Option<TopSubtree>,
-    pub include_file: Option<FileId>,
+    pub builtin: Option<BuiltinMacroItem>,
 }
 
 impl MacroCallItem {
     /// Builds an item-position macro call payload.
     ///
-    /// Literal `include!` resolution happens before this point because it needs package/file
-    /// context, so `include_file` carries the already discovered file identity when available.
+    /// Builtin macro probes happen before this point because they need package/file context.
+    /// `builtin` carries the already discovered source-like payload when available.
     pub fn from_ast(
         item: &ast::MacroCall,
         file_id: FileId,
         edition: RustEdition,
-        include_file: Option<FileId>,
+        builtin: Option<BuiltinMacroItem>,
         interner: &mut NameInterner,
     ) -> Self {
         let span_factory = SpanFactory::new(file_id_u32(file_id), macro_edition(edition));
         let mut span_for_range = |range| span_factory.span_for(range);
-        Self::from_ast_with_span(item, interner, include_file, &mut span_for_range)
+        Self::from_ast_with_span(item, interner, builtin, &mut span_for_range)
     }
 
     pub fn from_ast_with_span(
         item: &ast::MacroCall,
         interner: &mut NameInterner,
-        include_file: Option<FileId>,
+        builtin: Option<BuiltinMacroItem>,
         span_for_range: &mut dyn FnMut(TextRange) -> Span,
     ) -> Self {
         Self {
@@ -340,7 +344,7 @@ impl MacroCallItem {
             args: item
                 .token_tree()
                 .map(|token_tree| syntax_node_to_token_tree_with_span(&token_tree, span_for_range)),
-            include_file,
+            builtin,
         }
     }
 
@@ -350,6 +354,9 @@ impl MacroCallItem {
         }
         if let Some(callee) = &mut self.callee {
             callee.shrink_to_fit();
+        }
+        if let Some(builtin) = &mut self.builtin {
+            builtin.shrink_to_fit();
         }
     }
 }

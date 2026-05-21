@@ -1,5 +1,3 @@
-use rg_syntax::TextRange;
-
 use rg_cfg_eval::CfgExpr;
 use rg_parse::{FileId, Span};
 use rg_text::Name;
@@ -17,8 +15,8 @@ pub use self::{
     },
     kind::{ItemKind, ItemTag},
     macro_item::{
-        CfgAttrMacroUse, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr,
-        MacroUseSelector,
+        BuiltinMacroItem, CfgAttrMacroUse, CfgSelectArmItem, CfgSelectArmPayload, MacroCallItem,
+        MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
     },
     module::{ModuleItem, ModuleSource},
     type_ref::{GenericArg, Mutability, TypeBound, TypePath, TypePathSegment, TypeRef},
@@ -81,21 +79,21 @@ impl ItemNode {
     pub(super) fn new(
         kind: ItemKind,
         name: Option<Name>,
-        name_range: Option<TextRange>,
+        name_span: Option<Span>,
         visibility: VisibilityLevel,
         docs: Option<Documentation>,
-        text_range: TextRange,
+        span: Span,
         file_id: FileId,
     ) -> Self {
         Self {
             kind,
             name,
-            name_span: name_range.map(Span::from_text_range),
+            name_span,
             visibility,
             cfg: CfgExpr::default(),
             docs,
             file_id,
-            span: Span::from_text_range(text_range),
+            span,
         }
     }
 

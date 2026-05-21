@@ -8,19 +8,25 @@ use std::collections::HashSet;
 
 use anyhow::Context as _;
 use rg_arena::Arena;
+use rg_macro_expand::{CfgSelect, ExpansionSyntax};
 use rg_syntax::{
     AstNode as _, AstToken as _, SyntaxKind,
     ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
 };
 
-use rg_parse::{FileId, LineIndex, ModuleFileContext, Package as ParsePackage};
+use rg_parse::{FileId, LineIndex, ModuleFileContext, Package as ParsePackage, Span as ParseSpan};
 use rg_text::{Name, NameInterner};
+use rg_tt::{
+    Span as TtSpan,
+    syntax_bridge::{ExpansionSpanMap, SpanFactory, syntax_node_to_token_tree_with_span},
+};
 
 use super::{
-    CfgExpr, ConstItem, Documentation, EnumItem, ExternCrateItem, FileTree, FunctionItem, ImplItem,
-    ItemKind, ItemNode, ItemTreeId, MacroCallItem, MacroDefinitionItem, MacroUseAttr, ModuleItem,
-    ModuleSource, Package, StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, UnionItem,
-    UseItem, VisibilityLevel,
+    BuiltinMacroItem, CfgExpr, CfgSelectArmItem, ConstItem, Documentation, EnumItem,
+    ExternCrateItem, FileTree, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeId,
+    MacroCallItem, MacroDefinitionItem, MacroUseAttr, ModuleItem, ModuleSource, Package,
+    StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, UnionItem, UseItem,
+    VisibilityLevel, item::normalized_syntax,
 };
 
 /// Lowers all known files for one parsed package and records target entrypoints into them.
@@ -195,6 +201,7 @@ impl<'db> PackageLowering<'db> {
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Option<ItemTreeId>> {
         let edition = self.parse_package.edition();
+        let macro_edition = macro_edition(edition);
         let item_id = match item {
             ast::Item::AsmExpr(item) => Some(builder.alloc_item(
                 ItemKind::AsmExpr,
@@ -262,16 +269,16 @@ impl<'db> PackageLowering<'db> {
                 ))
             }
             ast::Item::MacroCall(item) => {
-                let include_file = self
-                    .lower_literal_include_file(builder.current_file_id, &item)
-                    .context("while attempting to lower literal include macro file")?;
+                let builtin = self
+                    .lower_builtin_macro(builder, &item, module_file_context)
+                    .context("while attempting to lower builtin macro payload")?;
+                let mut span_for_range = |range| builder.tt_span_for_range(range, macro_edition);
                 Some(builder.alloc_documented_item(
-                    ItemKind::MacroCall(MacroCallItem::from_ast(
+                    ItemKind::MacroCall(MacroCallItem::from_ast_with_span(
                         &item,
-                        builder.current_file_id,
-                        edition,
-                        include_file,
                         self.interner,
+                        builtin,
+                        &mut span_for_range,
                     )),
                     None,
                     None,
@@ -279,28 +286,32 @@ impl<'db> PackageLowering<'db> {
                     &item,
                 ))
             }
-            ast::Item::MacroDef(item) => Some(builder.alloc_documented_item(
-                ItemKind::MacroDefinition(MacroDefinitionItem::from_macro_def(
+            ast::Item::MacroDef(item) => {
+                let mut span_for_range = |range| builder.tt_span_for_range(range, macro_edition);
+                Some(builder.alloc_documented_item(
+                    ItemKind::MacroDefinition(MacroDefinitionItem::from_macro_def_with_span(
+                        &item,
+                        &mut span_for_range,
+                    )),
+                    self.intern_ast_name(item.name()),
+                    item.name().map(|name| name.syntax().text_range()),
+                    VisibilityLevel::from_ast(item.visibility()),
                     &item,
-                    builder.current_file_id,
-                    edition,
-                )),
-                self.intern_ast_name(item.name()),
-                item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(item.visibility()),
-                &item,
-            )),
-            ast::Item::MacroRules(item) => Some(builder.alloc_documented_item(
-                ItemKind::MacroDefinition(MacroDefinitionItem::from_macro_rules(
+                ))
+            }
+            ast::Item::MacroRules(item) => {
+                let mut span_for_range = |range| builder.tt_span_for_range(range, macro_edition);
+                Some(builder.alloc_documented_item(
+                    ItemKind::MacroDefinition(MacroDefinitionItem::from_macro_rules_with_span(
+                        &item,
+                        &mut span_for_range,
+                    )),
+                    self.intern_ast_name(item.name()),
+                    item.name().map(|name| name.syntax().text_range()),
+                    VisibilityLevel::from_ast(item.visibility()),
                     &item,
-                    builder.current_file_id,
-                    edition,
-                )),
-                self.intern_ast_name(item.name()),
-                item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(item.visibility()),
-                &item,
-            )),
+                ))
+            }
             ast::Item::Module(item) => {
                 let module_name = self.intern_ast_name(item.name());
                 let module_name_range = item.name().map(|name| name.syntax().text_range());
@@ -391,6 +402,26 @@ impl<'db> PackageLowering<'db> {
         Ok(item_id)
     }
 
+    /// Eagerly lowers source-like builtin macros while this file context is still available.
+    ///
+    /// Def-map later decides whether the call really resolves to a builtin; item-tree only records
+    /// enough pre-lowered payload for that decision to be applied without reparsing files.
+    fn lower_builtin_macro(
+        &mut self,
+        builder: &mut FileTreeBuilder<'_>,
+        item: &ast::MacroCall,
+        module_file_context: &ModuleFileContext,
+    ) -> anyhow::Result<Option<BuiltinMacroItem>> {
+        if let Some(include_file) = self
+            .lower_literal_include_file(builder.current_file_id, item)
+            .context("while attempting to lower literal include macro file")?
+        {
+            return Ok(Some(BuiltinMacroItem::Include { file: include_file }));
+        }
+
+        self.lower_cfg_select_arms(builder, item, module_file_context)
+    }
+
     /// Eagerly parses the simple `include!("file.rs")` form so def-map can splice real item-tree
     /// nodes after macro resolution confirms that the builtin was not shadowed.
     fn lower_literal_include_file(
@@ -428,6 +459,63 @@ impl<'db> PackageLowering<'db> {
             .and_then(Option::as_ref)
             .is_some();
         Ok(lowered.then_some(include_file_id))
+    }
+
+    /// Lowers every `cfg_select!` arm as a source fragment rooted at the call site.
+    ///
+    /// The selected arm is target-dependent, so item-tree cannot discard inactive arms. Lowering
+    /// all arms here preserves file-relative module resolution for whichever arm def-map chooses.
+    fn lower_cfg_select_arms(
+        &mut self,
+        builder: &mut FileTreeBuilder<'_>,
+        item: &ast::MacroCall,
+        module_file_context: &ModuleFileContext,
+    ) -> anyhow::Result<Option<BuiltinMacroItem>> {
+        if item
+            .path()
+            .map(|path| normalized_syntax(&path) != "cfg_select")
+            .unwrap_or(true)
+        {
+            return Ok(None);
+        }
+
+        let Some(args) = item.token_tree() else {
+            return Ok(None);
+        };
+        let mut span_for_range =
+            |range| builder.tt_span_for_range(range, macro_edition(self.parse_package.edition()));
+        let args = syntax_node_to_token_tree_with_span(&args, &mut span_for_range);
+        let Some(cfg_select) = CfgSelect::parse(&args) else {
+            return Ok(None);
+        };
+
+        let mut arms = Vec::new();
+        for arm in cfg_select.arms() {
+            let expansion = ExpansionSyntax::from_token_tree(arm.payload.clone());
+            let file = match ast::MacroItems::cast(expansion.parse.syntax_node()) {
+                Some(file) if expansion.parse.errors().is_empty() => file,
+                _ => {
+                    arms.push(CfgSelectArmItem::lowering_failed(arm.predicate.clone()));
+                    continue;
+                }
+            };
+            let items = file.items().collect::<Vec<_>>();
+            let Ok(lowered_items) = builder.with_span_map(expansion.span_map, |builder| {
+                self.collect_items(builder, items, module_file_context)
+            }) else {
+                // Inactive arms may be malformed or mention files that are not valid for this
+                // target. Preserve the failed arm and let def-map care only if target cfg selects
+                // it.
+                arms.push(CfgSelectArmItem::lowering_failed(arm.predicate.clone()));
+                continue;
+            };
+            arms.push(CfgSelectArmItem::lowered(
+                arm.predicate.clone(),
+                lowered_items,
+            ));
+        }
+
+        Ok(Some(BuiltinMacroItem::CfgSelect { arms }))
     }
 
     /// Lowers one module declaration into either an inline item list or an out-of-line file link.
@@ -600,6 +688,7 @@ struct FileTreeBuilder<'a> {
     current_file_id: FileId,
     line_index: &'a LineIndex,
     items: Arena<ItemTreeId, ItemNode>,
+    span_map: Option<ExpansionSpanMap>,
 }
 
 impl<'a> FileTreeBuilder<'a> {
@@ -608,7 +697,39 @@ impl<'a> FileTreeBuilder<'a> {
             current_file_id,
             line_index,
             items: Arena::new(),
+            span_map: None,
         }
+    }
+
+    fn with_span_map<R>(
+        &mut self,
+        span_map: ExpansionSpanMap,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let previous = self.span_map.replace(span_map);
+        let result = f(self);
+        self.span_map = previous;
+        result
+    }
+
+    fn parse_span_for_range(&self, range: rg_syntax::TextRange) -> ParseSpan {
+        self.span_map
+            .as_ref()
+            .and_then(|span_map| span_map.span_for_range(range))
+            .map(|span| ParseSpan::from_text_range(span.range))
+            .unwrap_or_else(|| ParseSpan::from_text_range(range))
+    }
+
+    fn tt_span_for_range(&self, range: rg_syntax::TextRange, edition: rg_tt::Edition) -> TtSpan {
+        if let Some(span) = self
+            .span_map
+            .as_ref()
+            .and_then(|span_map| span_map.span_for_range(range))
+        {
+            return span;
+        }
+
+        SpanFactory::new(file_id_u32(self.current_file_id), edition).span_for(range)
     }
 
     fn alloc_item(
@@ -657,12 +778,25 @@ impl<'a> FileTreeBuilder<'a> {
         self.items.alloc(ItemNode::new(
             kind,
             name,
-            name_range,
+            name_range.map(|range| self.parse_span_for_range(range)),
             visibility,
             docs,
-            text_range,
+            self.parse_span_for_range(text_range),
             self.current_file_id,
         ))
+    }
+}
+
+fn file_id_u32(file_id: FileId) -> u32 {
+    u32::try_from(file_id.0).expect("file id should fit macro span storage")
+}
+
+fn macro_edition(edition: rg_workspace::RustEdition) -> rg_tt::Edition {
+    match edition {
+        rg_workspace::RustEdition::Edition2015 => rg_tt::Edition::Edition2015,
+        rg_workspace::RustEdition::Edition2018 => rg_tt::Edition::Edition2018,
+        rg_workspace::RustEdition::Edition2021 => rg_tt::Edition::Edition2021,
+        rg_workspace::RustEdition::Edition2024 => rg_tt::Edition::Edition2024,
     }
 }
 
