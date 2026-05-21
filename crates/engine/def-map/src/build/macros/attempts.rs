@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 
 use rg_item_tree::ItemTreeDb;
-use rg_macro_expand::{Edition, ExpansionSyntax};
+use rg_macro_expand::{Edition, ExpansionSyntax, expand_cfg_select};
 use rg_parse::{FileId, Span};
 use rg_text::PackageNameInterners;
 use rg_tt::{Span as TtSpan, syntax_bridge::SpanFactory};
@@ -260,6 +260,7 @@ pub(crate) struct MacroExpansionAttempt {
 }
 
 impl MacroExpansionAttempt {
+    /// The call shape is not usable by item-position macro expansion.
     fn skipped(target: TargetRef, call_id: usize, call: &MacroCallSite) -> Self {
         Self::new(
             target,
@@ -273,6 +274,7 @@ impl MacroExpansionAttempt {
         )
     }
 
+    /// A builtin resolved, but it cannot add module-scope items for def-map.
     fn ignored_by_def_map(
         target: TargetRef,
         call_id: usize,
@@ -289,6 +291,7 @@ impl MacroExpansionAttempt {
         )
     }
 
+    /// A known builtin needs dedicated support before def-map can model it safely.
     fn unsupported_builtin(
         target: TargetRef,
         call_id: usize,
@@ -305,6 +308,7 @@ impl MacroExpansionAttempt {
         )
     }
 
+    /// Builtin `include!` splices a real file that item-tree already lowered.
     fn include_file(
         target: TargetRef,
         call_id: usize,
@@ -325,6 +329,38 @@ impl MacroExpansionAttempt {
         )
     }
 
+    /// Builtin `cfg_select!` chooses one item stream using the target cfg environment.
+    fn cfg_select(
+        target: TargetRef,
+        call_id: usize,
+        call: &MacroCallSite,
+        state: &TargetState,
+        args: &rg_tt::TopSubtree,
+        path_text: &str,
+    ) -> Self {
+        let cfg = state.cfg_evaluator();
+        let Some(syntax) = expand_cfg_select(args, &cfg) else {
+            return Self::new(
+                target,
+                call_id,
+                call,
+                Some(path_text.to_string()),
+                MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Failed),
+                MacroExpansionAttemptRecord::builtin_failed(),
+            );
+        };
+
+        Self::new(
+            target,
+            call_id,
+            call,
+            Some(path_text.to_string()),
+            MacroExpansionAttemptOutcome::Generated(syntax),
+            MacroExpansionAttemptRecord::builtin_expanded(),
+        )
+    }
+
+    /// The call may become resolvable after another import-resolution refresh.
     fn unresolved(
         target: TargetRef,
         call_id: usize,
@@ -341,6 +377,7 @@ impl MacroExpansionAttempt {
         )
     }
 
+    /// A declarative macro resolved and produced compile/expand accounting.
     fn resolved(
         target: TargetRef,
         call_id: usize,
@@ -360,6 +397,7 @@ impl MacroExpansionAttempt {
         )
     }
 
+    /// A direct same-module macro resolved but is declared after this call.
     fn resolved_skipped(
         target: TargetRef,
         call_id: usize,
@@ -376,6 +414,7 @@ impl MacroExpansionAttempt {
         )
     }
 
+    /// Common initializer that anchors generated items at the original call site.
     fn new(
         target: TargetRef,
         call_id: usize,
@@ -430,6 +469,16 @@ impl MacroExpansionAttempt {
                         state.target,
                         call_id,
                         call,
+                        path_text,
+                    ));
+                }
+                Some(BuiltinMacroDisposition::CfgSelect) => {
+                    return Ok(Self::cfg_select(
+                        state.target,
+                        call_id,
+                        call,
+                        state,
+                        args,
                         path_text,
                     ));
                 }
@@ -551,6 +600,7 @@ struct MacroExpansionAttemptRecord {
     unresolved: bool,
     skipped: bool,
     expanded: bool,
+    failed: bool,
     compile: Option<MacroCompileRecord>,
     expand: Option<MacroExpandRecord>,
 }
@@ -587,6 +637,14 @@ impl MacroExpansionAttemptRecord {
         }
     }
 
+    fn builtin_failed() -> Self {
+        Self {
+            resolved: true,
+            failed: true,
+            ..Self::default()
+        }
+    }
+
     fn resolved_skipped() -> Self {
         Self {
             resolved: true,
@@ -611,6 +669,9 @@ impl MacroExpansionAttemptRecord {
             }
             if self.expanded {
                 stats.macro_calls_expanded += 1;
+            }
+            if self.failed {
+                stats.record_expand_failure(macro_name);
             }
 
             if let Some(compile) = self.compile {

@@ -1304,6 +1304,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rg_cfg_eval"
+version = "0.1.0"
+dependencies = [
+ "rg_memsize",
+ "rg_syntax",
+ "wincode",
+]
+
+[[package]]
 name = "rg_codegen"
 version = "0.1.0"
 dependencies = [
@@ -1326,6 +1335,7 @@ dependencies = [
  "expect-test",
  "rayon",
  "rg_arena",
+ "rg_cfg_eval",
  "rg_item_tree",
  "rg_macro_expand",
  "rg_memsize",
@@ -1348,6 +1358,7 @@ dependencies = [
  "expect-test",
  "rayon",
  "rg_arena",
+ "rg_cfg_eval",
  "rg_memsize",
  "rg_parse",
  "rg_syntax",
@@ -1414,6 +1425,7 @@ dependencies = [
  "anyhow",
  "expect-test",
  "ra-ap-rustc_lexer",
+ "rg_cfg_eval",
  "rg_parser",
  "rg_syntax",
  "rg_tt",
@@ -1448,6 +1460,7 @@ dependencies = [
  "anyhow",
  "expect-test",
  "rg_arena",
+ "rg_cfg_eval",
  "rg_memsize",
  "rg_syntax",
  "rg_workspace",
@@ -1483,6 +1496,7 @@ dependencies = [
  "rayon",
  "rg_analysis",
  "rg_body_ir",
+ "rg_cfg_eval",
  "rg_def_map",
  "rg_item_tree",
  "rg_memsize",
@@ -1570,6 +1584,7 @@ dependencies = [
  "cargo_metadata",
  "derive_more",
  "expect-test",
+ "rg_cfg_eval",
  "rg_memsize",
  "serde",
  "test_fixture",

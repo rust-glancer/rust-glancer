@@ -308,6 +308,8 @@ fn relative_single_name(path: &ImportPath) -> Option<&Name> {
 pub(super) enum BuiltinMacroDisposition {
     /// The builtin cannot add module-scope definitions, so def-map can safely ignore it.
     IgnoredByDefMap,
+    /// The builtin selects one item stream from cfg predicates.
+    CfgSelect,
     /// The builtin splices another source file into the caller's item stream.
     Include,
     /// The builtin can affect item collection or requires dedicated compiler-like handling.
@@ -327,6 +329,7 @@ pub(super) fn builtin_macro_disposition(path: &ImportPath) -> Option<BuiltinMacr
         | "global_asm" | "include_bytes" | "include_str" | "line" | "llvm_asm" | "module_path"
         | "option_env" | "stringify" => Some(BuiltinMacroDisposition::IgnoredByDefMap),
 
+        "cfg_select" => Some(BuiltinMacroDisposition::CfgSelect),
         "include" => Some(BuiltinMacroDisposition::Include),
 
         // `concat_idents!` has token-shaping behavior that is better handled by a dedicated

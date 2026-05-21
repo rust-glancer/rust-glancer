@@ -2,9 +2,10 @@ use std::{path::Path, sync::Arc};
 
 use anyhow::Context as _;
 use rg_arena::Arena;
+use rg_cfg_eval::CfgOptions;
 
 use crate::{FileId, LineIndex, ParsedFile, ParsedFileSnapshot, Target, TargetId, file::FileDb};
-use rg_workspace::{CfgOptions, PackageId, PackageOrigin, RustEdition, TargetKind};
+use rg_workspace::{PackageId, PackageOrigin, RustEdition, TargetKind};
 
 /// Parsed package, including package-local files and target entrypoints.
 #[derive(Debug, Clone)]

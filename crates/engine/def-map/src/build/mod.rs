@@ -8,7 +8,6 @@
 //! - a clean build has no baseline and marks every package dirty;
 //! - a package rebuild has an old baseline and marks only affected packages dirty.
 
-mod cfg;
 mod collect;
 mod finalize;
 mod implicit_roots;

@@ -7,6 +7,7 @@
 
 extern crate ra_ap_rustc_lexer as rustc_lexer;
 
+mod builtins;
 mod mbe;
 
 use anyhow::Context as _;
@@ -20,6 +21,8 @@ use rg_tt::{
 
 pub use rg_tt::span::Edition;
 pub use rg_tt::tt::TopSubtree;
+
+pub use self::builtins::expand_cfg_select;
 
 /// Compiled declarative macro ready to expand function-like calls.
 ///
@@ -146,7 +149,8 @@ pub struct ExpansionSyntax {
 }
 
 impl ExpansionSyntax {
-    fn from_token_tree(token_tree: TopSubtree) -> Self {
+    /// Parses item-position syntax directly from an expanded token tree.
+    pub fn from_token_tree(token_tree: TopSubtree) -> Self {
         let mut span_to_edition = |ctx: SyntaxContext| ctx.edition();
         let (parse, span_map) = token_tree_to_syntax_node(
             &token_tree,

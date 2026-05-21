@@ -5,8 +5,9 @@
 
 use anyhow::{Context as _, Result};
 
+use rg_cfg_eval::CfgExpr;
 use rg_item_tree::{
-    CfgExpr, Documentation, ImportAlias, ItemTreeRef, MacroCallItem, MacroDefinitionAttrs,
+    Documentation, ImportAlias, ItemTreeRef, MacroCallItem, MacroDefinitionAttrs,
     MacroDefinitionItem, UseItem, VisibilityLevel,
 };
 use rg_macro_expand::ExpansionSyntax;
@@ -25,10 +26,7 @@ use crate::{
     DefId, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
     LocalDefId, LocalDefKind, LocalDefRef, MacroDefinitionData, ModuleData, ModuleId, ModuleOrigin,
     ModuleRef, ModuleScope, PathSegment, ScopeBinding, ScopeBindingOrigin, TargetRef,
-    build::{
-        cfg::CfgEvaluator, collect::TargetState, finalize::ScopeMatrix,
-        stats::DefMapFinalizationStatsSink,
-    },
+    build::{collect::TargetState, finalize::ScopeMatrix, stats::DefMapFinalizationStatsSink},
     model::Namespace,
 };
 
@@ -199,7 +197,7 @@ impl GeneratedCollector<'_> {
 
     fn is_item_enabled(&self, item: &ast::Item) -> bool {
         let cfg = CfgExpr::from_attrs(item);
-        CfgEvaluator::new(&self.state.cfg_options, &self.state.target_kind).is_enabled(&cfg)
+        self.state.cfg_evaluator().is_enabled(&cfg)
     }
 
     fn collect_named_def<T>(
@@ -320,7 +318,7 @@ impl GeneratedCollector<'_> {
             return true;
         }
 
-        let cfg = CfgEvaluator::new(&self.state.cfg_options, &self.state.target_kind);
+        let cfg = self.state.cfg_evaluator();
         attrs
             .cfg_attr_macro_export
             .iter()

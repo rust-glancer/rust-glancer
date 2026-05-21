@@ -1,3 +1,4 @@
+use rg_cfg_eval::CfgPredicate;
 use rg_parse::FileId;
 use rg_syntax::{
     AstNode as _, TextRange,
@@ -10,7 +11,7 @@ use rg_tt::{
 };
 use rg_workspace::RustEdition;
 
-use super::{CfgPredicate, normalized_syntax};
+use super::normalized_syntax;
 
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum MacroDefinitionItem {

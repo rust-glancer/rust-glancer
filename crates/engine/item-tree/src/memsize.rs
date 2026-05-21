@@ -1,14 +1,14 @@
 use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::{
-    CfgAttrMacroUse, CfgExpr, CfgGate, CfgPredicate, ConstItem, Documentation, EnumItem,
-    EnumVariantItem, ExternCrateItem, FieldItem, FieldKey, FieldList, FunctionItem, GenericArg,
-    GenericParams, ImplItem, ImportAlias, ItemKind, ItemNode, ItemTag, ItemTreeDb, ItemTreeId,
-    ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr,
-    MacroUseSelector, ModuleItem, ModuleSource, Mutability, Package, ParamItem, ParamKind,
-    StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, TypeBound, TypePath,
-    TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath,
-    UsePathSegment, UsePathSegmentKind, VisibilityLevel, WherePredicate,
+    CfgAttrMacroUse, ConstItem, Documentation, EnumItem, EnumVariantItem, ExternCrateItem,
+    FieldItem, FieldKey, FieldList, FunctionItem, GenericArg, GenericParams, ImplItem, ImportAlias,
+    ItemKind, ItemNode, ItemTag, ItemTreeDb, ItemTreeId, ItemTreeRef, MacroCallItem,
+    MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleItem,
+    ModuleSource, Mutability, Package, ParamItem, ParamKind, StaticItem, StructItem, TargetRoot,
+    TraitItem, TypeAliasItem, TypeBound, TypePath, TypePathSegment, TypeRef, UnionItem, UseImport,
+    UseImportKind, UseItem, UsePath, UsePathSegment, UsePathSegmentKind, VisibilityLevel,
+    WherePredicate,
     item::{ConstParamData, FunctionQualifiers, LifetimeParamData, TypeParamData},
 };
 
@@ -21,7 +21,6 @@ rg_memsize::impl_memory_size_children! {
     TargetRoot => target, root_file;
     ItemTreeRef => file_id, item;
     ItemNode => kind, name, name_span, visibility, cfg, docs, file_id, span;
-    CfgExpr => gates;
     Documentation => text;
     GenericParams => lifetimes, types, consts, where_predicates;
     LifetimeParamData => name, bounds;
@@ -82,36 +81,6 @@ impl MemorySize for MacroDefinitionAttrs {
         recorder.scope("cfg_attr_macro_export", |recorder| {
             self.cfg_attr_macro_export.record_memory_children(recorder);
         });
-    }
-}
-
-impl MemorySize for CfgGate {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        match self {
-            Self::Direct(predicate) => predicate.record_memory_children(recorder),
-            Self::CfgAttr { predicate, cfg } => {
-                recorder.scope("predicate", |recorder| {
-                    predicate.record_memory_children(recorder);
-                });
-                recorder.scope("cfg", |recorder| cfg.record_memory_children(recorder));
-            }
-        }
-    }
-}
-
-impl MemorySize for CfgPredicate {
-    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        match self {
-            Self::Atom(atom) => atom.record_memory_children(recorder),
-            Self::KeyValue { key, value } => {
-                recorder.scope("key", |recorder| key.record_memory_children(recorder));
-                recorder.scope("value", |recorder| value.record_memory_children(recorder));
-            }
-            Self::All(predicates) | Self::Any(predicates) | Self::Not(predicates) => {
-                predicates.record_memory_children(recorder);
-            }
-            Self::True | Self::False | Self::Invalid => {}
-        }
     }
 }
 

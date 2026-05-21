@@ -17,6 +17,7 @@ description = "Rust Glancer declarative macro expansion facade."
 anyhow.workspace = true
 parser.workspace = true
 ra-ap-rustc_lexer.workspace = true
+rg_cfg_eval.workspace = true
 rg_tt.workspace = true
 rg_syntax.workspace = true
 rustc-hash.workspace = true

@@ -1,10 +1,10 @@
 use rg_syntax::TextRange;
 
+use rg_cfg_eval::CfgExpr;
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
 pub use self::{
-    cfg::{CfgExpr, CfgGate, CfgPredicate},
     decl::{
         ConstItem, EnumItem, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,
         FunctionQualifiers, GenericParams, ImplItem, ParamItem, ParamKind, StaticItem, StructItem,
@@ -27,7 +27,6 @@ pub use self::{
 
 pub(crate) use self::decl::{ConstParamData, LifetimeParamData, TypeParamData};
 
-mod cfg;
 mod decl;
 mod docs;
 mod import;

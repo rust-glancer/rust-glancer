@@ -1,9 +1,9 @@
 use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::{
-    CargoMetadataConfig, CargoMetadataTarget, CfgKeyValue, CfgOptions, Package, PackageDependency,
-    PackageId, PackageOrigin, PackageSlot, PackageSource, RustEdition, SysrootCrate,
-    SysrootSources, Target, TargetKind, WorkspaceMetadata,
+    CargoMetadataConfig, CargoMetadataTarget, Package, PackageDependency, PackageId, PackageOrigin,
+    PackageSlot, PackageSource, RustEdition, SysrootCrate, SysrootSources, Target, TargetKind,
+    WorkspaceMetadata,
 };
 
 rg_memsize::impl_memory_size_leaf!(PackageSlot, PackageSource, SysrootCrate, RustEdition);
@@ -11,8 +11,6 @@ rg_memsize::impl_memory_size_leaf!(PackageSlot, PackageSource, SysrootCrate, Rus
 rg_memsize::impl_memory_size_children! {
     WorkspaceMetadata => workspace_root, packages, package_by_id;
     CargoMetadataConfig => target;
-    CfgOptions => atoms, key_values;
-    CfgKeyValue => key, value;
     SysrootSources => sysroot_root, library_root;
     Package => id, name, edition, origin, source, is_workspace_member, manifest_path, targets,
         cfg_options, dependencies;

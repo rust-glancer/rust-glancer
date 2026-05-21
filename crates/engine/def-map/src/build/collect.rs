@@ -14,6 +14,7 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 
+use rg_cfg_eval::{CfgEvaluator, CfgOptions};
 use rg_item_tree::{
     Documentation, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
     MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
@@ -21,7 +22,7 @@ use rg_item_tree::{
 };
 use rg_parse::{Package, Target};
 use rg_text::Name;
-use rg_workspace::{CfgOptions, RustEdition, TargetKind};
+use rg_workspace::{RustEdition, TargetKind};
 
 use crate::{
     DefId, DefMap, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
@@ -31,12 +32,9 @@ use crate::{
     model::{ModuleScopeBuilder, Namespace},
 };
 
-use super::{
-    cfg::CfgEvaluator,
-    macros::{
-        ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
-        MacroUseImport, TextualMacroScopes,
-    },
+use super::macros::{
+    ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
+    MacroUseImport, TextualMacroScopes,
 };
 
 /// Collected state for one target before fixed-point import resolution.
@@ -66,6 +64,13 @@ impl TargetState {
             call,
             state: MacroDirectiveState::Pending,
         });
+    }
+
+    pub(super) fn cfg_evaluator(&self) -> CfgEvaluator<'_> {
+        CfgEvaluator::new(
+            &self.cfg_options,
+            matches!(self.target_kind, TargetKind::Test | TargetKind::Bench),
+        )
     }
 }
 
@@ -311,7 +316,7 @@ impl<'db> TargetScopeCollector<'db> {
     }
 
     fn is_item_enabled(&self, item: &ItemNode) -> bool {
-        CfgEvaluator::new(self.cfg_options, &self.target_kind).is_enabled(&item.cfg)
+        self.cfg_evaluator().is_enabled(&item.cfg)
     }
 
     /// Records one module-scope local definition and inserts its direct binding into the base scope.
@@ -435,7 +440,7 @@ impl<'db> TargetScopeCollector<'db> {
             return true;
         }
 
-        let cfg = CfgEvaluator::new(self.cfg_options, &self.target_kind);
+        let cfg = self.cfg_evaluator();
         attrs
             .cfg_attr_macro_export
             .iter()
@@ -731,7 +736,7 @@ impl<'db> TargetScopeCollector<'db> {
 
     fn active_macro_use_selector(&self, attr: &MacroUseAttr) -> Option<MacroUseSelector> {
         let mut selector = attr.direct.clone();
-        let cfg = CfgEvaluator::new(self.cfg_options, &self.target_kind);
+        let cfg = self.cfg_evaluator();
 
         for cfg_attr in &attr.cfg_attr_macro_use {
             if !cfg.is_predicate_enabled(&cfg_attr.predicate) {
@@ -744,5 +749,12 @@ impl<'db> TargetScopeCollector<'db> {
         }
 
         selector
+    }
+
+    fn cfg_evaluator(&self) -> CfgEvaluator<'_> {
+        CfgEvaluator::new(
+            self.cfg_options,
+            matches!(self.target_kind, TargetKind::Test | TargetKind::Bench),
+        )
     }
 }

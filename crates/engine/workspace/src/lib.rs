@@ -6,6 +6,7 @@ use std::{
     process::Command,
 };
 
+use rg_cfg_eval::CfgOptions;
 use serde::{Deserialize, Serialize};
 
 mod memsize;
@@ -149,7 +150,7 @@ impl WorkspaceMetadata {
         config: &CargoMetadataConfig,
     ) -> WorkspaceMetadataResult<Self> {
         let target_triple = config.resolved_target_triple()?;
-        let target_cfg = CfgOptions::from_rustc_target(&target_triple)?;
+        let target_cfg = cfg_options_from_rustc_target(&target_triple)?;
         let metadata = config
             .metadata_command_for_target(manifest_path.as_ref(), &target_triple)?
             .exec()
@@ -793,146 +794,26 @@ impl Package {
     }
 }
 
-/// Active cfg facts for one package under one Cargo target selection.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
-pub struct CfgOptions {
-    atoms: Vec<String>,
-    key_values: Vec<CfgKeyValue>,
-}
+fn cfg_options_from_rustc_target(target: &str) -> WorkspaceMetadataResult<CfgOptions> {
+    let output = Command::new("rustc")
+        .args(["--print", "cfg", "--target", target])
+        .output()
+        .map_err(|error| WorkspaceMetadataError::RustcTargetCfg {
+            target: target.to_string(),
+            error,
+        })?;
 
-impl CfgOptions {
-    fn from_rustc_target(target: &str) -> WorkspaceMetadataResult<Self> {
-        let output = Command::new("rustc")
-            .args(["--print", "cfg", "--target", target])
-            .output()
-            .map_err(|error| WorkspaceMetadataError::RustcTargetCfg {
-                target: target.to_string(),
-                error,
-            })?;
-
-        if !output.status.success() {
-            return Err(WorkspaceMetadataError::RustcTargetCfgCommandFailed {
-                target: target.to_string(),
-                status: output.status.to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-            });
-        }
-
-        Ok(Self::from_rustc_cfg_output(&String::from_utf8_lossy(
-            &output.stdout,
-        )))
+    if !output.status.success() {
+        return Err(WorkspaceMetadataError::RustcTargetCfgCommandFailed {
+            target: target.to_string(),
+            status: output.status.to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+        });
     }
 
-    fn current_host() -> Self {
-        let mut options = Self::default();
-
-        if cfg!(unix) {
-            options.insert_atom("unix");
-        }
-        if cfg!(windows) {
-            options.insert_atom("windows");
-        }
-
-        options.insert_key_value("target_arch", std::env::consts::ARCH);
-        options.insert_key_value("target_os", std::env::consts::OS);
-        options.insert_key_value("target_family", std::env::consts::FAMILY);
-        options.insert_key_value("target_pointer_width", usize::BITS.to_string());
-
-        #[cfg(target_env = "gnu")]
-        options.insert_key_value("target_env", "gnu");
-        #[cfg(target_env = "msvc")]
-        options.insert_key_value("target_env", "msvc");
-        #[cfg(target_env = "musl")]
-        options.insert_key_value("target_env", "musl");
-        #[cfg(target_env = "")]
-        options.insert_key_value("target_env", "");
-
-        #[cfg(target_vendor = "apple")]
-        options.insert_key_value("target_vendor", "apple");
-        #[cfg(target_vendor = "pc")]
-        options.insert_key_value("target_vendor", "pc");
-        #[cfg(target_vendor = "unknown")]
-        options.insert_key_value("target_vendor", "unknown");
-
-        options
-    }
-
-    fn from_rustc_cfg_output(output: &str) -> Self {
-        let mut options = Self::default();
-
-        for line in output
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty())
-        {
-            if let Some((key, value)) = line.split_once('=') {
-                options.insert_key_value(key, cfg_value_from_rustc(value));
-            } else {
-                options.insert_atom(line);
-            }
-        }
-
-        options
-    }
-
-    pub fn insert_atom(&mut self, atom: impl Into<String>) {
-        let atom = atom.into();
-        if !self.atoms.contains(&atom) {
-            self.atoms.push(atom);
-        }
-    }
-
-    pub fn insert_key_value(&mut self, key: impl Into<String>, value: impl Into<String>) {
-        let key_value = CfgKeyValue {
-            key: key.into(),
-            value: value.into(),
-        };
-        if !self.key_values.contains(&key_value) {
-            self.key_values.push(key_value);
-        }
-    }
-
-    pub fn contains_atom(&self, atom: &str) -> bool {
-        self.atoms.iter().any(|known| known == atom)
-    }
-
-    pub fn contains_key_value(&self, key: &str, value: &str) -> bool {
-        self.key_values
-            .iter()
-            .any(|known| known.key == key && known.value == value)
-    }
-
-    pub fn atoms(&self) -> &[String] {
-        &self.atoms
-    }
-
-    pub fn key_values(&self) -> &[CfgKeyValue] {
-        &self.key_values
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct CfgKeyValue {
-    key: String,
-    value: String,
-}
-
-impl CfgKeyValue {
-    pub fn key(&self) -> &str {
-        &self.key
-    }
-
-    pub fn value(&self) -> &str {
-        &self.value
-    }
-}
-
-fn cfg_value_from_rustc(value: &str) -> String {
-    value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .unwrap_or(value)
-        .to_string()
+    Ok(CfgOptions::from_rustc_cfg_output(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 /// Normalized target metadata with one target kind per target.

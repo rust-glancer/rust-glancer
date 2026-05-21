@@ -18,10 +18,7 @@ use crate::{
     DefId, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
     LocalDefId, LocalDefKind, LocalDefRef, LocalImplData, ModuleData, ModuleId, ModuleOrigin,
     ModuleRef, ModuleScope, ScopeBinding, ScopeBindingOrigin,
-    build::{
-        cfg::CfgEvaluator, collect::TargetState, finalize::ScopeMatrix,
-        macros::MacroExpansionApplyResult,
-    },
+    build::{collect::TargetState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult},
     model::Namespace,
 };
 
@@ -125,7 +122,7 @@ impl IncludedCollector<'_> {
     }
 
     fn is_item_enabled(&self, item: &rg_item_tree::ItemNode) -> bool {
-        CfgEvaluator::new(&self.state.cfg_options, &self.state.target_kind).is_enabled(&item.cfg)
+        self.state.cfg_evaluator().is_enabled(&item.cfg)
     }
 
     fn collect_local_def(
@@ -261,7 +258,7 @@ impl IncludedCollector<'_> {
             return true;
         }
 
-        let cfg = CfgEvaluator::new(&self.state.cfg_options, &self.state.target_kind);
+        let cfg = self.state.cfg_evaluator();
         attrs
             .cfg_attr_macro_export
             .iter()
@@ -591,7 +588,7 @@ impl IncludedCollector<'_> {
         // Merge direct `#[macro_use]` with active `#[cfg_attr(..., macro_use)]` selectors into the
         // single selector used by textual and extern-crate macro-use handling.
         let mut selector = attr.direct.clone();
-        let cfg = CfgEvaluator::new(&self.state.cfg_options, &self.state.target_kind);
+        let cfg = self.state.cfg_evaluator();
 
         for cfg_attr in &attr.cfg_attr_macro_use {
             if !cfg.is_predicate_enabled(&cfg_attr.predicate) {

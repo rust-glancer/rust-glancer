@@ -8,6 +8,7 @@ members = [
   "crates/engine/parser",
   "crates/engine/syntax",
   "crates/engine/tt",
+  "crates/engine/cfg-eval",
   "crates/engine/macro-expand",
   "crates/engine/parse",
   "crates/engine/item-tree",
@@ -97,6 +98,7 @@ winnow = "0.7.13"
 
 rg_syntax = { path = "crates/engine/syntax" }
 rg_tt = { path = "crates/engine/tt" }
+rg_cfg_eval = { path = "crates/engine/cfg-eval" }
 rg_macro_expand = { path = "crates/engine/macro-expand" }
 
 rg_lsp_server = { path = "crates/lsp/server" }

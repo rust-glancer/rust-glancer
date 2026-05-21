@@ -6,7 +6,8 @@
 
 use std::path::Path;
 
-use rg_workspace::{CfgOptions, PackageId, PackageSlot, PackageSource, RustEdition, TargetKind};
+use rg_cfg_eval::CfgOptions;
+use rg_workspace::{PackageId, PackageSlot, PackageSource, RustEdition, TargetKind};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{Fingerprint, fingerprint};
