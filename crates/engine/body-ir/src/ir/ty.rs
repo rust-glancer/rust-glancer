@@ -277,9 +277,23 @@ impl BodyTy {
         }
     }
 
-    pub fn peel_references(&self) -> &Self {
+    pub fn reference_inner(&self) -> Option<(&Self, BodyRefMutability)> {
         match self {
-            Self::Reference { inner, .. } => inner.peel_references(),
+            Self::Reference { mutability, inner } => Some((inner, *mutability)),
+            Self::Unit
+            | Self::Never
+            | Self::Primitive(_)
+            | Self::Syntax(_)
+            | Self::LocalNominal(_)
+            | Self::Nominal(_)
+            | Self::SelfTy(_)
+            | Self::Unknown => None,
+        }
+    }
+
+    pub fn after_reference_deref(&self) -> &Self {
+        match self {
+            Self::Reference { inner, .. } => inner.after_reference_deref(),
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
@@ -291,8 +305,8 @@ impl BodyTy {
         }
     }
 
-    pub fn local_nominals(&self) -> &[BodyLocalNominalTy] {
-        match self.peel_references() {
+    pub fn as_local_nominals(&self) -> &[BodyLocalNominalTy] {
+        match self {
             Self::LocalNominal(types) => types,
             Self::Unit
             | Self::Never
@@ -305,8 +319,8 @@ impl BodyTy {
         }
     }
 
-    pub fn nominal_tys(&self) -> &[BodyNominalTy] {
-        match self.peel_references() {
+    pub fn as_nominals(&self) -> &[BodyNominalTy] {
+        match self {
             Self::Nominal(types) | Self::SelfTy(types) => types,
             Self::Unit
             | Self::Never
@@ -318,12 +332,19 @@ impl BodyTy {
         }
     }
 
-    pub fn local_items(&self) -> Vec<BodyItemRef> {
-        self.local_nominals().iter().map(|ty| ty.item).collect()
+    pub fn local_nominals_after_reference_deref(&self) -> &[BodyLocalNominalTy] {
+        self.after_reference_deref().as_local_nominals()
     }
 
-    pub fn type_defs(&self) -> Vec<TypeDefRef> {
-        self.nominal_tys().iter().map(|ty| ty.def).collect()
+    pub fn nominals_after_reference_deref(&self) -> &[BodyNominalTy] {
+        self.after_reference_deref().as_nominals()
+    }
+
+    pub fn type_defs_after_reference_deref(&self) -> Vec<TypeDefRef> {
+        self.nominals_after_reference_deref()
+            .iter()
+            .map(|ty| ty.def)
+            .collect()
     }
 
     pub(crate) fn shrink_to_fit(&mut self) {

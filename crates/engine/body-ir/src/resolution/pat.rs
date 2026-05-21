@@ -358,16 +358,16 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
 }
 
 fn enum_ty_candidates(ty: &BodyTy) -> Vec<&BodyNominalTy> {
-    // `nominal_tys` intentionally peels references for editor usefulness. Pattern-propagated
-    // binding types may therefore omit borrow information until references are modeled precisely.
-    ty.nominal_tys()
+    // Pattern propagation treats reference wrappers as transparent so enum payload inference
+    // remains useful. The explicit accessor keeps that policy out of plain type inspection.
+    ty.nominals_after_reference_deref()
         .iter()
         .filter(|ty| matches!(ty.def.id, TypeDefId::Enum(_)))
         .collect()
 }
 
 fn local_enum_ty_candidates(ty: &BodyTy) -> Vec<&BodyLocalNominalTy> {
-    ty.local_nominals().iter().collect()
+    ty.local_nominals_after_reference_deref().iter().collect()
 }
 
 fn variant_field<'a>(fields: &'a FieldList, key: &FieldKey) -> Option<&'a FieldItem> {

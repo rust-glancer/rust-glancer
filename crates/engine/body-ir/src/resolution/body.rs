@@ -365,7 +365,10 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 
         // Local and semantic fields use the same substitution idea, but local items need their
         // declaration scope so field types can mention body-local names.
-        for local_ty in self.body.exprs[base].ty.local_nominals() {
+        for local_ty in self.body.exprs[base]
+            .ty
+            .local_nominals_after_reference_deref()
+        {
             let Some(field_ref) = self.local_field_for_type(local_ty.item, field) else {
                 continue;
             };
@@ -384,7 +387,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             push_unique(&mut field_tys, field_ty);
         }
 
-        for nominal_ty in self.body.exprs[base].ty.nominal_tys() {
+        for nominal_ty in self.body.exprs[base].ty.nominals_after_reference_deref() {
             let Some(field_ref) = self.semantic_ir.field_for_type(nominal_ty.def, field)? else {
                 continue;
             };
@@ -434,7 +437,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 
         // Method lookup is intentionally shallow: exact local item identity for body-local impls,
         // and nominal type plus lightweight impl-argument matching for semantic impls.
-        for local_ty in receiver_ty.local_nominals() {
+        for local_ty in receiver_ty.local_nominals_after_reference_deref() {
             for function_ref in self.local_functions_for_type(local_ty)? {
                 let Some(function_data) = self.body.local_function(function_ref.function) else {
                     continue;
@@ -451,7 +454,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             }
         }
 
-        for nominal_ty in receiver_ty.nominal_tys() {
+        for nominal_ty in receiver_ty.nominals_after_reference_deref() {
             for function_ref in self.semantic_functions_for_type(nominal_ty, method_name)? {
                 let Some(function_data) = self.semantic_ir.function_data(function_ref)? else {
                     continue;
@@ -1008,7 +1011,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         // `Action::Start` and `Widget::new`, so they need an explicit pass.
         let mut variants = Vec::new();
         let mut variant_tys = Vec::new();
-        for local_ty in prefix_ty.local_nominals() {
+        for local_ty in prefix_ty.as_local_nominals() {
             let Some(variant_ref) = self.local_enum_variant_for_type(local_ty.item, last_segment)
             else {
                 continue;
@@ -1022,7 +1025,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 BodyTy::LocalNominal(vec![local_ty.clone()]),
             );
         }
-        for nominal_ty in prefix_ty.nominal_tys() {
+        for nominal_ty in prefix_ty.as_nominals() {
             if !matches!(nominal_ty.def.id, TypeDefId::Enum(_)) {
                 continue;
             }
@@ -1044,7 +1047,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         // Body-local associated consts are stored on local impls, not in lexical scopes. Once the
         // prefix type is known, jump through applicable inherent impls and use the const signature
         // as the expression type.
-        for local_ty in prefix_ty.local_nominals() {
+        for local_ty in prefix_ty.as_local_nominals() {
             if let Some((item_ref, ty)) =
                 self.local_associated_value_item_for_type(local_ty, last_segment)?
             {
@@ -1056,7 +1059,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         // deliberately optimistic, following the same "prefer useful candidates over false
         // negatives" policy as dot completion.
         let mut functions = Vec::new();
-        for local_ty in prefix_ty.local_nominals() {
+        for local_ty in prefix_ty.as_local_nominals() {
             for function_ref in self.local_associated_functions_for_type(local_ty)? {
                 let Some(function_data) = self.body.local_function(function_ref.function) else {
                     continue;
@@ -1066,7 +1069,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 }
             }
         }
-        for nominal_ty in prefix_ty.nominal_tys() {
+        for nominal_ty in prefix_ty.as_nominals() {
             for function_ref in self.semantic_associated_functions_for_type(nominal_ty)? {
                 let Some(function_data) = self.semantic_ir.function_data(function_ref)? else {
                     continue;

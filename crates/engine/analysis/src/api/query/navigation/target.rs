@@ -358,7 +358,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         ty: &BodyTy,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
         let mut local_targets = Vec::new();
-        for ty in ty.local_nominals() {
+        for ty in ty.local_nominals_after_reference_deref() {
             if let Some(target) = self.navigation_target_for_body_item(ty.item)? {
                 local_targets.push(target);
             }
@@ -368,7 +368,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         }
 
         let mut targets = Vec::new();
-        for ty in ty.nominal_tys() {
+        for ty in ty.nominals_after_reference_deref() {
             if let Some(target) = self.navigation_target_for_type_def(ty.def)? {
                 targets.push(target);
             }

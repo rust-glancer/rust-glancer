@@ -302,7 +302,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         };
         let prefix_ty = self.ty_from_type_ref_in_scope_with_subst(&prefix_ty_ref, scope, subst)?;
 
-        for ty in prefix_ty.local_nominals() {
+        for ty in prefix_ty.as_local_nominals() {
             let Some(item_ref) = self.local_associated_type_item_for_type(ty, name)? else {
                 continue;
             };

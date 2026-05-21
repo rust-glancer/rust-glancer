@@ -785,7 +785,7 @@ fn nominal_type_names_at(
 
     let semantic_ir = host.state.semantic_ir.read_txn(unexpected_package_loader());
     let def_map = host.state.def_map.read_txn(unexpected_package_loader());
-    ty.type_defs()
+    ty.type_defs_after_reference_deref()
         .into_iter()
         .filter_map(|ty| {
             semantic_ir

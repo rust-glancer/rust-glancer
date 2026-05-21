@@ -41,10 +41,10 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
             replace: site.member_prefix_span,
         };
         let mut completions = Vec::new();
-        for ty in receiver_ty.local_nominals() {
+        for ty in receiver_ty.local_nominals_after_reference_deref() {
             self.push_local_type_completions(ty, edit, &mut completions)?;
         }
-        for ty in receiver_ty.nominal_tys() {
+        for ty in receiver_ty.nominals_after_reference_deref() {
             self.push_type_completions(ty, edit, &mut completions)?;
         }
         // Keep snapshot output and editor ordering stable across equivalent resolution paths.

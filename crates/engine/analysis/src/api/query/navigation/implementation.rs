@@ -128,10 +128,10 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         ty: &BodyTy,
         targets: &mut Vec<NavigationTarget>,
     ) -> anyhow::Result<()> {
-        for local_ty in ty.local_nominals() {
+        for local_ty in ty.local_nominals_after_reference_deref() {
             self.push_local_type_targets(local_ty.item, targets)?;
         }
-        for ty in ty.nominal_tys() {
+        for ty in ty.nominals_after_reference_deref() {
             self.push_type_def_targets(ty.def, targets)?;
         }
         Ok(())
@@ -252,7 +252,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         receiver_ty: &BodyTy,
         targets: &mut Vec<NavigationTarget>,
     ) -> anyhow::Result<()> {
-        for ty in receiver_ty.nominal_tys() {
+        for ty in receiver_ty.nominals_after_reference_deref() {
             for trait_impl in self.0.semantic_ir.trait_impls_for_type(ty.def)? {
                 if trait_impl.trait_ref != trait_ref {
                     continue;
