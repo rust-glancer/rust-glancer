@@ -1,3 +1,4 @@
+#![allow(clippy::result_unit_err)]
 //! Adapted from rust-analyzer's `tt` crate.
 //!
 //! A "Parser" structure for token trees. We use this when parsing a declarative

@@ -318,22 +318,17 @@ pub(super) enum BuiltinMacroDisposition {
 
 /// Classifies builtin macros that are known even when no user macro binding resolves.
 ///
-// Note: We intentionally take a shortcut here. We support either unqalified builtin path,
-// or qualified `std`/`core`-based paths. It means that we don't do "real" resolution for
-// builtins and builtins can potentially shadow custom `cfg_select` from custom `std` module.
-// But let's be honest -- creating your own `std::cfg_select` that will not work like real
-// `cfg_select` is stupid, and the user should suffer for that. For 99.9% of normal cases
-// it will work, and "proper solution" is inadequately more complex.
+/// We intentionally take a small shortcut here. Unqualified builtins and `std`/`core`-qualified
+/// builtin-shaped paths cover the realistic call sites, while a fully resolution-aware builtin
+/// prefix model would add a lot of complexity for rare local `std`/`core` shadowing cases.
 pub(super) fn builtin_macro_disposition(path: &ImportPath) -> Option<BuiltinMacroDisposition> {
-    let Some(name) = relative_single_name(path).or_else(|| {
+    let name = relative_single_name(path).or_else(|| {
         // Check if we have two segments and the first one is either `std` or `core`.
         let [PathSegment::Name(root), PathSegment::Name(name)] = path.segments.as_slice() else {
             return None;
         };
         matches!(root.as_str(), "std" | "core").then_some(name)
-    }) else {
-        return None;
-    };
+    })?;
 
     match name.as_str() {
         // Expression, diagnostic, or assembly builtins do not contribute named items to def-map.

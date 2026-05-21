@@ -508,7 +508,7 @@ impl MacroExpansionAttempt {
     ) -> anyhow::Result<Self> {
         // First normalize the syntactic call into a path and argument list. Calls that are not
         // item-position macro invocations are marked done so the worklist can move on.
-        let Some(path_text) = call.path.as_deref().or_else(|| call.callee.as_deref()) else {
+        let Some(path_text) = call.path.as_deref().or(call.callee.as_deref()) else {
             return Ok(Self::skipped(state.target, call_id, call));
         };
         let Some(args) = call.args.as_ref() else {

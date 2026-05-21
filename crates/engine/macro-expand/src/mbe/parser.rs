@@ -129,6 +129,7 @@ pub(crate) enum Op {
         delimiter: tt::Delimiter,
     },
     Literal(tt::Literal),
+    #[allow(clippy::box_collection)] // To keep code closer to original
     Punct(Box<Vec<tt::Punct>>),
     Ident(tt::Ident),
 }

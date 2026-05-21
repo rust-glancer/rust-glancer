@@ -193,6 +193,7 @@ impl ProjectBuilder {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_resident_state(
     workspace: WorkspaceMetadata,
     cargo_metadata_config: CargoMetadataConfig,

@@ -18,6 +18,7 @@ use super::{FinalizeTargetStates, finalize_target_states};
 use crate::{DefMapDb, DefMapReadTxn, Package as DefMapPackage, PackageSlot};
 
 /// Rebuilds selected package def maps against the previous frozen graph.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn rebuild_packages(
     old: &DefMapDb,
     old_read: &DefMapReadTxn<'_>,

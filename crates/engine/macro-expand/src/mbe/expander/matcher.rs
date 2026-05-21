@@ -371,6 +371,7 @@ struct MatchState<'t> {
 /// - `bb_items`: the set of items that are waiting for the black-box parser.
 /// - `error_items`: the set of items in errors, used for error-resilient parsing
 #[inline]
+#[allow(clippy::too_many_arguments)]
 fn match_loop_inner<'t>(
     ctx_edition: impl Copy + Fn(SyntaxContext) -> Edition,
     src: TtIter<'t>,
@@ -818,6 +819,7 @@ fn match_meta_var<'t>(
             // rustc [explicitly checks the next token][1].
             // [0]: https://github.com/rust-lang/rust/issues/86730
             // [1]: https://github.com/rust-lang/rust/blob/f0c4da499/compiler/rustc_expand/src/mbe/macro_parser.rs#L576
+            #[allow(clippy::single_match)]
             match input.peek() {
                 Some(TtElement::Leaf(tt::Leaf::Ident(it))) => {
                     let is_err = if it.is_raw.no() && matches!(expr, ExprKind::Expr2021) {

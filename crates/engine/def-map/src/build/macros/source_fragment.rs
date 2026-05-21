@@ -146,13 +146,9 @@ impl SourceFragmentCollector<'_> {
         item: &rg_item_tree::ItemNode,
         source: ItemTreeRef,
     ) -> Option<LocalDefId> {
-        let Some(kind) = LocalDefKind::from_item_tag(item.kind.tag()) else {
-            return None;
-        };
+        let kind = LocalDefKind::from_item_tag(item.kind.tag())?;
         let namespace = kind.namespace();
-        let Some(name) = item.name.clone() else {
-            return None;
-        };
+        let name = item.name.clone()?;
 
         // Local definitions become immediately visible in both the frozen def-map being built and
         // the mutable scope snapshot used by the macro expansion fixed-point loop.

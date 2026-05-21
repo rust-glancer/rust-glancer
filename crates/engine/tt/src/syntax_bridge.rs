@@ -463,7 +463,7 @@ fn push_token_tree_children(
 
     for (index, child) in children.iter().enumerate() {
         match child {
-            NodeOrToken::Node(tree) => push_nested_token_tree(builder, &tree, span_for_range),
+            NodeOrToken::Node(tree) => push_nested_token_tree(builder, tree, span_for_range),
             NodeOrToken::Token(token)
                 if Some(token.text_range()) == left || Some(token.text_range()) == right => {}
             NodeOrToken::Token(token) => {
