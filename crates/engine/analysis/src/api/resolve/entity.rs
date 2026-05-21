@@ -307,7 +307,7 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
             BodyTypePathResolution::Traits(traits) => {
                 traits.into_iter().map(ResolvedEntity::Trait).collect()
             }
-            BodyTypePathResolution::Unknown => Vec::new(),
+            BodyTypePathResolution::Primitive(_) | BodyTypePathResolution::Unknown => Vec::new(),
         }
     }
 }

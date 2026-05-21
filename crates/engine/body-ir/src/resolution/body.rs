@@ -337,7 +337,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                     BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect()),
                 ));
             }
-            BodyTypePathResolution::TypeDefs(_)
+            BodyTypePathResolution::Primitive(_)
+            | BodyTypePathResolution::TypeDefs(_)
             | BodyTypePathResolution::Traits(_)
             | BodyTypePathResolution::Unknown => {}
         }
@@ -826,7 +827,8 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                     BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect()),
                 ));
             }
-            BodyTypePathResolution::TypeDefs(_)
+            BodyTypePathResolution::Primitive(_)
+            | BodyTypePathResolution::TypeDefs(_)
             | BodyTypePathResolution::Traits(_)
             | BodyTypePathResolution::Unknown => {}
         }
@@ -1206,6 +1208,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             BodyTypePathResolution::TypeDefs(types) => {
                 BodyTy::Nominal(types.into_iter().map(BodyNominalTy::bare).collect())
             }
+            BodyTypePathResolution::Primitive(primitive) => BodyTy::Primitive(primitive),
             BodyTypePathResolution::Traits(_) | BodyTypePathResolution::Unknown => BodyTy::Unknown,
         }
     }

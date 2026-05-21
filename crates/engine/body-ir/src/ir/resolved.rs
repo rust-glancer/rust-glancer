@@ -6,6 +6,7 @@ use rg_semantic_ir::{
 use super::ids::{
     BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef, BodyItemRef, BodyValueItemRef,
 };
+use super::ty::BodyPrimitiveTy;
 
 /// Stable field identity across module-level Semantic IR and body-local declarations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
@@ -55,10 +56,17 @@ pub enum BodyResolution {
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum BodyTypePathResolution {
     BodyLocal(BodyItemRef),
+    Primitive(BodyPrimitiveTy),
     SelfType(Vec<TypeDefRef>),
     TypeDefs(Vec<TypeDefRef>),
     Traits(Vec<TraitRef>),
     Unknown,
+}
+
+impl BodyTypePathResolution {
+    pub fn is_primitive(&self, primitive: &BodyPrimitiveTy) -> bool {
+        matches!(self, Self::Primitive(resolved) if resolved == primitive)
+    }
 }
 
 impl From<SemanticTypePathResolution> for BodyTypePathResolution {

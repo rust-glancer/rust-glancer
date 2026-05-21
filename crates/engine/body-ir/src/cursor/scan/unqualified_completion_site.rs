@@ -117,10 +117,14 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         visible_bindings: usize,
         path: &TypePath,
     ) -> Option<UnqualifiedCompletionSite> {
-        if path.absolute || path.segments.len() != 1 {
+        if path.absolute {
             return None;
         }
-        let segment = path.segments.first()?;
+        // This scanner owns only unqualified completion sites. Qualified type paths are handled by
+        // `PathCompletionSiteScanner`, because their candidates depend on the resolved qualifier.
+        let [segment] = path.segments.as_slice() else {
+            return None;
+        };
         if !segment.span.touches(self.offset) {
             return None;
         }
@@ -129,6 +133,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
             body,
             scope,
             member_prefix_span: segment.span,
+            member_prefix: self.prefix_text(segment.name.as_str(), segment.span),
             namespace: UnqualifiedCompletionNamespace::Types,
             visible_bindings,
         })
@@ -160,12 +165,25 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
                 body,
                 scope,
                 member_prefix_span: span,
+                member_prefix: self
+                    .prefix_text(def_map_path.single_name().unwrap_or_default(), span),
                 namespace: UnqualifiedCompletionNamespace::Values,
                 visible_bindings,
             },
             path.source_span.len(),
             best,
         );
+    }
+
+    fn prefix_text(&self, name: &str, span: rg_parse::Span) -> String {
+        // The lowered name is the complete segment text, while completion only needs the source
+        // prefix before the cursor. Walk back to a UTF-8 boundary for non-ASCII identifiers.
+        let end = self.offset.saturating_sub(span.text.start).min(span.len());
+        let mut end = usize::try_from(end).unwrap_or(name.len());
+        while !name.is_char_boundary(end) {
+            end = end.saturating_sub(1);
+        }
+        name.get(..end).unwrap_or(name).to_string()
     }
 
     /// Keeps nested path behavior predictable by choosing the shortest matching path syntax.

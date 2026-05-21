@@ -332,7 +332,9 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
                 }
                 Ok(targets)
             }
-            BodyTypePathResolution::Unknown => Ok(Vec::new()),
+            BodyTypePathResolution::Primitive(_) | BodyTypePathResolution::Unknown => {
+                Ok(Vec::new())
+            }
         }
     }
 }

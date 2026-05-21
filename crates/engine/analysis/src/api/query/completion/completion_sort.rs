@@ -27,6 +27,7 @@ pub(super) enum CompletionSortPolicy {
 pub(super) enum CompletionSortPriority {
     BodyScope { distance: usize },
     ModuleScope,
+    Primitive,
     Prelude,
     ExternRoot,
 }
@@ -142,8 +143,9 @@ impl SortTextComponent for CompletionSortPriority {
                 write!(out, "00-body:{distance:04}").expect("string writes should not fail");
             }
             Self::ModuleScope => out.push_str("01-module"),
-            Self::Prelude => out.push_str("02-prelude"),
-            Self::ExternRoot => out.push_str("03-extern"),
+            Self::Primitive => out.push_str("02-primitive"),
+            Self::Prelude => out.push_str("03-prelude"),
+            Self::ExternRoot => out.push_str("04-extern"),
         }
     }
 }

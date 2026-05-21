@@ -142,8 +142,8 @@ pub fn use_it(id: u8, name: u8) -> User {
             - s0 parent <none>: v0, v1
             - s1 parent s0: v2, v3
             bindings
-            - v0 param id `id`: u8 => syntax u8 @ 6:15-6:17
-            - v1 param name `name`: u8 => syntax u8 @ 6:23-6:27
+            - v0 param id `id`: u8 => u8 @ 6:15-6:17
+            - v1 param name `name`: u8 => u8 @ 6:23-6:27
             - v2 let base `base` => nominal struct body_record_expr_fixture[lib]::crate::User @ 7:9-7:13
             - v3 let defaults `defaults` => nominal struct body_record_expr_fixture[lib]::crate::User @ 8:9-8:17
             body
@@ -152,9 +152,9 @@ pub fn use_it(id: u8, name: u8) -> User {
                 initializer
                   expr e2 record User -> item struct body_record_expr_fixture[lib]::crate::User => nominal struct body_record_expr_fixture[lib]::crate::User @ 7:16-7:33
                     field id
-                      expr e0 path id -> local v0 => syntax u8 @ 7:23-7:25
+                      expr e0 path id -> local v0 => u8 @ 7:23-7:25
                     field name
-                      expr e1 path name -> local v1 => syntax u8 @ 7:27-7:31
+                      expr e1 path name -> local v1 => u8 @ 7:27-7:31
               stmt s1 let v3 @ 8:5-8:39
                 initializer
                   expr e4 record User -> item struct body_record_expr_fixture[lib]::crate::User => nominal struct body_record_expr_fixture[lib]::crate::User @ 8:20-8:38
@@ -309,7 +309,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
             bindings
             - v0 param pair `mut pair`: (u8, u8) => syntax (u8, u8) @ 9:15-9:23
             - v1 param slots `mut slots`: [u8; 3] => syntax [u8; 3] @ 9:35-9:44
-            - v2 param value `value`: u8 => syntax u8 @ 9:55-9:60
+            - v2 param value `value`: u8 => u8 @ 9:55-9:60
             - v3 param user `user`: User => nominal struct body_common_expr_fixture[lib]::crate::User @ 9:66-9:70
             - v4 let tuple `tuple` => <unknown> @ 10:9-10:14
             - v5 let array `array` => <unknown> @ 11:9-11:14
@@ -319,7 +319,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
             - v9 let inclusive `inclusive` => <unknown> @ 15:9-15:18
             - v10 let full `full` => <unknown> @ 16:9-16:13
             - v11 let casted `casted` => nominal struct body_common_expr_fixture[lib]::crate::User @ 17:9-17:15
-            - v12 let field_after_cast `field_after_cast` => syntax u8 @ 18:9-18:25
+            - v12 let field_after_cast `field_after_cast` => u8 @ 18:9-18:25
             - v13 let unary `unary` => <unknown> @ 19:9-19:14
             - v14 let binary `binary` => <unknown> @ 20:9-20:15
             - v15 let hole `hole` => <unknown> @ 23:9-23:13
@@ -329,16 +329,16 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                 initializer
                   expr e3 tuple => <unknown> @ 10:17-10:33
                     field
-                      expr e0 path value -> local v2 => syntax u8 @ 10:18-10:23
+                      expr e0 path value -> local v2 => u8 @ 10:18-10:23
                     field
-                      expr e2 field id -> field struct body_common_expr_fixture[lib]::crate::User::id => syntax u8 @ 10:25-10:32
+                      expr e2 field id -> field struct body_common_expr_fixture[lib]::crate::User::id => u8 @ 10:25-10:32
                         base
                           expr e1 path user -> local v3 => nominal struct body_common_expr_fixture[lib]::crate::User @ 10:25-10:29
               stmt s1 let v5 @ 11:5-11:31
                 initializer
                   expr e7 array => <unknown> @ 11:17-11:30
                     element
-                      expr e4 path value -> local v2 => syntax u8 @ 11:18-11:23
+                      expr e4 path value -> local v2 => u8 @ 11:18-11:23
                     element
                       expr e5 literal int `1` => <unknown> @ 11:25-11:26
                     element
@@ -347,7 +347,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                 initializer
                   expr e10 repeat_array => <unknown> @ 12:18-12:28
                     initializer
-                      expr e8 path value -> local v2 => syntax u8 @ 12:19-12:24
+                      expr e8 path value -> local v2 => u8 @ 12:19-12:24
                     repeat
                       expr e9 literal int `3` => <unknown> @ 12:26-12:27
               stmt s3 let v7 @ 13:5-13:28
@@ -363,14 +363,14 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                     start
                       expr e14 literal int `1` => <unknown> @ 14:21-14:22
                     end
-                      expr e15 path value -> local v2 => syntax u8 @ 14:24-14:29
+                      expr e15 path value -> local v2 => u8 @ 14:24-14:29
               stmt s5 let v9 @ 15:5-15:35
                 initializer
                   expr e19 range ..= => <unknown> @ 15:21-15:34
                     start
-                      expr e17 path value -> local v2 => syntax u8 @ 15:21-15:26
+                      expr e17 path value -> local v2 => u8 @ 15:21-15:26
                     end
-                      expr e18 path value -> local v2 => syntax u8 @ 15:29-15:34
+                      expr e18 path value -> local v2 => u8 @ 15:29-15:34
               stmt s6 let v10 @ 16:5-16:19
                 initializer
                   expr e20 range .. => <unknown> @ 16:16-16:18
@@ -381,7 +381,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                       expr e21 path user -> local v3 => nominal struct body_common_expr_fixture[lib]::crate::User @ 17:18-17:22
               stmt s8 let v12 @ 18:5-18:46
                 initializer
-                  expr e26 field id -> field struct body_common_expr_fixture[lib]::crate::User::id => syntax u8 @ 18:28-18:45
+                  expr e26 field id -> field struct body_common_expr_fixture[lib]::crate::User::id => u8 @ 18:28-18:45
                     base
                       expr e25 wrapper paren => nominal struct body_common_expr_fixture[lib]::crate::User @ 18:28-18:42
                         inner
@@ -402,9 +402,9 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                     field
                       expr e33 unary * => <unknown> @ 19:30-19:37
                         inner
-                          expr e32 wrapper ref => &syntax u8 @ 19:31-19:37
+                          expr e32 wrapper ref => &u8 @ 19:31-19:37
                             inner
-                              expr e31 path value -> local v2 => syntax u8 @ 19:32-19:37
+                              expr e31 path value -> local v2 => u8 @ 19:32-19:37
               stmt s10 let v14 @ 20:5-20:50
                 initializer
                   expr e43 binary || => <unknown> @ 20:18-20:49
@@ -415,7 +415,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                             lhs
                               expr e37 binary + => <unknown> @ 20:18-20:27
                                 lhs
-                                  expr e35 path value -> local v2 => syntax u8 @ 20:18-20:23
+                                  expr e35 path value -> local v2 => u8 @ 20:18-20:23
                                 rhs
                                   expr e36 literal int `1` => <unknown> @ 20:26-20:27
                             rhs
@@ -451,18 +451,18 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                       index
                         expr e54 literal int `0` => <unknown> @ 22:11-22:12
                   value
-                    expr e56 path value -> local v2 => syntax u8 @ 22:17-22:22
+                    expr e56 path value -> local v2 => u8 @ 22:17-22:22
               stmt s13 let v15 @ 23:5-23:18
                 initializer
                   expr e58 underscore => <unknown> @ 23:16-23:17
               stmt s14 expr; @ 24:5-24:17
                 expr e60 yield => <unknown> @ 24:5-24:16
                   value
-                    expr e59 path value -> local v2 => syntax u8 @ 24:11-24:16
+                    expr e59 path value -> local v2 => u8 @ 24:11-24:16
               stmt s15 expr; @ 25:5-25:19
                 expr e62 yeet => ! @ 25:5-25:18
                   value
-                    expr e61 path value -> local v2 => syntax u8 @ 25:13-25:18
+                    expr e61 path value -> local v2 => u8 @ 25:13-25:18
               stmt s16 expr; @ 26:5-26:20
                 expr e65 become => ! @ 26:5-26:19
                   value
@@ -516,57 +516,57 @@ pub fn use_it(value: u8) {
             - s10 parent s1: <none>
             - s11 parent s1: <none>
             bindings
-            - v0 param value `value`: u8 => syntax u8 @ 1:15-1:20
+            - v0 param value `value`: u8 => u8 @ 1:15-1:20
             body
             expr e24 block s1 => () @ 1:26-12:2
               stmt s1 expr; @ 2:5-2:23
                 expr e1 block unsafe s2 => () @ 2:5-2:22
                   stmt s0 expr; @ 2:14-2:20
-                    expr e0 path value -> local v0 => syntax u8 @ 2:14-2:19
+                    expr e0 path value -> local v0 => u8 @ 2:14-2:19
               stmt s3 expr; @ 3:5-3:22
                 expr e3 block const s3 => () @ 3:5-3:21
                   stmt s2 expr; @ 3:13-3:19
-                    expr e2 path value -> local v0 => syntax u8 @ 3:13-3:18
+                    expr e2 path value -> local v0 => u8 @ 3:13-3:18
               stmt s4 expr; @ 4:5-4:21
-                expr e5 block async s4 => syntax u8 @ 4:5-4:20
+                expr e5 block async s4 => u8 @ 4:5-4:20
                   tail
-                    expr e4 path value -> local v0 => syntax u8 @ 4:13-4:18
+                    expr e4 path value -> local v0 => u8 @ 4:13-4:18
               stmt s5 expr; @ 5:5-5:26
-                expr e7 block async move s5 => syntax u8 @ 5:5-5:25
+                expr e7 block async move s5 => u8 @ 5:5-5:25
                   tail
-                    expr e6 path value -> local v0 => syntax u8 @ 5:18-5:23
+                    expr e6 path value -> local v0 => u8 @ 5:18-5:23
               stmt s6 expr; @ 6:5-6:19
-                expr e9 block try s6 => syntax u8 @ 6:5-6:18
+                expr e9 block try s6 => u8 @ 6:5-6:18
                   tail
-                    expr e8 path value -> local v0 => syntax u8 @ 6:11-6:16
+                    expr e8 path value -> local v0 => u8 @ 6:11-6:16
               stmt s7 expr; @ 7:5-7:39
-                expr e11 block try bikeshed Result<u8> s7 => syntax u8 @ 7:5-7:38
+                expr e11 block try bikeshed Result<u8> s7 => u8 @ 7:5-7:38
                   tail
-                    expr e10 path value -> local v0 => syntax u8 @ 7:31-7:36
+                    expr e10 path value -> local v0 => u8 @ 7:31-7:36
               stmt s9 expr; @ 8:5-8:26
                 expr e14 block gen s8 => () @ 8:5-8:25
                   stmt s8 expr; @ 8:11-8:23
                     expr e13 yield => <unknown> @ 8:11-8:22
                       value
-                        expr e12 path value -> local v0 => syntax u8 @ 8:17-8:22
+                        expr e12 path value -> local v0 => u8 @ 8:17-8:22
               stmt s11 expr; @ 9:5-9:31
                 expr e17 block gen move s9 => () @ 9:5-9:30
                   stmt s10 expr; @ 9:16-9:28
                     expr e16 yield => <unknown> @ 9:16-9:27
                       value
-                        expr e15 path value -> local v0 => syntax u8 @ 9:22-9:27
+                        expr e15 path value -> local v0 => u8 @ 9:22-9:27
               stmt s13 expr; @ 10:5-10:32
                 expr e20 block async gen s10 => () @ 10:5-10:31
                   stmt s12 expr; @ 10:17-10:29
                     expr e19 yield => <unknown> @ 10:17-10:28
                       value
-                        expr e18 path value -> local v0 => syntax u8 @ 10:23-10:28
+                        expr e18 path value -> local v0 => u8 @ 10:23-10:28
               stmt s15 expr; @ 11:5-11:37
                 expr e23 block async gen move s11 => () @ 11:5-11:36
                   stmt s14 expr; @ 11:22-11:34
                     expr e22 yield => <unknown> @ 11:22-11:33
                       value
-                        expr e21 path value -> local v0 => syntax u8 @ 11:28-11:33
+                        expr e21 path value -> local v0 => u8 @ 11:28-11:33
         "#]],
     );
 }

@@ -10,7 +10,7 @@ use super::{cached::CachedPackage, fingerprint::Fingerprint};
 
 /// Current on-disk package artifact schema.
 pub const CURRENT_PACKAGE_CACHE_SCHEMA_VERSION: PackageCacheSchemaVersion =
-    PackageCacheSchemaVersion(1);
+    PackageCacheSchemaVersion(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct PackageCacheSchemaVersion(pub u32);

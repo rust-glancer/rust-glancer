@@ -9,6 +9,7 @@ use super::ids::BodyItemRef;
 pub enum BodyTy {
     Unit,
     Never,
+    Primitive(BodyPrimitiveTy),
     Syntax(TypeRef),
     Reference(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<BodyTy>>")] Box<BodyTy>),
     LocalNominal(
@@ -25,6 +26,137 @@ pub enum BodyTy {
     ),
     #[default]
     Unknown,
+}
+
+/// Rust primitive type known without resolving a module-scope definition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+pub enum BodyPrimitiveTy {
+    Bool,
+    Char,
+    Str,
+    SignedInt(BodySignedIntTy),
+    UnsignedInt(BodyUnsignedIntTy),
+    Float(BodyFloatTy),
+}
+
+/// Signed integer primitive width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+pub enum BodySignedIntTy {
+    I8,
+    I16,
+    I32,
+    I64,
+    I128,
+    Isize,
+}
+
+/// Unsigned integer primitive width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+pub enum BodyUnsignedIntTy {
+    U8,
+    U16,
+    U32,
+    U64,
+    U128,
+    Usize,
+}
+
+/// Floating-point primitive width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+pub enum BodyFloatTy {
+    F32,
+    F64,
+}
+
+impl BodyPrimitiveTy {
+    pub const ALL: &'static [Self] = &[
+        Self::Bool,
+        Self::Char,
+        Self::Str,
+        Self::SignedInt(BodySignedIntTy::I8),
+        Self::SignedInt(BodySignedIntTy::I16),
+        Self::SignedInt(BodySignedIntTy::I32),
+        Self::SignedInt(BodySignedIntTy::I64),
+        Self::SignedInt(BodySignedIntTy::I128),
+        Self::SignedInt(BodySignedIntTy::Isize),
+        Self::UnsignedInt(BodyUnsignedIntTy::U8),
+        Self::UnsignedInt(BodyUnsignedIntTy::U16),
+        Self::UnsignedInt(BodyUnsignedIntTy::U32),
+        Self::UnsignedInt(BodyUnsignedIntTy::U64),
+        Self::UnsignedInt(BodyUnsignedIntTy::U128),
+        Self::UnsignedInt(BodyUnsignedIntTy::Usize),
+        Self::Float(BodyFloatTy::F32),
+        Self::Float(BodyFloatTy::F64),
+    ];
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "bool" => Self::Bool,
+            "char" => Self::Char,
+            "str" => Self::Str,
+            "i8" => Self::SignedInt(BodySignedIntTy::I8),
+            "i16" => Self::SignedInt(BodySignedIntTy::I16),
+            "i32" => Self::SignedInt(BodySignedIntTy::I32),
+            "i64" => Self::SignedInt(BodySignedIntTy::I64),
+            "i128" => Self::SignedInt(BodySignedIntTy::I128),
+            "isize" => Self::SignedInt(BodySignedIntTy::Isize),
+            "u8" => Self::UnsignedInt(BodyUnsignedIntTy::U8),
+            "u16" => Self::UnsignedInt(BodyUnsignedIntTy::U16),
+            "u32" => Self::UnsignedInt(BodyUnsignedIntTy::U32),
+            "u64" => Self::UnsignedInt(BodyUnsignedIntTy::U64),
+            "u128" => Self::UnsignedInt(BodyUnsignedIntTy::U128),
+            "usize" => Self::UnsignedInt(BodyUnsignedIntTy::Usize),
+            "f32" => Self::Float(BodyFloatTy::F32),
+            "f64" => Self::Float(BodyFloatTy::F64),
+            _ => return None,
+        })
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Bool => "bool",
+            Self::Char => "char",
+            Self::Str => "str",
+            Self::SignedInt(kind) => kind.label(),
+            Self::UnsignedInt(kind) => kind.label(),
+            Self::Float(kind) => kind.label(),
+        }
+    }
+}
+
+impl BodySignedIntTy {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::I8 => "i8",
+            Self::I16 => "i16",
+            Self::I32 => "i32",
+            Self::I64 => "i64",
+            Self::I128 => "i128",
+            Self::Isize => "isize",
+        }
+    }
+}
+
+impl BodyUnsignedIntTy {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::U8 => "u8",
+            Self::U16 => "u16",
+            Self::U32 => "u32",
+            Self::U64 => "u64",
+            Self::U128 => "u128",
+            Self::Usize => "usize",
+        }
+    }
+}
+
+impl BodyFloatTy {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::F32 => "f32",
+            Self::F64 => "f64",
+        }
+    }
 }
 
 /// Body-local nominal type together with the generic arguments visible at use site.
@@ -103,6 +235,7 @@ impl BodyTy {
             Self::Reference(inner) => inner.peel_references(),
             Self::Unit
             | Self::Never
+            | Self::Primitive(_)
             | Self::Syntax(_)
             | Self::LocalNominal(_)
             | Self::Nominal(_)
@@ -116,6 +249,7 @@ impl BodyTy {
             Self::LocalNominal(types) => types,
             Self::Unit
             | Self::Never
+            | Self::Primitive(_)
             | Self::Syntax(_)
             | Self::Reference(_)
             | Self::Nominal(_)
@@ -129,6 +263,7 @@ impl BodyTy {
             Self::Nominal(types) | Self::SelfTy(types) => types,
             Self::Unit
             | Self::Never
+            | Self::Primitive(_)
             | Self::Syntax(_)
             | Self::Reference(_)
             | Self::LocalNominal(_)
@@ -160,7 +295,7 @@ impl BodyTy {
                     ty.shrink_to_fit();
                 }
             }
-            Self::Unit | Self::Never | Self::Unknown => {}
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Unknown => {}
         }
     }
 }

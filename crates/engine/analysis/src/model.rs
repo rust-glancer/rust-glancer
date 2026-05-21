@@ -1,7 +1,7 @@
 use rg_body_ir::{
     BindingData, BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionOwner, BodyFunctionRef,
-    BodyItemKind, BodyItemRef, BodyRef, BodyValueItemKind, BodyValueItemRef, ExprId,
-    ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
+    BodyItemKind, BodyItemRef, BodyPrimitiveTy, BodyRef, BodyValueItemKind, BodyValueItemRef,
+    ExprId, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
 };
 use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
@@ -342,6 +342,7 @@ pub enum CompletionTarget {
     Function(ResolvedFunctionRef),
     Def(DefId),
     Keyword(KeywordCompletion),
+    PrimitiveType(BodyPrimitiveTy),
 }
 
 /// Small, explicit set of Rust keyword and keyword-like snippet completions.
@@ -392,6 +393,8 @@ pub enum CompletionKind {
     Macro,
     #[display("module")]
     Module,
+    #[display("primitive_type")]
+    PrimitiveType,
     #[display("static")]
     Static,
     #[display("struct")]
@@ -424,6 +427,7 @@ impl CompletionKind {
             | Self::Enum
             | Self::EnumVariant
             | Self::Trait
+            | Self::PrimitiveType
             | Self::TypeAlias
             | Self::Union => 4,
             Self::Const | Self::Static => 5,
@@ -438,7 +442,7 @@ impl CompletionKind {
     /// This is a context-specific component of LSP `sortText`, not the enum's general ordering.
     pub(super) fn type_context_sort_text_rank(self) -> u8 {
         match self {
-            Self::Struct | Self::Enum | Self::Union | Self::TypeAlias => 0,
+            Self::Struct | Self::Enum | Self::Union | Self::TypeAlias | Self::PrimitiveType => 0,
             Self::Trait => 1,
             Self::Module => 2,
             Self::Keyword => 3,

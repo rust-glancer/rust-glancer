@@ -184,7 +184,9 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
                     }
                 }
             }
-            BodyTypePathResolution::Traits(_) | BodyTypePathResolution::Unknown => {}
+            BodyTypePathResolution::Primitive(_)
+            | BodyTypePathResolution::Traits(_)
+            | BodyTypePathResolution::Unknown => {}
         }
 
         Ok(())

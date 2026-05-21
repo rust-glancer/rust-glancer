@@ -4,7 +4,7 @@
 //! body-local declarations. Signature-only resolutions are converted into that common shape here.
 
 use rg_body_ir::{
-    BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyTy, BodyTypePathResolution,
+    BodyLocalNominalTy, BodyNominalTy, BodyPrimitiveTy, BodyRef, BodyTy, BodyTypePathResolution,
     ResolvedEnumVariantRef, ScopeId,
 };
 use rg_def_map::{DefId, Path};
@@ -96,11 +96,17 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
         context: TypePathContext,
         path: &Path,
     ) -> anyhow::Result<BodyTy> {
-        Ok(semantic_type_path_resolution_to_ty(
-            self.0
-                .semantic_ir
-                .resolve_type_path(&self.0.def_map, context, path)?,
-        ))
+        let resolution = self
+            .0
+            .semantic_ir
+            .resolve_type_path(&self.0.def_map, context, path)?;
+        if matches!(resolution, SemanticTypePathResolution::Unknown)
+            && let Some(primitive) = path.single_name().and_then(BodyPrimitiveTy::from_name)
+        {
+            return Ok(BodyTy::Primitive(primitive));
+        }
+
+        Ok(semantic_type_path_resolution_to_ty(resolution))
     }
 
     pub(crate) fn ty_for_body_type_path(
@@ -204,6 +210,7 @@ pub(crate) fn body_type_path_resolution_to_ty(resolution: BodyTypePathResolution
         BodyTypePathResolution::TypeDefs(types) => {
             BodyTy::Nominal(types.into_iter().map(BodyNominalTy::bare).collect())
         }
+        BodyTypePathResolution::Primitive(primitive) => BodyTy::Primitive(primitive),
         // Trait paths are useful for goto-definition, but `type_at` reports only nominal values
         // and body-local item types.
         BodyTypePathResolution::Traits(_) => BodyTy::Unknown,
