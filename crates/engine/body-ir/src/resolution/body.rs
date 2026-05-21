@@ -20,7 +20,7 @@ use crate::{
         BodyResolution, BodyTypePathResolution, ResolvedEnumVariantRef, ResolvedFieldRef,
         ResolvedFunctionRef,
     },
-    ir::stmt::BindingKind,
+    ir::stmt::{BindingKind, BodySelfParamKind},
     ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
 
@@ -113,16 +113,21 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 .ty_from_type_ref_in_scope(annotation, binding_data.scope);
         }
 
-        if matches!(binding_data.kind, BindingKind::SelfParam)
+        if let BindingKind::SelfParam(kind) = binding_data.kind
             && binding_data.name.as_deref() == Some("self")
         {
             let self_tys = self
                 .type_path_resolver()
                 .self_tys_for_function(self.body.owner)?;
             if !self_tys.is_empty() {
-                return Ok(BodyTy::SelfTy(
-                    self_tys.into_iter().map(BodyNominalTy::bare).collect(),
-                ));
+                let ty = BodyTy::SelfTy(self_tys.into_iter().map(BodyNominalTy::bare).collect());
+                return Ok(match kind {
+                    BodySelfParamKind::Value => ty,
+                    BodySelfParamKind::Reference { mutability } => {
+                        BodyTy::reference(mutability, ty)
+                    }
+                    BodySelfParamKind::Explicit => BodyTy::Unknown,
+                });
             }
         }
 

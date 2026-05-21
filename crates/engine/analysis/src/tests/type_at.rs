@@ -918,6 +918,51 @@ impl User {
 }
 
 #[test]
+fn returns_self_receiver_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_self_receiver_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+impl User {
+    pub fn owned(self) {
+        let _owned = se$type_owned_self$lf;
+    }
+
+    pub fn shared(&self) {
+        let _shared = se$type_shared_self$lf;
+    }
+
+    pub fn unique(&mut self) {
+        let _unique = se$type_unique_self$lf;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("type at owned self", "type_owned_self"),
+            AnalysisQuery::ty("type at shared self", "type_shared_self"),
+            AnalysisQuery::ty("type at mutable self", "type_unique_self"),
+        ],
+        expect![[r#"
+            type at owned self
+            - Self struct analysis_self_receiver_type[lib]::crate::User
+
+            type at shared self
+            - &Self struct analysis_self_receiver_type[lib]::crate::User
+
+            type at mutable self
+            - &mut Self struct analysis_self_receiver_type[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
 fn returns_body_local_struct_types_before_module_structs() {
     check_analysis_queries(
         r#"

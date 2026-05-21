@@ -25,7 +25,7 @@ pub use self::{
         BodyFunctionOwner, BodyFunctionRef, BodyGenericArg, BodyId, BodyImplData, BodyImplId,
         BodyIrStats, BodyItemData, BodyItemDeclaration, BodyItemId, BodyItemKind, BodyItemOwner,
         BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyPrimitiveTy, BodyRef,
-        BodyRefMutability, BodyResolution, BodySignedIntTy, BodySource, BodyTy,
+        BodyRefMutability, BodyResolution, BodySelfParamKind, BodySignedIntTy, BodySource, BodyTy,
         BodyTypePathResolution, BodyUnsignedIntTy, BodyValueItemData, BodyValueItemDeclaration,
         BodyValueItemId, BodyValueItemKind, BodyValueItemOwner, BodyValueItemRef, ClosureCapture,
         ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprId,

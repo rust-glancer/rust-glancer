@@ -58,7 +58,7 @@ impl User {
             - s0 parent <none>: v0, v1
             - s1 parent s0: v2, v3, v4, v5
             bindings
-            - v0 self_param self `&self` => Self struct body_expr_fixture[lib]::crate::User @ 12:15-12:20
+            - v0 self_param self `&self` => &Self struct body_expr_fixture[lib]::crate::User @ 12:15-12:20
             - v1 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 12:22-12:24
             - v2 let this `this`: Self => Self struct body_expr_fixture[lib]::crate::User @ 13:13-13:17
             - v3 let built `built`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:13-14:18
@@ -68,7 +68,7 @@ impl User {
             expr e12 block s1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 12:44-18:6
               stmt s0 let v2: Self @ 13:9-13:31
                 initializer
-                  expr e0 path self -> local v0 => Self struct body_expr_fixture[lib]::crate::User @ 13:26-13:30
+                  expr e0 path self -> local v0 => &Self struct body_expr_fixture[lib]::crate::User @ 13:26-13:30
               stmt s1 let v3: UserId @ 14:9-14:39
                 initializer
                   expr e3 call => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:29-14:38
@@ -87,11 +87,11 @@ impl User {
                 initializer
                   expr e8 field id -> field struct body_expr_fixture[lib]::crate::User::id => nominal struct body_expr_fixture[lib]::crate::UserId @ 16:21-16:28
                     base
-                      expr e7 path self -> local v0 => Self struct body_expr_fixture[lib]::crate::User @ 16:21-16:25
+                      expr e7 path self -> local v0 => &Self struct body_expr_fixture[lib]::crate::User @ 16:21-16:25
               tail
                 expr e11 method_call touch -> fn impl User::touch => nominal struct body_expr_fixture[lib]::crate::UserId @ 17:9-17:27
                   receiver
-                    expr e9 path self -> local v0 => Self struct body_expr_fixture[lib]::crate::User @ 17:9-17:13
+                    expr e9 path self -> local v0 => &Self struct body_expr_fixture[lib]::crate::User @ 17:9-17:13
                   arg
                     expr e10 path via_fn -> local v4 => nominal struct body_expr_fixture[lib]::crate::UserId @ 17:20-17:26
 
@@ -101,7 +101,7 @@ impl User {
             - s0 parent <none>: v0, v1
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => Self struct body_expr_fixture[lib]::crate::User @ 20:14-20:19
+            - v0 self_param self `&self` => &Self struct body_expr_fixture[lib]::crate::User @ 20:14-20:19
             - v1 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 20:21-20:23
             body
             expr e1 block s1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 20:43-22:6
