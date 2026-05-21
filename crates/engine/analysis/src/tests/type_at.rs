@@ -59,8 +59,10 @@ pub async fn load_user_async() -> User {
     User
 }
 
-pub async fn use_it(user: User) -> Result<(), Error> {
+pub async fn use_it(mut user: User) -> Result<(), Error> {
     let _borrowed = (&user)$type_ref$;
+    let _borrowed_mut = (&mut user)$type_mut_ref$;
+    let typed_mut$type_mut_binding$: &mut User = todo!();
     let _loaded = load_user()?$type_try$;
     let _awaited = load_user_async().await$type_await$;
     Result::Ok(())
@@ -68,12 +70,20 @@ pub async fn use_it(user: User) -> Result<(), Error> {
 "#,
         &[
             AnalysisQuery::ty("type at reference wrapper", "type_ref"),
+            AnalysisQuery::ty("type at mutable reference wrapper", "type_mut_ref"),
+            AnalysisQuery::ty("type at mutable reference binding", "type_mut_binding"),
             AnalysisQuery::ty("type at try wrapper", "type_try"),
             AnalysisQuery::ty("type at await wrapper", "type_await"),
         ],
         expect![[r#"
             type at reference wrapper
             - &nominal struct analysis_wrapper_type_at[lib]::crate::User
+
+            type at mutable reference wrapper
+            - &mut nominal struct analysis_wrapper_type_at[lib]::crate::User
+
+            type at mutable reference binding
+            - &mut nominal struct analysis_wrapper_type_at[lib]::crate::User
 
             type at try wrapper
             - nominal struct analysis_wrapper_type_at[lib]::crate::User

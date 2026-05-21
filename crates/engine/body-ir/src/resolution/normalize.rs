@@ -27,7 +27,7 @@ impl<'db, 'body> BodyTyNormalizer<'db, 'body> {
     pub(super) fn ty_for_wrapper(&self, kind: ExprWrapperKind, inner_ty: BodyTy) -> BodyTy {
         match kind {
             ExprWrapperKind::Paren => inner_ty,
-            ExprWrapperKind::Ref => BodyTy::reference(inner_ty),
+            ExprWrapperKind::Ref { mutability } => BodyTy::reference(mutability, inner_ty),
             // We currently model `async fn foo() -> T` as returning `T` directly. Preserving the
             // inner type through `.await` keeps that useful behavior without pretending to model
             // `Future::Output` for arbitrary future types.

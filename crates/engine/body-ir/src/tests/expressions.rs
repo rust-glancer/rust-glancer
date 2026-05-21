@@ -172,6 +172,50 @@ pub fn use_it(id: u8, name: u8) -> User {
 }
 
 #[test]
+fn preserves_reference_expression_mutability() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_ref_mutability_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(mut value: u8) {
+    let shared = &value;
+    let unique = &mut value;
+}
+"#,
+        expect![[r#"
+            package body_ref_mutability_fixture
+
+            body_ref_mutability_fixture [lib]
+            body b0 fn body_ref_mutability_fixture[lib]::crate::use_it @ 1:1-4:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v2
+            bindings
+            - v0 param value `mut value`: u8 => u8 @ 1:15-1:24
+            - v1 let shared `shared` => &u8 @ 2:9-2:15
+            - v2 let unique `unique` => &mut u8 @ 3:9-3:15
+            body
+            expr e4 block s1 => () @ 1:30-4:2
+              stmt s0 let v1 @ 2:5-2:25
+                initializer
+                  expr e1 wrapper ref => &u8 @ 2:18-2:24
+                    inner
+                      expr e0 path value -> local v0 => u8 @ 2:19-2:24
+              stmt s1 let v2 @ 3:5-3:29
+                initializer
+                  expr e3 wrapper ref => &mut u8 @ 3:18-3:28
+                    inner
+                      expr e2 path value -> local v0 => u8 @ 3:23-3:28
+        "#]],
+    );
+}
+
+#[test]
 fn preserves_rich_body_paths() {
     check_project_body_ir(
         r#"

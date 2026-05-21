@@ -59,14 +59,19 @@ pub(super) fn ty_from_type_ref_in_context(
             };
             Ok(ty_from_body_resolution(resolution, fallback, args))
         }
-        TypeRef::Reference { inner, .. } => Ok(BodyTy::reference(ty_from_type_ref_in_context(
-            def_map,
-            semantic_ir,
-            inner,
-            context,
-            BodyTy::Syntax((**inner).clone()),
-            subst,
-        )?)),
+        TypeRef::Reference {
+            mutability, inner, ..
+        } => Ok(BodyTy::reference(
+            (*mutability).into(),
+            ty_from_type_ref_in_context(
+                def_map,
+                semantic_ir,
+                inner,
+                context,
+                BodyTy::Syntax((**inner).clone()),
+                subst,
+            )?,
+        )),
         TypeRef::Unknown(_) | TypeRef::Infer => Ok(BodyTy::Unknown),
         TypeRef::Tuple(types) if types.is_empty() => Ok(BodyTy::Unit),
         _ => Ok(BodyTy::Syntax(ty.clone())),

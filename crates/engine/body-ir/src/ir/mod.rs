@@ -39,7 +39,7 @@ pub use self::{
     stmt::{BindingData, BindingKind, StmtData, StmtKind},
     ty::{
         BodyFloatTy, BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyPrimitiveTy,
-        BodySignedIntTy, BodyTy, BodyUnsignedIntTy,
+        BodyRefMutability, BodySignedIntTy, BodyTy, BodyUnsignedIntTy,
     },
 };
 
