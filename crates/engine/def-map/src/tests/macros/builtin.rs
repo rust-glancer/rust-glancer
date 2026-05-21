@@ -38,6 +38,30 @@ macro_rules! make_included {
 }
 
 #[test]
+fn qualified_include_macro_splices_real_source_items() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "qualified_include_macro_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+std::include!("included.rs");
+
+//- /src/included.rs
+pub struct Included;
+"#,
+    );
+    let target = project.lib("qualified_include_macro_fixture");
+
+    target
+        .entry("Included")
+        .assert_type_exists("std-qualified include should use builtin fallback");
+}
+
+#[test]
 fn local_include_macro_shadows_builtin_include() {
     let project = utils::DefMapFixtureDb::build(
         r#"
@@ -116,6 +140,49 @@ make_from_selected!();
     target
         .entry("HiddenLater")
         .assert_missing("later enabled cfg_select arms should not be reached");
+}
+
+#[test]
+fn qualified_cfg_select_expands_first_enabled_item_arm() {
+    let project = utils::DefMapFixtureDb::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "qualified_cfg_select_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+std::cfg_select! {
+    true => {
+        pub struct FromStd;
+    }
+}
+
+core::cfg_select! {
+    true => {
+        pub struct FromCore;
+    }
+}
+
+::std::cfg_select! {
+    true => {
+        pub struct FromAbsoluteStd;
+    }
+}
+"#,
+    );
+    let target = project.lib("qualified_cfg_select_fixture");
+
+    target
+        .entry("FromStd")
+        .assert_type_exists("std-qualified cfg_select should use builtin fallback");
+    target
+        .entry("FromCore")
+        .assert_type_exists("core-qualified cfg_select should use builtin fallback");
+    target
+        .entry("FromAbsoluteStd")
+        .assert_type_exists("absolute std-qualified cfg_select should use builtin fallback");
 }
 
 #[test]

@@ -26,7 +26,7 @@ use super::{
     ExternCrateItem, FileTree, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeId,
     MacroCallItem, MacroDefinitionItem, MacroUseAttr, ModuleItem, ModuleSource, Package,
     StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, UnionItem, UseItem,
-    VisibilityLevel, item::normalized_syntax,
+    VisibilityLevel,
 };
 
 /// Lowers all known files for one parsed package and records target entrypoints into them.
@@ -471,11 +471,7 @@ impl<'db> PackageLowering<'db> {
         item: &ast::MacroCall,
         module_file_context: &ModuleFileContext,
     ) -> anyhow::Result<Option<BuiltinMacroItem>> {
-        if item
-            .path()
-            .map(|path| normalized_syntax(&path) != "cfg_select")
-            .unwrap_or(true)
-        {
+        if macro_call_terminal_name(item).as_deref() != Some("cfg_select") {
             return Ok(None);
         }
 
@@ -810,8 +806,7 @@ fn normalized_use_name(use_item: &ast::Use) -> Option<String> {
 }
 
 fn literal_include_path(item: &ast::MacroCall) -> Option<String> {
-    let path = item.path()?;
-    if path.syntax().text().to_string() != "include" {
+    if macro_call_terminal_name(item).as_deref() != Some("include") {
         return None;
     }
 
@@ -831,6 +826,13 @@ fn literal_include_path(item: &ast::MacroCall) -> Option<String> {
 
     ast::String::cast(path.clone())
         .and_then(|path| path.value().ok().map(|value| value.into_owned()))
+}
+
+fn macro_call_terminal_name(item: &ast::MacroCall) -> Option<String> {
+    item.path()?
+        .segment()?
+        .name_ref()
+        .map(|name| name.text().to_string())
 }
 
 fn matching_delimiters(open: SyntaxKind, close: SyntaxKind) -> bool {
