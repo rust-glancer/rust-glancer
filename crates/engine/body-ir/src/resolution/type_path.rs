@@ -14,7 +14,7 @@ use crate::{
     ir::ids::{BodyItemId, BodyItemRef, BodyRef, ScopeId},
     ir::item::BodyItemOwner,
     ir::resolved::BodyTypePathResolution,
-    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyTy},
+    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyPrimitiveTy, BodyTy},
 };
 
 use super::{
@@ -70,7 +70,13 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         let resolution = self
             .semantic_ir
             .resolve_type_path(self.def_map, context, path)?;
-        Ok(BodyTypePathResolution::from(resolution))
+        let resolution = BodyTypePathResolution::from(resolution);
+        if matches!(resolution, BodyTypePathResolution::Unknown)
+            && let Some(primitive) = path.single_name().and_then(BodyPrimitiveTy::from_name)
+        {
+            return Ok(BodyTypePathResolution::Primitive(primitive));
+        }
+        Ok(resolution)
     }
 
     pub(super) fn ty_from_type_ref_in_scope(
@@ -169,7 +175,8 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
                     )
                 })
                 .map(|_| item)),
-            BodyTypePathResolution::SelfType(_)
+            BodyTypePathResolution::Primitive(_)
+            | BodyTypePathResolution::SelfType(_)
             | BodyTypePathResolution::TypeDefs(_)
             | BodyTypePathResolution::Traits(_)
             | BodyTypePathResolution::Unknown => Ok(None),
@@ -392,7 +399,8 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
                 .filter(|data| data.is_nominal_type())
                 .map(|_| vec![BodyLocalNominalTy::bare(item)])
                 .unwrap_or_default(),
-            BodyTypePathResolution::SelfType(_)
+            BodyTypePathResolution::Primitive(_)
+            | BodyTypePathResolution::SelfType(_)
             | BodyTypePathResolution::TypeDefs(_)
             | BodyTypePathResolution::Traits(_)
             | BodyTypePathResolution::Unknown => Vec::new(),

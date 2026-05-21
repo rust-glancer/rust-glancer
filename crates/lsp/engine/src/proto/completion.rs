@@ -37,6 +37,7 @@ fn completion_kind(kind: CompletionKind) -> CompletionItemKind {
         CompletionKind::Keyword => CompletionItemKind::KEYWORD,
         CompletionKind::Macro => CompletionItemKind::FUNCTION,
         CompletionKind::Module => CompletionItemKind::MODULE,
+        CompletionKind::PrimitiveType => CompletionItemKind::KEYWORD,
         CompletionKind::Static => CompletionItemKind::VARIABLE,
         CompletionKind::Struct | CompletionKind::Union => CompletionItemKind::STRUCT,
         CompletionKind::Trait => CompletionItemKind::INTERFACE,

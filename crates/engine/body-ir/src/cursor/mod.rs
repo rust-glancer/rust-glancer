@@ -62,12 +62,13 @@ pub struct PathCompletionSite {
 }
 
 /// Source site selected for an unqualified completion query inside a body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnqualifiedCompletionSite {
     pub body: BodyRef,
     pub scope: ScopeId,
     /// Name prefix already typed at the cursor.
     pub member_prefix_span: Span,
+    pub member_prefix: String,
     pub namespace: UnqualifiedCompletionNamespace,
     /// Number of body-wide bindings visible before this source site.
     ///
@@ -268,7 +269,7 @@ impl BodyIrReadTxn<'_> {
     /// Returns body-local names visible from an unqualified completion site.
     pub fn unqualified_completion_candidates(
         &self,
-        site: UnqualifiedCompletionSite,
+        site: &UnqualifiedCompletionSite,
     ) -> Result<Vec<BodyUnqualifiedCompletionCandidate>, PackageStoreError> {
         let Some(body) = self.body_data(site.body)? else {
             return Ok(Vec::new());

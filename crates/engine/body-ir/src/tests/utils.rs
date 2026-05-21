@@ -1281,6 +1281,7 @@ impl TargetBodyIrSnapshot<'_> {
         match ty {
             BodyTy::Unit => "()".to_string(),
             BodyTy::Never => "!".to_string(),
+            BodyTy::Primitive(primitive) => primitive.label().to_string(),
             BodyTy::Syntax(ty) => format!("syntax {ty}"),
             BodyTy::Reference(inner) => format!("&{}", self.render_ty(inner)),
             BodyTy::LocalNominal(items) => {

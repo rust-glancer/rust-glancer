@@ -60,7 +60,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
                           initializer
                             expr e0 path input -> local v0 => nominal enum body_if_let_fixture[lib]::crate::Maybe @ 15:30-15:35
                       rhs
-                        expr e3 method_call is_valid -> fn impl UserId::is_valid => syntax bool @ 15:39-15:52
+                        expr e3 method_call is_valid -> fn impl UserId::is_valid => bool @ 15:39-15:52
                           receiver
                             expr e2 path id -> local v2 => nominal struct body_if_let_fixture[lib]::crate::UserId @ 15:39-15:41
                   then
@@ -155,7 +155,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
                     expr e4 path input -> local v0 => nominal enum body_let_else_guard_fixture[lib]::crate::Maybe @ 19:11-19:16
                   arm s3
                     guard
-                      expr e6 method_call is_valid -> fn impl UserId::is_valid => syntax bool @ 20:30-20:45
+                      expr e6 method_call is_valid -> fn impl UserId::is_valid => bool @ 20:30-20:45
                         receiver
                           expr e5 path user -> local v3 => nominal struct body_let_else_guard_fixture[lib]::crate::UserId @ 20:30-20:34
                     expr e7 path user -> local v3 => nominal struct body_let_else_guard_fixture[lib]::crate::UserId @ 20:49-20:53

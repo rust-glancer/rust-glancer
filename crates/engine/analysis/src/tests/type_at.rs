@@ -117,6 +117,91 @@ pub fn use_it() {
 }
 
 #[test]
+fn returns_primitive_type_paths() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_primitive_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Slot<T> {
+    pub value: T,
+}
+
+pub fn use_it() {
+    let count$type_count$: u8 = 0;
+    let text$type_text$: &str = todo!();
+
+    let slot: Slot<bool> = todo!();
+    let flag = slot.va$type_flag$lue;
+}
+"#,
+        &[
+            AnalysisQuery::ty("type at primitive binding", "type_count"),
+            AnalysisQuery::ty("type at primitive reference binding", "type_text"),
+            AnalysisQuery::ty("type at propagated primitive generic", "type_flag"),
+        ],
+        expect![[r#"
+            type at primitive binding
+            - u8
+
+            type at primitive reference binding
+            - &str
+
+            type at propagated primitive generic
+            - bool
+        "#]],
+    );
+}
+
+#[test]
+fn primitive_type_paths_respect_type_namespace_shadowing() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_primitive_shadow_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct usize(pub u8);
+
+pub struct Holder {
+    pub value: us$type_signature$ize,
+}
+
+pub fn module_shadow() {
+    let value$type_module_binding$: usize = usize(1);
+}
+
+pub fn local_shadow() {
+    struct u8;
+    let value$type_local_binding$: u8 = u8;
+}
+"#,
+        &[
+            AnalysisQuery::ty("type at shadowed signature path", "type_signature"),
+            AnalysisQuery::ty("type at shadowed module binding", "type_module_binding"),
+            AnalysisQuery::ty("type at shadowed local binding", "type_local_binding"),
+        ],
+        expect![[r#"
+            type at shadowed signature path
+            - nominal struct analysis_primitive_shadow_type_at[lib]::crate::usize
+
+            type at shadowed module binding
+            - nominal struct analysis_primitive_shadow_type_at[lib]::crate::usize
+
+            type at shadowed local binding
+            - local nominal struct fn analysis_primitive_shadow_type_at[lib]::crate::local_shadow::u8
+        "#]],
+    );
+}
+
+#[test]
 fn returns_associated_function_and_enum_variant_call_types() {
     check_analysis_queries(
         r#"

@@ -531,6 +531,7 @@ fn type_arg_comparison_is_uncertain(ty: &BodyTy) -> bool {
         BodyTy::Reference(inner) => type_arg_comparison_is_uncertain(inner),
         BodyTy::Unit
         | BodyTy::Never
+        | BodyTy::Primitive(_)
         | BodyTy::LocalNominal(_)
         | BodyTy::Nominal(_)
         | BodyTy::SelfTy(_) => false,

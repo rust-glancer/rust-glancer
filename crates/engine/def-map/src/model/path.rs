@@ -11,6 +11,14 @@ pub struct Path {
 }
 
 impl Path {
+    /// Builds a single-segment relative path for ordinary lexical lookup.
+    pub fn unqualified_name(name: impl AsRef<str>) -> Self {
+        Self {
+            absolute: false,
+            segments: vec![PathSegment::Name(Name::new(name.as_ref()))],
+        }
+    }
+
     pub fn from_type_ref(ty: &TypeRef) -> Option<Self> {
         let TypeRef::Path(path) = ty else {
             return None;

@@ -20,6 +20,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         match ty {
             BodyTy::Unit => Ok(Some("()".to_string())),
             BodyTy::Never => Ok(Some("!".to_string())),
+            BodyTy::Primitive(primitive) => Ok(Some(primitive.label().to_string())),
             BodyTy::Syntax(ty) => Ok(Some(ty.to_string())),
             BodyTy::Reference(inner) => Ok(self.render(inner)?.map(|inner| format!("&{inner}"))),
             BodyTy::LocalNominal(types) => {

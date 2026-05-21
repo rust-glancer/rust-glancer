@@ -23,6 +23,7 @@ use super::{
     completion_sort::{CompletionSortPolicy, CompletionSortPriority},
     def_completion_detail,
     function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
+    primitive::PrimitiveTypeCompletionResolver,
 };
 
 pub(super) struct UnqualifiedCompletionResolver<'a, 'db, 'source> {
@@ -51,14 +52,14 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         for candidate in self
             .analysis
             .body_ir
-            .unqualified_completion_candidates(site)?
+            .unqualified_completion_candidates(&site)?
         {
             if !filter.accepts_body_candidate(&candidate) {
                 continue;
             }
             self.push_body_completion(
                 candidate,
-                site,
+                &site,
                 filter,
                 edit,
                 &mut hidden,
@@ -80,6 +81,14 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             &hidden,
             &mut completions,
         )?;
+
+        if matches!(site.namespace, UnqualifiedCompletionNamespace::Types) {
+            completions.extend(PrimitiveTypeCompletionResolver::body_completions(
+                self.analysis,
+                &site,
+                edit,
+            )?);
+        }
 
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
@@ -114,7 +123,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
     fn push_body_completion(
         &self,
         candidate: BodyUnqualifiedCompletionCandidate,
-        site: UnqualifiedCompletionSite,
+        site: &UnqualifiedCompletionSite,
         filter: UnqualifiedCompletionFilter,
         edit: CompletionEdit,
         hidden: &mut HashSet<(String, ScopeNamespace)>,

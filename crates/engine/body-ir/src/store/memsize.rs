@@ -1,15 +1,15 @@
 use crate::{
-    BindingData, BindingId, BindingKind, BodyData, BodyEnumVariantRef, BodyFieldRef,
+    BindingData, BindingId, BindingKind, BodyData, BodyEnumVariantRef, BodyFieldRef, BodyFloatTy,
     BodyFunctionData, BodyFunctionId, BodyFunctionOwner, BodyFunctionRef, BodyGenericArg, BodyId,
     BodyImplData, BodyImplId, BodyIrBuildPolicy, BodyIrDb, BodyIrStats, BodyItemData, BodyItemId,
-    BodyItemKind, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef,
-    BodyResolution, BodySource, BodyTy, BodyTypePathResolution, BodyValueItemData,
-    BodyValueItemDeclaration, BodyValueItemId, BodyValueItemKind, BodyValueItemOwner,
-    BodyValueItemRef, ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData,
-    ExprId, ExprKind, LiteralKind, PackageBodies, PatBindingMode, PatData, PatId, PatKind,
-    PatMutability, PatRangeKind, RecordExprField, RecordExprSpread, RecordPatField,
-    ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, ScopeData, ScopeId, StmtData,
-    StmtKind, TargetBodies, TargetBodiesStatus,
+    BodyItemKind, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyPrimitiveTy,
+    BodyRef, BodyResolution, BodySignedIntTy, BodySource, BodyTy, BodyTypePathResolution,
+    BodyUnsignedIntTy, BodyValueItemData, BodyValueItemDeclaration, BodyValueItemId,
+    BodyValueItemKind, BodyValueItemOwner, BodyValueItemRef, ClosureCapture, ClosureKind,
+    ClosureParamData, ExprBlockKind, ExprData, ExprId, ExprKind, LiteralKind, PackageBodies,
+    PatBindingMode, PatData, PatId, PatKind, PatMutability, PatRangeKind, RecordExprField,
+    RecordExprSpread, RecordPatField, ResolvedEnumVariantRef, ResolvedFieldRef,
+    ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
     ir::expr::{ExprWrapperKind, LabelData, MatchArmData},
     ir::ids::StmtId,
     ir::item::{BodyItemDeclaration, BodyItemOwner},
@@ -36,8 +36,12 @@ rg_memsize::impl_memory_size_leaf!(
     BodyItemOwner,
     BodyValueItemOwner,
     BindingKind,
+    BodyFloatTy,
     BodyId,
     BodyItemId,
+    BodyPrimitiveTy,
+    BodySignedIntTy,
+    BodyUnsignedIntTy,
     BodyValueItemId,
     BodyImplId,
     BodyFunctionId,
@@ -435,7 +439,7 @@ impl MemorySize for BodyTypePathResolution {
             Self::BodyLocal(item) => item.record_memory_children(recorder),
             Self::SelfType(types) | Self::TypeDefs(types) => types.record_memory_children(recorder),
             Self::Traits(traits) => traits.record_memory_children(recorder),
-            Self::Unknown => {}
+            Self::Primitive(_) | Self::Unknown => {}
         }
     }
 }
@@ -443,7 +447,7 @@ impl MemorySize for BodyTypePathResolution {
 impl MemorySize for BodyTy {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
         match self {
-            Self::Unit | Self::Never | Self::Unknown => {}
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Unknown => {}
             Self::Syntax(ty) => ty.record_memory_children(recorder),
             Self::Reference(inner) => inner.record_memory_children(recorder),
             Self::LocalNominal(types) => types.record_memory_children(recorder),

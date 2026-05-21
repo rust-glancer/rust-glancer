@@ -605,6 +605,120 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_primitive_types_in_unqualified_type_positions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_primitive_type_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Vec<T>(T);
+
+pub fn use_it() {
+    let _value: u$primitive$;
+    let _values: Vec<u$generic_arg$>;
+}
+"#,
+        &[
+            AnalysisQuery::complete("primitive type completions", "primitive"),
+            AnalysisQuery::complete("primitive generic arg completions", "generic_arg"),
+        ],
+        expect![[r#"
+            primitive type completions
+            - struct Vec
+            - primitive_type u128
+            - primitive_type u16
+            - primitive_type u32
+            - primitive_type u64
+            - primitive_type u8
+            - primitive_type usize
+
+            primitive generic arg completions
+            - struct Vec
+            - primitive_type u128
+            - primitive_type u16
+            - primitive_type u32
+            - primitive_type u64
+            - primitive_type u8
+            - primitive_type usize
+        "#]],
+    );
+}
+
+#[test]
+fn suppresses_shadowed_primitive_type_completions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_shadowed_primitive_type_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct usize;
+
+pub fn use_it() {
+    struct u8;
+    let _module: us$module_shadow$;
+    let _local: u8$local_shadow$;
+}
+"#,
+        &[
+            AnalysisQuery::complete("module shadowed primitive completions", "module_shadow"),
+            AnalysisQuery::complete("local shadowed primitive completions", "local_shadow"),
+        ],
+        expect![[r#"
+            module shadowed primitive completions
+            - struct u8
+            - struct usize
+
+            local shadowed primitive completions
+            - struct u8
+            - struct usize
+        "#]],
+    );
+}
+
+#[test]
+fn completes_primitive_types_shadowed_only_by_modules() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_module_named_like_primitive_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod usize {}
+
+pub fn use_it() {
+    let _value: us$module_name$;
+}
+"#,
+        &[AnalysisQuery::complete_verbose(
+            "module named like primitive completions",
+            "module_name",
+        )],
+        expect![[r#"
+            module named like primitive completions
+            - module usize
+              detail: mod usize
+              sort: 01-module|02|usize|00|Def(Module(ModuleRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, module: ModuleId(1) }))
+              replace: 52..54
+            - primitive_type usize
+              detail: primitive type usize
+              sort: 02-primitive|00|usize|00|PrimitiveType(UnsignedInt(Usize))
+              replace: 52..54
+        "#]],
+    );
+}
+
+#[test]
 fn completes_more_body_local_type_and_value_items() {
     check_analysis_queries(
         r#"
