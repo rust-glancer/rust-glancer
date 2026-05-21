@@ -178,12 +178,33 @@ impl CachedCfgOptions {
                 .collect(),
         }
     }
+
+    pub(super) fn atoms(&self) -> &[String] {
+        &self.atoms
+    }
+
+    pub(super) fn key_values(&self) -> &[CachedCfgKeyValue] {
+        &self.key_values
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct CachedCfgKeyValue {
     pub key: String,
     pub value: String,
+}
+
+impl CachedCfgKeyValue {
+    /// Returns cfg key-values in the deterministic order used by cache fingerprints.
+    pub(super) fn sorted(key_values: &[Self]) -> Vec<&Self> {
+        let mut key_values = key_values.iter().collect::<Vec<_>>();
+        key_values.sort_by(|left, right| {
+            left.key
+                .cmp(&right.key)
+                .then_with(|| left.value.cmp(&right.value))
+        });
+        key_values
+    }
 }
 
 /// Cached view of one package's artifact-selecting metadata.

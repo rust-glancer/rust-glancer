@@ -167,18 +167,18 @@ pub struct Dep;
             cache store `workspace target`
             root target/rust_glancer/<workspace>
             artifacts
-            - #0 app a64a418c3750f4192bf6c1c07e4b4053307a5e7e58cd8d1de0a74ca571c59b9b
-              target/rust_glancer/<workspace>/packages/graph-3a58d4ca8a82d0510c0a387db48869771ce86a29e56efa672fb591caf1f92a40/package-0-app-a64a418c3750f4192bf6c1c07e4b4053307a5e7e58cd8d1de0a74ca571c59b9b.rgpkg
-            - #1 dep-pkg 4fab8a4495a92cf24f5756ab41dd3167f5c05a54961703e0988b5361e86ed651
-              target/rust_glancer/<workspace>/packages/graph-3a58d4ca8a82d0510c0a387db48869771ce86a29e56efa672fb591caf1f92a40/package-1-dep-pkg-4fab8a4495a92cf24f5756ab41dd3167f5c05a54961703e0988b5361e86ed651.rgpkg
+            - #0 app 0063c44d0235d0c71e80678b7fc90da31773f1b1b51ee4cb45dfaa242f9689c1
+              target/rust_glancer/<workspace>/packages/graph-a70a182f184ff488c17e3311c43bca46fe719bd65710115e066972f21ae95644/package-0-app-0063c44d0235d0c71e80678b7fc90da31773f1b1b51ee4cb45dfaa242f9689c1.rgpkg
+            - #1 dep-pkg 7959296c5908094d56a9b4c107f631f0c128f3e1d65d8cfccef478d5c57d6ef7
+              target/rust_glancer/<workspace>/packages/graph-a70a182f184ff488c17e3311c43bca46fe719bd65710115e066972f21ae95644/package-1-dep-pkg-7959296c5908094d56a9b4c107f631f0c128f3e1d65d8cfccef478d5c57d6ef7.rgpkg
 
             cache store `custom target`
             root custom-target/rust_glancer/<workspace>
             artifacts
-            - #0 app a64a418c3750f4192bf6c1c07e4b4053307a5e7e58cd8d1de0a74ca571c59b9b
-              custom-target/rust_glancer/<workspace>/packages/graph-3a58d4ca8a82d0510c0a387db48869771ce86a29e56efa672fb591caf1f92a40/package-0-app-a64a418c3750f4192bf6c1c07e4b4053307a5e7e58cd8d1de0a74ca571c59b9b.rgpkg
-            - #1 dep-pkg 4fab8a4495a92cf24f5756ab41dd3167f5c05a54961703e0988b5361e86ed651
-              custom-target/rust_glancer/<workspace>/packages/graph-3a58d4ca8a82d0510c0a387db48869771ce86a29e56efa672fb591caf1f92a40/package-1-dep-pkg-4fab8a4495a92cf24f5756ab41dd3167f5c05a54961703e0988b5361e86ed651.rgpkg
+            - #0 app 0063c44d0235d0c71e80678b7fc90da31773f1b1b51ee4cb45dfaa242f9689c1
+              custom-target/rust_glancer/<workspace>/packages/graph-a70a182f184ff488c17e3311c43bca46fe719bd65710115e066972f21ae95644/package-0-app-0063c44d0235d0c71e80678b7fc90da31773f1b1b51ee4cb45dfaa242f9689c1.rgpkg
+            - #1 dep-pkg 7959296c5908094d56a9b4c107f631f0c128f3e1d65d8cfccef478d5c57d6ef7
+              custom-target/rust_glancer/<workspace>/packages/graph-a70a182f184ff488c17e3311c43bca46fe719bd65710115e066972f21ae95644/package-1-dep-pkg-7959296c5908094d56a9b4c107f631f0c128f3e1d65d8cfccef478d5c57d6ef7.rgpkg
         "#]],
     );
 }
@@ -284,7 +284,7 @@ pub struct App;
         expect![[r#"
             cache store artifact I/O
             missing before write true
-            artifact path target/rust_glancer/<workspace>/packages/graph-2e9c7f74573eb6146b67f8651910f56f141bcf2e664109bee1338bd97d317089/package-0-app-494a91ea75e1f1098b52d92a260b1fbe2501f098a88e450b86ff097aff10a5f6.rgpkg
+            artifact path target/rust_glancer/<workspace>/packages/graph-60269cf867e324e1692c50e76fc0e33358a752cbde132bfc80e2d094533e5e9a/package-0-app-4384a0ddccc3e99dabe33c35cbe6a8e29ccacc4b05c8b2348bab2aedf28a882c.rgpkg
             written artifact has bytes true
             loaded package #0 app
             corrupt read has typed decode error true
