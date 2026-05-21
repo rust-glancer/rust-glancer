@@ -2,7 +2,7 @@ use ls_types::{Hover, HoverContents, MarkupContent, MarkupKind};
 use rg_analysis::HoverInfo;
 use rg_parse::LineIndex;
 
-use crate::proto::position;
+use crate::proto::{markdown, position};
 
 pub(crate) fn hover(info: HoverInfo, line_index: &LineIndex) -> Option<Hover> {
     let range = info.range.map(|span| position::range(line_index, span));
@@ -39,11 +39,10 @@ impl HoverMarkdown {
                     block_sections.push(format!("```text\nType: {ty}\n```"));
                 }
 
-                if let Some(docs) = block.docs {
-                    let docs = docs.trim();
-                    if !docs.is_empty() {
-                        block_sections.push(docs.to_string());
-                    }
+                if let Some(docs) = block.docs
+                    && let Some(docs) = markdown::render_rustdoc_markdown(&docs)
+                {
+                    block_sections.push(docs);
                 }
 
                 (!block_sections.is_empty()).then(|| block_sections.join("\n\n"))
@@ -81,6 +80,26 @@ mod tests {
         assert_eq!(
             markdown.as_deref(),
             Some("```rust\napp::User\n```\n\n```rust\npub struct User\n```\n\nUser account.")
+        );
+    }
+
+    #[test]
+    fn normalizes_rustdoc_docs() {
+        let markdown = HoverMarkdown::from_info(HoverInfo {
+            range: None,
+            blocks: vec![HoverBlock {
+                kind: SymbolKind::Function,
+                path: None,
+                signature: Some("pub fn make_user()".to_string()),
+                ty: None,
+                docs: Some("```rust,no_run\n# use app::User;\nUser::new();\n```".to_string()),
+            }],
+        })
+        .finish();
+
+        assert_eq!(
+            markdown.as_deref(),
+            Some("```rust\npub fn make_user()\n```\n\n```rust\nUser::new();\n```")
         );
     }
 }
