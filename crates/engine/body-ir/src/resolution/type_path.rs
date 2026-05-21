@@ -14,15 +14,14 @@ use crate::{
     ir::ids::{BodyItemId, BodyItemRef, BodyRef, ScopeId},
     ir::item::BodyItemOwner,
     ir::resolved::BodyTypePathResolution,
-    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyTy},
+    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyPrimitiveTy, BodyTy},
 };
 
 use super::{
     method::{local_impl_applies_to_receiver, local_impl_self_subst_for_impl},
     ty::{
-        TypeSubst, local_type_subst, primitive_from_path, subst_from_generics,
-        substitute_type_param, ty_from_body_resolution, ty_from_type_ref_in_context,
-        type_ref_is_self,
+        TypeSubst, local_type_subst, subst_from_generics, substitute_type_param,
+        ty_from_body_resolution, ty_from_type_ref_in_context, type_ref_is_self,
     },
 };
 
@@ -73,7 +72,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             .resolve_type_path(self.def_map, context, path)?;
         let resolution = BodyTypePathResolution::from(resolution);
         if matches!(resolution, BodyTypePathResolution::Unknown)
-            && let Some(primitive) = primitive_from_path(path)
+            && let Some(primitive) = path.single_name().and_then(BodyPrimitiveTy::from_name)
         {
             return Ok(BodyTypePathResolution::Primitive(primitive));
         }

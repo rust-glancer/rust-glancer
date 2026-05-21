@@ -50,7 +50,8 @@ pub(super) fn ty_from_type_ref_in_context(
                 semantic_ir.resolve_type_path(def_map, context, &path)?,
             );
             let fallback = if matches!(resolution, BodyTypePathResolution::Unknown) {
-                primitive_from_path(&path)
+                path.single_name()
+                    .and_then(BodyPrimitiveTy::from_name)
                     .map(BodyTy::Primitive)
                     .unwrap_or(unresolved_path_fallback)
             } else {
@@ -105,10 +106,6 @@ pub(super) fn ty_from_body_resolution(
         BodyTypePathResolution::Traits(_) => fallback,
         BodyTypePathResolution::Unknown => fallback,
     }
-}
-
-pub(super) fn primitive_from_path(path: &Path) -> Option<BodyPrimitiveTy> {
-    BodyPrimitiveTy::from_name(path.single_name()?)
 }
 
 pub(super) fn subst_from_generics(generics: &GenericParams, args: &[BodyGenericArg]) -> TypeSubst {
