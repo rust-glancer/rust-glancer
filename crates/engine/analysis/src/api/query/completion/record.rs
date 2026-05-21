@@ -89,7 +89,9 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
                     );
                 }
             }
-            BodyTypePathResolution::Traits(_) | BodyTypePathResolution::Unknown => {}
+            BodyTypePathResolution::Primitive(_)
+            | BodyTypePathResolution::Traits(_)
+            | BodyTypePathResolution::Unknown => {}
         }
 
         Ok(fields)

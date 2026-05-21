@@ -3,7 +3,10 @@
 //! The renderer deliberately stays syntactic. It formats the declaration facts our IR already
 //! stores instead of trying to reconstruct rustc-perfect signatures.
 
-use rg_body_ir::{BindingData, BodyFieldData, BodyFunctionData, BodyItemData, BodyTy};
+use rg_body_ir::{
+    BindingData, BodyEnumVariantData, BodyFieldData, BodyFunctionData, BodyItemData,
+    BodyItemDeclaration, BodyTy, BodyValueItemData, BodyValueItemDeclaration,
+};
 use rg_semantic_ir::{
     ConstData, EnumData, EnumVariantData, EnumVariantItem, FieldData, FieldItem, FieldKey,
     FieldList, FunctionData, FunctionItem, FunctionQualifiers, GenericParams, Mutability,
@@ -135,14 +138,69 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
     }
 
     pub(crate) fn local_item_signature(&self, data: &BodyItemData) -> String {
-        let header = format!(
-            "{} {}{}{}",
-            data.kind,
-            data.name,
-            generic_params(&data.generics),
-            where_clause(&data.generics)
-        );
-        item_with_fields(header, &data.fields)
+        match &data.declaration {
+            BodyItemDeclaration::Struct(item) => {
+                let header = format!(
+                    "struct {}{}{}",
+                    data.name,
+                    generic_params(&item.generics),
+                    where_clause(&item.generics)
+                );
+                item_with_fields(header, &item.fields)
+            }
+            BodyItemDeclaration::Enum(item) => {
+                let header = format!(
+                    "enum {}{}{}",
+                    data.name,
+                    generic_params(&item.generics),
+                    where_clause(&item.generics)
+                );
+                if item.variants.is_empty() {
+                    format!("{header} {{}}")
+                } else {
+                    format_block(header, item.variants.iter().map(enum_variant_signature))
+                }
+            }
+            BodyItemDeclaration::Union(item) => {
+                let header = format!(
+                    "union {}{}{}",
+                    data.name,
+                    generic_params(&item.generics),
+                    where_clause(&item.generics)
+                );
+                item_with_record_fields(header, &item.fields)
+            }
+            BodyItemDeclaration::TypeAlias(item) => type_alias_signature(
+                &data.name,
+                Some(&item.generics),
+                &item.bounds,
+                item.aliased_ty.as_ref(),
+            ),
+            BodyItemDeclaration::Trait(item) => {
+                let unsafe_prefix = if item.is_unsafe { "unsafe " } else { "" };
+                let super_traits = if item.super_traits.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", type_bounds(&item.super_traits))
+                };
+                format!(
+                    "{unsafe_prefix}trait {}{}{}{}",
+                    data.name,
+                    generic_params(&item.generics),
+                    super_traits,
+                    where_clause(&item.generics)
+                )
+            }
+        }
+    }
+
+    pub(crate) fn local_value_item_signature(&self, data: &BodyValueItemData) -> String {
+        match &data.declaration {
+            BodyValueItemDeclaration::Const(item) => const_signature(&data.name, item.ty.as_ref()),
+            BodyValueItemDeclaration::Static(item) => {
+                static_signature(&data.name, item.mutability, item.ty.as_ref())
+            }
+        }
     }
 
     pub(crate) fn local_function_signature(&self, data: &BodyFunctionData) -> String {
@@ -151,6 +209,10 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
 
     pub(crate) fn local_field_signature(&self, data: BodyFieldData<'_>) -> Option<String> {
         field_signature(data.field)
+    }
+
+    pub(crate) fn local_enum_variant_signature(&self, data: BodyEnumVariantData<'_>) -> String {
+        enum_variant_signature(data.variant)
     }
 
     pub(crate) fn binding_signature(&self, data: &BindingData) -> anyhow::Result<String> {

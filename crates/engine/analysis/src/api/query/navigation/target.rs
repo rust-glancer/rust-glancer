@@ -1,7 +1,8 @@
 //! Concrete navigation target projection.
 
 use rg_body_ir::{
-    BodyFieldRef, BodyImplId, BodyItemRef, BodyRef, BodyTy, ResolvedFieldRef, ResolvedFunctionRef,
+    BodyEnumVariantRef, BodyFieldRef, BodyImplId, BodyItemRef, BodyRef, BodyTy, BodyValueItemRef,
+    ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
 };
 use rg_def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef};
 use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, ImplRef, TraitRef, TypeDefRef};
@@ -101,6 +102,26 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         Ok(Some(NavigationTarget {
             target: item_ref.body.target,
             kind: NavigationTargetKind::from_body_item_kind(item.kind),
+            name: item.name.to_string(),
+            file_id: item.source.file_id,
+            span: Some(item.name_source.span),
+        }))
+    }
+
+    pub(crate) fn navigation_target_for_body_value_item(
+        &self,
+        item_ref: BodyValueItemRef,
+    ) -> anyhow::Result<Option<NavigationTarget>> {
+        let Some(body_data) = self.0.body_ir.body_data(item_ref.body)? else {
+            return Ok(None);
+        };
+        let Some(item) = body_data.local_value_item(item_ref.item) else {
+            return Ok(None);
+        };
+
+        Ok(Some(NavigationTarget {
+            target: item_ref.body.target,
+            kind: NavigationTargetKind::from_body_value_item_kind(item.kind),
             name: item.name.to_string(),
             file_id: item.source.file_id,
             span: Some(item.name_source.span),
@@ -250,6 +271,37 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
             kind: NavigationTargetKind::EnumVariant,
             name: data.variant.name.to_string(),
             file_id: data.file_id,
+            span: Some(data.variant.name_span),
+        }))
+    }
+
+    pub(crate) fn navigation_target_for_resolved_enum_variant(
+        &self,
+        variant_ref: ResolvedEnumVariantRef,
+    ) -> anyhow::Result<Option<NavigationTarget>> {
+        match variant_ref {
+            ResolvedEnumVariantRef::Semantic(variant) => {
+                self.navigation_target_for_enum_variant(variant)
+            }
+            ResolvedEnumVariantRef::BodyLocal(variant) => {
+                self.navigation_target_for_body_enum_variant(variant)
+            }
+        }
+    }
+
+    fn navigation_target_for_body_enum_variant(
+        &self,
+        variant_ref: BodyEnumVariantRef,
+    ) -> anyhow::Result<Option<NavigationTarget>> {
+        let Some(data) = self.0.body_ir.local_enum_variant_data(variant_ref)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(NavigationTarget {
+            target: variant_ref.item.body.target,
+            kind: NavigationTargetKind::EnumVariant,
+            name: data.variant.name.to_string(),
+            file_id: data.item.source.file_id,
             span: Some(data.variant.name_span),
         }))
     }

@@ -15,20 +15,32 @@ pub use self::{
         BodyData, BodyIrStats, BodySource, PackageBodies, ScopeData, TargetBodies,
         TargetBodiesStatus,
     },
-    expr::{ExprData, ExprKind, ExprWrapperKind, LiteralKind, MatchArmData, RecordExprField},
+    expr::{
+        ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind,
+        ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LabelData, LiteralKind,
+        MatchArmData, RecordExprField, RecordExprSpread,
+    },
     ids::{
-        BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
-        BodyItemRef, BodyRef, ExprId, PatId, ScopeId, StmtId,
+        BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId,
+        BodyImplId, BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ExprId,
+        PatId, ScopeId, StmtId,
     },
     item::{
-        BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyItemData,
-        BodyItemKind,
+        BodyEnumVariantData, BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyImplData,
+        BodyItemData, BodyItemDeclaration, BodyItemKind, BodyItemOwner, BodyValueItemData,
+        BodyValueItemDeclaration, BodyValueItemKind, BodyValueItemOwner,
     },
-    pat::{PatData, PatKind, RecordPatField},
+    pat::{PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordPatField},
     path::BodyPath,
-    resolved::{BodyResolution, BodyTypePathResolution, ResolvedFieldRef, ResolvedFunctionRef},
+    resolved::{
+        BodyResolution, BodyTypePathResolution, ResolvedEnumVariantRef, ResolvedFieldRef,
+        ResolvedFunctionRef,
+    },
     stmt::{BindingData, BindingKind, StmtData, StmtKind},
-    ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},
+    ty::{
+        BodyFloatTy, BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyPrimitiveTy,
+        BodySignedIntTy, BodyTy, BodyUnsignedIntTy,
+    },
 };
 
 pub(crate) use self::body::BodyBuilder;

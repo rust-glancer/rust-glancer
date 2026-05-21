@@ -4,15 +4,16 @@
 //! `crate::module::Us` and return the qualifier, replacement span, and expected namespace.
 
 use rg_def_map::{Path, TargetRef};
-use rg_item_tree::{GenericArg, TypeBound, TypePath, TypeRef};
+use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{
-    BodyData, BodyId, BodyIrReadTxn, BodyPath, BodyRef, ExprKind, PatId, PatKind, ScopeId, StmtKind,
-};
+use crate::{BodyData, BodyId, BodyIrReadTxn, BodyPath, BodyRef, ExprKind, PatData, ScopeId};
 
-use super::super::{PathCompletionNamespace, PathCompletionSite};
+use super::{
+    super::{PathCompletionNamespace, PathCompletionSite},
+    sites::BodyScanSites,
+};
 
 /// Finds the source site that belongs to a qualified-path completion offset.
 pub(crate) struct PathCompletionSiteScanner<'txn, 'db> {
@@ -68,87 +69,13 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
         body: &BodyData,
         best: &mut Option<(PathCompletionSite, u32)>,
     ) {
-        for statement in body.statements.iter() {
-            if statement.source.file_id != self.file_id {
-                continue;
+        let sites = BodyScanSites::new(body);
+        sites.walk_type_paths(Some(self.file_id), |site| {
+            if let Some(completion_site) = self.site_for_type_path(body_ref, site.scope, site.path)
+            {
+                Self::remember_site(completion_site, site.path.source_span.len(), best);
             }
-            let StmtKind::Let {
-                scope,
-                annotation: Some(annotation),
-                ..
-            } = &statement.kind
-            else {
-                continue;
-            };
-            self.scan_type_ref(body_ref, *scope, annotation, best);
-        }
-    }
-
-    /// Recurses through type syntax because the completion site may be in a generic argument.
-    fn scan_type_ref(
-        &self,
-        body_ref: BodyRef,
-        scope: ScopeId,
-        ty: &TypeRef,
-        best: &mut Option<(PathCompletionSite, u32)>,
-    ) {
-        match ty {
-            TypeRef::Path(path) => {
-                if let Some(site) = self.site_for_type_path(body_ref, scope, path) {
-                    Self::remember_site(site, path.source_span.len(), best);
-                }
-
-                for segment in &path.segments {
-                    for arg in &segment.args {
-                        self.scan_generic_arg(body_ref, scope, arg, best);
-                    }
-                }
-            }
-            TypeRef::Tuple(types) => {
-                for ty in types {
-                    self.scan_type_ref(body_ref, scope, ty, best);
-                }
-            }
-            TypeRef::Reference { inner, .. }
-            | TypeRef::RawPointer { inner, .. }
-            | TypeRef::Slice(inner) => self.scan_type_ref(body_ref, scope, inner, best),
-            TypeRef::Array { inner, .. } => {
-                self.scan_type_ref(body_ref, scope, inner, best);
-            }
-            TypeRef::FnPointer { params, ret } => {
-                for param in params {
-                    self.scan_type_ref(body_ref, scope, param, best);
-                }
-                self.scan_type_ref(body_ref, scope, ret, best);
-            }
-            TypeRef::ImplTrait(bounds) | TypeRef::DynTrait(bounds) => {
-                for bound in bounds {
-                    if let TypeBound::Trait(ty) = bound {
-                        self.scan_type_ref(body_ref, scope, ty, best);
-                    }
-                }
-            }
-            TypeRef::Unknown(_) | TypeRef::Never | TypeRef::Unit | TypeRef::Infer => {}
-        }
-    }
-
-    fn scan_generic_arg(
-        &self,
-        body_ref: BodyRef,
-        scope: ScopeId,
-        arg: &GenericArg,
-        best: &mut Option<(PathCompletionSite, u32)>,
-    ) {
-        match arg {
-            GenericArg::Type(ty) => self.scan_type_ref(body_ref, scope, ty, best),
-            GenericArg::AssocType { ty: Some(ty), .. } => {
-                self.scan_type_ref(body_ref, scope, ty, best);
-            }
-            GenericArg::Lifetime(_)
-            | GenericArg::Const(_)
-            | GenericArg::AssocType { ty: None, .. }
-            | GenericArg::Unsupported(_) => {}
-        }
+        });
     }
 
     /// Scans expression and pattern paths where value-namespace completions can appear.
@@ -162,92 +89,33 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             if expr_data.source.file_id != self.file_id {
                 continue;
             }
-            if let ExprKind::Path { path } = &expr_data.kind {
-                self.scan_body_path(body_ref, expr_data.scope, path, best);
-            }
-        }
-
-        for statement in body.statements.iter() {
-            if statement.source.file_id != self.file_id {
-                continue;
-            }
-            let StmtKind::Let {
-                scope,
-                pat: Some(pat),
-                ..
-            } = &statement.kind
-            else {
-                continue;
-            };
-            self.scan_pat(body_ref, body, *scope, *pat, best);
-        }
-
-        for expr in body.exprs.iter() {
-            if expr.source.file_id != self.file_id {
-                continue;
-            }
-            let ExprKind::Match { arms, .. } = &expr.kind else {
-                continue;
-            };
-            for arm in arms {
-                if let Some(pat) = arm.pat {
-                    self.scan_pat(body_ref, body, arm.scope, pat, best);
+            match &expr_data.kind {
+                ExprKind::Path { path }
+                | ExprKind::Record {
+                    path: Some(path), ..
+                } => {
+                    self.scan_body_path(body_ref, expr_data.scope, path, best);
                 }
+                _ => {}
             }
         }
+
+        let sites = BodyScanSites::new(body);
+        sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
+            self.scan_pat_data(body_ref, site.scope, site.data, best);
+        });
     }
 
-    /// Recurses through nested patterns and visits value paths they expose.
-    fn scan_pat(
+    /// Visits value paths directly owned by one pattern node.
+    fn scan_pat_data(
         &self,
         body_ref: BodyRef,
-        body: &BodyData,
         scope: ScopeId,
-        pat: PatId,
+        data: &PatData,
         best: &mut Option<(PathCompletionSite, u32)>,
     ) {
-        let Some(data) = body.pat(pat) else {
-            return;
-        };
-
-        match &data.kind {
-            PatKind::TupleStruct { path, fields } => {
-                if let Some(path) = path {
-                    self.scan_body_path(body_ref, scope, path, best);
-                }
-                for field in fields {
-                    self.scan_pat(body_ref, body, scope, *field, best);
-                }
-            }
-            PatKind::Record { path, fields, .. } => {
-                if let Some(path) = path {
-                    self.scan_body_path(body_ref, scope, path, best);
-                }
-                for field in fields {
-                    self.scan_pat(body_ref, body, scope, field.pat, best);
-                }
-            }
-            PatKind::Path { path } => {
-                if let Some(path) = path {
-                    self.scan_body_path(body_ref, scope, path, best);
-                }
-            }
-            PatKind::Binding { subpat, .. } => {
-                if let Some(subpat) = subpat {
-                    self.scan_pat(body_ref, body, scope, *subpat, best);
-                }
-            }
-            PatKind::Tuple { fields }
-            | PatKind::Or { pats: fields }
-            | PatKind::Slice { fields } => {
-                for field in fields {
-                    self.scan_pat(body_ref, body, scope, *field, best);
-                }
-            }
-            PatKind::Ref { pat } | PatKind::Box { pat } => {
-                self.scan_pat(body_ref, body, scope, *pat, best);
-            }
-            PatKind::Wildcard | PatKind::Unsupported => {}
+        if let Some(path) = data.kind.value_path() {
+            self.scan_body_path(body_ref, scope, path, best);
         }
     }
 
@@ -320,13 +188,14 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     ) -> Option<PathCompletionSite> {
         let last_segment_span = path.segment_span(path.segment_count().checked_sub(1)?)?;
         let span = self.empty_member_span(path.source_span, last_segment_span)?;
+        let qualifier = path.prefix_through(path.segment_count() - 1)?;
 
         // Expression and pattern paths can use modules and types as intermediate qualifiers, even
         // when the final completed path must eventually denote a value.
         Some(PathCompletionSite {
             body,
             scope,
-            qualifier: path.prefix_through(path.segment_count() - 1),
+            qualifier,
             member_prefix_span: span,
             namespace: PathCompletionNamespace::Values,
         })
@@ -347,12 +216,15 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
             if !span.touches(self.offset) {
                 continue;
             }
+            let Some(qualifier) = path.prefix_through(idx - 1) else {
+                continue;
+            };
 
             Self::remember_site(
                 PathCompletionSite {
                     body,
                     scope,
-                    qualifier: path.prefix_through(idx - 1),
+                    qualifier,
                     member_prefix_span: span,
                     namespace: PathCompletionNamespace::Values,
                 },

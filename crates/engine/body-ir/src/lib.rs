@@ -3,6 +3,7 @@ mod cursor;
 mod ir;
 mod resolution;
 mod store;
+mod walk;
 
 use rg_def_map::PackageSlot;
 use rg_parse::FileId;
@@ -19,14 +20,19 @@ pub use self::{
         UnqualifiedCompletionNamespace, UnqualifiedCompletionSite,
     },
     ir::{
-        BindingData, BindingId, BindingKind, BodyData, BodyFieldData, BodyFieldRef,
-        BodyFunctionData, BodyFunctionId, BodyFunctionOwner, BodyFunctionRef, BodyGenericArg,
-        BodyId, BodyImplData, BodyImplId, BodyIrStats, BodyItemData, BodyItemId, BodyItemKind,
-        BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyRef, BodyResolution,
-        BodySource, BodyTy, BodyTypePathResolution, ExprData, ExprId, ExprKind, LiteralKind,
-        PackageBodies, PatData, PatId, PatKind, RecordExprField, RecordPatField, ResolvedFieldRef,
-        ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
-        TargetBodiesStatus,
+        BindingData, BindingId, BindingKind, BodyData, BodyEnumVariantData, BodyEnumVariantRef,
+        BodyFieldData, BodyFieldRef, BodyFloatTy, BodyFunctionData, BodyFunctionId,
+        BodyFunctionOwner, BodyFunctionRef, BodyGenericArg, BodyId, BodyImplData, BodyImplId,
+        BodyIrStats, BodyItemData, BodyItemDeclaration, BodyItemId, BodyItemKind, BodyItemOwner,
+        BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyPrimitiveTy, BodyRef,
+        BodyResolution, BodySignedIntTy, BodySource, BodyTy, BodyTypePathResolution,
+        BodyUnsignedIntTy, BodyValueItemData, BodyValueItemDeclaration, BodyValueItemId,
+        BodyValueItemKind, BodyValueItemOwner, BodyValueItemRef, ClosureCapture, ClosureKind,
+        ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprId, ExprKind,
+        ExprRangeKind, ExprUnaryOp, LabelData, LiteralKind, PackageBodies, PatBindingMode, PatData,
+        PatId, PatKind, PatMutability, PatRangeKind, RecordExprField, RecordExprSpread,
+        RecordPatField, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, ScopeData,
+        ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
     },
     store::{BodyIrDb, BodyIrReadTxn},
 };

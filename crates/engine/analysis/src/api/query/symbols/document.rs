@@ -443,8 +443,33 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         let mut symbols = Vec::new();
 
         for item in body.local_items() {
-            if item.source.file_id == file_id {
+            if item.source.file_id == file_id
+                && matches!(item.owner, rg_body_ir::BodyItemOwner::LocalScope(_))
+            {
                 symbols.push(self.body_item_document_symbol(file_id, item));
+            }
+        }
+
+        for item in body.local_value_items() {
+            if item.source.file_id == file_id
+                && matches!(item.owner, rg_body_ir::BodyValueItemOwner::LocalScope(_))
+            {
+                symbols.push(self.body_value_item_document_symbol(file_id, item));
+            }
+        }
+
+        for function in body.local_functions() {
+            if function.source.file_id == file_id
+                && matches!(function.owner, rg_body_ir::BodyFunctionOwner::LocalScope(_))
+            {
+                symbols.push(DocumentSymbol {
+                    name: function.name.to_string(),
+                    kind: SymbolKind::Function,
+                    file_id,
+                    span: function.source.span,
+                    selection_span: function.name_source.span,
+                    children: Vec::new(),
+                });
             }
         }
 
@@ -465,7 +490,6 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
             span: item.source.span,
             selection_span: item.name_source.span,
             children: item
-                .fields
                 .fields()
                 .iter()
                 .map(|field| {
@@ -476,6 +500,21 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                     )
                 })
                 .collect(),
+        }
+    }
+
+    fn body_value_item_document_symbol(
+        &self,
+        file_id: FileId,
+        item: &rg_body_ir::BodyValueItemData,
+    ) -> DocumentSymbol {
+        DocumentSymbol {
+            name: item.name.to_string(),
+            kind: SymbolKind::from_body_value_item_kind(item.kind),
+            file_id,
+            span: item.source.span,
+            selection_span: item.name_source.span,
+            children: Vec::new(),
         }
     }
 
@@ -491,9 +530,17 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
             span: impl_data.source.span,
             selection_span: impl_data.source.span,
             children: impl_data
-                .functions
+                .types
                 .iter()
-                .filter_map(|function| {
+                .filter_map(|item| {
+                    let data = body.local_item(*item)?;
+                    Some(self.body_item_document_symbol(data.source.file_id, data))
+                })
+                .chain(impl_data.consts.iter().filter_map(|item| {
+                    let data = body.local_value_item(*item)?;
+                    Some(self.body_value_item_document_symbol(data.source.file_id, data))
+                }))
+                .chain(impl_data.functions.iter().filter_map(|function| {
                     let data = body.local_function(*function)?;
                     Some(DocumentSymbol {
                         name: data.name.to_string(),
@@ -503,7 +550,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                         selection_span: data.name_source.span,
                         children: Vec::new(),
                     })
-                })
+                }))
                 .collect(),
         }
     }

@@ -5,13 +5,13 @@
 //! normalized through the same entity resolver before we compare declaration identities.
 
 use rg_body_ir::{
-    BodyCursorCandidate, BodyItemRef, BodyRef, ResolvedFieldRef, ResolvedFunctionRef,
+    BodyCursorCandidate, BodyItemRef, BodyRef, ResolvedEnumVariantRef, ResolvedFieldRef,
+    ResolvedFunctionRef,
 };
 use rg_def_map::{DefMapCursorCandidate, LocalDefRef, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
-    ConstRef, EnumVariantRef, SemanticCursorCandidate, StaticRef, TraitRef, TypeAliasRef,
-    TypeDefRef,
+    ConstRef, SemanticCursorCandidate, StaticRef, TraitRef, TypeAliasRef, TypeDefRef,
 };
 
 use crate::{
@@ -441,6 +441,23 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                     span,
                 }
             }
+            BodyCursorCandidate::LocalValueItem { item, .. } => {
+                if !self.query.includes_declarations() {
+                    return Ok(None);
+                }
+                let Some(body_data) = self.analysis.body_ir.body_data(item.body)? else {
+                    return Ok(None);
+                };
+                let Some(data) = body_data.local_value_item(item.item) else {
+                    return Ok(None);
+                };
+                ReferenceCandidate {
+                    symbol: SymbolAt::LocalValueItem { item, span },
+                    target,
+                    file_id: data.name_source.file_id,
+                    span,
+                }
+            }
             BodyCursorCandidate::LocalField { field, .. } => {
                 if !self.query.includes_declarations() {
                     return Ok(None);
@@ -450,6 +467,20 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 };
                 ReferenceCandidate {
                     symbol: SymbolAt::LocalField { field, span },
+                    target,
+                    file_id: data.item.source.file_id,
+                    span,
+                }
+            }
+            BodyCursorCandidate::LocalEnumVariant { variant, .. } => {
+                if !self.query.includes_declarations() {
+                    return Ok(None);
+                }
+                let Some(data) = self.analysis.body_ir.local_enum_variant_data(variant)? else {
+                    return Ok(None);
+                };
+                ReferenceCandidate {
+                    symbol: SymbolAt::LocalEnumVariant { variant, span },
                     target,
                     file_id: data.item.source.file_id,
                     span,
@@ -530,7 +561,7 @@ enum ReferenceSubject {
     Trait(TraitRef),
     Function(ResolvedFunctionRef),
     Field(ResolvedFieldRef),
-    EnumVariant(EnumVariantRef),
+    EnumVariant(ResolvedEnumVariantRef),
     TypeAlias(TypeAliasRef),
     Const(ConstRef),
     Static(StaticRef),
@@ -539,6 +570,7 @@ enum ReferenceSubject {
         binding: rg_body_ir::BindingId,
     },
     LocalItem(BodyItemRef),
+    LocalValueItem(rg_body_ir::BodyValueItemRef),
     LocalDef(LocalDefRef),
 }
 
@@ -556,6 +588,7 @@ impl ReferenceSubject {
             ResolvedEntity::Static(static_ref) => Self::Static(static_ref),
             ResolvedEntity::LocalBinding { body, binding } => Self::LocalBinding { body, binding },
             ResolvedEntity::LocalItem(item) => Self::LocalItem(item),
+            ResolvedEntity::LocalValueItem(item) => Self::LocalValueItem(item),
             ResolvedEntity::LocalDef(local_def) => Self::LocalDef(local_def),
         }
     }

@@ -10,8 +10,9 @@ use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
 
 use crate::{
+    ir::body::BodyData,
     ir::resolved::BodyTypePathResolution,
-    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},
+    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyPrimitiveTy, BodyTy},
 };
 
 /// Mapping from a generic type parameter name to the concrete Body IR type known at a use site.
@@ -45,12 +46,18 @@ pub(super) fn ty_from_type_ref_in_context(
                 context,
                 subst,
             )?;
-            let resolution = semantic_ir.resolve_type_path(def_map, context, &path)?;
-            Ok(ty_from_body_resolution(
-                BodyTypePathResolution::from(resolution),
-                unresolved_path_fallback,
-                args,
-            ))
+            let resolution = BodyTypePathResolution::from(
+                semantic_ir.resolve_type_path(def_map, context, &path)?,
+            );
+            let fallback = if matches!(resolution, BodyTypePathResolution::Unknown) {
+                path.single_name()
+                    .and_then(BodyPrimitiveTy::from_name)
+                    .map(BodyTy::Primitive)
+                    .unwrap_or(unresolved_path_fallback)
+            } else {
+                unresolved_path_fallback
+            };
+            Ok(ty_from_body_resolution(resolution, fallback, args))
         }
         TypeRef::Reference { inner, .. } => Ok(BodyTy::reference(ty_from_type_ref_in_context(
             def_map,
@@ -77,6 +84,7 @@ pub(super) fn ty_from_body_resolution(
         BodyTypePathResolution::BodyLocal(item) => {
             BodyTy::LocalNominal(vec![BodyLocalNominalTy { item, args }])
         }
+        BodyTypePathResolution::Primitive(primitive) => BodyTy::Primitive(primitive),
         BodyTypePathResolution::SelfType(types) => BodyTy::SelfTy(
             types
                 .into_iter()
@@ -111,6 +119,16 @@ pub(super) fn subst_from_generics(generics: &GenericParams, args: &[BodyGenericA
         .zip(type_args)
         .map(|(param, ty)| (param.name.clone(), ty))
         .collect()
+}
+
+pub(super) fn local_type_subst(body: &BodyData, ty: &BodyLocalNominalTy) -> TypeSubst {
+    let Some(item) = body.local_item(ty.item.item) else {
+        return TypeSubst::new();
+    };
+
+    item.generic_params()
+        .map(|generics| subst_from_generics(generics, &ty.args))
+        .unwrap_or_else(TypeSubst::new)
 }
 
 pub(super) fn body_generic_arg_ty(arg: &BodyGenericArg) -> Option<BodyTy> {

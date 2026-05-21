@@ -9,6 +9,7 @@ mod dot_completion_site;
 mod path_completion_site;
 mod paths;
 mod record_field_completion_site;
+mod sites;
 mod source;
 mod unqualified_completion_site;
 

@@ -106,6 +106,12 @@ fn hovers_over_enum_variants_and_body_local_items() {
                 id: Event,
             }
 
+            enum Action {
+                /// Local action has started.
+                Start(Event),
+                Stop,
+            }
+
             impl Request {
                 /// Returns the request id.
                 fn id(&self) -> Event {
@@ -117,6 +123,7 @@ fn hovers_over_enum_variants_and_body_local_items() {
             let _id = request.i$method_hover$d();
             let _field = request.i$local_field_hover$d;
             let _event = Event::Sta$variant_hover$rted;
+            let _action = Action::Sta$local_variant_hover$rt(Event::Started);
             let _typed: Re$local_type_hover$quest = request;
         }
         "#,
@@ -125,11 +132,12 @@ fn hovers_over_enum_variants_and_body_local_items() {
             AnalysisQuery::hover("hover body-local field", "local_field_hover"),
             AnalysisQuery::hover("hover enum variant declaration", "variant_decl_hover"),
             AnalysisQuery::hover("hover enum variant", "variant_hover"),
+            AnalysisQuery::hover("hover body-local enum variant", "local_variant_hover"),
             AnalysisQuery::hover("hover body-local type", "local_type_hover"),
         ],
         expect![[r#"
             hover body-local method
-            - range: 21:15-21:27
+            - range: 27:15-27:27
             - block:
               kind: method
               signature:
@@ -138,7 +146,7 @@ fn hovers_over_enum_variants_and_body_local_items() {
                 Returns the request id.
 
             hover body-local field
-            - range: 22:18-22:28
+            - range: 28:18-28:28
             - block:
               kind: field
               signature:
@@ -157,7 +165,7 @@ fn hovers_over_enum_variants_and_body_local_items() {
                 Event has started.
 
             hover enum variant
-            - range: 23:25-23:32
+            - range: 29:25-29:32
             - block:
               kind: variant
               path: analysis_hover_locals::Event::Started
@@ -166,8 +174,17 @@ fn hovers_over_enum_variants_and_body_local_items() {
               docs:
                 Event has started.
 
+            hover body-local enum variant
+            - range: 30:27-30:32
+            - block:
+              kind: variant
+              signature:
+                Start(Event)
+              docs:
+                Local action has started.
+
             hover body-local type
-            - range: 24:17-24:24
+            - range: 31:17-31:24
             - block:
               kind: struct
               signature:
@@ -176,6 +193,83 @@ fn hovers_over_enum_variants_and_body_local_items() {
                 }
               docs:
                 Request scoped to this function.
+        "#]],
+    );
+}
+
+#[test]
+fn hovers_over_more_body_local_items() {
+    check_analysis_queries(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "analysis_hover_more_locals"
+        version = "0.0.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct GlobalId;
+
+        pub fn demo() {
+            /// User id alias.
+            type Alias = GlobalId;
+            /// Local default id.
+            const DEFAULT: Alias = GlobalId;
+            /// Current id.
+            static CURRENT: GlobalId = GlobalId;
+            /// Builds local id.
+            fn helper() -> Alias {
+                DEFAULT
+            }
+
+            let _typed: Al$local_alias_hover$ias = helper();
+            let _default = DE$local_const_hover$FAULT;
+            let _current = CU$local_static_hover$RRENT;
+            let _helper = hel$local_fn_hover$per();
+        }
+        "#,
+        &[
+            AnalysisQuery::hover("hover body-local alias", "local_alias_hover"),
+            AnalysisQuery::hover("hover body-local const", "local_const_hover"),
+            AnalysisQuery::hover("hover body-local static", "local_static_hover"),
+            AnalysisQuery::hover("hover body-local free function", "local_fn_hover"),
+        ],
+        expect![[r#"
+            hover body-local alias
+            - range: 15:17-15:22
+            - block:
+              kind: type_alias
+              signature:
+                type Alias = GlobalId
+              docs:
+                User id alias.
+
+            hover body-local const
+            - range: 16:20-16:27
+            - block:
+              kind: const
+              signature:
+                const DEFAULT: Alias
+              docs:
+                Local default id.
+
+            hover body-local static
+            - range: 17:20-17:27
+            - block:
+              kind: static
+              signature:
+                static CURRENT: GlobalId
+              docs:
+                Current id.
+
+            hover body-local free function
+            - range: 18:19-18:25
+            - block:
+              kind: fn
+              signature:
+                fn helper() -> Alias
+              docs:
+                Builds local id.
         "#]],
     );
 }

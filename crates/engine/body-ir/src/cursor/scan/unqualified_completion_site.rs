@@ -5,14 +5,16 @@
 //! candidate set comes from the resolved qualifier rather than lexical scope.
 
 use rg_def_map::TargetRef;
-use rg_item_tree::{GenericArg, TypeBound, TypePath, TypeRef};
+use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
 use crate::{
-    BodyData, BodyId, BodyIrReadTxn, BodyPath, BodyRef, ExprKind, ScopeId, StmtKind,
+    BodyData, BodyId, BodyIrReadTxn, BodyPath, BodyRef, ExprKind, ScopeId,
     cursor::{UnqualifiedCompletionNamespace, UnqualifiedCompletionSite},
 };
+
+use super::sites::BodyScanSites;
 
 /// Finds the source site that belongs to an unqualified completion offset.
 pub(crate) struct UnqualifiedCompletionSiteScanner<'txn, 'db> {
@@ -69,93 +71,14 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         body: &BodyData,
         best: &mut Option<(UnqualifiedCompletionSite, u32)>,
     ) {
-        for statement in body.statements.iter() {
-            if statement.source.file_id != self.file_id {
-                continue;
+        let sites = BodyScanSites::new(body);
+        sites.walk_type_paths(Some(self.file_id), |site| {
+            if let Some(completion_site) =
+                self.site_for_type_path(body_ref, site.scope, site.visible_bindings, site.path)
+            {
+                Self::remember_site(completion_site, site.path.source_span.len(), best);
             }
-            let StmtKind::Let {
-                scope,
-                annotation: Some(annotation),
-                ..
-            } = &statement.kind
-            else {
-                continue;
-            };
-            self.scan_type_ref(body_ref, *scope, body.bindings().len(), annotation, best);
-        }
-    }
-
-    fn scan_type_ref(
-        &self,
-        body_ref: BodyRef,
-        scope: ScopeId,
-        visible_bindings: usize,
-        ty: &TypeRef,
-        best: &mut Option<(UnqualifiedCompletionSite, u32)>,
-    ) {
-        match ty {
-            TypeRef::Path(path) => {
-                if let Some(site) = self.site_for_type_path(body_ref, scope, visible_bindings, path)
-                {
-                    Self::remember_site(site, path.source_span.len(), best);
-                }
-
-                for segment in &path.segments {
-                    for arg in &segment.args {
-                        self.scan_generic_arg(body_ref, scope, visible_bindings, arg, best);
-                    }
-                }
-            }
-            TypeRef::Tuple(types) => {
-                for ty in types {
-                    self.scan_type_ref(body_ref, scope, visible_bindings, ty, best);
-                }
-            }
-            TypeRef::Reference { inner, .. }
-            | TypeRef::RawPointer { inner, .. }
-            | TypeRef::Slice(inner) => {
-                self.scan_type_ref(body_ref, scope, visible_bindings, inner, best);
-            }
-            TypeRef::Array { inner, .. } => {
-                self.scan_type_ref(body_ref, scope, visible_bindings, inner, best);
-            }
-            TypeRef::FnPointer { params, ret } => {
-                for param in params {
-                    self.scan_type_ref(body_ref, scope, visible_bindings, param, best);
-                }
-                self.scan_type_ref(body_ref, scope, visible_bindings, ret, best);
-            }
-            TypeRef::ImplTrait(bounds) | TypeRef::DynTrait(bounds) => {
-                for bound in bounds {
-                    if let TypeBound::Trait(ty) = bound {
-                        self.scan_type_ref(body_ref, scope, visible_bindings, ty, best);
-                    }
-                }
-            }
-            TypeRef::Unknown(_) | TypeRef::Never | TypeRef::Unit | TypeRef::Infer => {}
-        }
-    }
-
-    fn scan_generic_arg(
-        &self,
-        body_ref: BodyRef,
-        scope: ScopeId,
-        visible_bindings: usize,
-        arg: &GenericArg,
-        best: &mut Option<(UnqualifiedCompletionSite, u32)>,
-    ) {
-        match arg {
-            GenericArg::Type(ty) => {
-                self.scan_type_ref(body_ref, scope, visible_bindings, ty, best);
-            }
-            GenericArg::AssocType { ty: Some(ty), .. } => {
-                self.scan_type_ref(body_ref, scope, visible_bindings, ty, best);
-            }
-            GenericArg::Lifetime(_)
-            | GenericArg::Const(_)
-            | GenericArg::AssocType { ty: None, .. }
-            | GenericArg::Unsupported(_) => {}
-        }
+        });
     }
 
     /// Scans expression paths where value-namespace completions can appear.
@@ -169,14 +92,20 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
             if expr_data.source.file_id != self.file_id {
                 continue;
             }
-            if let ExprKind::Path { path } = &expr_data.kind {
-                self.scan_body_path(
-                    body_ref,
-                    expr_data.scope,
-                    expr_data.visible_bindings,
-                    path,
-                    best,
-                );
+            match &expr_data.kind {
+                ExprKind::Path { path }
+                | ExprKind::Record {
+                    path: Some(path), ..
+                } => {
+                    self.scan_body_path(
+                        body_ref,
+                        expr_data.scope,
+                        expr_data.visible_bindings,
+                        path,
+                        best,
+                    );
+                }
+                _ => {}
             }
         }
     }
@@ -188,10 +117,14 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         visible_bindings: usize,
         path: &TypePath,
     ) -> Option<UnqualifiedCompletionSite> {
-        if path.absolute || path.segments.len() != 1 {
+        if path.absolute {
             return None;
         }
-        let segment = path.segments.first()?;
+        // This scanner owns only unqualified completion sites. Qualified type paths are handled by
+        // `PathCompletionSiteScanner`, because their candidates depend on the resolved qualifier.
+        let [segment] = path.segments.as_slice() else {
+            return None;
+        };
         if !segment.span.touches(self.offset) {
             return None;
         }
@@ -200,6 +133,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
             body,
             scope,
             member_prefix_span: segment.span,
+            member_prefix: self.prefix_text(segment.name.as_str(), segment.span),
             namespace: UnqualifiedCompletionNamespace::Types,
             visible_bindings,
         })
@@ -213,7 +147,10 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         path: &BodyPath,
         best: &mut Option<(UnqualifiedCompletionSite, u32)>,
     ) {
-        if path.path.absolute || path.segment_count() != 1 {
+        let Some(def_map_path) = path.as_def_map_path() else {
+            return;
+        };
+        if def_map_path.absolute || path.segment_count() != 1 {
             return;
         }
         let Some(span) = path.segment_span(0) else {
@@ -228,12 +165,25 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
                 body,
                 scope,
                 member_prefix_span: span,
+                member_prefix: self
+                    .prefix_text(def_map_path.single_name().unwrap_or_default(), span),
                 namespace: UnqualifiedCompletionNamespace::Values,
                 visible_bindings,
             },
             path.source_span.len(),
             best,
         );
+    }
+
+    fn prefix_text(&self, name: &str, span: rg_parse::Span) -> String {
+        // The lowered name is the complete segment text, while completion only needs the source
+        // prefix before the cursor. Walk back to a UTF-8 boundary for non-ASCII identifiers.
+        let end = self.offset.saturating_sub(span.text.start).min(span.len());
+        let mut end = usize::try_from(end).unwrap_or(name.len());
+        while !name.is_char_boundary(end) {
+            end = end.saturating_sub(1);
+        }
+        name.get(..end).unwrap_or(name).to_string()
     }
 
     /// Keeps nested path behavior predictable by choosing the shortest matching path syntax.

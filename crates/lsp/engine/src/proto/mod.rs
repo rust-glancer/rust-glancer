@@ -3,6 +3,7 @@
 pub(crate) mod completion;
 pub(crate) mod hover;
 pub(crate) mod inlay_hint;
+pub(crate) mod markdown;
 pub(crate) mod navigation;
 pub(crate) mod position;
 pub(crate) mod references;

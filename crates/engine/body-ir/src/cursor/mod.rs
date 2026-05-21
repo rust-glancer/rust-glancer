@@ -6,14 +6,17 @@
 
 mod scan;
 
+use std::collections::HashSet;
+
 use rg_def_map::{Path, TargetRef};
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
+use rg_text::Name;
 
 use crate::{
-    BindingId, BodyFieldRef, BodyFunctionRef, BodyIrReadTxn, BodyItemKind, BodyItemRef, BodyRef,
-    BodyTy, ExprId, ScopeId,
+    BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef, BodyIrReadTxn, BodyItemKind,
+    BodyItemRef, BodyRef, BodyTy, BodyValueItemKind, BodyValueItemRef, ExprId, ScopeId,
 };
 
 use self::scan::{
@@ -59,12 +62,13 @@ pub struct PathCompletionSite {
 }
 
 /// Source site selected for an unqualified completion query inside a body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnqualifiedCompletionSite {
     pub body: BodyRef,
     pub scope: ScopeId,
     /// Name prefix already typed at the cursor.
     pub member_prefix_span: Span,
+    pub member_prefix: String,
     pub namespace: UnqualifiedCompletionNamespace,
     /// Number of body-wide bindings visible before this source site.
     ///
@@ -89,12 +93,16 @@ pub struct RecordFieldCompletionSite {
 /// Body-local name visible at an unqualified completion site.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BodyUnqualifiedCompletionCandidate {
+    /// Local binding introduced by a parameter or pattern, e.g. `user` in `let user = input;`.
     Binding {
         binding: BindingId,
         label: String,
         /// Number of lexical parents between the cursor scope and the binding's scope.
         scope_distance: usize,
     },
+    /// Body-local type-namespace item, e.g. `User` in `fn f() { struct User; }`.
+    ///
+    /// In value positions, this is only emitted for items that also introduce a bare constructor.
     LocalItem {
         item: BodyItemRef,
         kind: BodyItemKind,
@@ -102,37 +110,64 @@ pub enum BodyUnqualifiedCompletionCandidate {
         /// Number of lexical parents between the cursor scope and the item's scope.
         scope_distance: usize,
     },
+    /// Body-local value-namespace item, e.g. `DEFAULT` in `fn f() { const DEFAULT: u8 = 0; }`.
+    ///
+    /// This covers local `const` and `static` declarations, not `let` bindings.
+    LocalValueItem {
+        item: BodyValueItemRef,
+        kind: BodyValueItemKind,
+        label: String,
+        /// Number of lexical parents between the cursor scope and the item's scope.
+        scope_distance: usize,
+    },
+    /// Body-local free function, e.g. `helper` in `fn f() { fn helper() {} }`.
+    LocalFunction {
+        function: BodyFunctionRef,
+        label: String,
+        /// Number of lexical parents between the cursor scope and the function's scope.
+        scope_distance: usize,
+    },
 }
 
 /// One body source node that can participate in cursor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BodyCursorCandidate {
-    Body {
-        body: BodyRef,
-        span: Span,
-    },
+    /// Function body declaration, e.g. the name in `fn use_it() { ... }`.
+    Body { body: BodyRef, span: Span },
+    /// Local binding introduced by a parameter or pattern, e.g. `user` in `let user = input;`.
     Binding {
         body: BodyRef,
         binding: BindingId,
         span: Span,
     },
+    /// Lowered expression node, e.g. the whole `user.id()` call expression.
     Expr {
         body: BodyRef,
         expr: ExprId,
         span: Span,
     },
-    LocalItem {
-        item: BodyItemRef,
+    /// Body-local type-namespace item, e.g. `User` in `fn f() { struct User; }`.
+    ///
+    /// This also covers local `enum`, `union`, `type`, and `trait` declarations.
+    LocalItem { item: BodyItemRef, span: Span },
+    /// Body-local value-namespace item, e.g. `DEFAULT` in `fn f() { const DEFAULT: u8 = 0; }`.
+    ///
+    /// This covers local `const` and `static` declarations, not `let` bindings.
+    LocalValueItem { item: BodyValueItemRef, span: Span },
+    /// Field declared on a body-local struct or union,
+    /// e.g. `id` in `fn f() { struct User { id: Id } }`.
+    LocalField { field: BodyFieldRef, span: Span },
+    /// Variant declared on a body-local enum, e.g. `Start` in `enum Action { Start }`.
+    LocalEnumVariant {
+        variant: BodyEnumVariantRef,
         span: Span,
     },
-    LocalField {
-        field: BodyFieldRef,
-        span: Span,
-    },
+    /// Body-local function-like item, e.g. `helper` in `fn f() { fn helper() {} }`.
     LocalFunction {
         function: BodyFunctionRef,
         span: Span,
     },
+    /// Type-namespace path inside a body, e.g. `User` in `let user: User;`.
     TypePath {
         body: BodyRef,
         scope: ScopeId,
@@ -161,7 +196,9 @@ impl BodyCursorCandidate {
             | Self::Binding { span, .. }
             | Self::Expr { span, .. }
             | Self::LocalItem { span, .. }
+            | Self::LocalValueItem { span, .. }
             | Self::LocalField { span, .. }
+            | Self::LocalEnumVariant { span, .. }
             | Self::LocalFunction { span, .. }
             | Self::TypePath { span, .. }
             | Self::ValuePath { span, .. } => *span,
@@ -232,14 +269,14 @@ impl BodyIrReadTxn<'_> {
     /// Returns body-local names visible from an unqualified completion site.
     pub fn unqualified_completion_candidates(
         &self,
-        site: UnqualifiedCompletionSite,
+        site: &UnqualifiedCompletionSite,
     ) -> Result<Vec<BodyUnqualifiedCompletionCandidate>, PackageStoreError> {
         let Some(body) = self.body_data(site.body)? else {
             return Ok(Vec::new());
         };
         let mut candidates = Vec::new();
-        let mut seen_values = Vec::new();
-        let mut seen_types = Vec::new();
+        let mut seen_values = HashSet::<Name>::new();
+        let mut seen_types = HashSet::<Name>::new();
         let mut scope = Some(site.scope);
         let mut scope_distance = 0;
 
@@ -257,16 +294,50 @@ impl BodyIrReadTxn<'_> {
                     let Some(binding) = body.binding(binding_id) else {
                         continue;
                     };
-                    let Some(label) = binding.name.as_ref().map(ToString::to_string) else {
+                    let Some(name) = binding.name.as_ref() else {
                         continue;
                     };
-                    if seen_values.contains(&label) {
+                    if !seen_values.insert(name.clone()) {
                         continue;
                     }
-                    seen_values.push(label.clone());
                     candidates.push(BodyUnqualifiedCompletionCandidate::Binding {
                         binding: binding_id,
-                        label,
+                        label: name.to_string(),
+                        scope_distance,
+                    });
+                }
+
+                for function_id in scope_data.local_functions.iter().rev().copied() {
+                    let Some(function) = body.local_function(function_id) else {
+                        continue;
+                    };
+                    if !seen_values.insert(function.name.clone()) {
+                        continue;
+                    }
+                    candidates.push(BodyUnqualifiedCompletionCandidate::LocalFunction {
+                        function: BodyFunctionRef {
+                            body: site.body,
+                            function: function_id,
+                        },
+                        label: function.name.to_string(),
+                        scope_distance,
+                    });
+                }
+
+                for item_id in scope_data.local_value_items.iter().rev().copied() {
+                    let Some(item) = body.local_value_item(item_id) else {
+                        continue;
+                    };
+                    if !seen_values.insert(item.name.clone()) {
+                        continue;
+                    }
+                    candidates.push(BodyUnqualifiedCompletionCandidate::LocalValueItem {
+                        item: BodyValueItemRef {
+                            body: site.body,
+                            item: item_id,
+                        },
+                        kind: item.kind,
+                        label: item.name.to_string(),
                         scope_distance,
                     });
                 }
@@ -276,18 +347,27 @@ impl BodyIrReadTxn<'_> {
                 let Some(item) = body.local_item(item_id) else {
                     continue;
                 };
-                let label = item.name.to_string();
-                if seen_types.contains(&label) {
-                    continue;
+
+                match site.namespace {
+                    UnqualifiedCompletionNamespace::Values => {
+                        if !item.has_value_constructor() || !seen_values.insert(item.name.clone()) {
+                            continue;
+                        }
+                    }
+                    UnqualifiedCompletionNamespace::Types => {
+                        if !seen_types.insert(item.name.clone()) {
+                            continue;
+                        }
+                    }
                 }
-                seen_types.push(label.clone());
+
                 candidates.push(BodyUnqualifiedCompletionCandidate::LocalItem {
                     item: BodyItemRef {
                         body: site.body,
                         item: item_id,
                     },
                     kind: item.kind,
-                    label,
+                    label: item.name.to_string(),
                     scope_distance,
                 });
             }

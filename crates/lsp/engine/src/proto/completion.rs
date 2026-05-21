@@ -7,7 +7,7 @@ use rg_analysis::{
 };
 use rg_parse::LineIndex;
 
-use crate::proto::position;
+use crate::proto::{markdown, position};
 
 pub(crate) fn completion_item(item: CompletionItem, line_index: &LineIndex) -> LspCompletionItem {
     let detail = completion_detail(item.detail, item.applicability);
@@ -30,12 +30,14 @@ fn completion_kind(kind: CompletionKind) -> CompletionItemKind {
     match kind {
         CompletionKind::Const => CompletionItemKind::CONSTANT,
         CompletionKind::Enum => CompletionItemKind::ENUM,
+        CompletionKind::EnumVariant => CompletionItemKind::ENUM_MEMBER,
         CompletionKind::Field => CompletionItemKind::FIELD,
         CompletionKind::Function => CompletionItemKind::FUNCTION,
         CompletionKind::InherentMethod | CompletionKind::TraitMethod => CompletionItemKind::METHOD,
         CompletionKind::Keyword => CompletionItemKind::KEYWORD,
         CompletionKind::Macro => CompletionItemKind::FUNCTION,
         CompletionKind::Module => CompletionItemKind::MODULE,
+        CompletionKind::PrimitiveType => CompletionItemKind::KEYWORD,
         CompletionKind::Static => CompletionItemKind::VARIABLE,
         CompletionKind::Struct | CompletionKind::Union => CompletionItemKind::STRUCT,
         CompletionKind::Trait => CompletionItemKind::INTERFACE,
@@ -65,8 +67,8 @@ fn completion_detail(
 }
 
 fn markdown_documentation(value: String) -> Option<Documentation> {
-    let value = value.trim().to_string();
-    (!value.is_empty()).then_some(Documentation::MarkupContent(MarkupContent {
+    let value = markdown::render_rustdoc_markdown(&value)?;
+    Some(Documentation::MarkupContent(MarkupContent {
         kind: MarkupKind::Markdown,
         value,
     }))

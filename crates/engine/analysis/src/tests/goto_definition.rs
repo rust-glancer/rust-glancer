@@ -223,7 +223,15 @@ pub enum Action {
     Quit,
 }
 
-pub fn use_it(action: Action) {
+pub const EXACT: i32 = 5;
+pub const shadow: i32 = 7;
+
+pub mod limits {
+    pub const MIN: i32 = 0;
+    pub const MAX: i32 = 10;
+}
+
+pub fn use_it(action: Action, value: i32) {
     let widget = Wi$goto_assoc_type$dget::cre$goto_assoc_fn$ate();
     let _action = A$goto_enum_expr$ction::Con$goto_expr_variant$figure(Widget::create());
 
@@ -231,6 +239,17 @@ pub fn use_it(action: Action) {
         A$goto_enum_tuple_pattern$ction::Con$goto_tuple_variant$figure(widget) => widget,
         Action::Pro$goto_record_variant$ject { widget } => widget,
         Action::Quit => Widget,
+    };
+
+    match value {
+        limits::MI$goto_range_start$N..=limits::MA$goto_range_end$X => Widget,
+        const { EX$goto_const_block$ACT } => Widget,
+        _ => Widget,
+    };
+
+    match (value, value) {
+        (shadow, const { sha$goto_const_shadow$dow }) => Widget,
+        _ => Widget,
     };
 }
 "#,
@@ -242,6 +261,10 @@ pub fn use_it(action: Action) {
             AnalysisQuery::goto("goto tuple pattern enum prefix", "goto_enum_tuple_pattern"),
             AnalysisQuery::goto("goto tuple pattern variant", "goto_tuple_variant"),
             AnalysisQuery::goto("goto record pattern variant", "goto_record_variant"),
+            AnalysisQuery::goto("goto range pattern start", "goto_range_start"),
+            AnalysisQuery::goto("goto range pattern end", "goto_range_end"),
+            AnalysisQuery::goto("goto const block pattern path", "goto_const_block"),
+            AnalysisQuery::goto("goto const block shadowed path", "goto_const_shadow"),
         ],
         expect![[r#"
             goto associated type prefix
@@ -264,6 +287,18 @@ pub fn use_it(action: Action) {
 
             goto record pattern variant
             - variant Project @ 11:5-11:12
+
+            goto range pattern start
+            - const MIN @ 19:15-19:18
+
+            goto range pattern end
+            - const MAX @ 20:15-20:18
+
+            goto const block pattern path
+            - const EXACT @ 15:11-15:16
+
+            goto const block shadowed path
+            - const shadow @ 16:11-16:17
         "#]],
     );
 }
@@ -736,6 +771,155 @@ pub fn outside() {
 
             goto module constructor
             - struct User @ 1:12-1:16
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_body_local_enum_variants() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_local_enum_variant_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn make() {
+    enum Action {
+        Start,
+        Stop,
+    }
+
+    let _action = Action::Sta$goto_local_variant$rt;
+}
+"#,
+        &[AnalysisQuery::goto(
+            "goto local enum variant",
+            "goto_local_variant",
+        )],
+        expect![[r#"
+            goto local enum variant
+            - variant Start @ 3:9-3:14
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_body_local_record_literals() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_local_record_literal_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct User {
+        id: GlobalId,
+    }
+
+    let _user = Us$goto_record_local_type$er { id: GlobalId };
+}
+"#,
+        &[AnalysisQuery::goto(
+            "goto local record literal",
+            "goto_record_local_type",
+        )],
+        expect![[r#"
+            goto local record literal
+            - struct User @ 4:12-4:16
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_body_local_value_shadowing_by_scope() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_value_shadowing_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Outer;
+pub struct Inner;
+
+pub fn make() {
+    fn helper() -> Outer {
+        Outer
+    }
+    let value = Outer;
+
+    {
+        fn value() -> Inner {
+            Inner
+        }
+        let _from_fn = val$goto_inner_fn$ue();
+    };
+
+    {
+        const helper: Inner = Inner;
+        let _from_const = hel$goto_inner_const$per;
+    };
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto inner function", "goto_inner_fn"),
+            AnalysisQuery::goto("goto inner const", "goto_inner_const"),
+        ],
+        expect![[r#"
+            goto inner function
+            - fn value @ 11:12-11:17
+
+            goto inner const
+            - const helper @ 18:15-18:21
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_body_local_associated_consts_and_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_assoc_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct User;
+
+    impl User {
+        const DEFAULT: GlobalId = GlobalId;
+        type Id = GlobalId;
+    }
+
+    let _default = User::DE$goto_assoc_const$FAULT;
+    let _typed: User::I$goto_assoc_type$d = GlobalId;
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto associated const", "goto_assoc_const"),
+            AnalysisQuery::goto("goto associated type", "goto_assoc_type"),
+        ],
+        expect![[r#"
+            goto associated const
+            - const DEFAULT @ 7:15-7:22
+
+            goto associated type
+            - type_alias Id @ 8:14-8:16
         "#]],
     );
 }

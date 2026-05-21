@@ -162,17 +162,26 @@ pub mod api {
 
 pub fn use_it() {
     let _: crate::api::Ap$type_path$;
+    let _ = 0 as crate::api::Ap$cast_type_path$;
     let _ = crate::api::bu$value_path$();
 }
 "#,
         &[
             AnalysisQuery::complete("type path completions", "type_path"),
+            AnalysisQuery::complete("cast type path completions", "cast_type_path"),
             AnalysisQuery::complete("value path completions", "value_path"),
         ],
         // Value-position paths include type-namespace entries too because modules and nominal
         // types can be intermediate prefixes. Prefix filtering is left to the LSP client.
         expect![[r#"
             type path completions
+            - type_alias ApiAlias
+            - trait ApiNamed
+            - enum ApiState
+            - struct ApiUser
+            - module api_nested
+
+            cast type path completions
             - type_alias ApiAlias
             - trait ApiNamed
             - enum ApiState
@@ -224,6 +233,75 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_record_constructor_paths() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_record_constructor_path_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod api {
+    pub struct User {
+        pub id: u8,
+    }
+
+    pub enum Action {
+        Start { id: u8 },
+    }
+
+    pub fn build_user() -> User {
+        User { id: 0 }
+    }
+}
+
+pub struct LocalUser {
+    id: u8,
+}
+
+pub fn use_it() {
+    enum LocalAction {
+        Start { id: u8 },
+    }
+
+    let _local = Local$local_ctor$ { id: 0 };
+    let _local_variant = LocalAction::Sta$local_variant_ctor$ { id: 0 };
+    let _record = api::Us$record_ctor$ { id: 0 };
+    let _variant = api::Action::Sta$variant_ctor$ { id: 0 };
+}
+"#,
+        &[
+            AnalysisQuery::complete("unqualified record constructor completions", "local_ctor"),
+            AnalysisQuery::complete(
+                "body-local record variant constructor completions",
+                "local_variant_ctor",
+            ),
+            AnalysisQuery::complete("qualified record constructor completions", "record_ctor"),
+            AnalysisQuery::complete("record variant constructor completions", "variant_ctor"),
+        ],
+        expect![[r#"
+            unqualified record constructor completions
+            - struct LocalUser
+            - module api
+            - fn use_it
+
+            body-local record variant constructor completions
+            - variant Start
+
+            qualified record constructor completions
+            - enum Action
+            - struct User
+            - fn build_user
+
+            record variant constructor completions
+            - variant Start
+        "#]],
+    );
+}
+
+#[test]
 fn completes_bare_qualified_paths_in_type_contexts_without_semicolon() {
     check_analysis_queries(
         r#"
@@ -249,6 +327,57 @@ pub fn use_it() {
             bare type path completions
             - struct RootType
             - module api
+        "#]],
+    );
+}
+
+#[test]
+fn completes_qualified_paths_in_control_flow_patterns() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_control_flow_pattern_path_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod api {
+    pub struct Profile(pub u8);
+    pub struct User(pub u8);
+    pub fn build() {}
+}
+
+pub struct Users;
+
+pub fn use_it(user: api::User, users: Users) {
+    if let api::Us$if_path$er(id) = user {}
+
+    while let api::Us$while_path$er(id) = user {}
+
+    for api::Us$for_path$er(id) in users {}
+}
+"#,
+        &[
+            AnalysisQuery::complete("if let pattern path completions", "if_path"),
+            AnalysisQuery::complete("while let pattern path completions", "while_path"),
+            AnalysisQuery::complete("for pattern path completions", "for_path"),
+        ],
+        expect![[r#"
+            if let pattern path completions
+            - struct Profile
+            - struct User
+            - fn build
+
+            while let pattern path completions
+            - struct Profile
+            - struct User
+            - fn build
+
+            for pattern path completions
+            - struct Profile
+            - struct User
+            - fn build
         "#]],
     );
 }
@@ -366,6 +495,39 @@ pub fn use_it(c_a_outer: u8) {
 }
 
 #[test]
+fn completes_for_loop_pattern_bindings() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_for_pattern_binding_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Items;
+
+pub fn use_it(items: Items) {
+    for item in items {
+        it$0;
+    }
+}
+"#,
+        &[AnalysisQuery::complete(
+            "for pattern binding completions",
+            "0",
+        )],
+        expect![[r#"
+            for pattern binding completions
+            - struct Items
+            - variable item
+            - variable items
+            - fn use_it
+        "#]],
+    );
+}
+
+#[test]
 fn sorts_unqualified_body_types_by_lexical_proximity() {
     check_analysis_queries(
         r#"
@@ -443,6 +605,174 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_primitive_types_in_unqualified_type_positions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_primitive_type_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Vec<T>(T);
+
+pub fn use_it() {
+    let _value: u$primitive$;
+    let _values: Vec<u$generic_arg$>;
+}
+"#,
+        &[
+            AnalysisQuery::complete("primitive type completions", "primitive"),
+            AnalysisQuery::complete("primitive generic arg completions", "generic_arg"),
+        ],
+        expect![[r#"
+            primitive type completions
+            - struct Vec
+            - primitive_type u128
+            - primitive_type u16
+            - primitive_type u32
+            - primitive_type u64
+            - primitive_type u8
+            - primitive_type usize
+
+            primitive generic arg completions
+            - struct Vec
+            - primitive_type u128
+            - primitive_type u16
+            - primitive_type u32
+            - primitive_type u64
+            - primitive_type u8
+            - primitive_type usize
+        "#]],
+    );
+}
+
+#[test]
+fn suppresses_shadowed_primitive_type_completions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_shadowed_primitive_type_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct usize;
+
+pub fn use_it() {
+    struct u8;
+    let _module: us$module_shadow$;
+    let _local: u8$local_shadow$;
+}
+"#,
+        &[
+            AnalysisQuery::complete("module shadowed primitive completions", "module_shadow"),
+            AnalysisQuery::complete("local shadowed primitive completions", "local_shadow"),
+        ],
+        expect![[r#"
+            module shadowed primitive completions
+            - struct u8
+            - struct usize
+
+            local shadowed primitive completions
+            - struct u8
+            - struct usize
+        "#]],
+    );
+}
+
+#[test]
+fn completes_primitive_types_shadowed_only_by_modules() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_module_named_like_primitive_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod usize {}
+
+pub fn use_it() {
+    let _value: us$module_name$;
+}
+"#,
+        &[AnalysisQuery::complete_verbose(
+            "module named like primitive completions",
+            "module_name",
+        )],
+        expect![[r#"
+            module named like primitive completions
+            - module usize
+              detail: mod usize
+              sort: 01-module|02|usize|00|Def(Module(ModuleRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, module: ModuleId(1) }))
+              replace: 52..54
+            - primitive_type usize
+              detail: primitive type usize
+              sort: 02-primitive|00|usize|00|PrimitiveType(UnsignedInt(Usize))
+              replace: 52..54
+        "#]],
+    );
+}
+
+#[test]
+fn completes_more_body_local_type_and_value_items() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_more_body_local_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    struct LocalUnit;
+    enum LocalAction { Start }
+    union LocalBits { id: GlobalId }
+    type LocalAlias = GlobalId;
+    trait LocalNamed {}
+    const local_default: LocalAlias = GlobalId;
+    static local_current: GlobalId = GlobalId;
+    fn local_helper() -> LocalAlias {
+        GlobalId
+    }
+
+    let _typed: Loc$type$;
+    let _value = loc$value$;
+}
+"#,
+        &[
+            AnalysisQuery::complete("body-local type item completions", "type"),
+            AnalysisQuery::complete("body-local value item completions", "value"),
+        ],
+        expect![[r#"
+            body-local type item completions
+            - struct GlobalId
+            - enum LocalAction
+            - type_alias LocalAlias
+            - union LocalBits
+            - trait LocalNamed
+            - struct LocalUnit
+
+            body-local value item completions
+            - struct GlobalId
+            - struct LocalUnit
+            - variable _typed
+            - static local_current
+            - const local_default
+            - fn local_helper
+            - fn use_it
+        "#]],
+    );
+}
+
+#[test]
 fn completes_unqualified_type_args_in_generic_type_paths() {
     check_analysis_queries_with_sysroot(
         r#"
@@ -457,8 +787,14 @@ pub struct Session;
 pub struct State;
 pub struct String;
 
+pub enum Maybe<T> {
+    Some(T),
+    None,
+}
+
 pub fn use_it() {
     let _values: std::collections::HashMap<String, S$value_arg$>;
+    let _variant = Maybe::<S$value_path_arg$>::None;
     let _keys: std::collections::HashMap<S$key_arg$
 }
 
@@ -478,9 +814,12 @@ pub mod collections {
                 .in_lib("analysis_unqualified_generic_type_arg_completions"),
             AnalysisQuery::complete("second generic arg completions", "value_arg")
                 .in_lib("analysis_unqualified_generic_type_arg_completions"),
+            AnalysisQuery::complete("value path generic arg completions", "value_path_arg")
+                .in_lib("analysis_unqualified_generic_type_arg_completions"),
         ],
         expect![[r#"
             first generic arg completions
+            - enum Maybe
             - struct Session
             - struct State
             - struct String
@@ -489,6 +828,16 @@ pub mod collections {
             - module std
 
             second generic arg completions
+            - enum Maybe
+            - struct Session
+            - struct State
+            - struct String
+            - module alloc
+            - module core
+            - module std
+
+            value path generic arg completions
+            - enum Maybe
             - struct Session
             - struct State
             - struct String
@@ -875,9 +1224,11 @@ pub async fn load_user_async() -> User {
 }
 
 pub async fn use_it(user: User) -> Result<(), Error> {
+    let raw = 0;
     (&user).$reference$;
     load_user()?.$try$;
     load_user_async().await.$await$;
+    (raw as User).$cast$;
     Result::Ok(())
 }
 "#,
@@ -885,6 +1236,7 @@ pub async fn use_it(user: User) -> Result<(), Error> {
             AnalysisQuery::complete("reference completions", "reference"),
             AnalysisQuery::complete("try completions", "try"),
             AnalysisQuery::complete("await completions", "await"),
+            AnalysisQuery::complete("cast completions", "cast"),
         ],
         expect![[r#"
             reference completions
@@ -896,6 +1248,10 @@ pub async fn use_it(user: User) -> Result<(), Error> {
             - field profile
 
             await completions
+            - inherent_method id
+            - field profile
+
+            cast completions
             - inherent_method id
             - field profile
         "#]],
@@ -1400,6 +1756,10 @@ pub struct User {
 }
 
 impl User {
+    fn is_valid(&self) -> bool {
+        true
+    }
+
     fn label(&self) {}
 }
 
@@ -1412,23 +1772,99 @@ pub fn use_it(maybe: Option<User>) {
     let Some(value) = maybe else { return; };
     value.$let_payload$;
 
+    if let Some(found) = maybe && found.$if_rhs$is_valid() {
+        found.$if_payload$;
+    }
+
+    while let Some(next) = maybe {
+        next.$while_payload$;
+    }
+
     match maybe {
-        Some(user) => user.$match_payload$,
+        Some(user) if user.$match_guard$is_valid() => user.$match_payload$,
         None => {}
     }
 }
 "#,
         &[
             AnalysisQuery::complete("let pattern payload completions", "let_payload"),
+            AnalysisQuery::complete("if let-chain rhs completions", "if_rhs"),
+            AnalysisQuery::complete("if let pattern payload completions", "if_payload"),
+            AnalysisQuery::complete("while let pattern payload completions", "while_payload"),
+            AnalysisQuery::complete("match guard payload completions", "match_guard"),
             AnalysisQuery::complete("match pattern payload completions", "match_payload"),
         ],
         expect![[r#"
             let pattern payload completions
             - field id
+            - inherent_method is_valid
+            - inherent_method label
+
+            if let-chain rhs completions
+            - field id
+            - inherent_method is_valid
+            - inherent_method label
+
+            if let pattern payload completions
+            - field id
+            - inherent_method is_valid
+            - inherent_method label
+
+            while let pattern payload completions
+            - field id
+            - inherent_method is_valid
+            - inherent_method label
+
+            match guard payload completions
+            - field id
+            - inherent_method is_valid
             - inherent_method label
 
             match pattern payload completions
             - field id
+            - inherent_method is_valid
+            - inherent_method label
+        "#]],
+    );
+}
+
+#[test]
+fn completes_fields_and_methods_after_closure_params() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_closure_pattern_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Id;
+
+pub struct User {
+    id: Id,
+}
+
+impl User {
+    fn is_valid(&self) -> bool {
+        true
+    }
+
+    fn label(&self) {}
+}
+
+pub fn use_it() {
+    let _closure = |user: User| user.$closure_payload$;
+}
+"#,
+        &[AnalysisQuery::complete(
+            "closure param payload completions",
+            "closure_payload",
+        )],
+        expect![[r#"
+            closure param payload completions
+            - field id
+            - inherent_method is_valid
             - inherent_method label
         "#]],
     );
@@ -1530,11 +1966,13 @@ pub struct User {
 pub fn use_it(id: u8) {
     let _with_prefix = User { id, na$literal_prefix$ };
     let _empty = User { id, $literal_empty$ };
+    let _defaults = User { ..$literal_defaults$ };
 }
 "#,
         &[
             AnalysisQuery::complete("record literal prefix completions", "literal_prefix"),
             AnalysisQuery::complete("record literal empty completions", "literal_empty"),
+            AnalysisQuery::complete("record literal defaults completions", "literal_defaults"),
         ],
         expect![[r#"
             record literal prefix completions
@@ -1544,6 +1982,9 @@ pub fn use_it(id: u8) {
             record literal empty completions
             - field active
             - field name
+
+            record literal defaults completions
+            - <none>
         "#]],
     );
 }
@@ -1567,14 +2008,67 @@ pub struct User {
 
 pub fn use_it(user: User) {
     let User { id, na$pattern_prefix$ } = user;
+    let User { ..$pattern_rest$ } = user;
 }
 "#,
-        &[AnalysisQuery::complete(
-            "record pattern prefix completions",
-            "pattern_prefix",
-        )],
+        &[
+            AnalysisQuery::complete("record pattern prefix completions", "pattern_prefix"),
+            AnalysisQuery::complete("record pattern rest completions", "pattern_rest"),
+        ],
         expect![[r#"
             record pattern prefix completions
+            - field active
+            - field name
+
+            record pattern rest completions
+            - <none>
+        "#]],
+    );
+}
+
+#[test]
+fn completes_record_pattern_fields_in_control_flow() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_control_flow_record_pattern_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User {
+    pub id: u8,
+    pub name: u8,
+    pub active: bool,
+}
+
+pub struct Users;
+
+pub fn use_it(user: User, users: Users) {
+    if let User { id, na$if_field$ } = user {}
+
+    while let User { ac$while_field$ } = user {}
+
+    for User { id, na$for_field$ } in users {}
+}
+"#,
+        &[
+            AnalysisQuery::complete("if let record pattern fields", "if_field"),
+            AnalysisQuery::complete("while let record pattern fields", "while_field"),
+            AnalysisQuery::complete("for record pattern fields", "for_field"),
+        ],
+        expect![[r#"
+            if let record pattern fields
+            - field active
+            - field name
+
+            while let record pattern fields
+            - field active
+            - field id
+            - field name
+
+            for record pattern fields
             - field active
             - field name
         "#]],

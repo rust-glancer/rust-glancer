@@ -23,6 +23,7 @@ use super::{
     completion_sort::{CompletionSortPolicy, CompletionSortPriority},
     def_completion_detail,
     function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
+    primitive::PrimitiveTypeCompletionResolver,
 };
 
 pub(super) struct UnqualifiedCompletionResolver<'a, 'db, 'source> {
@@ -51,14 +52,14 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         for candidate in self
             .analysis
             .body_ir
-            .unqualified_completion_candidates(site)?
+            .unqualified_completion_candidates(&site)?
         {
             if !filter.accepts_body_candidate(&candidate) {
                 continue;
             }
             self.push_body_completion(
                 candidate,
-                site,
+                &site,
                 filter,
                 edit,
                 &mut hidden,
@@ -80,6 +81,14 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             &hidden,
             &mut completions,
         )?;
+
+        if matches!(site.namespace, UnqualifiedCompletionNamespace::Types) {
+            completions.extend(PrimitiveTypeCompletionResolver::body_completions(
+                self.analysis,
+                &site,
+                edit,
+            )?);
+        }
 
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
@@ -114,7 +123,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
     fn push_body_completion(
         &self,
         candidate: BodyUnqualifiedCompletionCandidate,
-        site: UnqualifiedCompletionSite,
+        site: &UnqualifiedCompletionSite,
         filter: UnqualifiedCompletionFilter,
         edit: CompletionEdit,
         hidden: &mut HashSet<(String, ScopeNamespace)>,
@@ -161,13 +170,18 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 label,
                 scope_distance,
             } => {
-                hidden.insert((label.clone(), ScopeNamespace::Types));
                 let Some(body) = self.analysis.body_ir.body_data(item.body)? else {
                     return Ok(());
                 };
                 let Some(data) = body.local_item(item.item) else {
                     return Ok(());
                 };
+                hidden.insert((label.clone(), ScopeNamespace::Types));
+                if matches!(site.namespace, UnqualifiedCompletionNamespace::Values)
+                    && data.has_value_constructor()
+                {
+                    hidden.insert((label.clone(), ScopeNamespace::Values));
+                }
                 let kind = CompletionKind::from_body_item_kind(kind);
                 let target = CompletionTarget::BodyItem(item);
                 completions.push(CompletionItem {
@@ -176,6 +190,74 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                     target,
                     applicability: CompletionApplicability::Known,
                     detail: Some(SignatureRenderer::new(self.analysis).local_item_signature(data)),
+                    documentation: data.docs.as_ref().map(Documentation::text),
+                    sort_text: filter.sort_policy().sort_text(
+                        Some(CompletionSortPriority::body_scope(scope_distance)),
+                        &label,
+                        kind,
+                        CompletionApplicability::Known,
+                        target,
+                    ),
+                    insert_text: CompletionInsertText::Plain,
+                    edit: Some(edit),
+                });
+            }
+            BodyUnqualifiedCompletionCandidate::LocalValueItem {
+                item,
+                kind,
+                label,
+                scope_distance,
+            } => {
+                hidden.insert((label.clone(), ScopeNamespace::Values));
+                let Some(body) = self.analysis.body_ir.body_data(item.body)? else {
+                    return Ok(());
+                };
+                let Some(data) = body.local_value_item(item.item) else {
+                    return Ok(());
+                };
+                let kind = CompletionKind::from_body_value_item_kind(kind);
+                let target = CompletionTarget::BodyValueItem(item);
+                completions.push(CompletionItem {
+                    label: label.clone(),
+                    kind,
+                    target,
+                    applicability: CompletionApplicability::Known,
+                    detail: Some(
+                        SignatureRenderer::new(self.analysis).local_value_item_signature(data),
+                    ),
+                    documentation: data.docs.as_ref().map(Documentation::text),
+                    sort_text: filter.sort_policy().sort_text(
+                        Some(CompletionSortPriority::body_scope(scope_distance)),
+                        &label,
+                        kind,
+                        CompletionApplicability::Known,
+                        target,
+                    ),
+                    insert_text: CompletionInsertText::Plain,
+                    edit: Some(edit),
+                });
+            }
+            BodyUnqualifiedCompletionCandidate::LocalFunction {
+                function,
+                label,
+                scope_distance,
+            } => {
+                hidden.insert((label.clone(), ScopeNamespace::Values));
+                let Some(data) = self.analysis.body_ir.local_function_data(function)? else {
+                    return Ok(());
+                };
+                let kind = CompletionKind::Function;
+                let target = CompletionTarget::Function(
+                    rg_body_ir::ResolvedFunctionRef::BodyLocal(function),
+                );
+                completions.push(CompletionItem {
+                    label: label.clone(),
+                    kind,
+                    target,
+                    applicability: CompletionApplicability::Known,
+                    detail: Some(
+                        SignatureRenderer::new(self.analysis).local_function_signature(data),
+                    ),
                     documentation: data.docs.as_ref().map(Documentation::text),
                     sort_text: filter.sort_policy().sort_text(
                         Some(CompletionSortPriority::body_scope(scope_distance)),

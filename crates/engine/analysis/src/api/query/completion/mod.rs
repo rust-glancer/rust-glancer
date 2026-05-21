@@ -16,6 +16,7 @@ mod field;
 mod function;
 mod keyword;
 mod path;
+mod primitive;
 mod record;
 mod syntax;
 mod unqualified;
@@ -125,9 +126,10 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 // Plain body names come from lexical scope, but value positions
                 // also accept expression keywords. Keep those as low-priority
                 // overlay rows so semantic names remain the primary signal.
+                let namespace = site.namespace;
                 let mut completions = UnqualifiedCompletionResolver::new(self.analysis, self.query)
                     .body_completions(site)?;
-                if matches!(site.namespace, UnqualifiedCompletionNamespace::Values) {
+                if matches!(namespace, UnqualifiedCompletionNamespace::Values) {
                     completions.extend(
                         KeywordCompletionResolver::new(self.query.client_capabilities)
                             .overlay_completions(syntax_context.get())?,
@@ -159,12 +161,14 @@ fn def_completion_detail(kind: CompletionKind, label: &str) -> String {
     match kind {
         CompletionKind::Const => format!("const {label}"),
         CompletionKind::Enum => format!("enum {label}"),
+        CompletionKind::EnumVariant => format!("variant {label}"),
         CompletionKind::Field => format!("field {label}"),
         CompletionKind::Function => format!("fn {label}"),
         CompletionKind::InherentMethod | CompletionKind::TraitMethod => format!("method {label}"),
         CompletionKind::Keyword => format!("keyword {label}"),
         CompletionKind::Macro => format!("macro {label}"),
         CompletionKind::Module => format!("mod {label}"),
+        CompletionKind::PrimitiveType => format!("primitive type {label}"),
         CompletionKind::Static => format!("static {label}"),
         CompletionKind::Struct => format!("struct {label}"),
         CompletionKind::Trait => format!("trait {label}"),

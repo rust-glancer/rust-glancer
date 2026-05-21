@@ -846,6 +846,23 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
+            SymbolAt::LocalValueItem { item, span } => {
+                let targets = self
+                    .db
+                    .analysis()
+                    .resolve_symbol(SymbolAt::LocalValueItem { item, span })
+                    .expect("fixture symbol resolution should resolve");
+                let label = targets
+                    .first()
+                    .map(|target| format!("{} {}", target.kind, target.name))
+                    .unwrap_or_else(|| "value <unresolved>".to_string());
+                writeln!(
+                    dump,
+                    "\n- {label} @ {}",
+                    self.render_source_span(item.body.target.package, file_id, span)
+                )
+                .expect("string writes should not fail");
+            }
             SymbolAt::LocalField { field, span } => {
                 let targets = self
                     .db
@@ -860,6 +877,23 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     dump,
                     "\n- {label} @ {}",
                     self.render_source_span(field.item.body.target.package, file_id, span)
+                )
+                .expect("string writes should not fail");
+            }
+            SymbolAt::LocalEnumVariant { variant, span } => {
+                let targets = self
+                    .db
+                    .analysis()
+                    .resolve_symbol(SymbolAt::LocalEnumVariant { variant, span })
+                    .expect("fixture symbol resolution should resolve");
+                let label = targets
+                    .first()
+                    .map(|target| format!("{} {}", target.kind, target.name))
+                    .unwrap_or_else(|| "variant <unresolved>".to_string());
+                writeln!(
+                    dump,
+                    "\n- {label} @ {}",
+                    self.render_source_span(variant.item.body.target.package, file_id, span)
                 )
                 .expect("string writes should not fail");
             }
@@ -897,7 +931,54 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             ExprKind::Block { .. } => "block".to_string(),
             ExprKind::Path { path } => format!("path {path}"),
             ExprKind::Call { .. } => "call".to_string(),
+            ExprKind::Tuple { .. } => "tuple".to_string(),
+            ExprKind::Array { .. } => "array".to_string(),
+            ExprKind::RepeatArray { .. } => "repeat_array".to_string(),
+            ExprKind::Index { .. } => "index".to_string(),
+            ExprKind::Range { kind, .. } => {
+                let kind = kind
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("range {kind}")
+            }
+            ExprKind::Cast { ty, .. } => {
+                let ty = ty
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("cast as {ty}")
+            }
+            ExprKind::Unary { op, .. } => {
+                let op = op
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("unary {op}")
+            }
+            ExprKind::Binary { op, .. } => {
+                let op = op
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("binary {op}")
+            }
+            ExprKind::Assign { op, .. } => {
+                let op = op
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("assign {op}")
+            }
             ExprKind::Match { .. } => "match".to_string(),
+            ExprKind::If { .. } => "if".to_string(),
+            ExprKind::Let { .. } => "let".to_string(),
+            ExprKind::Closure { .. } => "closure".to_string(),
+            ExprKind::Loop { .. } => "loop".to_string(),
+            ExprKind::While { .. } => "while".to_string(),
+            ExprKind::For { .. } => "for".to_string(),
+            ExprKind::Break { .. } => "break".to_string(),
+            ExprKind::Continue { .. } => "continue".to_string(),
             ExprKind::MethodCall { method_name, .. } => {
                 format!("method_call {method_name}")
             }
@@ -922,6 +1003,10 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     self.render_source_text(package, expr.source)
                 )
             }
+            ExprKind::Underscore => "underscore".to_string(),
+            ExprKind::Yield { .. } => "yield".to_string(),
+            ExprKind::Yeet { .. } => "yeet".to_string(),
+            ExprKind::Become { .. } => "become".to_string(),
             ExprKind::Unknown { .. } => {
                 format!("unknown {}", self.render_source_text(package, expr.source))
             }
@@ -1095,6 +1180,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         match ty {
             BodyTy::Unit => "()".to_string(),
             BodyTy::Never => "!".to_string(),
+            BodyTy::Primitive(primitive) => primitive.label().to_string(),
             BodyTy::Syntax(ty) => format!("syntax {ty}"),
             BodyTy::Reference(inner) => format!("&{}", self.render_ty(inner)),
             BodyTy::LocalNominal(items) => {

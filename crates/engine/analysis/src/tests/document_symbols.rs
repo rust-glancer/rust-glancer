@@ -98,6 +98,65 @@ pub fn make() {
 }
 
 #[test]
+fn outlines_more_body_local_items() {
+    check_document_symbols(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_more_body_local_document_symbols"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    enum Action {
+        Start(GlobalId),
+        Stop,
+    }
+    union Bits {
+        id: GlobalId,
+    }
+    type Alias = GlobalId;
+    trait Named {}
+    const DEFAULT: Alias = GlobalId;
+    static CURRENT: GlobalId = GlobalId;
+    fn helper() -> Alias {
+        GlobalId
+    }
+
+    impl Action {
+        const NAME: Alias = GlobalId;
+        type Output = Alias;
+        fn build() -> Alias {
+            helper()
+        }
+    }
+}
+"#,
+        DocumentSymbolsQuery::new("more body-local document symbols", "/src/lib.rs"),
+        expect![[r#"
+            more body-local document symbols
+            - struct GlobalId @ 1:1-1:21 selection 1:12-1:20
+            - fn use_it @ 3:1-26:2 selection 3:8-3:14
+              - enum Action @ 4:5-7:6 selection 4:10-4:16
+              - union Bits @ 8:5-10:6 selection 8:11-8:15
+                - field id @ 9:9-9:11
+              - type_alias Alias @ 11:5-11:27 selection 11:10-11:15
+              - trait Named @ 12:5-12:19 selection 12:11-12:16
+              - const DEFAULT @ 13:5-13:37 selection 13:11-13:18
+              - static CURRENT @ 14:5-14:41 selection 14:12-14:19
+              - fn helper @ 15:5-17:6 selection 15:8-15:14
+              - impl Action @ 19:5-25:6
+                - const NAME @ 20:9-20:38 selection 20:15-20:19
+                - type_alias Output @ 21:9-21:29 selection 21:14-21:20
+                - method build @ 22:9-24:10 selection 22:12-22:17
+        "#]],
+    );
+}
+
+#[test]
 fn outlines_bin_owned_out_of_line_module_files() {
     check_document_symbols(
         r#"

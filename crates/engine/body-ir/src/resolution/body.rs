@@ -12,10 +12,14 @@ use crate::{
     ir::body::BodyData,
     ir::expr::{ExprKind, ExprWrapperKind},
     ir::ids::{
-        BindingId, BodyFieldRef, BodyFunctionRef, BodyImplId, BodyItemRef, BodyRef, ExprId, ScopeId,
+        BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyImplId,
+        BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ExprId, ScopeId,
     },
-    ir::item::BodyFunctionOwner,
-    ir::resolved::{BodyResolution, BodyTypePathResolution, ResolvedFieldRef, ResolvedFunctionRef},
+    ir::item::{BodyFunctionOwner, BodyValueItemOwner},
+    ir::resolved::{
+        BodyResolution, BodyTypePathResolution, ResolvedEnumVariantRef, ResolvedFieldRef,
+        ResolvedFunctionRef,
+    },
     ir::stmt::BindingKind,
     ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
@@ -23,14 +27,14 @@ use crate::{
 use super::{
     SemanticResolutionIndex,
     method::{
-        local_function_applies_to_receiver, local_impl_self_subst,
-        semantic_function_applies_to_receiver, semantic_impl_self_subst,
-        semantic_trait_function_candidates_for_receiver,
+        local_function_applies_to_receiver, local_impl_applies_to_receiver, local_impl_self_subst,
+        local_impl_self_subst_for_impl, semantic_function_applies_to_receiver,
+        semantic_impl_self_subst, semantic_trait_function_candidates_for_receiver,
     },
     normalize::BodyTyNormalizer,
     pat::PatternTypePropagator,
     push_unique,
-    ty::{TypeSubst, subst_from_generics, type_ref_is_self},
+    ty::{TypeSubst, local_type_subst, subst_from_generics, type_ref_is_self},
     type_path::BodyTypePathResolver,
 };
 
@@ -64,8 +68,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
     }
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
-        self.resolve_bindings()?;
         self.resolve_local_impls()?;
+        self.resolve_bindings()?;
 
         // Pattern propagation can unlock later expression types, and those expressions can then
         // unlock more patterns. Every successful pass should discover at least one new binding or
@@ -150,13 +154,24 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 
         match kind {
             ExprKind::Path { path } => {
-                let (resolution, ty) = self.resolve_path_expr(expr, &path.path)?;
+                let (resolution, ty) = match path.as_def_map_path() {
+                    Some(path) => self.resolve_path_expr(expr, &path)?,
+                    None => (BodyResolution::Unknown, BodyTy::Unknown),
+                };
                 let data = &mut self.body.exprs[expr];
                 data.resolution = resolution;
                 data.ty = ty;
             }
             ExprKind::Call { callee, .. } => {
                 self.body.exprs[expr].ty = self.call_ty(callee)?;
+            }
+            ExprKind::Tuple { fields } if fields.is_empty() => {
+                self.body.exprs[expr].ty = BodyTy::Unit;
+            }
+            ExprKind::Cast { ty: Some(ty), .. } => {
+                self.body.exprs[expr].ty = self
+                    .type_path_resolver()
+                    .ty_from_type_ref_in_scope(&ty, self.body.exprs[expr].scope)?;
             }
             ExprKind::Match { arms, .. } => {
                 let mut arm_tys = Vec::new();
@@ -171,6 +186,28 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                     BodyTy::Unknown
                 };
             }
+            ExprKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.body.exprs[expr].ty = match else_branch {
+                    Some(else_branch) => {
+                        let mut branch_tys = Vec::new();
+                        if let Some(then_branch) = then_branch {
+                            push_unique(&mut branch_tys, self.body.exprs[then_branch].ty.clone());
+                        }
+                        push_unique(&mut branch_tys, self.body.exprs[else_branch].ty.clone());
+
+                        if branch_tys.len() == 1 {
+                            branch_tys.pop().expect("one branch type should exist")
+                        } else {
+                            BodyTy::Unknown
+                        }
+                    }
+                    None => BodyTy::Unit,
+                };
+            }
             ExprKind::Block { tail, .. } => {
                 self.body.exprs[expr].ty = tail
                     .map(|tail| self.body.exprs[tail].ty.clone())
@@ -183,9 +220,9 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 data.ty = ty;
             }
             ExprKind::Record { path, .. } => {
-                let (resolution, ty) = match path {
+                let (resolution, ty) = match path.as_ref().and_then(|path| path.as_def_map_path()) {
                     Some(path) => {
-                        self.resolve_nonlocal_path_expr(self.body.exprs[expr].scope, &path.path)?
+                        self.resolve_record_expr_path(self.body.exprs[expr].scope, &path)?
                     }
                     None => (BodyResolution::Unknown, BodyTy::Unknown),
                 };
@@ -209,7 +246,33 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 data.resolution = resolution;
                 data.ty = ty;
             }
-            ExprKind::Literal { .. } | ExprKind::Unknown { .. } => {}
+            ExprKind::While { .. } | ExprKind::For { .. } => {
+                self.body.exprs[expr].ty = BodyTy::Unit;
+            }
+            ExprKind::Assign { .. } => {
+                self.body.exprs[expr].ty = BodyTy::Unit;
+            }
+            ExprKind::Break { .. } | ExprKind::Continue { .. } => {
+                self.body.exprs[expr].ty = BodyTy::Never;
+            }
+            ExprKind::Yeet { .. } | ExprKind::Become { .. } => {
+                self.body.exprs[expr].ty = BodyTy::Never;
+            }
+            ExprKind::Let { .. }
+            | ExprKind::Closure { .. }
+            | ExprKind::Loop { .. }
+            | ExprKind::Tuple { .. }
+            | ExprKind::Array { .. }
+            | ExprKind::RepeatArray { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Range { .. }
+            | ExprKind::Cast { ty: None, .. }
+            | ExprKind::Unary { .. }
+            | ExprKind::Binary { .. }
+            | ExprKind::Literal { .. }
+            | ExprKind::Underscore
+            | ExprKind::Yield { .. }
+            | ExprKind::Unknown { .. } => {}
         }
 
         Ok(
@@ -224,14 +287,15 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         path: &Path,
     ) -> Result<(BodyResolution, BodyTy), PackageStoreError> {
         let scope = self.body.exprs[expr].scope;
-        if let Some(name) = path.single_name() {
-            if let Some(binding) = self.resolve_local_name(scope, name, expr) {
-                let ty = self.body.bindings[binding].ty.clone();
-                return Ok((BodyResolution::Local(binding), ty));
-            }
-        }
-
-        self.resolve_nonlocal_path_expr(scope, path)
+        let visible_bindings = self.body.exprs[expr].visible_bindings;
+        BodyValuePathResolver::new(
+            self.def_map,
+            self.semantic_ir,
+            Some(self.semantic_index),
+            self.body_ref,
+            self.body,
+        )
+        .resolve_path_expr(scope, path, Some(visible_bindings))
     }
 
     pub(super) fn resolve_nonlocal_path_expr(
@@ -247,6 +311,39 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             self.body,
         )
         .resolve_nonlocal_path_expr(scope, path)
+    }
+
+    fn resolve_record_expr_path(
+        &self,
+        scope: ScopeId,
+        path: &Path,
+    ) -> Result<(BodyResolution, BodyTy), PackageStoreError> {
+        match self.type_path_resolver().resolve_in_scope(scope, path)? {
+            BodyTypePathResolution::BodyLocal(item_ref) => {
+                if self
+                    .body
+                    .local_item(item_ref.item)
+                    .is_some_and(|item| item.is_nominal_type())
+                {
+                    return Ok((
+                        BodyResolution::LocalItem(item_ref),
+                        BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item_ref)]),
+                    ));
+                }
+            }
+            BodyTypePathResolution::SelfType(types) => {
+                return Ok((
+                    BodyResolution::Unknown,
+                    BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect()),
+                ));
+            }
+            BodyTypePathResolution::Primitive(_)
+            | BodyTypePathResolution::TypeDefs(_)
+            | BodyTypePathResolution::Traits(_)
+            | BodyTypePathResolution::Unknown => {}
+        }
+
+        self.resolve_nonlocal_path_expr(scope, path)
     }
 
     fn resolve_field_expr(
@@ -472,11 +569,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
     }
 
     fn local_type_subst(&self, ty: &BodyLocalNominalTy) -> TypeSubst {
-        let Some(item) = self.body.local_item(ty.item.item) else {
-            return TypeSubst::new();
-        };
-
-        subst_from_generics(&item.generics, &ty.args)
+        local_type_subst(self.body, ty)
     }
 
     fn semantic_type_subst(&self, ty: &BodyNominalTy) -> Result<TypeSubst, PackageStoreError> {
@@ -500,6 +593,9 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         };
 
         Ok(match function_data.owner {
+            BodyFunctionOwner::LocalScope(scope) => self
+                .type_path_resolver()
+                .ty_from_type_ref_in_scope(ret_ty, scope)?,
             BodyFunctionOwner::LocalImpl(impl_id) => {
                 self.ty_from_type_ref_for_local_impl(ret_ty, impl_id, function_ref, receiver_ty)?
             }
@@ -576,29 +672,6 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             .ty_from_type_ref_in_scope_with_subst(ty, impl_data.scope, &subst)
     }
 
-    fn resolve_local_name(
-        &self,
-        mut scope: ScopeId,
-        name: &str,
-        expr: ExprId,
-    ) -> Option<BindingId> {
-        loop {
-            let scope_data = self.body.scope(scope)?;
-            for binding in scope_data.bindings.iter().rev() {
-                if binding.0 >= self.body.exprs[expr].visible_bindings {
-                    continue;
-                }
-
-                let binding_data = self.body.binding(*binding)?;
-                if binding_data.name.as_deref() == Some(name) {
-                    return Some(*binding);
-                }
-            }
-
-            scope = scope_data.parent?;
-        }
-    }
-
     fn call_ty(&self, callee: Option<ExprId>) -> Result<BodyTy, PackageStoreError> {
         let Some(callee) = callee else {
             return Ok(BodyTy::Unknown);
@@ -647,6 +720,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             }
             BodyResolution::Local(_)
             | BodyResolution::LocalItem(_)
+            | BodyResolution::LocalValueItem(_)
             | BodyResolution::Field(_)
             | BodyResolution::EnumVariant(_)
             | BodyResolution::Method(_)
@@ -681,6 +755,19 @@ pub(super) struct BodyValuePathResolver<'query, 'db, 'body> {
     body: &'body BodyData,
 }
 
+/// One declaration that can satisfy an unqualified value path inside a body scope.
+///
+/// Rust shares bindings, local functions, const/static items, and tuple/unit constructors in the
+/// value namespace. Keeping them under one enum lets lookup stay scope-ordered instead of
+/// accidentally searching one category through every parent scope before the next category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BodyLocalValueName {
+    Binding(BindingId),
+    Function(BodyFunctionId),
+    ValueItem(BodyValueItemId),
+    ItemConstructor(BodyItemId),
+}
+
 impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
     pub(super) fn new(
         def_map: &'query DefMapReadTxn<'db>,
@@ -703,15 +790,36 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         scope: ScopeId,
         path: &Path,
     ) -> Result<(BodyResolution, BodyTy), PackageStoreError> {
+        self.resolve_path_expr(scope, path, None)
+    }
+
+    pub(super) fn resolve_path_expr(
+        &self,
+        scope: ScopeId,
+        path: &Path,
+        visible_bindings: Option<usize>,
+    ) -> Result<(BodyResolution, BodyTy), PackageStoreError> {
+        if let Some(name) = path.single_name() {
+            if let Some(value_name) = self.resolve_local_value_name(scope, name, visible_bindings) {
+                return self.local_value_name_resolution(value_name);
+            }
+        }
+
         // Value paths can start with type-like names: tuple/unit struct constructors, body-local
         // item constructors, `Self`, and the prefix of associated paths all need type resolution
         // before falling back to ordinary module/DefMap lookup.
         match self.type_path_resolver().resolve_in_scope(scope, path)? {
             BodyTypePathResolution::BodyLocal(item_ref) => {
-                return Ok((
-                    BodyResolution::LocalItem(item_ref),
-                    BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item_ref)]),
-                ));
+                if self
+                    .body
+                    .local_item(item_ref.item)
+                    .is_some_and(|item| item.has_value_constructor())
+                {
+                    return Ok((
+                        BodyResolution::LocalItem(item_ref),
+                        BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item_ref)]),
+                    ));
+                }
             }
             BodyTypePathResolution::SelfType(types) => {
                 return Ok((
@@ -719,7 +827,8 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                     BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect()),
                 ));
             }
-            BodyTypePathResolution::TypeDefs(_)
+            BodyTypePathResolution::Primitive(_)
+            | BodyTypePathResolution::TypeDefs(_)
             | BodyTypePathResolution::Traits(_)
             | BodyTypePathResolution::Unknown => {}
         }
@@ -737,6 +846,142 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         Ok((BodyResolution::Item(result.resolved), ty))
     }
 
+    fn resolve_local_value_name(
+        &self,
+        scope: ScopeId,
+        name: &str,
+        visible_bindings: Option<usize>,
+    ) -> Option<BodyLocalValueName> {
+        // Value lookup is scope-ordered: an inner const/function/constructor shadows an outer
+        // binding just as surely as an inner binding shadows an outer item.
+        self.body.walk_scopes(scope, |scope_data| {
+            if let Some(visible_bindings) = visible_bindings {
+                for binding in scope_data.bindings.iter().rev() {
+                    if binding.0 >= visible_bindings {
+                        continue;
+                    }
+
+                    let Some(binding_data) = self.body.binding(*binding) else {
+                        continue;
+                    };
+                    if binding_data.name.as_deref() == Some(name) {
+                        return Some(BodyLocalValueName::Binding(*binding));
+                    }
+                }
+            }
+
+            for function in scope_data.local_functions.iter().rev() {
+                let Some(function_data) = self.body.local_function(*function) else {
+                    continue;
+                };
+                if function_data.name == name {
+                    return Some(BodyLocalValueName::Function(*function));
+                }
+            }
+
+            for item in scope_data.local_value_items.iter().rev() {
+                let Some(item_data) = self.body.local_value_item(*item) else {
+                    continue;
+                };
+                if item_data.name == name {
+                    return Some(BodyLocalValueName::ValueItem(*item));
+                }
+            }
+
+            for item in scope_data.local_items.iter().rev() {
+                let Some(item_data) = self.body.local_item(*item) else {
+                    continue;
+                };
+                if item_data.name == name && item_data.has_value_constructor() {
+                    return Some(BodyLocalValueName::ItemConstructor(*item));
+                }
+            }
+
+            None
+        })
+    }
+
+    fn local_value_name_resolution(
+        &self,
+        value_name: BodyLocalValueName,
+    ) -> Result<(BodyResolution, BodyTy), PackageStoreError> {
+        match value_name {
+            BodyLocalValueName::Binding(binding) => {
+                let ty = self.body.bindings[binding].ty.clone();
+                Ok((BodyResolution::Local(binding), ty))
+            }
+            BodyLocalValueName::Function(function) => Ok((
+                BodyResolution::Function(vec![ResolvedFunctionRef::BodyLocal(BodyFunctionRef {
+                    body: self.body_ref,
+                    function,
+                })]),
+                BodyTy::Unknown,
+            )),
+            BodyLocalValueName::ValueItem(item) => {
+                let item_ref = BodyValueItemRef {
+                    body: self.body_ref,
+                    item,
+                };
+                Ok((
+                    BodyResolution::LocalValueItem(item_ref),
+                    self.value_item_ty(item)?,
+                ))
+            }
+            BodyLocalValueName::ItemConstructor(item) => {
+                let item_ref = BodyItemRef {
+                    body: self.body_ref,
+                    item,
+                };
+                Ok((
+                    BodyResolution::LocalItem(item_ref),
+                    BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item_ref)]),
+                ))
+            }
+        }
+    }
+
+    fn value_item_ty(&self, item: BodyValueItemId) -> Result<BodyTy, PackageStoreError> {
+        self.value_item_ty_for_receiver(item, None)
+    }
+
+    fn value_item_ty_for_receiver(
+        &self,
+        item: BodyValueItemId,
+        receiver_ty: Option<&BodyLocalNominalTy>,
+    ) -> Result<BodyTy, PackageStoreError> {
+        let Some(item) = self.body.local_value_item(item) else {
+            return Ok(BodyTy::Unknown);
+        };
+        let Some(ty) = item.ty() else {
+            return Ok(BodyTy::Unknown);
+        };
+
+        match item.owner {
+            BodyValueItemOwner::LocalScope(_) => self
+                .type_path_resolver()
+                .ty_from_type_ref_in_scope(ty, item.scope),
+            BodyValueItemOwner::LocalImpl(impl_id) => {
+                let Some(receiver_ty) = receiver_ty else {
+                    return self
+                        .type_path_resolver()
+                        .ty_from_type_ref_in_scope(ty, item.scope);
+                };
+                let Some(impl_data) = self.body.local_impl(impl_id) else {
+                    return Ok(BodyTy::Unknown);
+                };
+
+                if type_ref_is_self(ty) {
+                    return Ok(BodyTy::LocalNominal(vec![receiver_ty.clone()]));
+                }
+
+                let mut subst = local_type_subst(self.body, receiver_ty);
+                subst.extend(local_impl_self_subst_for_impl(impl_data, receiver_ty));
+                self.type_path_resolver()
+                    .ty_from_type_ref_in_scope_with_subst(ty, impl_data.scope, &subst)
+            }
+        }
+    }
+
     fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db, '_> {
         BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
@@ -751,10 +996,27 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         // `Action::Start` distinct from a module path while also handling `Widget::new` through
         // the same type-substitution rules used by method calls.
         let prefix_resolution = self.type_path_resolver().resolve_in_scope(scope, prefix)?;
-        let prefix_ty = type_path_resolution_to_body_ty(prefix_resolution);
+        let prefix_ty = self.type_path_resolution_to_body_ty(prefix_resolution);
 
+        // First treat the final segment as an enum variant. Variants are not ordinary associated
+        // functions in either Semantic IR or Body IR, but value paths use the same syntax for
+        // `Action::Start` and `Widget::new`, so they need an explicit pass.
         let mut variants = Vec::new();
         let mut variant_tys = Vec::new();
+        for local_ty in prefix_ty.local_nominals() {
+            let Some(variant_ref) = self.local_enum_variant_for_type(local_ty.item, last_segment)
+            else {
+                continue;
+            };
+            push_unique(
+                &mut variants,
+                ResolvedEnumVariantRef::BodyLocal(variant_ref),
+            );
+            push_unique(
+                &mut variant_tys,
+                BodyTy::LocalNominal(vec![local_ty.clone()]),
+            );
+        }
         for nominal_ty in prefix_ty.nominal_tys() {
             if !matches!(nominal_ty.def.id, TypeDefId::Enum(_)) {
                 continue;
@@ -765,13 +1027,24 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             else {
                 continue;
             };
-            push_unique(&mut variants, variant_ref);
+            push_unique(&mut variants, ResolvedEnumVariantRef::Semantic(variant_ref));
             push_unique(&mut variant_tys, BodyTy::Nominal(vec![nominal_ty.clone()]));
         }
 
         if !variants.is_empty() {
             let ty = unique_ty_or_unknown(variant_tys);
             return Ok(Some((BodyResolution::EnumVariant(variants), ty)));
+        }
+
+        // Body-local associated consts are stored on local impls, not in lexical scopes. Once the
+        // prefix type is known, jump through applicable inherent impls and use the const signature
+        // as the expression type.
+        for local_ty in prefix_ty.local_nominals() {
+            if let Some((item_ref, ty)) =
+                self.local_associated_value_item_for_type(local_ty, last_segment)?
+            {
+                return Ok(Some((BodyResolution::LocalValueItem(item_ref), ty)));
+            }
         }
 
         // Inherent associated functions are exact candidates. Trait-associated functions are kept
@@ -801,6 +1074,68 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
 
         Ok((!functions.is_empty())
             .then_some((BodyResolution::Function(functions), BodyTy::Unknown)))
+    }
+
+    fn local_associated_value_item_for_type(
+        &self,
+        ty: &BodyLocalNominalTy,
+        name: &str,
+    ) -> Result<Option<(BodyValueItemRef, BodyTy)>, PackageStoreError> {
+        for impl_id in self
+            .body
+            .inherent_impls_for_local_type(self.body_ref, ty.item)
+        {
+            let Some(impl_data) = self.body.local_impl(impl_id) else {
+                continue;
+            };
+            if !local_impl_applies_to_receiver(
+                self.def_map,
+                self.semantic_ir,
+                self.body_ref,
+                self.body,
+                impl_data,
+                ty,
+            )? {
+                continue;
+            }
+
+            for item in &impl_data.consts {
+                let Some(item_data) = self.body.local_value_item(*item) else {
+                    continue;
+                };
+                if item_data.name != name {
+                    continue;
+                }
+
+                let item_ref = BodyValueItemRef {
+                    body: self.body_ref,
+                    item: *item,
+                };
+                return Ok(Some((
+                    item_ref,
+                    self.value_item_ty_for_receiver(*item, Some(ty))?,
+                )));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn local_enum_variant_for_type(
+        &self,
+        item_ref: BodyItemRef,
+        name: &str,
+    ) -> Option<BodyEnumVariantRef> {
+        if item_ref.body != self.body_ref {
+            return None;
+        }
+
+        let item = self.body.local_item(item_ref.item)?;
+        let index = item.enum_variant_index(name)?;
+        Some(BodyEnumVariantRef {
+            item: item_ref,
+            index,
+        })
     }
 
     fn local_associated_functions_for_type(
@@ -859,6 +1194,25 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         Ok(functions)
     }
 
+    fn type_path_resolution_to_body_ty(&self, resolution: BodyTypePathResolution) -> BodyTy {
+        match resolution {
+            BodyTypePathResolution::BodyLocal(item) => self
+                .body
+                .local_item(item.item)
+                .filter(|data| data.is_nominal_type())
+                .map(|_| BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)]))
+                .unwrap_or(BodyTy::Unknown),
+            BodyTypePathResolution::SelfType(types) => {
+                BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect())
+            }
+            BodyTypePathResolution::TypeDefs(types) => {
+                BodyTy::Nominal(types.into_iter().map(BodyNominalTy::bare).collect())
+            }
+            BodyTypePathResolution::Primitive(primitive) => BodyTy::Primitive(primitive),
+            BodyTypePathResolution::Traits(_) | BodyTypePathResolution::Unknown => BodyTy::Unknown,
+        }
+    }
+
     fn nominal_ty_from_defs(&self, defs: &[DefId]) -> Result<BodyTy, PackageStoreError> {
         let mut type_defs = Vec::new();
         for def in defs {
@@ -895,21 +1249,6 @@ fn split_associated_path(path: &Path) -> Option<(Path, &str)> {
         },
         last_segment.as_str(),
     ))
-}
-
-fn type_path_resolution_to_body_ty(resolution: BodyTypePathResolution) -> BodyTy {
-    match resolution {
-        BodyTypePathResolution::BodyLocal(item) => {
-            BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)])
-        }
-        BodyTypePathResolution::SelfType(types) => {
-            BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect())
-        }
-        BodyTypePathResolution::TypeDefs(types) => {
-            BodyTy::Nominal(types.into_iter().map(BodyNominalTy::bare).collect())
-        }
-        BodyTypePathResolution::Traits(_) | BodyTypePathResolution::Unknown => BodyTy::Unknown,
-    }
 }
 
 fn unique_ty_or_unknown(mut tys: Vec<BodyTy>) -> BodyTy {

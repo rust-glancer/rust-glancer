@@ -5,9 +5,10 @@ use rg_package_store::{PackageRead, PackageStoreError, PackageStoreReadTxn};
 use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrReadTxn, TraitApplicability, TraitImplRef};
 
 use crate::{
-    BodyData, BodyFieldData, BodyFieldRef, BodyFunctionData, BodyFunctionRef, BodyItemRef,
-    BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyResolution, BodyTy, BodyTypePathResolution,
-    PackageBodies, ScopeId, TargetBodies, resolution,
+    BodyData, BodyEnumVariantData, BodyEnumVariantRef, BodyFieldData, BodyFieldRef,
+    BodyFunctionData, BodyFunctionRef, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyRef,
+    BodyResolution, BodyTy, BodyTypePathResolution, PackageBodies, ScopeId, TargetBodies,
+    resolution,
 };
 
 /// Read-only Body IR access for one query transaction.
@@ -179,7 +180,7 @@ impl<'db> BodyIrReadTxn<'db> {
             return Ok(Vec::new());
         };
 
-        let fields = (0..item.fields.fields().len())
+        let fields = (0..item.fields().len())
             .map(|index| BodyFieldRef {
                 item: item_ref,
                 index,
@@ -204,6 +205,24 @@ impl<'db> BodyIrReadTxn<'db> {
         };
 
         Ok(Some(BodyFieldData { item, field }))
+    }
+
+    /// Returns declaration data for one body-local enum variant.
+    pub fn local_enum_variant_data(
+        &self,
+        variant_ref: BodyEnumVariantRef,
+    ) -> Result<Option<BodyEnumVariantData<'_>>, PackageStoreError> {
+        let Some(body) = self.body_data(variant_ref.item.body)? else {
+            return Ok(None);
+        };
+        let Some(item) = body.local_item(variant_ref.item.item) else {
+            return Ok(None);
+        };
+        let Some(variant) = item.enum_variant(variant_ref.index) else {
+            return Ok(None);
+        };
+
+        Ok(Some(BodyEnumVariantData { item, variant }))
     }
 
     /// Returns inherent body-local impl functions declared for a body-local type item.

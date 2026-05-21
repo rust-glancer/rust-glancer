@@ -8,8 +8,9 @@ use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
 use crate::{
-    BindingId, BodyData, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyIrReadTxn,
-    BodyItemId, BodyItemRef, BodyRef, ExprId, ExprKind,
+    BindingId, BodyData, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId,
+    BodyIrReadTxn, BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ExprId,
+    ExprKind,
 };
 
 use super::{
@@ -111,7 +112,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 span: item.name_source.span,
             });
 
-            for (field_idx, field) in item.fields.fields().iter().enumerate() {
+            for (field_idx, field) in item.fields().iter().enumerate() {
                 candidates.push(BodyCursorCandidate::LocalField {
                     field: BodyFieldRef {
                         item: item_ref,
@@ -120,6 +121,30 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                     span: field.span,
                 });
             }
+
+            for (variant_idx, variant) in item.enum_variants().iter().enumerate() {
+                candidates.push(BodyCursorCandidate::LocalEnumVariant {
+                    variant: BodyEnumVariantRef {
+                        item: item_ref,
+                        index: variant_idx,
+                    },
+                    span: variant.name_span,
+                });
+            }
+        }
+
+        for (item_idx, item) in body.local_value_items().iter().enumerate() {
+            if !self.file_matches(item.name_source.file_id) {
+                continue;
+            }
+
+            candidates.push(BodyCursorCandidate::LocalValueItem {
+                item: BodyValueItemRef {
+                    body: body_ref,
+                    item: BodyValueItemId(item_idx),
+                },
+                span: item.name_source.span,
+            });
         }
 
         for (function_idx, function) in body.local_functions().iter().enumerate() {
@@ -149,7 +174,9 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             }
 
             let span = match &expr.kind {
-                ExprKind::Path { path } if path.segment_count() == 1 => {
+                ExprKind::Path { path }
+                    if path.segment_count() == 1 && path.as_def_map_path().is_some() =>
+                {
                     path.segment_span(0).unwrap_or(expr.source.span)
                 }
                 ExprKind::MethodCall {

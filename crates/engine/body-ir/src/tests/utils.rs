@@ -7,13 +7,15 @@ use std::{
 use expect_test::Expect;
 
 use crate::{
-    BindingData, BodyData, BodyFunctionData, BodyGenericArg, BodyImplData, BodyIrBuildPolicy,
-    BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy, BodyResolution,
-    BodySource, BodyTy, ExprData, ExprKind, ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
+    BindingData, BodyData, BodyFunctionData, BodyFunctionOwner, BodyGenericArg, BodyImplData,
+    BodyIrBuildPolicy, BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy,
+    BodyResolution, BodySource, BodyTy, BodyValueItemData, ClosureCapture, ClosureKind,
+    ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode, PatData, PatId,
+    PatKind, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
     TargetBodiesStatus,
     ir::ids::{
-        BindingId, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId,
-        BodyItemRef, ExprId, StmtId,
+        BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId,
+        BodyImplId, BodyItemId, BodyItemRef, BodyValueItemId, BodyValueItemRef, ExprId, StmtId,
     },
 };
 use rg_def_map::{DefId, DefMapDb, LocalDefRef, ModuleRef, TargetRef};
@@ -30,6 +32,13 @@ use test_fixture::{CrateFixture, fixture_crate};
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build(fixture);
     let actual = ProjectBodyIrSnapshot::new(&db).render();
+    let actual = format!("{}\n", actual.trim_end());
+    expect.assert_eq(&actual);
+}
+
+pub(super) fn check_project_body_ir_patterns(fixture: &str, expect: Expect) {
+    let db = BodyIrFixtureDb::build(fixture);
+    let actual = ProjectBodyIrSnapshot::new(&db).render_patterns();
     let actual = format!("{}\n", actual.trim_end());
     expect.assert_eq(&actual);
 }
@@ -149,6 +158,33 @@ impl<'a> ProjectBodyIrSnapshot<'a> {
             .collect::<Vec<_>>()
             .join("\n\n")
     }
+
+    fn render_patterns(&self) -> String {
+        sorted_packages(self.project.parse_db())
+            .into_iter()
+            .map(|(package_slot, package)| {
+                let target_dumps = sorted_targets(package)
+                    .into_iter()
+                    .map(|target| {
+                        TargetBodyIrSnapshot {
+                            project: self.project,
+                            target_ref: TargetRef {
+                                package: rg_def_map::PackageSlot(package_slot),
+                                target: target.id,
+                            },
+                            target_name: &target.name,
+                            target_kind: target.kind.to_string(),
+                        }
+                        .render_patterns()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+
+                format!("package {}\n\n{target_dumps}", package.package_name())
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
 }
 
 struct TargetBodyIrSnapshot<'a> {
@@ -198,6 +234,45 @@ impl TargetBodyIrSnapshot<'_> {
         dump
     }
 
+    fn render_patterns(&self) -> String {
+        let mut dump = format!("{} [{}]", self.target_name, self.target_kind);
+        let body_ir = self.body_ir_txn();
+        let Some(target_bodies) = body_ir
+            .target_bodies(self.target_ref)
+            .expect("target body IR should load while rendering body IR patterns")
+        else {
+            return dump;
+        };
+
+        if matches!(target_bodies.status(), TargetBodiesStatus::Skipped) {
+            dump.push_str("\nskipped");
+            return dump;
+        }
+
+        let mut bodies = target_bodies
+            .bodies()
+            .iter()
+            .enumerate()
+            .map(|(idx, body)| (self.render_function_ref(body.owner), BodyId(idx)))
+            .collect::<Vec<_>>();
+        bodies.sort_by(|left, right| left.0.cmp(&right.0));
+
+        for (idx, (_, body_id)) in bodies.into_iter().enumerate() {
+            if idx == 0 {
+                dump.push('\n');
+            } else {
+                dump.push_str("\n\n");
+            }
+
+            let body = target_bodies
+                .body(body_id)
+                .expect("body id should exist while rendering body IR patterns");
+            self.render_body_patterns(body, body_id, &mut dump);
+        }
+
+        dump
+    }
+
     fn render_body(&self, body: &BodyData, body_id: BodyId, dump: &mut String) {
         writeln!(
             dump,
@@ -237,6 +312,32 @@ impl TargetBodyIrSnapshot<'_> {
                         .join(", ")
                 )
             };
+            let values = if scope.local_value_items.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; values {}",
+                    scope
+                        .local_value_items
+                        .iter()
+                        .map(|item| format!("c{}", item.0))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            let functions = if scope.local_functions.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "; functions {}",
+                    scope
+                        .local_functions
+                        .iter()
+                        .map(|function| format!("f{}", function.0))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
             let impls = if scope.local_impls.is_empty() {
                 String::new()
             } else {
@@ -250,14 +351,37 @@ impl TargetBodyIrSnapshot<'_> {
                         .join(", ")
                 )
             };
-            writeln!(dump, "- s{idx} parent {parent}: {bindings}{items}{impls}")
-                .expect("string writes should not fail");
+            writeln!(
+                dump,
+                "- s{idx} parent {parent}: {bindings}{items}{values}{functions}{impls}"
+            )
+            .expect("string writes should not fail");
         }
 
         if !body.local_items.is_empty() {
             writeln!(dump, "items").expect("string writes should not fail");
             for (idx, item) in body.local_items.iter().enumerate() {
                 self.render_local_item(BodyItemId(idx), item, dump);
+            }
+        }
+
+        if !body.local_value_items.is_empty() {
+            writeln!(dump, "value_items").expect("string writes should not fail");
+            for (idx, item) in body.local_value_items.iter().enumerate() {
+                self.render_local_value_item(BodyValueItemId(idx), item, dump);
+            }
+        }
+
+        let free_functions = body
+            .local_functions
+            .iter()
+            .enumerate()
+            .filter(|(_, function)| matches!(function.owner, BodyFunctionOwner::LocalScope(_)))
+            .collect::<Vec<_>>();
+        if !free_functions.is_empty() {
+            writeln!(dump, "functions").expect("string writes should not fail");
+            for (idx, function) in free_functions {
+                self.render_body_function(BodyFunctionId(idx), function, dump);
             }
         }
 
@@ -277,6 +401,27 @@ impl TargetBodyIrSnapshot<'_> {
         self.render_expr(body, body.root_expr, 0, dump);
     }
 
+    fn render_body_patterns(&self, body: &BodyData, body_id: BodyId, dump: &mut String) {
+        writeln!(
+            dump,
+            "body b{} {} @ {}",
+            body_id.0,
+            self.render_function_ref(body.owner),
+            self.render_source(body.source),
+        )
+        .expect("string writes should not fail");
+
+        writeln!(dump, "patterns").expect("string writes should not fail");
+        if body.pats.is_empty() {
+            writeln!(dump, "<none>").expect("string writes should not fail");
+            return;
+        }
+
+        for (idx, pat) in body.pats.iter().enumerate() {
+            self.render_pat(PatId(idx), pat, dump);
+        }
+    }
+
     fn render_local_item(&self, id: BodyItemId, item: &BodyItemData, dump: &mut String) {
         writeln!(
             dump,
@@ -284,6 +429,28 @@ impl TargetBodyIrSnapshot<'_> {
             id.0,
             item.kind,
             item.name,
+            self.render_source(item.source),
+        )
+        .expect("string writes should not fail");
+    }
+
+    fn render_local_value_item(
+        &self,
+        id: BodyValueItemId,
+        item: &BodyValueItemData,
+        dump: &mut String,
+    ) {
+        let ty = item
+            .ty()
+            .map(|ty| format!(": {ty}"))
+            .unwrap_or_else(|| ": <unknown>".to_string());
+        writeln!(
+            dump,
+            "- c{} {} {}{} @ {}",
+            id.0,
+            item.kind,
+            item.name,
+            ty,
             self.render_source(item.source),
         )
         .expect("string writes should not fail");
@@ -315,6 +482,20 @@ impl TargetBodyIrSnapshot<'_> {
                 .local_function(*function)
                 .expect("body function id should exist while rendering local impl");
             self.render_body_function(*function, data, dump);
+        }
+        for item in &impl_data.consts {
+            let data = body
+                .local_value_item(*item)
+                .expect("body value item id should exist while rendering local impl");
+            writeln!(dump, "  - c{} {} {}", item.0, data.kind, data.name)
+                .expect("string writes should not fail");
+        }
+        for item in &impl_data.types {
+            let data = body
+                .local_item(*item)
+                .expect("body item id should exist while rendering local impl");
+            writeln!(dump, "  - i{} {} {}", item.0, data.kind, data.name)
+                .expect("string writes should not fail");
         }
     }
 
@@ -378,6 +559,105 @@ impl TargetBodyIrSnapshot<'_> {
         );
     }
 
+    fn render_pat(&self, id: PatId, pat: &PatData, dump: &mut String) {
+        writeln!(
+            dump,
+            "- p{} {} `{}` @ {}",
+            id.0,
+            self.render_pat_head(pat),
+            self.render_source_text(pat.source),
+            self.render_source(pat.source),
+        )
+        .expect("string writes should not fail");
+    }
+
+    fn render_pat_head(&self, pat: &PatData) -> String {
+        match &pat.kind {
+            PatKind::Binding {
+                mode,
+                binding,
+                subpat,
+                path,
+            } => {
+                let binding = binding
+                    .map(|binding| format!("v{}", binding.0))
+                    .unwrap_or_else(|| "<none>".to_string());
+                let subpat = subpat
+                    .map(|pat| format!(" subpat p{}", pat.0))
+                    .unwrap_or_default();
+                let path = path
+                    .as_ref()
+                    .map(|path| format!(" path {path}"))
+                    .unwrap_or_default();
+                format!(
+                    "binding {} {binding}{path}{subpat}",
+                    render_pat_binding_mode(*mode)
+                )
+            }
+            PatKind::Tuple { fields } => format!("tuple {}", render_pat_list(fields)),
+            PatKind::TupleStruct { path, fields } => {
+                let path = path
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("tuple_struct {path} {}", render_pat_list(fields))
+            }
+            PatKind::Record {
+                path, fields, rest, ..
+            } => {
+                let path = path
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                let fields = fields
+                    .iter()
+                    .map(|field| format!("{}=p{}", field.key, field.pat.0))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let rest = rest
+                    .map(|rest| format!(" rest p{}", rest.0))
+                    .unwrap_or_default();
+                format!("record {path} [{fields}]{rest}")
+            }
+            PatKind::Or { pats } => format!("or {}", render_pat_list(pats)),
+            PatKind::Slice { fields } => format!("slice {}", render_pat_list(fields)),
+            PatKind::Ref { mutability, pat } => format!("ref {mutability} p{}", pat.0),
+            PatKind::Box { pat } => format!("box p{}", pat.0),
+            PatKind::Path { path } => {
+                let path = path
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("path {path}")
+            }
+            PatKind::Rest => "rest".to_string(),
+            PatKind::Literal { kind, negated } => {
+                let prefix = if *negated { "-" } else { "" };
+                format!("literal {prefix}{kind}")
+            }
+            PatKind::Range { start, end, kind } => {
+                let start = start
+                    .map(|pat| format!("p{}", pat.0))
+                    .unwrap_or_else(|| "<open>".to_string());
+                let end = end
+                    .map(|pat| format!("p{}", pat.0))
+                    .unwrap_or_else(|| "<open>".to_string());
+                let kind = kind
+                    .map(|kind| kind.to_string())
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("range {start} {kind} {end}")
+            }
+            PatKind::ConstBlock { expr } => {
+                let expr = expr
+                    .map(|expr| format!("e{}", expr.0))
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("const_block {expr}")
+            }
+            PatKind::Wildcard => "wildcard".to_string(),
+            PatKind::Unsupported => "unsupported".to_string(),
+        }
+    }
+
     fn render_statement(
         &self,
         body: &BodyData,
@@ -396,6 +676,7 @@ impl TargetBodyIrSnapshot<'_> {
                 bindings,
                 annotation,
                 initializer,
+                else_branch,
             } => {
                 let bindings = bindings
                     .iter()
@@ -418,6 +699,11 @@ impl TargetBodyIrSnapshot<'_> {
                     writeln!(dump, "{}initializer", indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *initializer, depth + 2, dump);
+                }
+                if let Some(else_branch) = else_branch {
+                    writeln!(dump, "{}else", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *else_branch, depth + 2, dump);
                 }
             }
             StmtKind::Expr {
@@ -442,6 +728,28 @@ impl TargetBodyIrSnapshot<'_> {
                     indent(depth),
                     statement.0,
                     item.0,
+                    self.render_source(data.source),
+                )
+                .expect("string writes should not fail");
+            }
+            StmtKind::ValueItem { item } => {
+                writeln!(
+                    dump,
+                    "{}stmt s{} value_item c{} @ {}",
+                    indent(depth),
+                    statement.0,
+                    item.0,
+                    self.render_source(data.source),
+                )
+                .expect("string writes should not fail");
+            }
+            StmtKind::Function { function } => {
+                writeln!(
+                    dump,
+                    "{}stmt s{} function f{} @ {}",
+                    indent(depth),
+                    statement.0,
+                    function.0,
                     self.render_source(data.source),
                 )
                 .expect("string writes should not fail");
@@ -511,6 +819,90 @@ impl TargetBodyIrSnapshot<'_> {
                     self.render_expr(body, *arg, depth + 2, dump);
                 }
             }
+            ExprKind::Tuple { fields } => {
+                for field in fields {
+                    writeln!(dump, "{}field", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *field, depth + 2, dump);
+                }
+            }
+            ExprKind::Array { elements } => {
+                for element in elements {
+                    writeln!(dump, "{}element", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *element, depth + 2, dump);
+                }
+            }
+            ExprKind::RepeatArray {
+                initializer,
+                repeat,
+            } => {
+                if let Some(initializer) = initializer {
+                    writeln!(dump, "{}initializer", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *initializer, depth + 2, dump);
+                }
+                if let Some(repeat) = repeat {
+                    writeln!(dump, "{}repeat", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *repeat, depth + 2, dump);
+                }
+            }
+            ExprKind::Index { base, index } => {
+                if let Some(base) = base {
+                    writeln!(dump, "{}base", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *base, depth + 2, dump);
+                }
+                if let Some(index) = index {
+                    writeln!(dump, "{}index", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *index, depth + 2, dump);
+                }
+            }
+            ExprKind::Range { start, end, .. } => {
+                if let Some(start) = start {
+                    writeln!(dump, "{}start", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *start, depth + 2, dump);
+                }
+                if let Some(end) = end {
+                    writeln!(dump, "{}end", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *end, depth + 2, dump);
+                }
+            }
+            ExprKind::Cast { expr: inner, .. } | ExprKind::Unary { expr: inner, .. } => {
+                if let Some(inner) = inner {
+                    writeln!(dump, "{}inner", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *inner, depth + 2, dump);
+                }
+            }
+            ExprKind::Binary { lhs, rhs, .. } => {
+                if let Some(lhs) = lhs {
+                    writeln!(dump, "{}lhs", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *lhs, depth + 2, dump);
+                }
+                if let Some(rhs) = rhs {
+                    writeln!(dump, "{}rhs", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *rhs, depth + 2, dump);
+                }
+            }
+            ExprKind::Assign { target, value, .. } => {
+                if let Some(target) = target {
+                    writeln!(dump, "{}target", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *target, depth + 2, dump);
+                }
+                if let Some(value) = value {
+                    writeln!(dump, "{}value", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *value, depth + 2, dump);
+                }
+            }
             ExprKind::Match { scrutinee, arms } => {
                 if let Some(scrutinee) = scrutinee {
                     writeln!(dump, "{}scrutinee", indent(depth + 1))
@@ -520,9 +912,99 @@ impl TargetBodyIrSnapshot<'_> {
                 for arm in arms {
                     writeln!(dump, "{}arm s{}", indent(depth + 1), arm.scope.0)
                         .expect("string writes should not fail");
+                    if let Some(guard) = arm.guard {
+                        writeln!(dump, "{}guard", indent(depth + 2))
+                            .expect("string writes should not fail");
+                        self.render_expr(body, guard, depth + 3, dump);
+                    }
                     if let Some(expr) = arm.expr {
                         self.render_expr(body, expr, depth + 2, dump);
                     }
+                }
+            }
+            ExprKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                if let Some(condition) = condition {
+                    writeln!(dump, "{}condition", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *condition, depth + 2, dump);
+                }
+                if let Some(then_branch) = then_branch {
+                    writeln!(dump, "{}then", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *then_branch, depth + 2, dump);
+                }
+                if let Some(else_branch) = else_branch {
+                    writeln!(dump, "{}else", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *else_branch, depth + 2, dump);
+                }
+            }
+            ExprKind::Let { initializer, .. } => {
+                if let Some(initializer) = initializer {
+                    writeln!(dump, "{}initializer", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *initializer, depth + 2, dump);
+                }
+            }
+            ExprKind::Closure {
+                body: closure_body, ..
+            } => {
+                if let Some(closure_body) = closure_body {
+                    writeln!(dump, "{}body", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *closure_body, depth + 2, dump);
+                }
+            }
+            ExprKind::Loop {
+                body: loop_body, ..
+            } => {
+                if let Some(loop_body) = loop_body {
+                    writeln!(dump, "{}body", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *loop_body, depth + 2, dump);
+                }
+            }
+            ExprKind::While {
+                condition,
+                body: loop_body,
+                ..
+            } => {
+                if let Some(condition) = condition {
+                    writeln!(dump, "{}condition", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *condition, depth + 2, dump);
+                }
+                if let Some(loop_body) = loop_body {
+                    writeln!(dump, "{}body", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *loop_body, depth + 2, dump);
+                }
+            }
+            ExprKind::For {
+                iterable,
+                body: loop_body,
+                ..
+            } => {
+                if let Some(iterable) = iterable {
+                    writeln!(dump, "{}iterable", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *iterable, depth + 2, dump);
+                }
+                if let Some(loop_body) = loop_body {
+                    writeln!(dump, "{}body", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *loop_body, depth + 2, dump);
+                }
+            }
+            ExprKind::Break { value, .. } => {
+                if let Some(value) = value {
+                    writeln!(dump, "{}value", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *value, depth + 2, dump);
                 }
             }
             ExprKind::MethodCall { receiver, args, .. } => {
@@ -553,9 +1035,19 @@ impl TargetBodyIrSnapshot<'_> {
                     }
                 }
                 if let Some(spread) = spread {
-                    writeln!(dump, "{}spread", indent(depth + 1))
-                        .expect("string writes should not fail");
-                    self.render_expr(body, *spread, depth + 2, dump);
+                    writeln!(
+                        dump,
+                        "{}spread @ {}",
+                        indent(depth + 1),
+                        self.render_source(BodySource {
+                            file_id: data.source.file_id,
+                            span: spread.source_span,
+                        })
+                    )
+                    .expect("string writes should not fail");
+                    if let Some(expr) = spread.expr {
+                        self.render_expr(body, expr, depth + 2, dump);
+                    }
                 }
             }
             ExprKind::Wrapper { inner, .. } => {
@@ -563,6 +1055,13 @@ impl TargetBodyIrSnapshot<'_> {
                     writeln!(dump, "{}inner", indent(depth + 1))
                         .expect("string writes should not fail");
                     self.render_expr(body, *inner, depth + 2, dump);
+                }
+            }
+            ExprKind::Yield { value } | ExprKind::Yeet { value } | ExprKind::Become { value } => {
+                if let Some(value) = value {
+                    writeln!(dump, "{}value", indent(depth + 1))
+                        .expect("string writes should not fail");
+                    self.render_expr(body, *value, depth + 2, dump);
                 }
             }
             ExprKind::Unknown { children, .. } => {
@@ -573,15 +1072,126 @@ impl TargetBodyIrSnapshot<'_> {
                 }
             }
             ExprKind::Path { .. } | ExprKind::Literal { .. } => {}
+            ExprKind::Continue { .. } | ExprKind::Underscore => {}
         }
     }
 
     fn render_expr_head(&self, data: &ExprData) -> String {
         match &data.kind {
-            ExprKind::Block { scope, .. } => format!("block s{}", scope.0),
+            ExprKind::Block {
+                kind, label, scope, ..
+            } => {
+                let modifier = match kind {
+                    ExprBlockKind::Plain => String::new(),
+                    kind => format!(" {kind}"),
+                };
+                format!(
+                    "block{}{} s{}",
+                    render_label_suffix(label.as_ref()),
+                    modifier,
+                    scope.0
+                )
+            }
             ExprKind::Path { path } => format!("path {path}"),
             ExprKind::Call { .. } => "call".to_string(),
+            ExprKind::Tuple { .. } => "tuple".to_string(),
+            ExprKind::Array { .. } => "array".to_string(),
+            ExprKind::RepeatArray { .. } => "repeat_array".to_string(),
+            ExprKind::Index { .. } => "index".to_string(),
+            ExprKind::Range { kind, .. } => {
+                let kind = kind
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("range {kind}")
+            }
+            ExprKind::Cast { ty, .. } => {
+                let ty = ty
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("cast as {ty}")
+            }
+            ExprKind::Unary { op, .. } => {
+                let op = op
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("unary {op}")
+            }
+            ExprKind::Binary { op, .. } => {
+                let op = op
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("binary {op}")
+            }
+            ExprKind::Assign { op, .. } => {
+                let op = op
+                    .as_ref()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<missing>".to_string());
+                format!("assign {op}")
+            }
             ExprKind::Match { .. } => "match".to_string(),
+            ExprKind::If { .. } => "if".to_string(),
+            ExprKind::Let {
+                scope, bindings, ..
+            } => {
+                format!("let s{} {}", scope.0, render_binding_list(bindings))
+            }
+            ExprKind::Closure {
+                scope,
+                capture,
+                kind,
+                params,
+                ret_ty,
+                ..
+            } => {
+                let capture = match capture {
+                    ClosureCapture::Inferred => "",
+                    ClosureCapture::Move => " move",
+                };
+                let kind = match kind {
+                    ClosureKind::Normal => "",
+                    ClosureKind::Async => " async",
+                };
+                let params = params
+                    .iter()
+                    .map(render_closure_param)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let ret_ty = ret_ty
+                    .as_ref()
+                    .map(|ty| format!(" -> {ty}"))
+                    .unwrap_or_default();
+                format!("closure{kind}{capture} s{} ({params}){ret_ty}", scope.0)
+            }
+            ExprKind::Loop { label, .. } => {
+                format!("loop{}", render_label_suffix(label.as_ref()))
+            }
+            ExprKind::While { label, .. } => {
+                format!("while{}", render_label_suffix(label.as_ref()))
+            }
+            ExprKind::For {
+                label,
+                scope,
+                bindings,
+                ..
+            } => {
+                format!(
+                    "for{} s{} {}",
+                    render_label_suffix(label.as_ref()),
+                    scope.0,
+                    render_binding_list(bindings)
+                )
+            }
+            ExprKind::Break { label, .. } => {
+                format!("break{}", render_label_suffix(label.as_ref()))
+            }
+            ExprKind::Continue { label } => {
+                format!("continue{}", render_label_suffix(label.as_ref()))
+            }
             ExprKind::MethodCall { method_name, .. } => {
                 format!("method_call {method_name}")
             }
@@ -603,6 +1213,10 @@ impl TargetBodyIrSnapshot<'_> {
             ExprKind::Literal { kind } => {
                 format!("literal {kind} `{}`", self.render_source_text(data.source))
             }
+            ExprKind::Underscore => "underscore".to_string(),
+            ExprKind::Yield { .. } => "yield".to_string(),
+            ExprKind::Yeet { .. } => "yeet".to_string(),
+            ExprKind::Become { .. } => "become".to_string(),
             ExprKind::Unknown { .. } => {
                 format!("unknown `{}`", self.render_source_text(data.source))
             }
@@ -614,6 +1228,9 @@ impl TargetBodyIrSnapshot<'_> {
             BodyResolution::Local(binding) => format!(" -> local v{}", binding.0),
             BodyResolution::LocalItem(item) => {
                 format!(" -> local item {}", self.render_body_item_ref(*item))
+            }
+            BodyResolution::LocalValueItem(item) => {
+                format!(" -> local value {}", self.render_body_value_item_ref(*item))
             }
             BodyResolution::Item(defs) if defs.is_empty() => " -> item <unresolved>".to_string(),
             BodyResolution::Item(defs) => {
@@ -643,7 +1260,7 @@ impl TargetBodyIrSnapshot<'_> {
             BodyResolution::EnumVariant(variants) => {
                 let mut variants = variants
                     .iter()
-                    .map(|variant| self.render_enum_variant_ref(*variant))
+                    .map(|variant| self.render_resolved_enum_variant_ref(*variant))
                     .collect::<Vec<_>>();
                 variants.sort();
                 format!(" -> {}", variants.join(" | "))
@@ -664,6 +1281,7 @@ impl TargetBodyIrSnapshot<'_> {
         match ty {
             BodyTy::Unit => "()".to_string(),
             BodyTy::Never => "!".to_string(),
+            BodyTy::Primitive(primitive) => primitive.label().to_string(),
             BodyTy::Syntax(ty) => format!("syntax {ty}"),
             BodyTy::Reference(inner) => format!("&{}", self.render_ty(inner)),
             BodyTy::LocalNominal(items) => {
@@ -746,6 +1364,27 @@ impl TargetBodyIrSnapshot<'_> {
             return "<missing>".to_string();
         };
         let Some(item) = body.local_item(item_ref.item) else {
+            return "<missing>".to_string();
+        };
+
+        format!(
+            "{} {}::{} @ {}",
+            item.kind,
+            self.render_function_ref(body.owner),
+            item.name,
+            self.render_source(item.source),
+        )
+    }
+
+    fn render_body_value_item_ref(&self, item_ref: BodyValueItemRef) -> String {
+        let body_ir = self.body_ir_txn();
+        let Some(body) = body_ir
+            .body_data(item_ref.body)
+            .expect("body value item ref should load while rendering body IR")
+        else {
+            return "<missing>".to_string();
+        };
+        let Some(item) = body.local_value_item(item_ref.item) else {
             return "<missing>".to_string();
         };
 
@@ -934,6 +1573,15 @@ impl TargetBodyIrSnapshot<'_> {
         )
     }
 
+    fn render_resolved_enum_variant_ref(&self, variant_ref: ResolvedEnumVariantRef) -> String {
+        match variant_ref {
+            ResolvedEnumVariantRef::Semantic(variant) => self.render_enum_variant_ref(variant),
+            ResolvedEnumVariantRef::BodyLocal(variant) => {
+                self.render_body_enum_variant_ref(variant)
+            }
+        }
+    }
+
     fn render_enum_variant_ref(&self, variant_ref: rg_semantic_ir::EnumVariantRef) -> String {
         let semantic_ir = self.semantic_ir_txn();
         let data = semantic_ir
@@ -944,6 +1592,20 @@ impl TargetBodyIrSnapshot<'_> {
         format!(
             "variant {}::{}",
             self.render_type_def_ref(data.owner),
+            data.variant.name
+        )
+    }
+
+    fn render_body_enum_variant_ref(&self, variant_ref: BodyEnumVariantRef) -> String {
+        let body_ir = self.body_ir_txn();
+        let data = body_ir
+            .local_enum_variant_data(variant_ref)
+            .expect("body enum variant ref should load while rendering body IR")
+            .expect("body enum variant ref should exist while rendering body IR");
+
+        format!(
+            "variant {}::{}",
+            self.render_body_item_ref(variant_ref.item),
             data.variant.name
         )
     }
@@ -1108,6 +1770,56 @@ impl TargetBodyIrSnapshot<'_> {
             .collect::<Vec<_>>()
             .join(" ")
     }
+}
+
+fn render_binding_list(bindings: &[BindingId]) -> String {
+    if bindings.is_empty() {
+        return "<none>".to_string();
+    }
+
+    bindings
+        .iter()
+        .map(|binding| format!("v{}", binding.0))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn render_closure_param(param: &ClosureParamData) -> String {
+    let annotation = param
+        .annotation
+        .as_ref()
+        .map(|ty| format!(": {ty}"))
+        .unwrap_or_default();
+    format!("{}{}", render_binding_list(&param.bindings), annotation)
+}
+
+fn render_pat_list(pats: &[PatId]) -> String {
+    if pats.is_empty() {
+        return "[]".to_string();
+    }
+
+    format!(
+        "[{}]",
+        pats.iter()
+            .map(|pat| format!("p{}", pat.0))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn render_pat_binding_mode(mode: PatBindingMode) -> &'static str {
+    match (mode.by_ref, mode.mutable) {
+        (false, false) => "move",
+        (false, true) => "move mut",
+        (true, false) => "ref",
+        (true, true) => "ref mut",
+    }
+}
+
+fn render_label_suffix(label: Option<&LabelData>) -> String {
+    label
+        .map(|label| format!(" {}", label.name))
+        .unwrap_or_default()
 }
 
 fn indent(depth: usize) -> String {
