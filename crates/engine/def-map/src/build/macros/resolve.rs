@@ -304,33 +304,32 @@ fn relative_single_name(path: &ImportPath) -> Option<&Name> {
     }
 }
 
-/// Identifies builtin macros we intentionally do not expand in this milestone.
-pub(super) fn is_unsupported_builtin_macro_path(path: &ImportPath) -> bool {
+/// Known builtin macro call that should not be resolved as a user macro.
+pub(super) enum BuiltinMacroDisposition {
+    /// The builtin cannot add module-scope definitions, so def-map can safely ignore it.
+    IgnoredByDefMap,
+    /// The builtin can affect item collection or requires dedicated compiler-like handling.
+    Unsupported,
+}
+
+/// Classifies builtin macros that are known even when no user macro binding resolves.
+pub(super) fn builtin_macro_disposition(path: &ImportPath) -> Option<BuiltinMacroDisposition> {
     let Some(name) = relative_single_name(path) else {
-        return false;
+        return None;
     };
 
-    matches!(
-        name.as_str(),
-        "asm"
-            | "cfg"
-            | "column"
-            | "compile_error"
-            | "concat"
-            | "concat_idents"
-            | "env"
-            | "file"
-            | "format_args"
-            | "global_asm"
-            | "include"
-            | "include_bytes"
-            | "include_str"
-            | "line"
-            | "llvm_asm"
-            | "module_path"
-            | "option_env"
-            | "stringify"
-    )
+    match name.as_str() {
+        // Expression, diagnostic, or assembly builtins do not contribute named items to def-map.
+        // Body lowering can later synthesize values/types for the expression-like subset.
+        "asm" | "cfg" | "column" | "compile_error" | "concat" | "env" | "file" | "format_args"
+        | "global_asm" | "include_bytes" | "include_str" | "line" | "llvm_asm" | "module_path"
+        | "option_env" | "stringify" => Some(BuiltinMacroDisposition::IgnoredByDefMap),
+
+        // `include!` can inject Rust items from another file, and `concat_idents!` has
+        // token-shaping behavior that is better handled by a dedicated builtin implementation.
+        "concat_idents" | "include" => Some(BuiltinMacroDisposition::Unsupported),
+        _ => None,
+    }
 }
 
 /// Parses the textual callee path stored in item-tree macro-call data.

@@ -314,6 +314,6 @@ macros::include!();
     let target = project.lib("qualified_builtin_name_fixture");
 
     target.entry("QualifiedInclude").assert_type_exists(
-        "qualified user macros should not be treated as unsupported builtins by last segment",
+        "qualified user macros should not be classified as builtins by last segment",
     );
 }

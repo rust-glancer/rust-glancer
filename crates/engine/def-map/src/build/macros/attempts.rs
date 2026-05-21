@@ -29,7 +29,10 @@ use super::{
     cache::{MacroCompileRecord, MacroExpandRecord, MacroExpansionCache, PreparedMacroExpansion},
     expand::MacroExpansionWork,
     generated::{GeneratedCollector, GeneratedOrigin},
-    resolve::{is_unsupported_builtin_macro_path, macro_path_from_text, resolve_macro_definition},
+    resolve::{
+        BuiltinMacroDisposition, builtin_macro_disposition, macro_path_from_text,
+        resolve_macro_definition,
+    },
 };
 
 /// Selects which part of the macro worklist one expansion pass should inspect.
@@ -58,6 +61,7 @@ fn should_scan_directive(state: MacroDirectiveState, scan: MacroExpansionScan<'_
         MacroDirectiveState::Expanded
         | MacroDirectiveState::Failed
         | MacroDirectiveState::Skipped
+        | MacroDirectiveState::IgnoredByDefMap
         | MacroDirectiveState::Unsupported => false,
     }
 }
@@ -234,7 +238,23 @@ impl MacroExpansionAttempt {
         )
     }
 
-    fn unsupported(
+    fn ignored_by_def_map(
+        target: TargetRef,
+        call_id: usize,
+        call: &MacroCallSite,
+        path_text: &str,
+    ) -> Self {
+        Self::new(
+            target,
+            call_id,
+            call,
+            Some(path_text.to_string()),
+            MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::IgnoredByDefMap),
+            MacroExpansionAttemptRecord::skipped(),
+        )
+    }
+
+    fn unsupported_builtin(
         target: TargetRef,
         call_id: usize,
         call: &MacroCallSite,
@@ -347,12 +367,27 @@ impl MacroExpansionAttempt {
         };
 
         // Then resolve against the current scope snapshot. Unresolved user macros stay resumable;
-        // known builtins are unsupported for this milestone and are not retried.
+        // known builtins are classified once so we do not retry names that def-map cannot expand.
         let Some(resolved) = resolve_macro_definition(env, states, state, call, &path)? else {
-            if is_unsupported_builtin_macro_path(&path) {
-                return Ok(Self::unsupported(state.target, call_id, call, path_text));
+            match builtin_macro_disposition(&path) {
+                Some(BuiltinMacroDisposition::IgnoredByDefMap) => {
+                    return Ok(Self::ignored_by_def_map(
+                        state.target,
+                        call_id,
+                        call,
+                        path_text,
+                    ));
+                }
+                Some(BuiltinMacroDisposition::Unsupported) => {
+                    return Ok(Self::unsupported_builtin(
+                        state.target,
+                        call_id,
+                        call,
+                        path_text,
+                    ));
+                }
+                None => return Ok(Self::unresolved(state.target, call_id, call, path_text)),
             }
-            return Ok(Self::unresolved(state.target, call_id, call, path_text));
         };
 
         // Direct `macro_rules!` bindings cannot be used before a later definition in the same

@@ -54,7 +54,9 @@ pub(super) enum MacroDirectiveState {
     Failed,
     /// The call is known not to be expandable by this engine.
     Skipped,
-    /// The call resolved to a builtin/proc-like macro category outside this milestone.
+    /// The call names a builtin that cannot contribute def-map items.
+    IgnoredByDefMap,
+    /// The call names a macro category that would need dedicated support to model correctly.
     Unsupported,
 }
 
