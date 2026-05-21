@@ -1,6 +1,6 @@
 use rg_parse::FileId;
 use rg_syntax::{
-    TextRange,
+    AstNode as _, TextRange,
     ast::{self, HasAttrs as _},
 };
 use rg_text::{Name, NameInterner};
@@ -132,6 +132,169 @@ impl MacroDefinitionAttrs {
         for predicate in &mut self.cfg_attr_macro_export {
             predicate.shrink_to_fit();
         }
+    }
+}
+
+/// Legacy `#[macro_use]` import selector.
+#[derive(Debug, Clone, Default, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct MacroUseAttr {
+    pub direct: Option<MacroUseSelector>,
+    pub cfg_attr_macro_use: Vec<CfgAttrMacroUse>,
+}
+
+impl MacroUseAttr {
+    pub fn from_attrs(item: &impl ast::HasAttrs, interner: &mut NameInterner) -> Option<Self> {
+        let mut attr = Self::default();
+
+        for source_attr in item.attrs().filter(|attr| attr.kind().is_outer()) {
+            let Some(meta) = source_attr.meta() else {
+                continue;
+            };
+            attr.collect_macro_use_meta(meta, None, interner);
+        }
+
+        (attr.direct.is_some() || !attr.cfg_attr_macro_use.is_empty()).then_some(attr)
+    }
+
+    fn collect_macro_use_meta(
+        &mut self,
+        meta: ast::Meta,
+        predicate: Option<CfgPredicate>,
+        interner: &mut NameInterner,
+    ) {
+        if let Some(selector) = MacroUseSelector::from_meta(&meta, interner) {
+            match predicate {
+                Some(predicate) => self.cfg_attr_macro_use.push(CfgAttrMacroUse {
+                    predicate,
+                    selector,
+                }),
+                None => match &mut self.direct {
+                    Some(direct) => direct.merge(&selector),
+                    None => self.direct = Some(selector),
+                },
+            }
+            return;
+        }
+
+        match meta {
+            ast::Meta::CfgAttrMeta(cfg_attr) => {
+                let cfg_attr_predicate = cfg_attr
+                    .cfg_predicate()
+                    .map(CfgPredicate::from_ast)
+                    .unwrap_or(CfgPredicate::Invalid);
+                let predicate = match predicate {
+                    Some(predicate) => CfgPredicate::All(vec![predicate, cfg_attr_predicate]),
+                    None => cfg_attr_predicate,
+                };
+                for nested in cfg_attr.metas() {
+                    self.collect_macro_use_meta(nested, Some(predicate.clone()), interner);
+                }
+            }
+            ast::Meta::UnsafeMeta(meta) => {
+                if let Some(meta) = meta.meta() {
+                    self.collect_macro_use_meta(meta, predicate, interner);
+                }
+            }
+            ast::Meta::CfgMeta(_)
+            | ast::Meta::PathMeta(_)
+            | ast::Meta::TokenTreeMeta(_)
+            | ast::Meta::KeyValueMeta(_) => {}
+        }
+    }
+
+    pub(crate) fn shrink_to_fit(&mut self) {
+        if let Some(direct) = &mut self.direct {
+            direct.shrink_to_fit();
+        }
+        self.cfg_attr_macro_use.shrink_to_fit();
+        for cfg_attr in &mut self.cfg_attr_macro_use {
+            cfg_attr.shrink_to_fit();
+        }
+    }
+}
+
+/// Macro-use selector once cfg_attr gates have been evaluated for one target.
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct MacroUseSelector {
+    /// `None` means all exported macros; `Some` keeps the explicit `#[macro_use(foo, bar)]` list.
+    pub names: Option<Vec<Name>>,
+}
+
+impl MacroUseSelector {
+    fn from_meta(meta: &ast::Meta, interner: &mut NameInterner) -> Option<Self> {
+        if meta.as_simple_atom().as_deref() == Some("macro_use") {
+            return Some(Self { names: None });
+        }
+
+        if let Some((name, token_tree)) = meta.as_simple_call()
+            && name.as_str() == "macro_use"
+        {
+            return Some(Self {
+                names: Some(Self::names_from_token_tree(&token_tree, interner)),
+            });
+        }
+
+        None
+    }
+
+    pub fn allows(&self, name: &Name) -> bool {
+        match &self.names {
+            Some(names) => names.iter().any(|allowed| allowed == name),
+            None => true,
+        }
+    }
+
+    pub fn merge(&mut self, other: &Self) {
+        let (Some(names), Some(other_names)) = (&mut self.names, &other.names) else {
+            self.names = None;
+            return;
+        };
+
+        for name in other_names {
+            if !names.iter().any(|existing| existing == name) {
+                names.push(name.clone());
+            }
+        }
+    }
+
+    fn shrink_to_fit(&mut self) {
+        if let Some(names) = &mut self.names {
+            names.shrink_to_fit();
+            for name in names {
+                name.shrink_to_fit();
+            }
+        }
+    }
+
+    pub(crate) fn names_from_token_tree(
+        token_tree: &ast::TokenTree,
+        interner: &mut NameInterner,
+    ) -> Vec<Name> {
+        let text = token_tree.syntax().text().to_string();
+        let text = text
+            .strip_prefix('(')
+            .and_then(|text| text.strip_suffix(')'))
+            .unwrap_or(&text);
+
+        text.split(',')
+            .filter_map(|name| {
+                let name = name.trim();
+                (!name.is_empty()).then(|| interner.intern(name))
+            })
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub struct CfgAttrMacroUse {
+    pub predicate: CfgPredicate,
+    pub selector: MacroUseSelector,
+}
+
+impl CfgAttrMacroUse {
+    fn shrink_to_fit(&mut self) {
+        self.predicate.shrink_to_fit();
+        self.selector.shrink_to_fit();
     }
 }
 

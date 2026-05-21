@@ -8,11 +8,14 @@ use rg_syntax::{
 use rg_parse::{Span, TextSpan};
 use rg_text::{Name, NameInterner};
 
+use super::MacroUseAttr;
+
 /// Syntactic `extern crate` facts attached to `ItemKind::ExternCrate`.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct ExternCrateItem {
     pub name: Option<Name>,
     pub alias: ImportAlias,
+    pub macro_use: Option<MacroUseAttr>,
 }
 
 impl ExternCrateItem {
@@ -22,6 +25,7 @@ impl ExternCrateItem {
                 .name_ref()
                 .map(|name_ref| interner.intern(name_ref.text())),
             alias: ImportAlias::from_rename(item.rename(), interner),
+            macro_use: MacroUseAttr::from_attrs(item, interner),
         }
     }
 
@@ -30,6 +34,9 @@ impl ExternCrateItem {
             name.shrink_to_fit();
         }
         self.alias.shrink_to_fit();
+        if let Some(macro_use) = &mut self.macro_use {
+            macro_use.shrink_to_fit();
+        }
     }
 }
 

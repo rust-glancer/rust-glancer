@@ -193,6 +193,27 @@ pub(crate) fn visible_module_scope_entry_set_with_env(
     Ok(visible_scope)
 }
 
+/// Returns visible macro bindings for one name without copying the whole source scope.
+pub(crate) fn visible_module_macro_bindings_with_env(
+    env: &impl PathResolutionEnv,
+    importing_module: ModuleRef,
+    source_module: ModuleRef,
+    name: &Name,
+) -> Result<Vec<ScopeBinding>, PackageStoreError> {
+    let Some(entry) = env.module_scope_entry(source_module, name.as_str())? else {
+        return Ok(Vec::new());
+    };
+
+    let mut bindings = Vec::new();
+    for binding in entry.macros() {
+        if binding_is_visible(env, importing_module, binding)? {
+            bindings.push(binding.clone());
+        }
+    }
+
+    Ok(bindings)
+}
+
 /// Resolves a path to the definitions it denotes in the current scope snapshot.
 ///
 /// The return type is a list rather than a single value because one textual name may resolve in

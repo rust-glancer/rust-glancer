@@ -4,8 +4,8 @@ use expect_test::Expect;
 
 use crate::{
     FieldItem, FieldList, FileTree, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
-    MacroDefinitionItem, ModuleSource, Package as ItemTreePackage, PackageNameInterners, ParamKind,
-    TargetRoot, VisibilityLevel,
+    MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleSource, Package as ItemTreePackage,
+    PackageNameInterners, ParamKind, TargetRoot, VisibilityLevel,
 };
 use rg_parse::{FileId, Package, ParseDb, Target};
 use rg_workspace::WorkspaceMetadata;
@@ -176,11 +176,17 @@ impl<'a> PackageItemTreeSnapshot<'a> {
 
         if let ItemKind::Module(module) = &item.kind {
             line.push_str(&format!(" [{}]", self.render_module_source(&module.source)));
+            if let Some(macro_use) = &module.macro_use {
+                line.push_str(&format!(" [{}]", render_macro_use_attr(macro_use)));
+            }
         }
 
         if let ItemKind::ExternCrate(extern_crate) = &item.kind {
             let name = extern_crate.name.as_deref().unwrap_or("<missing>");
             line.push_str(&format!(" [{name}{}]", extern_crate.alias));
+            if let Some(macro_use) = &extern_crate.macro_use {
+                line.push_str(&format!(" [{}]", render_macro_use_attr(macro_use)));
+            }
         }
 
         if let ItemKind::MacroCall(macro_call) = &item.kind {
@@ -468,6 +474,35 @@ fn visibility_prefix(visibility: &VisibilityLevel) -> String {
     match visibility {
         VisibilityLevel::Private => String::new(),
         _ => format!("{visibility} "),
+    }
+}
+
+fn render_macro_use_attr(attr: &MacroUseAttr) -> String {
+    let mut parts = Vec::new();
+    if let Some(direct) = &attr.direct {
+        parts.push(render_macro_use_selector(direct));
+    }
+    for cfg_attr in &attr.cfg_attr_macro_use {
+        parts.push(format!(
+            "cfg_attr({:?}, {})",
+            cfg_attr.predicate,
+            render_macro_use_selector(&cfg_attr.selector)
+        ));
+    }
+    parts.join(", ")
+}
+
+fn render_macro_use_selector(selector: &MacroUseSelector) -> String {
+    match &selector.names {
+        Some(names) => {
+            let names = names
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("macro_use({names})")
+        }
+        None => "macro_use".to_string(),
     }
 }
 

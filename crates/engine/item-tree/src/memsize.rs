@@ -1,13 +1,14 @@
 use rg_memsize::{MemoryRecorder, MemorySize};
 
 use crate::{
-    CfgExpr, CfgGate, CfgPredicate, ConstItem, Documentation, EnumItem, EnumVariantItem,
-    ExternCrateItem, FieldItem, FieldKey, FieldList, FunctionItem, GenericArg, GenericParams,
-    ImplItem, ImportAlias, ItemKind, ItemNode, ItemTag, ItemTreeDb, ItemTreeId, ItemTreeRef,
-    MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource, Mutability,
-    Package, ParamItem, ParamKind, StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem,
-    TypeBound, TypePath, TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind, UseItem,
-    UsePath, UsePathSegment, UsePathSegmentKind, VisibilityLevel, WherePredicate,
+    CfgAttrMacroUse, CfgExpr, CfgGate, CfgPredicate, ConstItem, Documentation, EnumItem,
+    EnumVariantItem, ExternCrateItem, FieldItem, FieldKey, FieldList, FunctionItem, GenericArg,
+    GenericParams, ImplItem, ImportAlias, ItemKind, ItemNode, ItemTag, ItemTreeDb, ItemTreeId,
+    ItemTreeRef, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr,
+    MacroUseSelector, ModuleItem, ModuleSource, Mutability, Package, ParamItem, ParamKind,
+    StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, TypeBound, TypePath,
+    TypePathSegment, TypeRef, UnionItem, UseImport, UseImportKind, UseItem, UsePath,
+    UsePathSegment, UsePathSegmentKind, VisibilityLevel, WherePredicate,
     item::{ConstParamData, FunctionQualifiers, LifetimeParamData, TypeParamData},
 };
 
@@ -42,12 +43,15 @@ rg_memsize::impl_memory_size_children! {
     StaticItem => ty, mutability;
     TypePath => source_span, absolute, segments;
     TypePathSegment => name, args, span;
-    ExternCrateItem => name, alias;
+    ExternCrateItem => name, alias, macro_use;
+    MacroUseAttr => direct, cfg_attr_macro_use;
+    MacroUseSelector => names;
+    CfgAttrMacroUse => predicate, selector;
     UseItem => imports;
     UseImport => kind, path, alias;
     UsePath => source_span, absolute, segments;
     UsePathSegment => kind, span;
-    ModuleItem => inner_docs, source;
+    ModuleItem => inner_docs, macro_use, source;
 }
 
 impl MemorySize for MacroDefinitionItem {

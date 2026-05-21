@@ -358,11 +358,14 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
+#[macro_use(make_bar)]
 pub mod bar {
     pub mod foo {}
 }
 
+#[macro_use(current_macro)]
 extern crate self as current;
+#[macro_use]
 extern crate self as _;
 
 use bar::foo::{self, self as imported_foo, work as _, *};
@@ -377,10 +380,10 @@ use ::bar::foo;
 
             files
             file lib.rs
-            - pub module bar [inline]
+            - pub module bar [inline] [macro_use(make_bar)]
               - pub module foo [inline]
-            - extern_crate self [self as current]
-            - extern_crate self [self as _]
+            - extern_crate self [self as current] [macro_use(current_macro)]
+            - extern_crate self [self as _] [macro_use]
             - use bar::foo::{self, self as imported_foo, work as _, *}
               - import self bar::foo
               - import self bar::foo as imported_foo

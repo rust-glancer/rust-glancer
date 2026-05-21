@@ -18,9 +18,9 @@ use rg_text::{Name, NameInterner};
 
 use super::{
     CfgExpr, ConstItem, Documentation, EnumItem, ExternCrateItem, FileTree, FunctionItem, ImplItem,
-    ItemKind, ItemNode, ItemTreeId, MacroCallItem, MacroDefinitionItem, ModuleItem, ModuleSource,
-    Package, StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, UnionItem, UseItem,
-    VisibilityLevel,
+    ItemKind, ItemNode, ItemTreeId, MacroCallItem, MacroDefinitionItem, MacroUseAttr, ModuleItem,
+    ModuleSource, Package, StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, UnionItem,
+    UseItem, VisibilityLevel,
 };
 
 /// Lowers all known files for one parsed package and records target entrypoints into them.
@@ -405,6 +405,7 @@ impl<'db> PackageLowering<'db> {
                 .context("while attempting to collect inline module items")?;
             return Ok(ModuleItem {
                 inner_docs: Documentation::inner_from_ast(item),
+                macro_use: MacroUseAttr::from_attrs(item, self.interner),
                 source: ModuleSource::Inline { items },
             });
         }
@@ -412,6 +413,7 @@ impl<'db> PackageLowering<'db> {
         let Some(module_file_path) = module_file_context.resolve_module_file(item) else {
             return Ok(ModuleItem {
                 inner_docs: None,
+                macro_use: MacroUseAttr::from_attrs(item, self.interner),
                 source: ModuleSource::OutOfLine {
                     definition_file: None,
                 },
@@ -438,6 +440,7 @@ impl<'db> PackageLowering<'db> {
 
         Ok(ModuleItem {
             inner_docs: None,
+            macro_use: MacroUseAttr::from_attrs(item, self.interner),
             source: ModuleSource::OutOfLine {
                 definition_file: Some(module_file_id),
             },

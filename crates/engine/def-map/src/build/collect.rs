@@ -16,8 +16,8 @@ use anyhow::Context as _;
 
 use rg_item_tree::{
     Documentation, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
-    MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource,
-    Package as ItemTreePackage, UseImport, UseItem, VisibilityLevel,
+    MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
+    ModuleItem, ModuleSource, Package as ItemTreePackage, UseImport, UseItem, VisibilityLevel,
 };
 use rg_parse::{Package, Target};
 use rg_text::Name;
@@ -35,7 +35,7 @@ use super::{
     cfg::CfgEvaluator,
     macros::{
         ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
-        TextualMacroScopes,
+        MacroUseImport, TextualMacroScopes,
     },
 };
 
@@ -56,6 +56,7 @@ pub(super) struct TargetState {
     pub(super) prelude: Option<ModuleRef>,
     pub(super) macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
     pub(super) textual_macro_scopes: TextualMacroScopes,
+    pub(super) macro_use_imports: Vec<MacroUseImport>,
     pub(super) macro_directives: Vec<MacroDirective>,
 }
 
@@ -157,6 +158,7 @@ struct TargetScopeCollector<'db> {
     base_scopes: Vec<ModuleScopeBuilder>,
     macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
     textual_macro_scopes: TextualMacroScopes,
+    macro_use_imports: Vec<MacroUseImport>,
     macro_directives: Vec<MacroDirective>,
 }
 
@@ -178,6 +180,7 @@ impl<'db> TargetScopeCollector<'db> {
             base_scopes: Vec::new(),
             macro_definitions: HashMap::new(),
             textual_macro_scopes: TextualMacroScopes::default(),
+            macro_use_imports: Vec::new(),
             macro_directives: Vec::new(),
         }
     }
@@ -222,6 +225,7 @@ impl<'db> TargetScopeCollector<'db> {
             prelude: None,
             macro_definitions: self.macro_definitions,
             textual_macro_scopes: self.textual_macro_scopes,
+            macro_use_imports: self.macro_use_imports,
             macro_directives: self.macro_directives,
         })
     }
@@ -536,7 +540,7 @@ impl<'db> TargetScopeCollector<'db> {
             item.visibility.clone(),
         );
         self.textual_macro_scopes
-            .record_module_declaration(child_module, order);
+            .record_module_declaration(child_module, order.clone());
 
         match source {
             ModuleSource::Inline { items } => {
@@ -565,6 +569,16 @@ impl<'db> TargetScopeCollector<'db> {
             ModuleSource::OutOfLine {
                 definition_file: None,
             } => {}
+        }
+        if let Some(macro_use) = &module_item.macro_use
+            && let Some(selector) = self.active_macro_use_selector(macro_use)
+        {
+            self.textual_macro_scopes.import_module_definitions(
+                parent_module,
+                child_module,
+                order,
+                &selector,
+            );
         }
 
         Ok(())
@@ -660,11 +674,6 @@ impl<'db> TargetScopeCollector<'db> {
         let Some(extern_name) = extern_crate.name.clone() else {
             return;
         };
-        let Some(binding_name) =
-            ImportBinding::from_alias(&extern_crate.alias).resolve(Some(extern_name.clone()))
-        else {
-            return;
-        };
 
         let module_ref = if extern_name == "self" {
             ModuleRef {
@@ -679,6 +688,24 @@ impl<'db> TargetScopeCollector<'db> {
                 return;
             };
             module_ref
+        };
+
+        if let Some(macro_use) = &extern_crate.macro_use
+            && let Some(selector) = self.active_macro_use_selector(macro_use)
+        {
+            // `extern crate dep as _` hides the type binding but still imports macros. Record the
+            // macro-use bridge before resolving the optional binding name.
+            self.macro_use_imports.push(MacroUseImport {
+                module: module_id,
+                source_module: module_ref,
+                selector,
+            });
+        }
+
+        let Some(binding_name) =
+            ImportBinding::from_alias(&extern_crate.alias).resolve(Some(extern_name.clone()))
+        else {
+            return;
         };
 
         // `extern crate` contributes directly to the base scope rather than through a deferred
@@ -699,5 +726,22 @@ impl<'db> TargetScopeCollector<'db> {
                     origin: ScopeBindingOrigin::Direct,
                 },
             );
+    }
+
+    fn active_macro_use_selector(&self, attr: &MacroUseAttr) -> Option<MacroUseSelector> {
+        let mut selector = attr.direct.clone();
+        let cfg = CfgEvaluator::new(self.cfg_options, &self.target_kind);
+
+        for cfg_attr in &attr.cfg_attr_macro_use {
+            if !cfg.is_predicate_enabled(&cfg_attr.predicate) {
+                continue;
+            }
+            match &mut selector {
+                Some(selector) => selector.merge(&cfg_attr.selector),
+                None => selector = Some(cfg_attr.selector.clone()),
+            }
+        }
+
+        selector
     }
 }

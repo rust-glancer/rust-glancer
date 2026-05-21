@@ -11,7 +11,10 @@ use crate::{
     DefId, ImportPath, LocalDefData, LocalDefKind, LocalDefRef, MacroDefinitionData, ModuleRef,
     PathSegment, ScopeBinding, ScopeBindingOrigin, TargetRef,
     build::{collect::TargetState, finalize::FinalizeTargetStates},
-    query::path_resolution::{PathResolutionEnv, resolve_path_to_macro_bindings_with_env},
+    query::path_resolution::{
+        PathResolutionEnv, resolve_path_to_macro_bindings_with_env,
+        visible_module_macro_bindings_with_env,
+    },
 };
 
 use super::{ItemOrder, MacroCallSite};
@@ -51,7 +54,10 @@ pub(super) fn resolve_macro_definition<'a>(
         }
     }
 
-    Ok(unique_visible_macro_definition(macros, state.target, call))
+    Ok(
+        unique_macro_definition(visible_macro_definitions(macros, state.target, call))
+            .into_option(),
+    )
 }
 
 /// Resolves one-segment macro calls with Rust's `macro_rules!` lookup order.
@@ -68,31 +74,32 @@ fn resolve_single_name_macro<'a>(
         return Ok(Some(resolved));
     }
 
-    // From here on we use the ordinary macro namespace as an approximation for imported/exported
-    // macros. That may keep resolving some malformed source states that rustc rejects, but those
-    // states are already invalid Rust; precisely modeling them would complicate expansion without
-    // improving valid-code behavior.
-    let Some(entry) = env.module_scope_entry(
+    // Imported/reexported macros and exported root macros are represented as ordinary macro
+    // namespace bindings in the current resolved scope snapshot.
+    let entry = env.module_scope_entry(
         ModuleRef {
             target: state.target,
             module: call.module,
         },
         name.as_str(),
-    )?
-    else {
-        return Ok(None);
-    };
+    )?;
 
-    // If no textual macro applies, imports/reexports and exported macros are represented as normal
-    // macro namespace bindings in the current resolved scope snapshot.
-    let mut macros = Vec::new();
-    for binding in entry.macros() {
-        if let Some(resolved) = macro_record_for_binding(env, states, binding)? {
-            macros.push(resolved);
+    if let Some(entry) = entry {
+        let mut macros = Vec::new();
+        for binding in entry.macros() {
+            if let Some(resolved) = macro_record_for_binding(env, states, binding)? {
+                macros.push(resolved);
+            }
+        }
+
+        match unique_macro_definition(visible_macro_definitions(macros, state.target, call)) {
+            MacroDefinitionSelection::Empty => {}
+            MacroDefinitionSelection::Unique(macro_) => return Ok(Some(macro_)),
+            MacroDefinitionSelection::Ambiguous => return Ok(None),
         }
     }
 
-    Ok(unique_visible_macro_definition(macros, state.target, call))
+    resolve_macro_use_extern_crate_fallback(env, states, state, name)
 }
 
 /// Searches build-only textual `macro_rules!` scopes for the definition visible at this call.
@@ -139,6 +146,43 @@ fn resolve_textual_macro_rules<'a>(
     }
 }
 
+/// Consults legacy `#[macro_use] extern crate` imports after ordinary unqualified lookup fails.
+fn resolve_macro_use_extern_crate_fallback<'a>(
+    env: &'a impl PathResolutionEnv,
+    states: &'a FinalizeTargetStates,
+    state: &TargetState,
+    name: &Name,
+) -> Result<Option<ResolvedMacroDefinition<'a>>> {
+    let mut macros = Vec::new();
+
+    for macro_use in &state.macro_use_imports {
+        if !macro_use.selector.allows(name) {
+            continue;
+        }
+
+        let import_owner = ModuleRef {
+            target: state.target,
+            module: macro_use.module,
+        };
+        for binding in visible_module_macro_bindings_with_env(
+            env,
+            import_owner,
+            macro_use.source_module,
+            name,
+        )? {
+            // Treat the fallback as an import-like binding. The source binding may be direct inside
+            // the exporting crate, but macro-use lookup is not source-order sensitive in the caller.
+            if let Some(resolved) =
+                macro_record_for_def(env, states, binding.def, ScopeBindingOrigin::Import)?
+            {
+                macros.push(resolved);
+            }
+        }
+    }
+
+    Ok(unique_macro_definition(macros).into_option())
+}
+
 /// Converts a resolved macro binding into the payload needed by expansion.
 fn macro_record_for_binding<'a>(
     env: &'a impl PathResolutionEnv,
@@ -182,28 +226,52 @@ fn macro_record_for_def<'a>(
     }))
 }
 
-/// Selects a single visible macro from ordinary namespace resolution results.
-fn unique_visible_macro_definition<'a>(
-    macros: Vec<ResolvedMacroDefinition<'a>>,
+fn visible_macro_definitions<'a, 'call, I>(
+    macros: I,
     target: TargetRef,
-    call: &MacroCallSite,
-) -> Option<ResolvedMacroDefinition<'a>> {
-    let macros = macros
+    call: &'call MacroCallSite,
+) -> impl Iterator<Item = ResolvedMacroDefinition<'a>> + 'call
+where
+    I: IntoIterator<Item = ResolvedMacroDefinition<'a>> + 'call,
+{
+    macros
         .into_iter()
-        .filter(|macro_| macro_definition_is_visible_by_order(macro_, target, call))
-        .collect::<Vec<_>>();
+        .filter(move |macro_| macro_definition_is_visible_by_order(macro_, target, call))
+}
 
+fn unique_macro_definition<'a>(
+    macros: impl IntoIterator<Item = ResolvedMacroDefinition<'a>>,
+) -> MacroDefinitionSelection<'a> {
     let mut unique: Option<ResolvedMacroDefinition<'a>> = None;
     for macro_ in macros {
         // A root `#[macro_export]` macro can appear as both its ordinary definition and exported
         // root binding. That is still one resolved macro, not an ambiguity.
         match &unique {
             Some(existing) if existing.def_ref == macro_.def_ref => {}
-            Some(_) => return None,
+            Some(_) => return MacroDefinitionSelection::Ambiguous,
             None => unique = Some(macro_),
         }
     }
-    unique
+
+    match unique {
+        Some(macro_) => MacroDefinitionSelection::Unique(macro_),
+        None => MacroDefinitionSelection::Empty,
+    }
+}
+
+enum MacroDefinitionSelection<'a> {
+    Empty,
+    Unique(ResolvedMacroDefinition<'a>),
+    Ambiguous,
+}
+
+impl<'a> MacroDefinitionSelection<'a> {
+    fn into_option(self) -> Option<ResolvedMacroDefinition<'a>> {
+        match self {
+            Self::Unique(macro_) => Some(macro_),
+            Self::Empty | Self::Ambiguous => None,
+        }
+    }
 }
 
 /// Filters ordinary namespace candidates that are textually later than the call site.
