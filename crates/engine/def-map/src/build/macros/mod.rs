@@ -201,8 +201,8 @@ impl ItemOrder {
     }
 }
 
-/// Marks the still-expandable macro calls as skipped after the fixed-point guard fires.
-pub(super) fn mark_pending_macros_skipped_by_limit(
+/// Marks the still-retryable macro calls as skipped after the fixed-point guard fires.
+pub(super) fn mark_retryable_macros_skipped_by_limit(
     states: &mut FinalizeTargetStates,
     stats: &mut DefMapFinalizationStatsSink<'_>,
 ) {
@@ -211,7 +211,10 @@ pub(super) fn mark_pending_macros_skipped_by_limit(
     for package_states in states.iter_dirty_mut() {
         for state in package_states {
             for directive in &mut state.macro_directives {
-                if directive.state == MacroDirectiveState::Pending {
+                if matches!(
+                    directive.state,
+                    MacroDirectiveState::Pending | MacroDirectiveState::Unresolved
+                ) {
                     directive.state = MacroDirectiveState::Skipped;
                     skipped += 1;
                 }

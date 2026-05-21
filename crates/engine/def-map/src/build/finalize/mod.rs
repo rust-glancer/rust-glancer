@@ -30,7 +30,7 @@ use super::{
         MAX_MACRO_EXPANSION_PASSES, MacroExpansionCache, MacroExpansionCursors,
         MacroExpansionExecutor, MacroExpansionScan, apply_expansion_attempts,
         collect_expansion_attempts, expand_expansion_attempts,
-        mark_pending_macros_skipped_by_limit,
+        mark_retryable_macros_skipped_by_limit,
     },
     stats::{DefMapFinalizationStats, DefMapFinalizationStatsSink},
 };
@@ -515,7 +515,7 @@ fn finalize_scopes(
             if expansion_passes >= MAX_MACRO_EXPANSION_PASSES {
                 // Stop expanding but still freeze a coherent def-map. The final import refresh lets
                 // names generated before the cap settle into module scopes.
-                mark_pending_macros_skipped_by_limit(states, &mut finalization_stats);
+                mark_retryable_macros_skipped_by_limit(states, &mut finalization_stats);
                 let timer = finalization_stats.start_timer();
                 current_scopes = resolve_import_scopes(old, states)?;
                 finalization_stats.finish_timer(timer, |timings, elapsed| {

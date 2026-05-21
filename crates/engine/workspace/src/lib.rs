@@ -27,6 +27,9 @@ pub use self::sysroot::{SysrootCrate, SysrootSources};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceMetadata {
     workspace_root: PathBuf,
+    // Target/platform cfg facts are kept separate from package cfgs, which additionally include
+    // Cargo features active for that package.
+    target_cfg_options: CfgOptions,
     packages: Vec<Package>,
     package_by_id: HashMap<PackageId, usize>,
 }
@@ -257,6 +260,7 @@ impl WorkspaceMetadata {
 
         Ok(Self {
             workspace_root,
+            target_cfg_options: target_cfg,
             packages,
             package_by_id,
         })
@@ -290,11 +294,7 @@ impl WorkspaceMetadata {
             return;
         }
 
-        let target_cfg = self
-            .packages
-            .first()
-            .map(|package| package.cfg_options.clone())
-            .unwrap_or_else(CfgOptions::current_host);
+        let target_cfg = self.target_cfg_options.clone();
         let mut sysroot_packages = SysrootCrate::ALL
             .iter()
             .copied()

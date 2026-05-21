@@ -6,8 +6,8 @@ use expect_test::expect;
 use test_fixture::fixture_crate;
 
 use crate::{
-    CargoMetadataConfig, CargoMetadataTarget, PackageSource, TargetKind, WorkspaceMetadata,
-    WorkspaceMetadataError, parse_rustc_host_target,
+    CargoMetadataConfig, CargoMetadataTarget, PackageSource, SysrootSources, TargetKind,
+    WorkspaceMetadata, WorkspaceMetadataError, parse_rustc_host_target,
 };
 
 #[test]
@@ -427,6 +427,72 @@ pub mod marker {
             - core -> core
         "#]],
     );
+}
+
+#[test]
+fn sysroot_cfg_options_do_not_inherit_package_features() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["extra"]
+extra = []
+
+//- /src/lib.rs
+pub struct App;
+
+//- /sysroot/library/core/src/lib.rs
+pub mod marker {
+    pub struct Core;
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub mod marker {
+    pub struct Alloc;
+}
+
+//- /sysroot/library/std/src/lib.rs
+pub mod marker {
+    pub struct Std;
+}
+"#,
+    );
+    let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
+        .expect("fixture sysroot should be complete");
+    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        .expect("fixture workspace metadata should build")
+        .with_sysroot_sources(Some(sysroot));
+    let app = workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == "app")
+        .expect("fixture app package should exist");
+
+    assert!(
+        app.cfg_options.contains_key_value("feature", "extra"),
+        "fixture should exercise package-local feature cfgs",
+    );
+
+    for name in ["core", "alloc", "std"] {
+        let package = workspace
+            .packages()
+            .iter()
+            .find(|package| package.name == name)
+            .unwrap_or_else(|| panic!("fixture sysroot package `{name}` should exist"));
+        assert!(
+            !package
+                .cfg_options
+                .key_values()
+                .iter()
+                .any(|value| value.key() == "feature"),
+            "sysroot package `{name}` should use target cfg without package features",
+        );
+    }
 }
 
 #[test]
