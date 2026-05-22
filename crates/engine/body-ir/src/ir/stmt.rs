@@ -6,7 +6,7 @@ use super::{
     ids::{
         BindingId, BodyFunctionId, BodyImplId, BodyItemId, BodyValueItemId, ExprId, PatId, ScopeId,
     },
-    ty::BodyTy,
+    ty::{BodyRefMutability, BodyTy},
 };
 
 /// One local binding introduced by a parameter or `let`.
@@ -53,10 +53,18 @@ pub enum BindingKind {
     Param,
     /// `self`, `&self`, or another receiver parameter.
     #[display("self_param")]
-    SelfParam,
+    SelfParam(BodySelfParamKind),
     /// `let name = value`.
     #[display("let")]
     Let,
+}
+
+/// Receiver form written by a function's self parameter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+pub enum BodySelfParamKind {
+    Value,
+    Reference { mutability: BodyRefMutability },
+    Explicit,
 }
 
 /// One lowered statement.

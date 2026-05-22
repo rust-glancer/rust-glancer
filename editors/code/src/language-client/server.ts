@@ -1,12 +1,10 @@
 /**
  * Resolves and launches the rust-glancer language-server process for the window client.
  *
- * This module chooses between explicit settings, test overrides, development checkouts, and PATH,
- * then converts that decision into `vscode-languageclient` server options.
+ * This module chooses between explicit settings, test overrides, and PATH, then converts that
+ * decision into `vscode-languageclient` server options.
  */
 import { spawn, type ChildProcess } from "child_process";
-import * as fs from "fs";
-import * as path from "path";
 import * as vscode from "vscode";
 import type { ServerOptions } from "vscode-languageclient/node";
 
@@ -27,7 +25,6 @@ export namespace ResolvedServer {
   export function discover(
     config: ExtensionConfig,
     workspaceFolder: vscode.WorkspaceFolder,
-    extensionPath: string,
   ): ResolvedServer {
     if (config.serverPath !== undefined) {
       return executableServer(
@@ -41,17 +38,6 @@ export namespace ResolvedServer {
     const envServer = normalizeOptionalString(process.env[SERVER_ENV_OVERRIDE]);
     if (envServer !== undefined) {
       return executableServer(envServer, SERVER_ENV_OVERRIDE, config, workspaceFolder);
-    }
-
-    const repositoryRoot = path.resolve(extensionPath, "..", "..");
-    if (isDevelopmentCheckout(repositoryRoot)) {
-      return {
-        command: "cargo",
-        args: ["run", "--release", "-p", "rust-glancer", "--", "lsp"],
-        cwd: repositoryRoot,
-        env: buildEnv(config),
-        source: "development checkout",
-      };
     }
 
     return executableServer("rust-glancer", "PATH", config, workspaceFolder);
@@ -127,13 +113,6 @@ function expandEnv(value: string, env: NodeJS.ProcessEnv): string {
     const key = plain ?? braced;
     return env[key] ?? "";
   });
-}
-
-function isDevelopmentCheckout(repositoryRoot: string): boolean {
-  return (
-    fs.existsSync(path.join(repositoryRoot, "Cargo.toml")) &&
-    fs.existsSync(path.join(repositoryRoot, "crates", "rust-glancer", "Cargo.toml"))
-  );
 }
 
 function normalizeOptionalString(value: string | undefined): string | undefined {

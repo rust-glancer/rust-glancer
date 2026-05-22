@@ -12,9 +12,9 @@ use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::{Span, TextSpan};
 
 use crate::ir::{
-    BindingData, BindingKind, BodyTy, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
-    ExprBinaryOp, ExprId, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LiteralKind,
-    MatchArmData, RecordExprField, RecordExprSpread, ScopeId,
+    BindingData, BindingKind, BodyRefMutability, BodyTy, ClosureCapture, ClosureKind,
+    ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprId, ExprKind, ExprRangeKind, ExprUnaryOp,
+    ExprWrapperKind, LiteralKind, MatchArmData, RecordExprField, RecordExprSpread, ScopeId,
 };
 
 use super::function::FunctionBodyLowering;
@@ -68,17 +68,12 @@ impl FunctionBodyLowering<'_> {
             },
             ast::Expr::PathExpr(path) => self.lower_path_expr(path, scope),
             ast::Expr::PrefixExpr(prefix) => self.lower_unary_expr(prefix, scope),
-            ast::Expr::RefExpr(ref_expr) => match ref_expr.expr() {
-                Some(inner) => self.lower_wrapper_expr(
-                    ref_expr.syntax(),
-                    Some(inner),
-                    scope,
-                    ExprWrapperKind::Ref,
-                ),
-                None => {
-                    self.lower_wrapper_expr(ref_expr.syntax(), None, scope, ExprWrapperKind::Ref)
-                }
-            },
+            ast::Expr::RefExpr(ref_expr) => {
+                let kind = ExprWrapperKind::Ref {
+                    mutability: BodyRefMutability::from_mut_token(ref_expr.mut_token().is_some()),
+                };
+                self.lower_wrapper_expr(ref_expr.syntax(), ref_expr.expr(), scope, kind)
+            }
             ast::Expr::ReturnExpr(return_expr) => match return_expr.expr() {
                 Some(inner) => self.lower_wrapper_expr(
                     return_expr.syntax(),

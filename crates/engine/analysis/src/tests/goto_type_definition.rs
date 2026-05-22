@@ -82,6 +82,8 @@ pub async fn load_user_async() -> User {
 
 pub async fn use_it(user: User) -> Result<(), Error> {
     let _borrowed = (&user)$goto_ref_type$;
+    let borrowed_twice = &&user;
+    let _borrowed_twice = borrowed_twice$goto_double_ref_type$;
     let _loaded = load_user()?$goto_try_type$;
     let _awaited = load_user_async().await$goto_await_type$;
     Result::Ok(())
@@ -89,11 +91,15 @@ pub async fn use_it(user: User) -> Result<(), Error> {
 "#,
         &[
             AnalysisQuery::goto_type("goto type from reference wrapper", "goto_ref_type"),
+            AnalysisQuery::goto_type("goto type from double reference", "goto_double_ref_type"),
             AnalysisQuery::goto_type("goto type from try wrapper", "goto_try_type"),
             AnalysisQuery::goto_type("goto type from await wrapper", "goto_await_type"),
         ],
         expect![[r#"
             goto type from reference wrapper
+            - struct User @ 7:12-7:16
+
+            goto type from double reference
             - struct User @ 7:12-7:16
 
             goto type from try wrapper

@@ -58,7 +58,7 @@ impl User {
             - s0 parent <none>: v0, v1
             - s1 parent s0: v2, v3, v4, v5
             bindings
-            - v0 self_param self `&self` => Self struct body_expr_fixture[lib]::crate::User @ 12:15-12:20
+            - v0 self_param self `&self` => &Self struct body_expr_fixture[lib]::crate::User @ 12:15-12:20
             - v1 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 12:22-12:24
             - v2 let this `this`: Self => Self struct body_expr_fixture[lib]::crate::User @ 13:13-13:17
             - v3 let built `built`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:13-14:18
@@ -68,7 +68,7 @@ impl User {
             expr e12 block s1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 12:44-18:6
               stmt s0 let v2: Self @ 13:9-13:31
                 initializer
-                  expr e0 path self -> local v0 => Self struct body_expr_fixture[lib]::crate::User @ 13:26-13:30
+                  expr e0 path self -> local v0 => &Self struct body_expr_fixture[lib]::crate::User @ 13:26-13:30
               stmt s1 let v3: UserId @ 14:9-14:39
                 initializer
                   expr e3 call => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:29-14:38
@@ -87,11 +87,11 @@ impl User {
                 initializer
                   expr e8 field id -> field struct body_expr_fixture[lib]::crate::User::id => nominal struct body_expr_fixture[lib]::crate::UserId @ 16:21-16:28
                     base
-                      expr e7 path self -> local v0 => Self struct body_expr_fixture[lib]::crate::User @ 16:21-16:25
+                      expr e7 path self -> local v0 => &Self struct body_expr_fixture[lib]::crate::User @ 16:21-16:25
               tail
                 expr e11 method_call touch -> fn impl User::touch => nominal struct body_expr_fixture[lib]::crate::UserId @ 17:9-17:27
                   receiver
-                    expr e9 path self -> local v0 => Self struct body_expr_fixture[lib]::crate::User @ 17:9-17:13
+                    expr e9 path self -> local v0 => &Self struct body_expr_fixture[lib]::crate::User @ 17:9-17:13
                   arg
                     expr e10 path via_fn -> local v4 => nominal struct body_expr_fixture[lib]::crate::UserId @ 17:20-17:26
 
@@ -101,7 +101,7 @@ impl User {
             - s0 parent <none>: v0, v1
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => Self struct body_expr_fixture[lib]::crate::User @ 20:14-20:19
+            - v0 self_param self `&self` => &Self struct body_expr_fixture[lib]::crate::User @ 20:14-20:19
             - v1 param id `id`: UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 20:21-20:23
             body
             expr e1 block s1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 20:43-22:6
@@ -167,6 +167,50 @@ pub fn use_it(id: u8, name: u8) -> User {
                     expr e5 literal int `1` => <unknown> @ 9:16-9:17
                   spread @ 9:19-9:25
                     expr e6 path base -> local v2 => nominal struct body_record_expr_fixture[lib]::crate::User @ 9:21-9:25
+        "#]],
+    );
+}
+
+#[test]
+fn preserves_reference_expression_mutability() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_ref_mutability_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(mut value: u8) {
+    let shared = &value;
+    let unique = &mut value;
+}
+"#,
+        expect![[r#"
+            package body_ref_mutability_fixture
+
+            body_ref_mutability_fixture [lib]
+            body b0 fn body_ref_mutability_fixture[lib]::crate::use_it @ 1:1-4:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v2
+            bindings
+            - v0 param value `mut value`: u8 => u8 @ 1:15-1:24
+            - v1 let shared `shared` => &u8 @ 2:9-2:15
+            - v2 let unique `unique` => &mut u8 @ 3:9-3:15
+            body
+            expr e4 block s1 => () @ 1:30-4:2
+              stmt s0 let v1 @ 2:5-2:25
+                initializer
+                  expr e1 wrapper ref => &u8 @ 2:18-2:24
+                    inner
+                      expr e0 path value -> local v0 => u8 @ 2:19-2:24
+              stmt s1 let v2 @ 3:5-3:29
+                initializer
+                  expr e3 wrapper ref => &mut u8 @ 3:18-3:28
+                    inner
+                      expr e2 path value -> local v0 => u8 @ 3:23-3:28
         "#]],
     );
 }
@@ -400,7 +444,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                         inner
                           expr e29 literal int `1` => <unknown> @ 19:27-19:28
                     field
-                      expr e33 unary * => <unknown> @ 19:30-19:37
+                      expr e33 unary * => u8 @ 19:30-19:37
                         inner
                           expr e32 wrapper ref => &u8 @ 19:31-19:37
                             inner

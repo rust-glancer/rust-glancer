@@ -1225,7 +1225,9 @@ pub async fn load_user_async() -> User {
 
 pub async fn use_it(user: User) -> Result<(), Error> {
     let raw = 0;
+    let shared: &&User = &&user;
     (&user).$reference$;
+    shared.$double_reference$;
     load_user()?.$try$;
     load_user_async().await.$await$;
     (raw as User).$cast$;
@@ -1234,12 +1236,17 @@ pub async fn use_it(user: User) -> Result<(), Error> {
 "#,
         &[
             AnalysisQuery::complete("reference completions", "reference"),
+            AnalysisQuery::complete("double reference completions", "double_reference"),
             AnalysisQuery::complete("try completions", "try"),
             AnalysisQuery::complete("await completions", "await"),
             AnalysisQuery::complete("cast completions", "cast"),
         ],
         expect![[r#"
             reference completions
+            - inherent_method id
+            - field profile
+
+            double reference completions
             - inherent_method id
             - field profile
 
@@ -1482,6 +1489,39 @@ pub fn use_it(wrapper: Wrapper<User>) {
 }
 
 #[test]
+fn marks_non_type_generic_trait_impl_args_as_maybe() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_const_trait_completion"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Wrapper<const N: usize>;
+
+pub trait Named {
+    fn label(&self);
+}
+
+impl Named for Wrapper<1> {
+    fn label(&self) {}
+}
+
+pub fn use_it(wrapper: Wrapper<2>) {
+    wrapper.$0;
+}
+"#,
+        &[AnalysisQuery::complete("const trait impl completions", "0")],
+        expect![[r#"
+            const trait impl completions
+            - trait_method label (maybe)
+        "#]],
+    );
+}
+
+#[test]
 fn completes_methods_after_field_receiver() {
     check_analysis_queries(
         r#"
@@ -1584,6 +1624,70 @@ pub fn use_it() {
             body-local tuple field completions
             - field 0
             - field 1
+        "#]],
+    );
+}
+
+#[test]
+fn completes_through_core_deref() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct User {
+    pub id: Id,
+}
+
+pub struct Id;
+pub struct Label;
+
+impl User {
+    pub fn label(&self) -> Label {
+        missing()
+    }
+}
+
+pub struct Wrapper<T>;
+
+impl<T> core::ops::Deref for Wrapper<T> {
+    type Target = T;
+}
+
+pub fn use_it(wrapper: Wrapper<User>) {
+    wrapper.$deref$;
+}
+"#,
+        &[AnalysisQuery::complete("Deref completions", "deref").in_lib("app")],
+        expect![[r#"
+            Deref completions
+            - field id
+            - inherent_method label
         "#]],
     );
 }

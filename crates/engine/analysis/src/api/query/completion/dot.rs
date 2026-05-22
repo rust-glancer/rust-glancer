@@ -1,7 +1,8 @@
 //! Dot-completion assembly for member access sites.
 
 use rg_body_ir::{
-    BodyLocalNominalTy, BodyNominalTy, DotCompletionSite, ResolvedFieldRef, ResolvedFunctionRef,
+    BodyAutoderef, BodyAutoderefMode, BodyLocalNominalTy, BodyNominalTy, DotCompletionSite,
+    ResolvedFieldRef, ResolvedFunctionRef,
 };
 
 use crate::{
@@ -40,32 +41,53 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
         let edit = CompletionEdit {
             replace: site.member_prefix_span,
         };
+        let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
         let mut completions = Vec::new();
-        for ty in receiver_ty.local_nominals() {
-            self.push_local_type_completions(ty, edit, &mut completions)?;
+        for candidate in autoderef.candidates(BodyAutoderefMode::FieldLookup, receiver_ty) {
+            let candidate = candidate?;
+            for ty in candidate.ty().as_local_nominals() {
+                self.push_local_type_field_completions(ty, edit, &mut completions)?;
+            }
+            for ty in candidate.ty().as_nominals() {
+                self.push_type_field_completions(ty, edit, &mut completions)?;
+            }
         }
-        for ty in receiver_ty.nominal_tys() {
-            self.push_type_completions(ty, edit, &mut completions)?;
+        for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, receiver_ty) {
+            let candidate = candidate?;
+            for ty in candidate.ty().as_local_nominals() {
+                self.push_local_type_method_completions(ty, edit, &mut completions)?;
+            }
+            for ty in candidate.ty().as_nominals() {
+                self.push_type_method_completions(ty, edit, &mut completions)?;
+            }
         }
         // Keep snapshot output and editor ordering stable across equivalent resolution paths.
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
     }
 
-    /// Adds field and method candidates for a resolved receiver type, such as
-    /// `User` in `user.$0`.
-    fn push_type_completions(
+    /// Adds field candidates for a resolved semantic receiver type, such as `User` in `user.$0`.
+    fn push_type_field_completions(
         &self,
         ty: &BodyNominalTy,
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
-        // Semantic nominal types can offer fields, inherent methods, and trait methods. Trait
-        // candidates carry applicability because this project intentionally avoids full solving.
         for field in self.analysis.semantic_ir.fields_for_type(ty.def)? {
             self.push_field_completion(ResolvedFieldRef::Semantic(field), edit, completions)?;
         }
+        Ok(())
+    }
 
+    /// Adds method candidates for a resolved semantic receiver type, such as `User` in `user.$0`.
+    fn push_type_method_completions(
+        &self,
+        ty: &BodyNominalTy,
+        edit: CompletionEdit,
+        completions: &mut Vec<CompletionItem>,
+    ) -> anyhow::Result<()> {
+        // Trait candidates carry applicability because this project intentionally avoids full
+        // solving.
         for function in self
             .analysis
             .semantic_ir
@@ -113,9 +135,8 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
         Ok(())
     }
 
-    /// Adds member candidates for a body-local receiver type, such as a struct
-    /// declared inside the same function as `local.$0`.
-    fn push_local_type_completions(
+    /// Adds field candidates for a body-local receiver type.
+    fn push_local_type_field_completions(
         &self,
         ty: &BodyLocalNominalTy,
         edit: CompletionEdit,
@@ -126,7 +147,16 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
         for field in self.analysis.body_ir.fields_for_local_type(ty.item)? {
             self.push_field_completion(ResolvedFieldRef::BodyLocal(field), edit, completions)?;
         }
+        Ok(())
+    }
 
+    /// Adds method candidates for a body-local receiver type.
+    fn push_local_type_method_completions(
+        &self,
+        ty: &BodyLocalNominalTy,
+        edit: CompletionEdit,
+        completions: &mut Vec<CompletionItem>,
+    ) -> anyhow::Result<()> {
         for function in self
             .analysis
             .body_ir

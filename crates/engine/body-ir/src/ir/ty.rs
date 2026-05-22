@@ -1,4 +1,6 @@
-use rg_item_tree::TypeRef;
+use std::fmt;
+
+use rg_item_tree::{Mutability, TypeRef};
 use rg_semantic_ir::TypeDefRef;
 use rg_text::Name;
 
@@ -21,7 +23,11 @@ pub enum BodyTy {
     #[memsize(skip)]
     Primitive(BodyPrimitiveTy),
     Syntax(TypeRef),
-    Reference(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<BodyTy>>")] Box<BodyTy>),
+    Reference {
+        mutability: BodyRefMutability,
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<BodyTy>>")]
+        inner: Box<BodyTy>,
+    },
     LocalNominal(
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<BodyLocalNominalTy>>")]
         Vec<BodyLocalNominalTy>,
@@ -36,6 +42,23 @@ pub enum BodyTy {
     ),
     #[default]
     Unknown,
+}
+
+/// Mutability carried by a Body IR reference type.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
+pub enum BodyRefMutability {
+    Shared,
+    Mutable,
 }
 
 /// Rust primitive type known without resolving a module-scope definition.
@@ -178,6 +201,37 @@ impl BodyPrimitiveTy {
     }
 }
 
+impl BodyRefMutability {
+    pub fn from_mut_token(is_mut: bool) -> Self {
+        if is_mut { Self::Mutable } else { Self::Shared }
+    }
+
+    pub fn render_prefix(self) -> &'static str {
+        match self {
+            Self::Shared => "&",
+            Self::Mutable => "&mut ",
+        }
+    }
+}
+
+impl From<Mutability> for BodyRefMutability {
+    fn from(value: Mutability) -> Self {
+        match value {
+            Mutability::Shared => Self::Shared,
+            Mutability::Mutable => Self::Mutable,
+        }
+    }
+}
+
+impl fmt::Display for BodyRefMutability {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Shared => f.write_str("shared"),
+            Self::Mutable => f.write_str("mut"),
+        }
+    }
+}
+
 impl BodySignedIntTy {
     pub fn label(self) -> &'static str {
         match self {
@@ -282,17 +336,20 @@ pub enum BodyGenericArg {
 }
 
 impl BodyTy {
-    pub fn reference(inner: BodyTy) -> Self {
+    pub fn reference(mutability: BodyRefMutability, inner: BodyTy) -> Self {
         if matches!(inner, Self::Unknown) {
             return Self::Unknown;
         }
 
-        Self::Reference(Box::new(inner))
+        Self::Reference {
+            mutability,
+            inner: Box::new(inner),
+        }
     }
 
-    pub fn peel_references(&self) -> &Self {
+    pub fn reference_inner(&self) -> Option<(&Self, BodyRefMutability)> {
         match self {
-            Self::Reference(inner) => inner.peel_references(),
+            Self::Reference { mutability, inner } => Some((inner, *mutability)),
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
@@ -300,49 +357,41 @@ impl BodyTy {
             | Self::LocalNominal(_)
             | Self::Nominal(_)
             | Self::SelfTy(_)
-            | Self::Unknown => self,
+            | Self::Unknown => None,
         }
     }
 
-    pub fn local_nominals(&self) -> &[BodyLocalNominalTy] {
-        match self.peel_references() {
+    pub fn as_local_nominals(&self) -> &[BodyLocalNominalTy] {
+        match self {
             Self::LocalNominal(types) => types,
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
             | Self::Syntax(_)
-            | Self::Reference(_)
+            | Self::Reference { .. }
             | Self::Nominal(_)
             | Self::SelfTy(_)
             | Self::Unknown => &[],
         }
     }
 
-    pub fn nominal_tys(&self) -> &[BodyNominalTy] {
-        match self.peel_references() {
+    pub fn as_nominals(&self) -> &[BodyNominalTy] {
+        match self {
             Self::Nominal(types) | Self::SelfTy(types) => types,
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
             | Self::Syntax(_)
-            | Self::Reference(_)
+            | Self::Reference { .. }
             | Self::LocalNominal(_)
             | Self::Unknown => &[],
         }
     }
 
-    pub fn local_items(&self) -> Vec<BodyItemRef> {
-        self.local_nominals().iter().map(|ty| ty.item).collect()
-    }
-
-    pub fn type_defs(&self) -> Vec<TypeDefRef> {
-        self.nominal_tys().iter().map(|ty| ty.def).collect()
-    }
-
     pub(crate) fn shrink_to_fit(&mut self) {
         match self {
             Self::Syntax(ty) => ty.shrink_to_fit(),
-            Self::Reference(inner) => inner.shrink_to_fit(),
+            Self::Reference { inner, .. } => inner.shrink_to_fit(),
             Self::LocalNominal(types) => {
                 types.shrink_to_fit();
                 for ty in types {

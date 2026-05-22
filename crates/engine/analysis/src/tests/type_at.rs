@@ -59,27 +59,496 @@ pub async fn load_user_async() -> User {
     User
 }
 
-pub async fn use_it(user: User) -> Result<(), Error> {
+pub async fn use_it(mut user: User) -> Result<(), Error> {
     let _borrowed = (&user)$type_ref$;
+    let _borrowed_mut = (&mut user)$type_mut_ref$;
+    let typed_mut$type_mut_binding$: &mut User = todo!();
     let _loaded = load_user()?$type_try$;
+    let _borrowed_loaded = (&load_user())?$type_try_borrowed_result$;
     let _awaited = load_user_async().await$type_await$;
     Result::Ok(())
 }
 "#,
         &[
             AnalysisQuery::ty("type at reference wrapper", "type_ref"),
+            AnalysisQuery::ty("type at mutable reference wrapper", "type_mut_ref"),
+            AnalysisQuery::ty("type at mutable reference binding", "type_mut_binding"),
             AnalysisQuery::ty("type at try wrapper", "type_try"),
+            AnalysisQuery::ty("type at borrowed try wrapper", "type_try_borrowed_result"),
             AnalysisQuery::ty("type at await wrapper", "type_await"),
         ],
         expect![[r#"
             type at reference wrapper
             - &nominal struct analysis_wrapper_type_at[lib]::crate::User
 
+            type at mutable reference wrapper
+            - &mut nominal struct analysis_wrapper_type_at[lib]::crate::User
+
+            type at mutable reference binding
+            - &mut nominal struct analysis_wrapper_type_at[lib]::crate::User
+
             type at try wrapper
             - nominal struct analysis_wrapper_type_at[lib]::crate::User
 
+            type at borrowed try wrapper
+            - <unknown>
+
             type at await wrapper
             - nominal struct analysis_wrapper_type_at[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
+fn autoderefs_references_for_member_lookup_and_explicit_deref() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_reference_autoderef"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Profile;
+pub struct Label;
+
+pub struct User {
+    pub profile: Profile,
+}
+
+impl User {
+    pub fn label(&self) -> Label {
+        missing()
+    }
+}
+
+pub fn use_it(mut user: User, value: u8) {
+    let shared: &&User = &&user;
+    let _profile = shared.pro$type_field$file;
+    let _label = shared.la$type_method$bel();
+    let _deref_shared = (*(&user))$type_deref_shared$;
+    let _deref_mut = (*(&mut user))$type_deref_mut$;
+    let _not_ref = (*value)$type_deref_non_ref$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("field through double reference", "type_field"),
+            AnalysisQuery::ty("method through double reference", "type_method"),
+            AnalysisQuery::ty("explicit shared deref", "type_deref_shared"),
+            AnalysisQuery::ty("explicit mutable deref", "type_deref_mut"),
+            AnalysisQuery::ty("explicit non-reference deref", "type_deref_non_ref"),
+        ],
+        expect![[r#"
+            field through double reference
+            - nominal struct analysis_reference_autoderef[lib]::crate::Profile
+
+            method through double reference
+            - nominal struct analysis_reference_autoderef[lib]::crate::Label
+
+            explicit shared deref
+            - nominal struct analysis_reference_autoderef[lib]::crate::User
+
+            explicit mutable deref
+            - nominal struct analysis_reference_autoderef[lib]::crate::User
+
+            explicit non-reference deref
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn autoderefs_core_deref_for_member_lookup_and_explicit_deref() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct Id;
+pub struct Label;
+
+pub struct User {
+    pub id: Id,
+}
+
+impl User {
+    pub fn label(&self) -> Label {
+        missing()
+    }
+}
+
+pub struct Wrapper<T> {
+    inner: T,
+}
+
+impl<T> core::ops::Deref for Wrapper<T> {
+    type Target = T;
+}
+
+pub fn use_it(wrapper: Wrapper<User>) {
+    let _id = wrapper.i$type_deref_field$d;
+    let _label = wrapper.la$type_deref_method$bel();
+    let _explicit = (*wrapper)$type_deref_explicit$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("field through Deref", "type_deref_field").in_lib("app"),
+            AnalysisQuery::ty("method through Deref", "type_deref_method").in_lib("app"),
+            AnalysisQuery::ty("explicit Deref", "type_deref_explicit").in_lib("app"),
+        ],
+        expect![[r#"
+            field through Deref
+            - nominal struct app[lib]::crate::Id
+
+            method through Deref
+            - nominal struct app[lib]::crate::Label
+
+            explicit Deref
+            - nominal struct app[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_canonical_deref_through_absolute_core_path() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+mod core {
+    pub mod ops {
+        pub trait Deref {
+            type Target;
+        }
+    }
+}
+
+pub struct Id;
+
+pub struct User {
+    pub id: Id,
+}
+
+pub struct Wrapper<T> {
+    inner: T,
+}
+
+impl<T> ::core::ops::Deref for Wrapper<T> {
+    type Target = T;
+}
+
+pub fn use_it(wrapper: Wrapper<User>) {
+    let _id = wrapper.i$type_shadowed_core$d;
+}
+"#,
+        &[
+            AnalysisQuery::ty("Deref ignores local core shadow", "type_shadowed_core")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            Deref ignores local core shadow
+            - nominal struct app[lib]::crate::Id
+        "#]],
+    );
+}
+
+#[test]
+fn rejects_uncertain_nested_generic_deref_impls_for_member_lookup() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct Id;
+pub struct Foo;
+pub struct Option<T> {
+    value: T,
+}
+pub struct Result<T> {
+    value: T,
+}
+
+pub struct User {
+    pub id: Id,
+}
+
+pub struct Wrapper<T> {
+    inner: T,
+}
+
+impl<T> core::ops::Deref for Wrapper<Option<T>> {
+    type Target = User;
+}
+
+pub fn use_it(wrapper: Wrapper<Result<Foo>>) {
+    let _id = wrapper.i$type_rejected_deref$d;
+}
+"#,
+        &[AnalysisQuery::ty("rejected nested Deref impl", "type_rejected_deref").in_lib("app")],
+        expect![[r#"
+            rejected nested Deref impl
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn aggregates_same_depth_deref_targets_before_resolving_members() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct UserId;
+pub struct ProjectId;
+pub struct UserLabel;
+pub struct ProjectLabel;
+
+pub struct User {
+    pub id: UserId,
+}
+
+impl User {
+    pub fn label(&self) -> UserLabel {
+        missing()
+    }
+}
+
+pub struct Project {
+    pub id: ProjectId,
+}
+
+impl Project {
+    pub fn label(&self) -> ProjectLabel {
+        missing()
+    }
+}
+
+pub struct Wrapper;
+
+impl core::ops::Deref for Wrapper {
+    type Target = User;
+}
+
+impl core::ops::Deref for Wrapper {
+    type Target = Project;
+}
+
+pub fn use_it(wrapper: Wrapper) {
+    let _id = wrapper.i$type_field$d;
+    let _label = wrapper.la$type_method$bel();
+}
+"#,
+        &[
+            AnalysisQuery::ty("ambiguous same-depth Deref field", "type_field").in_lib("app"),
+            AnalysisQuery::ty("ambiguous same-depth Deref method", "type_method").in_lib("app"),
+        ],
+        expect![[r#"
+            ambiguous same-depth Deref field
+            - <unknown>
+
+            ambiguous same-depth Deref method
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn alternates_reference_and_trait_deref_for_member_lookup() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "std", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /std/Cargo.toml
+[package]
+name = "fake_std"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /std/src/lib.rs
+pub use core::ops;
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+std = { package = "fake_std", path = "../std" }
+
+//- /app/src/lib.rs
+pub struct Id;
+pub struct Label;
+
+pub struct User {
+    pub id: Id,
+}
+
+impl User {
+    pub fn label(&self) -> Label {
+        missing()
+    }
+}
+
+pub struct Box<T> {
+    inner: T,
+}
+
+impl<T> std::ops::Deref for Box<T> {
+    type Target = T;
+}
+
+pub fn use_it(user_box: &Box<User>, ref_box: &Box<&User>) {
+    let _id = user_box.i$type_ref_trait_field$d;
+    let _label = (&*user_box).la$type_explicit_ref_trait_method$bel();
+    let _nested_id = (&*ref_box).i$type_explicit_ref_trait_ref_field$d;
+}
+"#,
+        &[
+            AnalysisQuery::ty("field through &Box<User>", "type_ref_trait_field").in_lib("app"),
+            AnalysisQuery::ty(
+                "method through &*&Box<User>",
+                "type_explicit_ref_trait_method",
+            )
+            .in_lib("app"),
+            AnalysisQuery::ty(
+                "field through &*&Box<&User>",
+                "type_explicit_ref_trait_ref_field",
+            )
+            .in_lib("app"),
+        ],
+        expect![[r#"
+            field through &Box<User>
+            - nominal struct app[lib]::crate::Id
+
+            method through &*&Box<User>
+            - nominal struct app[lib]::crate::Label
+
+            field through &*&Box<&User>
+            - nominal struct app[lib]::crate::Id
         "#]],
     );
 }
@@ -452,6 +921,63 @@ pub fn use_it(user: Wrapper<User>, error: Wrapper<Error>) {
             - nominal struct analysis_concrete_impl_args[lib]::crate::Error
 
             concrete impl method on wrong receiver
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn does_not_ignore_const_generic_args_when_matching_impls() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_const_impl_args"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub struct Label;
+
+pub struct Foo<const N: usize>;
+
+impl Foo<1> {
+    pub fn label(&self) -> Label {
+        missing()
+    }
+}
+
+pub fn use_semantic(foo: Foo<2>) {
+    let _label = foo.la$type_semantic$bel();
+}
+
+pub fn use_local() {
+    struct LocalLabel;
+    struct LocalFoo<const N: usize>;
+
+    impl LocalFoo<1> {
+        fn label(&self) -> LocalLabel {
+            missing()
+        }
+    }
+
+    let foo: LocalFoo<2> = missing();
+    let _label = foo.la$type_local$bel();
+}
+"#,
+        &[
+            AnalysisQuery::ty("const impl arg mismatch", "type_semantic"),
+            AnalysisQuery::ty("local const impl arg mismatch", "type_local"),
+        ],
+        expect![[r#"
+            const impl arg mismatch
+            - <unknown>
+
+            local const impl arg mismatch
             - <unknown>
         "#]],
     );
@@ -903,6 +1429,51 @@ impl User {
         expect![[r#"
             type at impl signature Self
             - Self struct analysis_impl_self_signature_type[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
+fn returns_self_receiver_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_self_receiver_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+impl User {
+    pub fn owned(self) {
+        let _owned = se$type_owned_self$lf;
+    }
+
+    pub fn shared(&self) {
+        let _shared = se$type_shared_self$lf;
+    }
+
+    pub fn unique(&mut self) {
+        let _unique = se$type_unique_self$lf;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("type at owned self", "type_owned_self"),
+            AnalysisQuery::ty("type at shared self", "type_shared_self"),
+            AnalysisQuery::ty("type at mutable self", "type_unique_self"),
+        ],
+        expect![[r#"
+            type at owned self
+            - Self struct analysis_self_receiver_type[lib]::crate::User
+
+            type at shared self
+            - &Self struct analysis_self_receiver_type[lib]::crate::User
+
+            type at mutable self
+            - &mut Self struct analysis_self_receiver_type[lib]::crate::User
         "#]],
     );
 }

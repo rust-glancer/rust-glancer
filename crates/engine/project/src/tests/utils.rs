@@ -12,6 +12,7 @@ use rg_analysis::{
     CompletionApplicability, CompletionClientCapabilities, CompletionItem, CompletionQuery,
     WorkspaceSymbol,
 };
+use rg_body_ir::BodyAutoderef;
 use rg_def_map::{PackageSlot, TargetRef};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb};
@@ -785,20 +786,25 @@ fn nominal_type_names_at(
 
     let semantic_ir = host.state.semantic_ir.read_txn(unexpected_package_loader());
     let def_map = host.state.def_map.read_txn(unexpected_package_loader());
-    ty.type_defs()
-        .into_iter()
-        .filter_map(|ty| {
-            semantic_ir
-                .local_def_for_type_def(ty)
+    let mut names = Vec::new();
+    for candidate in BodyAutoderef::peel_references(&ty) {
+        for ty in candidate.ty().as_nominals() {
+            let Some(local_def) = semantic_ir
+                .local_def_for_type_def(ty.def)
                 .expect("fixture semantic IR should load while rendering nominal types")
-        })
-        .filter_map(|local_def| {
-            def_map
+            else {
+                continue;
+            };
+            let Some(local_def) = def_map
                 .local_def(local_def)
                 .expect("fixture def-map should load while rendering nominal types")
-        })
-        .map(|local_def| local_def.name.to_string())
-        .collect()
+            else {
+                continue;
+            };
+            names.push(local_def.name.to_string());
+        }
+    }
+    names
 }
 
 fn package_slot_by_name(parse: &ParseDb, package_name: &str) -> PackageSlot {
