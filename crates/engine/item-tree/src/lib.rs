@@ -1,7 +1,6 @@
 mod db;
 mod item;
 mod lower;
-mod memsize;
 mod package;
 
 #[cfg(test)]

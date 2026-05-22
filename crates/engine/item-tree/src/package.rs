@@ -4,7 +4,7 @@ use rg_parse::{FileId, TargetId};
 use crate::{Documentation, ItemNode, ItemTreeId, ItemTreeRef};
 
 /// Item trees for all files inside one parsed package, plus target entrypoints.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
 pub struct Package {
     pub(crate) files: Arena<FileId, Option<FileTree>>,
     pub(crate) target_roots: Arena<TargetId, TargetRoot>,
@@ -46,7 +46,7 @@ impl Package {
 }
 
 /// File-local lowered item tree.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct FileTree {
     pub file: FileId,
     pub docs: Option<Documentation>,
@@ -73,7 +73,7 @@ impl FileTree {
 }
 
 /// Target entrypoint into file-local item trees.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct TargetRoot {
     pub target: TargetId,
     pub root_file: FileId,

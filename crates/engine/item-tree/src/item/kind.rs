@@ -13,7 +13,14 @@ use super::{
 /// Unit variants are enough for plain local definitions. Structured payloads live inline in the
 /// file item arena so lowering avoids one heap allocation per payload-bearing item.
 #[derive(
-    Debug, Clone, PartialEq, Eq, derive_more::Display, wincode::SchemaRead, wincode::SchemaWrite,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
 pub enum ItemKind {
     #[display("asm")]
@@ -104,7 +111,9 @@ impl ItemKind {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum ItemTag {
     #[display("asm")]
     AsmExpr,

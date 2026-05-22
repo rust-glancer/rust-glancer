@@ -3,7 +3,9 @@ use rg_parse::FileId;
 use super::{Documentation, ItemTreeId, MacroUseAttr};
 
 /// Syntactic module facts attached to `ItemKind::Module`.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct ModuleItem {
     pub inner_docs: Option<Documentation>,
     pub macro_use: Option<MacroUseAttr>,
@@ -23,7 +25,9 @@ impl ModuleItem {
 }
 
 /// How a module declaration obtains its item list.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum ModuleSource {
     Inline { items: Vec<ItemTreeId> },
     OutOfLine { definition_file: Option<FileId> },

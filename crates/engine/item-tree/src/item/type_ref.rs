@@ -11,7 +11,17 @@ use rg_text::{Name, NameInterner};
 use super::normalized_syntax;
 
 /// Syntax-level mutability marker used by lowered declarations and type refs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub enum Mutability {
     Shared,
     Mutable,
@@ -36,7 +46,9 @@ impl fmt::Display for Mutability {
 ///
 /// This intentionally stops before semantic resolution. `TypeRef` represents what the user wrote
 /// in an item declaration; resolving paths to definitions belongs to later IR layers.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum TypeRef {
     Unknown(String),
     Never,
@@ -327,7 +339,9 @@ impl fmt::Display for TypeRef {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct TypePath {
     /// Full source range of the path syntax, including separators around segments.
     pub source_span: Span,
@@ -392,7 +406,9 @@ impl fmt::Display for TypePath {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct TypePathSegment {
     pub name: Name,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
@@ -463,7 +479,9 @@ impl fmt::Display for TypePathSegment {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum GenericArg {
     Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
     Lifetime(String),
@@ -547,7 +565,9 @@ impl fmt::Display for GenericArg {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum TypeBound {
     Trait(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
     Lifetime(String),
