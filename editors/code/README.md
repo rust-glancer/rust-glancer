@@ -14,17 +14,19 @@ npm run compile
 Launch `Run Rust Glancer Extension` from VS Code. The launch configuration
 opens the repository root in an Extension Development Host.
 
-During development the extension starts the server through Cargo:
+During development the extension starts the configured `rust-glancer`
+executable, or `rust-glancer` from `PATH` when no path is configured. Build the
+server binary first if needed:
 
 ```text
-cargo run --release -p rust-glancer -- lsp
+cargo build --release -p rust-glancer
 ```
 
-To force a specific server binary, set:
+Then point the extension at that binary:
 
 ```json
 {
-  "rust-glancer.server.path": "/path/to/rust-glancer"
+  "rust-glancer.server.path": "/absolute/path/to/rust-glancer/target/release/rust-glancer"
 }
 ```
 

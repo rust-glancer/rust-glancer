@@ -22,12 +22,11 @@ export class ExtensionController implements vscode.Disposable {
 
   /** Wires VS Code workspace/editor events to the window-level LSP client lifecycle. */
   public constructor(
-    extensionPath: string,
     private readonly extensionLog: vscode.LogOutputChannel,
     serverOutput: vscode.OutputChannel,
     private readonly status: StatusView,
   ) {
-    this.clientSlot = new LanguageClientSlot(extensionPath, extensionLog, serverOutput, status);
+    this.clientSlot = new LanguageClientSlot(extensionLog, serverOutput, status);
     this.workspaceListeners = vscode.Disposable.from(
       vscode.window.onDidChangeActiveTextEditor((editor) => {
         void this.activateForEditor(editor);
