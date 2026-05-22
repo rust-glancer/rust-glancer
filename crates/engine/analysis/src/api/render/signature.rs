@@ -14,7 +14,11 @@ use rg_semantic_ir::{
     VisibilityLevel, WherePredicate,
 };
 
-use crate::api::{Analysis, render::ty::TypeRenderer};
+use crate::api::{
+    Analysis,
+    render::ty::TypeRenderer,
+    view::member::{MemberFieldView, MemberFunctionView},
+};
 
 const MEMBER_PREVIEW_LIMIT: usize = 5;
 
@@ -133,6 +137,13 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         field_signature(data.field)
     }
 
+    pub(crate) fn member_field_signature(&self, data: &MemberFieldView<'_>) -> Option<String> {
+        match data {
+            MemberFieldView::Semantic { data, .. } => self.field_signature(*data),
+            MemberFieldView::BodyLocal { data, .. } => self.local_field_signature(*data),
+        }
+    }
+
     pub(crate) fn enum_variant_signature(&self, data: EnumVariantData<'_>) -> String {
         enum_variant_signature(data.variant)
     }
@@ -205,6 +216,13 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
 
     pub(crate) fn local_function_signature(&self, data: &BodyFunctionData) -> String {
         function_signature(&data.name, &data.declaration)
+    }
+
+    pub(crate) fn member_function_signature(&self, data: &MemberFunctionView<'_>) -> String {
+        match data {
+            MemberFunctionView::Semantic { data, .. } => self.function_signature(data),
+            MemberFunctionView::BodyLocal { data, .. } => self.local_function_signature(data),
+        }
     }
 
     pub(crate) fn local_field_signature(&self, data: BodyFieldData<'_>) -> Option<String> {

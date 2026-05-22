@@ -13,6 +13,7 @@ use crate::{
         query::type_at::TypeResolver,
         render::{path::PathRenderer, signature::SignatureRenderer},
         resolve::entity::{EntityResolver, ResolvedEntity},
+        view::member::MemberLookup,
     },
     model::{HoverBlock, HoverInfo, SymbolAt, SymbolKind},
 };
@@ -186,61 +187,35 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         &self,
         function: ResolvedFunctionRef,
     ) -> anyhow::Result<Option<HoverBlock>> {
-        match function {
-            ResolvedFunctionRef::Semantic(function_ref) => {
-                let Some(data) = self.0.semantic_ir.function_data(function_ref)? else {
-                    return Ok(None);
-                };
-                Ok(Some(HoverBlock {
-                    kind: function_kind(data.owner),
-                    path: PathRenderer::new(self.0).function_path(function_ref)?,
-                    signature: Some(SignatureRenderer::new(self.0).function_signature(data)),
-                    ty: None,
-                    docs: data.docs.as_ref().map(Documentation::text),
-                }))
-            }
-            ResolvedFunctionRef::BodyLocal(function_ref) => {
-                let Some(data) = self.0.body_ir.local_function_data(function_ref)? else {
-                    return Ok(None);
-                };
-                Ok(Some(HoverBlock {
-                    kind: SymbolKind::from_body_function_owner(data.owner),
-                    path: None,
-                    signature: Some(SignatureRenderer::new(self.0).local_function_signature(data)),
-                    ty: None,
-                    docs: data.docs.as_ref().map(Documentation::text),
-                }))
-            }
-        }
+        let members = MemberLookup::new(self.0);
+        let Some(function) = members.function_view(function)? else {
+            return Ok(None);
+        };
+        let path = function.display_path(&PathRenderer::new(self.0))?;
+
+        Ok(Some(HoverBlock {
+            kind: function.symbol_kind(),
+            path,
+            signature: Some(SignatureRenderer::new(self.0).member_function_signature(&function)),
+            ty: None,
+            docs: function.docs_text(),
+        }))
     }
 
     fn hover_for_field(&self, field: ResolvedFieldRef) -> anyhow::Result<Option<HoverBlock>> {
-        match field {
-            ResolvedFieldRef::Semantic(field_ref) => {
-                let Some(data) = self.0.semantic_ir.field_data(field_ref)? else {
-                    return Ok(None);
-                };
-                Ok(Some(HoverBlock {
-                    kind: SymbolKind::Field,
-                    path: PathRenderer::new(self.0).type_def_path(field_ref.owner)?,
-                    signature: SignatureRenderer::new(self.0).field_signature(data),
-                    ty: None,
-                    docs: data.field.docs.as_ref().map(Documentation::text),
-                }))
-            }
-            ResolvedFieldRef::BodyLocal(field_ref) => {
-                let Some(data) = self.0.body_ir.local_field_data(field_ref)? else {
-                    return Ok(None);
-                };
-                Ok(Some(HoverBlock {
-                    kind: SymbolKind::Field,
-                    path: None,
-                    signature: SignatureRenderer::new(self.0).local_field_signature(data),
-                    ty: None,
-                    docs: data.field.docs.as_ref().map(Documentation::text),
-                }))
-            }
-        }
+        let members = MemberLookup::new(self.0);
+        let Some(field) = members.field_view(field)? else {
+            return Ok(None);
+        };
+        let path = field.display_path(&PathRenderer::new(self.0))?;
+
+        Ok(Some(HoverBlock {
+            kind: SymbolKind::Field,
+            path,
+            signature: SignatureRenderer::new(self.0).member_field_signature(&field),
+            ty: None,
+            docs: field.docs_text(),
+        }))
     }
 
     fn hover_for_enum_variant(
@@ -404,15 +379,6 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                 .body_data(*body)?
                 .and_then(|body_data| body_data.expr(*expr))
                 .map(|expr| expr.source.span)),
-        }
-    }
-}
-
-fn function_kind(owner: rg_semantic_ir::ItemOwner) -> SymbolKind {
-    match owner {
-        rg_semantic_ir::ItemOwner::Module(_) => SymbolKind::Function,
-        rg_semantic_ir::ItemOwner::Trait(_) | rg_semantic_ir::ItemOwner::Impl(_) => {
-            SymbolKind::Method
         }
     }
 }

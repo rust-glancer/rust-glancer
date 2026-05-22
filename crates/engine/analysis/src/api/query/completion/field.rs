@@ -4,11 +4,10 @@
 //! signature detail, docs, sort text, and replacement edit.
 
 use rg_body_ir::{FieldKey, ResolvedFieldRef};
-use rg_semantic_ir::Documentation;
 
 use crate::{
     Analysis,
-    api::render::signature::SignatureRenderer,
+    api::{render::signature::SignatureRenderer, view::member::MemberLookup},
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -61,41 +60,23 @@ impl<'a, 'db> FieldCompletionRenderer<'a, 'db> {
         &self,
         field: ResolvedFieldRef,
     ) -> anyhow::Result<Option<FieldCompletionMetadata>> {
+        let members = MemberLookup::new(self.0);
+        let Some(field) = members.field_view(field)? else {
+            return Ok(None);
+        };
+        let Some(key) = field.key().cloned() else {
+            return Ok(None);
+        };
         let renderer = SignatureRenderer::new(self.0);
-        match field {
-            ResolvedFieldRef::Semantic(field) => {
-                let Some(data) = self.0.semantic_ir.field_data(field)? else {
-                    return Ok(None);
-                };
-                let Some(key) = data.field.key.clone() else {
-                    return Ok(None);
-                };
-                Ok(Some(FieldCompletionMetadata {
-                    completion: CompletionMetadata {
-                        label: key.to_string(),
-                        detail: renderer.field_signature(data),
-                        documentation: data.field.docs.as_ref().map(Documentation::text),
-                    },
-                    key,
-                }))
-            }
-            ResolvedFieldRef::BodyLocal(field) => {
-                let Some(data) = self.0.body_ir.local_field_data(field)? else {
-                    return Ok(None);
-                };
-                let Some(key) = data.field.key.clone() else {
-                    return Ok(None);
-                };
-                Ok(Some(FieldCompletionMetadata {
-                    completion: CompletionMetadata {
-                        label: key.to_string(),
-                        detail: renderer.local_field_signature(data),
-                        documentation: data.field.docs.as_ref().map(Documentation::text),
-                    },
-                    key,
-                }))
-            }
-        }
+
+        Ok(Some(FieldCompletionMetadata {
+            completion: CompletionMetadata {
+                label: key.to_string(),
+                detail: renderer.member_field_signature(&field),
+                documentation: field.docs_text(),
+            },
+            key,
+        }))
     }
 }
 

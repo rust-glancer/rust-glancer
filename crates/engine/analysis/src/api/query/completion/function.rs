@@ -8,7 +8,7 @@ use rg_semantic_ir::ParamItem;
 
 use crate::{
     Analysis,
-    api::render::signature::SignatureRenderer,
+    api::{render::signature::SignatureRenderer, view::member::MemberLookup},
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -111,45 +111,22 @@ impl<'a, 'db, 'source> FunctionCompletionRenderer<'a, 'db, 'source> {
         call_completion: FunctionCallCompletion,
         edit: CompletionEdit,
     ) -> anyhow::Result<Option<FunctionCompletionMetadata>> {
+        let members = MemberLookup::new(self.analysis);
+        let Some(function) = members.function_view(function)? else {
+            return Ok(None);
+        };
         let renderer = SignatureRenderer::new(self.analysis);
-        match function {
-            ResolvedFunctionRef::Semantic(function) => {
-                let Some(data) = self.analysis.semantic_ir.function_data(function)? else {
-                    return Ok(None);
-                };
-                let label = label_override.unwrap_or(&data.name).to_string();
-                Ok(Some(FunctionCompletionMetadata {
-                    label: label.clone(),
-                    detail: Some(renderer.function_signature(data)),
-                    documentation: data.docs.as_ref().map(rg_semantic_ir::Documentation::text),
-                    insert_text: self.insert_text(
-                        &label,
-                        data.signature.params(),
-                        call_completion,
-                        edit,
-                    ),
-                    has_self_receiver: data.has_self_receiver(),
-                }))
-            }
-            ResolvedFunctionRef::BodyLocal(function) => {
-                let Some(data) = self.analysis.body_ir.local_function_data(function)? else {
-                    return Ok(None);
-                };
-                let label = label_override.unwrap_or(&data.name).to_string();
-                Ok(Some(FunctionCompletionMetadata {
-                    label: label.clone(),
-                    detail: Some(renderer.local_function_signature(data)),
-                    documentation: data.docs.as_ref().map(rg_semantic_ir::Documentation::text),
-                    insert_text: self.insert_text(
-                        &label,
-                        &data.declaration.params,
-                        call_completion,
-                        edit,
-                    ),
-                    has_self_receiver: data.has_self_receiver(),
-                }))
-            }
-        }
+        let label = label_override
+            .unwrap_or_else(|| function.name())
+            .to_string();
+
+        Ok(Some(FunctionCompletionMetadata {
+            label: label.clone(),
+            detail: Some(renderer.member_function_signature(&function)),
+            documentation: function.docs_text(),
+            insert_text: self.insert_text(&label, function.params(), call_completion, edit),
+            has_self_receiver: function.has_self_receiver(),
+        }))
     }
 
     fn insert_text(
