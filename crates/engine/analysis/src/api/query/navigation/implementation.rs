@@ -1,6 +1,9 @@
 //! Goto-implementation query flow.
 
-use rg_body_ir::{BodyImplId, BodyResolution, BodyTy, ExprKind, ResolvedFunctionRef};
+use rg_body_ir::{
+    BodyAutoderef, BodyAutoderefMode, BodyImplId, BodyResolution, BodyTy, ExprKind,
+    ResolvedFunctionRef,
+};
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
 use rg_semantic_ir::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitRef, TypeDefRef};
@@ -128,11 +131,15 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         ty: &BodyTy,
         targets: &mut Vec<NavigationTarget>,
     ) -> anyhow::Result<()> {
-        for local_ty in ty.local_nominals() {
-            self.push_local_type_targets(local_ty.item, targets)?;
+        for candidate in BodyAutoderef::peel_references(ty) {
+            for local_ty in candidate.ty().as_local_nominals() {
+                self.push_local_type_targets(local_ty.item, targets)?;
+            }
         }
-        for ty in ty.nominal_tys() {
-            self.push_type_def_targets(ty.def, targets)?;
+        for candidate in BodyAutoderef::peel_references(ty) {
+            for ty in candidate.ty().as_nominals() {
+                self.push_type_def_targets(ty.def, targets)?;
+            }
         }
         Ok(())
     }
@@ -252,23 +259,27 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         receiver_ty: &BodyTy,
         targets: &mut Vec<NavigationTarget>,
     ) -> anyhow::Result<()> {
-        for ty in receiver_ty.nominal_tys() {
-            for trait_impl in self.0.semantic_ir.trait_impls_for_type(ty.def)? {
-                if trait_impl.trait_ref != trait_ref {
-                    continue;
+        let autoderef = BodyAutoderef::new(&self.0.def_map, &self.0.semantic_ir);
+        for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, receiver_ty) {
+            let candidate = candidate?;
+            for ty in candidate.ty().as_nominals() {
+                for trait_impl in self.0.semantic_ir.trait_impls_for_type(ty.def)? {
+                    if trait_impl.trait_ref != trait_ref {
+                        continue;
+                    }
+                    // The nominal type match can still include generic impls for other concrete
+                    // args. Reuse method lookup's applicability check so `Wrapper<Account>` does
+                    // not jump to implementations that only apply to `Wrapper<User>`.
+                    if !self.0.body_ir.semantic_trait_impl_applies_to_receiver(
+                        &self.0.def_map,
+                        &self.0.semantic_ir,
+                        trait_impl,
+                        ty,
+                    )? {
+                        continue;
+                    }
+                    self.push_matching_impl_methods(trait_impl.impl_ref, method_name, targets)?;
                 }
-                // The nominal type match can still include generic impls for other concrete args.
-                // Reuse method lookup's applicability check so `Wrapper<Account>` does not jump to
-                // implementations that only apply to `Wrapper<User>`.
-                if !self.0.body_ir.semantic_trait_impl_applies_to_receiver(
-                    &self.0.def_map,
-                    &self.0.semantic_ir,
-                    trait_impl,
-                    ty,
-                )? {
-                    continue;
-                }
-                self.push_matching_impl_methods(trait_impl.impl_ref, method_name, targets)?;
             }
         }
         Ok(())

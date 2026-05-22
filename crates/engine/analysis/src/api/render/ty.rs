@@ -22,7 +22,9 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             BodyTy::Never => Ok(Some("!".to_string())),
             BodyTy::Primitive(primitive) => Ok(Some(primitive.label().to_string())),
             BodyTy::Syntax(ty) => Ok(Some(ty.to_string())),
-            BodyTy::Reference(inner) => Ok(self.render(inner)?.map(|inner| format!("&{inner}"))),
+            BodyTy::Reference { mutability, inner } => Ok(self
+                .render(inner)?
+                .map(|inner| format!("{}{inner}", mutability.render_prefix()))),
             BodyTy::LocalNominal(types) => {
                 let mut labels = Vec::new();
                 for ty in types {

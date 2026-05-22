@@ -78,7 +78,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => Self struct body_if_let_fixture[lib]::crate::UserId @ 4:21-4:26
+            - v0 self_param self `&self` => &Self struct body_if_let_fixture[lib]::crate::UserId @ 4:21-4:26
             body
             expr e1 block s1 => <unknown> @ 4:36-6:6
               tail
@@ -168,7 +168,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => Self struct body_let_else_guard_fixture[lib]::crate::UserId @ 4:21-4:26
+            - v0 self_param self `&self` => &Self struct body_let_else_guard_fixture[lib]::crate::UserId @ 4:21-4:26
             body
             expr e1 block s1 => <unknown> @ 4:36-6:6
               tail

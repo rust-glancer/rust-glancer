@@ -13,9 +13,9 @@ use rg_item_tree::{
 use crate::ir::{
     BindingData, BindingId, BindingKind, BodyFunctionData, BodyFunctionId, BodyFunctionOwner,
     BodyImplData, BodyImplId, BodyItemData, BodyItemDeclaration, BodyItemId, BodyItemKind,
-    BodyItemOwner, BodyTy, BodyValueItemData, BodyValueItemDeclaration, BodyValueItemId,
-    BodyValueItemKind, BodyValueItemOwner, ExprBlockKind, ExprId, ExprKind, ScopeId, StmtData,
-    StmtId, StmtKind,
+    BodyItemOwner, BodyRefMutability, BodySelfParamKind, BodyTy, BodyValueItemData,
+    BodyValueItemDeclaration, BodyValueItemId, BodyValueItemKind, BodyValueItemOwner,
+    ExprBlockKind, ExprId, ExprKind, ScopeId, StmtData, StmtId, StmtKind,
 };
 
 use super::function::FunctionBodyLowering;
@@ -49,10 +49,19 @@ impl FunctionBodyLowering<'_> {
         let annotation = param
             .ty()
             .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
+        let self_kind = if annotation.is_some() {
+            BodySelfParamKind::Explicit
+        } else if param.amp_token().is_some() {
+            BodySelfParamKind::Reference {
+                mutability: BodyRefMutability::from_mut_token(param.mut_token().is_some()),
+            }
+        } else {
+            BodySelfParamKind::Value
+        };
         self.builder.alloc_binding(BindingData {
             source,
             scope,
-            kind: BindingKind::SelfParam,
+            kind: BindingKind::SelfParam(self_kind),
             name: Some(self.interner.intern("self")),
             annotation,
             ty: BodyTy::Unknown,

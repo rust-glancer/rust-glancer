@@ -21,6 +21,7 @@ use crate::{
 };
 
 use super::{
+    autoderef::BodyAutoderef,
     push_unique,
     ty::{TypeSubst, local_type_subst, subst_from_generics, ty_from_type_ref_in_context},
     type_path::BodyTypePathResolver,
@@ -246,21 +247,34 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         field_key: &FieldKey,
     ) -> Result<Option<BodyTy>, PackageStoreError> {
         let mut candidates = Vec::new();
-        for enum_ty in enum_ty_candidates(expected_ty) {
-            let Some(field_ty) =
-                self.variant_field_ty_for_enum(enum_ty, variant_name, field_key)?
-            else {
-                continue;
-            };
-            push_unique(&mut candidates, field_ty);
+
+        // Pattern propagation peels only reference wrappers so enum payload inference remains
+        // useful without opting into receiver autoderef or future trait-backed deref.
+        for deref_candidate in BodyAutoderef::peel_references(expected_ty) {
+            for enum_ty in deref_candidate
+                .ty()
+                .as_nominals()
+                .iter()
+                .filter(|ty| matches!(ty.def.id, TypeDefId::Enum(_)))
+            {
+                let Some(field_ty) =
+                    self.variant_field_ty_for_enum(enum_ty, variant_name, field_key)?
+                else {
+                    continue;
+                };
+                push_unique(&mut candidates, field_ty);
+            }
         }
-        for enum_ty in local_enum_ty_candidates(expected_ty) {
-            let Some(field_ty) =
-                self.variant_field_ty_for_local_enum(enum_ty, variant_name, field_key)?
-            else {
-                continue;
-            };
-            push_unique(&mut candidates, field_ty);
+
+        for deref_candidate in BodyAutoderef::peel_references(expected_ty) {
+            for enum_ty in deref_candidate.ty().as_local_nominals() {
+                let Some(field_ty) =
+                    self.variant_field_ty_for_local_enum(enum_ty, variant_name, field_key)?
+                else {
+                    continue;
+                };
+                push_unique(&mut candidates, field_ty);
+            }
         }
 
         match candidates.as_slice() {
@@ -355,19 +369,6 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         binding_data.ty = ty;
         true
     }
-}
-
-fn enum_ty_candidates(ty: &BodyTy) -> Vec<&BodyNominalTy> {
-    // `nominal_tys` intentionally peels references for editor usefulness. Pattern-propagated
-    // binding types may therefore omit borrow information until references are modeled precisely.
-    ty.nominal_tys()
-        .iter()
-        .filter(|ty| matches!(ty.def.id, TypeDefId::Enum(_)))
-        .collect()
-}
-
-fn local_enum_ty_candidates(ty: &BodyTy) -> Vec<&BodyLocalNominalTy> {
-    ty.local_nominals().iter().collect()
 }
 
 fn variant_field<'a>(fields: &'a FieldList, key: &FieldKey) -> Option<&'a FieldItem> {

@@ -1182,7 +1182,9 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             BodyTy::Never => "!".to_string(),
             BodyTy::Primitive(primitive) => primitive.label().to_string(),
             BodyTy::Syntax(ty) => format!("syntax {ty}"),
-            BodyTy::Reference(inner) => format!("&{}", self.render_ty(inner)),
+            BodyTy::Reference { mutability, inner } => {
+                format!("{}{}", mutability.render_prefix(), self.render_ty(inner))
+            }
             BodyTy::LocalNominal(items) => {
                 let mut items = items
                     .iter()

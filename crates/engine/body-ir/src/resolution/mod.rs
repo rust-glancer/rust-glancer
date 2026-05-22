@@ -3,7 +3,10 @@
 //! The resolver consumes the already-lowered body store. It answers only cheap questions:
 //! local-vs-item path resolution and simple types that are already present in signatures.
 
+mod autoderef;
 mod body;
+mod deref;
+mod impl_match;
 mod index;
 mod method;
 mod normalize;
@@ -26,16 +29,19 @@ use crate::{
 
 use self::{
     body::BodyValuePathResolver,
+    impl_match::BodyImplMatcher,
     method::{
         local_function_applies_to_receiver as local_function_applies_to_receiver_impl,
         semantic_function_applies_to_receiver as semantic_function_applies_to_receiver_impl,
         semantic_trait_function_candidates_for_receiver as semantic_trait_function_candidates_for_receiver_impl,
-        semantic_trait_impl_applicability,
     },
     ty::{TypeSubst, ty_from_type_ref_in_context},
     type_path::BodyTypePathResolver,
 };
 
+pub use self::autoderef::{
+    BodyAutoderef, BodyAutoderefCandidate, BodyAutoderefCandidates, BodyAutoderefMode,
+};
 pub(crate) use self::body::BodyResolver;
 pub(crate) use self::index::SemanticResolutionIndex;
 
@@ -119,10 +125,9 @@ pub(super) fn semantic_trait_impl_applies_to_receiver(
     trait_impl: TraitImplRef,
     receiver_ty: &BodyNominalTy,
 ) -> Result<bool, PackageStoreError> {
-    Ok(
-        semantic_trait_impl_applicability(def_map, semantic_ir, trait_impl, receiver_ty)?
-            .is_applicable(),
-    )
+    Ok(BodyImplMatcher::new(def_map, semantic_ir)
+        .semantic_trait_impl_applicability(trait_impl, receiver_ty)?
+        .is_applicable())
 }
 
 pub(super) fn local_function_applies_to_receiver(

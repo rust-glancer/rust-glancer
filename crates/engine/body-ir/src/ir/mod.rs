@@ -36,10 +36,10 @@ pub use self::{
         BodyResolution, BodyTypePathResolution, ResolvedEnumVariantRef, ResolvedFieldRef,
         ResolvedFunctionRef,
     },
-    stmt::{BindingData, BindingKind, StmtData, StmtKind},
+    stmt::{BindingData, BindingKind, BodySelfParamKind, StmtData, StmtKind},
     ty::{
         BodyFloatTy, BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyPrimitiveTy,
-        BodySignedIntTy, BodyTy, BodyUnsignedIntTy,
+        BodyRefMutability, BodySignedIntTy, BodyTy, BodyUnsignedIntTy,
     },
 };
 

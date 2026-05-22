@@ -27,7 +27,7 @@ impl<'db, 'body> BodyTyNormalizer<'db, 'body> {
     pub(super) fn ty_for_wrapper(&self, kind: ExprWrapperKind, inner_ty: BodyTy) -> BodyTy {
         match kind {
             ExprWrapperKind::Paren => inner_ty,
-            ExprWrapperKind::Ref => BodyTy::reference(inner_ty),
+            ExprWrapperKind::Ref { mutability } => BodyTy::reference(mutability, inner_ty),
             // We currently model `async fn foo() -> T` as returning `T` directly. Preserving the
             // inner type through `.await` keeps that useful behavior without pretending to model
             // `Future::Output` for arbitrary future types.
@@ -42,7 +42,7 @@ impl<'db, 'body> BodyTyNormalizer<'db, 'body> {
     fn try_output_ty(&self, ty: &BodyTy) -> BodyTy {
         let mut outputs = Vec::new();
 
-        for nominal in ty.nominal_tys() {
+        for nominal in ty.as_nominals() {
             let Ok(Some(name)) = self.semantic_ir.type_def_name(nominal.def) else {
                 continue;
             };
@@ -53,7 +53,7 @@ impl<'db, 'body> BodyTyNormalizer<'db, 'body> {
             }
         }
 
-        for local in ty.local_nominals() {
+        for local in ty.as_local_nominals() {
             let Some(item) = self.body.local_item(local.item.item) else {
                 continue;
             };
