@@ -379,13 +379,26 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             return Ok((BodyResolution::Unknown, BodyTy::Unknown));
         };
 
+        let mut current_depth = None;
+        let mut fields = Vec::new();
+        let mut field_tys = Vec::new();
+
         for candidate in self
             .autoderef()
             .candidates(BodyAutoderefMode::FieldLookup, &self.body.exprs[base].ty)
         {
             let candidate = candidate?;
-            let mut fields = Vec::new();
-            let mut field_tys = Vec::new();
+            // Autoderef yields candidates by depth. Resolve only after the whole matching depth is
+            // collected, so same-depth alternatives produce ambiguity instead of order dependence.
+            if current_depth.is_some_and(|depth| depth != candidate.depth()) && !fields.is_empty() {
+                let ty = if field_tys.len() == 1 {
+                    field_tys.pop().expect("one field type should exist")
+                } else {
+                    BodyTy::Unknown
+                };
+                return Ok((BodyResolution::Field(fields), ty));
+            }
+            current_depth = Some(candidate.depth());
 
             // Local and semantic fields use the same substitution idea, but local items need their
             // declaration scope so field types can mention body-local names.
@@ -428,15 +441,15 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                     )?;
                 push_unique(&mut field_tys, field_ty);
             }
+        }
 
-            if !fields.is_empty() {
-                let ty = if field_tys.len() == 1 {
-                    field_tys.pop().expect("one field type should exist")
-                } else {
-                    BodyTy::Unknown
-                };
-                return Ok((BodyResolution::Field(fields), ty));
-            }
+        if !fields.is_empty() {
+            let ty = if field_tys.len() == 1 {
+                field_tys.pop().expect("one field type should exist")
+            } else {
+                BodyTy::Unknown
+            };
+            return Ok((BodyResolution::Field(fields), ty));
         }
 
         Ok((BodyResolution::Unknown, BodyTy::Unknown))
@@ -455,13 +468,28 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 
         // Method lookup is intentionally shallow: exact local item identity for body-local impls,
         // and nominal type plus lightweight impl-argument matching for semantic impls.
+        let mut current_depth = None;
+        let mut functions = Vec::new();
+        let mut return_tys = Vec::new();
+
         for candidate in self
             .autoderef()
             .candidates(BodyAutoderefMode::MethodReceiver, receiver_ty)
         {
             let candidate = candidate?;
-            let mut functions = Vec::new();
-            let mut return_tys = Vec::new();
+            // Autoderef yields candidates by depth. Resolve only after the whole matching depth is
+            // collected, so same-depth alternatives produce ambiguity instead of order dependence.
+            if current_depth.is_some_and(|depth| depth != candidate.depth())
+                && !functions.is_empty()
+            {
+                let ty = if return_tys.len() == 1 {
+                    return_tys.pop().expect("one return type should exist")
+                } else {
+                    BodyTy::Unknown
+                };
+                return Ok((BodyResolution::Method(functions), ty));
+            }
+            current_depth = Some(candidate.depth());
 
             for local_ty in candidate.ty().as_local_nominals() {
                 for function_ref in self.local_functions_for_type(local_ty)? {
@@ -497,15 +525,15 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                     );
                 }
             }
+        }
 
-            if !functions.is_empty() {
-                let ty = if return_tys.len() == 1 {
-                    return_tys.pop().expect("one return type should exist")
-                } else {
-                    BodyTy::Unknown
-                };
-                return Ok((BodyResolution::Method(functions), ty));
-            }
+        if !functions.is_empty() {
+            let ty = if return_tys.len() == 1 {
+                return_tys.pop().expect("one return type should exist")
+            } else {
+                BodyTy::Unknown
+            };
+            return Ok((BodyResolution::Method(functions), ty));
         }
 
         Ok((BodyResolution::Unknown, BodyTy::Unknown))

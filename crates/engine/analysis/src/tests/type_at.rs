@@ -301,6 +301,92 @@ pub fn use_it(wrapper: Wrapper<Result<Foo>>) {
 }
 
 #[test]
+fn aggregates_same_depth_deref_targets_before_resolving_members() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct UserId;
+pub struct ProjectId;
+pub struct UserLabel;
+pub struct ProjectLabel;
+
+pub struct User {
+    pub id: UserId,
+}
+
+impl User {
+    pub fn label(&self) -> UserLabel {
+        missing()
+    }
+}
+
+pub struct Project {
+    pub id: ProjectId,
+}
+
+impl Project {
+    pub fn label(&self) -> ProjectLabel {
+        missing()
+    }
+}
+
+pub struct Wrapper;
+
+impl core::ops::Deref for Wrapper {
+    type Target = User;
+}
+
+impl core::ops::Deref for Wrapper {
+    type Target = Project;
+}
+
+pub fn use_it(wrapper: Wrapper) {
+    let _id = wrapper.i$type_field$d;
+    let _label = wrapper.la$type_method$bel();
+}
+"#,
+        &[
+            AnalysisQuery::ty("ambiguous same-depth Deref field", "type_field").in_lib("app"),
+            AnalysisQuery::ty("ambiguous same-depth Deref method", "type_method").in_lib("app"),
+        ],
+        expect![[r#"
+            ambiguous same-depth Deref field
+            - <unknown>
+
+            ambiguous same-depth Deref method
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
 fn alternates_reference_and_trait_deref_for_member_lookup() {
     check_analysis_queries(
         r#"
