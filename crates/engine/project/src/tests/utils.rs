@@ -12,6 +12,7 @@ use rg_analysis::{
     CompletionApplicability, CompletionClientCapabilities, CompletionItem, CompletionQuery,
     WorkspaceSymbol,
 };
+use rg_body_ir::{BodyAutoderef, BodyAutoderefMode};
 use rg_def_map::{PackageSlot, TargetRef};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb};
@@ -785,11 +786,11 @@ fn nominal_type_names_at(
 
     let semantic_ir = host.state.semantic_ir.read_txn(unexpected_package_loader());
     let def_map = host.state.def_map.read_txn(unexpected_package_loader());
-    ty.type_defs_after_reference_deref()
-        .into_iter()
+    BodyAutoderef::candidates(BodyAutoderefMode::PeelReferences, &ty)
+        .flat_map(|candidate| candidate.ty().as_nominals())
         .filter_map(|ty| {
             semantic_ir
-                .local_def_for_type_def(ty)
+                .local_def_for_type_def(ty.def)
                 .expect("fixture semantic IR should load while rendering nominal types")
         })
         .filter_map(|local_def| {

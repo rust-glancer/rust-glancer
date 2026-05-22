@@ -291,20 +291,6 @@ impl BodyTy {
         }
     }
 
-    pub fn after_reference_deref(&self) -> &Self {
-        match self {
-            Self::Reference { inner, .. } => inner.after_reference_deref(),
-            Self::Unit
-            | Self::Never
-            | Self::Primitive(_)
-            | Self::Syntax(_)
-            | Self::LocalNominal(_)
-            | Self::Nominal(_)
-            | Self::SelfTy(_)
-            | Self::Unknown => self,
-        }
-    }
-
     pub fn as_local_nominals(&self) -> &[BodyLocalNominalTy] {
         match self {
             Self::LocalNominal(types) => types,
@@ -330,21 +316,6 @@ impl BodyTy {
             | Self::LocalNominal(_)
             | Self::Unknown => &[],
         }
-    }
-
-    pub fn local_nominals_after_reference_deref(&self) -> &[BodyLocalNominalTy] {
-        self.after_reference_deref().as_local_nominals()
-    }
-
-    pub fn nominals_after_reference_deref(&self) -> &[BodyNominalTy] {
-        self.after_reference_deref().as_nominals()
-    }
-
-    pub fn type_defs_after_reference_deref(&self) -> Vec<TypeDefRef> {
-        self.nominals_after_reference_deref()
-            .iter()
-            .map(|ty| ty.def)
-            .collect()
     }
 
     pub(crate) fn shrink_to_fit(&mut self) {

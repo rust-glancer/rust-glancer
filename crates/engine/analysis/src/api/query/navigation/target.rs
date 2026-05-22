@@ -1,8 +1,9 @@
 //! Concrete navigation target projection.
 
 use rg_body_ir::{
-    BodyAutoderef, BodyEnumVariantRef, BodyFieldRef, BodyImplId, BodyItemRef, BodyRef, BodyTy,
-    BodyValueItemRef, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
+    BodyAutoderef, BodyAutoderefMode, BodyEnumVariantRef, BodyFieldRef, BodyImplId, BodyItemRef,
+    BodyRef, BodyTy, BodyValueItemRef, ResolvedEnumVariantRef, ResolvedFieldRef,
+    ResolvedFunctionRef,
 };
 use rg_def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef};
 use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, ImplRef, TraitRef, TypeDefRef};
@@ -357,9 +358,8 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         ty: &BodyTy,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
-        let candidates = BodyAutoderef::receiver_candidates(ty);
         let mut local_targets = Vec::new();
-        for candidate in &candidates {
+        for candidate in BodyAutoderef::candidates(BodyAutoderefMode::PeelReferences, ty) {
             for ty in candidate.ty().as_local_nominals() {
                 if let Some(target) = self.navigation_target_for_body_item(ty.item)? {
                     local_targets.push(target);
@@ -371,7 +371,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         }
 
         let mut targets = Vec::new();
-        for candidate in &candidates {
+        for candidate in BodyAutoderef::candidates(BodyAutoderefMode::PeelReferences, ty) {
             for ty in candidate.ty().as_nominals() {
                 if let Some(target) = self.navigation_target_for_type_def(ty.def)? {
                     targets.push(target);

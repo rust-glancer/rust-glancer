@@ -35,7 +35,9 @@ pub use self::{
         ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
         TargetBodiesStatus,
     },
-    resolution::{BodyAutoderef, BodyAutoderefCandidate},
+    resolution::{
+        BodyAutoderef, BodyAutoderefCandidate, BodyAutoderefCandidates, BodyAutoderefMode,
+    },
     store::{BodyIrDb, BodyIrReadTxn},
 };
 
