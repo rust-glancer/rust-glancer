@@ -27,10 +27,10 @@ use crate::{
 use super::{
     SemanticResolutionIndex,
     autoderef::{BodyAutoderef, BodyAutoderefMode},
+    impl_match::{BodyImplMatcher, LocalImplMatcher},
     method::{
-        local_function_applies_to_receiver, local_impl_applies_to_receiver, local_impl_self_subst,
-        local_impl_self_subst_for_impl, semantic_function_applies_to_receiver,
-        semantic_impl_self_subst, semantic_trait_function_candidates_for_receiver,
+        local_function_applies_to_receiver, semantic_function_applies_to_receiver,
+        semantic_trait_function_candidates_for_receiver,
     },
     normalize::BodyTyNormalizer,
     pat::PatternTypePropagator,
@@ -66,6 +66,14 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 
     fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db, '_> {
         BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+    }
+
+    fn semantic_impl_matcher(&self) -> BodyImplMatcher<'_, 'db> {
+        BodyImplMatcher::new(self.def_map, self.semantic_ir)
+    }
+
+    fn local_impl_matcher(&self) -> LocalImplMatcher<'_, 'db, '_> {
+        LocalImplMatcher::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
@@ -649,7 +657,10 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 // Receiver type args and impl self args both contribute substitutions. For
                 // `impl<U> Wrapper<U>`, this maps `U` to the known receiver argument.
                 let mut subst = self.semantic_type_subst(ty)?;
-                subst.extend(semantic_impl_self_subst(self.semantic_ir, function_ref, ty));
+                subst.extend(
+                    self.semantic_impl_matcher()
+                        .semantic_impl_self_subst(function_ref, ty),
+                );
                 Ok(subst)
             })
             .transpose()?
@@ -687,7 +698,10 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 // Receiver type args and impl self args both contribute substitutions. For
                 // `impl<U> Wrapper<U>`, this maps `U` to the known receiver argument.
                 let mut subst = self.local_type_subst(ty);
-                subst.extend(local_impl_self_subst(self.body, function_ref, ty));
+                subst.extend(
+                    self.local_impl_matcher()
+                        .local_impl_self_subst(function_ref, ty),
+                );
                 subst
             })
             .unwrap_or_default();
@@ -806,6 +820,14 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             body_ref,
             body,
         }
+    }
+
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db, 'body> {
+        BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+    }
+
+    fn local_impl_matcher(&self) -> LocalImplMatcher<'_, 'db, 'body> {
+        LocalImplMatcher::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
     pub(super) fn resolve_nonlocal_path_expr(
@@ -998,15 +1020,14 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 }
 
                 let mut subst = local_type_subst(self.body, receiver_ty);
-                subst.extend(local_impl_self_subst_for_impl(impl_data, receiver_ty));
+                subst.extend(
+                    self.local_impl_matcher()
+                        .local_impl_self_subst_for_impl(impl_data, receiver_ty),
+                );
                 self.type_path_resolver()
                     .ty_from_type_ref_in_scope_with_subst(ty, impl_data.scope, &subst)
             }
         }
-    }
-
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db, '_> {
-        BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
     fn resolve_associated_path(
@@ -1111,14 +1132,10 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             let Some(impl_data) = self.body.local_impl(impl_id) else {
                 continue;
             };
-            if !local_impl_applies_to_receiver(
-                self.def_map,
-                self.semantic_ir,
-                self.body_ref,
-                self.body,
-                impl_data,
-                ty,
-            )? {
+            if !self
+                .local_impl_matcher()
+                .local_impl_applies_to_receiver(impl_data, ty)?
+            {
                 continue;
             }
 

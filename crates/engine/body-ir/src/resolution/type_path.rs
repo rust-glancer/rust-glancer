@@ -18,7 +18,7 @@ use crate::{
 };
 
 use super::{
-    method::{local_impl_applies_to_receiver, local_impl_self_subst_for_impl},
+    impl_match::LocalImplMatcher,
     ty::{
         TypeSubst, local_type_subst, subst_from_generics, substitute_type_param,
         ty_from_body_resolution, ty_from_type_ref_in_context, type_ref_is_self,
@@ -45,6 +45,10 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             body_ref,
             body,
         }
+    }
+
+    fn local_impl_matcher(&self) -> LocalImplMatcher<'_, 'db, 'body> {
+        LocalImplMatcher::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
     pub(super) fn resolve_in_scope(
@@ -326,14 +330,10 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             let Some(impl_data) = self.body.local_impl(impl_id) else {
                 continue;
             };
-            if !local_impl_applies_to_receiver(
-                self.def_map,
-                self.semantic_ir,
-                self.body_ref,
-                self.body,
-                impl_data,
-                ty,
-            )? {
+            if !self
+                .local_impl_matcher()
+                .local_impl_applies_to_receiver(impl_data, ty)?
+            {
                 continue;
             }
 
@@ -381,7 +381,10 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         };
 
         let mut alias_subst = local_type_subst(self.body, receiver_ty);
-        alias_subst.extend(local_impl_self_subst_for_impl(impl_data, receiver_ty));
+        alias_subst.extend(
+            self.local_impl_matcher()
+                .local_impl_self_subst_for_impl(impl_data, receiver_ty),
+        );
         if let Some(generics) = item.generic_params() {
             alias_subst.extend(subst_from_generics(generics, args));
         }
