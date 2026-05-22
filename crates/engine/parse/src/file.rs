@@ -2,7 +2,6 @@ use anyhow::Context as _;
 use std::{
     borrow::Cow,
     collections::HashMap,
-    mem,
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
@@ -403,15 +402,13 @@ impl ParsedSource {
         }
     }
 
-    fn record_memory(source: &Self, recorder: &mut rg_memsize::MemoryRecorder) {
+    fn record_memory(source: &Self, _recorder: &mut rg_memsize::MemoryRecorder) {
         match source {
             Self::SavedFile => {}
-            Self::InMemory(source) => recorder.scope("in_memory", |recorder| {
-                // The text is shared through `Arc<str>`; account for the backing bytes and the
-                // pointer-sized shared header retained by this source handle.
-                recorder.record_heap::<str>(source.len());
-                recorder.record_approximate::<Arc<str>>(mem::size_of::<usize>());
-            }),
+            Self::InMemory(_) => {
+                // Dirty buffers are a small, short-lived overlay on top of the saved project
+                // snapshot, so static memory reports intentionally ignore them.
+            }
         }
     }
 }
@@ -424,49 +421,44 @@ impl ParsedFileData {
         if let Some(syntax) = syntax {
             // The parse cache owns one retained syntax tree per parsed file. Count it here
             // explicitly so cloned parse handles and AST cursors do not look like owners.
-            Self::record_syntax_tree_memory(syntax.retained_tree_memory_usage(), recorder);
-        }
-    }
+            let usage = syntax.retained_tree_memory_usage();
 
-    fn record_syntax_tree_memory(
-        usage: rg_syntax::SyntaxTreeMemoryUsage,
-        recorder: &mut rg_memsize::MemoryRecorder,
-    ) {
-        // `rg_syntax` exposes storage facts without knowing about memory reports; this is the
-        // parse-cache boundary where those facts become retained-memory accounting.
-        recorder.scope("tree", |recorder| {
-            recorder.scope("source", |recorder| {
-                recorder.record_heap::<str>(usage.source_bytes);
+            // `rg_syntax` exposes storage facts without knowing about memory reports; this is the
+            // parse-cache boundary where those facts become retained-memory accounting.
+            recorder.scope("tree", |recorder| {
+                recorder.scope("source", |recorder| {
+                    recorder.record_heap::<str>(usage.source_bytes);
+                });
+                recorder.scope("nodes", |recorder| {
+                    recorder.record_type_name(
+                        rg_memsize::MemoryRecordKind::Heap,
+                        "rg_syntax::NodeData",
+                        usage.node_table_bytes,
+                    );
+                });
+                recorder.scope("tokens", |recorder| {
+                    recorder.record_type_name(
+                        rg_memsize::MemoryRecordKind::Heap,
+                        "rg_syntax::TokenData",
+                        usage.token_table_bytes,
+                    );
+                });
+                recorder.scope("children", |recorder| {
+                    recorder.record_type_name(
+                        rg_memsize::MemoryRecordKind::Heap,
+                        "rg_syntax::ElementId",
+                        usage.child_table_bytes,
+                    );
+                });
+                recorder.scope("errors", |recorder| {
+                    recorder.record_type_name(
+                        rg_memsize::MemoryRecordKind::Heap,
+                        "rg_syntax::SyntaxError",
+                        usage.error_bytes,
+                    );
+                });
             });
-            recorder.scope("nodes", |recorder| {
-                recorder.record_type_name(
-                    rg_memsize::MemoryRecordKind::Heap,
-                    "rg_syntax::NodeData",
-                    usage.node_table_bytes,
-                );
-            });
-            recorder.scope("tokens", |recorder| {
-                recorder.record_type_name(
-                    rg_memsize::MemoryRecordKind::Heap,
-                    "rg_syntax::TokenData",
-                    usage.token_table_bytes,
-                );
-            });
-            recorder.scope("children", |recorder| {
-                recorder.record_type_name(
-                    rg_memsize::MemoryRecordKind::Heap,
-                    "rg_syntax::ElementId",
-                    usage.child_table_bytes,
-                );
-            });
-            recorder.scope("errors", |recorder| {
-                recorder.record_type_name(
-                    rg_memsize::MemoryRecordKind::Heap,
-                    "rg_syntax::SyntaxError",
-                    usage.error_bytes,
-                );
-            });
-        });
+        }
     }
 
     fn parse_snapshot(&self) -> anyhow::Result<ParsedFileSnapshot> {

@@ -44,7 +44,7 @@ enum Resolution {
     },
 }
 
-fn record_unknown_payload(payload: &String, recorder: &mut MemoryRecorder) {
+fn record_unknown_payload(payload: &str, recorder: &mut MemoryRecorder) {
     recorder.record_approximate::<String>(payload.len());
 }
 

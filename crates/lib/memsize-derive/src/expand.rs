@@ -67,7 +67,7 @@ impl DataExpansion {
             Data::Struct(data) => Self::from_struct(data, crate_path),
             Data::Enum(data) => Self::from_enum(data, crate_path),
             Data::Union(data) => Err(syn::Error::new_spanned(
-                &data.union_token,
+                data.union_token,
                 "`MemorySize` cannot be derived for unions",
             )),
         }
