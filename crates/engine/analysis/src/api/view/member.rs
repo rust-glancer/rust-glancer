@@ -1,73 +1,94 @@
 //! Unified member lookup over semantic and body-local nominal types.
 
 use rg_body_ir::{
-    BodyLocalNominalTy, BodyNominalTy, BodyTy, ResolvedFieldRef, ResolvedFunctionRef,
+    BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyTy, ResolvedFieldRef, ResolvedFunctionRef,
 };
-use rg_semantic_ir::TraitApplicability;
+use rg_semantic_ir::{TraitApplicability, TypeDefRef};
 
 use crate::api::Analysis;
 
 /// A nominal receiver type whose declarations may live in either Semantic IR or Body IR.
 #[derive(Debug, Clone, Copy)]
-pub(super) enum MemberReceiverTy<'a> {
+pub(crate) enum MemberReceiverTy<'a> {
     Semantic(&'a BodyNominalTy),
     BodyLocal(&'a BodyLocalNominalTy),
 }
 
 impl<'a> MemberReceiverTy<'a> {
-    pub(super) fn in_body_ty(ty: &'a BodyTy) -> impl Iterator<Item = Self> + 'a {
+    pub(crate) fn in_body_ty(ty: &'a BodyTy) -> impl Iterator<Item = Self> + 'a {
         ty.as_local_nominals()
             .iter()
             .map(Self::BodyLocal)
             .chain(ty.as_nominals().iter().map(Self::Semantic))
     }
+
+    fn owner(self) -> MemberOwner {
+        match self {
+            Self::Semantic(ty) => MemberOwner::Semantic(ty.def),
+            Self::BodyLocal(ty) => MemberOwner::BodyLocal(ty.item),
+        }
+    }
+}
+
+/// A declaration owner whose fields can be enumerated without receiver-specific generic args.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum MemberOwner {
+    Semantic(TypeDefRef),
+    BodyLocal(BodyItemRef),
 }
 
 /// One method candidate with enough origin information for UI ranking and labels.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct MemberMethodCandidate {
-    pub(super) function: ResolvedFunctionRef,
-    pub(super) origin: MemberMethodOrigin,
+pub(crate) struct MemberMethodCandidate {
+    pub(crate) function: ResolvedFunctionRef,
+    pub(crate) origin: MemberMethodOrigin,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(super) enum MemberMethodOrigin {
+pub(crate) enum MemberMethodOrigin {
     Inherent,
     Trait { applicability: TraitApplicability },
 }
 
-pub(super) struct MemberLookup<'a, 'db> {
+pub(crate) struct MemberLookup<'a, 'db> {
     analysis: &'a Analysis<'db>,
 }
 
 impl<'a, 'db> MemberLookup<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self { analysis }
     }
 
-    pub(super) fn field_candidates(
+    pub(crate) fn field_candidates(
         &self,
         receiver_ty: MemberReceiverTy<'_>,
     ) -> anyhow::Result<Vec<ResolvedFieldRef>> {
-        match receiver_ty {
-            MemberReceiverTy::Semantic(ty) => Ok(self
+        self.field_candidates_for_owner(receiver_ty.owner())
+    }
+
+    pub(crate) fn field_candidates_for_owner(
+        &self,
+        owner: MemberOwner,
+    ) -> anyhow::Result<Vec<ResolvedFieldRef>> {
+        match owner {
+            MemberOwner::Semantic(ty) => Ok(self
                 .analysis
                 .semantic_ir
-                .fields_for_type(ty.def)?
+                .fields_for_type(ty)?
                 .into_iter()
                 .map(ResolvedFieldRef::Semantic)
                 .collect()),
-            MemberReceiverTy::BodyLocal(ty) => Ok(self
+            MemberOwner::BodyLocal(item) => Ok(self
                 .analysis
                 .body_ir
-                .fields_for_local_type(ty.item)?
+                .fields_for_local_type(item)?
                 .into_iter()
                 .map(ResolvedFieldRef::BodyLocal)
                 .collect()),
         }
     }
 
-    pub(super) fn method_candidates(
+    pub(crate) fn method_candidates(
         &self,
         receiver_ty: MemberReceiverTy<'_>,
     ) -> anyhow::Result<Vec<MemberMethodCandidate>> {

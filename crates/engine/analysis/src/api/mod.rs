@@ -1,6 +1,7 @@
 mod query;
 mod render;
 mod resolve;
+mod view;
 
 pub use query::{
     completion::{CompletionClientCapabilities, CompletionQuery},

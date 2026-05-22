@@ -6,7 +6,7 @@ use rg_body_ir::{
 
 use crate::{
     Analysis,
-    api::query::member::{
+    api::view::member::{
         MemberLookup, MemberMethodCandidate, MemberMethodOrigin, MemberReceiverTy,
     },
     model::{

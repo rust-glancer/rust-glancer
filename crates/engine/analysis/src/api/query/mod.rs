@@ -7,7 +7,6 @@
 
 pub(crate) mod completion;
 pub(crate) mod hover;
-mod member;
 pub(crate) mod navigation;
 pub(crate) mod references;
 pub(crate) mod symbol_at;
