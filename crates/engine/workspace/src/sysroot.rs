@@ -5,7 +5,8 @@ use std::{
 };
 
 /// Sysroot crates that rust-glancer can model as ordinary library roots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, rg_memsize::MemorySize)]
+#[memsize(leaf)]
 pub enum SysrootCrate {
     Core,
     Alloc,
@@ -31,7 +32,7 @@ impl fmt::Display for SysrootCrate {
 }
 
 /// Rust source tree discovered from `rustc --print sysroot`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct SysrootSources {
     pub(crate) sysroot_root: PathBuf,
     pub(crate) library_root: PathBuf,
