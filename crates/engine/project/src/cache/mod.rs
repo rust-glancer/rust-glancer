@@ -26,7 +26,7 @@ pub use self::{
     },
     codec::PackageCacheCodec,
     fingerprint::Fingerprint,
-    header::{CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, PackageCacheHeader, PackageCacheSchemaVersion},
+    header::{CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, PackageCacheHeader},
     payload::{PackageCacheArtifact, PackageCachePayload},
     plan::WorkspaceCachePlan,
     store::PackageCacheStore,

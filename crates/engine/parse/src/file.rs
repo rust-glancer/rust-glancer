@@ -2,6 +2,7 @@ use anyhow::Context as _;
 use std::{
     borrow::Cow,
     collections::HashMap,
+    mem,
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
@@ -75,7 +76,7 @@ pub struct ParsedFile<'a> {
 
 /// Source backing for a parsed file whose syntax tree may be evicted.
 #[derive(Debug, Clone, rg_memsize::MemorySize)]
-#[memsize(with = "crate::memsize::record_parsed_source")]
+#[memsize(with = "Self::record_memory")]
 pub(crate) enum ParsedSource {
     SavedFile,
     InMemory(Arc<str>),
@@ -400,6 +401,18 @@ impl ParsedSource {
             Self::InMemory(source) => Ok(Cow::Borrowed(source.as_ref())),
         }
     }
+
+    fn record_memory(source: &Self, recorder: &mut rg_memsize::MemoryRecorder) {
+        match source {
+            Self::SavedFile => {}
+            Self::InMemory(source) => recorder.scope("in_memory", |recorder| {
+                // The text is shared through `Arc<str>`; account for the backing bytes and the
+                // pointer-sized shared header retained by this source handle.
+                recorder.record_heap::<str>(source.len());
+                recorder.record_approximate::<Arc<str>>(mem::size_of::<usize>());
+            }),
+        }
+    }
 }
 
 impl ParsedFileData {
@@ -430,7 +443,7 @@ impl ParsedFileData {
 /// tables can be dropped after package artifacts are durable and reconstructed from the saved source
 /// file when an LSP range conversion actually needs them.
 #[derive(Debug, rg_memsize::MemorySize)]
-#[memsize(with = "crate::memsize::record_line_index_state")]
+#[memsize(with = "Self::record_memory")]
 pub(crate) enum LineIndexState {
     Resident(LineIndex),
     Offloaded(OnceLock<LineIndex>),
@@ -484,6 +497,21 @@ impl LineIndexState {
         match self {
             Self::Resident(line_index) => Ok(line_index),
             Self::Offloaded(line_index) => line_index.get_mut().ok_or(()),
+        }
+    }
+
+    fn record_memory(state: &Self, recorder: &mut rg_memsize::MemoryRecorder) {
+        match state {
+            Self::Resident(line_index) => recorder.scope("resident", |recorder| {
+                rg_memsize::MemorySize::record_memory_children(line_index, recorder);
+            }),
+            Self::Offloaded(line_index) => {
+                if let Some(line_index) = line_index.get() {
+                    recorder.scope("loaded", |recorder| {
+                        rg_memsize::MemorySize::record_memory_children(line_index, recorder);
+                    });
+                }
+            }
         }
     }
 }

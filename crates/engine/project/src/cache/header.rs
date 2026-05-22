@@ -12,11 +12,14 @@ use super::{cached::CachedPackage, fingerprint::Fingerprint};
 pub const CURRENT_PACKAGE_CACHE_SCHEMA_VERSION: PackageCacheSchemaVersion =
     PackageCacheSchemaVersion(2);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub struct PackageCacheSchemaVersion(pub u32);
 
 /// Header shared by future package cache artifacts.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, rg_memsize::MemorySize)]
 pub struct PackageCacheHeader {
     pub schema_version: PackageCacheSchemaVersion,
     pub package: CachedPackage,

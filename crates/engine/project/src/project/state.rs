@@ -17,16 +17,18 @@ use crate::{
 use super::{stats::ProjectStats, txn::ProjectReadTxn};
 
 /// Fully built project pipeline state.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, rg_memsize::MemorySize)]
 pub(crate) struct ProjectState {
     pub(crate) workspace: WorkspaceMetadata,
     pub(crate) cargo_metadata_config: CargoMetadataConfig,
     pub(crate) cache_plan: WorkspaceCachePlan,
+    #[memsize(skip)]
     pub(crate) cache_store: PackageCacheStore,
     pub(crate) package_source_fingerprints: Vec<Option<Fingerprint>>,
     pub(crate) body_ir_policy: BodyIrBuildPolicy,
     pub(crate) package_residency_policy: PackageResidencyPolicy,
     pub(crate) package_residency: PackageResidencyPlan,
+    #[memsize(skip)]
     pub(crate) memory_hooks: Arc<dyn ProjectMemoryHooks>,
     pub(crate) names: PackageNameInterners,
     pub(crate) parse: ParseDb,

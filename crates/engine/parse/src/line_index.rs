@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{mem, sync::Arc};
 
 use crate::span::Position;
 
@@ -235,10 +235,7 @@ pub struct LineIndexSnapshot {
 }
 
 #[derive(Debug, Clone, rg_memsize::MemorySize)]
-#[memsize(
-    with = "crate::memsize::record_line_index_storage",
-    bound = "T: rg_memsize::MemorySize"
-)]
+#[memsize(with = "Self::record_memory", bound = "T: rg_memsize::MemorySize")]
 pub(crate) enum LineIndexStorage<T> {
     Owned(Vec<T>),
     Shared {
@@ -298,6 +295,26 @@ impl<T> LineIndexStorage<T> {
     fn shrink_to_fit(&mut self) {
         if let Self::Owned(items) = self {
             items.shrink_to_fit();
+        }
+    }
+
+    fn record_memory(storage: &Self, recorder: &mut rg_memsize::MemoryRecorder)
+    where
+        T: rg_memsize::MemorySize,
+    {
+        match storage {
+            Self::Owned(items) => rg_memsize::MemorySize::record_memory_children(items, recorder),
+            Self::Shared { .. } => {
+                let items = storage.as_slice();
+                recorder.scope("items", |recorder| {
+                    // Shared packed buffers should report this file's logical slice, not the whole
+                    // package-level allocation that may be referenced by many files.
+                    recorder.record_heap::<T>(items.len().saturating_mul(mem::size_of::<T>()));
+                    for item in items {
+                        rg_memsize::MemorySize::record_memory_children(item, recorder);
+                    }
+                });
+            }
         }
     }
 }
