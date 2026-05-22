@@ -236,6 +236,75 @@ pub fn use_it(wrapper: Wrapper<User>) {
 }
 
 #[test]
+fn resolves_canonical_deref_through_absolute_core_path() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+mod core {
+    pub mod ops {
+        pub trait Deref {
+            type Target;
+        }
+    }
+}
+
+pub struct Id;
+
+pub struct User {
+    pub id: Id,
+}
+
+pub struct Wrapper<T> {
+    inner: T,
+}
+
+impl<T> ::core::ops::Deref for Wrapper<T> {
+    type Target = T;
+}
+
+pub fn use_it(wrapper: Wrapper<User>) {
+    let _id = wrapper.i$type_shadowed_core$d;
+}
+"#,
+        &[
+            AnalysisQuery::ty("Deref ignores local core shadow", "type_shadowed_core")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            Deref ignores local core shadow
+            - nominal struct app[lib]::crate::Id
+        "#]],
+    );
+}
+
+#[test]
 fn rejects_uncertain_nested_generic_deref_impls_for_member_lookup() {
     check_analysis_queries(
         r#"
@@ -852,6 +921,63 @@ pub fn use_it(user: Wrapper<User>, error: Wrapper<Error>) {
             - nominal struct analysis_concrete_impl_args[lib]::crate::Error
 
             concrete impl method on wrong receiver
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn does_not_ignore_const_generic_args_when_matching_impls() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_const_impl_args"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub struct Label;
+
+pub struct Foo<const N: usize>;
+
+impl Foo<1> {
+    pub fn label(&self) -> Label {
+        missing()
+    }
+}
+
+pub fn use_semantic(foo: Foo<2>) {
+    let _label = foo.la$type_semantic$bel();
+}
+
+pub fn use_local() {
+    struct LocalLabel;
+    struct LocalFoo<const N: usize>;
+
+    impl LocalFoo<1> {
+        fn label(&self) -> LocalLabel {
+            missing()
+        }
+    }
+
+    let foo: LocalFoo<2> = missing();
+    let _label = foo.la$type_local$bel();
+}
+"#,
+        &[
+            AnalysisQuery::ty("const impl arg mismatch", "type_semantic"),
+            AnalysisQuery::ty("local const impl arg mismatch", "type_local"),
+        ],
+        expect![[r#"
+            const impl arg mismatch
+            - <unknown>
+
+            local const impl arg mismatch
             - <unknown>
         "#]],
     );

@@ -106,7 +106,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
         impl_data: &rg_semantic_ir::ImplData,
     ) -> Result<bool, PackageStoreError> {
         let path = Path {
-            absolute: false,
+            absolute: true,
             segments: vec![
                 PathSegment::Name(Name::new("core")),
                 PathSegment::Name(Name::new("ops")),

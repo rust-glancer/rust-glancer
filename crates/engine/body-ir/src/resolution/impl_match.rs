@@ -5,7 +5,7 @@
 //! substitutions that make associated signatures readable in the receiver context.
 
 use rg_def_map::DefMapReadTxn;
-use rg_item_tree::{GenericParams, TypeRef};
+use rg_item_tree::{GenericArg, GenericParams, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{
     FunctionRef, ImplRef, ItemOwner, SemanticIrReadTxn, TraitApplicability, TraitImplRef,
@@ -17,7 +17,7 @@ use crate::{
     ir::body::BodyData,
     ir::ids::{BodyFunctionRef, BodyRef},
     ir::item::{BodyFunctionOwner, BodyImplData},
-    ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
+    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
 
 use super::{
@@ -238,20 +238,12 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
             return Ok(true);
         };
 
-        let impl_type_args = segment
-            .args
-            .iter()
-            .filter_map(generic_arg_type_ref)
-            .collect::<Vec<_>>();
-        if impl_type_args.is_empty() {
-            return Ok(true);
-        }
-
-        let receiver_type_args = receiver_ty
-            .args
-            .iter()
-            .filter_map(body_generic_arg_ty)
-            .collect::<Vec<_>>();
+        let Some(impl_type_args) = Self::item_tree_type_args(&segment.args) else {
+            return Ok(false);
+        };
+        let Some(receiver_type_args) = Self::body_type_args(&receiver_ty.args) else {
+            return Ok(false);
+        };
         if impl_type_args.len() != receiver_type_args.len() {
             return Ok(false);
         }
@@ -304,20 +296,12 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
             return Ok(TraitApplicability::Maybe);
         };
 
-        let impl_type_args = segment
-            .args
-            .iter()
-            .filter_map(generic_arg_type_ref)
-            .collect::<Vec<_>>();
-        if impl_type_args.is_empty() {
-            return Ok(TraitApplicability::Yes);
-        }
-
-        let receiver_type_args = receiver_ty
-            .args
-            .iter()
-            .filter_map(body_generic_arg_ty)
-            .collect::<Vec<_>>();
+        let Some(impl_type_args) = Self::item_tree_type_args(&segment.args) else {
+            return Ok(TraitApplicability::Maybe);
+        };
+        let Some(receiver_type_args) = Self::body_type_args(&receiver_ty.args) else {
+            return Ok(TraitApplicability::Maybe);
+        };
         if impl_type_args.len() != receiver_type_args.len() {
             return Ok(TraitApplicability::Maybe);
         }
@@ -490,6 +474,24 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
             .collect()
     }
 
+    /// Returns item-tree type args only when no lifetime/const/assoc args were written.
+    fn item_tree_type_args(args: &[GenericArg]) -> Option<Vec<&TypeRef>> {
+        let mut type_args = Vec::new();
+        for arg in args {
+            type_args.push(generic_arg_type_ref(arg)?);
+        }
+        Some(type_args)
+    }
+
+    /// Returns Body IR type args only when no lifetime/const/assoc args were preserved.
+    fn body_type_args(args: &[BodyGenericArg]) -> Option<Vec<BodyTy>> {
+        let mut type_args = Vec::new();
+        for arg in args {
+            type_args.push(body_generic_arg_ty(arg)?);
+        }
+        Some(type_args)
+    }
+
     /// Returns whether the impl header has no constraints that require solving.
     fn impl_header_has_only_plain_type_params(impl_data: &rg_semantic_ir::ImplData) -> bool {
         impl_data.generics.lifetimes.is_empty()
@@ -660,20 +662,12 @@ impl<'query, 'db, 'body> LocalImplMatcher<'query, 'db, 'body> {
             return Ok(true);
         };
 
-        let impl_type_args = segment
-            .args
-            .iter()
-            .filter_map(generic_arg_type_ref)
-            .collect::<Vec<_>>();
-        if impl_type_args.is_empty() {
-            return Ok(true);
-        }
-
-        let receiver_type_args = receiver_ty
-            .args
-            .iter()
-            .filter_map(body_generic_arg_ty)
-            .collect::<Vec<_>>();
+        let Some(impl_type_args) = BodyImplMatcher::item_tree_type_args(&segment.args) else {
+            return Ok(false);
+        };
+        let Some(receiver_type_args) = BodyImplMatcher::body_type_args(&receiver_ty.args) else {
+            return Ok(false);
+        };
         if impl_type_args.len() != receiver_type_args.len() {
             return Ok(false);
         }

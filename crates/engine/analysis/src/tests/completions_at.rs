@@ -1489,6 +1489,39 @@ pub fn use_it(wrapper: Wrapper<User>) {
 }
 
 #[test]
+fn marks_non_type_generic_trait_impl_args_as_maybe() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_const_trait_completion"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Wrapper<const N: usize>;
+
+pub trait Named {
+    fn label(&self);
+}
+
+impl Named for Wrapper<1> {
+    fn label(&self) {}
+}
+
+pub fn use_it(wrapper: Wrapper<2>) {
+    wrapper.$0;
+}
+"#,
+        &[AnalysisQuery::complete("const trait impl completions", "0")],
+        expect![[r#"
+            const trait impl completions
+            - trait_method label (maybe)
+        "#]],
+    );
+}
+
+#[test]
 fn completes_methods_after_field_receiver() {
     check_analysis_queries(
         r#"
