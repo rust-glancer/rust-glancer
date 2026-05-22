@@ -243,32 +243,22 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 scope_distance,
             } => {
                 hidden.insert((label.clone(), ScopeNamespace::Values));
-                let Some(data) = self.analysis.body_ir.local_function_data(function)? else {
+                let function = ResolvedFunctionRef::BodyLocal(function);
+                let Some(completion) = FunctionCompletionRenderer::new(self.analysis, self.query)
+                    .completion(FunctionCompletionRequest {
+                    function,
+                    label_override: Some(&label),
+                    kind: CompletionKind::Function,
+                    applicability: CompletionApplicability::Known,
+                    edit,
+                    call_completion: FunctionCallCompletion::Plain,
+                    sort_policy: filter.sort_policy(),
+                    sort_priority: Some(CompletionSortPriority::body_scope(scope_distance)),
+                })?
+                else {
                     return Ok(());
                 };
-                let kind = CompletionKind::Function;
-                let target = CompletionTarget::Function(
-                    rg_body_ir::ResolvedFunctionRef::BodyLocal(function),
-                );
-                completions.push(CompletionItem {
-                    label: label.clone(),
-                    kind,
-                    target,
-                    applicability: CompletionApplicability::Known,
-                    detail: Some(
-                        SignatureRenderer::new(self.analysis).local_function_signature(data),
-                    ),
-                    documentation: data.docs.as_ref().map(Documentation::text),
-                    sort_text: filter.sort_policy().sort_text(
-                        Some(CompletionSortPriority::body_scope(scope_distance)),
-                        &label,
-                        kind,
-                        CompletionApplicability::Known,
-                        target,
-                    ),
-                    insert_text: CompletionInsertText::Plain,
-                    edit: Some(edit),
-                });
+                completions.push(completion.item);
             }
         }
         Ok(())

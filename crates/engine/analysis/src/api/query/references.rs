@@ -19,6 +19,7 @@ use crate::{
         Analysis,
         query::navigation::SymbolResolver,
         resolve::entity::{EntityResolver, ResolvedEntity},
+        view::member::MemberLookup,
     },
     model::{ReferenceLocation, SymbolAt},
 };
@@ -305,34 +306,19 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         candidate: SemanticCursorCandidate,
     ) -> anyhow::Result<Option<ReferenceCandidate>> {
         let candidate = match candidate {
-            SemanticCursorCandidate::Field { field, span } => {
-                if !self.query.includes_declarations() {
-                    return Ok(None);
-                }
-                let Some(data) = self.analysis.semantic_ir.field_data(field)? else {
-                    return Ok(None);
-                };
-                ReferenceCandidate {
-                    symbol: SymbolAt::Field { field, span },
+            SemanticCursorCandidate::Field { field, span } => self.field_declaration_candidate(
+                SymbolAt::Field { field, span },
+                ResolvedFieldRef::Semantic(field),
+                target,
+                span,
+            )?,
+            SemanticCursorCandidate::Function { function, span } => self
+                .function_declaration_candidate(
+                    SymbolAt::Function { function, span },
+                    ResolvedFunctionRef::Semantic(function),
                     target,
-                    file_id: data.file_id,
                     span,
-                }
-            }
-            SemanticCursorCandidate::Function { function, span } => {
-                if !self.query.includes_declarations() {
-                    return Ok(None);
-                }
-                let Some(data) = self.analysis.semantic_ir.function_data(function)? else {
-                    return Ok(None);
-                };
-                ReferenceCandidate {
-                    symbol: SymbolAt::Function { function, span },
-                    target,
-                    file_id: data.source.file_id,
-                    span,
-                }
-            }
+                )?,
             SemanticCursorCandidate::EnumVariant { variant, span } => {
                 if !self.query.includes_declarations() {
                     return Ok(None);
@@ -340,19 +326,19 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant)? else {
                     return Ok(None);
                 };
-                ReferenceCandidate {
+                Some(ReferenceCandidate {
                     symbol: SymbolAt::EnumVariant { variant, span },
                     target,
                     file_id: data.file_id,
                     span,
-                }
+                })
             }
             SemanticCursorCandidate::TypePath {
                 context,
                 path,
                 file_id,
                 span,
-            } => ReferenceCandidate {
+            } => Some(ReferenceCandidate {
                 symbol: SymbolAt::TypePath {
                     context,
                     path,
@@ -361,10 +347,10 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 target,
                 file_id,
                 span,
-            },
+            }),
         };
 
-        Ok(Some(candidate))
+        Ok(candidate)
     }
 
     fn push_body_candidates(
@@ -403,12 +389,12 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 let Some(data) = body_data.binding(binding) else {
                     return Ok(None);
                 };
-                ReferenceCandidate {
+                Some(ReferenceCandidate {
                     symbol: SymbolAt::Binding { body, binding },
                     target,
                     file_id: data.source.file_id,
                     span,
-                }
+                })
             }
             BodyCursorCandidate::Expr { body, expr, .. } => {
                 let Some(body_data) = self.analysis.body_ir.body_data(body)? else {
@@ -417,12 +403,12 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 let Some(data) = body_data.expr(expr) else {
                     return Ok(None);
                 };
-                ReferenceCandidate {
+                Some(ReferenceCandidate {
                     symbol: SymbolAt::Expr { body, expr },
                     target,
                     file_id: data.source.file_id,
                     span,
-                }
+                })
             }
             BodyCursorCandidate::LocalItem { item, .. } => {
                 if !self.query.includes_declarations() {
@@ -434,12 +420,12 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 let Some(data) = body_data.local_item(item.item) else {
                     return Ok(None);
                 };
-                ReferenceCandidate {
+                Some(ReferenceCandidate {
                     symbol: SymbolAt::LocalItem { item, span },
                     target,
                     file_id: data.name_source.file_id,
                     span,
-                }
+                })
             }
             BodyCursorCandidate::LocalValueItem { item, .. } => {
                 if !self.query.includes_declarations() {
@@ -451,27 +437,19 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 let Some(data) = body_data.local_value_item(item.item) else {
                     return Ok(None);
                 };
-                ReferenceCandidate {
+                Some(ReferenceCandidate {
                     symbol: SymbolAt::LocalValueItem { item, span },
                     target,
                     file_id: data.name_source.file_id,
                     span,
-                }
+                })
             }
-            BodyCursorCandidate::LocalField { field, .. } => {
-                if !self.query.includes_declarations() {
-                    return Ok(None);
-                }
-                let Some(data) = self.analysis.body_ir.local_field_data(field)? else {
-                    return Ok(None);
-                };
-                ReferenceCandidate {
-                    symbol: SymbolAt::LocalField { field, span },
-                    target,
-                    file_id: data.item.source.file_id,
-                    span,
-                }
-            }
+            BodyCursorCandidate::LocalField { field, .. } => self.field_declaration_candidate(
+                SymbolAt::LocalField { field, span },
+                ResolvedFieldRef::BodyLocal(field),
+                target,
+                span,
+            )?,
             BodyCursorCandidate::LocalEnumVariant { variant, .. } => {
                 if !self.query.includes_declarations() {
                     return Ok(None);
@@ -479,34 +457,27 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 let Some(data) = self.analysis.body_ir.local_enum_variant_data(variant)? else {
                     return Ok(None);
                 };
-                ReferenceCandidate {
+                Some(ReferenceCandidate {
                     symbol: SymbolAt::LocalEnumVariant { variant, span },
                     target,
                     file_id: data.item.source.file_id,
                     span,
-                }
+                })
             }
-            BodyCursorCandidate::LocalFunction { function, .. } => {
-                if !self.query.includes_declarations() {
-                    return Ok(None);
-                }
-                let Some(data) = self.analysis.body_ir.local_function_data(function)? else {
-                    return Ok(None);
-                };
-                ReferenceCandidate {
-                    symbol: SymbolAt::LocalFunction { function, span },
+            BodyCursorCandidate::LocalFunction { function, .. } => self
+                .function_declaration_candidate(
+                    SymbolAt::LocalFunction { function, span },
+                    ResolvedFunctionRef::BodyLocal(function),
                     target,
-                    file_id: data.name_source.file_id,
                     span,
-                }
-            }
+                )?,
             BodyCursorCandidate::TypePath {
                 body,
                 scope,
                 path,
                 file_id,
                 ..
-            } => ReferenceCandidate {
+            } => Some(ReferenceCandidate {
                 symbol: SymbolAt::BodyPath {
                     body,
                     scope,
@@ -516,14 +487,14 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 target,
                 file_id,
                 span,
-            },
+            }),
             BodyCursorCandidate::ValuePath {
                 body,
                 scope,
                 path,
                 file_id,
                 ..
-            } => ReferenceCandidate {
+            } => Some(ReferenceCandidate {
                 symbol: SymbolAt::BodyValuePath {
                     body,
                     scope,
@@ -533,10 +504,62 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 target,
                 file_id,
                 span,
-            },
+            }),
         };
 
-        Ok(Some(candidate))
+        Ok(candidate)
+    }
+
+    fn field_declaration_candidate(
+        &self,
+        symbol: SymbolAt,
+        field: ResolvedFieldRef,
+        scan_target: TargetRef,
+        span: Span,
+    ) -> anyhow::Result<Option<ReferenceCandidate>> {
+        if !self.query.includes_declarations() {
+            return Ok(None);
+        }
+        let members = MemberLookup::new(self.analysis);
+        let Some(declaration) = members
+            .field_view(field)?
+            .and_then(|field| field.declaration())
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(ReferenceCandidate {
+            symbol,
+            target: scan_target,
+            file_id: declaration.file_id,
+            span,
+        }))
+    }
+
+    fn function_declaration_candidate(
+        &self,
+        symbol: SymbolAt,
+        function: ResolvedFunctionRef,
+        scan_target: TargetRef,
+        span: Span,
+    ) -> anyhow::Result<Option<ReferenceCandidate>> {
+        if !self.query.includes_declarations() {
+            return Ok(None);
+        }
+        let members = MemberLookup::new(self.analysis);
+        let Some(declaration) = members
+            .function_view(function)?
+            .map(|function| function.declaration())
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(ReferenceCandidate {
+            symbol,
+            target: scan_target,
+            file_id: declaration.file_id,
+            span,
+        }))
     }
 }
 

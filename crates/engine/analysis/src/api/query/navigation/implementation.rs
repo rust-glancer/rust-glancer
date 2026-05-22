@@ -199,11 +199,9 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
             ResolvedFunctionRef::Semantic(function) => {
                 self.push_semantic_function_targets(function, receiver_ty, targets)
             }
-            ResolvedFunctionRef::BodyLocal(function) => {
+            ResolvedFunctionRef::BodyLocal(_) => {
                 let Some(target) = NavigationTargetResolver::new(self.0)
-                    .navigation_target_for_resolved_function(ResolvedFunctionRef::BodyLocal(
-                        function,
-                    ))?
+                    .navigation_target_for_resolved_function(function)?
                 else {
                     return Ok(());
                 };
