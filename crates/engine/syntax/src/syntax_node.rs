@@ -53,6 +53,7 @@ pub(crate) struct SyntaxTree {
     errors: Box<[SyntaxError]>,
 }
 
+/// Approximate retained storage for one immutable syntax tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SyntaxTreeMemoryUsage {
     pub source_bytes: usize,
@@ -206,7 +207,7 @@ impl SyntaxTree {
         self.children(id).get(index as usize).copied()
     }
 
-    fn memory_usage(&self) -> SyntaxTreeMemoryUsage {
+    pub(crate) fn memory_usage(&self) -> SyntaxTreeMemoryUsage {
         SyntaxTreeMemoryUsage {
             source_bytes: self.source.len(),
             node_table_bytes: self.nodes.len() * std::mem::size_of::<NodeData>(),
@@ -451,10 +452,6 @@ impl SyntaxNode {
             .find(|child| child.text_range().contains_range(range))
     }
 
-    pub fn tree_memory_usage(&self) -> SyntaxTreeMemoryUsage {
-        self.tree.memory_usage()
-    }
-
     pub(crate) fn parse_errors(&self) -> &[SyntaxError] {
         &self.tree.errors
     }
@@ -544,10 +541,6 @@ impl SyntaxToken {
                 .find_map(|node| node.prev_sibling_or_token())
                 .and_then(|element| element.last_token()),
         }
-    }
-
-    pub fn tree_memory_usage(&self) -> SyntaxTreeMemoryUsage {
-        self.tree.memory_usage()
     }
 }
 

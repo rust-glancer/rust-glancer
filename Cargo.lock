@@ -1562,7 +1562,6 @@ version = "0.1.0"
 dependencies = [
  "ls-types",
  "rg_memsize_derive",
- "rg_syntax",
 ]
 
 [[package]]

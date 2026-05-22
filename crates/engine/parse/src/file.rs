@@ -59,6 +59,7 @@ pub(crate) struct ParsedFileData {
     /// `rg_syntax::SourceFile` is a traversal cursor over an immutable parse tree. Keeping the
     /// parse result lets each AST-consuming phase create a fresh local cursor instead of sharing
     /// cursor internals across package or thread boundaries.
+    #[memsize(with = "Self::record_syntax_memory")]
     pub(crate) syntax: Option<SyntaxParse<SourceFile>>,
 }
 
@@ -416,6 +417,58 @@ impl ParsedSource {
 }
 
 impl ParsedFileData {
+    fn record_syntax_memory(
+        syntax: &Option<SyntaxParse<SourceFile>>,
+        recorder: &mut rg_memsize::MemoryRecorder,
+    ) {
+        if let Some(syntax) = syntax {
+            // The parse cache owns one retained syntax tree per parsed file. Count it here
+            // explicitly so cloned parse handles and AST cursors do not look like owners.
+            Self::record_syntax_tree_memory(syntax.retained_tree_memory_usage(), recorder);
+        }
+    }
+
+    fn record_syntax_tree_memory(
+        usage: rg_syntax::SyntaxTreeMemoryUsage,
+        recorder: &mut rg_memsize::MemoryRecorder,
+    ) {
+        // `rg_syntax` exposes storage facts without knowing about memory reports; this is the
+        // parse-cache boundary where those facts become retained-memory accounting.
+        recorder.scope("tree", |recorder| {
+            recorder.scope("source", |recorder| {
+                recorder.record_heap::<str>(usage.source_bytes);
+            });
+            recorder.scope("nodes", |recorder| {
+                recorder.record_type_name(
+                    rg_memsize::MemoryRecordKind::Heap,
+                    "rg_syntax::NodeData",
+                    usage.node_table_bytes,
+                );
+            });
+            recorder.scope("tokens", |recorder| {
+                recorder.record_type_name(
+                    rg_memsize::MemoryRecordKind::Heap,
+                    "rg_syntax::TokenData",
+                    usage.token_table_bytes,
+                );
+            });
+            recorder.scope("children", |recorder| {
+                recorder.record_type_name(
+                    rg_memsize::MemoryRecordKind::Heap,
+                    "rg_syntax::ElementId",
+                    usage.child_table_bytes,
+                );
+            });
+            recorder.scope("errors", |recorder| {
+                recorder.record_type_name(
+                    rg_memsize::MemoryRecordKind::Heap,
+                    "rg_syntax::SyntaxError",
+                    usage.error_bytes,
+                );
+            });
+        });
+    }
+
     fn parse_snapshot(&self) -> anyhow::Result<ParsedFileSnapshot> {
         Ok(ParsedFileSnapshot {
             path: ParsedFilePath::from_path(&self.path),

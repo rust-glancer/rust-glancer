@@ -14,12 +14,10 @@ description.workspace = true
 default = ["derive"]
 derive = ["dep:rg_memsize_derive"]
 ls_types = ["dep:ls_types"]
-rg_syntax = ["dep:rg_syntax"]
 
 [dependencies]
 ls_types = { workspace = true, optional = true }
 rg_memsize_derive = { workspace = true, optional = true }
-rg_syntax = { workspace = true, optional = true }
 
 [[test]]
 name = "derive"

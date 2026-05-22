@@ -8,8 +8,6 @@ use std::{any, collections::BTreeMap, mem};
 mod default_impls;
 #[cfg(feature = "ls_types")]
 mod ls_types_impls;
-#[cfg(feature = "rg_syntax")]
-mod rg_syntax_impls;
 #[cfg(test)]
 mod tests;
 
