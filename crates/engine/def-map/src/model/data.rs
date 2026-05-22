@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use rg_arena::Arena;
-use rg_item_tree::{Documentation, ItemTag, ItemTreeRef, MacroDefinitionItem, VisibilityLevel};
+use rg_item_tree::{Documentation, ItemTag, MacroDefinitionItem, VisibilityLevel};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 use rg_tt::TopSubtree;
@@ -9,7 +9,8 @@ use rg_workspace::RustEdition;
 
 use super::scope::Namespace;
 use super::{
-    ImportData, ImportId, LocalDefId, LocalImplId, ModuleId, ModuleRef, ModuleScope, TargetRef,
+    ImportData, ImportId, ItemSource, LocalDefId, LocalImplId, ModuleId, ModuleRef, ModuleScope,
+    TargetRef,
 };
 
 /// Frozen namespace map for one analyzed target.
@@ -245,7 +246,7 @@ pub struct LocalDefData {
     pub name: Name,
     pub kind: LocalDefKind,
     pub visibility: VisibilityLevel,
-    pub source: ItemTreeRef,
+    pub source: ItemSource,
     pub file_id: FileId,
     pub name_span: Option<Span>,
     pub span: Span,
@@ -317,7 +318,7 @@ impl MacroDefinitionPayload {
 )]
 pub struct LocalImplData {
     pub module: ModuleId,
-    pub source: ItemTreeRef,
+    pub source: ItemSource,
     pub file_id: FileId,
     pub span: Span,
 }

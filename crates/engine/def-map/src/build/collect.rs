@@ -335,7 +335,7 @@ impl<'db> TargetScopeCollector<'db> {
             name: name.clone(),
             kind,
             visibility: item.visibility.clone(),
-            source,
+            source: source.into(),
             file_id: item.file_id,
             name_span: item.name_span,
             span: item.span,
@@ -473,7 +473,7 @@ impl<'db> TargetScopeCollector<'db> {
     fn collect_local_impl(&mut self, module_id: ModuleId, item: &ItemNode, source: ItemTreeRef) {
         let local_impl_id = self.def_map.alloc_local_impl(LocalImplData {
             module: module_id,
-            source,
+            source: source.into(),
             file_id: item.file_id,
             span: item.span,
         });

@@ -7,7 +7,8 @@
 use anyhow::Context as _;
 
 use rg_def_map::{
-    DefMapDb, DefMapReadTxn, LocalDefRef, LocalImplRef, ModuleRef, PackageSlot, TargetRef,
+    DefMapDb, DefMapReadTxn, ItemSource, LocalDefRef, LocalImplRef, ModuleRef, PackageSlot,
+    TargetRef,
 };
 use rg_item_tree::{
     ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
@@ -116,7 +117,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             .map(|(local_def_ref, local_def)| (local_def_ref, local_def.source, local_def.module))
             .collect::<Vec<_>>();
         for (local_def_ref, source, module) in local_defs {
-            let item = self.item(source)?;
+            let (source, item) = self.item(source)?;
             let owner = ModuleRef {
                 target: self.target,
                 module,
@@ -145,7 +146,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             })
             .collect::<Vec<_>>();
         for (local_impl_ref, source, module) in local_impls {
-            let item = self.item(source)?;
+            let (source, item) = self.item(source)?;
             let owner = ModuleRef {
                 target: self.target,
                 module,
@@ -160,13 +161,17 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         Ok(self.target_ir)
     }
 
-    fn item(&self, item_ref: ItemTreeRef) -> anyhow::Result<&'a ItemNode> {
-        self.item_tree.item(item_ref).with_context(|| {
+    fn item(&self, source: ItemSource) -> anyhow::Result<(ItemTreeRef, &'a ItemNode)> {
+        let item_ref = source.as_item_tree().with_context(|| {
+            format!("while attempting to fetch unsupported generated item source {source:?}")
+        })?;
+        let item = self.item_tree.item(item_ref).with_context(|| {
             format!(
                 "while attempting to fetch item-tree node {:?} in {:?}",
                 item_ref.item, item_ref.file_id
             )
-        })
+        })?;
+        Ok((item_ref, item))
     }
 
     fn lower_local_item(

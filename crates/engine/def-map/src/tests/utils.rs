@@ -645,7 +645,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
                         .expect("local impl id should exist while dumping");
                     dump.push_str(&format!(
                         "- impl {}\n",
-                        self.render_item_tree_ref(local_impl.source)
+                        self.render_item_source(local_impl.source)
                     ));
                 }
             }
@@ -755,6 +755,13 @@ impl<'a> TargetDefMapSnapshot<'a> {
     fn render_item_tree_ref(&self, item_ref: rg_item_tree::ItemTreeRef) -> String {
         let file_label = file_label(self.package, item_ref.file_id);
         format!("{file_label}#{}", item_ref.item.0)
+    }
+
+    fn render_item_source(&self, source: crate::ItemSource) -> String {
+        match source {
+            crate::ItemSource::ItemTree(item_ref) => self.render_item_tree_ref(item_ref),
+            crate::ItemSource::Generated(item_ref) => format!("generated#{}", item_ref.item.0),
+        }
     }
 
     fn module_path(&self, target_ref: TargetRef, module_id: ModuleId) -> String {

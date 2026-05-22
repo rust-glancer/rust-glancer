@@ -157,7 +157,7 @@ impl SourceFragmentCollector<'_> {
             name: name.clone(),
             kind,
             visibility: item.visibility.clone(),
-            source,
+            source: source.into(),
             file_id: item.file_id,
             name_span: item.name_span,
             span: item.span,
@@ -311,7 +311,7 @@ impl SourceFragmentCollector<'_> {
     ) {
         let local_impl_id = self.state.def_map.alloc_local_impl(LocalImplData {
             module: module_id,
-            source,
+            source: source.into(),
             file_id: item.file_id,
             span: item.span,
         });

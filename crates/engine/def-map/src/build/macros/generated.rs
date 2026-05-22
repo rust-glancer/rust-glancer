@@ -218,7 +218,8 @@ impl GeneratedCollector<'_> {
             name: name.clone(),
             kind,
             visibility: visibility.clone(),
-            source: self.origin.source,
+            // TODO: Allocate a generated-item payload here once the generated source store exists.
+            source: self.origin.source.into(),
             file_id: self.origin.file_id,
             name_span: Some(self.origin.span),
             span: self.origin.span,
