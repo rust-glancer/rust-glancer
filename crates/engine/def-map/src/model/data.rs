@@ -13,7 +13,16 @@ use super::{
 };
 
 /// Frozen namespace map for one analyzed target.
-#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub struct DefMap {
     root_module: Option<ModuleId>,
     // Currently means “implicit roots visible to this target,” including sibling lib roots
@@ -48,10 +57,6 @@ impl DefMap {
         self.modules.as_slice()
     }
 
-    pub(crate) fn modules_storage(&self) -> &Arena<ModuleId, ModuleData> {
-        &self.modules
-    }
-
     /// Returns module data by id.
     pub fn module(&self, module_id: ModuleId) -> Option<&ModuleData> {
         self.modules.get(module_id)
@@ -75,17 +80,9 @@ impl DefMap {
         self.local_defs.as_slice()
     }
 
-    pub(crate) fn local_defs_storage(&self) -> &Arena<LocalDefId, LocalDefData> {
-        &self.local_defs
-    }
-
     /// Returns a declarative macro payload by its local definition id.
     pub(crate) fn macro_definition(&self, local_def: LocalDefId) -> Option<&MacroDefinitionData> {
         self.macro_definitions.get(&local_def)
-    }
-
-    pub(crate) fn macro_definitions_storage(&self) -> &HashMap<LocalDefId, MacroDefinitionData> {
-        &self.macro_definitions
     }
 
     /// Returns impl block data by id.
@@ -98,17 +95,9 @@ impl DefMap {
         self.local_impls.as_slice()
     }
 
-    pub(crate) fn local_impls_storage(&self) -> &Arena<LocalImplId, LocalImplData> {
-        &self.local_impls
-    }
-
     /// Returns all imports in stable import-id order.
     pub fn imports(&self) -> &[ImportData] {
         self.imports.as_slice()
-    }
-
-    pub(crate) fn imports_storage(&self) -> &Arena<ImportId, ImportData> {
-        &self.imports
     }
 
     pub(crate) fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &ImportData)> {
@@ -174,7 +163,9 @@ impl DefMap {
 }
 
 /// One module in the frozen namespace graph.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct ModuleData {
     pub name: Option<Name>,
     pub name_span: Option<Span>,
@@ -210,7 +201,9 @@ impl ModuleData {
 }
 
 /// Where a module came from in source code.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum ModuleOrigin {
     Root {
         file_id: FileId,
@@ -244,7 +237,9 @@ impl ModuleOrigin {
 }
 
 /// One module-scope definition collected from source.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct LocalDefData {
     pub module: ModuleId,
     pub name: Name,
@@ -263,7 +258,9 @@ impl LocalDefData {
 }
 
 /// Declarative macro definition payload retained for expansion after def-map freezing.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct MacroDefinitionData {
     pub edition: RustEdition,
     /// Target that `$crate` inside this macro body should resolve to when expanded.
@@ -288,9 +285,12 @@ impl MacroDefinitionData {
 }
 
 /// Token-tree payload needed to compile a collected declarative macro.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum MacroDefinitionPayload {
     MacroRules {
+        #[memsize(scope = "body")]
         body: Option<TopSubtree>,
     },
     MacroDef {
@@ -312,7 +312,9 @@ impl MacroDefinitionPayload {
 }
 
 /// One module-owned impl block collected from source.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct LocalImplData {
     pub module: ModuleId,
     pub source: ItemTreeRef,
@@ -330,7 +332,9 @@ pub struct LocalImplData {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum LocalDefKind {
     #[display("const")]
     Const,

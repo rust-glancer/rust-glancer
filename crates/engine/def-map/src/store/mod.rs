@@ -1,7 +1,6 @@
-//! Def-map snapshot storage, lazy package access, and memory accounting.
+//! Def-map snapshot storage and lazy package access.
 
 mod db;
-mod memsize;
 mod txn;
 
 pub use self::{

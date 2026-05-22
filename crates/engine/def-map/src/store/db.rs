@@ -1,7 +1,6 @@
 //! Def-map package store and transaction entry points.
 
 use rg_item_tree::ItemTreeDb;
-use rg_memsize::{MemoryRecorder, MemorySize};
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_parse::{self, TargetId};
 use rg_text::PackageNameInterners;
@@ -14,7 +13,7 @@ use crate::{
 };
 
 /// Frozen def maps for all parsed packages and targets.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
 pub struct DefMapDb {
     packages: PackageStore<Package>,
 }
@@ -42,10 +41,6 @@ impl DefMapDb {
         DefMapDbPackageRebuilder::new(
             self, old_read, workspace, parse, item_tree, packages, interners,
         )
-    }
-
-    pub(crate) fn record_packages_memory_children(&self, recorder: &mut MemoryRecorder) {
-        self.packages.record_memory_children(recorder);
     }
 
     pub(crate) fn from_packages(packages: Vec<Package>) -> Self {
@@ -167,7 +162,7 @@ impl DefMapDbMutator<'_> {
 }
 
 /// Coarse totals for reporting that the DefMap phase produced useful data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
 pub struct DefMapStats {
     pub target_count: usize,
     pub module_count: usize,

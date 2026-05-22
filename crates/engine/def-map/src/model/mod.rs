@@ -24,6 +24,5 @@ pub use self::{
 
 pub(crate) use self::{
     ids::ResidentTargetRef,
-    import::ImportSourcePathSegment,
-    scope::{ModuleScopeBuilder, Namespace, ScopeEntryRef, ScopeNameEntry},
+    scope::{ModuleScopeBuilder, Namespace, ScopeEntryRef},
 };
