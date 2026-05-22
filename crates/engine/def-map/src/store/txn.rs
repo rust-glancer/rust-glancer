@@ -4,9 +4,10 @@ use rg_package_store::{PackageRead, PackageStoreError, PackageStoreReadTxn};
 use rg_parse::TargetId;
 
 use crate::{
-    DefMap, ImportData, ImportId, ImportRef, LocalDefData, LocalDefId, LocalDefRef, LocalImplData,
-    LocalImplRef, ModuleData, ModuleId, ModuleRef, Package, PackageSlot, Path, ResolvePathResult,
-    TargetRef, query::path_resolution,
+    DefMap, GeneratedItemRef, GeneratedSourceData, GeneratedSourceId, ImportData, ImportId,
+    ImportRef, LocalDefData, LocalDefId, LocalDefRef, LocalImplData, LocalImplRef, ModuleData,
+    ModuleId, ModuleRef, Package, PackageSlot, Path, ResolvePathResult, TargetRef,
+    query::path_resolution,
 };
 
 /// Read-only def-map access for one query transaction.
@@ -194,6 +195,28 @@ impl<'db> DefMapReadTxn<'db> {
             .collect::<Vec<_>>();
 
         Ok(imports)
+    }
+
+    /// Returns one generated source by stable target-local id.
+    pub fn generated_source(
+        &self,
+        target: TargetRef,
+        source: GeneratedSourceId,
+    ) -> Result<Option<&GeneratedSourceData>, PackageStoreError> {
+        Ok(self
+            .def_map(target)?
+            .and_then(|def_map| def_map.generated_source(source)))
+    }
+
+    /// Returns one retained generated item by stable target-local reference.
+    pub fn generated_item(
+        &self,
+        target: TargetRef,
+        item: GeneratedItemRef,
+    ) -> Result<Option<&rg_item_tree::ItemNode>, PackageStoreError> {
+        Ok(self
+            .generated_source(target, item.source)?
+            .and_then(|source| source.item(item.item)))
     }
 
     /// Resolves a value-position path from one module against this transaction.

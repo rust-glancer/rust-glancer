@@ -758,9 +758,11 @@ impl<'a> TargetDefMapSnapshot<'a> {
     }
 
     fn render_item_source(&self, source: crate::ItemSource) -> String {
-        match source {
-            crate::ItemSource::ItemTree(item_ref) => self.render_item_tree_ref(item_ref),
-            crate::ItemSource::Generated(item_ref) => format!("generated#{}", item_ref.item.0),
+        match source.kind {
+            crate::ItemSourceKind::ItemTree(item_ref) => self.render_item_tree_ref(item_ref),
+            crate::ItemSourceKind::Generated(item_ref) => {
+                format!("generated#{}:{}", item_ref.source.0, item_ref.item.0)
+            }
         }
     }
 

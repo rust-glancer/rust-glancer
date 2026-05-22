@@ -1,36 +1,33 @@
 //! Collects syntax produced by macro expansion back into mutable target state.
 //!
-//! Generated definitions belong to the macro call's module and file identity, while their spans
-//! point at the call site until expansion span maps are threaded through later phases.
+//! Generated definitions belong to the macro call's module and file identity. Their retained item
+//! payloads carry expansion spans where available, while generated imports and other provenance-only
+//! facts may still point at the macro call site.
 
 use anyhow::{Context as _, Result};
 
-use rg_cfg_eval::CfgExpr;
 use rg_item_tree::{
-    Documentation, ImportAlias, ItemTreeRef, MacroCallItem, MacroDefinitionAttrs,
-    MacroDefinitionItem, UseItem, VisibilityLevel,
+    Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ItemTreeRef, MacroCallItem,
+    MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource, UseImport, UseItem,
+    VisibilityLevel,
 };
 use rg_macro_expand::ExpansionSyntax;
 use rg_parse::{FileId, Span};
-use rg_syntax::{
-    AstNode as _, TextRange,
-    ast::{self, HasModuleItem, HasName, HasVisibility},
-};
 use rg_text::{Name, NameInterner};
-use rg_tt::{
-    Span as TtSpan,
-    syntax_bridge::{ExpansionSpanMap, SpanFactory},
-};
 
 use crate::{
-    DefId, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
-    LocalDefId, LocalDefKind, LocalDefRef, MacroDefinitionData, ModuleData, ModuleId, ModuleOrigin,
-    ModuleRef, ModuleScope, PathSegment, ScopeBinding, ScopeBindingOrigin, TargetRef,
+    DefId, GeneratedItemRef, GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath,
+    ImportSourcePath, ItemSource, LocalDefData, LocalDefId, LocalDefKind, LocalDefRef,
+    LocalImplData, MacroDefinitionData, ModuleData, ModuleId, ModuleOrigin, ModuleRef, ModuleScope,
+    PathSegment, ScopeBinding, ScopeBindingOrigin, TargetRef,
     build::{collect::TargetState, finalize::ScopeMatrix, stats::DefMapFinalizationStatsSink},
     model::Namespace,
 };
 
-use super::{ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroExpansionApplyResult};
+use super::{
+    ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroExpansionApplyResult,
+    generated_tree::GeneratedSourceLowering,
+};
 
 /// Call-site identity used for every item produced by one macro expansion.
 #[derive(Debug, Clone)]
@@ -59,11 +56,10 @@ impl GeneratedCollector<'_> {
         macro_name: Option<&str>,
         stats: &mut DefMapFinalizationStatsSink<'_>,
     ) -> Result<MacroExpansionApplyResult> {
-        let ExpansionSyntax { parse, span_map } = expansion;
         // Macro expansion has already run the parser over token trees. At this point we only check
         // syntax errors and collect item-position declarations from the generated root.
         let timer = stats.start_timer();
-        let errors = parse.errors();
+        let errors = expansion.parse.errors();
         stats.finish_timer(timer, |timings, elapsed| {
             timings.parse_generated_sources += elapsed;
         });
@@ -72,22 +68,34 @@ impl GeneratedCollector<'_> {
             stats.record(|stats| stats.record_generated_source_parse_failure(macro_name));
             anyhow::bail!("macro expansion syntax has errors: {errors:?}");
         }
-        let file = ast::MacroItems::cast(parse.syntax_node())
-            .context("while attempting to cast macro expansion syntax root")?;
         stats.record(|stats| stats.generated_sources_parsed += 1);
         self.result.mark_changed();
 
-        let items = file.items().collect::<Vec<_>>();
+        let generated_source = GeneratedSourceLowering::lower(
+            &self.origin,
+            expansion,
+            self.interner,
+            self.state.edition,
+        )
+        .context("while attempting to lower macro expansion into generated source")?;
+        let generated_source_id = self.state.def_map.alloc_generated_source(generated_source);
+        let top_level = self
+            .state
+            .def_map
+            .generated_source(generated_source_id)
+            .expect("generated source should exist immediately after allocation")
+            .top_level
+            .clone();
 
         // Generated items may introduce further macro calls, imports, and inline modules. Those are
         // appended to the same mutable state so the surrounding fixed-point loop can see them.
         let timer = stats.start_timer();
-        for (index, item) in items.into_iter().enumerate() {
+        for (index, item_id) in top_level.into_iter().enumerate() {
             self.collect_item(
                 self.origin.module,
-                item,
+                generated_source_id,
+                item_id,
                 self.origin.order.generated_child(index),
-                &span_map,
                 stats,
             );
         }
@@ -101,128 +109,82 @@ impl GeneratedCollector<'_> {
     fn collect_item(
         &mut self,
         module_id: ModuleId,
-        item: ast::Item,
+        generated_source: GeneratedSourceId,
+        item_id: ItemTreeId,
         order: ItemOrder,
-        span_map: &ExpansionSpanMap,
         stats: &mut DefMapFinalizationStatsSink<'_>,
     ) {
+        let item = self
+            .state
+            .def_map
+            .generated_source(generated_source)
+            .and_then(|source| source.item(item_id))
+            .expect("generated item id should exist while collecting def map")
+            .clone();
         if !self.is_item_enabled(&item) {
             return;
         }
         stats.record(|stats| stats.generated_items_seen += 1);
 
-        match item {
-            ast::Item::Const(item) => {
-                self.collect_named_def(module_id, &item, LocalDefKind::Const, None);
+        match &item.kind {
+            ItemKind::MacroCall(macro_call) => {
+                self.collect_macro_call(module_id, &item, macro_call, order);
             }
-            ast::Item::Enum(item) => {
-                self.collect_named_def(module_id, &item, LocalDefKind::Enum, None);
-            }
-            ast::Item::Fn(item) => {
-                self.collect_named_def(module_id, &item, LocalDefKind::Function, None);
-            }
-            ast::Item::MacroCall(item) => {
-                let fallback = self.origin_tt_span();
-                let mut span_for_range = |range| span_map.span_for_range(range).unwrap_or(fallback);
-                // Macro-generated `include!("...")` would need a real file-relative expansion
-                // context to resolve safely. Keep it unsupported until a crate actually needs it.
-                let macro_call = MacroCallItem::from_ast_with_span(
+            ItemKind::MacroDefinition(macro_definition) => {
+                self.collect_macro_definition(
+                    module_id,
                     &item,
-                    self.interner,
-                    None,
-                    &mut span_for_range,
-                );
-                self.state.push_macro_call(MacroCallSite {
-                    module: module_id,
-                    source: self.origin.source,
-                    path: macro_call.path,
-                    callee: macro_call.callee,
-                    args: macro_call.args,
-                    builtin: macro_call.builtin,
-                    dollar_crate_target: self.origin.dollar_crate_target,
-                    file_id: self.origin.file_id,
-                    span: self.origin.span,
+                    macro_definition,
+                    generated_source,
+                    item_id,
                     order,
-                });
-            }
-            ast::Item::MacroDef(item) => {
-                let fallback = self.origin_tt_span();
-                let mut span_for_range = |range| span_map.span_for_range(range).unwrap_or(fallback);
-                let macro_definition =
-                    MacroDefinitionItem::from_macro_def_with_span(&item, &mut span_for_range);
-                self.collect_named_def(
-                    module_id,
-                    &item,
-                    LocalDefKind::MacroDefinition,
-                    Some((macro_definition, order)),
                 );
             }
-            ast::Item::MacroRules(item) => {
-                let fallback = self.origin_tt_span();
-                let mut span_for_range = |range| span_map.span_for_range(range).unwrap_or(fallback);
-                let macro_definition =
-                    MacroDefinitionItem::from_macro_rules_with_span(&item, &mut span_for_range);
-                self.collect_named_def(
+            ItemKind::Module(module_item) => {
+                self.collect_inline_module(
                     module_id,
                     &item,
-                    LocalDefKind::MacroDefinition,
-                    Some((macro_definition, order)),
+                    module_item,
+                    generated_source,
+                    order,
+                    stats,
                 );
             }
-            ast::Item::Module(item) => {
-                self.collect_inline_module(module_id, &item, order, span_map, stats)
+            ItemKind::Use(use_item) => self.collect_use(module_id, &item, use_item),
+            ItemKind::Impl(_) => {
+                self.collect_local_impl(module_id, &item, generated_source, item_id)
             }
-            ast::Item::Static(item) => {
-                self.collect_named_def(module_id, &item, LocalDefKind::Static, None);
+            ItemKind::AsmExpr | ItemKind::ExternBlock | ItemKind::ExternCrate(_) => {}
+            _ => {
+                self.collect_named_def(module_id, &item, generated_source, item_id);
             }
-            ast::Item::Struct(item) => {
-                self.collect_named_def(module_id, &item, LocalDefKind::Struct, None);
-            }
-            ast::Item::Trait(item) => {
-                self.collect_named_def(module_id, &item, LocalDefKind::Trait, None);
-            }
-            ast::Item::TypeAlias(item) => {
-                self.collect_named_def(module_id, &item, LocalDefKind::TypeAlias, None);
-            }
-            ast::Item::Union(item) => {
-                self.collect_named_def(module_id, &item, LocalDefKind::Union, None);
-            }
-            ast::Item::Use(item) => self.collect_use(module_id, &item),
-            ast::Item::AsmExpr(_)
-            | ast::Item::ExternBlock(_)
-            | ast::Item::ExternCrate(_)
-            | ast::Item::Impl(_) => {}
         }
     }
 
-    fn is_item_enabled(&self, item: &ast::Item) -> bool {
-        let cfg = CfgExpr::from_attrs(item);
-        self.state.cfg_evaluator().is_enabled(&cfg)
+    fn is_item_enabled(&self, item: &ItemNode) -> bool {
+        self.state.cfg_evaluator().is_enabled(&item.cfg)
     }
 
-    fn collect_named_def<T>(
+    fn collect_named_def(
         &mut self,
         module_id: ModuleId,
-        item: &T,
-        kind: LocalDefKind,
-        macro_definition: Option<(MacroDefinitionItem, ItemOrder)>,
-    ) where
-        T: AstNodeWithNameAndVisibility,
-    {
-        let Some(name) = item.name().map(|name| self.interner.intern(name.text())) else {
-            return;
-        };
-        let visibility = VisibilityLevel::from_ast(item.visibility());
+        item: &ItemNode,
+        generated_source: GeneratedSourceId,
+        item_id: ItemTreeId,
+    ) -> Option<LocalDefId> {
+        let kind = LocalDefKind::from_item_tag(item.kind.tag())?;
+        let namespace = kind.namespace();
+        let name = item.name.clone()?;
+        let visibility = item.visibility.clone();
         let local_def_id = self.state.def_map.alloc_local_def(LocalDefData {
             module: module_id,
             name: name.clone(),
             kind,
             visibility: visibility.clone(),
-            // TODO: Allocate a generated-item payload here once the generated source store exists.
-            source: self.origin.source.into(),
-            file_id: self.origin.file_id,
-            name_span: Some(self.origin.span),
-            span: self.origin.span,
+            source: self.item_source(generated_source, item_id),
+            file_id: item.file_id,
+            name_span: item.name_span,
+            span: item.span,
         });
         self.state
             .def_map
@@ -249,40 +211,62 @@ impl GeneratedCollector<'_> {
             .base_scopes
             .get_mut(module_id.0)
             .expect("base scope should exist for generated local definition")
-            .insert_binding(&name, kind.namespace(), binding.clone());
+            .insert_binding(&name, namespace, binding.clone());
         self.current_scopes
             .module_scope_mut(self.state.target, module_id)
             .expect("current scope should exist for generated local definition")
-            .insert_binding(&name, kind.namespace(), binding);
+            .insert_binding(&name, namespace, binding);
 
-        if let Some((item, order)) = macro_definition {
-            self.state.macro_definitions.insert(
+        Some(local_def_id)
+    }
+
+    fn collect_macro_definition(
+        &mut self,
+        module_id: ModuleId,
+        item: &ItemNode,
+        macro_definition: &MacroDefinitionItem,
+        generated_source: GeneratedSourceId,
+        item_id: ItemTreeId,
+        order: ItemOrder,
+    ) {
+        let Some(local_def_id) = self.collect_named_def(module_id, item, generated_source, item_id)
+        else {
+            return;
+        };
+        let Some(name) = item.name.clone() else {
+            return;
+        };
+
+        self.state.macro_definitions.insert(
+            local_def_id,
+            MacroDefinitionRecord {
+                order: order.clone(),
+            },
+        );
+        if matches!(macro_definition, MacroDefinitionItem::MacroRules { .. }) {
+            self.state.textual_macro_scopes.record_definition(
+                module_id,
+                name.clone(),
                 local_def_id,
-                MacroDefinitionRecord {
-                    order: order.clone(),
-                },
-            );
-            if matches!(item, MacroDefinitionItem::MacroRules { .. }) {
-                self.state.textual_macro_scopes.record_definition(
-                    module_id,
-                    name.clone(),
-                    local_def_id,
-                    order,
-                );
-            }
-            if let MacroDefinitionItem::MacroRules { attrs, .. } = &item
-                && self.macro_definition_is_exported(attrs)
-            {
-                self.export_macro_definition_to_root(&name, local_def_id);
-            }
-            // Generated macro definitions inherit `$crate` from the macro that produced them, not
-            // from the module where the generated definition is inserted.
-            let dollar_crate_target = self.origin.dollar_crate_target.unwrap_or(self.state.target);
-            self.state.def_map.insert_macro_definition(
-                local_def_id,
-                MacroDefinitionData::from_item(&item, self.state.edition, dollar_crate_target),
+                order,
             );
         }
+        if let MacroDefinitionItem::MacroRules { attrs, .. } = macro_definition
+            && self.macro_definition_is_exported(attrs)
+        {
+            self.export_macro_definition_to_root(&name, local_def_id);
+        }
+        // Generated macro definitions inherit `$crate` from the macro that produced them, not from
+        // the module where the generated definition is inserted.
+        let dollar_crate_target = self.origin.dollar_crate_target.unwrap_or(self.state.target);
+        self.state.def_map.insert_macro_definition(
+            local_def_id,
+            MacroDefinitionData::from_item(
+                macro_definition,
+                self.state.edition,
+                dollar_crate_target,
+            ),
+        );
     }
 
     /// Updates both scope snapshots for a generated `#[macro_export]` definition.
@@ -329,25 +313,26 @@ impl GeneratedCollector<'_> {
     fn collect_inline_module(
         &mut self,
         parent_module: ModuleId,
-        item: &ast::Module,
+        item: &ItemNode,
+        module_item: &ModuleItem,
+        generated_source: GeneratedSourceId,
         order: ItemOrder,
-        span_map: &ExpansionSpanMap,
         stats: &mut DefMapFinalizationStatsSink<'_>,
     ) {
-        let Some(module_name) = item.name().map(|name| self.interner.intern(name.text())) else {
+        let Some(module_name) = item.name.clone() else {
             return;
         };
-        let Some(item_list) = item.item_list() else {
+        let ModuleSource::Inline { items } = &module_item.source else {
             // Out-of-line generated modules need call-site module file resolution. Skipping them is
             // a false negative, while inventing an empty module would create misleading scope data.
             return;
         };
 
-        let visibility = VisibilityLevel::from_ast(item.visibility());
+        let visibility = item.visibility.clone();
         let child_module = self.state.def_map.alloc_module(ModuleData {
             name: Some(module_name.clone()),
-            name_span: Some(self.origin.span),
-            docs: Documentation::inner_from_ast(item),
+            name_span: item.name_span,
+            docs: Documentation::concat(item.docs.clone(), module_item.inner_docs.clone()),
             parent: Some(parent_module),
             children: Vec::new(),
             local_defs: Vec::new(),
@@ -356,8 +341,8 @@ impl GeneratedCollector<'_> {
             unresolved_imports: Vec::new(),
             scope: ModuleScope::default(),
             origin: ModuleOrigin::Inline {
-                declaration_file: self.origin.file_id,
-                declaration_span: self.origin.span,
+                declaration_file: item.file_id,
+                declaration_span: item.span,
             },
         });
         // Inline generated modules extend all scope matrices in lockstep with the def-map module
@@ -397,26 +382,65 @@ impl GeneratedCollector<'_> {
             .expect("current scope should exist for generated child link")
             .insert_binding(&module_name, Namespace::Types, binding);
 
-        for (index, child_item) in item_list.items().enumerate() {
+        for (index, child_item) in items.iter().copied().enumerate() {
             self.collect_item(
                 child_module,
+                generated_source,
                 child_item,
                 order.generated_child(index),
-                span_map,
                 stats,
             );
         }
     }
 
-    fn origin_tt_span(&self) -> TtSpan {
-        fallback_tt_span(self.origin.file_id, self.origin.span, self.state.edition)
+    fn collect_macro_call(
+        &mut self,
+        module_id: ModuleId,
+        item: &ItemNode,
+        macro_call: &MacroCallItem,
+        order: ItemOrder,
+    ) {
+        // Macro-generated `include!("...")` would need a real file-relative expansion context to
+        // resolve safely. The generated lowerer therefore records no builtin payload here.
+        self.state.push_macro_call(MacroCallSite {
+            module: module_id,
+            source: self.origin.source,
+            path: macro_call.path.clone(),
+            callee: macro_call.callee.clone(),
+            args: macro_call.args.clone(),
+            builtin: macro_call.builtin.clone(),
+            dollar_crate_target: self.origin.dollar_crate_target,
+            file_id: item.file_id,
+            span: item.span,
+            order,
+        });
     }
 
-    fn collect_use(&mut self, module_id: ModuleId, item: &ast::Use) {
-        let visibility = VisibilityLevel::from_ast(item.visibility());
-        let use_item = UseItem::from_ast(item, self.interner);
+    fn collect_local_impl(
+        &mut self,
+        module_id: ModuleId,
+        item: &ItemNode,
+        generated_source: GeneratedSourceId,
+        item_id: ItemTreeId,
+    ) {
+        let local_impl_id = self.state.def_map.alloc_local_impl(LocalImplData {
+            module: module_id,
+            source: self.item_source(generated_source, item_id),
+            file_id: item.file_id,
+            span: item.span,
+        });
+        self.state
+            .def_map
+            .module_mut(module_id)
+            .expect("module should exist for generated impl block")
+            .impls
+            .push(local_impl_id);
+    }
 
-        for (import_index, import) in use_item.imports.iter().enumerate() {
+    fn collect_use(&mut self, module_id: ModuleId, item: &ItemNode, use_item: &UseItem) {
+        let imports: &[UseImport] = &use_item.imports;
+
+        for (import_index, import) in imports.iter().enumerate() {
             let mut path = ImportPath::from_use_path(&import.path);
             self.rewrite_dollar_crate_path(&mut path);
             if path.segments.is_empty() {
@@ -434,7 +458,7 @@ impl GeneratedCollector<'_> {
 
             let import_id = self.state.def_map.alloc_import(ImportData {
                 module: module_id,
-                visibility: visibility.clone(),
+                visibility: item.visibility.clone(),
                 kind: ImportKind::from_use_kind(import.kind),
                 path,
                 source_path,
@@ -453,6 +477,16 @@ impl GeneratedCollector<'_> {
                 .imports
                 .push(import_id);
         }
+    }
+
+    fn item_source(&self, generated_source: GeneratedSourceId, item: ItemTreeId) -> ItemSource {
+        ItemSource::generated(
+            self.origin.file_id,
+            GeneratedItemRef {
+                source: generated_source,
+                item,
+            },
+        )
     }
 
     fn rewrite_dollar_crate_path(&self, path: &mut ImportPath) {
@@ -481,27 +515,5 @@ impl GeneratedCollector<'_> {
             first.segment = PathSegment::DollarCrate(target);
             path.absolute = false;
         }
-    }
-}
-
-trait AstNodeWithNameAndVisibility: ast::HasName + ast::HasVisibility {}
-
-impl<T> AstNodeWithNameAndVisibility for T where T: ast::HasName + ast::HasVisibility {}
-
-fn fallback_tt_span(file_id: FileId, span: Span, edition: rg_workspace::RustEdition) -> TtSpan {
-    let text_range = TextRange::new(span.text.start.into(), span.text.end.into());
-    SpanFactory::new(
-        u32::try_from(file_id.0).expect("file id should fit macro span storage"),
-        macro_edition(edition),
-    )
-    .span_for(text_range)
-}
-
-fn macro_edition(edition: rg_workspace::RustEdition) -> rg_tt::Edition {
-    match edition {
-        rg_workspace::RustEdition::Edition2015 => rg_tt::Edition::Edition2015,
-        rg_workspace::RustEdition::Edition2018 => rg_tt::Edition::Edition2018,
-        rg_workspace::RustEdition::Edition2021 => rg_tt::Edition::Edition2021,
-        rg_workspace::RustEdition::Edition2024 => rg_tt::Edition::Edition2024,
     }
 }

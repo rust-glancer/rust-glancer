@@ -7,14 +7,14 @@
 use anyhow::Context as _;
 
 use rg_def_map::{
-    DefMapDb, DefMapReadTxn, ItemSource, LocalDefRef, LocalImplRef, ModuleRef, PackageSlot,
-    TargetRef,
+    DefMapDb, DefMapReadTxn, ItemSource, ItemSourceKind, LocalDefRef, LocalImplRef, ModuleRef,
+    PackageSlot, TargetRef,
 };
 use rg_item_tree::{
-    ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
+    ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
     Package as ItemTreePackage, StaticItem, TraitItem, TypeAliasItem,
 };
-use rg_parse::{FileId, TargetId};
+use rg_parse::TargetId;
 use rg_text::Name;
 
 use crate::{
@@ -161,23 +161,39 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         Ok(self.target_ir)
     }
 
-    fn item(&self, source: ItemSource) -> anyhow::Result<(ItemTreeRef, &'a ItemNode)> {
-        let item_ref = source.as_item_tree().with_context(|| {
-            format!("while attempting to fetch unsupported generated item source {source:?}")
-        })?;
-        let item = self.item_tree.item(item_ref).with_context(|| {
-            format!(
-                "while attempting to fetch item-tree node {:?} in {:?}",
-                item_ref.item, item_ref.file_id
-            )
-        })?;
-        Ok((item_ref, item))
+    fn item(&self, source: ItemSource) -> anyhow::Result<(ItemSource, &'a ItemNode)> {
+        let item = match source.kind {
+            ItemSourceKind::ItemTree(item_ref) => {
+                self.item_tree.item(item_ref).with_context(|| {
+                    format!(
+                        "while attempting to fetch item-tree node {:?} in {:?}",
+                        item_ref.item, item_ref.file_id
+                    )
+                })?
+            }
+            ItemSourceKind::Generated(item_ref) => self
+                .def_map
+                .generated_item(self.target, item_ref)
+                .with_context(|| {
+                    format!(
+                        "while attempting to fetch generated item {:?} from generated source {:?}",
+                        item_ref.item, item_ref.source
+                    )
+                })?
+                .with_context(|| {
+                    format!(
+                        "while attempting to find generated item {:?} from generated source {:?}",
+                        item_ref.item, item_ref.source
+                    )
+                })?,
+        };
+        Ok((source, item))
     }
 
     fn lower_local_item(
         &mut self,
         local_def: LocalDefRef,
-        source: ItemTreeRef,
+        source: ItemSource,
         owner: ModuleRef,
         item: &ItemNode,
     ) -> Option<ItemId> {
@@ -261,7 +277,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
     fn lower_trait(
         &mut self,
         local_def: LocalDefRef,
-        source: ItemTreeRef,
+        source: ItemSource,
         owner: ModuleRef,
         item: &ItemNode,
         trait_item: &TraitItem,
@@ -279,11 +295,8 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             items: Vec::new(),
             is_unsafe: trait_item.is_unsafe,
         });
-        let assoc_items = self.lower_assoc_items(
-            source.file_id,
-            &trait_item.items,
-            ItemOwner::Trait(trait_id),
-        );
+        let assoc_items =
+            self.lower_assoc_items(source, &trait_item.items, ItemOwner::Trait(trait_id));
         self.target_ir.items_mut().traits[trait_id].items = assoc_items;
         trait_id
     }
@@ -291,7 +304,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
     fn lower_impl(
         &mut self,
         local_impl: LocalImplRef,
-        source: ItemTreeRef,
+        source: ItemSource,
         owner: ModuleRef,
         impl_item: &ImplItem,
     ) -> ImplId {
@@ -310,14 +323,14 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             is_unsafe: impl_item.is_unsafe,
         });
         let assoc_items =
-            self.lower_assoc_items(source.file_id, &impl_item.items, ItemOwner::Impl(impl_id));
+            self.lower_assoc_items(source, &impl_item.items, ItemOwner::Impl(impl_id));
         self.target_ir.items_mut().impls[impl_id].items = assoc_items;
         impl_id
     }
 
     fn lower_assoc_items(
         &mut self,
-        file_id: FileId,
+        parent_source: ItemSource,
         item_ids: &[ItemTreeId],
         owner: ItemOwner,
     ) -> Vec<AssocItemId> {
@@ -326,11 +339,8 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         // Associated items share the same stores as module items, but they do not have def-map
         // local definitions because they are reached through their trait/impl owner.
         for item_id in item_ids {
-            let source = ItemTreeRef {
-                file_id,
-                item: *item_id,
-            };
-            let Some(item) = self.item_tree.item(source) else {
+            let source = parent_source.with_item(*item_id);
+            let Ok((source, item)) = self.item(source) else {
                 continue;
             };
 
@@ -364,7 +374,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
     fn lower_function(
         &mut self,
         local_def: Option<LocalDefRef>,
-        source: ItemTreeRef,
+        source: ItemSource,
         owner: ItemOwner,
         item: &ItemNode,
         declaration: &FunctionItem,
@@ -385,7 +395,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
     fn lower_type_alias(
         &mut self,
         local_def: Option<LocalDefRef>,
-        source: ItemTreeRef,
+        source: ItemSource,
         owner: ItemOwner,
         item: &ItemNode,
         declaration: &TypeAliasItem,
@@ -406,7 +416,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
     fn lower_const(
         &mut self,
         local_def: Option<LocalDefRef>,
-        source: ItemTreeRef,
+        source: ItemSource,
         owner: ItemOwner,
         item: &ItemNode,
         declaration: &ConstItem,
@@ -427,7 +437,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
     fn lower_static(
         &mut self,
         local_def: LocalDefRef,
-        source: ItemTreeRef,
+        source: ItemSource,
         owner: ModuleRef,
         item: &ItemNode,
         declaration: &StaticItem,

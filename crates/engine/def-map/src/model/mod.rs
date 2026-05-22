@@ -21,7 +21,9 @@ pub use self::{
     package::Package,
     path::{Path, PathSegment},
     scope::{ModuleScope, ScopeBinding, ScopeBindingOrigin, ScopeEntry},
-    source::{GeneratedItemId, GeneratedItemRef, ItemSource},
+    source::{
+        GeneratedItemRef, GeneratedSourceData, GeneratedSourceId, ItemSource, ItemSourceKind,
+    },
 };
 
 pub(crate) use self::{

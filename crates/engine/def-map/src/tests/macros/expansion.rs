@@ -1,4 +1,5 @@
 use super::super::utils;
+use expect_test::expect;
 
 #[test]
 fn expands_local_macro_rules_items() {
@@ -25,6 +26,44 @@ make_user!();
     target
         .entry("User")
         .assert_type_exists("macro expansion should add generated structs to the module scope");
+}
+
+#[test]
+fn generated_impls_keep_generated_source_identity() {
+    utils::check_project_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "macro_impl_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! make_user {
+    () => {
+        pub struct User;
+
+        impl User {
+            pub fn new() -> Self {
+                User
+            }
+        }
+    };
+}
+
+make_user!();
+"#,
+        expect![[r#"
+            package macro_impl_fixture
+
+            macro_impl_fixture [lib]
+            crate
+            - User : type [pub struct macro_impl_fixture[lib]::crate::User]
+            - make_user : macro [macro_definition macro_impl_fixture[lib]::crate::make_user]
+            impls
+            - impl generated#0:2
+        "#]],
+    );
 }
 
 #[test]

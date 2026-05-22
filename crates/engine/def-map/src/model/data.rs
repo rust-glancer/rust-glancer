@@ -9,8 +9,8 @@ use rg_workspace::RustEdition;
 
 use super::scope::Namespace;
 use super::{
-    ImportData, ImportId, ItemSource, LocalDefId, LocalImplId, ModuleId, ModuleRef, ModuleScope,
-    TargetRef,
+    GeneratedSourceData, GeneratedSourceId, ImportData, ImportId, ItemSource, LocalDefId,
+    LocalImplId, ModuleId, ModuleRef, ModuleScope, TargetRef,
 };
 
 /// Frozen namespace map for one analyzed target.
@@ -35,6 +35,7 @@ pub struct DefMap {
     macro_definitions: HashMap<LocalDefId, MacroDefinitionData>,
     local_impls: Arena<LocalImplId, LocalImplData>,
     imports: Arena<ImportId, ImportData>,
+    generated_sources: Arena<GeneratedSourceId, GeneratedSourceData>,
 }
 
 impl DefMap {
@@ -101,6 +102,19 @@ impl DefMap {
         self.imports.as_slice()
     }
 
+    /// Returns one retained generated source by id.
+    pub fn generated_source(
+        &self,
+        generated_source: GeneratedSourceId,
+    ) -> Option<&GeneratedSourceData> {
+        self.generated_sources.get(generated_source)
+    }
+
+    /// Returns all retained generated sources in stable generated-source-id order.
+    pub fn generated_sources(&self) -> &[GeneratedSourceData] {
+        self.generated_sources.as_slice()
+    }
+
     pub(crate) fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &ImportData)> {
         self.imports.iter_with_ids()
     }
@@ -127,6 +141,13 @@ impl DefMap {
 
     pub(crate) fn alloc_import(&mut self, import: ImportData) -> ImportId {
         self.imports.alloc(import)
+    }
+
+    pub(crate) fn alloc_generated_source(
+        &mut self,
+        generated_source: GeneratedSourceData,
+    ) -> GeneratedSourceId {
+        self.generated_sources.alloc(generated_source)
     }
 
     pub(crate) fn set_root_module(&mut self, root_module: ModuleId) {
@@ -159,6 +180,10 @@ impl DefMap {
         self.imports.shrink_to_fit();
         for import in self.imports.iter_mut() {
             import.shrink_to_fit();
+        }
+        self.generated_sources.shrink_to_fit();
+        for generated_source in self.generated_sources.iter_mut() {
+            generated_source.shrink_to_fit();
         }
     }
 }

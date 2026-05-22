@@ -1,8 +1,8 @@
 use rg_arena::Arena;
-use rg_def_map::{LocalDefRef, LocalImplRef, ModuleRef};
+use rg_def_map::{ItemSource, LocalDefRef, LocalImplRef, ModuleRef};
 use rg_item_tree::{
-    Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, ItemTreeRef, Mutability,
-    ParamKind, TypeBound, TypeRef, VisibilityLevel,
+    Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, Mutability, ParamKind,
+    TypeBound, TypeRef, VisibilityLevel,
 };
 use rg_parse::{FileId, Span};
 use rg_text::Name;
@@ -182,7 +182,7 @@ pub struct EnumVariantData<'a> {
 )]
 pub struct StructData {
     pub local_def: LocalDefRef,
-    pub source: ItemTreeRef,
+    pub source: ItemSource,
     pub owner: ModuleRef,
     pub name: Name,
     pub visibility: VisibilityLevel,
@@ -208,7 +208,7 @@ impl StructData {
 )]
 pub struct UnionData {
     pub local_def: LocalDefRef,
-    pub source: ItemTreeRef,
+    pub source: ItemSource,
     pub owner: ModuleRef,
     pub name: Name,
     pub visibility: VisibilityLevel,
@@ -237,7 +237,7 @@ impl UnionData {
 )]
 pub struct EnumData {
     pub local_def: LocalDefRef,
-    pub source: ItemTreeRef,
+    pub source: ItemSource,
     pub owner: ModuleRef,
     pub name: Name,
     pub visibility: VisibilityLevel,
@@ -266,7 +266,7 @@ impl EnumData {
 )]
 pub struct TraitData {
     pub local_def: LocalDefRef,
-    pub source: ItemTreeRef,
+    pub source: ItemSource,
     pub owner: ModuleRef,
     pub name: Name,
     pub visibility: VisibilityLevel,
@@ -301,7 +301,7 @@ impl TraitData {
 )]
 pub struct ImplData {
     pub local_impl: LocalImplRef,
-    pub source: ItemTreeRef,
+    pub source: ItemSource,
     pub owner: ModuleRef,
     pub generics: GenericParams,
     pub trait_ref: Option<TypeRef>,
@@ -331,7 +331,7 @@ impl ImplData {
 )]
 pub struct FunctionData {
     pub local_def: Option<LocalDefRef>,
-    pub source: ItemTreeRef,
+    pub source: ItemSource,
     pub span: Span,
     pub name_span: Option<Span>,
     pub owner: ItemOwner,
@@ -364,7 +364,7 @@ impl FunctionData {
 )]
 pub struct TypeAliasData {
     pub local_def: Option<LocalDefRef>,
-    pub source: ItemTreeRef,
+    pub source: ItemSource,
     pub span: Span,
     pub name_span: Option<Span>,
     pub owner: ItemOwner,
@@ -390,7 +390,7 @@ impl TypeAliasData {
 )]
 pub struct ConstData {
     pub local_def: Option<LocalDefRef>,
-    pub source: ItemTreeRef,
+    pub source: ItemSource,
     pub span: Span,
     pub name_span: Option<Span>,
     pub owner: ItemOwner,
@@ -416,7 +416,7 @@ impl ConstData {
 )]
 pub struct StaticData {
     pub local_def: LocalDefRef,
-    pub source: ItemTreeRef,
+    pub source: ItemSource,
     pub span: Span,
     pub name_span: Option<Span>,
     pub owner: ModuleRef,

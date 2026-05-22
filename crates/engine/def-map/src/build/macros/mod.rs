@@ -20,6 +20,7 @@ mod attempts;
 mod cache;
 mod expand;
 mod generated;
+mod generated_tree;
 mod resolve;
 mod source_fragment;
 

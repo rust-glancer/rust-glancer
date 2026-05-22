@@ -424,7 +424,7 @@ impl TypePathSegment {
     ) -> Self {
         let name = segment
             .name_ref()
-            .map(|name| interner.intern(name.syntax().text().to_string()))
+            .map(|name| interner.intern(name.syntax().text().to_string().trim()))
             .unwrap_or_else(|| interner.intern(normalized_syntax(segment)));
         let span = segment
             .name_ref()

@@ -75,7 +75,9 @@ pub struct ItemTreeRef {
 }
 
 /// AST-independent item-tree node used by later lowering stages.
-#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct ItemNode {
     pub kind: ItemKind,
     /// Name (when applicable), e.g. for functions or structs.
@@ -116,7 +118,7 @@ impl ItemNode {
         }
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.kind.shrink_to_fit();
         if let Some(name) = &mut self.name {
             name.shrink_to_fit();
