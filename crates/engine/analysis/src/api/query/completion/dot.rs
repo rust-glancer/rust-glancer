@@ -43,7 +43,7 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
         };
         let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
         let mut completions = Vec::new();
-        for candidate in autoderef.candidates(BodyAutoderefMode::FieldLookup, &receiver_ty) {
+        for candidate in autoderef.candidates(BodyAutoderefMode::FieldLookup, receiver_ty) {
             let candidate = candidate?;
             for ty in candidate.ty().as_local_nominals() {
                 self.push_local_type_field_completions(ty, edit, &mut completions)?;
@@ -52,7 +52,7 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
                 self.push_type_field_completions(ty, edit, &mut completions)?;
             }
         }
-        for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, &receiver_ty) {
+        for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, receiver_ty) {
             let candidate = candidate?;
             for ty in candidate.ty().as_local_nominals() {
                 self.push_local_type_method_completions(ty, edit, &mut completions)?;
