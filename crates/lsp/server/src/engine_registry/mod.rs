@@ -1,16 +1,16 @@
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Weak},
 };
 
 use rg_lsp_proto::EngineConfig;
 use tokio::sync::Mutex;
-use tower_lsp_server::Client as LspClient;
+use tower_lsp_server::{Client as LspClient, ls_types::MessageType};
 
 use crate::{
     client_notifications::{ActiveWorkspaceChanged, ActiveWorkspaceStatus},
     engine_client::EngineClient,
-    engine_process::EngineProcess,
+    engine_process::{EngineProcess, EngineProcessExit, EngineProcessExitMonitor},
 };
 
 mod document_owner;
@@ -32,7 +32,7 @@ use self::{
 #[derive(Debug)]
 pub(crate) struct EngineRegistry {
     lsp_client: LspClient,
-    inner: Mutex<EngineRegistryInner>,
+    inner: Arc<Mutex<EngineRegistryInner>>,
 }
 
 impl EngineRegistry {
@@ -44,7 +44,10 @@ impl EngineRegistry {
     ) -> Self {
         Self {
             lsp_client,
-            inner: Mutex::new(EngineRegistryInner::new(workspace_folders, config)),
+            inner: Arc::new(Mutex::new(EngineRegistryInner::new(
+                workspace_folders,
+                config,
+            ))),
         }
     }
 
@@ -62,13 +65,24 @@ impl EngineRegistry {
     }
 
     /// Returns the currently active ready engine, if one has been selected.
-    pub(crate) async fn active_engine(&self) -> Option<EngineClient> {
+    pub(crate) async fn active_engine(&self) -> anyhow::Result<Option<EngineClient>> {
         let inner = self.inner.lock().await;
-        let id = inner.routing.active_id()?;
-        inner
-            .engine(id)
-            .and_then(EngineSlot::ready)
-            .map(|engine| engine.process.engine_client().clone())
+        let Some(id) = inner.routing.active_id() else {
+            return Ok(None);
+        };
+        match inner.engine(id) {
+            Some(EngineSlot::Ready(engine)) => Ok(Some(engine.process.engine_client().clone())),
+            Some(EngineSlot::Starting { .. }) | None => Ok(None),
+            Some(EngineSlot::Failed { root, error }) => Err(anyhow::anyhow!(
+                "rust-glancer engine for `{}` is unavailable: {error}",
+                root.display()
+            )),
+        }
+    }
+
+    /// Prevents expected child exits during LSP shutdown from becoming user-facing failures.
+    pub(crate) async fn begin_shutdown(&self) {
+        self.inner.lock().await.begin_shutdown();
     }
 
     /// Routes a newly opened document and records exact file ownership until `didClose`.
@@ -157,12 +171,15 @@ impl EngineRegistry {
             inner.workspace_status_update()
         };
 
-        self.publish_active_workspace(status).await;
+        Self::publish_active_workspace(&self.lsp_client, status).await;
     }
 
-    async fn publish_active_workspace(&self, status: Option<ActiveWorkspaceStatus>) {
+    async fn publish_active_workspace(
+        lsp_client: &LspClient,
+        status: Option<ActiveWorkspaceStatus>,
+    ) {
         if let Some(status) = status {
-            self.lsp_client
+            lsp_client
                 .send_notification::<ActiveWorkspaceChanged>(ActiveWorkspaceChanged::params(
                     &status,
                 ))
@@ -175,7 +192,8 @@ impl EngineRegistry {
         &self,
         start: ReservedEngineStart,
     ) -> anyhow::Result<EngineClient> {
-        let engine = match self.spawn_engine(start.root.clone(), start.config).await {
+        let spawned = self.spawn_engine(start.root.clone(), start.config).await;
+        let (engine, exit_monitor) = match spawned {
             Ok(engine) => engine,
             Err(error) => {
                 self.mark_failed(start.id, start.root, error.to_string())
@@ -204,6 +222,24 @@ impl EngineRegistry {
         }
 
         self.mark_ready(start.id, engine).await;
+
+        let inner = Arc::downgrade(&self.inner);
+        let lsp_client = self.lsp_client.clone();
+        let id = start.id;
+        let root = start.root;
+        // This is deliberately supervision, not recovery. An engine panic is a bug that should stay
+        // visible enough to report and fix, while automatic replacement would risk hiding the real
+        // problem or confusing server-side routing state.
+        // Once startup succeeds, this task is the whole supervision layer for the child process:
+        // it waits for one terminal event and marks the ready engine failed.
+        tokio::spawn(async move {
+            let Some(exit) = exit_monitor.wait().await else {
+                return;
+            };
+
+            Self::mark_exited(inner, lsp_client, id, root, exit).await;
+        });
+
         Ok(engine_client)
     }
 
@@ -220,7 +256,7 @@ impl EngineRegistry {
                     Some(EngineSlot::Starting { notify, .. }) => Some(notify.clone()),
                     Some(EngineSlot::Failed { root, error }) => {
                         return Err(anyhow::anyhow!(
-                            "rust-glancer engine for `{}` failed to start: {error}",
+                            "rust-glancer engine for `{}` is unavailable: {error}",
                             root.display()
                         ));
                     }
@@ -249,7 +285,7 @@ impl EngineRegistry {
             (notify, status)
         };
         notify.notify_waiters();
-        self.publish_active_workspace(status).await;
+        Self::publish_active_workspace(&self.lsp_client, status).await;
     }
 
     /// Replaces a starting slot with a failure and wakes waiters.
@@ -267,7 +303,50 @@ impl EngineRegistry {
         if let Some(notify) = notify {
             notify.notify_waiters();
         }
-        self.publish_active_workspace(status).await;
+        Self::publish_active_workspace(&self.lsp_client, status).await;
+    }
+
+    async fn mark_exited(
+        inner: Weak<Mutex<EngineRegistryInner>>,
+        lsp_client: LspClient,
+        id: EngineId,
+        root: PathBuf,
+        exit: EngineProcessExit,
+    ) {
+        let Some(inner) = inner.upgrade() else {
+            return;
+        };
+        let error = exit.failure_message();
+        let status = {
+            let mut inner = inner.lock().await;
+            if inner.shutting_down() {
+                return;
+            }
+
+            match inner.engine(id) {
+                Some(EngineSlot::Ready(_)) => {
+                    inner.engines[id.index()] = EngineSlot::Failed {
+                        root: root.clone(),
+                        error: Arc::from(error.as_str()),
+                    };
+                    inner.workspace_status_update()
+                }
+                _ => {
+                    return;
+                }
+            }
+        };
+
+        tracing::error!(
+            engine_id = id.index(),
+            root = %root.display(),
+            error = %error,
+            "rust-glancer engine became unavailable"
+        );
+        lsp_client
+            .log_message(MessageType::ERROR, format!("Rust Glancer {error}"))
+            .await;
+        Self::publish_active_workspace(&lsp_client, status).await;
     }
 
     /// Spawns the engine subprocess and sends its protocol initialize request.
@@ -275,8 +354,9 @@ impl EngineRegistry {
         &self,
         root: PathBuf,
         config: EngineConfig,
-    ) -> anyhow::Result<EngineProcess> {
-        let engine = EngineProcess::spawn(self.lsp_client.clone(), Self::engine_id(&root)).await?;
+    ) -> anyhow::Result<(EngineProcess, EngineProcessExitMonitor)> {
+        let (engine, exit_monitor) =
+            EngineProcess::spawn(self.lsp_client.clone(), Self::engine_id(&root)).await?;
         let engine_client = engine.engine_client().clone();
         let initialize_root = root.clone();
         engine_client
@@ -291,7 +371,7 @@ impl EngineRegistry {
             .await?;
 
         tracing::info!(root = %root.display(), "started rust-glancer engine");
-        Ok(engine)
+        Ok((engine, exit_monitor))
     }
 
     fn engine_id(root: &Path) -> String {
@@ -460,6 +540,42 @@ pub struct External;
         assert_eq!(failed.root, workspace_root);
         assert_eq!(failed.state, ActiveWorkspaceState::Failed);
         assert_eq!(failed.message.as_deref(), Some("startup failed"));
+    }
+
+    #[tokio::test]
+    async fn active_engine_reports_failed_slot() {
+        let fixture = fixture_crate(WORKSPACE_FIXTURE);
+        let (service, _socket) = initialized_service(&fixture);
+        let registry = &service.inner().registry;
+        let document = fixture.path("workspace/project_a/src/lib.rs");
+        let workspace_root = normalize_path(fixture.path("workspace"));
+
+        let id = {
+            let mut inner = registry.inner.lock().await;
+            let owner = DocumentOwner::new(&mut inner, &document, OpenFileCachePolicy::Record)
+                .expect("open document should route through Cargo workspace")
+                .expect("workspace document should have an owner");
+            inner.set_active_id(owner.id());
+            inner.engines[owner.id().index()] = EngineSlot::Failed {
+                root: workspace_root.clone(),
+                error: Arc::from("engine process exited unexpectedly: exit status: 101"),
+            };
+            owner.id()
+        };
+
+        let error = registry
+            .active_engine()
+            .await
+            .expect_err("failed active engine should be user-visible");
+
+        assert_eq!(id.index(), 0);
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "rust-glancer engine for `{}` is unavailable: engine process exited unexpectedly: exit status: 101",
+                workspace_root.display()
+            )
+        );
     }
 
     fn initialized_service(fixture: &CrateFixture) -> (LspService<TestBackend>, ClientSocket) {

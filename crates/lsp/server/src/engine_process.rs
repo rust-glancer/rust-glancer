@@ -1,4 +1,11 @@
-use std::{fmt, io::Write as _, net::SocketAddr, process::Stdio, sync::Arc, time::Duration};
+use std::{
+    fmt,
+    io::Write as _,
+    net::SocketAddr,
+    process::{ExitStatus, Stdio},
+    sync::{Arc, Weak},
+    time::Duration,
+};
 
 use anyhow::Context as _;
 use futures::prelude::*;
@@ -25,7 +32,6 @@ const ENGINE_ID_ENV: &str = "RUST_GLANCER_ENGINE_ID";
 ///
 /// Process lifetime lives here; request-specific logic belongs to method handlers through
 /// `EngineClient`, while multi-engine routing lives one level up in the registry.
-#[derive(Clone)]
 pub(crate) struct EngineProcess {
     engine_client: EngineClient,
     // Kept alive so `kill_on_drop` remains tied to the server-side engine handle.
@@ -33,7 +39,10 @@ pub(crate) struct EngineProcess {
 }
 
 impl EngineProcess {
-    pub(crate) async fn spawn(lsp_client: LspClient, engine_id: String) -> anyhow::Result<Self> {
+    pub(crate) async fn spawn(
+        lsp_client: LspClient,
+        engine_id: String,
+    ) -> anyhow::Result<(Self, EngineProcessExitMonitor)> {
         // Initialize transport for engine service.
         let (mut engine_listener, engine_addr) = {
             // Both JSON and TCP are chosen for convenience of debugging, not that we need too much speed.
@@ -63,6 +72,8 @@ impl EngineProcess {
         // Spawn the engine subprocess.
         let mut child = Self::spawn_worker(engine_addr, notifications_addr, &engine_id)?;
         Self::spawn_stderr_forwarder(&mut child, &engine_id);
+        let child = Arc::new(Mutex::new(child));
+        let exit_monitor = EngineProcessExitMonitor::new(Arc::downgrade(&child));
 
         // Spawn the notifications publisher.
         {
@@ -119,10 +130,13 @@ impl EngineProcess {
             EngineClient::new(engine_service_client)
         };
 
-        Ok(Self {
-            engine_client,
-            _child: Arc::new(Mutex::new(child)),
-        })
+        Ok((
+            Self {
+                engine_client,
+                _child: child,
+            },
+            exit_monitor,
+        ))
     }
 
     pub(crate) fn engine_client(&self) -> &EngineClient {
@@ -192,5 +206,99 @@ impl EngineProcess {
 impl fmt::Debug for EngineProcess {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("EngineProcess").finish_non_exhaustive()
+    }
+}
+
+/// Process-exit observer handed to the registry after startup succeeds.
+pub(crate) struct EngineProcessExitMonitor {
+    child: Weak<Mutex<Child>>,
+}
+
+impl EngineProcessExitMonitor {
+    fn new(child: Weak<Mutex<Child>>) -> Self {
+        Self { child }
+    }
+
+    pub(crate) async fn wait(self) -> Option<EngineProcessExit> {
+        const POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+        loop {
+            let Some(child) = self.child.upgrade() else {
+                return None;
+            };
+
+            // Polling through a weak handle keeps shutdown ownership simple: when the server
+            // drops the engine handle, `kill_on_drop` is free to clean up the child process.
+            let status = {
+                let mut child = child.lock().await;
+                child.try_wait()
+            };
+            match status {
+                Ok(Some(status)) => {
+                    return Some(EngineProcessExit::Exited(status));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return Some(EngineProcessExit::WaitFailed(error.to_string()));
+                }
+            }
+
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+    }
+}
+
+impl fmt::Debug for EngineProcessExitMonitor {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("EngineProcessExitMonitor")
+            .finish_non_exhaustive()
+    }
+}
+
+/// Terminal process event observed by the parent-side supervisor.
+#[derive(Debug)]
+pub(crate) enum EngineProcessExit {
+    Exited(ExitStatus),
+    WaitFailed(String),
+}
+
+impl EngineProcessExit {
+    pub(crate) fn failure_message(&self) -> String {
+        match self {
+            Self::Exited(status) => {
+                format!("engine process exited unexpectedly: {status}")
+            }
+            Self::WaitFailed(error) => {
+                format!("failed to supervise engine process: {error}")
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::EngineProcessExit;
+
+    #[cfg(unix)]
+    #[test]
+    fn exit_message_includes_process_status() {
+        use std::os::unix::process::ExitStatusExt as _;
+
+        let exit = EngineProcessExit::Exited(std::process::ExitStatus::from_raw(101 << 8));
+
+        assert_eq!(
+            exit.failure_message(),
+            "engine process exited unexpectedly: exit status: 101"
+        );
+    }
+
+    #[test]
+    fn wait_failure_message_names_supervision_failure() {
+        let exit = EngineProcessExit::WaitFailed("process handle unavailable".to_string());
+
+        assert_eq!(
+            exit.failure_message(),
+            "failed to supervise engine process: process handle unavailable"
+        );
     }
 }
