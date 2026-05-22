@@ -135,6 +135,15 @@ impl<T> Parse<T> {
         validation::validate(&self.syntax_node(), &mut errors);
         errors
     }
+
+    /// Returns approximate retained storage for the syntax tree behind this parse result.
+    ///
+    /// The returned value describes the whole immutable tree behind this parse. `Parse` is
+    /// cloneable, and typed/untyped parse handles can share the same tree, so callers must account
+    /// for this at most once for each underlying tree in one aggregate memory report.
+    pub fn retained_tree_memory_usage(&self) -> SyntaxTreeMemoryUsage {
+        self.tree.memory_usage()
+    }
 }
 
 impl<T: AstNode> Parse<T> {
@@ -430,4 +439,32 @@ fn api_walkthrough() {
         }
     }
     assert_eq!(exprs_cast, exprs_visit);
+}
+
+#[cfg(test)]
+mod memory_usage_tests {
+    use crate::{Edition, SourceFile};
+
+    #[test]
+    fn reports_retained_parse_tree_memory_usage() {
+        let parse = SourceFile::parse(
+            r#"
+            struct User {
+                name: String,
+            }
+            "#,
+            Edition::CURRENT,
+        );
+        assert!(
+            parse.errors().is_empty(),
+            "test source should parse as a source file"
+        );
+
+        let usage = parse.retained_tree_memory_usage();
+
+        assert!(usage.source_bytes > 0);
+        assert!(usage.node_table_bytes > 0);
+        assert!(usage.token_table_bytes > 0);
+        assert!(usage.child_table_bytes > 0);
+    }
 }

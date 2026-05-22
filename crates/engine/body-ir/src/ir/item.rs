@@ -11,7 +11,9 @@ use super::{
 };
 
 /// One item declared inside a function body.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct BodyItemData {
     pub source: BodySource,
     pub name_source: BodySource,
@@ -87,7 +89,17 @@ impl BodyItemData {
 }
 
 /// Owner of a body-local type-namespace item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub enum BodyItemOwner {
     /// Lexical item declared directly in a body block, e.g. `fn f() { struct User; }`.
     LocalScope(ScopeId),
@@ -96,7 +108,9 @@ pub enum BodyItemOwner {
 }
 
 /// Syntax-level declaration data for a body-local type-namespace item.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum BodyItemDeclaration {
     Struct(StructItem),
     Enum(EnumItem),
@@ -164,7 +178,9 @@ pub struct BodyEnumVariantData<'a> {
 }
 
 /// One value-namespace item declared inside a function body or body-local impl.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct BodyValueItemData {
     pub source: BodySource,
     pub name_source: BodySource,
@@ -194,7 +210,17 @@ impl BodyValueItemData {
 }
 
 /// Owner of a body-local value item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub enum BodyValueItemOwner {
     LocalScope(ScopeId),
     LocalImpl(BodyImplId),
@@ -210,7 +236,9 @@ pub enum BodyValueItemOwner {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum BodyValueItemKind {
     #[display("const")]
     Const,
@@ -219,7 +247,9 @@ pub enum BodyValueItemKind {
 }
 
 /// Syntax-level declaration data for a body-local value item.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum BodyValueItemDeclaration {
     Const(ConstItem),
     Static(StaticItem),
@@ -235,7 +265,9 @@ impl BodyValueItemDeclaration {
 }
 
 /// One impl block declared inside a function body.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct BodyImplData {
     pub source: BodySource,
     pub scope: ScopeId,
@@ -262,7 +294,9 @@ impl BodyImplData {
 }
 
 /// One function-like declaration inside a function body.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct BodyFunctionData {
     pub source: BodySource,
     pub name_source: BodySource,
@@ -290,7 +324,16 @@ impl BodyFunctionData {
 }
 
 /// Owner of a body-local function-like declaration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub enum BodyFunctionOwner {
     LocalScope(ScopeId),
     LocalImpl(BodyImplId),
@@ -306,7 +349,9 @@ pub enum BodyFunctionOwner {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum BodyItemKind {
     #[display("struct")]
     Struct,

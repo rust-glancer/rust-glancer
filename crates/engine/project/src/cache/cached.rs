@@ -13,7 +13,20 @@ use wincode::{SchemaRead, SchemaWrite};
 use super::{Fingerprint, fingerprint};
 
 /// Snapshot-local package slot stored in cache metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, SchemaRead, SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    SchemaRead,
+    SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub struct CachedPackageSlot(pub u64);
 
 impl CachedPackageSlot {
@@ -23,9 +36,19 @@ impl CachedPackageSlot {
 }
 
 /// Stable Cargo package id text stored in cache metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 #[display("{_0}")]
-pub struct CachedPackageId(pub(crate) String);
+pub struct CachedPackageId(#[memsize(inline)] pub(crate) String);
 
 impl CachedPackageId {
     pub(super) fn from_workspace(id: &PackageId) -> Self {
@@ -34,9 +57,19 @@ impl CachedPackageId {
 }
 
 /// UTF-8 path text stored in cache metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 #[display("{_0}")]
-pub struct CachedPath(pub(crate) String);
+pub struct CachedPath(#[memsize(inline)] pub(crate) String);
 
 impl CachedPath {
     pub(super) fn from_workspace_path(path: &Path) -> Self {
@@ -50,8 +83,18 @@ impl CachedPath {
 
 /// Cargo source kind stored in cache metadata.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum CachedPackageSource {
     #[display("workspace")]
     Workspace,
@@ -88,8 +131,18 @@ impl From<PackageSource> for CachedPackageSource {
 
 /// Rust edition stored in cache metadata.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum CachedRustEdition {
     #[display("2015")]
     Edition2015,
@@ -113,7 +166,17 @@ impl From<RustEdition> for CachedRustEdition {
 }
 
 /// Target kind stored in cache metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub enum CachedTargetKind {
     #[display("lib")]
     Lib,
@@ -208,7 +271,7 @@ impl CachedCfgKeyValue {
 }
 
 /// Cached view of one package's artifact-selecting metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, rg_memsize::MemorySize)]
 pub struct CachedPackage {
     pub package: CachedPackageSlot,
     pub package_id: CachedPackageId,
@@ -216,6 +279,7 @@ pub struct CachedPackage {
     pub source: CachedPackageSource,
     pub edition: CachedRustEdition,
     pub manifest_path: CachedPath,
+    #[memsize(skip)]
     pub cfg_options: CachedCfgOptions,
     pub targets: Vec<CachedTarget>,
     pub dependencies: Vec<CachedDependency>,
@@ -232,7 +296,7 @@ impl CachedPackage {
 }
 
 /// Target metadata that can affect package-local analysis artifacts.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, rg_memsize::MemorySize)]
 pub struct CachedTarget {
     pub name: String,
     pub kind: CachedTargetKind,
@@ -257,7 +321,7 @@ impl CachedTarget {
 }
 
 /// Dependency edge metadata that can affect package-local path resolution.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, rg_memsize::MemorySize)]
 pub struct CachedDependency {
     pub package_id: CachedPackageId,
     pub name: String,

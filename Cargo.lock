@@ -1561,7 +1561,16 @@ name = "rg_memsize"
 version = "0.1.0"
 dependencies = [
  "ls-types",
- "rg_syntax",
+ "rg_memsize_derive",
+]
+
+[[package]]
+name = "rg_memsize_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

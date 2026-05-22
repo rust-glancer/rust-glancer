@@ -8,7 +8,7 @@ use crate::{FileId, LineIndex, ParsedFile, ParsedFileSnapshot, Target, TargetId,
 use rg_workspace::{PackageId, PackageOrigin, RustEdition, TargetKind};
 
 /// Parsed package, including package-local files and target entrypoints.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, rg_memsize::MemorySize)]
 pub struct Package {
     /// Stable package id from workspace metadata.
     pub(crate) id: PackageId,
@@ -228,7 +228,9 @@ impl Package {
 ///
 /// The file vector is intentionally package-local and ordered by `FileId`; cached item/semantic
 /// payloads can only be reused if those ids keep pointing at the same paths and line indexes.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct PackageParseSnapshot {
     pub(crate) files: Vec<ParsedFileSnapshot>,
     pub(crate) target_root_files: Vec<FileId>,

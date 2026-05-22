@@ -9,28 +9,67 @@ use super::ids::{
 use super::ty::BodyPrimitiveTy;
 
 /// Stable field identity across module-level Semantic IR and body-local declarations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub enum ResolvedFieldRef {
     Semantic(FieldRef),
     BodyLocal(BodyFieldRef),
 }
 
 /// Stable function identity across module-level Semantic IR and body-local declarations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub enum ResolvedFunctionRef {
     Semantic(FunctionRef),
     BodyLocal(BodyFunctionRef),
 }
 
 /// Stable enum variant identity across module-level Semantic IR and body-local declarations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub enum ResolvedEnumVariantRef {
     Semantic(EnumVariantRef),
     BodyLocal(BodyEnumVariantRef),
 }
 
 /// Best-effort semantic resolution attached to body expressions.
-#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub enum BodyResolution {
     Local(BindingId),
     LocalItem(BodyItemRef),
@@ -53,9 +92,12 @@ pub enum BodyResolution {
 }
 
 /// Body-scoped type path resolution result.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum BodyTypePathResolution {
     BodyLocal(BodyItemRef),
+    #[memsize(skip)]
     Primitive(BodyPrimitiveTy),
     SelfType(Vec<TypeDefRef>),
     TypeDefs(Vec<TypeDefRef>),

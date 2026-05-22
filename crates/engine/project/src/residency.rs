@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 ///
 /// This is cache policy, not Cargo metadata. `PackageSource` says where Cargo resolved a package
 /// from; residency policy decides how eagerly rust-glancer should keep that package in memory.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub enum PackageResidencyPolicy {
     /// Keep the current pre-cache behavior: all packages stay in memory.
     #[default]
@@ -24,14 +27,15 @@ pub enum PackageResidencyPolicy {
 }
 
 /// Storage decision for one package in a built project snapshot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, rg_memsize::MemorySize)]
+#[memsize(leaf)]
 pub enum PackageResidency {
     Resident,
     Offloadable,
 }
 
 /// Per-package residency decisions for one workspace metadata snapshot.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct PackageResidencyPlan {
     pub(crate) policy: PackageResidencyPolicy,
     pub(crate) packages: Vec<PackageResidency>,

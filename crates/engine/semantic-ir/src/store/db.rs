@@ -1,7 +1,6 @@
 //! Semantic IR package store and transaction entry points.
 
 use rg_def_map::{Package as DefMapPackage, PackageSlot};
-use rg_memsize::{MemoryRecorder, MemorySize};
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 
 use crate::{
@@ -14,7 +13,7 @@ use crate::{
 /// Semantic IR is the signature layer: it keeps named items, fields, impl headers, function
 /// signatures, and enough resolution metadata to answer LSP-shaped questions without parsing AST
 /// again. Bodies live in `rg_body_ir`; this layer intentionally stops at item/signature facts.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
 pub struct SemanticIrDb {
     packages: PackageStore<PackageIr>,
 }
@@ -63,10 +62,6 @@ impl SemanticIrDb {
 
     pub(crate) fn mutator(&mut self) -> SemanticIrDbMutator<'_> {
         SemanticIrDbMutator { db: self }
-    }
-
-    pub(crate) fn record_packages_memory_children(&self, recorder: &mut MemoryRecorder) {
-        self.packages.record_memory_children(recorder);
     }
 
     /// Returns coarse item counts for status output and smoke checks.

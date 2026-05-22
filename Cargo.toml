@@ -21,6 +21,7 @@ members = [
   "crates/lib/text",
   "crates/lib/arena",
   "crates/lib/memsize",
+  "crates/lib/memsize-derive",
   "crates/lib/wincode-utils",
   "crates/lib/test-fixture",
   "crates/tools/codegen",
@@ -82,6 +83,7 @@ serde_json = "1.0.149"
 smallvec = "1.15.1"
 smol_str = "0.3.2"
 stdx = { git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca" }
+syn = "2.0"
 tarpc = "0.37"
 tempfile = "3.27.0"
 test-utils = { git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca" }
@@ -116,6 +118,7 @@ rg_package_store = { path = "crates/engine/package-store" }
 rg_text = { path = "crates/lib/text" }
 rg_arena = { path = "crates/lib/arena" }
 rg_memsize = { path = "crates/lib/memsize" }
+rg_memsize_derive = { path = "crates/lib/memsize-derive" }
 rg_wincode_utils = { path = "crates/lib/wincode-utils" }
 test_fixture = { path = "crates/lib/test-fixture" }
 

@@ -8,7 +8,9 @@ use super::{
 };
 
 /// One lowered pattern node.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct PatData {
     pub source: BodySource,
     pub kind: PatKind,
@@ -21,7 +23,9 @@ impl PatData {
 }
 
 /// Pattern forms that matter for binding and enum-payload type propagation.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum PatKind {
     /// `name`, `ref mut name`, or `name @ <pat>`.
     Binding {
@@ -68,7 +72,10 @@ pub enum PatKind {
         kind: Option<PatRangeKind>,
     },
     /// `const { ... }`.
-    ConstBlock { expr: Option<ExprId> },
+    ConstBlock {
+        #[memsize(scope = "expr")]
+        expr: Option<ExprId>,
+    },
     /// `_`.
     Wildcard,
     /// Pattern syntax that Body IR does not model directly.
@@ -76,7 +83,17 @@ pub enum PatKind {
 }
 
 /// Binding mode written on an identifier pattern.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub struct PatBindingMode {
     pub by_ref: bool,
     pub mutable: bool,
@@ -99,7 +116,9 @@ impl PatBindingMode {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum PatMutability {
     /// `&<pat>`.
     #[display("shared")]
@@ -119,7 +138,9 @@ pub enum PatMutability {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum PatRangeKind {
     /// `..`.
     #[display("..")]
@@ -130,7 +151,9 @@ pub enum PatRangeKind {
 }
 
 /// One field inside a record pattern.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct RecordPatField {
     pub key: FieldKey,
     pub key_span: rg_parse::Span,

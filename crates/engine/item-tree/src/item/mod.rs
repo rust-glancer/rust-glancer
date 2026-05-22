@@ -23,8 +23,6 @@ pub use self::{
     visibility::VisibilityLevel,
 };
 
-pub(crate) use self::decl::{ConstParamData, LifetimeParamData, TypeParamData};
-
 mod decl;
 mod docs;
 mod import;
@@ -35,7 +33,18 @@ mod type_ref;
 mod visibility;
 
 /// Stable file-local identifier for one lowered item-tree node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub struct ItemTreeId(pub usize);
 
 impl rg_arena::ArenaId for ItemTreeId {
@@ -49,14 +58,24 @@ impl rg_arena::ArenaId for ItemTreeId {
 }
 
 /// Stable project-local reference to one item-tree node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub struct ItemTreeRef {
     pub file_id: FileId,
     pub item: ItemTreeId,
 }
 
 /// AST-independent item-tree node used by later lowering stages.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct ItemNode {
     pub kind: ItemKind,
     /// Name (when applicable), e.g. for functions or structs.

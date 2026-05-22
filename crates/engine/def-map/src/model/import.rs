@@ -8,7 +8,9 @@ use rg_workspace::RustEdition;
 use super::{ModuleId, Path, PathSegment, path::last_segment_name};
 
 /// One lowered import declaration.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct ImportData {
     pub module: ModuleId,
     pub visibility: VisibilityLevel,
@@ -42,7 +44,14 @@ impl ImportData {
 
 /// Binding strategy for one lowered import or extern crate item.
 #[derive(
-    Debug, Clone, PartialEq, Eq, derive_more::Display, wincode::SchemaRead, wincode::SchemaWrite,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
 pub enum ImportBinding {
     #[display("")]
@@ -78,7 +87,17 @@ impl ImportBinding {
 }
 
 /// Import form that matters for scope propagation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub enum ImportKind {
     Named,
     SelfImport,
@@ -96,7 +115,9 @@ impl ImportKind {
 }
 
 /// Structured path used during import resolution.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct ImportPath {
     pub absolute: bool,
     pub segments: Vec<PathSegment>,
@@ -135,7 +156,9 @@ impl ImportPath {
 }
 
 /// Import path plus source spans for each segment.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct ImportSourcePath {
     pub(crate) source_span: Option<Span>,
     pub(crate) absolute: bool,
@@ -191,7 +214,9 @@ impl ImportSourcePath {
 }
 
 /// One source-spanned import path segment.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct ImportSourcePathSegment {
     pub(crate) segment: PathSegment,
     pub span: Span,

@@ -13,7 +13,18 @@ use super::{
 };
 
 /// Stable BLAKE3 fingerprint used by cache keys.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub struct Fingerprint([u8; 32]);
 
 impl Fingerprint {

@@ -1,7 +1,6 @@
-//! Body IR snapshot storage, lazy package access, and memory accounting.
+//! Body IR snapshot storage and lazy package access.
 
 mod db;
-mod memsize;
 mod txn;
 
 pub use self::{db::BodyIrDb, txn::BodyIrReadTxn};

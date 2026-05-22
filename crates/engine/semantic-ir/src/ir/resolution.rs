@@ -4,7 +4,7 @@ use rg_def_map::ModuleRef;
 
 use super::ids::{ImplRef, TraitRef, TypeDefRef};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct TypePathContext {
     pub module: ModuleRef,
     pub impl_ref: Option<ImplRef>,
@@ -19,7 +19,7 @@ impl TypePathContext {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
 pub enum SemanticTypePathResolution {
     SelfType(Vec<TypeDefRef>),
     TypeDefs(Vec<TypeDefRef>),

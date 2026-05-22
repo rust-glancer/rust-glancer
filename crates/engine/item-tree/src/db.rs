@@ -9,7 +9,7 @@ use rg_text::PackageNameInterners;
 use crate::{Package, lower};
 
 /// Lowered item trees for all parsed packages.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
 pub struct ItemTreeDb {
     pub(crate) packages: Vec<Option<Package>>,
 }

@@ -10,7 +10,9 @@ use rg_parse::FileId;
 use super::super::ItemTreeId;
 
 /// Source-like builtin payload discovered during item-tree lowering.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum BuiltinMacroItem {
     /// Literal `include!("...")` resolves to a real source file.
     Include { file: FileId },
@@ -33,7 +35,9 @@ impl BuiltinMacroItem {
 }
 
 /// One item-position arm from a lowered `cfg_select!` call.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct CfgSelectArmItem {
     pub predicate: CfgPredicate,
     pub payload: CfgSelectArmPayload,
@@ -61,7 +65,9 @@ impl CfgSelectArmItem {
 }
 
 /// Source-fragment lowering result for one `cfg_select!` arm.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum CfgSelectArmPayload {
     /// The arm parsed as ordinary item-position Rust and can be collected if selected.
     Items(Vec<ItemTreeId>),

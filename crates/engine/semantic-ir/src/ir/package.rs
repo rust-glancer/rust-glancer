@@ -7,7 +7,16 @@ use super::target::TargetIr;
 ///
 /// Packages keep target IRs in the same stable order as parse/def-map packages, so a
 /// `TargetRef { package, target }` can address every phase without an extra translation table.
-#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub struct PackageIr {
     pub(crate) targets: Arena<TargetId, TargetIr>,
 }

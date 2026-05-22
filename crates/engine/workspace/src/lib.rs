@@ -9,7 +9,6 @@ use std::{
 use rg_cfg_eval::CfgOptions;
 use serde::{Deserialize, Serialize};
 
-mod memsize;
 mod sysroot;
 
 #[cfg(test)]
@@ -24,7 +23,7 @@ pub use self::sysroot::{SysrootCrate, SysrootSources};
 /// Filesystem roots are canonicalized at construction so save handling can compare paths directly
 /// without each phase defending against Cargo's original path spelling. Missing non-workspace
 /// targets are omitted because they cannot be parsed or reached through local save handling.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct WorkspaceMetadata {
     workspace_root: PathBuf,
     // Target/platform cfg facts are kept separate from package cfgs, which additionally include
@@ -39,7 +38,7 @@ pub struct WorkspaceMetadata {
 /// Cargo metadata includes dependencies for every platform unless callers pass
 /// `--filter-platform`. Analysis wants one concrete graph, so the default resolves the current
 /// rustc host triple and lets Cargo prune target-specific dependencies before lowering starts.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, rg_memsize::MemorySize)]
 pub struct CargoMetadataConfig {
     target: CargoMetadataTarget,
 }
@@ -133,7 +132,7 @@ impl Default for CargoMetadataConfig {
 }
 
 /// Target platform selection for Cargo metadata filtering.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, rg_memsize::MemorySize)]
 pub enum CargoMetadataTarget {
     /// Detect the host triple from `rustc -vV`.
     Auto,
@@ -614,9 +613,9 @@ fn canonicalize_path(path: &Path) -> io::Result<PathBuf> {
 }
 
 /// Stable package identifier derived from Cargo metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, rg_memsize::MemorySize)]
 #[display("{_0}")]
-pub struct PackageId(String);
+pub struct PackageId(#[memsize(inline)] String);
 
 impl PackageId {
     fn from_cargo(id: &cargo_metadata::PackageId) -> Self {
@@ -643,11 +642,13 @@ impl PackageId {
     Ord,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub struct PackageSlot(pub usize);
 
 /// Where one normalized package came from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
 pub enum PackageOrigin {
     Workspace,
     Dependency,
@@ -661,7 +662,8 @@ impl PackageOrigin {
 }
 
 /// Cargo source kind used to classify packages for future residency/cache policies.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, rg_memsize::MemorySize)]
+#[memsize(leaf)]
 pub enum PackageSource {
     #[display("workspace")]
     Workspace,
@@ -731,7 +733,9 @@ impl PackageSource {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum RustEdition {
     #[display("2015")]
     Edition2015,
@@ -767,7 +771,7 @@ impl RustEdition {
 }
 
 /// Normalized package metadata relevant to later analysis phases.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct Package {
     pub id: PackageId,
     pub name: String,
@@ -817,7 +821,7 @@ fn cfg_options_from_rustc_target(target: &str) -> WorkspaceMetadataResult<CfgOpt
 }
 
 /// Normalized target metadata with one target kind per target.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct Target {
     pub name: String,
     pub kind: TargetKind,
@@ -872,7 +876,7 @@ fn normalize_target_src_path(
 }
 
 /// One dependency edge after Cargo resolution.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct PackageDependency {
     package: PackageId,
     name: String,
@@ -970,7 +974,7 @@ impl PackageDependency {
 /// We intentionally support less kinds than `cargo_metadata`,
 /// since we are only interested in the kinds that are useful
 /// for analysis.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, rg_memsize::MemorySize)]
 pub enum TargetKind {
     #[display("lib")]
     Lib,

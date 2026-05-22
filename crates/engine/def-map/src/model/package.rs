@@ -4,7 +4,16 @@ use rg_parse::TargetId;
 use super::data::DefMap;
 
 /// Def maps for all targets inside one parsed package.
-#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub struct Package {
     pub(crate) name: String,
     pub(crate) target_names: Arena<TargetId, String>,

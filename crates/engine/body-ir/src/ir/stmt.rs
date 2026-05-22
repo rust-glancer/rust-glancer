@@ -10,7 +10,9 @@ use super::{
 };
 
 /// One local binding introduced by a parameter or `let`.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct BindingData {
     pub source: BodySource,
     pub scope: ScopeId,
@@ -42,7 +44,9 @@ impl BindingData {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum BindingKind {
     /// `param` in `fn f(param: Type)`.
     #[display("param")]
@@ -64,7 +68,9 @@ pub enum BodySelfParamKind {
 }
 
 /// One lowered statement.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct StmtData {
     pub source: BodySource,
     pub kind: StmtKind,
@@ -77,7 +83,9 @@ impl StmtData {
 }
 
 /// Statement forms that matter for the first Body IR pass.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum StmtKind {
     /// `let <pat>: Type = <expr>;` or `let <pat> = <expr> else { ... };`.
     Let {

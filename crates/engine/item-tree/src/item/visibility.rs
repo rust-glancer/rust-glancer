@@ -1,7 +1,14 @@
 use rg_syntax::{AstNode as _, ast};
 
 #[derive(
-    Debug, Clone, PartialEq, Eq, derive_more::Display, wincode::SchemaRead, wincode::SchemaWrite,
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
 pub enum VisibilityLevel {
     #[display("private")]
