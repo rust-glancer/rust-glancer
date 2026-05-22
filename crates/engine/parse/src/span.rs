@@ -3,7 +3,16 @@ use rg_syntax::TextRange;
 use crate::LineIndex;
 
 /// Span representation in UTF-8 byte offsets from the beginning of the file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub struct Span {
     pub text: TextSpan,
 }
@@ -49,7 +58,16 @@ impl Span {
 }
 
 /// A half-open byte-offset range within a source file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub struct TextSpan {
     pub start: u32,
     pub end: u32,
@@ -78,14 +96,32 @@ impl TextSpan {
 }
 
 /// A half-open line/column range within a source file.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub struct LineColumnSpan {
     pub start: Position,
     pub end: Position,
 }
 
 /// A zero-based line/column coordinate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub struct Position {
     pub line: u32,
     pub column: u32,

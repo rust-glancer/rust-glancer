@@ -12,6 +12,8 @@ pub(crate) struct ContainerAttrs {
     /// Treat the whole type as a shallow leaf.
     pub(crate) leaf: bool,
     crate_path: Option<Path>,
+    /// Custom function that records the whole value's children.
+    pub(crate) with: Option<Path>,
     /// Let callers provide all generic bounds by hand.
     pub(crate) no_auto_bound: bool,
     /// Extra where-clause predicates injected after auto-bounds.
@@ -44,6 +46,15 @@ impl ContainerAttrs {
                     return Ok(());
                 }
 
+                if meta.path.is_ident("with") {
+                    let lit: LitStr = meta.value()?.parse()?;
+                    if parsed.with.is_some() {
+                        return Err(meta.error("duplicate `with` memsize attribute"));
+                    }
+                    parsed.with = Some(parse_path_literal(&lit)?);
+                    return Ok(());
+                }
+
                 if meta.path.is_ident("bound") {
                     let lit: LitStr = meta.value()?.parse()?;
                     parsed.bounds.push(lit.parse()?);
@@ -54,6 +65,7 @@ impl ContainerAttrs {
             })?;
         }
 
+        parsed.validate()?;
         Ok(parsed)
     }
 
@@ -62,6 +74,17 @@ impl ContainerAttrs {
         self.crate_path
             .clone()
             .unwrap_or_else(|| parse_quote!(::rg_memsize))
+    }
+
+    fn validate(&self) -> syn::Result<()> {
+        if self.leaf && self.with.is_some() {
+            return Err(syn::Error::new(
+                Span::call_site(),
+                "`leaf` and `with` cannot be combined",
+            ));
+        }
+
+        Ok(())
     }
 }
 

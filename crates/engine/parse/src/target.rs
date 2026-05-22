@@ -5,7 +5,18 @@ use rg_arena::ArenaId;
 use rg_workspace::TargetKind;
 
 /// Stable identifier of a target within one parsed package.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub struct TargetId(pub usize);
 
 impl ArenaId for TargetId {
@@ -22,7 +33,7 @@ impl ArenaId for TargetId {
 ///
 /// A single package may define multiple targets, such as `lib.rs`, `main.rs`, examples, or tests.
 /// This phase keeps only the normalized target identity and its parsed root source file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct Target {
     /// Stable target id assigned during package parsing.
     pub id: TargetId,

@@ -21,7 +21,11 @@ pub(crate) fn expand_memory_size(input: DeriveInput) -> syn::Result<TokenStream2
     // The trait already owns shallow-size accounting. The derive only generates child traversal,
     // so manual impls and generated impls keep the same top-level accounting shape.
     let mut generics = input.generics.clone();
-    let body = if attrs.leaf {
+    let body = if let Some(with) = &attrs.with {
+        quote! {
+            #with(self, recorder);
+        }
+    } else if attrs.leaf {
         TokenStream2::new()
     } else {
         let expansion = DataExpansion::from_data(&input.data, &crate_path)?;

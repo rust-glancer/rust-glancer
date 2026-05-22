@@ -17,7 +17,18 @@ use crate::{
 };
 
 /// Stable identifier for a parsed source file inside `FileDb`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub struct FileId(pub usize);
 
 impl rg_arena::ArenaId for FileId {
@@ -31,7 +42,7 @@ impl rg_arena::ArenaId for FileId {
 }
 
 /// Internal parsed representation used by the parser cache.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, rg_memsize::MemorySize)]
 pub(crate) struct ParsedFileData {
     /// Canonical filesystem path for this source file.
     pub(crate) path: PathBuf,
@@ -63,7 +74,8 @@ pub struct ParsedFile<'a> {
 }
 
 /// Source backing for a parsed file whose syntax tree may be evicted.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, rg_memsize::MemorySize)]
+#[memsize(with = "crate::memsize::record_parsed_source")]
 pub(crate) enum ParsedSource {
     SavedFile,
     InMemory(Arc<str>),
@@ -73,7 +85,9 @@ pub(crate) enum ParsedSource {
 ///
 /// Cache-backed startup restores this data so later queries can still translate file ids into
 /// paths and source coordinates without rebuilding item trees first.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct ParsedFileSnapshot {
     pub(crate) path: ParsedFilePath,
     pub(crate) line_index: LineIndexSnapshot,
@@ -90,8 +104,10 @@ impl ParsedFileSnapshot {
 /// `PathBuf` is the natural in-memory type, but cache artifacts should stay platform-neutral. The
 /// snapshot stores the canonical path as a string and converts back to `PathBuf` when restoring the
 /// parse database.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
-pub(crate) struct ParsedFilePath(pub(crate) String);
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
+pub(crate) struct ParsedFilePath(#[memsize(inline)] pub(crate) String);
 
 impl ParsedFilePath {
     fn from_path(path: &Path) -> Self {
@@ -169,7 +185,7 @@ impl<'a> ParsedFile<'a> {
 ///
 /// `FileDb` deduplicates parsing across targets, so shared modules are parsed once
 /// and reused during multiple target traversals.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, rg_memsize::MemorySize)]
 pub(super) struct FileDb {
     pub(crate) edition: RustEdition,
     pub(crate) parsed_files: Arena<FileId, ParsedFileData>,
@@ -413,7 +429,8 @@ impl ParsedFileData {
 /// File paths and file ids stay resident because they define package inventory. The heavier line
 /// tables can be dropped after package artifacts are durable and reconstructed from the saved source
 /// file when an LSP range conversion actually needs them.
-#[derive(Debug)]
+#[derive(Debug, rg_memsize::MemorySize)]
+#[memsize(with = "crate::memsize::record_line_index_state")]
 pub(crate) enum LineIndexState {
     Resident(LineIndex),
     Offloaded(OnceLock<LineIndex>),

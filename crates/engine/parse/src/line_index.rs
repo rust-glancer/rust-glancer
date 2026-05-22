@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::span::Position;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, rg_memsize::MemorySize)]
 pub struct LineIndex {
     pub(crate) lines: LineIndexStorage<LineInfo>,
     pub(crate) non_ascii_lines: LineIndexStorage<LineUtf16Metrics>,
@@ -225,14 +225,20 @@ impl LineIndex {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct LineIndexSnapshot {
     pub(crate) lines: Vec<LineInfo>,
     pub(crate) non_ascii_lines: Vec<LineUtf16Metrics>,
     pub(crate) non_ascii_ranges: Vec<LineCharRange>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, rg_memsize::MemorySize)]
+#[memsize(
+    with = "crate::memsize::record_line_index_storage",
+    bound = "T: rg_memsize::MemorySize"
+)]
 pub(crate) enum LineIndexStorage<T> {
     Owned(Vec<T>),
     Shared {
@@ -316,14 +322,32 @@ struct PackedLineIndexRanges {
 }
 
 /// Per-line byte facts needed for offset conversion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub(crate) struct LineInfo {
     pub(crate) start: u32,
     pub(crate) byte_len: u32,
 }
 
 /// Sparse per-line mapping between UTF-8 byte columns and UTF-16 code-unit columns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub(crate) struct LineUtf16Metrics {
     pub(crate) line: u32,
     pub(crate) utf16_len: u32,
@@ -424,7 +448,16 @@ impl LineUtf16Metrics {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub(crate) struct LineCharRange {
     pub(crate) byte_start: u32,
     pub(crate) byte_end: u32,

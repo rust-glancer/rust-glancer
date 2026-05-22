@@ -114,8 +114,18 @@ struct CustomGenericRecord<T> {
     value: T,
 }
 
+#[derive(rg_memsize::MemorySize)]
+#[memsize(with = "record_whole_value")]
+struct WholeValueRecord {
+    value: String,
+}
+
 fn record_custom_generic<T>(_value: &T, recorder: &mut MemoryRecorder) {
     recorder.record_approximate::<CustomGenericRecord<T>>(1);
+}
+
+fn record_whole_value(value: &WholeValueRecord, recorder: &mut MemoryRecorder) {
+    recorder.record_approximate::<WholeValueRecord>(value.value.len());
 }
 
 #[test]
@@ -137,4 +147,22 @@ fn derive_handles_generics_and_custom_recorders() {
     let mut expected = BTreeMap::new();
     expected.insert(MemoryRecordKind::Approximate, 1);
     assert_eq!(recorder.totals_by_kind(), expected);
+}
+
+#[test]
+fn derive_supports_type_level_custom_recorders() {
+    let value = WholeValueRecord {
+        value: "custom".to_owned(),
+    };
+
+    let mut recorder = MemoryRecorder::new("whole");
+    value.record_memory_children(&mut recorder);
+
+    assert_eq!(
+        recorder
+            .totals_by_kind()
+            .get(&MemoryRecordKind::Approximate),
+        Some(&6)
+    );
+    assert_eq!(recorder.totals_by_path().get("whole"), Some(&6));
 }

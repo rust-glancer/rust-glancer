@@ -22,6 +22,7 @@ mod generics;
 /// Supported container attributes:
 /// - `#[memsize(leaf)]`: generate a no-op child traversal for ids, flags, and marker values.
 /// - `#[memsize(crate_path = "::some_path")]`: use a different path to the `rg_memsize` crate.
+/// - `#[memsize(with = "record_type")]`: call a custom `fn(&Self, &mut MemoryRecorder)`.
 /// - `#[memsize(no_auto_bound)]`: skip generated `T: MemorySize` bounds.
 /// - `#[memsize(bound = "T: SomeBound")]`: add an explicit where-clause predicate.
 ///
