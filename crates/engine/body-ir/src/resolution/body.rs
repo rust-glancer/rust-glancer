@@ -68,6 +68,10 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
+    fn autoderef(&self) -> BodyAutoderef<'_, 'db> {
+        BodyAutoderef::with_index(self.def_map, self.semantic_ir, self.semantic_index)
+    }
+
     fn semantic_impl_matcher(&self) -> BodyImplMatcher<'_, 'db> {
         BodyImplMatcher::new(self.def_map, self.semantic_ir)
     }
@@ -264,7 +268,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 op: Some(ExprUnaryOp::Deref),
                 expr: Some(inner),
             } => {
-                self.body.exprs[expr].ty = self.explicit_deref_ty(inner);
+                self.body.exprs[expr].ty = self.explicit_deref_ty(inner)?;
             }
             ExprKind::While { .. } | ExprKind::For { .. } => {
                 self.body.exprs[expr].ty = BodyTy::Unit;
@@ -375,9 +379,11 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             return Ok((BodyResolution::Unknown, BodyTy::Unknown));
         };
 
-        for candidate in
-            BodyAutoderef::candidates(BodyAutoderefMode::FieldLookup, &self.body.exprs[base].ty)
+        for candidate in self
+            .autoderef()
+            .candidates(BodyAutoderefMode::FieldLookup, &self.body.exprs[base].ty)
         {
+            let candidate = candidate?;
             let mut fields = Vec::new();
             let mut field_tys = Vec::new();
 
@@ -449,7 +455,11 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 
         // Method lookup is intentionally shallow: exact local item identity for body-local impls,
         // and nominal type plus lightweight impl-argument matching for semantic impls.
-        for candidate in BodyAutoderef::candidates(BodyAutoderefMode::MethodReceiver, receiver_ty) {
+        for candidate in self
+            .autoderef()
+            .candidates(BodyAutoderefMode::MethodReceiver, receiver_ty)
+        {
+            let candidate = candidate?;
             let mut functions = Vec::new();
             let mut return_tys = Vec::new();
 
@@ -521,11 +531,22 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         (resolution, ty)
     }
 
-    fn explicit_deref_ty(&self, inner: ExprId) -> BodyTy {
-        BodyAutoderef::candidates(BodyAutoderefMode::ExplicitDeref, &self.body.exprs[inner].ty)
-            .next()
-            .map(|candidate| candidate.ty().clone())
-            .unwrap_or(BodyTy::Unknown)
+    fn explicit_deref_ty(&self, inner: ExprId) -> Result<BodyTy, PackageStoreError> {
+        let mut candidates = Vec::new();
+        for candidate in self
+            .autoderef()
+            .candidates(BodyAutoderefMode::ExplicitDeref, &self.body.exprs[inner].ty)
+        {
+            push_unique(&mut candidates, candidate?.ty().clone());
+        }
+
+        Ok(if candidates.len() == 1 {
+            candidates
+                .pop()
+                .expect("one explicit deref candidate should exist")
+        } else {
+            BodyTy::Unknown
+        })
     }
 
     fn local_field_for_type(&self, item_ref: BodyItemRef, key: &FieldKey) -> Option<BodyFieldRef> {

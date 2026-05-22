@@ -159,6 +159,181 @@ pub fn use_it(mut user: User, value: u8) {
 }
 
 #[test]
+fn autoderefs_core_deref_for_member_lookup_and_explicit_deref() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct Id;
+pub struct Label;
+
+pub struct User {
+    pub id: Id,
+}
+
+impl User {
+    pub fn label(&self) -> Label {
+        missing()
+    }
+}
+
+pub struct Wrapper<T> {
+    inner: T,
+}
+
+impl<T> core::ops::Deref for Wrapper<T> {
+    type Target = T;
+}
+
+pub fn use_it(wrapper: Wrapper<User>) {
+    let _id = wrapper.i$type_deref_field$d;
+    let _label = wrapper.la$type_deref_method$bel();
+    let _explicit = (*wrapper)$type_deref_explicit$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("field through Deref", "type_deref_field").in_lib("app"),
+            AnalysisQuery::ty("method through Deref", "type_deref_method").in_lib("app"),
+            AnalysisQuery::ty("explicit Deref", "type_deref_explicit").in_lib("app"),
+        ],
+        expect![[r#"
+            field through Deref
+            - nominal struct app[lib]::crate::Id
+
+            method through Deref
+            - nominal struct app[lib]::crate::Label
+
+            explicit Deref
+            - nominal struct app[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
+fn alternates_reference_and_trait_deref_for_member_lookup() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "std", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /std/Cargo.toml
+[package]
+name = "fake_std"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /std/src/lib.rs
+pub use core::ops;
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+std = { package = "fake_std", path = "../std" }
+
+//- /app/src/lib.rs
+pub struct Id;
+pub struct Label;
+
+pub struct User {
+    pub id: Id,
+}
+
+impl User {
+    pub fn label(&self) -> Label {
+        missing()
+    }
+}
+
+pub struct Box<T> {
+    inner: T,
+}
+
+impl<T> std::ops::Deref for Box<T> {
+    type Target = T;
+}
+
+pub fn use_it(user_box: &Box<User>, ref_box: &Box<&User>) {
+    let _id = user_box.i$type_ref_trait_field$d;
+    let _label = (&*user_box).la$type_explicit_ref_trait_method$bel();
+    let _nested_id = (&*ref_box).i$type_explicit_ref_trait_ref_field$d;
+}
+"#,
+        &[
+            AnalysisQuery::ty("field through &Box<User>", "type_ref_trait_field").in_lib("app"),
+            AnalysisQuery::ty(
+                "method through &*&Box<User>",
+                "type_explicit_ref_trait_method",
+            )
+            .in_lib("app"),
+            AnalysisQuery::ty(
+                "field through &*&Box<&User>",
+                "type_explicit_ref_trait_ref_field",
+            )
+            .in_lib("app"),
+        ],
+        expect![[r#"
+            field through &Box<User>
+            - nominal struct app[lib]::crate::Id
+
+            method through &*&Box<User>
+            - nominal struct app[lib]::crate::Label
+
+            field through &*&Box<&User>
+            - nominal struct app[lib]::crate::Id
+        "#]],
+    );
+}
+
+#[test]
 fn returns_binding_declaration_types() {
     check_analysis_queries(
         r#"

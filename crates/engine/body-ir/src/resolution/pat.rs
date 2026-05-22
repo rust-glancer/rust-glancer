@@ -21,7 +21,7 @@ use crate::{
 };
 
 use super::{
-    autoderef::{BodyAutoderef, BodyAutoderefMode},
+    autoderef::BodyAutoderef,
     push_unique,
     ty::{TypeSubst, local_type_subst, subst_from_generics, ty_from_type_ref_in_context},
     type_path::BodyTypePathResolver,
@@ -250,9 +250,7 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
 
         // Pattern propagation peels only reference wrappers so enum payload inference remains
         // useful without opting into receiver autoderef or future trait-backed deref.
-        for deref_candidate in
-            BodyAutoderef::candidates(BodyAutoderefMode::PeelReferences, expected_ty)
-        {
+        for deref_candidate in BodyAutoderef::peel_references(expected_ty) {
             for enum_ty in deref_candidate
                 .ty()
                 .as_nominals()
@@ -268,9 +266,7 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
             }
         }
 
-        for deref_candidate in
-            BodyAutoderef::candidates(BodyAutoderefMode::PeelReferences, expected_ty)
-        {
+        for deref_candidate in BodyAutoderef::peel_references(expected_ty) {
             for enum_ty in deref_candidate.ty().as_local_nominals() {
                 let Some(field_ty) =
                     self.variant_field_ty_for_local_enum(enum_ty, variant_name, field_key)?

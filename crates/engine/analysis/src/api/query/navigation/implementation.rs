@@ -131,12 +131,12 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         ty: &BodyTy,
         targets: &mut Vec<NavigationTarget>,
     ) -> anyhow::Result<()> {
-        for candidate in BodyAutoderef::candidates(BodyAutoderefMode::PeelReferences, ty) {
+        for candidate in BodyAutoderef::peel_references(ty) {
             for local_ty in candidate.ty().as_local_nominals() {
                 self.push_local_type_targets(local_ty.item, targets)?;
             }
         }
-        for candidate in BodyAutoderef::candidates(BodyAutoderefMode::PeelReferences, ty) {
+        for candidate in BodyAutoderef::peel_references(ty) {
             for ty in candidate.ty().as_nominals() {
                 self.push_type_def_targets(ty.def, targets)?;
             }
@@ -259,7 +259,9 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         receiver_ty: &BodyTy,
         targets: &mut Vec<NavigationTarget>,
     ) -> anyhow::Result<()> {
-        for candidate in BodyAutoderef::candidates(BodyAutoderefMode::MethodReceiver, receiver_ty) {
+        let autoderef = BodyAutoderef::new(&self.0.def_map, &self.0.semantic_ir);
+        for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, receiver_ty) {
+            let candidate = candidate?;
             for ty in candidate.ty().as_nominals() {
                 for trait_impl in self.0.semantic_ir.trait_impls_for_type(ty.def)? {
                     if trait_impl.trait_ref != trait_ref {

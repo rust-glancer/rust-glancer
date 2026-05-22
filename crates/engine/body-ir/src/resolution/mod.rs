@@ -5,6 +5,7 @@
 
 mod autoderef;
 mod body;
+mod deref;
 mod impl_match;
 mod index;
 mod method;

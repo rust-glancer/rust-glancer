@@ -1596,6 +1596,70 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_through_core_deref() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct User {
+    pub id: Id,
+}
+
+pub struct Id;
+pub struct Label;
+
+impl User {
+    pub fn label(&self) -> Label {
+        missing()
+    }
+}
+
+pub struct Wrapper<T>;
+
+impl<T> core::ops::Deref for Wrapper<T> {
+    type Target = T;
+}
+
+pub fn use_it(wrapper: Wrapper<User>) {
+    wrapper.$deref$;
+}
+"#,
+        &[AnalysisQuery::complete("Deref completions", "deref").in_lib("app")],
+        expect![[r#"
+            Deref completions
+            - field id
+            - inherent_method label
+        "#]],
+    );
+}
+
+#[test]
 fn completes_body_local_impl_methods_at_dot() {
     check_analysis_queries(
         r#"
