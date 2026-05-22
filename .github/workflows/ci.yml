@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: taiki-e/install-action@285e94bf531e72a83c0923d52526fabb44c3b169 # nextest
+      - uses: taiki-e/install-action@eb9f6eaa1d11cdadf3b1d513cbc44e30a2793cab # nextest
       - name: Run tests
         run: cargo nextest run --workspace
 
@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: taiki-e/install-action@31aff3cbbd5cedd6280320e7d7871dd39147ed4c # just
+      - uses: taiki-e/install-action@d9a3293a00aebe0fa95fe826fb2d186ce665ba1e # just
       - name: Check test targets
         run: just check-test-targets
 
@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
-      - uses: taiki-e/install-action@3a58a0b3ca97bb468adc27126d15973ca18bbfcb # cargo-deny
+      - uses: taiki-e/install-action@ac54170bde70142b5da85f9ed39eed6d2daa118d # cargo-deny
       - name: Run cargo deny
         run: cargo deny check
 
