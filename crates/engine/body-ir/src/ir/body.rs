@@ -17,7 +17,7 @@ use super::{
 };
 
 /// Coarse totals for reporting that the Body IR phase produced useful data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
 pub struct BodyIrStats {
     pub target_count: usize,
     pub built_target_count: usize,
@@ -34,7 +34,16 @@ pub struct BodyIrStats {
 }
 
 /// Lowered bodies for all targets inside one parsed package.
-#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub struct PackageBodies {
     pub(crate) targets: Arena<TargetId, TargetBodies>,
 }
@@ -69,7 +78,9 @@ impl PackageBodies {
 }
 
 /// Lowered bodies for one target.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct TargetBodies {
     pub(crate) status: TargetBodiesStatus,
     pub(crate) function_bodies: Arena<FunctionId, Option<BodyId>>,
@@ -136,7 +147,9 @@ impl TargetBodies {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum TargetBodiesStatus {
     #[display("built")]
     Built,
@@ -163,7 +176,9 @@ impl TargetBodies {
 }
 
 /// Lowered body for one function.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct BodyData {
     pub(crate) owner: FunctionRef,
     pub(crate) owner_module: rg_def_map::ModuleRef,
@@ -536,14 +551,25 @@ impl BodyBuilder {
 }
 
 /// Source location attached to every body node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub struct BodySource {
     pub file_id: FileId,
     pub span: Span,
 }
 
 /// One lexical scope.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct ScopeData {
     pub parent: Option<ScopeId>,
     pub local_items: Vec<BodyItemId>,

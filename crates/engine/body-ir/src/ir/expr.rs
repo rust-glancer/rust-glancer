@@ -13,7 +13,9 @@ use super::{
 };
 
 /// One lowered expression.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct ExprData {
     pub source: BodySource,
     pub scope: ScopeId,
@@ -36,7 +38,9 @@ impl ExprData {
 }
 
 /// One field written inside a record expression.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct RecordExprField {
     pub key: FieldKey,
     pub key_span: Span,
@@ -45,14 +49,18 @@ pub struct RecordExprField {
 }
 
 /// `..` or `..base` written after record fields.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct RecordExprSpread {
     pub source_span: Span,
     pub expr: Option<ExprId>,
 }
 
 /// Block-level execution modifier written before the statement list.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum ExprBlockKind {
     /// `{ ... }`.
     Plain,
@@ -61,16 +69,26 @@ pub enum ExprBlockKind {
     /// `const { ... }`.
     Const,
     /// `async { ... }` or `async move { ... }`.
-    Async { move_capture: bool },
+    Async {
+        #[memsize(skip)]
+        move_capture: bool,
+    },
     /// `try { ... }` or `try bikeshed Type { ... }`.
     Try {
+        #[memsize(skip)]
         bikeshed: bool,
         result_ty: Option<TypeRef>,
     },
     /// `gen { ... }` or `gen move { ... }`.
-    Gen { move_capture: bool },
+    Gen {
+        #[memsize(skip)]
+        move_capture: bool,
+    },
     /// `async gen { ... }` or `async gen move { ... }`.
-    AsyncGen { move_capture: bool },
+    AsyncGen {
+        #[memsize(skip)]
+        move_capture: bool,
+    },
 }
 
 impl fmt::Display for ExprBlockKind {
@@ -124,7 +142,9 @@ impl ExprBlockKind {
 }
 
 /// Expression forms that the first Body IR pass understands.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum ExprKind {
     /// `{ ... }`, `async { ... }`, or `'label: { ... }`.
     Block {
@@ -288,7 +308,9 @@ pub enum ExprKind {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum ClosureCapture {
     #[display("inferred")]
     Inferred,
@@ -306,7 +328,9 @@ pub enum ClosureCapture {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum ClosureKind {
     #[display("normal")]
     Normal,
@@ -324,7 +348,9 @@ pub enum ClosureKind {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum ExprUnaryOp {
     #[display("*")]
     Deref,
@@ -344,7 +370,9 @@ pub enum ExprUnaryOp {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum ExprBinaryOp {
     #[display("||")]
     LogicOr,
@@ -394,7 +422,9 @@ pub enum ExprBinaryOp {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum ExprAssignOp {
     #[display("=")]
     Assign,
@@ -430,7 +460,9 @@ pub enum ExprAssignOp {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum ExprRangeKind {
     /// `..`.
     #[display("..")]
@@ -450,7 +482,9 @@ pub enum ExprRangeKind {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum ExprWrapperKind {
     /// `(<expr>)`.
     #[display("paren")]
@@ -470,7 +504,9 @@ pub enum ExprWrapperKind {
 }
 
 /// One match arm with its pattern scope and lowered arm expression.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct MatchArmData {
     pub pat: Option<PatId>,
     pub scope: ScopeId,
@@ -479,7 +515,9 @@ pub struct MatchArmData {
 }
 
 /// One closure parameter pattern and its lowered bindings.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct ClosureParamData {
     pub source: BodySource,
     pub pat: Option<PatId>,
@@ -488,7 +526,9 @@ pub struct ClosureParamData {
 }
 
 /// A loop label written on loop-like syntax or referenced from a jump expression.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct LabelData {
     pub name: Name,
     pub span: Span,
@@ -504,7 +544,9 @@ pub struct LabelData {
     derive_more::Display,
     wincode::SchemaRead,
     wincode::SchemaWrite,
+    rg_memsize::MemorySize,
 )]
+#[memsize(leaf)]
 pub enum LiteralKind {
     #[display("bool")]
     Bool,

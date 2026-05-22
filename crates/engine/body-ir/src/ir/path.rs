@@ -9,7 +9,9 @@ use rg_text::Name;
 ///
 /// DefMap paths intentionally keep only the semantic shape. Body IR keeps the richer source shape
 /// and exposes a DefMap projection so existing resolution can keep using DefMap paths.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct BodyPath {
     /// Full source range of the path expression or pattern.
     pub source_span: Span,
@@ -17,14 +19,18 @@ pub struct BodyPath {
     pub(crate) segments: Vec<BodyPathSegment>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub(crate) struct BodyPathSegment {
     pub(crate) kind: BodyPathSegmentKind,
     pub(crate) span: Span,
     pub(crate) args: Option<BodyPathSegmentArgs>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub(crate) enum BodyPathSegmentKind {
     /// `name` in `module::name`.
     Name(Name),
@@ -46,7 +52,9 @@ pub(crate) enum BodyPathSegmentKind {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub(crate) enum BodyPathSegmentArgs {
     /// `<T>` or `::<T>`.
     Angle {

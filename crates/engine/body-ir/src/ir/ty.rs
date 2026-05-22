@@ -5,10 +5,20 @@ use rg_text::Name;
 use super::ids::BodyItemRef;
 
 /// Small type vocabulary for the first Body IR pass.
-#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    PartialEq,
+    Eq,
+    Default,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub enum BodyTy {
     Unit,
     Never,
+    #[memsize(skip)]
     Primitive(BodyPrimitiveTy),
     Syntax(TypeRef),
     Reference(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<BodyTy>>")] Box<BodyTy>),
@@ -29,7 +39,18 @@ pub enum BodyTy {
 }
 
 /// Rust primitive type known without resolving a module-scope definition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub enum BodyPrimitiveTy {
     Bool,
     Char,
@@ -40,7 +61,18 @@ pub enum BodyPrimitiveTy {
 }
 
 /// Signed integer primitive width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub enum BodySignedIntTy {
     I8,
     I16,
@@ -51,7 +83,18 @@ pub enum BodySignedIntTy {
 }
 
 /// Unsigned integer primitive width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub enum BodyUnsignedIntTy {
     U8,
     U16,
@@ -62,7 +105,18 @@ pub enum BodyUnsignedIntTy {
 }
 
 /// Floating-point primitive width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
 pub enum BodyFloatTy {
     F32,
     F64,
@@ -160,7 +214,9 @@ impl BodyFloatTy {
 }
 
 /// Body-local nominal type together with the generic arguments visible at use site.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct BodyLocalNominalTy {
     pub item: BodyItemRef,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<BodyGenericArg>>")]
@@ -184,7 +240,9 @@ impl BodyLocalNominalTy {
 }
 
 /// Module-level nominal type together with the generic arguments visible at use site.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct BodyNominalTy {
     pub def: TypeDefRef,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<BodyGenericArg>>")]
@@ -208,7 +266,9 @@ impl BodyNominalTy {
 }
 
 /// Generic argument as understood by the intentionally small Body IR type model.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub enum BodyGenericArg {
     Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<BodyTy>>")] Box<BodyTy>),
     Lifetime(String),

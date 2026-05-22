@@ -1,7 +1,6 @@
 //! Body IR package store and transaction entry points.
 
 use rg_def_map::{Package as DefMapPackage, PackageSlot};
-use rg_memsize::{MemoryRecorder, MemorySize};
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_semantic_ir::PackageIr;
 use rg_text::PackageNameInterners;
@@ -12,7 +11,7 @@ use crate::{
 };
 
 /// Body-level IR for all analyzed packages and targets.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
 pub struct BodyIrDb {
     packages: PackageStore<PackageBodies>,
 }
@@ -67,10 +66,6 @@ impl BodyIrDb {
 
     pub(crate) fn mutator(&mut self) -> BodyIrDbMutator<'_> {
         BodyIrDbMutator { db: self }
-    }
-
-    pub(crate) fn record_packages_memory_children(&self, recorder: &mut MemoryRecorder) {
-        self.packages.record_memory_children(recorder);
     }
 
     pub fn stats(&self) -> BodyIrStats {

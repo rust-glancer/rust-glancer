@@ -51,7 +51,8 @@ impl BodyIrFile {
 }
 
 /// Package-set selector for eager body lowering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[memsize(leaf)]
 enum BodyIrPackageScope {
     #[default]
     WorkspacePackages,
@@ -59,7 +60,7 @@ enum BodyIrPackageScope {
 }
 
 /// Controls which packages get function-body lowering during eager Body IR construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
 pub struct BodyIrBuildPolicy {
     package_scope: BodyIrPackageScope,
 }
