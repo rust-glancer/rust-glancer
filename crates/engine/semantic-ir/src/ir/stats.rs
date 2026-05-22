@@ -1,5 +1,5 @@
 /// Coarse semantic IR counts used by CLI/status reporting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
 pub struct SemanticIrStats {
     pub target_count: usize,
     pub struct_count: usize,

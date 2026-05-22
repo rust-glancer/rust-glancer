@@ -24,5 +24,3 @@ pub use self::{
     stats::SemanticIrStats,
     target::TargetIr,
 };
-
-pub(crate) use self::signature::SignatureGenerics;
