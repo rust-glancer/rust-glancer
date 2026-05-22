@@ -1,15 +1,19 @@
 //! Concrete navigation target projection.
 
 use rg_body_ir::{
-    BodyAutoderef, BodyEnumVariantRef, BodyFieldRef, BodyImplId, BodyItemRef, BodyRef, BodyTy,
-    BodyValueItemRef, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
+    BodyAutoderef, BodyEnumVariantRef, BodyImplId, BodyItemRef, BodyRef, BodyTy, BodyValueItemRef,
+    ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
 };
 use rg_def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef};
 use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, ImplRef, TraitRef, TypeDefRef};
 
 use crate::{
-    api::{Analysis, query::symbols::shared},
-    model::{NavigationTarget, NavigationTargetKind},
+    api::{
+        Analysis,
+        query::symbols::shared,
+        view::member::{MemberDeclaration, MemberLookup},
+    },
+    model::{NavigationTarget, NavigationTargetKind, SymbolKind},
 };
 
 /// Converts stable IR identities into concrete editor navigation targets.
@@ -17,6 +21,37 @@ use crate::{
 /// This resolver does not decide what the cursor means. It receives already-resolved def-map,
 /// semantic IR, or body IR IDs and projects them into the public `NavigationTarget` shape.
 pub(crate) struct NavigationTargetResolver<'a, 'db>(&'a Analysis<'db>);
+
+impl From<MemberDeclaration> for NavigationTarget {
+    fn from(declaration: MemberDeclaration) -> Self {
+        Self {
+            target: declaration.target,
+            kind: navigation_kind_from_symbol(declaration.kind),
+            name: declaration.name,
+            file_id: declaration.file_id,
+            span: Some(declaration.span),
+        }
+    }
+}
+
+fn navigation_kind_from_symbol(kind: SymbolKind) -> NavigationTargetKind {
+    match kind {
+        SymbolKind::Const => NavigationTargetKind::Const,
+        SymbolKind::Enum => NavigationTargetKind::Enum,
+        SymbolKind::EnumVariant => NavigationTargetKind::EnumVariant,
+        SymbolKind::Field => NavigationTargetKind::Field,
+        SymbolKind::Function | SymbolKind::Method => NavigationTargetKind::Function,
+        SymbolKind::Impl => NavigationTargetKind::Impl,
+        SymbolKind::Macro => NavigationTargetKind::Macro,
+        SymbolKind::Module => NavigationTargetKind::Module,
+        SymbolKind::Static => NavigationTargetKind::Static,
+        SymbolKind::Struct => NavigationTargetKind::Struct,
+        SymbolKind::Trait => NavigationTargetKind::Trait,
+        SymbolKind::TypeAlias => NavigationTargetKind::TypeAlias,
+        SymbolKind::Union => NavigationTargetKind::Union,
+        SymbolKind::Variable => NavigationTargetKind::LocalBinding,
+    }
+}
 
 impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
@@ -132,66 +167,25 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         field_ref: FieldRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        let Some(field_data) = self.0.semantic_ir.field_data(field_ref)? else {
-            return Ok(None);
-        };
-        let Some(key) = field_data.field.key.as_ref() else {
-            return Ok(None);
-        };
-        Ok(Some(NavigationTarget {
-            target: field_ref.owner.target,
-            kind: NavigationTargetKind::Field,
-            name: key.declaration_label(),
-            file_id: field_data.file_id,
-            span: Some(field_data.field.span),
-        }))
+        self.navigation_target_for_resolved_field(ResolvedFieldRef::Semantic(field_ref))
     }
 
     pub(crate) fn navigation_target_for_resolved_field(
         &self,
         field_ref: ResolvedFieldRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        match field_ref {
-            ResolvedFieldRef::Semantic(field) => self.navigation_target_for_field(field),
-            ResolvedFieldRef::BodyLocal(field) => self.navigation_target_for_local_field(field),
-        }
-    }
-
-    fn navigation_target_for_local_field(
-        &self,
-        field_ref: BodyFieldRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        let Some(field_data) = self.0.body_ir.local_field_data(field_ref)? else {
-            return Ok(None);
-        };
-        let Some(key) = field_data.field.key.as_ref() else {
-            return Ok(None);
-        };
-
-        Ok(Some(NavigationTarget {
-            target: field_ref.item.body.target,
-            kind: NavigationTargetKind::Field,
-            name: key.declaration_label(),
-            file_id: field_data.item.source.file_id,
-            span: Some(field_data.field.span),
-        }))
+        let members = MemberLookup::new(self.0);
+        Ok(members
+            .field_view(field_ref)?
+            .and_then(|field| field.declaration())
+            .map(NavigationTarget::from))
     }
 
     pub(crate) fn navigation_target_for_function(
         &self,
         function_ref: FunctionRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        let Some(function_data) = self.0.semantic_ir.function_data(function_ref)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(NavigationTarget {
-            target: function_ref.target,
-            kind: NavigationTargetKind::Function,
-            name: function_data.name.to_string(),
-            file_id: function_data.source.file_id,
-            span: Some(function_data.name_span.unwrap_or(function_data.span)),
-        }))
+        self.navigation_target_for_resolved_function(ResolvedFunctionRef::Semantic(function_ref))
     }
 
     pub(crate) fn navigation_target_for_impl(
@@ -239,23 +233,10 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         function_ref: ResolvedFunctionRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        match function_ref {
-            ResolvedFunctionRef::Semantic(function) => {
-                self.navigation_target_for_function(function)
-            }
-            ResolvedFunctionRef::BodyLocal(function) => {
-                let Some(data) = self.0.body_ir.local_function_data(function)? else {
-                    return Ok(None);
-                };
-                Ok(Some(NavigationTarget {
-                    target: function.body.target,
-                    kind: NavigationTargetKind::Function,
-                    name: data.name.to_string(),
-                    file_id: data.source.file_id,
-                    span: Some(data.name_source.span),
-                }))
-            }
-        }
+        let members = MemberLookup::new(self.0);
+        Ok(members
+            .function_view(function_ref)?
+            .map(|function| NavigationTarget::from(function.declaration())))
     }
 
     pub(crate) fn navigation_target_for_enum_variant(

@@ -1,9 +1,11 @@
 //! Unified member lookup over semantic and body-local nominal types.
 
 use rg_body_ir::{
-    BodyFieldData, BodyFunctionData, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyTy,
-    ResolvedFieldRef, ResolvedFunctionRef,
+    BodyFieldData, BodyFieldRef, BodyFunctionData, BodyFunctionRef, BodyItemRef,
+    BodyLocalNominalTy, BodyNominalTy, BodyTy, ResolvedFieldRef, ResolvedFunctionRef,
 };
+use rg_def_map::TargetRef;
+use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
     Documentation, FieldData, FieldKey, FieldRef, FunctionData, FunctionRef, ItemOwner, ParamItem,
     TraitApplicability, TypeDefRef,
@@ -44,6 +46,16 @@ pub(crate) enum MemberOwner {
     BodyLocal(BodyItemRef),
 }
 
+/// Source declaration facts shared by member-oriented analysis queries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MemberDeclaration {
+    pub(crate) target: TargetRef,
+    pub(crate) kind: SymbolKind,
+    pub(crate) name: String,
+    pub(crate) file_id: FileId,
+    pub(crate) span: Span,
+}
+
 /// Borrowed data for one resolved field, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum MemberFieldView<'a> {
@@ -52,6 +64,7 @@ pub(crate) enum MemberFieldView<'a> {
         data: FieldData<'a>,
     },
     BodyLocal {
+        field: BodyFieldRef,
         data: BodyFieldData<'a>,
     },
 }
@@ -74,6 +87,26 @@ impl<'a> MemberFieldView<'a> {
         }
     }
 
+    pub(crate) fn declaration(&self) -> Option<MemberDeclaration> {
+        let key = self.key()?;
+        Some(match self {
+            Self::Semantic { field, data } => MemberDeclaration {
+                target: field.owner.target,
+                kind: SymbolKind::Field,
+                name: key.declaration_label(),
+                file_id: data.file_id,
+                span: data.field.span,
+            },
+            Self::BodyLocal { field, data } => MemberDeclaration {
+                target: field.item.body.target,
+                kind: SymbolKind::Field,
+                name: key.declaration_label(),
+                file_id: data.item.source.file_id,
+                span: data.field.span,
+            },
+        })
+    }
+
     pub(crate) fn docs_text(&self) -> Option<String> {
         self.docs().map(Documentation::text)
     }
@@ -94,6 +127,7 @@ pub(crate) enum MemberFunctionView<'a> {
         data: &'a FunctionData,
     },
     BodyLocal {
+        function: BodyFunctionRef,
         data: &'a BodyFunctionData,
     },
 }
@@ -130,6 +164,25 @@ impl<'a> MemberFunctionView<'a> {
                 ItemOwner::Trait(_) | ItemOwner::Impl(_) => SymbolKind::Method,
             },
             Self::BodyLocal { data, .. } => SymbolKind::from_body_function_owner(data.owner),
+        }
+    }
+
+    pub(crate) fn declaration(&self) -> MemberDeclaration {
+        match self {
+            Self::Semantic { function, data } => MemberDeclaration {
+                target: function.target,
+                kind: self.symbol_kind(),
+                name: data.name.to_string(),
+                file_id: data.source.file_id,
+                span: data.name_span.unwrap_or(data.span),
+            },
+            Self::BodyLocal { function, data } => MemberDeclaration {
+                target: function.body.target,
+                kind: self.symbol_kind(),
+                name: data.name.to_string(),
+                file_id: data.source.file_id,
+                span: data.name_source.span,
+            },
         }
     }
 
@@ -217,7 +270,7 @@ impl<'a, 'db> MemberLookup<'a, 'db> {
                 .analysis
                 .body_ir
                 .local_field_data(field)?
-                .map(|data| MemberFieldView::BodyLocal { data })),
+                .map(|data| MemberFieldView::BodyLocal { field, data })),
         }
     }
 
@@ -235,7 +288,7 @@ impl<'a, 'db> MemberLookup<'a, 'db> {
                 .analysis
                 .body_ir
                 .local_function_data(function)?
-                .map(|data| MemberFunctionView::BodyLocal { data })),
+                .map(|data| MemberFunctionView::BodyLocal { function, data })),
         }
     }
 
