@@ -11,6 +11,7 @@ use rg_semantic_ir::{
     FunctionRef, ImplRef, ItemOwner, SemanticIrReadTxn, TraitApplicability, TraitImplRef,
     TypePathContext,
 };
+use rg_text::Name;
 
 use crate::{
     ir::body::BodyData,
@@ -141,6 +142,30 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
             applicability,
             self.semantic_impl_self_subst_for_impl(impl_data, receiver_ty),
         )))
+    }
+
+    /// Matches one semantic trait impl for contexts that perform a real type adjustment.
+    ///
+    /// This is stricter than method candidate matching: only direct impl type parameters such as
+    /// `Wrapper<T>` are bindable. Nested generic patterns like `Wrapper<Option<T>>`, where clauses,
+    /// bounded params, lifetimes, and const generics are rejected until Body IR has a real solver.
+    pub(super) fn semantic_trait_impl_structural_match(
+        &self,
+        trait_impl: TraitImplRef,
+        receiver_ty: &BodyNominalTy,
+    ) -> Result<Option<TypeSubst>, PackageStoreError> {
+        let Some(impl_data) = self.semantic_ir.impl_data(trait_impl.impl_ref)? else {
+            return Ok(None);
+        };
+        if !impl_data.resolved_self_tys.contains(&receiver_ty.def)
+            || !impl_data
+                .resolved_trait_refs
+                .contains(&trait_impl.trait_ref)
+        {
+            return Ok(None);
+        }
+
+        self.impl_self_structural_subst(trait_impl.impl_ref, impl_data, receiver_ty)
     }
 
     /// Returns only the yes/maybe/no part of `semantic_trait_impl_match`.
@@ -333,6 +358,81 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
         Ok(applicability)
     }
 
+    /// Builds substitutions only when the impl self type structurally matches the receiver.
+    ///
+    /// This intentionally rejects optimistic cases that are acceptable for trait-method UI
+    /// candidates. Type adjustments such as `Deref` must not turn an uncertain impl into a real
+    /// receiver type.
+    fn impl_self_structural_subst(
+        &self,
+        impl_ref: ImplRef,
+        impl_data: &rg_semantic_ir::ImplData,
+        receiver_ty: &BodyNominalTy,
+    ) -> Result<Option<TypeSubst>, PackageStoreError> {
+        if !Self::impl_header_has_only_plain_type_params(impl_data) {
+            return Ok(None);
+        }
+
+        let TypeRef::Path(self_ty) = &impl_data.self_ty else {
+            return Ok(None);
+        };
+        let Some(segment) = self_ty.segments.last() else {
+            return Ok(None);
+        };
+        if segment.args.len() != receiver_ty.args.len() {
+            return Ok(None);
+        }
+
+        let impl_type_params = Self::impl_type_param_names(&impl_data.generics);
+        let mut subst = TypeSubst::new();
+
+        for (impl_arg, receiver_arg) in segment.args.iter().zip(&receiver_ty.args) {
+            let Some(impl_arg) = generic_arg_type_ref(impl_arg) else {
+                return Ok(None);
+            };
+            let Some(receiver_arg) = body_generic_arg_ty(receiver_arg) else {
+                return Ok(None);
+            };
+
+            if let Some(name) = type_param_name_from_type_ref(impl_arg)
+                && impl_type_params.contains(&name.as_str())
+            {
+                if !Self::push_structural_subst(&mut subst, name, receiver_arg) {
+                    return Ok(None);
+                }
+                continue;
+            }
+
+            if impl_arg.mentions_type_param(&impl_type_params) {
+                return Ok(None);
+            }
+
+            let context = TypePathContext {
+                module: impl_data.owner,
+                impl_ref: Some(impl_ref),
+            };
+            let impl_arg_ty = ty_from_type_ref_in_context(
+                self.def_map,
+                self.semantic_ir,
+                impl_arg,
+                context,
+                BodyTy::Syntax(impl_arg.clone()),
+                &TypeSubst::new(),
+            )?;
+            if Self::type_arg_comparison_is_uncertain(&impl_arg_ty)
+                || Self::type_arg_comparison_is_uncertain(&receiver_arg)
+            {
+                return Ok(None);
+            }
+
+            if impl_arg_ty != receiver_arg {
+                return Ok(None);
+            }
+        }
+
+        Ok(Some(subst))
+    }
+
     /// Extracts substitutions by aligning impl self type args with receiver type args.
     ///
     /// For `impl<T> Wrapper<T>` matched with `Wrapper<User>`, this returns `T -> User`.
@@ -368,6 +468,19 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
             .collect()
     }
 
+    /// Records a strict direct-param substitution, rejecting conflicting repeated params.
+    fn push_structural_subst(subst: &mut TypeSubst, name: Name, ty: BodyTy) -> bool {
+        if let Some((_, existing_ty)) = subst
+            .iter()
+            .find(|(existing_name, _)| existing_name == &name)
+        {
+            return existing_ty == &ty;
+        }
+
+        subst.push((name, ty));
+        true
+    }
+
     /// Lists the type parameters declared by an impl header.
     fn impl_type_param_names(generics: &GenericParams) -> Vec<&str> {
         generics
@@ -375,6 +488,22 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
             .iter()
             .map(|param| param.name.as_str())
             .collect()
+    }
+
+    /// Returns whether the impl header has no constraints that require solving.
+    fn impl_header_has_only_plain_type_params(impl_data: &rg_semantic_ir::ImplData) -> bool {
+        impl_data.generics.lifetimes.is_empty()
+            && impl_data.generics.consts.is_empty()
+            && impl_data.generics.where_predicates.is_empty()
+            && impl_data
+                .generics
+                .types
+                .iter()
+                .all(|param| param.bounds.is_empty() && param.default.is_none())
+            && impl_data
+                .trait_ref
+                .as_ref()
+                .is_none_or(|trait_ref| !trait_ref.has_generic_args())
     }
 
     /// Returns whether the impl header has no generic or where-clause uncertainty.

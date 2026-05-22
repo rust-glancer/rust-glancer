@@ -80,12 +80,15 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
             if !self.is_core_ops_deref_impl(trait_impl, impl_data)? {
                 continue;
             }
-            let Some(trait_impl_match) =
-                matcher.semantic_trait_impl_match(trait_impl, receiver_ty)?
+
+            // `Deref` is a real type adjustment, not just an optimistic editor candidate.
+            // Require a structural impl-self match so uncertain trait impls cannot change
+            // field/method lookup receiver types.
+            let Some(subst) =
+                matcher.semantic_trait_impl_structural_match(trait_impl, receiver_ty)?
             else {
                 continue;
             };
-            let (_, subst) = trait_impl_match.into_parts();
 
             let Some(target) = self.target_from_impl(trait_impl, impl_data, &subst)? else {
                 continue;

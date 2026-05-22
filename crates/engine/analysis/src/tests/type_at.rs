@@ -236,6 +236,71 @@ pub fn use_it(wrapper: Wrapper<User>) {
 }
 
 #[test]
+fn rejects_uncertain_nested_generic_deref_impls_for_member_lookup() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct Id;
+pub struct Foo;
+pub struct Option<T> {
+    value: T,
+}
+pub struct Result<T> {
+    value: T,
+}
+
+pub struct User {
+    pub id: Id,
+}
+
+pub struct Wrapper<T> {
+    inner: T,
+}
+
+impl<T> core::ops::Deref for Wrapper<Option<T>> {
+    type Target = User;
+}
+
+pub fn use_it(wrapper: Wrapper<Result<Foo>>) {
+    let _id = wrapper.i$type_rejected_deref$d;
+}
+"#,
+        &[AnalysisQuery::ty("rejected nested Deref impl", "type_rejected_deref").in_lib("app")],
+        expect![[r#"
+            rejected nested Deref impl
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
 fn alternates_reference_and_trait_deref_for_member_lookup() {
     check_analysis_queries(
         r#"
