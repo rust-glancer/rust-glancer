@@ -42,6 +42,8 @@ impl Named for Account {
 pub fn use_it(user: User) {
     let _again: User = User::n$impl_inherent_use$ew();
     let _name = user.na$impl_trait_call$me();
+    let shared: &&User = &&user;
+    let _ref_name = shared.na$impl_trait_ref_call$me();
 }
 "#,
         &[
@@ -51,6 +53,10 @@ pub fn use_it(user: User) {
             AnalysisQuery::goto_impl("goto inherent implementation", "impl_inherent"),
             AnalysisQuery::goto_impl("goto inherent implementation use", "impl_inherent_use"),
             AnalysisQuery::goto_impl("goto trait implementation from call", "impl_trait_call"),
+            AnalysisQuery::goto_impl(
+                "goto trait implementation from reference call",
+                "impl_trait_ref_call",
+            ),
         ],
         expect![[r#"
             goto implementations of type
@@ -72,6 +78,9 @@ pub fn use_it(user: User) {
             - fn new @ 10:12-10:15
 
             goto trait implementation from call
+            - fn name @ 16:8-16:12
+
+            goto trait implementation from reference call
             - fn name @ 16:8-16:12
         "#]],
     );

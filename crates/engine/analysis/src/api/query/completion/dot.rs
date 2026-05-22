@@ -1,7 +1,8 @@
 //! Dot-completion assembly for member access sites.
 
 use rg_body_ir::{
-    BodyLocalNominalTy, BodyNominalTy, DotCompletionSite, ResolvedFieldRef, ResolvedFunctionRef,
+    BodyAutoderef, BodyLocalNominalTy, BodyNominalTy, DotCompletionSite, ResolvedFieldRef,
+    ResolvedFunctionRef,
 };
 
 use crate::{
@@ -41,11 +42,13 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
             replace: site.member_prefix_span,
         };
         let mut completions = Vec::new();
-        for ty in receiver_ty.local_nominals_after_reference_deref() {
-            self.push_local_type_completions(ty, edit, &mut completions)?;
-        }
-        for ty in receiver_ty.nominals_after_reference_deref() {
-            self.push_type_completions(ty, edit, &mut completions)?;
+        for candidate in BodyAutoderef::receiver_candidates(&receiver_ty) {
+            for ty in candidate.ty().as_local_nominals() {
+                self.push_local_type_completions(ty, edit, &mut completions)?;
+            }
+            for ty in candidate.ty().as_nominals() {
+                self.push_type_completions(ty, edit, &mut completions)?;
+            }
         }
         // Keep snapshot output and editor ordering stable across equivalent resolution paths.
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));

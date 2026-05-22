@@ -37,6 +37,7 @@ use self::{
     type_path::BodyTypePathResolver,
 };
 
+pub use self::autoderef::{BodyAutoderef, BodyAutoderefCandidate};
 pub(crate) use self::body::BodyResolver;
 pub(crate) use self::index::SemanticResolutionIndex;
 

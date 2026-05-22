@@ -26,7 +26,7 @@ use crate::{
 
 use super::{
     SemanticResolutionIndex,
-    autoderef::{Autoderef, AutoderefCandidate, AutoderefMode},
+    autoderef::{AutoderefMode, BodyAutoderef, BodyAutoderefCandidate},
     method::{
         local_function_applies_to_receiver, local_impl_applies_to_receiver, local_impl_self_subst,
         local_impl_self_subst_for_impl, semantic_function_applies_to_receiver,
@@ -368,7 +368,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         };
 
         for candidate in
-            Autoderef::candidates(AutoderefMode::FieldLookup, &self.body.exprs[base].ty)
+            BodyAutoderef::candidates(AutoderefMode::FieldLookup, &self.body.exprs[base].ty)
         {
             let mut fields = Vec::new();
             let mut field_tys = Vec::new();
@@ -441,7 +441,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 
         // Method lookup is intentionally shallow: exact local item identity for body-local impls,
         // and nominal type plus lightweight impl-argument matching for semantic impls.
-        for candidate in Autoderef::candidates(AutoderefMode::MethodReceiver, receiver_ty) {
+        for candidate in BodyAutoderef::candidates(AutoderefMode::MethodReceiver, receiver_ty) {
             let mut functions = Vec::new();
             let mut return_tys = Vec::new();
 
@@ -514,10 +514,10 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
     }
 
     fn explicit_deref_ty(&self, inner: ExprId) -> BodyTy {
-        Autoderef::candidates(AutoderefMode::ExplicitDeref, &self.body.exprs[inner].ty)
+        BodyAutoderef::candidates(AutoderefMode::ExplicitDeref, &self.body.exprs[inner].ty)
             .into_iter()
             .next()
-            .map(AutoderefCandidate::into_ty)
+            .map(BodyAutoderefCandidate::into_ty)
             .unwrap_or(BodyTy::Unknown)
     }
 

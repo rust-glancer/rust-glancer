@@ -15,26 +15,34 @@ pub(super) enum AutoderefMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct AutoderefCandidate {
+pub struct BodyAutoderefCandidate {
     ty: BodyTy,
-    _depth: usize,
-    _mutability: Option<BodyRefMutability>,
+    depth: usize,
+    mutability: Option<BodyRefMutability>,
 }
 
-impl AutoderefCandidate {
-    pub(super) fn ty(&self) -> &BodyTy {
+impl BodyAutoderefCandidate {
+    pub fn ty(&self) -> &BodyTy {
         &self.ty
     }
 
-    pub(super) fn into_ty(self) -> BodyTy {
+    pub fn into_ty(self) -> BodyTy {
         self.ty
+    }
+
+    pub fn depth(&self) -> usize {
+        self.depth
+    }
+
+    pub fn mutability(&self) -> Option<BodyRefMutability> {
+        self.mutability
     }
 }
 
-pub(super) struct Autoderef;
+pub struct BodyAutoderef;
 
-impl Autoderef {
-    pub(super) fn candidates(mode: AutoderefMode, ty: &BodyTy) -> Vec<AutoderefCandidate> {
+impl BodyAutoderef {
+    pub(super) fn candidates(mode: AutoderefMode, ty: &BodyTy) -> Vec<BodyAutoderefCandidate> {
         match mode {
             AutoderefMode::FieldLookup | AutoderefMode::MethodReceiver => {
                 Self::receiver_candidates(ty)
@@ -45,11 +53,11 @@ impl Autoderef {
         }
     }
 
-    fn receiver_candidates(ty: &BodyTy) -> Vec<AutoderefCandidate> {
-        let mut candidates = vec![AutoderefCandidate {
+    pub fn receiver_candidates(ty: &BodyTy) -> Vec<BodyAutoderefCandidate> {
+        let mut candidates = vec![BodyAutoderefCandidate {
             ty: ty.clone(),
-            _depth: 0,
-            _mutability: None,
+            depth: 0,
+            mutability: None,
         }];
         let mut current = ty;
 
@@ -57,10 +65,10 @@ impl Autoderef {
             let Some((inner, mutability)) = current.reference_inner() else {
                 break;
             };
-            candidates.push(AutoderefCandidate {
+            candidates.push(BodyAutoderefCandidate {
                 ty: inner.clone(),
-                _depth: depth,
-                _mutability: Some(mutability),
+                depth,
+                mutability: Some(mutability),
             });
             current = inner;
         }
@@ -68,12 +76,12 @@ impl Autoderef {
         candidates
     }
 
-    fn explicit_deref_candidate(ty: &BodyTy) -> Option<AutoderefCandidate> {
+    pub fn explicit_deref_candidate(ty: &BodyTy) -> Option<BodyAutoderefCandidate> {
         ty.reference_inner()
-            .map(|(inner, mutability)| AutoderefCandidate {
+            .map(|(inner, mutability)| BodyAutoderefCandidate {
                 ty: inner.clone(),
-                _depth: 1,
-                _mutability: Some(mutability),
+                depth: 1,
+                mutability: Some(mutability),
             })
     }
 }

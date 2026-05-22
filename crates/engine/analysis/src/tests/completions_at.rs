@@ -1225,7 +1225,9 @@ pub async fn load_user_async() -> User {
 
 pub async fn use_it(user: User) -> Result<(), Error> {
     let raw = 0;
+    let shared: &&User = &&user;
     (&user).$reference$;
+    shared.$double_reference$;
     load_user()?.$try$;
     load_user_async().await.$await$;
     (raw as User).$cast$;
@@ -1234,12 +1236,17 @@ pub async fn use_it(user: User) -> Result<(), Error> {
 "#,
         &[
             AnalysisQuery::complete("reference completions", "reference"),
+            AnalysisQuery::complete("double reference completions", "double_reference"),
             AnalysisQuery::complete("try completions", "try"),
             AnalysisQuery::complete("await completions", "await"),
             AnalysisQuery::complete("cast completions", "cast"),
         ],
         expect![[r#"
             reference completions
+            - inherent_method id
+            - field profile
+
+            double reference completions
             - inherent_method id
             - field profile
 
