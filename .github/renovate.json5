@@ -54,6 +54,19 @@
 
     "packageRules": [
         {
+            "description": "Do not update Cargo git dependencies pinned to refs/tags",
+            "matchManagers": [
+                "cargo"
+            ],
+            "matchDatasources": [
+                "git-refs",
+                "git-tags",
+                "github-tags",
+                "gitlab-tags"
+            ],
+            "enabled": false
+        },
+        {
             "description": "Group non-major Rust dependencies",
             "matchManagers": [
                 "cargo"
