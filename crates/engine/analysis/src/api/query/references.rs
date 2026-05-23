@@ -5,8 +5,8 @@
 //! normalized through the same entity resolver before we compare declaration identities.
 
 use rg_body_ir::{
-    BodyCursorCandidate, BodyItemRef, BodyRef, ResolvedEnumVariantRef, ResolvedFieldRef,
-    ResolvedFunctionRef,
+    BodyCursorCandidate, BodyItemRef, BodyRef, BodyValueItemRef, ResolvedEnumVariantRef,
+    ResolvedFieldRef, ResolvedFunctionRef,
 };
 use rg_def_map::{DefMapCursorCandidate, LocalDefRef, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
@@ -19,9 +19,9 @@ use crate::{
         Analysis,
         query::navigation::SymbolResolver,
         resolve::entity::{EntityResolver, ResolvedEntity},
-        view::member::MemberLookup,
+        view::declaration::{DeclarationLookup, DeclarationRef},
     },
-    model::{ReferenceLocation, SymbolAt},
+    model::{Declaration, ReferenceLocation, SymbolAt},
 };
 
 /// Options for a source reference lookup.
@@ -410,40 +410,19 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                     span,
                 })
             }
-            BodyCursorCandidate::LocalItem { item, .. } => {
-                if !self.query.includes_declarations() {
-                    return Ok(None);
-                }
-                let Some(body_data) = self.analysis.body_ir.body_data(item.body)? else {
-                    return Ok(None);
-                };
-                let Some(data) = body_data.local_item(item.item) else {
-                    return Ok(None);
-                };
-                Some(ReferenceCandidate {
-                    symbol: SymbolAt::LocalItem { item, span },
+            BodyCursorCandidate::LocalItem { item, .. } => self.body_item_declaration_candidate(
+                SymbolAt::LocalItem { item, span },
+                item,
+                target,
+                span,
+            )?,
+            BodyCursorCandidate::LocalValueItem { item, .. } => self
+                .body_value_item_declaration_candidate(
+                    SymbolAt::LocalValueItem { item, span },
+                    item,
                     target,
-                    file_id: data.name_source.file_id,
                     span,
-                })
-            }
-            BodyCursorCandidate::LocalValueItem { item, .. } => {
-                if !self.query.includes_declarations() {
-                    return Ok(None);
-                }
-                let Some(body_data) = self.analysis.body_ir.body_data(item.body)? else {
-                    return Ok(None);
-                };
-                let Some(data) = body_data.local_value_item(item.item) else {
-                    return Ok(None);
-                };
-                Some(ReferenceCandidate {
-                    symbol: SymbolAt::LocalValueItem { item, span },
-                    target,
-                    file_id: data.name_source.file_id,
-                    span,
-                })
-            }
+                )?,
             BodyCursorCandidate::LocalField { field, .. } => self.field_declaration_candidate(
                 SymbolAt::LocalField { field, span },
                 ResolvedFieldRef::BodyLocal(field),
@@ -510,6 +489,50 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         Ok(candidate)
     }
 
+    fn body_item_declaration_candidate(
+        &self,
+        symbol: SymbolAt,
+        item: BodyItemRef,
+        scan_target: TargetRef,
+        span: Span,
+    ) -> anyhow::Result<Option<ReferenceCandidate>> {
+        if !self.query.includes_declarations() {
+            return Ok(None);
+        }
+        let Some(declaration) = self.declaration(item)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(Self::reference_candidate_for_declaration(
+            symbol,
+            declaration,
+            scan_target,
+            span,
+        )))
+    }
+
+    fn body_value_item_declaration_candidate(
+        &self,
+        symbol: SymbolAt,
+        item: BodyValueItemRef,
+        scan_target: TargetRef,
+        span: Span,
+    ) -> anyhow::Result<Option<ReferenceCandidate>> {
+        if !self.query.includes_declarations() {
+            return Ok(None);
+        }
+        let Some(declaration) = self.declaration(item)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(Self::reference_candidate_for_declaration(
+            symbol,
+            declaration,
+            scan_target,
+            span,
+        )))
+    }
+
     fn field_declaration_candidate(
         &self,
         symbol: SymbolAt,
@@ -520,20 +543,16 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         if !self.query.includes_declarations() {
             return Ok(None);
         }
-        let members = MemberLookup::new(self.analysis);
-        let Some(declaration) = members
-            .field_view(field)?
-            .and_then(|field| field.declaration())
-        else {
+        let Some(declaration) = self.declaration(field)? else {
             return Ok(None);
         };
 
-        Ok(Some(ReferenceCandidate {
+        Ok(Some(Self::reference_candidate_for_declaration(
             symbol,
-            target: scan_target,
-            file_id: declaration.file_id,
+            declaration,
+            scan_target,
             span,
-        }))
+        )))
     }
 
     fn function_declaration_candidate(
@@ -546,20 +565,37 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         if !self.query.includes_declarations() {
             return Ok(None);
         }
-        let members = MemberLookup::new(self.analysis);
-        let Some(declaration) = members
-            .function_view(function)?
-            .map(|function| function.declaration())
-        else {
+        let Some(declaration) = self.declaration(function)? else {
             return Ok(None);
         };
 
-        Ok(Some(ReferenceCandidate {
+        Ok(Some(Self::reference_candidate_for_declaration(
+            symbol,
+            declaration,
+            scan_target,
+            span,
+        )))
+    }
+
+    fn reference_candidate_for_declaration(
+        symbol: SymbolAt,
+        declaration: Declaration,
+        scan_target: TargetRef,
+        span: Span,
+    ) -> ReferenceCandidate {
+        ReferenceCandidate {
             symbol,
             target: scan_target,
             file_id: declaration.file_id,
             span,
-        }))
+        }
+    }
+
+    fn declaration(
+        &self,
+        declaration: impl Into<DeclarationRef>,
+    ) -> anyhow::Result<Option<Declaration>> {
+        DeclarationLookup::new(self.analysis).declaration(declaration.into())
     }
 }
 
@@ -593,7 +629,7 @@ enum ReferenceSubject {
         binding: rg_body_ir::BindingId,
     },
     LocalItem(BodyItemRef),
-    LocalValueItem(rg_body_ir::BodyValueItemRef),
+    LocalValueItem(BodyValueItemRef),
     LocalDef(LocalDefRef),
 }
 

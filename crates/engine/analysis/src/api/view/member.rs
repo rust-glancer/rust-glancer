@@ -4,8 +4,6 @@ use rg_body_ir::{
     BodyFieldData, BodyFieldRef, BodyFunctionData, BodyFunctionRef, BodyItemRef,
     BodyLocalNominalTy, BodyNominalTy, BodyTy, ResolvedFieldRef, ResolvedFunctionRef,
 };
-use rg_def_map::TargetRef;
-use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
     Documentation, FieldData, FieldKey, FieldRef, FunctionData, FunctionRef, ItemOwner, ParamItem,
     TraitApplicability, TypeDefRef,
@@ -13,7 +11,7 @@ use rg_semantic_ir::{
 
 use crate::{
     api::{Analysis, render::path::PathRenderer},
-    model::SymbolKind,
+    model::{Declaration, SymbolKind},
 };
 
 /// A nominal receiver type whose declarations may live in either Semantic IR or Body IR.
@@ -44,16 +42,6 @@ impl<'a> MemberReceiverTy<'a> {
 pub(crate) enum MemberOwner {
     Semantic(TypeDefRef),
     BodyLocal(BodyItemRef),
-}
-
-/// Source declaration facts shared by member-oriented analysis queries.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct MemberDeclaration {
-    pub(crate) target: TargetRef,
-    pub(crate) kind: SymbolKind,
-    pub(crate) name: String,
-    pub(crate) file_id: FileId,
-    pub(crate) span: Span,
 }
 
 /// Borrowed data for one resolved field, independent from the storage layer it came from.
@@ -87,22 +75,24 @@ impl<'a> MemberFieldView<'a> {
         }
     }
 
-    pub(crate) fn declaration(&self) -> Option<MemberDeclaration> {
+    pub(crate) fn declaration(&self) -> Option<Declaration> {
         let key = self.key()?;
         Some(match self {
-            Self::Semantic { field, data } => MemberDeclaration {
+            Self::Semantic { field, data } => Declaration {
                 target: field.owner.target,
                 kind: SymbolKind::Field,
                 name: key.declaration_label(),
                 file_id: data.file_id,
                 span: data.field.span,
+                selection_span: data.field.span,
             },
-            Self::BodyLocal { field, data } => MemberDeclaration {
+            Self::BodyLocal { field, data } => Declaration {
                 target: field.item.body.target,
                 kind: SymbolKind::Field,
                 name: key.declaration_label(),
                 file_id: data.item.source.file_id,
                 span: data.field.span,
+                selection_span: data.field.span,
             },
         })
     }
@@ -167,21 +157,23 @@ impl<'a> MemberFunctionView<'a> {
         }
     }
 
-    pub(crate) fn declaration(&self) -> MemberDeclaration {
+    pub(crate) fn declaration(&self) -> Declaration {
         match self {
-            Self::Semantic { function, data } => MemberDeclaration {
+            Self::Semantic { function, data } => Declaration {
                 target: function.target,
                 kind: self.symbol_kind(),
                 name: data.name.to_string(),
                 file_id: data.source.file_id,
-                span: data.name_span.unwrap_or(data.span),
+                span: data.span,
+                selection_span: data.name_span.unwrap_or(data.span),
             },
-            Self::BodyLocal { function, data } => MemberDeclaration {
+            Self::BodyLocal { function, data } => Declaration {
                 target: function.body.target,
                 kind: self.symbol_kind(),
                 name: data.name.to_string(),
                 file_id: data.source.file_id,
-                span: data.name_source.span,
+                span: data.source.span,
+                selection_span: data.name_source.span,
             },
         }
     }

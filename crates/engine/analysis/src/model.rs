@@ -86,6 +86,21 @@ pub struct ReferenceLocation {
     pub span: Span,
 }
 
+/// Storage-independent declaration data for a source symbol.
+///
+/// Editor features project this into different API shapes: navigation targets use the selection
+/// span, outlines use both spans, and reference search keeps its own occurrence span while using
+/// this to recover the declaration file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Declaration {
+    pub(crate) target: TargetRef,
+    pub(crate) kind: SymbolKind,
+    pub(crate) name: String,
+    pub(crate) file_id: FileId,
+    pub(crate) span: Span,
+    pub(crate) selection_span: Span,
+}
+
 /// One goto-definition destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavigationTarget {
@@ -112,6 +127,18 @@ impl NavigationTarget {
     }
 }
 
+impl From<Declaration> for NavigationTarget {
+    fn from(declaration: Declaration) -> Self {
+        Self {
+            target: declaration.target,
+            kind: NavigationTargetKind::from(declaration.kind),
+            name: declaration.name,
+            file_id: declaration.file_id,
+            span: Some(declaration.selection_span),
+        }
+    }
+}
+
 /// Hierarchical source outline for one file under one target context.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentSymbol {
@@ -121,6 +148,26 @@ pub struct DocumentSymbol {
     pub span: Span,
     pub selection_span: Span,
     pub children: Vec<DocumentSymbol>,
+}
+
+impl DocumentSymbol {
+    pub(crate) fn with_children(mut self, children: Vec<DocumentSymbol>) -> Self {
+        self.children = children;
+        self
+    }
+}
+
+impl From<Declaration> for DocumentSymbol {
+    fn from(declaration: Declaration) -> Self {
+        Self {
+            name: declaration.name,
+            kind: declaration.kind,
+            file_id: declaration.file_id,
+            span: declaration.span,
+            selection_span: declaration.selection_span,
+            children: Vec::new(),
+        }
+    }
 }
 
 /// Flat symbol row suitable for workspace-wide search.
@@ -271,35 +318,23 @@ pub enum NavigationTargetKind {
     Union,
 }
 
-impl NavigationTargetKind {
-    pub(super) fn from_local_def_kind(kind: LocalDefKind) -> Self {
+impl From<SymbolKind> for NavigationTargetKind {
+    fn from(kind: SymbolKind) -> Self {
         match kind {
-            LocalDefKind::Const => Self::Const,
-            LocalDefKind::Enum => Self::Enum,
-            LocalDefKind::Function => Self::Function,
-            LocalDefKind::MacroDefinition => Self::Macro,
-            LocalDefKind::Static => Self::Static,
-            LocalDefKind::Struct => Self::Struct,
-            LocalDefKind::Trait => Self::Trait,
-            LocalDefKind::TypeAlias => Self::TypeAlias,
-            LocalDefKind::Union => Self::Union,
-        }
-    }
-
-    pub(super) fn from_body_item_kind(kind: BodyItemKind) -> Self {
-        match kind {
-            BodyItemKind::Struct => Self::Struct,
-            BodyItemKind::Enum => Self::Enum,
-            BodyItemKind::Union => Self::Union,
-            BodyItemKind::TypeAlias => Self::TypeAlias,
-            BodyItemKind::Trait => Self::Trait,
-        }
-    }
-
-    pub(super) fn from_body_value_item_kind(kind: BodyValueItemKind) -> Self {
-        match kind {
-            BodyValueItemKind::Const => Self::Const,
-            BodyValueItemKind::Static => Self::Static,
+            SymbolKind::Const => Self::Const,
+            SymbolKind::Enum => Self::Enum,
+            SymbolKind::EnumVariant => Self::EnumVariant,
+            SymbolKind::Field => Self::Field,
+            SymbolKind::Function | SymbolKind::Method => Self::Function,
+            SymbolKind::Impl => Self::Impl,
+            SymbolKind::Macro => Self::Macro,
+            SymbolKind::Module => Self::Module,
+            SymbolKind::Static => Self::Static,
+            SymbolKind::Struct => Self::Struct,
+            SymbolKind::Trait => Self::Trait,
+            SymbolKind::TypeAlias => Self::TypeAlias,
+            SymbolKind::Union => Self::Union,
+            SymbolKind::Variable => Self::LocalBinding,
         }
     }
 }

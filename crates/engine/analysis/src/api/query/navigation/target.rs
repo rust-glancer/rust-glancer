@@ -11,9 +11,9 @@ use crate::{
     api::{
         Analysis,
         query::symbols::shared,
-        view::member::{MemberDeclaration, MemberLookup},
+        view::declaration::{DeclarationLookup, DeclarationRef},
     },
-    model::{NavigationTarget, NavigationTargetKind, SymbolKind},
+    model::{Declaration, NavigationTarget, NavigationTargetKind},
 };
 
 /// Converts stable IR identities into concrete editor navigation targets.
@@ -21,37 +21,6 @@ use crate::{
 /// This resolver does not decide what the cursor means. It receives already-resolved def-map,
 /// semantic IR, or body IR IDs and projects them into the public `NavigationTarget` shape.
 pub(crate) struct NavigationTargetResolver<'a, 'db>(&'a Analysis<'db>);
-
-impl From<MemberDeclaration> for NavigationTarget {
-    fn from(declaration: MemberDeclaration) -> Self {
-        Self {
-            target: declaration.target,
-            kind: navigation_kind_from_symbol(declaration.kind),
-            name: declaration.name,
-            file_id: declaration.file_id,
-            span: Some(declaration.span),
-        }
-    }
-}
-
-fn navigation_kind_from_symbol(kind: SymbolKind) -> NavigationTargetKind {
-    match kind {
-        SymbolKind::Const => NavigationTargetKind::Const,
-        SymbolKind::Enum => NavigationTargetKind::Enum,
-        SymbolKind::EnumVariant => NavigationTargetKind::EnumVariant,
-        SymbolKind::Field => NavigationTargetKind::Field,
-        SymbolKind::Function | SymbolKind::Method => NavigationTargetKind::Function,
-        SymbolKind::Impl => NavigationTargetKind::Impl,
-        SymbolKind::Macro => NavigationTargetKind::Macro,
-        SymbolKind::Module => NavigationTargetKind::Module,
-        SymbolKind::Static => NavigationTargetKind::Static,
-        SymbolKind::Struct => NavigationTargetKind::Struct,
-        SymbolKind::Trait => NavigationTargetKind::Trait,
-        SymbolKind::TypeAlias => NavigationTargetKind::TypeAlias,
-        SymbolKind::Union => NavigationTargetKind::Union,
-        SymbolKind::Variable => NavigationTargetKind::LocalBinding,
-    }
-}
 
 impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
@@ -107,60 +76,21 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         local_def: LocalDefRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        let Some(local_def_data) = self.0.def_map.local_def(local_def)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(NavigationTarget {
-            target: local_def.target,
-            kind: NavigationTargetKind::from_local_def_kind(local_def_data.kind),
-            name: local_def_data.name.to_string(),
-            file_id: local_def_data.file_id,
-            // Goto should land on the declaration name rather than the whole item. The full item
-            // span intentionally includes doc comments, which is useful for outline/hover-like
-            // features but feels wrong as an editor cursor destination.
-            span: Some(local_def_data.name_span.unwrap_or(local_def_data.span)),
-        }))
+        Ok(self.declaration(local_def)?.map(NavigationTarget::from))
     }
 
     pub(crate) fn navigation_target_for_body_item(
         &self,
         item_ref: BodyItemRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        let Some(body_data) = self.0.body_ir.body_data(item_ref.body)? else {
-            return Ok(None);
-        };
-        let Some(item) = body_data.local_item(item_ref.item) else {
-            return Ok(None);
-        };
-
-        Ok(Some(NavigationTarget {
-            target: item_ref.body.target,
-            kind: NavigationTargetKind::from_body_item_kind(item.kind),
-            name: item.name.to_string(),
-            file_id: item.source.file_id,
-            span: Some(item.name_source.span),
-        }))
+        Ok(self.declaration(item_ref)?.map(NavigationTarget::from))
     }
 
     pub(crate) fn navigation_target_for_body_value_item(
         &self,
         item_ref: BodyValueItemRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        let Some(body_data) = self.0.body_ir.body_data(item_ref.body)? else {
-            return Ok(None);
-        };
-        let Some(item) = body_data.local_value_item(item_ref.item) else {
-            return Ok(None);
-        };
-
-        Ok(Some(NavigationTarget {
-            target: item_ref.body.target,
-            kind: NavigationTargetKind::from_body_value_item_kind(item.kind),
-            name: item.name.to_string(),
-            file_id: item.source.file_id,
-            span: Some(item.name_source.span),
-        }))
+        Ok(self.declaration(item_ref)?.map(NavigationTarget::from))
     }
 
     pub(crate) fn navigation_target_for_field(
@@ -174,11 +104,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         field_ref: ResolvedFieldRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        let members = MemberLookup::new(self.0);
-        Ok(members
-            .field_view(field_ref)?
-            .and_then(|field| field.declaration())
-            .map(NavigationTarget::from))
+        Ok(self.declaration(field_ref)?.map(NavigationTarget::from))
     }
 
     pub(crate) fn navigation_target_for_function(
@@ -233,10 +159,14 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         function_ref: ResolvedFunctionRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        let members = MemberLookup::new(self.0);
-        Ok(members
-            .function_view(function_ref)?
-            .map(|function| NavigationTarget::from(function.declaration())))
+        Ok(self.declaration(function_ref)?.map(NavigationTarget::from))
+    }
+
+    fn declaration(
+        &self,
+        declaration: impl Into<DeclarationRef>,
+    ) -> anyhow::Result<Option<Declaration>> {
+        DeclarationLookup::new(self.0).declaration(declaration.into())
     }
 
     pub(crate) fn navigation_target_for_enum_variant(

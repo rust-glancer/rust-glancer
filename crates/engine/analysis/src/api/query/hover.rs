@@ -13,9 +13,12 @@ use crate::{
         query::type_at::TypeResolver,
         render::{path::PathRenderer, signature::SignatureRenderer},
         resolve::entity::{EntityResolver, ResolvedEntity},
-        view::member::MemberLookup,
+        view::{
+            declaration::{DeclarationLookup, DeclarationRef},
+            member::MemberLookup,
+        },
     },
-    model::{HoverBlock, HoverInfo, SymbolAt, SymbolKind},
+    model::{Declaration, HoverBlock, HoverInfo, SymbolAt, SymbolKind},
 };
 
 pub(crate) struct HoverResolver<'a, 'db>(&'a Analysis<'db>);
@@ -95,8 +98,11 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                 let Some(item) = body_data.local_item(item_ref.item) else {
                     return Ok(None);
                 };
+                let Some(declaration) = self.declaration(item_ref)? else {
+                    return Ok(None);
+                };
                 Ok(Some(HoverBlock {
-                    kind: SymbolKind::from_body_item_kind(item.kind),
+                    kind: declaration.kind,
                     path: None,
                     signature: Some(SignatureRenderer::new(self.0).local_item_signature(item)),
                     ty: None,
@@ -110,8 +116,11 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                 let Some(item) = body_data.local_value_item(item_ref.item) else {
                     return Ok(None);
                 };
+                let Some(declaration) = self.declaration(item_ref)? else {
+                    return Ok(None);
+                };
                 Ok(Some(HoverBlock {
-                    kind: SymbolKind::from_body_value_item_kind(item.kind),
+                    kind: declaration.kind,
                     path: None,
                     signature: Some(
                         SignatureRenderer::new(self.0).local_value_item_signature(item),
@@ -345,6 +354,13 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             ty: Some(signature),
             docs: None,
         }))
+    }
+
+    fn declaration(
+        &self,
+        declaration: impl Into<DeclarationRef>,
+    ) -> anyhow::Result<Option<Declaration>> {
+        DeclarationLookup::new(self.0).declaration(declaration.into())
     }
 
     fn symbol_range(&self, symbol: &SymbolAt) -> anyhow::Result<Option<Span>> {

@@ -12,7 +12,7 @@ description.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-derive_more = { workspace = true, features = ["display"] }
+derive_more = { workspace = true, features = ["display", "from"] }
 rg_syntax.workspace = true
 rg_body_ir.workspace = true
 rg_def_map.workspace = true
