@@ -65,12 +65,17 @@ impl Backend {
     }
 
     async fn active_method_context(&self) -> Result<Option<MethodContext>> {
-        Ok(self
+        let Some(engine_client) = self
             .registry()
             .await?
             .active_engine()
             .await
-            .map(|engine_client| self.method_context(engine_client)))
+            .map_err(methods::internal_error)?
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(self.method_context(engine_client)))
     }
 }
 
@@ -118,6 +123,7 @@ impl LanguageServer for Backend {
             return Ok(());
         };
 
+        registry.begin_shutdown().await;
         for engine_client in registry.engine_clients().await {
             let context = self.method_context(engine_client);
             if let Err(error) = methods::shutdown(context).await {

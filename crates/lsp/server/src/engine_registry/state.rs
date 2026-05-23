@@ -23,6 +23,7 @@ pub(super) struct EngineRegistryInner {
     pub(super) engines: Vec<EngineSlot>,
     config: EngineConfig,
     last_published_workspace_status: Option<ActiveWorkspaceStatus>,
+    shutting_down: bool,
 }
 
 impl EngineRegistryInner {
@@ -38,6 +39,7 @@ impl EngineRegistryInner {
             engines: Vec::new(),
             config,
             last_published_workspace_status: None,
+            shutting_down: false,
         }
     }
 
@@ -77,6 +79,14 @@ impl EngineRegistryInner {
 
     pub(super) fn set_active_id(&mut self, id: EngineId) {
         self.routing.set_active_id(id);
+    }
+
+    pub(super) fn begin_shutdown(&mut self) {
+        self.shutting_down = true;
+    }
+
+    pub(super) fn shutting_down(&self) -> bool {
+        self.shutting_down
     }
 
     /// Returns the active-workspace status if the client has not seen this exact state yet.
