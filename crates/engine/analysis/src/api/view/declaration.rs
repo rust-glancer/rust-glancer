@@ -2,13 +2,12 @@
 
 use rg_body_ir::{
     BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef,
-    BodyImplRef, BodyItemRef, BodyValueItemRef, ResolvedEnumVariantRef, ResolvedFieldRef,
-    ResolvedFunctionRef,
+    BodyImplRef, BodyItemRef, BodyValueItemRef, ResolvedFieldRef, ResolvedFunctionRef,
 };
 use rg_def_map::{LocalDefRef, ModuleOrigin, ModuleRef};
 use rg_semantic_ir::{
-    ConstRef, FunctionRef, ImplRef, SemanticItemKind, SemanticItemRef, StaticRef, TraitRef,
-    TypeAliasRef, TypeDefRef, TypeRef,
+    ConstRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, SemanticDeclarationRef,
+    SemanticItemKind, SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefRef, TypeRef,
 };
 
 use crate::{
@@ -24,6 +23,7 @@ pub(crate) enum DeclarationRef {
     #[from]
     LocalDef(LocalDefRef),
     #[from(
+        SemanticDeclarationRef,
         SemanticItemRef,
         TypeDefRef,
         TraitRef,
@@ -31,9 +31,11 @@ pub(crate) enum DeclarationRef {
         FunctionRef,
         TypeAliasRef,
         ConstRef,
-        StaticRef
+        StaticRef,
+        FieldRef,
+        EnumVariantRef
     )]
-    SemanticItem(SemanticItemRef),
+    Semantic(SemanticDeclarationRef),
     #[from(
         BodyDeclarationRef,
         BodyBindingRef,
@@ -45,12 +47,6 @@ pub(crate) enum DeclarationRef {
         BodyFunctionRef
     )]
     Body(BodyDeclarationRef),
-    #[from]
-    EnumVariant(ResolvedEnumVariantRef),
-    #[from]
-    Field(ResolvedFieldRef),
-    #[from]
-    Function(ResolvedFunctionRef),
 }
 
 /// Reads declaration facts for IDs that already identify one source declaration.
@@ -70,11 +66,8 @@ impl<'a, 'db> DeclarationLookup<'a, 'db> {
         match declaration {
             DeclarationRef::Module(module_ref) => self.module(module_ref),
             DeclarationRef::LocalDef(local_def) => self.local_def(local_def),
-            DeclarationRef::SemanticItem(item) => self.semantic_item(item),
+            DeclarationRef::Semantic(declaration) => self.semantic_declaration(declaration),
             DeclarationRef::Body(declaration) => self.body_declaration(declaration),
-            DeclarationRef::EnumVariant(variant) => self.enum_variant(variant),
-            DeclarationRef::Field(field) => self.field(field),
-            DeclarationRef::Function(function) => self.function(function),
         }
     }
 
@@ -123,6 +116,17 @@ impl<'a, 'db> DeclarationLookup<'a, 'db> {
         }))
     }
 
+    fn semantic_declaration(
+        &self,
+        declaration: SemanticDeclarationRef,
+    ) -> anyhow::Result<Option<Declaration>> {
+        match declaration {
+            SemanticDeclarationRef::Item(item) => self.semantic_item(item),
+            SemanticDeclarationRef::Field(field) => self.semantic_field(field),
+            SemanticDeclarationRef::EnumVariant(variant) => self.semantic_enum_variant(variant),
+        }
+    }
+
     fn semantic_item(&self, item: SemanticItemRef) -> anyhow::Result<Option<Declaration>> {
         let Some(view) = self.analysis.semantic_ir.semantic_item_view(item)? else {
             return Ok(None);
@@ -159,9 +163,7 @@ impl<'a, 'db> DeclarationLookup<'a, 'db> {
                 }))
             }
             SemanticItemKind::Function => match item {
-                SemanticItemRef::Function(function) => {
-                    self.function(ResolvedFunctionRef::Semantic(function))
-                }
+                SemanticItemRef::Function(function) => self.semantic_function(function),
                 SemanticItemRef::TypeDef(_)
                 | SemanticItemRef::Trait(_)
                 | SemanticItemRef::Impl(_)
@@ -305,44 +307,34 @@ impl<'a, 'db> DeclarationLookup<'a, 'db> {
         Ok(Some(declaration))
     }
 
-    fn enum_variant(&self, variant: ResolvedEnumVariantRef) -> anyhow::Result<Option<Declaration>> {
-        match variant {
-            ResolvedEnumVariantRef::Semantic(variant_ref) => {
-                let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant_ref)? else {
-                    return Ok(None);
-                };
+    fn semantic_enum_variant(
+        &self,
+        variant_ref: EnumVariantRef,
+    ) -> anyhow::Result<Option<Declaration>> {
+        let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant_ref)? else {
+            return Ok(None);
+        };
 
-                Ok(Some(Declaration {
-                    target: variant_ref.target,
-                    kind: SymbolKind::EnumVariant,
-                    name: data.variant.name.to_string(),
-                    file_id: data.file_id,
-                    span: data.variant.span,
-                    selection_span: data.variant.name_span,
-                }))
-            }
-            ResolvedEnumVariantRef::BodyLocal(variant_ref) => {
-                self.body_declaration(variant_ref.into())
-            }
-        }
+        Ok(Some(Declaration {
+            target: variant_ref.target,
+            kind: SymbolKind::EnumVariant,
+            name: data.variant.name.to_string(),
+            file_id: data.file_id,
+            span: data.variant.span,
+            selection_span: data.variant.name_span,
+        }))
     }
 
-    fn field(&self, field: ResolvedFieldRef) -> anyhow::Result<Option<Declaration>> {
-        match field {
-            ResolvedFieldRef::Semantic(_) => Ok(MemberLookup::new(self.analysis)
-                .field_view(field)?
-                .and_then(|field| field.declaration())),
-            ResolvedFieldRef::BodyLocal(field) => self.body_declaration(field.into()),
-        }
+    fn semantic_field(&self, field: FieldRef) -> anyhow::Result<Option<Declaration>> {
+        Ok(MemberLookup::new(self.analysis)
+            .field_view(ResolvedFieldRef::Semantic(field))?
+            .and_then(|field| field.declaration()))
     }
 
-    fn function(&self, function: ResolvedFunctionRef) -> anyhow::Result<Option<Declaration>> {
-        match function {
-            ResolvedFunctionRef::Semantic(_) => Ok(MemberLookup::new(self.analysis)
-                .function_view(function)?
-                .map(|function| function.declaration())),
-            ResolvedFunctionRef::BodyLocal(function) => self.body_declaration(function.into()),
-        }
+    fn semantic_function(&self, function: FunctionRef) -> anyhow::Result<Option<Declaration>> {
+        Ok(MemberLookup::new(self.analysis)
+            .function_view(ResolvedFunctionRef::Semantic(function))?
+            .map(|function| function.declaration()))
     }
 
     fn impl_label(self_ty: &TypeRef, trait_ref: Option<&TypeRef>) -> String {

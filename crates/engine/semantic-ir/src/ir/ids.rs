@@ -382,6 +382,47 @@ pub struct EnumVariantRef {
     pub index: usize,
 }
 
+/// Stable identity for any declaration contributed by Semantic IR.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::From,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+pub enum SemanticDeclarationRef {
+    #[from(
+        SemanticItemRef,
+        TypeDefRef,
+        TraitRef,
+        ImplRef,
+        FunctionRef,
+        TypeAliasRef,
+        ConstRef,
+        StaticRef
+    )]
+    Item(SemanticItemRef),
+    #[from]
+    Field(FieldRef),
+    #[from]
+    EnumVariant(EnumVariantRef),
+}
+
+impl SemanticDeclarationRef {
+    pub fn target(self) -> TargetRef {
+        match self {
+            Self::Item(item) => item.target(),
+            Self::Field(field) => field.owner.target,
+            Self::EnumVariant(variant) => variant.target,
+        }
+    }
+}
+
 #[derive(
     Debug,
     Clone,

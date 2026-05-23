@@ -6,8 +6,8 @@ use rg_body_ir::{
 use rg_def_map::{LocalDefRef, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
-    ConstRef, Documentation, SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId,
-    TypeDefRef,
+    ConstRef, Documentation, SemanticDeclarationRef, SemanticItemRef, StaticRef, TraitRef,
+    TypeAliasRef, TypeDefId, TypeDefRef,
 };
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
         Analysis,
         query::type_at::TypeResolver,
         render::{path::PathRenderer, signature::SignatureRenderer},
-        resolve::entity::{EntityResolver, ResolvedEntity},
+        resolve::entity::EntityResolver,
         view::{
             declaration::{DeclarationLookup, DeclarationRef},
             member::MemberLookup,
@@ -41,11 +41,24 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             return Ok(None);
         };
         let range = self.symbol_range(&symbol)?;
-        let entities = EntityResolver::new(self.0).entities_for_symbol(symbol.clone())?;
+        let declarations = EntityResolver::new(self.0).declarations_for_symbol(symbol.clone())?;
+        let module_display_name = Self::module_display_name_for_symbol(&symbol);
         let mut blocks = Vec::new();
 
-        for entity in entities {
-            let Some(block) = self.hover_for_entity(entity)? else {
+        for declaration in declarations {
+            let block = match declaration {
+                DeclarationRef::Module(module) => {
+                    self.hover_for_module(module, module_display_name.clone())?
+                }
+                DeclarationRef::LocalDef(local_def) => self.hover_for_local_def(local_def)?,
+                DeclarationRef::Semantic(declaration) => {
+                    self.hover_for_semantic_declaration(declaration)?
+                }
+                DeclarationRef::Body(declaration) => {
+                    self.hover_for_body_declaration(declaration)?
+                }
+            };
+            let Some(block) = block else {
                 continue;
             };
             if !blocks.contains(&block) {
@@ -63,19 +76,24 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         Ok((!blocks.is_empty()).then_some(HoverInfo { range, blocks }))
     }
 
-    fn hover_for_entity(&self, entity: ResolvedEntity) -> anyhow::Result<Option<HoverBlock>> {
-        match entity {
-            ResolvedEntity::Module {
-                module,
-                display_name,
-            } => self.hover_for_module(module, display_name),
-            ResolvedEntity::SemanticItem(item) => self.hover_for_semantic_item(item),
-            ResolvedEntity::BodyDeclaration(declaration) => {
-                self.hover_for_body_declaration(declaration)
-            }
-            ResolvedEntity::Field(field) => self.hover_for_field(field),
-            ResolvedEntity::EnumVariant(variant) => self.hover_for_enum_variant(variant),
-            ResolvedEntity::LocalDef(local_def) => self.hover_for_local_def(local_def),
+    fn module_display_name_for_symbol(symbol: &SymbolAt) -> Option<String> {
+        match symbol {
+            SymbolAt::BodyPath { path, .. }
+            | SymbolAt::BodyValuePath { path, .. }
+            | SymbolAt::TypePath { path, .. }
+            | SymbolAt::UsePath { path, .. } => path.last_segment_label(),
+            SymbolAt::Body { .. }
+            | SymbolAt::Binding { .. }
+            | SymbolAt::Def { .. }
+            | SymbolAt::Expr { .. }
+            | SymbolAt::Field { .. }
+            | SymbolAt::Function { .. }
+            | SymbolAt::EnumVariant { .. }
+            | SymbolAt::LocalEnumVariant { .. }
+            | SymbolAt::LocalItem { .. }
+            | SymbolAt::LocalValueItem { .. }
+            | SymbolAt::LocalField { .. }
+            | SymbolAt::LocalFunction { .. } => None,
         }
     }
 
@@ -163,6 +181,21 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             SemanticItemRef::TypeAlias(type_alias_ref) => self.hover_for_type_alias(type_alias_ref),
             SemanticItemRef::Const(const_ref) => self.hover_for_const(const_ref),
             SemanticItemRef::Static(static_ref) => self.hover_for_static(static_ref),
+        }
+    }
+
+    fn hover_for_semantic_declaration(
+        &self,
+        declaration: SemanticDeclarationRef,
+    ) -> anyhow::Result<Option<HoverBlock>> {
+        match declaration {
+            SemanticDeclarationRef::Item(item) => self.hover_for_semantic_item(item),
+            SemanticDeclarationRef::Field(field) => {
+                self.hover_for_field(ResolvedFieldRef::Semantic(field))
+            }
+            SemanticDeclarationRef::EnumVariant(variant) => {
+                self.hover_for_enum_variant(ResolvedEnumVariantRef::Semantic(variant))
+            }
         }
     }
 

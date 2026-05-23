@@ -4,7 +4,6 @@ use anyhow::Result;
 use rg_body_ir::{
     BodyData, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplData, BodyImplId, BodyImplRef,
     BodyItemData, BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef,
-    ResolvedEnumVariantRef,
 };
 use rg_def_map::TargetRef;
 use rg_parse::{FileId, Span};
@@ -176,20 +175,15 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
             return Ok(None);
         };
         for index in 0..data.variants.len() {
-            let variant_ref = ResolvedEnumVariantRef::Semantic(EnumVariantRef {
+            let variant_ref = EnumVariantRef {
                 target: ty.target,
                 enum_id,
                 index,
-            });
+            };
             let Some(declaration) = self.declaration(variant_ref)? else {
                 continue;
             };
-            let Some(variant) = self.0.semantic_ir.enum_variant_data(EnumVariantRef {
-                target: ty.target,
-                enum_id,
-                index,
-            })?
-            else {
+            let Some(variant) = self.0.semantic_ir.enum_variant_data(variant_ref)? else {
                 continue;
             };
             children.push(

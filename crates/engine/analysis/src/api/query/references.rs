@@ -4,18 +4,16 @@
 //! a separate index. That keeps the feature aligned with goto/hover resolution: every candidate is
 //! normalized through the same entity resolver before we compare declaration identities.
 
-use rg_body_ir::{
-    BodyCursorCandidate, BodyDeclarationRef, ResolvedEnumVariantRef, ResolvedFieldRef,
-};
-use rg_def_map::{DefMapCursorCandidate, LocalDefRef, ModuleRef, TargetRef};
+use rg_body_ir::BodyCursorCandidate;
+use rg_def_map::{DefMapCursorCandidate, TargetRef};
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{SemanticCursorCandidate, SemanticItemRef};
+use rg_semantic_ir::SemanticCursorCandidate;
 
 use crate::{
     api::{
         Analysis,
         query::navigation::SymbolResolver,
-        resolve::entity::{EntityResolver, ResolvedEntity},
+        resolve::entity::EntityResolver,
         view::declaration::{DeclarationLookup, DeclarationRef},
     },
     model::{Declaration, ReferenceLocation, SymbolAt},
@@ -184,13 +182,12 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         Ok(())
     }
 
-    fn subjects_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Vec<ReferenceSubject>> {
-        let entities = EntityResolver::new(self.analysis).entities_for_symbol(symbol)?;
+    fn subjects_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Vec<DeclarationRef>> {
+        let declarations = EntityResolver::new(self.analysis).declarations_for_symbol(symbol)?;
         let mut subjects = Vec::new();
-        for entity in entities {
-            let subject = ReferenceSubject::from_entity(entity);
-            if !subjects.contains(&subject) {
-                subjects.push(subject);
+        for declaration in declarations {
+            if !subjects.contains(&declaration) {
+                subjects.push(declaration);
             }
         }
         Ok(subjects)
@@ -303,12 +300,9 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         candidate: SemanticCursorCandidate,
     ) -> anyhow::Result<Option<ReferenceCandidate>> {
         let candidate = match candidate {
-            SemanticCursorCandidate::Field { field, span } => self.declaration_candidate(
-                SymbolAt::Field { field, span },
-                ResolvedFieldRef::Semantic(field),
-                target,
-                span,
-            )?,
+            SemanticCursorCandidate::Field { field, span } => {
+                self.declaration_candidate(SymbolAt::Field { field, span }, field, target, span)?
+            }
             SemanticCursorCandidate::Function { function, span } => self.declaration_candidate(
                 SymbolAt::Function { function, span },
                 function,
@@ -317,7 +311,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             )?,
             SemanticCursorCandidate::EnumVariant { variant, span } => self.declaration_candidate(
                 SymbolAt::EnumVariant { variant, span },
-                ResolvedEnumVariantRef::Semantic(variant),
+                variant,
                 target,
                 span,
             )?,
@@ -520,27 +514,4 @@ struct ReferenceCandidate {
     target: TargetRef,
     file_id: FileId,
     span: Span,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ReferenceSubject {
-    Module(ModuleRef),
-    SemanticItem(SemanticItemRef),
-    BodyDeclaration(BodyDeclarationRef),
-    Field(ResolvedFieldRef),
-    EnumVariant(ResolvedEnumVariantRef),
-    LocalDef(LocalDefRef),
-}
-
-impl ReferenceSubject {
-    fn from_entity(entity: ResolvedEntity) -> Self {
-        match entity {
-            ResolvedEntity::Module { module, .. } => Self::Module(module),
-            ResolvedEntity::SemanticItem(item) => Self::SemanticItem(item),
-            ResolvedEntity::BodyDeclaration(declaration) => Self::BodyDeclaration(declaration),
-            ResolvedEntity::Field(field) => Self::Field(field),
-            ResolvedEntity::EnumVariant(variant) => Self::EnumVariant(variant),
-            ResolvedEntity::LocalDef(local_def) => Self::LocalDef(local_def),
-        }
-    }
 }

@@ -1,21 +1,21 @@
 //! Goto-implementation query flow.
 
 use rg_body_ir::{
-    BodyAutoderef, BodyAutoderefMode, BodyDeclarationRef, BodyFunctionRef, BodyImplId,
-    BodyResolution, BodyTy, ExprKind, ResolvedFunctionRef,
+    BodyAutoderef, BodyAutoderefMode, BodyDeclarationRef, BodyImplId, BodyResolution, BodyTy,
+    ExprKind, ResolvedFunctionRef,
 };
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
 use rg_semantic_ir::{
-    AssocItemId, FunctionRef, ImplRef, ItemOwner, SemanticItemRef, TraitRef, TypeDefRef,
+    AssocItemId, FunctionRef, ImplRef, ItemOwner, SemanticDeclarationRef, SemanticItemRef,
+    TraitRef, TypeDefRef,
 };
 
 use super::target::NavigationTargetResolver;
 use crate::{
     api::{
-        Analysis,
-        query::type_at::TypeResolver,
-        resolve::entity::{EntityResolver, ResolvedEntity},
+        Analysis, query::type_at::TypeResolver, resolve::entity::EntityResolver,
+        view::declaration::DeclarationRef,
     },
     model::{NavigationTarget, SymbolAt},
 };
@@ -49,8 +49,52 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         }
 
         // 2) Symbol/entity expansion: trait/type/function/local bindings.
-        for entity in EntityResolver::new(self.0).entities_for_symbol(symbol)? {
-            self.push_entity_targets(entity, &mut targets)?;
+        for declaration in EntityResolver::new(self.0).declarations_for_symbol(symbol)? {
+            match declaration {
+                DeclarationRef::Semantic(SemanticDeclarationRef::Item(item)) => match item {
+                    SemanticItemRef::TypeDef(ty) => self.push_type_def_targets(ty, &mut targets)?,
+                    SemanticItemRef::Trait(trait_ref) => {
+                        self.push_trait_impl_targets(trait_ref, &mut targets)?;
+                    }
+                    SemanticItemRef::Function(function) => {
+                        self.push_semantic_function_targets(function, None, &mut targets)?;
+                    }
+                    SemanticItemRef::Impl(_)
+                    | SemanticItemRef::TypeAlias(_)
+                    | SemanticItemRef::Const(_)
+                    | SemanticItemRef::Static(_) => {}
+                },
+                DeclarationRef::Body(declaration) => match declaration {
+                    BodyDeclarationRef::Binding(_) => {
+                        let Some(view) = self.0.body_ir.body_declaration_view(declaration)? else {
+                            continue;
+                        };
+                        let Some(binding_data) = view.binding_data() else {
+                            continue;
+                        };
+                        self.push_ty_targets(&binding_data.ty, &mut targets)?;
+                    }
+                    BodyDeclarationRef::Item(item) => {
+                        self.push_local_type_targets(item, &mut targets)?;
+                    }
+                    BodyDeclarationRef::Function(function) => {
+                        self.push_resolved_function_targets(
+                            ResolvedFunctionRef::BodyLocal(function),
+                            None,
+                            &mut targets,
+                        )?;
+                    }
+                    BodyDeclarationRef::ValueItem(_)
+                    | BodyDeclarationRef::Impl(_)
+                    | BodyDeclarationRef::Field(_)
+                    | BodyDeclarationRef::EnumVariant(_) => {}
+                },
+                DeclarationRef::Semantic(
+                    SemanticDeclarationRef::Field(_) | SemanticDeclarationRef::EnumVariant(_),
+                )
+                | DeclarationRef::Module(_)
+                | DeclarationRef::LocalDef(_) => {}
+            }
         }
 
         // 3) If symbol expansion found nothing, fall back to inferred type.
@@ -94,75 +138,6 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         }
 
         Ok(true)
-    }
-
-    fn push_entity_targets(
-        &self,
-        entity: ResolvedEntity,
-        targets: &mut Vec<NavigationTarget>,
-    ) -> anyhow::Result<()> {
-        match entity {
-            ResolvedEntity::SemanticItem(item) => self.push_semantic_item_targets(item, targets),
-            ResolvedEntity::BodyDeclaration(declaration) => {
-                self.push_body_declaration_targets(declaration, targets)
-            }
-            ResolvedEntity::Module { .. }
-            | ResolvedEntity::Field(_)
-            | ResolvedEntity::EnumVariant(_)
-            | ResolvedEntity::LocalDef(_) => Ok(()),
-        }
-    }
-
-    fn push_body_declaration_targets(
-        &self,
-        declaration: BodyDeclarationRef,
-        targets: &mut Vec<NavigationTarget>,
-    ) -> anyhow::Result<()> {
-        match declaration {
-            BodyDeclarationRef::Binding(_) => {
-                let Some(view) = self.0.body_ir.body_declaration_view(declaration)? else {
-                    return Ok(());
-                };
-                let Some(binding_data) = view.binding_data() else {
-                    return Ok(());
-                };
-                self.push_ty_targets(&binding_data.ty, targets)
-            }
-            BodyDeclarationRef::Item(item) => self.push_local_type_targets(item, targets),
-            BodyDeclarationRef::Function(function) => {
-                self.push_body_function_targets(function, targets)
-            }
-            BodyDeclarationRef::ValueItem(_)
-            | BodyDeclarationRef::Impl(_)
-            | BodyDeclarationRef::Field(_)
-            | BodyDeclarationRef::EnumVariant(_) => Ok(()),
-        }
-    }
-
-    fn push_semantic_item_targets(
-        &self,
-        item: SemanticItemRef,
-        targets: &mut Vec<NavigationTarget>,
-    ) -> anyhow::Result<()> {
-        match item {
-            SemanticItemRef::TypeDef(ty) => self.push_type_def_targets(ty, targets),
-            SemanticItemRef::Trait(trait_ref) => self.push_trait_impl_targets(trait_ref, targets),
-            SemanticItemRef::Function(function) => {
-                self.push_semantic_function_targets(function, None, targets)
-            }
-            SemanticItemRef::Impl(_)
-            | SemanticItemRef::TypeAlias(_)
-            | SemanticItemRef::Const(_)
-            | SemanticItemRef::Static(_) => Ok(()),
-        }
-    }
-
-    fn push_body_function_targets(
-        &self,
-        function: BodyFunctionRef,
-        targets: &mut Vec<NavigationTarget>,
-    ) -> anyhow::Result<()> {
-        self.push_resolved_function_targets(ResolvedFunctionRef::BodyLocal(function), None, targets)
     }
 
     fn push_ty_targets(

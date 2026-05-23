@@ -1,7 +1,6 @@
 //! Workspace-wide symbol search.
 
 use anyhow::Result;
-use rg_body_ir::{ResolvedEnumVariantRef, ResolvedFieldRef};
 use rg_def_map::{ModuleId, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
@@ -219,11 +218,11 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
             return Ok(());
         };
         for index in 0..data.variants.len() {
-            let variant_ref = ResolvedEnumVariantRef::Semantic(EnumVariantRef {
+            let variant_ref = EnumVariantRef {
                 target: ty.target,
                 enum_id,
                 index,
-            });
+            };
             self.push_declaration_workspace_symbol(
                 variant_ref,
                 Some(container_name.to_string()),
@@ -244,7 +243,7 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
     ) -> Result<()> {
         for field_ref in self.0.semantic_ir.fields_for_type(ty)? {
             self.push_declaration_workspace_symbol(
-                ResolvedFieldRef::Semantic(field_ref),
+                field_ref,
                 Some(container_name.to_string()),
                 query,
                 symbols,

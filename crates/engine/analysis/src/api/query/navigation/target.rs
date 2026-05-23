@@ -84,21 +84,21 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         declaration: BodyDeclarationRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        Ok(self.declaration(declaration)?.map(NavigationTarget::from))
+        self.navigation_target_for_declaration(declaration.into())
     }
 
     pub(crate) fn navigation_target_for_semantic_item(
         &self,
         item_ref: SemanticItemRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        Ok(self.declaration(item_ref)?.map(NavigationTarget::from))
+        self.navigation_target_for_declaration(item_ref.into())
     }
 
     pub(crate) fn navigation_target_for_field(
         &self,
         field_ref: FieldRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_resolved_field(ResolvedFieldRef::Semantic(field_ref))
+        self.navigation_target_for_declaration(field_ref.into())
     }
 
     pub(crate) fn navigation_target_for_resolved_field(
@@ -106,11 +106,11 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         field_ref: ResolvedFieldRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
         match field_ref {
-            ResolvedFieldRef::Semantic(_) => {
-                Ok(self.declaration(field_ref)?.map(NavigationTarget::from))
+            ResolvedFieldRef::Semantic(field_ref) => {
+                self.navigation_target_for_declaration(field_ref.into())
             }
             ResolvedFieldRef::BodyLocal(field_ref) => {
-                self.navigation_target_for_body_declaration(field_ref.into())
+                self.navigation_target_for_declaration(field_ref.into())
             }
         }
     }
@@ -119,14 +119,14 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         function_ref: FunctionRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        Ok(self.declaration(function_ref)?.map(NavigationTarget::from))
+        self.navigation_target_for_declaration(function_ref.into())
     }
 
     pub(crate) fn navigation_target_for_impl(
         &self,
         impl_ref: ImplRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        Ok(self.declaration(impl_ref)?.map(NavigationTarget::from))
+        self.navigation_target_for_declaration(impl_ref.into())
     }
 
     pub(crate) fn navigation_target_for_body_impl(
@@ -148,11 +148,11 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         function_ref: ResolvedFunctionRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
         match function_ref {
-            ResolvedFunctionRef::Semantic(_) => {
-                Ok(self.declaration(function_ref)?.map(NavigationTarget::from))
+            ResolvedFunctionRef::Semantic(function_ref) => {
+                self.navigation_target_for_declaration(function_ref.into())
             }
             ResolvedFunctionRef::BodyLocal(function_ref) => {
-                self.navigation_target_for_body_declaration(function_ref.into())
+                self.navigation_target_for_declaration(function_ref.into())
             }
         }
     }
@@ -168,9 +168,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         variant_ref: EnumVariantRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_resolved_enum_variant(ResolvedEnumVariantRef::Semantic(
-            variant_ref,
-        ))
+        self.navigation_target_for_declaration(variant_ref.into())
     }
 
     pub(crate) fn navigation_target_for_resolved_enum_variant(
@@ -178,11 +176,11 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         variant_ref: ResolvedEnumVariantRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
         match variant_ref {
-            ResolvedEnumVariantRef::Semantic(_) => {
-                Ok(self.declaration(variant_ref)?.map(NavigationTarget::from))
+            ResolvedEnumVariantRef::Semantic(variant_ref) => {
+                self.navigation_target_for_declaration(variant_ref.into())
             }
             ResolvedEnumVariantRef::BodyLocal(variant_ref) => {
-                self.navigation_target_for_body_declaration(variant_ref.into())
+                self.navigation_target_for_declaration(variant_ref.into())
             }
         }
     }
@@ -191,14 +189,14 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         trait_ref: TraitRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        Ok(self.declaration(trait_ref)?.map(NavigationTarget::from))
+        self.navigation_target_for_declaration(trait_ref.into())
     }
 
     pub(crate) fn navigation_target_for_type_def(
         &self,
         ty: TypeDefRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        Ok(self.declaration(ty)?.map(NavigationTarget::from))
+        self.navigation_target_for_declaration(ty.into())
     }
 
     pub(crate) fn navigation_targets_for_body_ty(
@@ -226,5 +224,18 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
             }
         }
         Ok(targets)
+    }
+
+    pub(crate) fn navigation_target_for_declaration(
+        &self,
+        declaration: DeclarationRef,
+    ) -> anyhow::Result<Option<NavigationTarget>> {
+        match declaration {
+            DeclarationRef::Module(module) => self.navigation_target_for_module(module),
+            DeclarationRef::LocalDef(local_def) => self.navigation_target_for_local_def(local_def),
+            DeclarationRef::Semantic(_) | DeclarationRef::Body(_) => {
+                Ok(self.declaration(declaration)?.map(NavigationTarget::from))
+            }
+        }
     }
 }
