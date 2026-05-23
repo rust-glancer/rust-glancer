@@ -12,7 +12,6 @@ use rg_semantic_ir::SemanticCursorCandidate;
 use crate::{
     api::{
         Analysis,
-        query::navigation::SymbolResolver,
         resolve::declaration::SymbolDeclarationResolver,
         view::declaration::{DeclarationRef, DeclarationView},
     },
@@ -163,20 +162,22 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         symbol: SymbolAt,
         locations: &mut Vec<ReferenceLocation>,
     ) -> anyhow::Result<()> {
-        for target in SymbolResolver::new(self.analysis).resolve_symbol(symbol)? {
-            let Some(span) = target.span else {
+        for declaration_ref in self.subjects_for_symbol(symbol)? {
+            let Some(declaration) =
+                DeclarationView::new(self.analysis).declaration(declaration_ref)?
+            else {
                 continue;
             };
             if !self
                 .query
-                .accepts_declaration(target.target, target.file_id)
+                .accepts_declaration(declaration.target(), declaration.file_id())
             {
                 continue;
             }
             locations.push(ReferenceLocation {
-                target: target.target,
-                file_id: target.file_id,
-                span,
+                target: declaration.target(),
+                file_id: declaration.file_id(),
+                span: declaration.selection_span(),
             });
         }
         Ok(())

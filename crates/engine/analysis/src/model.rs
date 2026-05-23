@@ -1,7 +1,7 @@
 use rg_body_ir::{
-    BindingData, BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionOwner, BodyFunctionRef,
-    BodyItemKind, BodyItemRef, BodyPrimitiveTy, BodyRef, BodyValueItemKind, BodyValueItemRef,
-    ExprId, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
+    BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionOwner, BodyFunctionRef, BodyItemKind,
+    BodyItemRef, BodyPrimitiveTy, BodyRef, BodyValueItemKind, BodyValueItemRef, ExprId,
+    ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
 };
 use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
@@ -96,22 +96,6 @@ pub struct NavigationTarget {
     pub name: String,
     pub file_id: FileId,
     pub span: Option<Span>,
-}
-
-impl NavigationTarget {
-    pub(super) fn from_binding(target: TargetRef, binding: &BindingData) -> Self {
-        Self {
-            target,
-            kind: NavigationTargetKind::LocalBinding,
-            name: binding
-                .name
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "<unsupported>".to_string()),
-            file_id: binding.source.file_id,
-            span: Some(binding.source.span),
-        }
-    }
 }
 
 /// Hierarchical source outline for one file under one target context.

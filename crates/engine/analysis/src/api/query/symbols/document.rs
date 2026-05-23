@@ -3,7 +3,7 @@
 use anyhow::Result;
 use rg_body_ir::{
     BodyData, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplData, BodyImplId, BodyImplRef,
-    BodyItemData, BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef,
+    BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef,
 };
 use rg_def_map::TargetRef;
 use rg_parse::{FileId, Span};
@@ -141,14 +141,12 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
 
         let mut children = Vec::new();
         for field_ref in self.0.semantic_ir.fields_for_type(ty)? {
-            let Some(field) = self.0.semantic_ir.field_data(field_ref)? else {
+            let Some(symbol) = self.declaration_document_symbol(field_ref)? else {
                 continue;
             };
-            children.push(Self::field_document_symbol(
-                file_id,
-                shared::field_label(field.field.key_declaration_label()),
-                field.field.span,
-            ));
+            if symbol.file_id == file_id {
+                children.push(symbol);
+            }
         }
 
         Ok(Some(
@@ -313,7 +311,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                     body: body_ref,
                     item: BodyItemId(item_idx),
                 };
-                let Some(symbol) = self.body_item_document_symbol(item_ref, item)? else {
+                let Some(symbol) = self.body_item_document_symbol(item_ref)? else {
                     continue;
                 };
                 symbols.push(symbol);
@@ -356,8 +354,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                     body: body_ref,
                     impl_id: BodyImplId(impl_idx),
                 };
-                let Some(symbol) = self.body_impl_document_symbol(impl_ref, body, impl_data)?
-                else {
+                let Some(symbol) = self.body_impl_document_symbol(impl_ref, impl_data)? else {
                     continue;
                 };
                 symbols.push(symbol);
@@ -367,26 +364,20 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         Ok(symbols)
     }
 
-    fn body_item_document_symbol(
-        &self,
-        item_ref: BodyItemRef,
-        item: &BodyItemData,
-    ) -> Result<Option<DocumentSymbol>> {
+    fn body_item_document_symbol(&self, item_ref: BodyItemRef) -> Result<Option<DocumentSymbol>> {
         let Some(declaration) = self.declaration(item_ref)? else {
             return Ok(None);
         };
 
-        let children = item
-            .fields()
-            .iter()
-            .map(|field| {
-                Self::field_document_symbol(
-                    declaration.file_id(),
-                    shared::field_label(field.key_declaration_label()),
-                    field.span,
-                )
-            })
-            .collect();
+        let mut children = Vec::new();
+        for field_ref in self.0.body_ir.fields_for_local_type(item_ref)? {
+            let Some(symbol) = self.declaration_document_symbol(field_ref)? else {
+                continue;
+            };
+            if symbol.file_id == declaration.file_id() {
+                children.push(symbol);
+            }
+        }
 
         Ok(Some(
             DocumentSymbol::from(declaration).with_children(children),
@@ -396,20 +387,16 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
     fn body_impl_document_symbol(
         &self,
         impl_ref: BodyImplRef,
-        body: &BodyData,
         impl_data: &BodyImplData,
     ) -> Result<Option<DocumentSymbol>> {
         let mut children = Vec::new();
 
         for item in &impl_data.types {
-            let Some(data) = body.local_item(*item) else {
-                continue;
-            };
             let item_ref = BodyItemRef {
                 body: impl_ref.body,
                 item: *item,
             };
-            let Some(symbol) = self.body_item_document_symbol(item_ref, data)? else {
+            let Some(symbol) = self.body_item_document_symbol(item_ref)? else {
                 continue;
             };
             children.push(symbol);

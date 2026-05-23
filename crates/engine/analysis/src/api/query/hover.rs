@@ -1,4 +1,4 @@
-//! Builds hover payloads from resolved analysis entities.
+//! Builds hover payloads from resolved analysis declarations.
 
 use rg_body_ir::{
     BodyDeclarationRef, BodyTy, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
@@ -47,18 +47,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         let mut blocks = Vec::new();
 
         for declaration in declarations {
-            let block = match declaration {
-                DeclarationRef::Module(module) => {
-                    self.hover_for_module(module, module_display_name.clone())?
-                }
-                DeclarationRef::LocalDef(local_def) => self.hover_for_local_def(local_def)?,
-                DeclarationRef::Semantic(declaration) => {
-                    self.hover_for_semantic_declaration(declaration)?
-                }
-                DeclarationRef::Body(declaration) => {
-                    self.hover_for_body_declaration(declaration)?
-                }
-            };
+            let block = self.hover_for_declaration(declaration, module_display_name.clone())?;
             let Some(block) = block else {
                 continue;
             };
@@ -95,6 +84,21 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             | SymbolAt::LocalValueItem { .. }
             | SymbolAt::LocalField { .. }
             | SymbolAt::LocalFunction { .. } => None,
+        }
+    }
+
+    fn hover_for_declaration(
+        &self,
+        declaration: DeclarationRef,
+        module_display_name: Option<String>,
+    ) -> anyhow::Result<Option<HoverBlock>> {
+        match declaration {
+            DeclarationRef::Module(module) => self.hover_for_module(module, module_display_name),
+            DeclarationRef::LocalDef(local_def) => self.hover_for_local_def(local_def),
+            DeclarationRef::Semantic(declaration) => {
+                self.hover_for_semantic_declaration(declaration)
+            }
+            DeclarationRef::Body(declaration) => self.hover_for_body_declaration(declaration),
         }
     }
 

@@ -4,13 +4,21 @@
 //! body-local declarations. Signature-only resolutions are converted into that common shape here.
 
 use rg_body_ir::{
-    BodyLocalNominalTy, BodyNominalTy, BodyPrimitiveTy, BodyRef, BodyTy, BodyTypePathResolution,
-    ResolvedEnumVariantRef, ScopeId,
+    BodyDeclarationRef, BodyLocalNominalTy, BodyNominalTy, BodyPrimitiveTy, BodyRef, BodyTy,
+    BodyTypePathResolution, ResolvedEnumVariantRef, ScopeId,
 };
-use rg_def_map::{DefId, Path};
-use rg_semantic_ir::{FieldRef, SemanticItemRef, SemanticTypePathResolution, TypePathContext};
+use rg_def_map::Path;
+use rg_semantic_ir::{
+    FieldRef, SemanticDeclarationRef, SemanticItemRef, SemanticTypePathResolution, TypePathContext,
+};
 
-use crate::{api::Analysis, model::SymbolAt};
+use crate::{
+    api::{
+        Analysis, resolve::declaration::SymbolDeclarationResolver,
+        view::declaration::DeclarationRef,
+    },
+    model::SymbolAt,
+};
 
 pub(crate) struct TypeResolver<'a, 'db>(&'a Analysis<'db>);
 
@@ -60,30 +68,21 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
                 )?;
                 Some(ty)
             }
-            SymbolAt::Def { def, .. } => self.ty_for_def(def)?,
-            SymbolAt::Field { field, .. } => self.ty_for_field(field)?,
-            SymbolAt::LocalItem { item, .. } => {
-                Some(BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)]))
+            declaration_symbol @ (SymbolAt::Def { .. }
+            | SymbolAt::Field { .. }
+            | SymbolAt::Function { .. }
+            | SymbolAt::EnumVariant { .. }
+            | SymbolAt::LocalItem { .. }
+            | SymbolAt::LocalValueItem { .. }
+            | SymbolAt::LocalField { .. }
+            | SymbolAt::LocalEnumVariant { .. }
+            | SymbolAt::LocalFunction { .. }) => {
+                self.ty_for_symbol_declarations(declaration_symbol)?
             }
-            SymbolAt::LocalValueItem { item, .. } => self
-                .0
-                .body_ir
-                .body_data(item.body)?
-                .and_then(|body_data| body_data.local_value_item(item.item))
-                .and_then(|data| data.ty().cloned())
-                .map(BodyTy::Syntax),
-            SymbolAt::LocalField { .. } => None,
-            SymbolAt::LocalEnumVariant { variant, .. } => {
-                self.ty_for_enum_variant(ResolvedEnumVariantRef::BodyLocal(variant))?
-            }
-            SymbolAt::LocalFunction { .. } => None,
             SymbolAt::TypePath { context, path, .. } => {
                 Some(self.ty_for_type_path(context, &path)?)
             }
-            SymbolAt::EnumVariant { variant, .. } => {
-                self.ty_for_enum_variant(ResolvedEnumVariantRef::Semantic(variant))?
-            }
-            SymbolAt::UsePath { .. } | SymbolAt::Function { .. } => None,
+            SymbolAt::UsePath { .. } => None,
             SymbolAt::Body { .. } => None,
         };
         Ok(ty)
@@ -124,17 +123,70 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
         ))
     }
 
-    fn ty_for_def(&self, def: DefId) -> anyhow::Result<Option<BodyTy>> {
-        let DefId::Local(local_def) = def else {
-            return Ok(None);
-        };
-        let Some(SemanticItemRef::TypeDef(ty)) =
-            self.0.semantic_ir.semantic_item_for_local_def(local_def)?
-        else {
-            return Ok(None);
-        };
+    fn ty_for_symbol_declarations(&self, symbol: SymbolAt) -> anyhow::Result<Option<BodyTy>> {
+        let declarations =
+            SymbolDeclarationResolver::new(self.0).declarations_for_symbol(symbol)?;
+        for declaration in declarations {
+            if let Some(ty) = self.ty_for_declaration(declaration)? {
+                return Ok(Some(ty));
+            }
+        }
+        Ok(None)
+    }
 
-        Ok(Some(BodyTy::Nominal(vec![BodyNominalTy::bare(ty)])))
+    fn ty_for_declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<BodyTy>> {
+        match declaration {
+            DeclarationRef::Module(_) => Ok(None),
+            DeclarationRef::LocalDef(local_def) => {
+                let Some(SemanticItemRef::TypeDef(ty)) =
+                    self.0.semantic_ir.semantic_item_for_local_def(local_def)?
+                else {
+                    return Ok(None);
+                };
+                Ok(Some(BodyTy::Nominal(vec![BodyNominalTy::bare(ty)])))
+            }
+            DeclarationRef::Semantic(SemanticDeclarationRef::Item(SemanticItemRef::TypeDef(
+                ty,
+            ))) => Ok(Some(BodyTy::Nominal(vec![BodyNominalTy::bare(ty)]))),
+            DeclarationRef::Semantic(SemanticDeclarationRef::Item(
+                SemanticItemRef::Trait(_)
+                | SemanticItemRef::Impl(_)
+                | SemanticItemRef::Function(_)
+                | SemanticItemRef::TypeAlias(_)
+                | SemanticItemRef::Const(_)
+                | SemanticItemRef::Static(_),
+            )) => Ok(None),
+            DeclarationRef::Semantic(SemanticDeclarationRef::Field(field)) => {
+                self.ty_for_field(field)
+            }
+            DeclarationRef::Semantic(SemanticDeclarationRef::EnumVariant(variant)) => {
+                self.ty_for_enum_variant(ResolvedEnumVariantRef::Semantic(variant))
+            }
+            DeclarationRef::Body(BodyDeclarationRef::Binding(binding)) => Ok(self
+                .0
+                .body_ir
+                .body_data(binding.body)?
+                .and_then(|body_data| body_data.binding(binding.binding))
+                .map(|data| data.ty.clone())),
+            DeclarationRef::Body(BodyDeclarationRef::Item(item)) => Ok(Some(BodyTy::LocalNominal(
+                vec![BodyLocalNominalTy::bare(item)],
+            ))),
+            DeclarationRef::Body(BodyDeclarationRef::ValueItem(item)) => Ok(self
+                .0
+                .body_ir
+                .body_data(item.body)?
+                .and_then(|body_data| body_data.local_value_item(item.item))
+                .and_then(|data| data.ty().cloned())
+                .map(BodyTy::Syntax)),
+            DeclarationRef::Body(BodyDeclarationRef::EnumVariant(variant)) => {
+                self.ty_for_enum_variant(ResolvedEnumVariantRef::BodyLocal(variant))
+            }
+            DeclarationRef::Body(
+                BodyDeclarationRef::Impl(_)
+                | BodyDeclarationRef::Field(_)
+                | BodyDeclarationRef::Function(_),
+            ) => Ok(None),
+        }
     }
 
     fn ty_for_field(&self, field: FieldRef) -> anyhow::Result<Option<BodyTy>> {

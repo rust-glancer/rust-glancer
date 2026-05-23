@@ -2,12 +2,9 @@
 
 use rg_body_ir::{
     BodyAutoderef, BodyDeclarationRef, BodyImplId, BodyImplRef, BodyItemRef, BodyRef, BodyTy,
-    ResolvedDeclarationRef,
 };
-use rg_def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef};
-use rg_semantic_ir::{
-    EnumVariantRef, FieldRef, FunctionRef, ImplRef, SemanticItemRef, TraitRef, TypeDefRef,
-};
+use rg_def_map::{LocalDefRef, ModuleOrigin, ModuleRef};
+use rg_semantic_ir::{FunctionRef, ImplRef, TypeDefRef};
 
 use crate::{
     api::{
@@ -26,16 +23,6 @@ pub(crate) struct NavigationTargetResolver<'a, 'db>(&'a Analysis<'db>);
 impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
-    }
-
-    pub(crate) fn navigation_target_for_def(
-        &self,
-        def: DefId,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        match def {
-            DefId::Module(module_ref) => self.navigation_target_for_module(module_ref),
-            DefId::Local(local_def) => self.navigation_target_for_local_def(local_def),
-        }
     }
 
     fn navigation_target_for_module(
@@ -89,35 +76,6 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         self.navigation_target_for_declaration(declaration.into())
     }
 
-    pub(crate) fn navigation_target_for_resolved_declaration(
-        &self,
-        declaration: ResolvedDeclarationRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        match declaration {
-            ResolvedDeclarationRef::Def(def) => self.navigation_target_for_def(def),
-            ResolvedDeclarationRef::Semantic(declaration) => {
-                self.navigation_target_for_declaration(declaration.into())
-            }
-            ResolvedDeclarationRef::Body(declaration) => {
-                self.navigation_target_for_declaration(declaration.into())
-            }
-        }
-    }
-
-    pub(crate) fn navigation_target_for_semantic_item(
-        &self,
-        item_ref: SemanticItemRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_declaration(item_ref.into())
-    }
-
-    pub(crate) fn navigation_target_for_field(
-        &self,
-        field_ref: FieldRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_declaration(field_ref.into())
-    }
-
     pub(crate) fn navigation_target_for_function(
         &self,
         function_ref: FunctionRef,
@@ -146,25 +104,24 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         )
     }
 
+    pub(crate) fn navigation_targets_for_declarations(
+        &self,
+        declarations: Vec<DeclarationRef>,
+    ) -> anyhow::Result<Vec<NavigationTarget>> {
+        let mut targets = Vec::new();
+        for declaration in declarations {
+            if let Some(target) = self.navigation_target_for_declaration(declaration)? {
+                targets.push(target);
+            }
+        }
+        Ok(targets)
+    }
+
     fn declaration(
         &self,
         declaration: impl Into<DeclarationRef>,
     ) -> anyhow::Result<Option<Declaration>> {
         DeclarationView::new(self.0).declaration(declaration.into())
-    }
-
-    pub(crate) fn navigation_target_for_enum_variant(
-        &self,
-        variant_ref: EnumVariantRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_declaration(variant_ref.into())
-    }
-
-    pub(crate) fn navigation_target_for_trait(
-        &self,
-        trait_ref: TraitRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_declaration(trait_ref.into())
     }
 
     pub(crate) fn navigation_target_for_type_def(
