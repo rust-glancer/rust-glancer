@@ -494,7 +494,7 @@ checksum = "9bda8e21c04aca2ae33ffc2fd8c23134f3cac46db123ba97bd9d3f3b8a4a85e1"
 [[package]]
 name = "edition"
 version = "0.0.0"
-source = "git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca#b8458013c217be4fccefc4e4f194026fa04ab4ca"
+source = "git+https://github.com/rust-lang/rust-analyzer?rev=2cf14f4d34fd96fb763cfd9f909472a61145674a#2cf14f4d34fd96fb763cfd9f909472a61145674a"
 
 [[package]]
 name = "educe"

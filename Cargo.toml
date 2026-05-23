@@ -62,7 +62,7 @@ cargo_metadata = "0.23.1"
 derive_more = { version = "2.1.1" }
 divan = { package = "codspeed-divan-compat", version = "4.6.0" }
 drop_bomb = "0.1.5"
-edition = { git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca" }
+edition = { git = "https://github.com/rust-lang/rust-analyzer", rev = "2cf14f4d34fd96fb763cfd9f909472a61145674a" }
 either = "1.15.0"
 expect-test = "1.5.1"
 futures = "0.3.32"
