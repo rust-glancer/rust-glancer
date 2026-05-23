@@ -223,9 +223,7 @@ impl EngineProcessExitMonitor {
         const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
         loop {
-            let Some(child) = self.child.upgrade() else {
-                return None;
-            };
+            let child = self.child.upgrade()?;
 
             // Polling through a weak handle keeps shutdown ownership simple: when the server
             // drops the engine handle, `kill_on_drop` is free to clean up the child process.
