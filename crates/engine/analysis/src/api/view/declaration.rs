@@ -1,7 +1,8 @@
 //! Source-level declaration lookup shared by editor queries.
 
 use rg_body_ir::{
-    BodyImplId, BodyItemRef, BodyRef, BodyValueItemRef, ResolvedEnumVariantRef, ResolvedFieldRef,
+    BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef,
+    BodyImplRef, BodyItemRef, BodyValueItemRef, ResolvedEnumVariantRef, ResolvedFieldRef,
     ResolvedFunctionRef,
 };
 use rg_def_map::{LocalDefRef, ModuleOrigin, ModuleRef};
@@ -18,64 +19,38 @@ use crate::{
 /// Storage-independent identity for declarations that editor features can project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::From)]
 pub(crate) enum DeclarationRef {
+    #[from]
     Module(ModuleRef),
+    #[from]
     LocalDef(LocalDefRef),
+    #[from(
+        SemanticItemRef,
+        TypeDefRef,
+        TraitRef,
+        ImplRef,
+        FunctionRef,
+        TypeAliasRef,
+        ConstRef,
+        StaticRef
+    )]
     SemanticItem(SemanticItemRef),
-    BodyImpl(BodyImplRef),
-    BodyItem(BodyItemRef),
-    BodyValueItem(BodyValueItemRef),
+    #[from(
+        BodyDeclarationRef,
+        BodyBindingRef,
+        BodyItemRef,
+        BodyValueItemRef,
+        BodyImplRef,
+        BodyFieldRef,
+        BodyEnumVariantRef,
+        BodyFunctionRef
+    )]
+    Body(BodyDeclarationRef),
+    #[from]
     EnumVariant(ResolvedEnumVariantRef),
+    #[from]
     Field(ResolvedFieldRef),
+    #[from]
     Function(ResolvedFunctionRef),
-}
-
-impl From<TypeDefRef> for DeclarationRef {
-    fn from(item: TypeDefRef) -> Self {
-        Self::SemanticItem(item.into())
-    }
-}
-
-impl From<TraitRef> for DeclarationRef {
-    fn from(item: TraitRef) -> Self {
-        Self::SemanticItem(item.into())
-    }
-}
-
-impl From<ImplRef> for DeclarationRef {
-    fn from(item: ImplRef) -> Self {
-        Self::SemanticItem(item.into())
-    }
-}
-
-impl From<FunctionRef> for DeclarationRef {
-    fn from(item: FunctionRef) -> Self {
-        Self::SemanticItem(item.into())
-    }
-}
-
-impl From<TypeAliasRef> for DeclarationRef {
-    fn from(item: TypeAliasRef) -> Self {
-        Self::SemanticItem(item.into())
-    }
-}
-
-impl From<ConstRef> for DeclarationRef {
-    fn from(item: ConstRef) -> Self {
-        Self::SemanticItem(item.into())
-    }
-}
-
-impl From<StaticRef> for DeclarationRef {
-    fn from(item: StaticRef) -> Self {
-        Self::SemanticItem(item.into())
-    }
-}
-
-/// Body IR stores impl ids inside a body, so the body id is part of the declaration identity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BodyImplRef {
-    pub(crate) body: BodyRef,
-    pub(crate) impl_id: BodyImplId,
 }
 
 /// Reads declaration facts for IDs that already identify one source declaration.
@@ -96,9 +71,7 @@ impl<'a, 'db> DeclarationLookup<'a, 'db> {
             DeclarationRef::Module(module_ref) => self.module(module_ref),
             DeclarationRef::LocalDef(local_def) => self.local_def(local_def),
             DeclarationRef::SemanticItem(item) => self.semantic_item(item),
-            DeclarationRef::BodyImpl(impl_ref) => self.body_impl(impl_ref),
-            DeclarationRef::BodyItem(item_ref) => self.body_item(item_ref),
-            DeclarationRef::BodyValueItem(item_ref) => self.body_value_item(item_ref),
+            DeclarationRef::Body(declaration) => self.body_declaration(declaration),
             DeclarationRef::EnumVariant(variant) => self.enum_variant(variant),
             DeclarationRef::Field(field) => self.field(field),
             DeclarationRef::Function(function) => self.function(function),
@@ -216,58 +189,120 @@ impl<'a, 'db> DeclarationLookup<'a, 'db> {
         }
     }
 
-    fn body_impl(&self, impl_ref: BodyImplRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(body) = self.analysis.body_ir.body_data(impl_ref.body)? else {
-            return Ok(None);
-        };
-        let Some(data) = body.local_impl(impl_ref.impl_id) else {
-            return Ok(None);
-        };
-
-        Ok(Some(Declaration {
-            target: impl_ref.body.target,
-            kind: SymbolKind::Impl,
-            name: Self::impl_label(&data.self_ty, data.trait_ref.as_ref()),
-            file_id: data.source.file_id,
-            span: data.source.span,
-            selection_span: data.source.span,
-        }))
-    }
-
-    fn body_item(&self, item_ref: BodyItemRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(body_data) = self.analysis.body_ir.body_data(item_ref.body)? else {
-            return Ok(None);
-        };
-        let Some(item) = body_data.local_item(item_ref.item) else {
+    fn body_declaration(
+        &self,
+        declaration: BodyDeclarationRef,
+    ) -> anyhow::Result<Option<Declaration>> {
+        let Some(view) = self.analysis.body_ir.body_declaration_view(declaration)? else {
             return Ok(None);
         };
 
-        Ok(Some(Declaration {
-            target: item_ref.body.target,
-            kind: SymbolKind::from_body_item_kind(item.kind),
-            name: item.name.to_string(),
-            file_id: item.source.file_id,
-            span: item.source.span,
-            selection_span: item.name_source.span,
-        }))
-    }
+        let target = declaration.body().target;
+        let source = view.source();
+        let selection_span = view.name_source().unwrap_or(source).span;
 
-    fn body_value_item(&self, item_ref: BodyValueItemRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(body_data) = self.analysis.body_ir.body_data(item_ref.body)? else {
-            return Ok(None);
-        };
-        let Some(item) = body_data.local_value_item(item_ref.item) else {
-            return Ok(None);
+        let declaration = match declaration {
+            BodyDeclarationRef::Binding(_) => Declaration {
+                target,
+                kind: SymbolKind::Variable,
+                name: view
+                    .name()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| "<unsupported>".to_string()),
+                file_id: source.file_id,
+                span: source.span,
+                selection_span,
+            },
+            BodyDeclarationRef::Item(_) => {
+                let Some(kind) = view.item_kind() else {
+                    return Ok(None);
+                };
+                let Some(name) = view.name() else {
+                    return Ok(None);
+                };
+                Declaration {
+                    target,
+                    kind: SymbolKind::from_body_item_kind(kind),
+                    name: name.to_string(),
+                    file_id: source.file_id,
+                    span: source.span,
+                    selection_span,
+                }
+            }
+            BodyDeclarationRef::ValueItem(_) => {
+                let Some(kind) = view.value_item_kind() else {
+                    return Ok(None);
+                };
+                let Some(name) = view.name() else {
+                    return Ok(None);
+                };
+                Declaration {
+                    target,
+                    kind: SymbolKind::from_body_value_item_kind(kind),
+                    name: name.to_string(),
+                    file_id: source.file_id,
+                    span: source.span,
+                    selection_span,
+                }
+            }
+            BodyDeclarationRef::Impl(_) => {
+                let Some((self_ty, trait_ref)) = view.impl_header() else {
+                    return Ok(None);
+                };
+                Declaration {
+                    target,
+                    kind: SymbolKind::Impl,
+                    name: Self::impl_label(self_ty, trait_ref),
+                    file_id: source.file_id,
+                    span: source.span,
+                    selection_span,
+                }
+            }
+            BodyDeclarationRef::Field(_) => {
+                let Some(data) = view.field_data() else {
+                    return Ok(None);
+                };
+                Declaration {
+                    target,
+                    kind: SymbolKind::Field,
+                    name: Self::field_label(data.field.key_declaration_label()),
+                    file_id: source.file_id,
+                    span: source.span,
+                    selection_span,
+                }
+            }
+            BodyDeclarationRef::EnumVariant(_) => {
+                let Some(name) = view.name() else {
+                    return Ok(None);
+                };
+                Declaration {
+                    target,
+                    kind: SymbolKind::EnumVariant,
+                    name: name.to_string(),
+                    file_id: source.file_id,
+                    span: source.span,
+                    selection_span,
+                }
+            }
+            BodyDeclarationRef::Function(_) => {
+                let Some(owner) = view.function_owner() else {
+                    return Ok(None);
+                };
+                let Some(name) = view.name() else {
+                    return Ok(None);
+                };
+                Declaration {
+                    target,
+                    kind: SymbolKind::from_body_function_owner(owner),
+                    name: name.to_string(),
+                    file_id: source.file_id,
+                    span: source.span,
+                    selection_span,
+                }
+            }
         };
 
-        Ok(Some(Declaration {
-            target: item_ref.body.target,
-            kind: SymbolKind::from_body_value_item_kind(item.kind),
-            name: item.name.to_string(),
-            file_id: item.source.file_id,
-            span: item.source.span,
-            selection_span: item.name_source.span,
-        }))
+        Ok(Some(declaration))
     }
 
     fn enum_variant(&self, variant: ResolvedEnumVariantRef) -> anyhow::Result<Option<Declaration>> {
@@ -287,32 +322,27 @@ impl<'a, 'db> DeclarationLookup<'a, 'db> {
                 }))
             }
             ResolvedEnumVariantRef::BodyLocal(variant_ref) => {
-                let Some(data) = self.analysis.body_ir.local_enum_variant_data(variant_ref)? else {
-                    return Ok(None);
-                };
-
-                Ok(Some(Declaration {
-                    target: variant_ref.item.body.target,
-                    kind: SymbolKind::EnumVariant,
-                    name: data.variant.name.to_string(),
-                    file_id: data.item.source.file_id,
-                    span: data.variant.span,
-                    selection_span: data.variant.name_span,
-                }))
+                self.body_declaration(variant_ref.into())
             }
         }
     }
 
     fn field(&self, field: ResolvedFieldRef) -> anyhow::Result<Option<Declaration>> {
-        Ok(MemberLookup::new(self.analysis)
-            .field_view(field)?
-            .and_then(|field| field.declaration()))
+        match field {
+            ResolvedFieldRef::Semantic(_) => Ok(MemberLookup::new(self.analysis)
+                .field_view(field)?
+                .and_then(|field| field.declaration())),
+            ResolvedFieldRef::BodyLocal(field) => self.body_declaration(field.into()),
+        }
     }
 
     fn function(&self, function: ResolvedFunctionRef) -> anyhow::Result<Option<Declaration>> {
-        Ok(MemberLookup::new(self.analysis)
-            .function_view(function)?
-            .map(|function| function.declaration()))
+        match function {
+            ResolvedFunctionRef::Semantic(_) => Ok(MemberLookup::new(self.analysis)
+                .function_view(function)?
+                .map(|function| function.declaration())),
+            ResolvedFunctionRef::BodyLocal(function) => self.body_declaration(function.into()),
+        }
     }
 
     fn impl_label(self_ty: &TypeRef, trait_ref: Option<&TypeRef>) -> String {
@@ -320,5 +350,9 @@ impl<'a, 'db> DeclarationLookup<'a, 'db> {
             Some(trait_ref) => format!("impl {trait_ref} for {self_ty}"),
             None => format!("impl {self_ty}"),
         }
+    }
+
+    fn field_label(name: Option<String>) -> String {
+        name.unwrap_or_else(|| "<unsupported>".to_string())
     }
 }

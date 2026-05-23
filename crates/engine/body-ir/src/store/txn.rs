@@ -5,10 +5,11 @@ use rg_package_store::{PackageRead, PackageStoreError, PackageStoreReadTxn};
 use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrReadTxn, TraitApplicability, TraitImplRef};
 
 use crate::{
-    BodyData, BodyEnumVariantData, BodyEnumVariantRef, BodyFieldData, BodyFieldRef,
-    BodyFunctionData, BodyFunctionRef, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyRef,
-    BodyResolution, BodyTy, BodyTypePathResolution, PackageBodies, ScopeId, TargetBodies,
-    resolution,
+    BindingData, BodyBindingRef, BodyData, BodyDeclarationRef, BodyDeclarationView,
+    BodyEnumVariantData, BodyEnumVariantRef, BodyFieldData, BodyFieldRef, BodyFunctionData,
+    BodyFunctionRef, BodyImplRef, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyRef,
+    BodyResolution, BodyTy, BodyTypePathResolution, BodyValueItemRef, PackageBodies, ScopeId,
+    TargetBodies, resolution, view::BodyDeclarationData,
 };
 
 /// Read-only Body IR access for one query transaction.
@@ -60,6 +61,38 @@ impl<'db> BodyIrReadTxn<'db> {
         Ok(self
             .target_bodies(body_ref.target)?
             .and_then(|target_bodies| target_bodies.body(body_ref.body)))
+    }
+
+    /// Returns declaration-shaped data for one body-local declaration.
+    pub fn body_declaration_view(
+        &self,
+        declaration: BodyDeclarationRef,
+    ) -> Result<Option<BodyDeclarationView<'_>>, PackageStoreError> {
+        let data = match declaration {
+            BodyDeclarationRef::Binding(binding_ref) => self
+                .local_binding_data(binding_ref)?
+                .map(BodyDeclarationData::Binding),
+            BodyDeclarationRef::Item(item_ref) => self
+                .local_item_data(item_ref)?
+                .map(BodyDeclarationData::Item),
+            BodyDeclarationRef::ValueItem(item_ref) => self
+                .local_value_item_data(item_ref)?
+                .map(BodyDeclarationData::ValueItem),
+            BodyDeclarationRef::Impl(impl_ref) => self
+                .local_impl_data(impl_ref)?
+                .map(BodyDeclarationData::Impl),
+            BodyDeclarationRef::Field(field_ref) => self
+                .local_field_data(field_ref)?
+                .map(BodyDeclarationData::Field),
+            BodyDeclarationRef::EnumVariant(variant_ref) => self
+                .local_enum_variant_data(variant_ref)?
+                .map(BodyDeclarationData::EnumVariant),
+            BodyDeclarationRef::Function(function_ref) => self
+                .local_function_data(function_ref)?
+                .map(BodyDeclarationData::Function),
+        };
+
+        Ok(data.map(BodyDeclarationView::new))
     }
 
     /// Resolves a type path from a body-local lexical scope.
@@ -166,6 +199,46 @@ impl<'db> BodyIrReadTxn<'db> {
             function_ref,
             receiver_ty,
         )
+    }
+
+    /// Returns declaration data for one local binding.
+    fn local_binding_data(
+        &self,
+        binding_ref: BodyBindingRef,
+    ) -> Result<Option<&BindingData>, PackageStoreError> {
+        Ok(self
+            .body_data(binding_ref.body)?
+            .and_then(|body| body.binding(binding_ref.binding)))
+    }
+
+    /// Returns declaration data for one body-local type-namespace item.
+    fn local_item_data(
+        &self,
+        item_ref: BodyItemRef,
+    ) -> Result<Option<&crate::BodyItemData>, PackageStoreError> {
+        Ok(self
+            .body_data(item_ref.body)?
+            .and_then(|body| body.local_item(item_ref.item)))
+    }
+
+    /// Returns declaration data for one body-local value-namespace item.
+    fn local_value_item_data(
+        &self,
+        item_ref: BodyValueItemRef,
+    ) -> Result<Option<&crate::BodyValueItemData>, PackageStoreError> {
+        Ok(self
+            .body_data(item_ref.body)?
+            .and_then(|body| body.local_value_item(item_ref.item)))
+    }
+
+    /// Returns declaration data for one body-local impl block.
+    fn local_impl_data(
+        &self,
+        impl_ref: BodyImplRef,
+    ) -> Result<Option<&crate::BodyImplData>, PackageStoreError> {
+        Ok(self
+            .body_data(impl_ref.body)?
+            .and_then(|body| body.local_impl(impl_ref.impl_id)))
     }
 
     /// Returns all body-local fields declared for a body-local type item.

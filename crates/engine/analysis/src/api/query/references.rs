@@ -5,8 +5,7 @@
 //! normalized through the same entity resolver before we compare declaration identities.
 
 use rg_body_ir::{
-    BodyCursorCandidate, BodyFunctionRef, BodyItemRef, BodyRef, BodyValueItemRef,
-    ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
+    BodyCursorCandidate, BodyDeclarationRef, ResolvedEnumVariantRef, ResolvedFieldRef,
 };
 use rg_def_map::{DefMapCursorCandidate, LocalDefRef, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
@@ -410,19 +409,19 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             )?,
             BodyCursorCandidate::LocalField { field, .. } => self.declaration_candidate(
                 SymbolAt::LocalField { field, span },
-                ResolvedFieldRef::BodyLocal(field),
+                field,
                 target,
                 span,
             )?,
             BodyCursorCandidate::LocalEnumVariant { variant, .. } => self.declaration_candidate(
                 SymbolAt::LocalEnumVariant { variant, span },
-                ResolvedEnumVariantRef::BodyLocal(variant),
+                variant,
                 target,
                 span,
             )?,
             BodyCursorCandidate::LocalFunction { function, .. } => self.declaration_candidate(
                 SymbolAt::LocalFunction { function, span },
-                ResolvedFunctionRef::BodyLocal(function),
+                function,
                 target,
                 span,
             )?,
@@ -527,15 +526,9 @@ struct ReferenceCandidate {
 enum ReferenceSubject {
     Module(ModuleRef),
     SemanticItem(SemanticItemRef),
-    BodyFunction(BodyFunctionRef),
+    BodyDeclaration(BodyDeclarationRef),
     Field(ResolvedFieldRef),
     EnumVariant(ResolvedEnumVariantRef),
-    LocalBinding {
-        body: BodyRef,
-        binding: rg_body_ir::BindingId,
-    },
-    LocalItem(BodyItemRef),
-    LocalValueItem(BodyValueItemRef),
     LocalDef(LocalDefRef),
 }
 
@@ -544,12 +537,9 @@ impl ReferenceSubject {
         match entity {
             ResolvedEntity::Module { module, .. } => Self::Module(module),
             ResolvedEntity::SemanticItem(item) => Self::SemanticItem(item),
-            ResolvedEntity::BodyFunction(function) => Self::BodyFunction(function),
+            ResolvedEntity::BodyDeclaration(declaration) => Self::BodyDeclaration(declaration),
             ResolvedEntity::Field(field) => Self::Field(field),
             ResolvedEntity::EnumVariant(variant) => Self::EnumVariant(variant),
-            ResolvedEntity::LocalBinding { body, binding } => Self::LocalBinding { body, binding },
-            ResolvedEntity::LocalItem(item) => Self::LocalItem(item),
-            ResolvedEntity::LocalValueItem(item) => Self::LocalValueItem(item),
             ResolvedEntity::LocalDef(local_def) => Self::LocalDef(local_def),
         }
     }

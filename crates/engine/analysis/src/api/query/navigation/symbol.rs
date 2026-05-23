@@ -74,33 +74,27 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
                 .collect()),
             SymbolAt::LocalEnumVariant { variant, .. } => Ok(self
                 .targets()
-                .navigation_target_for_resolved_enum_variant(
-                    rg_body_ir::ResolvedEnumVariantRef::BodyLocal(variant),
-                )?
+                .navigation_target_for_body_declaration(variant.into())?
                 .into_iter()
                 .collect()),
             SymbolAt::LocalItem { item, .. } => Ok(self
                 .targets()
-                .navigation_target_for_body_item(item)?
+                .navigation_target_for_body_declaration(item.into())?
                 .into_iter()
                 .collect()),
             SymbolAt::LocalValueItem { item, .. } => Ok(self
                 .targets()
-                .navigation_target_for_body_value_item(item)?
+                .navigation_target_for_body_declaration(item.into())?
                 .into_iter()
                 .collect()),
             SymbolAt::LocalField { field, .. } => Ok(self
                 .targets()
-                .navigation_target_for_resolved_field(rg_body_ir::ResolvedFieldRef::BodyLocal(
-                    field,
-                ))?
+                .navigation_target_for_body_declaration(field.into())?
                 .into_iter()
                 .collect()),
             SymbolAt::LocalFunction { function, .. } => Ok(self
                 .targets()
-                .navigation_target_for_resolved_function(
-                    rg_body_ir::ResolvedFunctionRef::BodyLocal(function),
-                )?
+                .navigation_target_for_body_declaration(function.into())?
                 .into_iter()
                 .collect()),
             SymbolAt::TypePath { context, path, .. } => {
@@ -134,12 +128,12 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
                 .collect()),
             BodyResolution::LocalItem(item) => Ok(self
                 .targets()
-                .navigation_target_for_body_item(*item)?
+                .navigation_target_for_body_declaration((*item).into())?
                 .into_iter()
                 .collect()),
             BodyResolution::LocalValueItem(item) => Ok(self
                 .targets()
-                .navigation_target_for_body_value_item(*item)?
+                .navigation_target_for_body_declaration((*item).into())?
                 .into_iter()
                 .collect()),
             BodyResolution::Item(defs) => {

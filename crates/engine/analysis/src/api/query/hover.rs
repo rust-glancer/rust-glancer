@@ -1,7 +1,7 @@
 //! Builds hover payloads from resolved analysis entities.
 
 use rg_body_ir::{
-    BodyFunctionRef, BodyTy, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
+    BodyDeclarationRef, BodyTy, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
 };
 use rg_def_map::{LocalDefRef, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
@@ -70,14 +70,25 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                 display_name,
             } => self.hover_for_module(module, display_name),
             ResolvedEntity::SemanticItem(item) => self.hover_for_semantic_item(item),
-            ResolvedEntity::BodyFunction(function) => self.hover_for_body_function(function),
+            ResolvedEntity::BodyDeclaration(declaration) => {
+                self.hover_for_body_declaration(declaration)
+            }
             ResolvedEntity::Field(field) => self.hover_for_field(field),
             ResolvedEntity::EnumVariant(variant) => self.hover_for_enum_variant(variant),
-            ResolvedEntity::LocalBinding { body, binding } => {
-                let Some(body_data) = self.0.body_ir.body_data(body)? else {
+            ResolvedEntity::LocalDef(local_def) => self.hover_for_local_def(local_def),
+        }
+    }
+
+    fn hover_for_body_declaration(
+        &self,
+        declaration: BodyDeclarationRef,
+    ) -> anyhow::Result<Option<HoverBlock>> {
+        match declaration {
+            BodyDeclarationRef::Binding(_) => {
+                let Some(view) = self.0.body_ir.body_declaration_view(declaration)? else {
                     return Ok(None);
                 };
-                let Some(binding_data) = body_data.binding(binding) else {
+                let Some(binding_data) = view.binding_data() else {
                     return Ok(None);
                 };
                 Ok(Some(HoverBlock {
@@ -90,14 +101,14 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     docs: None,
                 }))
             }
-            ResolvedEntity::LocalItem(item_ref) => {
-                let Some(body_data) = self.0.body_ir.body_data(item_ref.body)? else {
+            BodyDeclarationRef::Item(_) => {
+                let Some(view) = self.0.body_ir.body_declaration_view(declaration)? else {
                     return Ok(None);
                 };
-                let Some(item) = body_data.local_item(item_ref.item) else {
+                let Some(item) = view.item_data() else {
                     return Ok(None);
                 };
-                let Some(declaration) = self.declaration(item_ref)? else {
+                let Some(declaration) = self.declaration(declaration)? else {
                     return Ok(None);
                 };
                 Ok(Some(HoverBlock {
@@ -108,14 +119,14 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     docs: item.docs.as_ref().map(Documentation::text),
                 }))
             }
-            ResolvedEntity::LocalValueItem(item_ref) => {
-                let Some(body_data) = self.0.body_ir.body_data(item_ref.body)? else {
+            BodyDeclarationRef::ValueItem(_) => {
+                let Some(view) = self.0.body_ir.body_declaration_view(declaration)? else {
                     return Ok(None);
                 };
-                let Some(item) = body_data.local_value_item(item_ref.item) else {
+                let Some(item) = view.value_item_data() else {
                     return Ok(None);
                 };
-                let Some(declaration) = self.declaration(item_ref)? else {
+                let Some(declaration) = self.declaration(declaration)? else {
                     return Ok(None);
                 };
                 Ok(Some(HoverBlock {
@@ -128,7 +139,16 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     docs: item.docs.as_ref().map(Documentation::text),
                 }))
             }
-            ResolvedEntity::LocalDef(local_def) => self.hover_for_local_def(local_def),
+            BodyDeclarationRef::Function(function) => {
+                self.hover_for_function(ResolvedFunctionRef::BodyLocal(function))
+            }
+            BodyDeclarationRef::Field(field) => {
+                self.hover_for_field(ResolvedFieldRef::BodyLocal(field))
+            }
+            BodyDeclarationRef::EnumVariant(variant) => {
+                self.hover_for_enum_variant(ResolvedEnumVariantRef::BodyLocal(variant))
+            }
+            BodyDeclarationRef::Impl(_) => Ok(None),
         }
     }
 
@@ -144,13 +164,6 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             SemanticItemRef::Const(const_ref) => self.hover_for_const(const_ref),
             SemanticItemRef::Static(static_ref) => self.hover_for_static(static_ref),
         }
-    }
-
-    fn hover_for_body_function(
-        &self,
-        function: BodyFunctionRef,
-    ) -> anyhow::Result<Option<HoverBlock>> {
-        self.hover_for_function(ResolvedFunctionRef::BodyLocal(function))
     }
 
     fn hover_for_type_def(&self, ty: TypeDefRef) -> anyhow::Result<Option<HoverBlock>> {

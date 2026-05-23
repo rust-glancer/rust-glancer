@@ -3,6 +3,7 @@ mod cursor;
 mod ir;
 mod resolution;
 mod store;
+mod view;
 mod walk;
 
 use rg_def_map::PackageSlot;
@@ -20,12 +21,13 @@ pub use self::{
         UnqualifiedCompletionNamespace, UnqualifiedCompletionSite,
     },
     ir::{
-        BindingData, BindingId, BindingKind, BodyData, BodyEnumVariantData, BodyEnumVariantRef,
-        BodyFieldData, BodyFieldRef, BodyFloatTy, BodyFunctionData, BodyFunctionId,
-        BodyFunctionOwner, BodyFunctionRef, BodyGenericArg, BodyId, BodyImplData, BodyImplId,
-        BodyIrStats, BodyItemData, BodyItemDeclaration, BodyItemId, BodyItemKind, BodyItemOwner,
-        BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyPrimitiveTy, BodyRef,
-        BodyRefMutability, BodyResolution, BodySelfParamKind, BodySignedIntTy, BodySource, BodyTy,
+        BindingData, BindingId, BindingKind, BodyBindingRef, BodyData, BodyDeclarationRef,
+        BodyEnumVariantData, BodyEnumVariantRef, BodyFieldData, BodyFieldRef, BodyFloatTy,
+        BodyFunctionData, BodyFunctionId, BodyFunctionOwner, BodyFunctionRef, BodyGenericArg,
+        BodyId, BodyImplData, BodyImplId, BodyImplRef, BodyIrStats, BodyItemData,
+        BodyItemDeclaration, BodyItemId, BodyItemKind, BodyItemOwner, BodyItemRef,
+        BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyPrimitiveTy, BodyRef, BodyRefMutability,
+        BodyResolution, BodySelfParamKind, BodySignedIntTy, BodySource, BodyTy,
         BodyTypePathResolution, BodyUnsignedIntTy, BodyValueItemData, BodyValueItemDeclaration,
         BodyValueItemId, BodyValueItemKind, BodyValueItemOwner, BodyValueItemRef, ClosureCapture,
         ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprId,
@@ -39,6 +41,7 @@ pub use self::{
         BodyAutoderef, BodyAutoderefCandidate, BodyAutoderefCandidates, BodyAutoderefMode,
     },
     store::{BodyIrDb, BodyIrReadTxn},
+    view::BodyDeclarationView,
 };
 
 /// One package-local source file whose function bodies should be lowered during a partial rebuild.

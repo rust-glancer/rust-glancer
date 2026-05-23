@@ -112,6 +112,23 @@ pub struct BodyValueItemRef {
     pub item: BodyValueItemId,
 }
 
+/// Stable reference to one local binding inside a body.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+pub struct BodyBindingRef {
+    pub body: BodyRef,
+    pub binding: BindingId,
+}
+
 /// Stable identifier for one impl block declared inside a function body.
 #[derive(
     Debug,
@@ -126,6 +143,23 @@ pub struct BodyValueItemRef {
 )]
 #[memsize(leaf)]
 pub struct BodyImplId(pub usize);
+
+/// Stable reference to one impl block declared inside a function body.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+pub struct BodyImplRef {
+    pub body: BodyRef,
+    pub impl_id: BodyImplId,
+}
 
 /// Stable reference to one field declared on a body-local item.
 #[derive(
@@ -191,6 +225,43 @@ pub struct BodyFunctionId(pub usize);
 pub struct BodyFunctionRef {
     pub body: BodyRef,
     pub function: BodyFunctionId,
+}
+
+/// Stable reference to any declaration contributed by one lowered body.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::From,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+pub enum BodyDeclarationRef {
+    Binding(BodyBindingRef),
+    Item(BodyItemRef),
+    ValueItem(BodyValueItemRef),
+    Impl(BodyImplRef),
+    Field(BodyFieldRef),
+    EnumVariant(BodyEnumVariantRef),
+    Function(BodyFunctionRef),
+}
+
+impl BodyDeclarationRef {
+    pub fn body(self) -> BodyRef {
+        match self {
+            Self::Binding(declaration) => declaration.body,
+            Self::Item(declaration) => declaration.body,
+            Self::ValueItem(declaration) => declaration.body,
+            Self::Impl(declaration) => declaration.body,
+            Self::Field(declaration) => declaration.item.body,
+            Self::EnumVariant(declaration) => declaration.item.body,
+            Self::Function(declaration) => declaration.body,
+        }
+    }
 }
 
 /// Stable identifier for one expression inside a body.

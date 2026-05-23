@@ -21,9 +21,9 @@ pub use self::{
         MatchArmData, RecordExprField, RecordExprSpread,
     },
     ids::{
-        BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId,
-        BodyImplId, BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ExprId,
-        PatId, ScopeId, StmtId,
+        BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
+        BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyImplRef, BodyItemId, BodyItemRef,
+        BodyRef, BodyValueItemId, BodyValueItemRef, ExprId, PatId, ScopeId, StmtId,
     },
     item::{
         BodyEnumVariantData, BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyImplData,

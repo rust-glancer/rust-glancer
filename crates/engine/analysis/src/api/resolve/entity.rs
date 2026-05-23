@@ -4,7 +4,7 @@
 //! question: "what declaration-like entity does this cursor symbol denote?"
 
 use rg_body_ir::{
-    BodyFunctionRef, BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution,
+    BodyBindingRef, BodyDeclarationRef, BodyRef, BodyResolution, BodyTypePathResolution,
     ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
 };
 use rg_def_map::{DefId, LocalDefRef, ModuleRef, Path};
@@ -19,15 +19,9 @@ pub(crate) enum ResolvedEntity {
         display_name: Option<String>,
     },
     SemanticItem(SemanticItemRef),
-    BodyFunction(BodyFunctionRef),
+    BodyDeclaration(BodyDeclarationRef),
     Field(ResolvedFieldRef),
     EnumVariant(ResolvedEnumVariantRef),
-    LocalBinding {
-        body: BodyRef,
-        binding: rg_body_ir::BindingId,
-    },
-    LocalItem(BodyItemRef),
-    LocalValueItem(rg_body_ir::BodyValueItemRef),
     LocalDef(LocalDefRef),
 }
 
@@ -44,9 +38,9 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
     ) -> anyhow::Result<Vec<ResolvedEntity>> {
         match symbol {
             SymbolAt::Body { .. } => Ok(Vec::new()),
-            SymbolAt::Binding { body, binding } => {
-                Ok(vec![ResolvedEntity::LocalBinding { body, binding }])
-            }
+            SymbolAt::Binding { body, binding } => Ok(vec![ResolvedEntity::BodyDeclaration(
+                BodyBindingRef { body, binding }.into(),
+            )]),
             SymbolAt::BodyPath {
                 body, scope, path, ..
             } => self.entities_for_body_type_path(body, scope, &path),
@@ -72,16 +66,20 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
             SymbolAt::EnumVariant { variant, .. } => Ok(vec![ResolvedEntity::EnumVariant(
                 ResolvedEnumVariantRef::Semantic(variant),
             )]),
-            SymbolAt::LocalEnumVariant { variant, .. } => Ok(vec![ResolvedEntity::EnumVariant(
-                ResolvedEnumVariantRef::BodyLocal(variant),
-            )]),
-            SymbolAt::LocalItem { item, .. } => Ok(vec![ResolvedEntity::LocalItem(item)]),
-            SymbolAt::LocalValueItem { item, .. } => Ok(vec![ResolvedEntity::LocalValueItem(item)]),
-            SymbolAt::LocalField { field, .. } => Ok(vec![ResolvedEntity::Field(
-                ResolvedFieldRef::BodyLocal(field),
-            )]),
+            SymbolAt::LocalEnumVariant { variant, .. } => {
+                Ok(vec![ResolvedEntity::BodyDeclaration(variant.into())])
+            }
+            SymbolAt::LocalItem { item, .. } => {
+                Ok(vec![ResolvedEntity::BodyDeclaration(item.into())])
+            }
+            SymbolAt::LocalValueItem { item, .. } => {
+                Ok(vec![ResolvedEntity::BodyDeclaration(item.into())])
+            }
+            SymbolAt::LocalField { field, .. } => {
+                Ok(vec![ResolvedEntity::BodyDeclaration(field.into())])
+            }
             SymbolAt::LocalFunction { function, .. } => {
-                Ok(vec![ResolvedEntity::BodyFunction(function)])
+                Ok(vec![ResolvedEntity::BodyDeclaration(function.into())])
             }
             SymbolAt::TypePath { context, path, .. } => {
                 let entities = self.entities_for_semantic_type_path(context, &path)?;
@@ -204,14 +202,20 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
     ) -> anyhow::Result<Vec<ResolvedEntity>> {
         match resolution {
             BodyResolution::Local(binding) => Ok(body_ref
-                .map(|body| ResolvedEntity::LocalBinding {
+                .map(|body| BodyBindingRef {
                     body,
                     binding: *binding,
                 })
+                .map(BodyDeclarationRef::from)
+                .map(ResolvedEntity::BodyDeclaration)
                 .into_iter()
                 .collect()),
-            BodyResolution::LocalItem(item) => Ok(vec![ResolvedEntity::LocalItem(*item)]),
-            BodyResolution::LocalValueItem(item) => Ok(vec![ResolvedEntity::LocalValueItem(*item)]),
+            BodyResolution::LocalItem(item) => {
+                Ok(vec![ResolvedEntity::BodyDeclaration((*item).into())])
+            }
+            BodyResolution::LocalValueItem(item) => {
+                Ok(vec![ResolvedEntity::BodyDeclaration((*item).into())])
+            }
             BodyResolution::Item(defs) => {
                 let mut entities = Vec::new();
                 for def in defs {
@@ -224,9 +228,11 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
                 }
                 Ok(entities)
             }
-            BodyResolution::Field(fields) => {
-                Ok(fields.iter().copied().map(ResolvedEntity::Field).collect())
-            }
+            BodyResolution::Field(fields) => Ok(fields
+                .iter()
+                .copied()
+                .map(Self::entity_for_resolved_field)
+                .collect()),
             BodyResolution::Function(functions) | BodyResolution::Method(functions) => {
                 Ok(functions
                     .iter()
@@ -237,7 +243,7 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
             BodyResolution::EnumVariant(variants) => Ok(variants
                 .iter()
                 .copied()
-                .map(ResolvedEntity::EnumVariant)
+                .map(Self::entity_for_resolved_enum_variant)
                 .collect()),
             BodyResolution::Unknown => Ok(Vec::new()),
         }
@@ -248,7 +254,29 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
             ResolvedFunctionRef::Semantic(function) => {
                 ResolvedEntity::SemanticItem(function.into())
             }
-            ResolvedFunctionRef::BodyLocal(function) => ResolvedEntity::BodyFunction(function),
+            ResolvedFunctionRef::BodyLocal(function) => {
+                ResolvedEntity::BodyDeclaration(function.into())
+            }
+        }
+    }
+
+    fn entity_for_resolved_field(field: ResolvedFieldRef) -> ResolvedEntity {
+        match field {
+            ResolvedFieldRef::Semantic(field) => {
+                ResolvedEntity::Field(ResolvedFieldRef::Semantic(field))
+            }
+            ResolvedFieldRef::BodyLocal(field) => ResolvedEntity::BodyDeclaration(field.into()),
+        }
+    }
+
+    fn entity_for_resolved_enum_variant(variant: ResolvedEnumVariantRef) -> ResolvedEntity {
+        match variant {
+            ResolvedEnumVariantRef::Semantic(variant) => {
+                ResolvedEntity::EnumVariant(ResolvedEnumVariantRef::Semantic(variant))
+            }
+            ResolvedEnumVariantRef::BodyLocal(variant) => {
+                ResolvedEntity::BodyDeclaration(variant.into())
+            }
         }
     }
 
@@ -257,7 +285,9 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
         resolution: BodyTypePathResolution,
     ) -> Vec<ResolvedEntity> {
         match resolution {
-            BodyTypePathResolution::BodyLocal(item) => vec![ResolvedEntity::LocalItem(item)],
+            BodyTypePathResolution::BodyLocal(item) => {
+                vec![ResolvedEntity::BodyDeclaration(item.into())]
+            }
             BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
                 types
                     .into_iter()

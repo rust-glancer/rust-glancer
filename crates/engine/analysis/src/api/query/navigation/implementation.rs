@@ -1,8 +1,8 @@
 //! Goto-implementation query flow.
 
 use rg_body_ir::{
-    BodyAutoderef, BodyAutoderefMode, BodyFunctionRef, BodyImplId, BodyResolution, BodyTy,
-    ExprKind, ResolvedFunctionRef,
+    BodyAutoderef, BodyAutoderefMode, BodyDeclarationRef, BodyFunctionRef, BodyImplId,
+    BodyResolution, BodyTy, ExprKind, ResolvedFunctionRef,
 };
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
@@ -103,24 +103,39 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
     ) -> anyhow::Result<()> {
         match entity {
             ResolvedEntity::SemanticItem(item) => self.push_semantic_item_targets(item, targets),
-            ResolvedEntity::BodyFunction(function) => {
-                self.push_body_function_targets(function, targets)
+            ResolvedEntity::BodyDeclaration(declaration) => {
+                self.push_body_declaration_targets(declaration, targets)
             }
-            ResolvedEntity::LocalBinding { body, binding } => {
-                let Some(body_data) = self.0.body_ir.body_data(body)? else {
+            ResolvedEntity::Module { .. }
+            | ResolvedEntity::Field(_)
+            | ResolvedEntity::EnumVariant(_)
+            | ResolvedEntity::LocalDef(_) => Ok(()),
+        }
+    }
+
+    fn push_body_declaration_targets(
+        &self,
+        declaration: BodyDeclarationRef,
+        targets: &mut Vec<NavigationTarget>,
+    ) -> anyhow::Result<()> {
+        match declaration {
+            BodyDeclarationRef::Binding(_) => {
+                let Some(view) = self.0.body_ir.body_declaration_view(declaration)? else {
                     return Ok(());
                 };
-                let Some(binding_data) = body_data.binding(binding) else {
+                let Some(binding_data) = view.binding_data() else {
                     return Ok(());
                 };
                 self.push_ty_targets(&binding_data.ty, targets)
             }
-            ResolvedEntity::LocalItem(item) => self.push_local_type_targets(item, targets),
-            ResolvedEntity::Module { .. }
-            | ResolvedEntity::Field(_)
-            | ResolvedEntity::EnumVariant(_)
-            | ResolvedEntity::LocalValueItem(_)
-            | ResolvedEntity::LocalDef(_) => Ok(()),
+            BodyDeclarationRef::Item(item) => self.push_local_type_targets(item, targets),
+            BodyDeclarationRef::Function(function) => {
+                self.push_body_function_targets(function, targets)
+            }
+            BodyDeclarationRef::ValueItem(_)
+            | BodyDeclarationRef::Impl(_)
+            | BodyDeclarationRef::Field(_)
+            | BodyDeclarationRef::EnumVariant(_) => Ok(()),
         }
     }
 

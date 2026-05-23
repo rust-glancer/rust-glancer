@@ -2,9 +2,9 @@
 
 use anyhow::Result;
 use rg_body_ir::{
-    BodyData, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplData, BodyImplId, BodyItemData,
-    BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ResolvedEnumVariantRef,
-    ResolvedFunctionRef,
+    BodyData, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplData, BodyImplId, BodyImplRef,
+    BodyItemData, BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef,
+    ResolvedEnumVariantRef,
 };
 use rg_def_map::TargetRef;
 use rg_parse::{FileId, Span};
@@ -17,7 +17,7 @@ use super::shared;
 use crate::{
     api::{
         Analysis,
-        view::declaration::{BodyImplRef, DeclarationLookup, DeclarationRef},
+        view::declaration::{DeclarationLookup, DeclarationRef},
     },
     model::{Declaration, DocumentSymbol, SymbolKind},
 };
@@ -345,10 +345,10 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
             if function.source.file_id == file_id
                 && matches!(function.owner, rg_body_ir::BodyFunctionOwner::LocalScope(_))
             {
-                let function = ResolvedFunctionRef::BodyLocal(BodyFunctionRef {
+                let function = BodyFunctionRef {
                     body: body_ref,
                     function: BodyFunctionId(function_idx),
-                });
+                };
                 let Some(symbol) = self.declaration_document_symbol(function)? else {
                     continue;
                 };
@@ -433,10 +433,10 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         }
 
         for function in &impl_data.functions {
-            let function = ResolvedFunctionRef::BodyLocal(BodyFunctionRef {
+            let function = BodyFunctionRef {
                 body: impl_ref.body,
                 function: *function,
-            });
+            };
             let Some(symbol) = self.declaration_document_symbol(function)? else {
                 continue;
             };
