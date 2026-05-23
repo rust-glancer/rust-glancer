@@ -1,7 +1,7 @@
 //! Concrete navigation target projection.
 
 use rg_body_ir::{
-    BodyAutoderef, BodyEnumVariantRef, BodyImplId, BodyItemRef, BodyRef, BodyTy, BodyValueItemRef,
+    BodyAutoderef, BodyImplId, BodyItemRef, BodyRef, BodyTy, BodyValueItemRef,
     ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
 };
 use rg_def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef};
@@ -10,8 +10,7 @@ use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, ImplRef, TraitRef, T
 use crate::{
     api::{
         Analysis,
-        query::symbols::shared,
-        view::declaration::{DeclarationLookup, DeclarationRef},
+        view::declaration::{BodyImplRef, DeclarationLookup, DeclarationRef},
     },
     model::{Declaration, NavigationTarget, NavigationTargetKind},
 };
@@ -44,31 +43,24 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         let Some(module) = self.0.def_map.module(module_ref)? else {
             return Ok(None);
         };
-        // Root modules have no declaration name to jump to, so they navigate to the owning file.
-        // Named modules navigate to the `mod` declaration that introduced them.
-        let (file_id, span) = match module.origin {
-            ModuleOrigin::Root { file_id } => (file_id, None),
-            ModuleOrigin::Inline {
-                declaration_file,
-                declaration_span,
-            }
-            | ModuleOrigin::OutOfLine {
-                declaration_file,
-                declaration_span,
-                ..
-            } => (declaration_file, Some(declaration_span)),
+        if let ModuleOrigin::Root { file_id } = module.origin {
+            // Root modules have no declaration name to jump to, so they navigate to the owning
+            // file. Named modules are ordinary declarations.
+            return Ok(Some(NavigationTarget {
+                target: module_ref.target,
+                kind: NavigationTargetKind::Module,
+                name: "crate".to_string(),
+                file_id,
+                span: None,
+            }));
         };
 
-        Ok(Some(NavigationTarget {
-            target: module_ref.target,
-            kind: NavigationTargetKind::Module,
-            name: module
-                .name
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "crate".to_string()),
-            file_id,
-            span,
+        Ok(self.declaration(module_ref)?.map(|declaration| {
+            let span = declaration.span;
+            NavigationTarget {
+                span: Some(span),
+                ..NavigationTarget::from(declaration)
+            }
         }))
     }
 
@@ -118,20 +110,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         impl_ref: ImplRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        let Some(data) = self.0.semantic_ir.impl_data(impl_ref)? else {
-            return Ok(None);
-        };
-        let Some(local_impl) = self.0.def_map.local_impl(data.local_impl)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(NavigationTarget {
-            target: impl_ref.target,
-            kind: NavigationTargetKind::Impl,
-            name: shared::impl_label(data),
-            file_id: local_impl.file_id,
-            span: Some(local_impl.span),
-        }))
+        Ok(self.declaration(impl_ref)?.map(NavigationTarget::from))
     }
 
     pub(crate) fn navigation_target_for_body_impl(
@@ -139,20 +118,12 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         body_ref: BodyRef,
         impl_id: BodyImplId,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
-            return Ok(None);
-        };
-        let Some(data) = body.local_impl(impl_id) else {
-            return Ok(None);
-        };
-
-        Ok(Some(NavigationTarget {
-            target: body_ref.target,
-            kind: NavigationTargetKind::Impl,
-            name: shared::body_impl_label(data),
-            file_id: data.source.file_id,
-            span: Some(data.source.span),
-        }))
+        Ok(self
+            .declaration(BodyImplRef {
+                body: body_ref,
+                impl_id,
+            })?
+            .map(NavigationTarget::from))
     }
 
     pub(crate) fn navigation_target_for_resolved_function(
@@ -173,95 +144,30 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         variant_ref: EnumVariantRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        let Some(data) = self.0.semantic_ir.enum_variant_data(variant_ref)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(NavigationTarget {
-            target: variant_ref.target,
-            kind: NavigationTargetKind::EnumVariant,
-            name: data.variant.name.to_string(),
-            file_id: data.file_id,
-            span: Some(data.variant.name_span),
-        }))
+        self.navigation_target_for_resolved_enum_variant(ResolvedEnumVariantRef::Semantic(
+            variant_ref,
+        ))
     }
 
     pub(crate) fn navigation_target_for_resolved_enum_variant(
         &self,
         variant_ref: ResolvedEnumVariantRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        match variant_ref {
-            ResolvedEnumVariantRef::Semantic(variant) => {
-                self.navigation_target_for_enum_variant(variant)
-            }
-            ResolvedEnumVariantRef::BodyLocal(variant) => {
-                self.navigation_target_for_body_enum_variant(variant)
-            }
-        }
-    }
-
-    fn navigation_target_for_body_enum_variant(
-        &self,
-        variant_ref: BodyEnumVariantRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        let Some(data) = self.0.body_ir.local_enum_variant_data(variant_ref)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(NavigationTarget {
-            target: variant_ref.item.body.target,
-            kind: NavigationTargetKind::EnumVariant,
-            name: data.variant.name.to_string(),
-            file_id: data.item.source.file_id,
-            span: Some(data.variant.name_span),
-        }))
+        Ok(self.declaration(variant_ref)?.map(NavigationTarget::from))
     }
 
     pub(crate) fn navigation_target_for_trait(
         &self,
         trait_ref: TraitRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        let Some(local_def) = self
-            .0
-            .semantic_ir
-            .trait_data(trait_ref)?
-            .map(|data| data.local_def)
-        else {
-            return Ok(None);
-        };
-
-        self.navigation_target_for_local_def(local_def)
+        Ok(self.declaration(trait_ref)?.map(NavigationTarget::from))
     }
 
     pub(crate) fn navigation_target_for_type_def(
         &self,
         ty: TypeDefRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        let Some(target_ir) = self.0.semantic_ir.target_ir(ty.target)? else {
-            return Ok(None);
-        };
-        let local_def = match ty.id {
-            rg_semantic_ir::TypeDefId::Struct(id) => {
-                let Some(data) = target_ir.items().struct_data(id) else {
-                    return Ok(None);
-                };
-                data.local_def
-            }
-            rg_semantic_ir::TypeDefId::Enum(id) => {
-                let Some(data) = target_ir.items().enum_data(id) else {
-                    return Ok(None);
-                };
-                data.local_def
-            }
-            rg_semantic_ir::TypeDefId::Union(id) => {
-                let Some(data) = target_ir.items().union_data(id) else {
-                    return Ok(None);
-                };
-                data.local_def
-            }
-        };
-
-        self.navigation_target_for_local_def(local_def)
+        Ok(self.declaration(ty)?.map(NavigationTarget::from))
     }
 
     pub(crate) fn navigation_targets_for_body_ty(

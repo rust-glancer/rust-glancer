@@ -1,11 +1,11 @@
 //! Workspace-wide symbol search.
 
 use anyhow::Result;
-use rg_body_ir::{ResolvedFieldRef, ResolvedFunctionRef};
-use rg_def_map::{LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_body_ir::{ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef};
+use rg_def_map::{ModuleId, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
-    AssocItemId, ConstData, ConstRef, FunctionRef, ItemOwner, TypeAliasData, TypeAliasRef,
+    AssocItemId, ConstRef, EnumVariantRef, FunctionRef, ItemOwner, TypeAliasRef, TypeDefId,
     TypeDefRef,
 };
 
@@ -61,30 +61,32 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         symbols: &mut Vec<WorkspaceSymbol>,
     ) -> Result<()> {
         for (ty, data) in self.0.semantic_ir.structs(target)? {
-            self.push_local_def_workspace_symbol(data.local_def, None, query, symbols)?;
+            self.push_declaration_workspace_symbol(ty, None, query, symbols)?;
             self.push_field_workspace_symbols(ty, &data.name, query, symbols)?;
         }
 
         for (ty, data) in self.0.semantic_ir.unions(target)? {
-            self.push_local_def_workspace_symbol(data.local_def, None, query, symbols)?;
+            self.push_declaration_workspace_symbol(ty, None, query, symbols)?;
             self.push_field_workspace_symbols(ty, &data.name, query, symbols)?;
         }
 
-        for (_, data) in self.0.semantic_ir.enums(target)? {
-            self.push_local_def_workspace_symbol(data.local_def, None, query, symbols)?;
-            for variant in &data.variants {
-                self.push_workspace_symbol(
-                    WorkspaceSymbolInput {
-                        target,
-                        name: variant.name.to_string(),
-                        kind: SymbolKind::EnumVariant,
-                        file_id: data.source.file_id,
-                        span: Some(variant.name_span),
-                        container_name: Some(data.name.to_string()),
-                    },
+        for (ty, data) in self.0.semantic_ir.enums(target)? {
+            self.push_declaration_workspace_symbol(ty, None, query, symbols)?;
+            let TypeDefId::Enum(enum_id) = ty.id else {
+                continue;
+            };
+            for (index, _) in data.variants.iter().enumerate() {
+                let variant_ref = ResolvedEnumVariantRef::Semantic(EnumVariantRef {
+                    target,
+                    enum_id,
+                    index,
+                });
+                self.push_declaration_workspace_symbol(
+                    variant_ref,
+                    Some(data.name.to_string()),
                     query,
                     symbols,
-                );
+                )?;
             }
         }
 
@@ -97,21 +99,18 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
     ) -> Result<()> {
-        for (module_ref, data) in self.0.def_map.modules(target)? {
-            let Some(name) = data.name.as_ref().map(ToString::to_string) else {
-                continue;
-            };
-            let Some(source) = shared::module_declaration_source(data) else {
+        for (module_ref, _) in self.0.def_map.modules(target)? {
+            let Some(declaration) = self.declaration(module_ref)? else {
                 continue;
             };
 
             self.push_workspace_symbol(
                 WorkspaceSymbolInput {
-                    target,
-                    name,
-                    kind: SymbolKind::Module,
-                    file_id: source.file_id,
-                    span: Some(source.selection_span),
+                    target: declaration.target,
+                    name: declaration.name,
+                    kind: declaration.kind,
+                    file_id: declaration.file_id,
+                    span: Some(declaration.selection_span),
                     container_name: self.module_container_name(module_ref)?,
                 },
                 query,
@@ -128,8 +127,8 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
     ) -> Result<()> {
-        for (_, data) in self.0.semantic_ir.traits(target)? {
-            self.push_local_def_workspace_symbol(data.local_def, None, query, symbols)?;
+        for (trait_ref, data) in self.0.semantic_ir.traits(target)? {
+            self.push_declaration_workspace_symbol(trait_ref, None, query, symbols)?;
             self.push_assoc_item_workspace_symbols(
                 target,
                 &data.items,
@@ -149,10 +148,13 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         symbols: &mut Vec<WorkspaceSymbol>,
     ) -> Result<()> {
         for (impl_ref, data) in self.0.semantic_ir.impls(target)? {
+            let Some(declaration) = self.declaration(impl_ref)? else {
+                continue;
+            };
             self.push_assoc_item_workspace_symbols(
                 impl_ref.target,
                 &data.items,
-                &shared::impl_label(data),
+                &declaration.name,
                 query,
                 symbols,
             )?;
@@ -171,7 +173,7 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
             if !matches!(data.owner, ItemOwner::Module(_)) {
                 continue;
             }
-            self.push_function_workspace_symbol(
+            self.push_declaration_workspace_symbol(
                 ResolvedFunctionRef::Semantic(function),
                 None,
                 query,
@@ -188,11 +190,11 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
     ) -> Result<()> {
-        for (_, data) in self.0.semantic_ir.type_aliases(target)? {
+        for (type_alias_ref, data) in self.0.semantic_ir.type_aliases(target)? {
             if !matches!(data.owner, ItemOwner::Module(_)) {
                 continue;
             }
-            self.push_type_alias_workspace_symbol(target, data, None, query, symbols);
+            self.push_declaration_workspace_symbol(type_alias_ref, None, query, symbols)?;
         }
 
         Ok(())
@@ -204,11 +206,11 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
     ) -> Result<()> {
-        for (_, data) in self.0.semantic_ir.consts(target)? {
+        for (const_ref, data) in self.0.semantic_ir.consts(target)? {
             if !matches!(data.owner, ItemOwner::Module(_)) {
                 continue;
             }
-            self.push_const_workspace_symbol(target, data, None, query, symbols);
+            self.push_declaration_workspace_symbol(const_ref, None, query, symbols)?;
         }
 
         Ok(())
@@ -220,8 +222,8 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
     ) -> Result<()> {
-        for (_, data) in self.0.semantic_ir.statics(target)? {
-            self.push_local_def_workspace_symbol(data.local_def, None, query, symbols)?;
+        for (static_ref, _) in self.0.semantic_ir.statics(target)? {
+            self.push_declaration_workspace_symbol(static_ref, None, query, symbols)?;
         }
 
         Ok(())
@@ -239,7 +241,7 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
             match item {
                 AssocItemId::Function(id) => {
                     let function_ref = FunctionRef { target, id: *id };
-                    self.push_function_workspace_symbol(
+                    self.push_declaration_workspace_symbol(
                         ResolvedFunctionRef::Semantic(function_ref),
                         Some(container_name.to_string()),
                         query,
@@ -248,29 +250,21 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
                 }
                 AssocItemId::TypeAlias(id) => {
                     let type_alias_ref = TypeAliasRef { target, id: *id };
-                    let Some(data) = self.0.semantic_ir.type_alias_data(type_alias_ref)? else {
-                        continue;
-                    };
-                    self.push_type_alias_workspace_symbol(
-                        target,
-                        data,
+                    self.push_declaration_workspace_symbol(
+                        type_alias_ref,
                         Some(container_name.to_string()),
                         query,
                         symbols,
-                    );
+                    )?;
                 }
                 AssocItemId::Const(id) => {
                     let const_ref = ConstRef { target, id: *id };
-                    let Some(data) = self.0.semantic_ir.const_data(const_ref)? else {
-                        continue;
-                    };
-                    self.push_const_workspace_symbol(
-                        target,
-                        data,
+                    self.push_declaration_workspace_symbol(
+                        const_ref,
                         Some(container_name.to_string()),
                         query,
                         symbols,
-                    );
+                    )?;
                 }
             }
         }
@@ -286,61 +280,25 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         symbols: &mut Vec<WorkspaceSymbol>,
     ) -> Result<()> {
         for field_ref in self.0.semantic_ir.fields_for_type(ty)? {
-            let Some(declaration) = self.declaration(ResolvedFieldRef::Semantic(field_ref))? else {
-                continue;
-            };
-            self.push_workspace_symbol(
-                WorkspaceSymbolInput {
-                    target: declaration.target,
-                    name: declaration.name,
-                    kind: declaration.kind,
-                    file_id: declaration.file_id,
-                    span: Some(declaration.selection_span),
-                    container_name: Some(container_name.to_string()),
-                },
+            self.push_declaration_workspace_symbol(
+                ResolvedFieldRef::Semantic(field_ref),
+                Some(container_name.to_string()),
                 query,
                 symbols,
-            );
+            )?;
         }
 
         Ok(())
     }
 
-    fn push_function_workspace_symbol(
+    fn push_declaration_workspace_symbol(
         &self,
-        function: ResolvedFunctionRef,
+        declaration: impl Into<DeclarationRef>,
         container_name: Option<String>,
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
     ) -> Result<()> {
-        let Some(declaration) = self.declaration(function)? else {
-            return Ok(());
-        };
-
-        self.push_workspace_symbol(
-            WorkspaceSymbolInput {
-                target: declaration.target,
-                name: declaration.name,
-                kind: declaration.kind,
-                file_id: declaration.file_id,
-                span: Some(declaration.selection_span),
-                container_name,
-            },
-            query,
-            symbols,
-        );
-
-        Ok(())
-    }
-
-    fn push_local_def_workspace_symbol(
-        &self,
-        local_def: LocalDefRef,
-        container_name: Option<String>,
-        query: &WorkspaceSymbolQuery,
-        symbols: &mut Vec<WorkspaceSymbol>,
-    ) -> Result<()> {
-        let Some(declaration) = self.declaration(local_def)? else {
+        let Some(declaration) = self.declaration(declaration)? else {
             return Ok(());
         };
 
@@ -362,50 +320,6 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
 
     fn declaration(&self, declaration: impl Into<DeclarationRef>) -> Result<Option<Declaration>> {
         DeclarationLookup::new(self.0).declaration(declaration.into())
-    }
-
-    fn push_type_alias_workspace_symbol(
-        &self,
-        target: TargetRef,
-        data: &TypeAliasData,
-        container_name: Option<String>,
-        query: &WorkspaceSymbolQuery,
-        symbols: &mut Vec<WorkspaceSymbol>,
-    ) {
-        self.push_workspace_symbol(
-            WorkspaceSymbolInput {
-                target,
-                name: data.name.to_string(),
-                kind: SymbolKind::TypeAlias,
-                file_id: data.source.file_id,
-                span: Some(data.name_span.unwrap_or(data.span)),
-                container_name,
-            },
-            query,
-            symbols,
-        );
-    }
-
-    fn push_const_workspace_symbol(
-        &self,
-        target: TargetRef,
-        data: &ConstData,
-        container_name: Option<String>,
-        query: &WorkspaceSymbolQuery,
-        symbols: &mut Vec<WorkspaceSymbol>,
-    ) {
-        self.push_workspace_symbol(
-            WorkspaceSymbolInput {
-                target,
-                name: data.name.to_string(),
-                kind: SymbolKind::Const,
-                file_id: data.source.file_id,
-                span: Some(data.name_span.unwrap_or(data.span)),
-                container_name,
-            },
-            query,
-            symbols,
-        );
     }
 
     fn push_workspace_symbol(

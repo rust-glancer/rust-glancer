@@ -8,9 +8,7 @@ use rg_body_ir::{
     ResolvedEnumVariantRef, ScopeId,
 };
 use rg_def_map::{DefId, Path};
-use rg_semantic_ir::{
-    FieldRef, ItemId, SemanticTypePathResolution, TypeDefId, TypeDefRef, TypePathContext,
-};
+use rg_semantic_ir::{FieldRef, SemanticTypePathResolution, TypePathContext};
 
 use crate::{api::Analysis, model::SymbolAt};
 
@@ -130,29 +128,11 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
         let DefId::Local(local_def) = def else {
             return Ok(None);
         };
-        let Some(target_ir) = self.0.semantic_ir.target_ir(local_def.target)? else {
+        let Some(ty) = self.0.semantic_ir.type_def_for_local_def(local_def)? else {
             return Ok(None);
-        };
-        let Some(item) = target_ir.item_for_local_def(local_def.local_def) else {
-            return Ok(None);
-        };
-        let id = match item {
-            ItemId::Struct(id) => TypeDefId::Struct(id),
-            ItemId::Enum(id) => TypeDefId::Enum(id),
-            ItemId::Union(id) => TypeDefId::Union(id),
-            ItemId::Trait(_)
-            | ItemId::Function(_)
-            | ItemId::TypeAlias(_)
-            | ItemId::Const(_)
-            | ItemId::Static(_) => return Ok(None),
         };
 
-        Ok(Some(BodyTy::Nominal(vec![BodyNominalTy::bare(
-            TypeDefRef {
-                target: local_def.target,
-                id,
-            },
-        )])))
+        Ok(Some(BodyTy::Nominal(vec![BodyNominalTy::bare(ty)])))
     }
 
     fn ty_for_field(&self, field: FieldRef) -> anyhow::Result<Option<BodyTy>> {

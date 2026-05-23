@@ -2,21 +2,22 @@
 
 use anyhow::Result;
 use rg_body_ir::{
-    BodyData, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplData, BodyItemData, BodyItemId,
-    BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ResolvedFunctionRef,
+    BodyData, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplData, BodyImplId, BodyItemData,
+    BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ResolvedEnumVariantRef,
+    ResolvedFunctionRef,
 };
-use rg_def_map::{LocalDefRef, TargetRef};
+use rg_def_map::TargetRef;
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
-    AssocItemId, ConstData, ConstRef, EnumData, FunctionRef, ItemOwner, StaticData, StructData,
-    TypeAliasData, TypeAliasRef, UnionData,
+    AssocItemId, ConstRef, EnumData, EnumVariantRef, FunctionRef, ItemOwner, StructData,
+    TypeAliasRef, TypeDefId, TypeDefRef, UnionData,
 };
 
 use super::shared;
 use crate::{
     api::{
         Analysis,
-        view::declaration::{DeclarationLookup, DeclarationRef},
+        view::declaration::{BodyImplRef, DeclarationLookup, DeclarationRef},
     },
     model::{Declaration, DocumentSymbol, SymbolKind},
 };
@@ -60,25 +61,15 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
     ) -> Result<()> {
-        for (_, data) in self.0.def_map.modules(target)? {
-            let Some(name) = data.name.as_ref().map(ToString::to_string) else {
+        for (module_ref, _) in self.0.def_map.modules(target)? {
+            let Some(symbol) = self.declaration(module_ref)?.map(DocumentSymbol::from) else {
                 continue;
             };
-            let Some(source) = shared::module_declaration_source(data) else {
-                continue;
-            };
-            if source.file_id != file_id {
+            if symbol.file_id != file_id {
                 continue;
             }
 
-            symbols.push(DocumentSymbol {
-                name,
-                kind: SymbolKind::Module,
-                file_id,
-                span: source.span,
-                selection_span: source.selection_span,
-                children: Vec::new(),
-            });
+            symbols.push(symbol);
         }
 
         Ok(())
@@ -90,18 +81,18 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
     ) -> Result<()> {
-        for (_, data) in self.0.semantic_ir.structs(target)? {
-            if let Some(symbol) = self.struct_document_symbol(data, file_id)? {
+        for (ty, data) in self.0.semantic_ir.structs(target)? {
+            if let Some(symbol) = self.struct_document_symbol(ty, data, file_id)? {
                 symbols.push(symbol);
             }
         }
-        for (_, data) in self.0.semantic_ir.unions(target)? {
-            if let Some(symbol) = self.union_document_symbol(data, file_id)? {
+        for (ty, data) in self.0.semantic_ir.unions(target)? {
+            if let Some(symbol) = self.union_document_symbol(ty, data, file_id)? {
                 symbols.push(symbol);
             }
         }
-        for (_, data) in self.0.semantic_ir.enums(target)? {
-            if let Some(symbol) = self.enum_document_symbol(data, file_id)? {
+        for (ty, data) in self.0.semantic_ir.enums(target)? {
+            if let Some(symbol) = self.enum_document_symbol(ty, data, file_id)? {
                 symbols.push(symbol);
             }
         }
@@ -111,85 +102,93 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
 
     fn struct_document_symbol(
         &self,
+        ty: TypeDefRef,
         data: &StructData,
         file_id: FileId,
     ) -> Result<Option<DocumentSymbol>> {
-        let Some(def) = self.local_def_symbol_source(data.local_def, file_id)? else {
+        let Some(declaration) = self.declaration(ty)? else {
             return Ok(None);
         };
-        Ok(Some(DocumentSymbol {
-            name: data.name.to_string(),
-            kind: SymbolKind::Struct,
-            file_id,
-            span: def.span,
-            selection_span: def.selection_span,
-            children: data
-                .fields
-                .fields()
-                .iter()
-                .map(|field| {
-                    Self::field_document_symbol(
-                        file_id,
-                        shared::field_label(field.key_declaration_label()),
-                        field.span,
-                    )
-                })
-                .collect(),
-        }))
+        if declaration.file_id != file_id {
+            return Ok(None);
+        };
+
+        let children = data
+            .fields
+            .fields()
+            .iter()
+            .map(|field| {
+                Self::field_document_symbol(
+                    file_id,
+                    shared::field_label(field.key_declaration_label()),
+                    field.span,
+                )
+            })
+            .collect();
+
+        Ok(Some(
+            DocumentSymbol::from(declaration).with_children(children),
+        ))
     }
 
     fn union_document_symbol(
         &self,
+        ty: TypeDefRef,
         data: &UnionData,
         file_id: FileId,
     ) -> Result<Option<DocumentSymbol>> {
-        let Some(def) = self.local_def_symbol_source(data.local_def, file_id)? else {
+        let Some(declaration) = self.declaration(ty)? else {
             return Ok(None);
         };
-        Ok(Some(DocumentSymbol {
-            name: data.name.to_string(),
-            kind: SymbolKind::Union,
-            file_id,
-            span: def.span,
-            selection_span: def.selection_span,
-            children: data
-                .fields
-                .iter()
-                .map(|field| {
-                    Self::field_document_symbol(
-                        file_id,
-                        shared::field_label(field.key_declaration_label()),
-                        field.span,
-                    )
-                })
-                .collect(),
-        }))
+        if declaration.file_id != file_id {
+            return Ok(None);
+        };
+
+        let children = data
+            .fields
+            .iter()
+            .map(|field| {
+                Self::field_document_symbol(
+                    file_id,
+                    shared::field_label(field.key_declaration_label()),
+                    field.span,
+                )
+            })
+            .collect();
+
+        Ok(Some(
+            DocumentSymbol::from(declaration).with_children(children),
+        ))
     }
 
     fn enum_document_symbol(
         &self,
+        ty: TypeDefRef,
         data: &EnumData,
         file_id: FileId,
     ) -> Result<Option<DocumentSymbol>> {
-        let Some(def) = self.local_def_symbol_source(data.local_def, file_id)? else {
+        let Some(declaration) = self.declaration(ty)? else {
             return Ok(None);
         };
-        Ok(Some(DocumentSymbol {
-            name: data.name.to_string(),
-            kind: SymbolKind::Enum,
-            file_id,
-            span: def.span,
-            selection_span: def.selection_span,
-            children: data
-                .variants
-                .iter()
-                .map(|variant| DocumentSymbol {
-                    name: variant.name.to_string(),
-                    kind: SymbolKind::EnumVariant,
-                    file_id,
-                    span: variant.span,
-                    selection_span: variant.name_span,
-                    children: variant
+        if declaration.file_id != file_id {
+            return Ok(None);
+        };
+        let TypeDefId::Enum(enum_id) = ty.id else {
+            return Ok(None);
+        };
+        let mut children = Vec::new();
+        for (index, variant) in data.variants.iter().enumerate() {
+            let variant_ref = ResolvedEnumVariantRef::Semantic(EnumVariantRef {
+                target: ty.target,
+                enum_id,
+                index,
+            });
+            let Some(declaration) = self.declaration(variant_ref)? else {
+                continue;
+            };
+            children.push(
+                DocumentSymbol::from(declaration).with_children(
+                    variant
                         .fields
                         .fields()
                         .iter()
@@ -201,9 +200,13 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                             )
                         })
                         .collect(),
-                })
-                .collect(),
-        }))
+                ),
+            );
+        }
+
+        Ok(Some(
+            DocumentSymbol::from(declaration).with_children(children),
+        ))
     }
 
     fn push_trait_document_symbols(
@@ -212,19 +215,21 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
     ) -> Result<()> {
-        for (_, data) in self.0.semantic_ir.traits(target)? {
-            let Some(def) = self.local_def_symbol_source(data.local_def, file_id)? else {
+        for (trait_ref, data) in self.0.semantic_ir.traits(target)? {
+            let Some(declaration) = self.declaration(trait_ref)? else {
                 continue;
             };
+            if declaration.file_id != file_id {
+                continue;
+            }
 
-            symbols.push(DocumentSymbol {
-                name: data.name.to_string(),
-                kind: SymbolKind::Trait,
-                file_id,
-                span: def.span,
-                selection_span: def.selection_span,
-                children: self.assoc_item_document_symbols(target, &data.items, file_id)?,
-            });
+            symbols.push(
+                DocumentSymbol::from(declaration).with_children(self.assoc_item_document_symbols(
+                    target,
+                    &data.items,
+                    file_id,
+                )?),
+            );
         }
 
         Ok(())
@@ -237,25 +242,16 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         symbols: &mut Vec<DocumentSymbol>,
     ) -> Result<()> {
         for (impl_ref, data) in self.0.semantic_ir.impls(target)? {
-            let Some(local_impl) = self.0.def_map.local_impl(data.local_impl)? else {
+            let Some(declaration) = self.declaration(impl_ref)? else {
                 continue;
             };
-            if local_impl.file_id != file_id {
+            if declaration.file_id != file_id {
                 continue;
             }
 
-            symbols.push(DocumentSymbol {
-                name: shared::impl_label(data),
-                kind: SymbolKind::Impl,
-                file_id,
-                span: local_impl.span,
-                selection_span: local_impl.span,
-                children: self.assoc_item_document_symbols(
-                    impl_ref.target,
-                    &data.items,
-                    file_id,
-                )?,
-            });
+            symbols.push(DocumentSymbol::from(declaration).with_children(
+                self.assoc_item_document_symbols(impl_ref.target, &data.items, file_id)?,
+            ));
         }
 
         Ok(())
@@ -272,7 +268,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                 continue;
             }
             let function = ResolvedFunctionRef::Semantic(function);
-            let Some(symbol) = self.function_document_symbol(function)? else {
+            let Some(symbol) = self.declaration_document_symbol(function)? else {
                 continue;
             };
             symbols.push(symbol);
@@ -287,11 +283,14 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
     ) -> Result<()> {
-        for (_, data) in self.0.semantic_ir.type_aliases(target)? {
+        for (type_alias_ref, data) in self.0.semantic_ir.type_aliases(target)? {
             if !matches!(data.owner, ItemOwner::Module(_)) || data.source.file_id != file_id {
                 continue;
             }
-            symbols.push(self.type_alias_document_symbol(data));
+            let Some(symbol) = self.declaration_document_symbol(type_alias_ref)? else {
+                continue;
+            };
+            symbols.push(symbol);
         }
 
         Ok(())
@@ -303,11 +302,14 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
     ) -> Result<()> {
-        for (_, data) in self.0.semantic_ir.consts(target)? {
+        for (const_ref, data) in self.0.semantic_ir.consts(target)? {
             if !matches!(data.owner, ItemOwner::Module(_)) || data.source.file_id != file_id {
                 continue;
             }
-            symbols.push(self.const_document_symbol(data));
+            let Some(symbol) = self.declaration_document_symbol(const_ref)? else {
+                continue;
+            };
+            symbols.push(symbol);
         }
 
         Ok(())
@@ -319,11 +321,14 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         file_id: FileId,
         symbols: &mut Vec<DocumentSymbol>,
     ) -> Result<()> {
-        for (_, data) in self.0.semantic_ir.statics(target)? {
+        for (static_ref, data) in self.0.semantic_ir.statics(target)? {
             if data.source.file_id != file_id {
                 continue;
             }
-            symbols.push(self.static_document_symbol(data));
+            let Some(symbol) = self.declaration_document_symbol(static_ref)? else {
+                continue;
+            };
+            symbols.push(symbol);
         }
 
         Ok(())
@@ -342,7 +347,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                 AssocItemId::Function(id) => {
                     let function_ref = FunctionRef { target, id: *id };
                     let function = ResolvedFunctionRef::Semantic(function_ref);
-                    let Some(symbol) = self.function_document_symbol(function)? else {
+                    let Some(symbol) = self.declaration_document_symbol(function)? else {
                         continue;
                     };
                     if symbol.file_id == file_id {
@@ -351,20 +356,20 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                 }
                 AssocItemId::TypeAlias(id) => {
                     let type_alias_ref = TypeAliasRef { target, id: *id };
-                    let Some(data) = self.0.semantic_ir.type_alias_data(type_alias_ref)? else {
+                    let Some(symbol) = self.declaration_document_symbol(type_alias_ref)? else {
                         continue;
                     };
-                    if data.source.file_id == file_id {
-                        symbols.push(self.type_alias_document_symbol(data));
+                    if symbol.file_id == file_id {
+                        symbols.push(symbol);
                     }
                 }
                 AssocItemId::Const(id) => {
                     let const_ref = ConstRef { target, id: *id };
-                    let Some(data) = self.0.semantic_ir.const_data(const_ref)? else {
+                    let Some(symbol) = self.declaration_document_symbol(const_ref)? else {
                         continue;
                     };
-                    if data.source.file_id == file_id {
-                        symbols.push(self.const_document_symbol(data));
+                    if symbol.file_id == file_id {
+                        symbols.push(symbol);
                     }
                 }
             }
@@ -373,48 +378,11 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         Ok(symbols)
     }
 
-    fn function_document_symbol(
+    fn declaration_document_symbol(
         &self,
-        function: ResolvedFunctionRef,
+        declaration: impl Into<DeclarationRef>,
     ) -> Result<Option<DocumentSymbol>> {
-        let Some(declaration) = self.declaration(function)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(declaration.into()))
-    }
-
-    fn type_alias_document_symbol(&self, data: &TypeAliasData) -> DocumentSymbol {
-        DocumentSymbol {
-            name: data.name.to_string(),
-            kind: SymbolKind::TypeAlias,
-            file_id: data.source.file_id,
-            span: data.span,
-            selection_span: data.name_span.unwrap_or(data.span),
-            children: Vec::new(),
-        }
-    }
-
-    fn const_document_symbol(&self, data: &ConstData) -> DocumentSymbol {
-        DocumentSymbol {
-            name: data.name.to_string(),
-            kind: SymbolKind::Const,
-            file_id: data.source.file_id,
-            span: data.span,
-            selection_span: data.name_span.unwrap_or(data.span),
-            children: Vec::new(),
-        }
-    }
-
-    fn static_document_symbol(&self, data: &StaticData) -> DocumentSymbol {
-        DocumentSymbol {
-            name: data.name.to_string(),
-            kind: SymbolKind::Static,
-            file_id: data.source.file_id,
-            span: data.span,
-            selection_span: data.name_span.unwrap_or(data.span),
-            children: Vec::new(),
-        }
+        Ok(self.declaration(declaration)?.map(DocumentSymbol::from))
     }
 
     fn attach_body_local_document_symbols(
@@ -486,7 +454,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                     body: body_ref,
                     item: BodyValueItemId(item_idx),
                 };
-                let Some(symbol) = self.body_value_item_document_symbol(item_ref)? else {
+                let Some(symbol) = self.declaration_document_symbol(item_ref)? else {
                     continue;
                 };
                 symbols.push(symbol);
@@ -501,16 +469,24 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                     body: body_ref,
                     function: BodyFunctionId(function_idx),
                 });
-                let Some(symbol) = self.function_document_symbol(function)? else {
+                let Some(symbol) = self.declaration_document_symbol(function)? else {
                     continue;
                 };
                 symbols.push(symbol);
             }
         }
 
-        for impl_data in body.local_impls() {
+        for (impl_idx, impl_data) in body.local_impls().iter().enumerate() {
             if impl_data.source.file_id == file_id {
-                symbols.push(self.body_impl_document_symbol(body_ref, body, impl_data)?);
+                let impl_ref = BodyImplRef {
+                    body: body_ref,
+                    impl_id: BodyImplId(impl_idx),
+                };
+                let Some(symbol) = self.body_impl_document_symbol(impl_ref, body, impl_data)?
+                else {
+                    continue;
+                };
+                symbols.push(symbol);
             }
         }
 
@@ -543,23 +519,12 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         ))
     }
 
-    fn body_value_item_document_symbol(
-        &self,
-        item_ref: BodyValueItemRef,
-    ) -> Result<Option<DocumentSymbol>> {
-        let Some(declaration) = self.declaration(item_ref)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(declaration.into()))
-    }
-
     fn body_impl_document_symbol(
         &self,
-        body_ref: BodyRef,
+        impl_ref: BodyImplRef,
         body: &BodyData,
         impl_data: &BodyImplData,
-    ) -> Result<DocumentSymbol> {
+    ) -> Result<Option<DocumentSymbol>> {
         let mut children = Vec::new();
 
         for item in &impl_data.types {
@@ -567,7 +532,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
                 continue;
             };
             let item_ref = BodyItemRef {
-                body: body_ref,
+                body: impl_ref.body,
                 item: *item,
             };
             let Some(symbol) = self.body_item_document_symbol(item_ref, data)? else {
@@ -578,10 +543,10 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
 
         for item in &impl_data.consts {
             let item_ref = BodyValueItemRef {
-                body: body_ref,
+                body: impl_ref.body,
                 item: *item,
             };
-            let Some(symbol) = self.body_value_item_document_symbol(item_ref)? else {
+            let Some(symbol) = self.declaration_document_symbol(item_ref)? else {
                 continue;
             };
             children.push(symbol);
@@ -589,23 +554,22 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
 
         for function in &impl_data.functions {
             let function = ResolvedFunctionRef::BodyLocal(BodyFunctionRef {
-                body: body_ref,
+                body: impl_ref.body,
                 function: *function,
             });
-            let Some(symbol) = self.function_document_symbol(function)? else {
+            let Some(symbol) = self.declaration_document_symbol(function)? else {
                 continue;
             };
             children.push(symbol);
         }
 
-        Ok(DocumentSymbol {
-            name: shared::body_impl_label(impl_data),
-            kind: SymbolKind::Impl,
-            file_id: impl_data.source.file_id,
-            span: impl_data.source.span,
-            selection_span: impl_data.source.span,
-            children,
-        })
+        let Some(declaration) = self.declaration(impl_ref)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(
+            DocumentSymbol::from(declaration).with_children(children),
+        ))
     }
 
     fn find_function_symbol_mut<'s>(
@@ -638,24 +602,6 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
             selection_span: span,
             children: Vec::new(),
         }
-    }
-
-    fn local_def_symbol_source(
-        &self,
-        local_def: LocalDefRef,
-        file_id: FileId,
-    ) -> Result<Option<shared::SymbolSource>> {
-        let Some(declaration) = self.declaration(local_def)? else {
-            return Ok(None);
-        };
-        if declaration.file_id != file_id {
-            return Ok(None);
-        }
-
-        Ok(Some(shared::SymbolSource {
-            span: declaration.span,
-            selection_span: declaration.selection_span,
-        }))
     }
 
     fn declaration(&self, declaration: impl Into<DeclarationRef>) -> Result<Option<Declaration>> {

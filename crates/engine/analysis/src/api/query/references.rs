@@ -306,33 +306,24 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         candidate: SemanticCursorCandidate,
     ) -> anyhow::Result<Option<ReferenceCandidate>> {
         let candidate = match candidate {
-            SemanticCursorCandidate::Field { field, span } => self.field_declaration_candidate(
+            SemanticCursorCandidate::Field { field, span } => self.declaration_candidate(
                 SymbolAt::Field { field, span },
                 ResolvedFieldRef::Semantic(field),
                 target,
                 span,
             )?,
-            SemanticCursorCandidate::Function { function, span } => self
-                .function_declaration_candidate(
-                    SymbolAt::Function { function, span },
-                    ResolvedFunctionRef::Semantic(function),
-                    target,
-                    span,
-                )?,
-            SemanticCursorCandidate::EnumVariant { variant, span } => {
-                if !self.query.includes_declarations() {
-                    return Ok(None);
-                }
-                let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant)? else {
-                    return Ok(None);
-                };
-                Some(ReferenceCandidate {
-                    symbol: SymbolAt::EnumVariant { variant, span },
-                    target,
-                    file_id: data.file_id,
-                    span,
-                })
-            }
+            SemanticCursorCandidate::Function { function, span } => self.declaration_candidate(
+                SymbolAt::Function { function, span },
+                ResolvedFunctionRef::Semantic(function),
+                target,
+                span,
+            )?,
+            SemanticCursorCandidate::EnumVariant { variant, span } => self.declaration_candidate(
+                SymbolAt::EnumVariant { variant, span },
+                ResolvedEnumVariantRef::Semantic(variant),
+                target,
+                span,
+            )?,
             SemanticCursorCandidate::TypePath {
                 context,
                 path,
@@ -410,46 +401,33 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                     span,
                 })
             }
-            BodyCursorCandidate::LocalItem { item, .. } => self.body_item_declaration_candidate(
-                SymbolAt::LocalItem { item, span },
+            BodyCursorCandidate::LocalItem { item, .. } => {
+                self.declaration_candidate(SymbolAt::LocalItem { item, span }, item, target, span)?
+            }
+            BodyCursorCandidate::LocalValueItem { item, .. } => self.declaration_candidate(
+                SymbolAt::LocalValueItem { item, span },
                 item,
                 target,
                 span,
             )?,
-            BodyCursorCandidate::LocalValueItem { item, .. } => self
-                .body_value_item_declaration_candidate(
-                    SymbolAt::LocalValueItem { item, span },
-                    item,
-                    target,
-                    span,
-                )?,
-            BodyCursorCandidate::LocalField { field, .. } => self.field_declaration_candidate(
+            BodyCursorCandidate::LocalField { field, .. } => self.declaration_candidate(
                 SymbolAt::LocalField { field, span },
                 ResolvedFieldRef::BodyLocal(field),
                 target,
                 span,
             )?,
-            BodyCursorCandidate::LocalEnumVariant { variant, .. } => {
-                if !self.query.includes_declarations() {
-                    return Ok(None);
-                }
-                let Some(data) = self.analysis.body_ir.local_enum_variant_data(variant)? else {
-                    return Ok(None);
-                };
-                Some(ReferenceCandidate {
-                    symbol: SymbolAt::LocalEnumVariant { variant, span },
-                    target,
-                    file_id: data.item.source.file_id,
-                    span,
-                })
-            }
-            BodyCursorCandidate::LocalFunction { function, .. } => self
-                .function_declaration_candidate(
-                    SymbolAt::LocalFunction { function, span },
-                    ResolvedFunctionRef::BodyLocal(function),
-                    target,
-                    span,
-                )?,
+            BodyCursorCandidate::LocalEnumVariant { variant, .. } => self.declaration_candidate(
+                SymbolAt::LocalEnumVariant { variant, span },
+                ResolvedEnumVariantRef::BodyLocal(variant),
+                target,
+                span,
+            )?,
+            BodyCursorCandidate::LocalFunction { function, .. } => self.declaration_candidate(
+                SymbolAt::LocalFunction { function, span },
+                ResolvedFunctionRef::BodyLocal(function),
+                target,
+                span,
+            )?,
             BodyCursorCandidate::TypePath {
                 body,
                 scope,
@@ -489,83 +467,17 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         Ok(candidate)
     }
 
-    fn body_item_declaration_candidate(
+    fn declaration_candidate(
         &self,
         symbol: SymbolAt,
-        item: BodyItemRef,
+        declaration: impl Into<DeclarationRef>,
         scan_target: TargetRef,
         span: Span,
     ) -> anyhow::Result<Option<ReferenceCandidate>> {
         if !self.query.includes_declarations() {
             return Ok(None);
         }
-        let Some(declaration) = self.declaration(item)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(Self::reference_candidate_for_declaration(
-            symbol,
-            declaration,
-            scan_target,
-            span,
-        )))
-    }
-
-    fn body_value_item_declaration_candidate(
-        &self,
-        symbol: SymbolAt,
-        item: BodyValueItemRef,
-        scan_target: TargetRef,
-        span: Span,
-    ) -> anyhow::Result<Option<ReferenceCandidate>> {
-        if !self.query.includes_declarations() {
-            return Ok(None);
-        }
-        let Some(declaration) = self.declaration(item)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(Self::reference_candidate_for_declaration(
-            symbol,
-            declaration,
-            scan_target,
-            span,
-        )))
-    }
-
-    fn field_declaration_candidate(
-        &self,
-        symbol: SymbolAt,
-        field: ResolvedFieldRef,
-        scan_target: TargetRef,
-        span: Span,
-    ) -> anyhow::Result<Option<ReferenceCandidate>> {
-        if !self.query.includes_declarations() {
-            return Ok(None);
-        }
-        let Some(declaration) = self.declaration(field)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(Self::reference_candidate_for_declaration(
-            symbol,
-            declaration,
-            scan_target,
-            span,
-        )))
-    }
-
-    fn function_declaration_candidate(
-        &self,
-        symbol: SymbolAt,
-        function: ResolvedFunctionRef,
-        scan_target: TargetRef,
-        span: Span,
-    ) -> anyhow::Result<Option<ReferenceCandidate>> {
-        if !self.query.includes_declarations() {
-            return Ok(None);
-        }
-        let Some(declaration) = self.declaration(function)? else {
+        let Some(declaration) = self.declaration(declaration)? else {
             return Ok(None);
         };
 
