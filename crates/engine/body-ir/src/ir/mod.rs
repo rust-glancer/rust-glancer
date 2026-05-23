@@ -33,8 +33,8 @@ pub use self::{
     pat::{PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordPatField},
     path::BodyPath,
     resolved::{
-        BodyResolution, BodyTypePathResolution, ResolvedEnumVariantRef, ResolvedFieldRef,
-        ResolvedFunctionRef,
+        BodyResolution, BodyTypePathResolution, ResolvedDeclarationRef, ResolvedEnumVariantRef,
+        ResolvedFieldRef, ResolvedFunctionRef,
     },
     stmt::{BindingData, BindingKind, BodySelfParamKind, StmtData, StmtKind},
     ty::{

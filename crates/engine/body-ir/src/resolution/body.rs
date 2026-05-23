@@ -6,19 +6,23 @@
 use rg_def_map::{DefId, DefMapReadTxn, Path, PathSegment};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{FunctionRef, SemanticIrReadTxn, SemanticItemRef, TypeDefId, TypePathContext};
+use rg_semantic_ir::{
+    FunctionRef, SemanticDeclarationRef, SemanticIrReadTxn, SemanticItemRef, TypeDefId,
+    TypePathContext,
+};
 
 use crate::{
     ir::body::BodyData,
     ir::expr::{ExprKind, ExprUnaryOp, ExprWrapperKind},
     ir::ids::{
-        BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyImplId,
-        BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ExprId, ScopeId,
+        BindingId, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId,
+        BodyFunctionRef, BodyImplId, BodyItemId, BodyItemRef, BodyRef, BodyValueItemId,
+        BodyValueItemRef, ExprId, ScopeId,
     },
     ir::item::{BodyFunctionOwner, BodyValueItemOwner},
     ir::resolved::{
-        BodyResolution, BodyTypePathResolution, ResolvedEnumVariantRef, ResolvedFieldRef,
-        ResolvedFunctionRef,
+        BodyResolution, BodyTypePathResolution, ResolvedDeclarationRef, ResolvedEnumVariantRef,
+        ResolvedFieldRef, ResolvedFunctionRef,
     },
     ir::stmt::{BindingKind, BodySelfParamKind},
     ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
@@ -350,7 +354,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                     .is_some_and(|item| item.is_nominal_type())
                 {
                     return Ok((
-                        BodyResolution::LocalItem(item_ref),
+                        BodyResolution::Declaration(vec![item_ref.into()]),
                         BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item_ref)]),
                     ));
                 }
@@ -396,7 +400,15 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 } else {
                     BodyTy::Unknown
                 };
-                return Ok((BodyResolution::Field(fields), ty));
+                return Ok((
+                    BodyResolution::Field(
+                        fields
+                            .into_iter()
+                            .map(ResolvedDeclarationRef::from)
+                            .collect(),
+                    ),
+                    ty,
+                ));
             }
             current_depth = Some(candidate.depth());
 
@@ -449,7 +461,15 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             } else {
                 BodyTy::Unknown
             };
-            return Ok((BodyResolution::Field(fields), ty));
+            return Ok((
+                BodyResolution::Field(
+                    fields
+                        .into_iter()
+                        .map(ResolvedDeclarationRef::from)
+                        .collect(),
+                ),
+                ty,
+            ));
         }
 
         Ok((BodyResolution::Unknown, BodyTy::Unknown))
@@ -487,7 +507,15 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 } else {
                     BodyTy::Unknown
                 };
-                return Ok((BodyResolution::Method(functions), ty));
+                return Ok((
+                    BodyResolution::Method(
+                        functions
+                            .into_iter()
+                            .map(ResolvedDeclarationRef::from)
+                            .collect(),
+                    ),
+                    ty,
+                ));
             }
             current_depth = Some(candidate.depth());
 
@@ -533,7 +561,15 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             } else {
                 BodyTy::Unknown
             };
-            return Ok((BodyResolution::Method(functions), ty));
+            return Ok((
+                BodyResolution::Method(
+                    functions
+                        .into_iter()
+                        .map(ResolvedDeclarationRef::from)
+                        .collect(),
+                ),
+                ty,
+            ));
         }
 
         Ok((BodyResolution::Unknown, BodyTy::Unknown))
@@ -775,38 +811,12 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         // outside the current intentionally-small Body IR model.
         let mut return_tys = Vec::new();
         match &callee_data.resolution {
-            BodyResolution::Item(defs) => {
-                for def in defs {
-                    let Some(function_ref) = self.function_ref_for_def(*def)? else {
-                        continue;
-                    };
-                    push_unique(
-                        &mut return_tys,
-                        self.semantic_function_return_ty(function_ref, None)?,
-                    );
-                }
-            }
-            BodyResolution::Function(functions) => {
-                for function in functions {
-                    match function {
-                        ResolvedFunctionRef::Semantic(function_ref) => {
-                            push_unique(
-                                &mut return_tys,
-                                self.semantic_function_return_ty(*function_ref, None)?,
-                            );
-                        }
-                        ResolvedFunctionRef::BodyLocal(function_ref) => {
-                            push_unique(
-                                &mut return_tys,
-                                self.local_function_return_ty(*function_ref, None)?,
-                            );
-                        }
-                    }
+            BodyResolution::Declaration(declarations) | BodyResolution::Function(declarations) => {
+                for declaration in declarations {
+                    self.push_return_ty_for_declaration(*declaration, &mut return_tys)?;
                 }
             }
             BodyResolution::Local(_)
-            | BodyResolution::LocalItem(_)
-            | BodyResolution::LocalValueItem(_)
             | BodyResolution::Field(_)
             | BodyResolution::EnumVariant(_)
             | BodyResolution::Method(_)
@@ -818,6 +828,60 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         } else {
             Ok(BodyTy::Unknown)
         }
+    }
+
+    fn push_return_ty_for_declaration(
+        &self,
+        declaration: ResolvedDeclarationRef,
+        return_tys: &mut Vec<BodyTy>,
+    ) -> Result<(), PackageStoreError> {
+        match declaration {
+            ResolvedDeclarationRef::Def(def) => {
+                let Some(function_ref) = self.function_ref_for_def(def)? else {
+                    return Ok(());
+                };
+                push_unique(
+                    return_tys,
+                    self.semantic_function_return_ty(function_ref, None)?,
+                );
+            }
+            ResolvedDeclarationRef::Semantic(SemanticDeclarationRef::Item(
+                SemanticItemRef::Function(function_ref),
+            )) => {
+                push_unique(
+                    return_tys,
+                    self.semantic_function_return_ty(function_ref, None)?,
+                );
+            }
+            ResolvedDeclarationRef::Body(BodyDeclarationRef::Function(function_ref)) => {
+                push_unique(
+                    return_tys,
+                    self.local_function_return_ty(function_ref, None)?,
+                );
+            }
+            ResolvedDeclarationRef::Semantic(
+                SemanticDeclarationRef::Item(
+                    SemanticItemRef::TypeDef(_)
+                    | SemanticItemRef::Trait(_)
+                    | SemanticItemRef::Impl(_)
+                    | SemanticItemRef::TypeAlias(_)
+                    | SemanticItemRef::Const(_)
+                    | SemanticItemRef::Static(_),
+                )
+                | SemanticDeclarationRef::Field(_)
+                | SemanticDeclarationRef::EnumVariant(_),
+            )
+            | ResolvedDeclarationRef::Body(
+                BodyDeclarationRef::Binding(_)
+                | BodyDeclarationRef::Item(_)
+                | BodyDeclarationRef::ValueItem(_)
+                | BodyDeclarationRef::Impl(_)
+                | BodyDeclarationRef::Field(_)
+                | BodyDeclarationRef::EnumVariant(_),
+            ) => {}
+        }
+
+        Ok(())
     }
 
     fn function_ref_for_def(&self, def: DefId) -> Result<Option<FunctionRef>, PackageStoreError> {
@@ -915,7 +979,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                     .is_some_and(|item| item.has_value_constructor())
                 {
                     return Ok((
-                        BodyResolution::LocalItem(item_ref),
+                        BodyResolution::Declaration(vec![item_ref.into()]),
                         BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item_ref)]),
                     ));
                 }
@@ -942,7 +1006,16 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
 
         let result = self.def_map.resolve_path(self.body.owner_module, path)?;
         let ty = self.nominal_ty_from_defs(&result.resolved)?;
-        Ok((BodyResolution::Item(result.resolved), ty))
+        Ok((
+            BodyResolution::Declaration(
+                result
+                    .resolved
+                    .into_iter()
+                    .map(ResolvedDeclarationRef::from)
+                    .collect(),
+            ),
+            ty,
+        ))
     }
 
     fn resolve_local_value_name(
@@ -1010,10 +1083,13 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 Ok((BodyResolution::Local(binding), ty))
             }
             BodyLocalValueName::Function(function) => Ok((
-                BodyResolution::Function(vec![ResolvedFunctionRef::BodyLocal(BodyFunctionRef {
-                    body: self.body_ref,
-                    function,
-                })]),
+                BodyResolution::Function(vec![
+                    BodyFunctionRef {
+                        body: self.body_ref,
+                        function,
+                    }
+                    .into(),
+                ]),
                 BodyTy::Unknown,
             )),
             BodyLocalValueName::ValueItem(item) => {
@@ -1022,7 +1098,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                     item,
                 };
                 Ok((
-                    BodyResolution::LocalValueItem(item_ref),
+                    BodyResolution::Declaration(vec![item_ref.into()]),
                     self.value_item_ty(item)?,
                 ))
             }
@@ -1032,7 +1108,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                     item,
                 };
                 Ok((
-                    BodyResolution::LocalItem(item_ref),
+                    BodyResolution::Declaration(vec![item_ref.into()]),
                     BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item_ref)]),
                 ))
             }
@@ -1131,7 +1207,15 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
 
         if !variants.is_empty() {
             let ty = unique_ty_or_unknown(variant_tys);
-            return Ok(Some((BodyResolution::EnumVariant(variants), ty)));
+            return Ok(Some((
+                BodyResolution::EnumVariant(
+                    variants
+                        .into_iter()
+                        .map(ResolvedDeclarationRef::from)
+                        .collect(),
+                ),
+                ty,
+            )));
         }
 
         // Body-local associated consts are stored on local impls, not in lexical scopes. Once the
@@ -1141,7 +1225,10 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             if let Some((item_ref, ty)) =
                 self.local_associated_value_item_for_type(local_ty, last_segment)?
             {
-                return Ok(Some((BodyResolution::LocalValueItem(item_ref), ty)));
+                return Ok(Some((
+                    BodyResolution::Declaration(vec![item_ref.into()]),
+                    ty,
+                )));
             }
         }
 
@@ -1170,8 +1257,15 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             }
         }
 
-        Ok((!functions.is_empty())
-            .then_some((BodyResolution::Function(functions), BodyTy::Unknown)))
+        Ok((!functions.is_empty()).then_some((
+            BodyResolution::Function(
+                functions
+                    .into_iter()
+                    .map(ResolvedDeclarationRef::from)
+                    .collect(),
+            ),
+            BodyTy::Unknown,
+        )))
     }
 
     fn local_associated_value_item_for_type(

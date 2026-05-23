@@ -4,8 +4,8 @@
 //! question: "what declaration does this cursor symbol denote?"
 
 use rg_body_ir::{
-    BodyBindingRef, BodyRef, BodyResolution, BodyTypePathResolution, ResolvedEnumVariantRef,
-    ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
+    BodyBindingRef, BodyRef, BodyResolution, BodyTypePathResolution, ResolvedDeclarationRef,
+    ScopeId,
 };
 use rg_def_map::{DefId, LocalDefRef, ModuleRef, Path};
 
@@ -170,42 +170,29 @@ impl<'a, 'db> SymbolDeclarationResolver<'a, 'db> {
                 .map(DeclarationRef::from)
                 .into_iter()
                 .collect()),
-            BodyResolution::LocalItem(item) => Ok(vec![(*item).into()]),
-            BodyResolution::LocalValueItem(item) => Ok(vec![(*item).into()]),
-            BodyResolution::Item(defs) => {
+            BodyResolution::Declaration(resolved)
+            | BodyResolution::Field(resolved)
+            | BodyResolution::Function(resolved)
+            | BodyResolution::Method(resolved)
+            | BodyResolution::EnumVariant(resolved) => {
                 let mut declarations = Vec::new();
-                for def in defs {
-                    declarations.extend(self.declarations_for_def(*def)?);
+                for declaration in resolved {
+                    declarations.extend(self.declarations_for_resolved_declaration(*declaration)?);
                 }
                 Ok(declarations)
             }
-            BodyResolution::Field(fields) => Ok(fields
-                .iter()
-                .copied()
-                .map(|field| match field {
-                    ResolvedFieldRef::Semantic(field) => field.into(),
-                    ResolvedFieldRef::BodyLocal(field) => field.into(),
-                })
-                .collect()),
-            BodyResolution::Function(functions) | BodyResolution::Method(functions) => {
-                Ok(functions
-                    .iter()
-                    .copied()
-                    .map(|function| match function {
-                        ResolvedFunctionRef::Semantic(function) => function.into(),
-                        ResolvedFunctionRef::BodyLocal(function) => function.into(),
-                    })
-                    .collect())
-            }
-            BodyResolution::EnumVariant(variants) => Ok(variants
-                .iter()
-                .copied()
-                .map(|variant| match variant {
-                    ResolvedEnumVariantRef::Semantic(variant) => variant.into(),
-                    ResolvedEnumVariantRef::BodyLocal(variant) => variant.into(),
-                })
-                .collect()),
             BodyResolution::Unknown => Ok(Vec::new()),
+        }
+    }
+
+    fn declarations_for_resolved_declaration(
+        &self,
+        declaration: ResolvedDeclarationRef,
+    ) -> anyhow::Result<Vec<DeclarationRef>> {
+        match declaration {
+            ResolvedDeclarationRef::Def(def) => self.declarations_for_def(def),
+            ResolvedDeclarationRef::Semantic(declaration) => Ok(vec![declaration.into()]),
+            ResolvedDeclarationRef::Body(declaration) => Ok(vec![declaration.into()]),
         }
     }
 

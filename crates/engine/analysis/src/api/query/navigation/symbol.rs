@@ -116,8 +116,8 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
         body: &rg_body_ir::BodyData,
         resolution: &BodyResolution,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
-        // Body resolution can point at lexical bindings, body-local items, or semantic items.
-        // Normalize each source of identity into the same navigation payload.
+        // Body resolution keeps lexical bindings body-relative, but everything else has already
+        // been normalized into a composite declaration identity.
         match resolution {
             BodyResolution::Local(binding) => Ok(body
                 .binding(*binding)
@@ -126,55 +126,16 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
                 })
                 .into_iter()
                 .collect()),
-            BodyResolution::LocalItem(item) => Ok(self
-                .targets()
-                .navigation_target_for_body_declaration((*item).into())?
-                .into_iter()
-                .collect()),
-            BodyResolution::LocalValueItem(item) => Ok(self
-                .targets()
-                .navigation_target_for_body_declaration((*item).into())?
-                .into_iter()
-                .collect()),
-            BodyResolution::Item(defs) => {
+            BodyResolution::Declaration(declarations)
+            | BodyResolution::Field(declarations)
+            | BodyResolution::Function(declarations)
+            | BodyResolution::Method(declarations)
+            | BodyResolution::EnumVariant(declarations) => {
                 let mut targets = Vec::new();
-                for def in defs {
-                    if let Some(target) = self.targets().navigation_target_for_def(*def)? {
-                        targets.push(target);
-                    }
-                }
-                Ok(targets)
-            }
-            BodyResolution::Field(fields) => {
-                let mut targets = Vec::new();
-                for field in fields {
+                for declaration in declarations {
                     if let Some(target) = self
                         .targets()
-                        .navigation_target_for_resolved_field(*field)?
-                    {
-                        targets.push(target);
-                    }
-                }
-                Ok(targets)
-            }
-            BodyResolution::Function(functions) | BodyResolution::Method(functions) => {
-                let mut targets = Vec::new();
-                for function in functions {
-                    if let Some(target) = self
-                        .targets()
-                        .navigation_target_for_resolved_function(*function)?
-                    {
-                        targets.push(target);
-                    }
-                }
-                Ok(targets)
-            }
-            BodyResolution::EnumVariant(variants) => {
-                let mut targets = Vec::new();
-                for variant in variants {
-                    if let Some(target) = self
-                        .targets()
-                        .navigation_target_for_resolved_enum_variant(*variant)?
+                        .navigation_target_for_resolved_declaration(*declaration)?
                     {
                         targets.push(target);
                     }

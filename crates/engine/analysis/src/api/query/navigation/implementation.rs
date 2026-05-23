@@ -2,7 +2,7 @@
 
 use rg_body_ir::{
     BodyAutoderef, BodyAutoderefMode, BodyDeclarationRef, BodyImplId, BodyResolution, BodyTy,
-    ExprKind, ResolvedFunctionRef,
+    ExprKind, ResolvedDeclarationRef,
 };
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
@@ -48,7 +48,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
             return Ok(targets);
         }
 
-        // 2) Symbol/entity expansion: trait/type/function/local bindings.
+        // 2) Symbol/declaration expansion: trait/type/function/local bindings.
         for declaration in SymbolDeclarationResolver::new(self.0).declarations_for_symbol(symbol)? {
             match declaration {
                 DeclarationRef::Semantic(SemanticDeclarationRef::Item(item)) => match item {
@@ -78,11 +78,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
                         self.push_local_type_targets(item, &mut targets)?;
                     }
                     BodyDeclarationRef::Function(function) => {
-                        self.push_resolved_function_targets(
-                            ResolvedFunctionRef::BodyLocal(function),
-                            None,
-                            &mut targets,
-                        )?;
+                        self.push_resolved_function_targets(function.into(), None, &mut targets)?;
                     }
                     BodyDeclarationRef::ValueItem(_)
                     | BodyDeclarationRef::Impl(_)
@@ -133,8 +129,8 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         };
         let receiver_ty = body_data.expr(*receiver).map(|data| &data.ty);
 
-        for function in functions {
-            self.push_resolved_function_targets(*function, receiver_ty, targets)?;
+        for declaration in functions {
+            self.push_resolved_function_targets(*declaration, receiver_ty, targets)?;
         }
 
         Ok(true)
@@ -205,23 +201,54 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
 
     fn push_resolved_function_targets(
         &self,
-        function: ResolvedFunctionRef,
+        declaration: ResolvedDeclarationRef,
         receiver_ty: Option<&BodyTy>,
         targets: &mut Vec<NavigationTarget>,
     ) -> anyhow::Result<()> {
-        match function {
-            ResolvedFunctionRef::Semantic(function) => {
+        match declaration {
+            ResolvedDeclarationRef::Def(def) => {
+                let rg_def_map::DefId::Local(local_def) = def else {
+                    return Ok(());
+                };
+                let Some(SemanticItemRef::Function(function)) =
+                    self.0.semantic_ir.semantic_item_for_local_def(local_def)?
+                else {
+                    return Ok(());
+                };
                 self.push_semantic_function_targets(function, receiver_ty, targets)
             }
-            ResolvedFunctionRef::BodyLocal(_) => {
+            ResolvedDeclarationRef::Semantic(SemanticDeclarationRef::Item(
+                SemanticItemRef::Function(function),
+            )) => self.push_semantic_function_targets(function, receiver_ty, targets),
+            ResolvedDeclarationRef::Body(BodyDeclarationRef::Function(function)) => {
                 let Some(target) = NavigationTargetResolver::new(self.0)
-                    .navigation_target_for_resolved_function(function)?
+                    .navigation_target_for_body_declaration(function.into())?
                 else {
                     return Ok(());
                 };
                 Self::push_unique_target(targets, target);
                 Ok(())
             }
+            ResolvedDeclarationRef::Semantic(
+                SemanticDeclarationRef::Item(
+                    SemanticItemRef::TypeDef(_)
+                    | SemanticItemRef::Trait(_)
+                    | SemanticItemRef::Impl(_)
+                    | SemanticItemRef::TypeAlias(_)
+                    | SemanticItemRef::Const(_)
+                    | SemanticItemRef::Static(_),
+                )
+                | SemanticDeclarationRef::Field(_)
+                | SemanticDeclarationRef::EnumVariant(_),
+            )
+            | ResolvedDeclarationRef::Body(
+                BodyDeclarationRef::Binding(_)
+                | BodyDeclarationRef::Item(_)
+                | BodyDeclarationRef::ValueItem(_)
+                | BodyDeclarationRef::Impl(_)
+                | BodyDeclarationRef::Field(_)
+                | BodyDeclarationRef::EnumVariant(_),
+            ) => Ok(()),
         }
     }
 

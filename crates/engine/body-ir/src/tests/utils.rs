@@ -11,11 +11,12 @@ use crate::{
     BodyIrBuildPolicy, BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy,
     BodyResolution, BodySource, BodyTy, BodyValueItemData, ClosureCapture, ClosureKind,
     ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode, PatData, PatId,
-    PatKind, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, StmtKind,
-    TargetBodiesStatus,
+    PatKind, ResolvedDeclarationRef, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
+    StmtKind, TargetBodiesStatus,
     ir::ids::{
-        BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId,
-        BodyImplId, BodyItemId, BodyItemRef, BodyValueItemId, BodyValueItemRef, ExprId, StmtId,
+        BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
+        BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyImplRef, BodyItemId, BodyItemRef,
+        BodyValueItemId, BodyValueItemRef, ExprId, StmtId,
     },
 };
 use rg_def_map::{DefId, DefMapDb, LocalDefRef, ModuleRef, TargetRef};
@@ -23,8 +24,8 @@ use rg_item_tree::{ItemTreeDb, PackageNameInterners};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{Package, ParseDb, Target};
 use rg_semantic_ir::{
-    FieldRef, FunctionRef, ImplRef, ItemId, ItemOwner, SemanticIrDb, SemanticIrReadTxn, TraitRef,
-    TypeDefId, TypeDefRef,
+    FieldRef, FunctionRef, ImplRef, ItemId, ItemOwner, SemanticDeclarationRef, SemanticIrDb,
+    SemanticIrReadTxn, SemanticItemRef, TraitRef, TypeDefId, TypeDefRef,
 };
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, fixture_crate};
@@ -1226,52 +1227,20 @@ impl TargetBodyIrSnapshot<'_> {
     fn render_resolution(&self, resolution: &BodyResolution) -> String {
         match resolution {
             BodyResolution::Local(binding) => format!(" -> local v{}", binding.0),
-            BodyResolution::LocalItem(item) => {
-                format!(" -> local item {}", self.render_body_item_ref(*item))
+            BodyResolution::Declaration(declarations) if declarations.is_empty() => {
+                " -> item <unresolved>".to_string()
             }
-            BodyResolution::LocalValueItem(item) => {
-                format!(" -> local value {}", self.render_body_value_item_ref(*item))
-            }
-            BodyResolution::Item(defs) if defs.is_empty() => " -> item <unresolved>".to_string(),
-            BodyResolution::Item(defs) => {
-                let mut defs = defs
+            BodyResolution::Declaration(declarations)
+            | BodyResolution::Field(declarations)
+            | BodyResolution::Function(declarations)
+            | BodyResolution::EnumVariant(declarations)
+            | BodyResolution::Method(declarations) => {
+                let mut declarations = declarations
                     .iter()
-                    .map(|def| self.render_def(*def))
+                    .map(|declaration| self.render_resolved_declaration_ref(*declaration))
                     .collect::<Vec<_>>();
-                defs.sort();
-                format!(" -> item {}", defs.join(" | "))
-            }
-            BodyResolution::Field(fields) => {
-                let mut fields = fields
-                    .iter()
-                    .map(|field| self.render_resolved_field_ref(*field))
-                    .collect::<Vec<_>>();
-                fields.sort();
-                format!(" -> {}", fields.join(" | "))
-            }
-            BodyResolution::Function(functions) => {
-                let mut functions = functions
-                    .iter()
-                    .map(|function| self.render_resolved_function_ref(*function))
-                    .collect::<Vec<_>>();
-                functions.sort();
-                format!(" -> {}", functions.join(" | "))
-            }
-            BodyResolution::EnumVariant(variants) => {
-                let mut variants = variants
-                    .iter()
-                    .map(|variant| self.render_resolved_enum_variant_ref(*variant))
-                    .collect::<Vec<_>>();
-                variants.sort();
-                format!(" -> {}", variants.join(" | "))
-            }
-            BodyResolution::Method(functions) => {
-                let mut functions = functions
-                    .iter()
-                    .map(|function| self.render_resolved_function_ref(*function))
-                    .collect::<Vec<_>>();
-                functions.sort();
-                format!(" -> {}", functions.join(" | "))
+                declarations.sort();
+                format!(" -> {}", declarations.join(" | "))
             }
             BodyResolution::Unknown => String::new(),
         }
@@ -1404,6 +1373,134 @@ impl TargetBodyIrSnapshot<'_> {
             DefId::Module(module_ref) => format!("module {}", self.render_module_ref(module_ref)),
             DefId::Local(local_def) => self.render_local_def(local_def),
         }
+    }
+
+    fn render_resolved_declaration_ref(&self, declaration: ResolvedDeclarationRef) -> String {
+        match declaration {
+            ResolvedDeclarationRef::Def(def) => format!("item {}", self.render_def(def)),
+            ResolvedDeclarationRef::Semantic(declaration) => {
+                self.render_semantic_declaration_ref(declaration)
+            }
+            ResolvedDeclarationRef::Body(declaration) => {
+                self.render_body_declaration_ref(declaration)
+            }
+        }
+    }
+
+    fn render_semantic_declaration_ref(&self, declaration: SemanticDeclarationRef) -> String {
+        match declaration {
+            SemanticDeclarationRef::Item(item) => self.render_semantic_item_ref(item),
+            SemanticDeclarationRef::Field(field) => {
+                self.render_resolved_field_ref(ResolvedFieldRef::Semantic(field))
+            }
+            SemanticDeclarationRef::EnumVariant(variant) => {
+                self.render_resolved_enum_variant_ref(ResolvedEnumVariantRef::Semantic(variant))
+            }
+        }
+    }
+
+    fn render_semantic_item_ref(&self, item: SemanticItemRef) -> String {
+        match item {
+            SemanticItemRef::TypeDef(ty) => self.render_type_def_ref(ty),
+            SemanticItemRef::Trait(trait_ref) => self.render_trait_ref(trait_ref),
+            SemanticItemRef::Impl(impl_ref) => self.render_impl_ref(impl_ref),
+            SemanticItemRef::Function(function) => {
+                self.render_resolved_function_ref(ResolvedFunctionRef::Semantic(function))
+            }
+            SemanticItemRef::TypeAlias(type_alias_ref) => {
+                let semantic_ir = self.semantic_ir_txn();
+                let data = semantic_ir
+                    .type_alias_data(type_alias_ref)
+                    .expect("type alias ref should load while rendering body IR")
+                    .expect("type alias ref should exist while rendering body IR");
+                format!(
+                    "type {}::{}",
+                    self.render_owner(data.owner, type_alias_ref.target),
+                    data.name
+                )
+            }
+            SemanticItemRef::Const(const_ref) => {
+                let semantic_ir = self.semantic_ir_txn();
+                let data = semantic_ir
+                    .const_data(const_ref)
+                    .expect("const ref should load while rendering body IR")
+                    .expect("const ref should exist while rendering body IR");
+                format!(
+                    "const {}::{}",
+                    self.render_owner(data.owner, const_ref.target),
+                    data.name
+                )
+            }
+            SemanticItemRef::Static(static_ref) => {
+                let semantic_ir = self.semantic_ir_txn();
+                let data = semantic_ir
+                    .static_data(static_ref)
+                    .expect("static ref should load while rendering body IR")
+                    .expect("static ref should exist while rendering body IR");
+                format!(
+                    "static {}::{}",
+                    self.render_module_ref(data.owner),
+                    data.name
+                )
+            }
+        }
+    }
+
+    fn render_body_declaration_ref(&self, declaration: BodyDeclarationRef) -> String {
+        match declaration {
+            BodyDeclarationRef::Binding(binding) => self.render_body_binding_ref(binding),
+            BodyDeclarationRef::Item(item) => {
+                format!("local item {}", self.render_body_item_ref(item))
+            }
+            BodyDeclarationRef::ValueItem(item) => {
+                format!("local value {}", self.render_body_value_item_ref(item))
+            }
+            BodyDeclarationRef::Impl(impl_ref) => self.render_body_impl_ref(impl_ref),
+            BodyDeclarationRef::Field(field) => {
+                self.render_resolved_field_ref(ResolvedFieldRef::BodyLocal(field))
+            }
+            BodyDeclarationRef::EnumVariant(variant) => {
+                self.render_resolved_enum_variant_ref(ResolvedEnumVariantRef::BodyLocal(variant))
+            }
+            BodyDeclarationRef::Function(function) => {
+                self.render_resolved_function_ref(ResolvedFunctionRef::BodyLocal(function))
+            }
+        }
+    }
+
+    fn render_body_binding_ref(&self, binding_ref: BodyBindingRef) -> String {
+        let body_ir = self.body_ir_txn();
+        let Some(body) = body_ir
+            .body_data(binding_ref.body)
+            .expect("body binding ref should load while rendering body IR")
+        else {
+            return "<missing>".to_string();
+        };
+        let Some(binding) = body.binding(binding_ref.binding) else {
+            return "<missing>".to_string();
+        };
+        let name = binding.name.as_deref().unwrap_or("<missing>");
+
+        format!("local {name} @ {}", self.render_source(binding.source))
+    }
+
+    fn render_body_impl_ref(&self, impl_ref: BodyImplRef) -> String {
+        let body_ir = self.body_ir_txn();
+        let Some(body) = body_ir
+            .body_data(impl_ref.body)
+            .expect("body impl ref should load while rendering body IR")
+        else {
+            return "<missing>".to_string();
+        };
+        let Some(data) = body.local_impl(impl_ref.impl_id) else {
+            return "<missing>".to_string();
+        };
+
+        format!(
+            "impl {} @ {}",
+            self.render_function_ref(body.owner),
+            self.render_source(data.source)
+        )
     }
 
     fn render_local_def(&self, local_def: LocalDefRef) -> String {

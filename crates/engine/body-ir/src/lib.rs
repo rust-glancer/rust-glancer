@@ -33,9 +33,9 @@ pub use self::{
         ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprId,
         ExprKind, ExprRangeKind, ExprUnaryOp, LabelData, LiteralKind, PackageBodies,
         PatBindingMode, PatData, PatId, PatKind, PatMutability, PatRangeKind, RecordExprField,
-        RecordExprSpread, RecordPatField, ResolvedEnumVariantRef, ResolvedFieldRef,
-        ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
-        TargetBodiesStatus,
+        RecordExprSpread, RecordPatField, ResolvedDeclarationRef, ResolvedEnumVariantRef,
+        ResolvedFieldRef, ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind,
+        TargetBodies, TargetBodiesStatus,
     },
     resolution::{
         BodyAutoderef, BodyAutoderefCandidate, BodyAutoderefCandidates, BodyAutoderefMode,

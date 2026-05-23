@@ -2,7 +2,7 @@
 //!
 //! Each module backs one public `Analysis` operation or a tightly related group of operations.
 //! Queries combine def-map, semantic IR, and body IR facts into transport-neutral result models,
-//! but leave lower-level cursor/entity normalization and presentation formatting to sibling
+//! but leave lower-level cursor/declaration normalization and presentation formatting to sibling
 //! modules.
 
 pub(crate) mod completion;
