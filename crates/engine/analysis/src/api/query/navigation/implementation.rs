@@ -14,7 +14,7 @@ use rg_semantic_ir::{
 use super::target::NavigationTargetResolver;
 use crate::{
     api::{
-        Analysis, query::type_at::TypeResolver, resolve::entity::EntityResolver,
+        Analysis, query::type_at::TypeResolver, resolve::declaration::SymbolDeclarationResolver,
         view::declaration::DeclarationRef,
     },
     model::{NavigationTarget, SymbolAt},
@@ -49,7 +49,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         }
 
         // 2) Symbol/entity expansion: trait/type/function/local bindings.
-        for declaration in EntityResolver::new(self.0).declarations_for_symbol(symbol)? {
+        for declaration in SymbolDeclarationResolver::new(self.0).declarations_for_symbol(symbol)? {
             match declaration {
                 DeclarationRef::Semantic(SemanticDeclarationRef::Item(item)) => match item {
                     SemanticItemRef::TypeDef(ty) => self.push_type_def_targets(ty, &mut targets)?,

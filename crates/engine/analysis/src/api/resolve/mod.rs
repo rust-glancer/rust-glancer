@@ -5,4 +5,4 @@
 //! type, or symbol results.
 
 pub(crate) mod cursor;
-pub(crate) mod entity;
+pub(crate) mod declaration;

@@ -13,7 +13,7 @@ use crate::{
     api::{
         Analysis,
         query::navigation::SymbolResolver,
-        resolve::entity::EntityResolver,
+        resolve::declaration::SymbolDeclarationResolver,
         view::declaration::{DeclarationLookup, DeclarationRef},
     },
     model::{Declaration, ReferenceLocation, SymbolAt},
@@ -183,7 +183,8 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
     }
 
     fn subjects_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Vec<DeclarationRef>> {
-        let declarations = EntityResolver::new(self.analysis).declarations_for_symbol(symbol)?;
+        let declarations =
+            SymbolDeclarationResolver::new(self.analysis).declarations_for_symbol(symbol)?;
         let mut subjects = Vec::new();
         for declaration in declarations {
             if !subjects.contains(&declaration) {

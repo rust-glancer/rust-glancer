@@ -15,7 +15,7 @@ use crate::{
         Analysis,
         query::type_at::TypeResolver,
         render::{path::PathRenderer, signature::SignatureRenderer},
-        resolve::entity::EntityResolver,
+        resolve::declaration::SymbolDeclarationResolver,
         view::{
             declaration::{DeclarationLookup, DeclarationRef},
             member::MemberLookup,
@@ -41,7 +41,8 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             return Ok(None);
         };
         let range = self.symbol_range(&symbol)?;
-        let declarations = EntityResolver::new(self.0).declarations_for_symbol(symbol.clone())?;
+        let declarations =
+            SymbolDeclarationResolver::new(self.0).declarations_for_symbol(symbol.clone())?;
         let module_display_name = Self::module_display_name_for_symbol(&symbol);
         let mut blocks = Vec::new();
 

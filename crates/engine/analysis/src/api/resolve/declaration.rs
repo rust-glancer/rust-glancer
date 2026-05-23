@@ -1,7 +1,7 @@
 //! Resolves analysis cursor symbols into composite declaration identities.
 //!
 //! Navigation and hover need different presentation payloads, but they start from the same core
-//! question: "what declaration-like entity does this cursor symbol denote?"
+//! question: "what declaration does this cursor symbol denote?"
 
 use rg_body_ir::{
     BodyBindingRef, BodyRef, BodyResolution, BodyTypePathResolution, ResolvedEnumVariantRef,
@@ -14,9 +14,9 @@ use crate::{
     model::SymbolAt,
 };
 
-pub(crate) struct EntityResolver<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct SymbolDeclarationResolver<'a, 'db>(&'a Analysis<'db>);
 
-impl<'a, 'db> EntityResolver<'a, 'db> {
+impl<'a, 'db> SymbolDeclarationResolver<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
