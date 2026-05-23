@@ -86,7 +86,7 @@ stdx = { git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217
 syn = "2.0"
 tarpc = "0.37"
 tempfile = "3.27.0"
-test-utils = { git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca" }
+test-utils = { git = "https://github.com/rust-lang/rust-analyzer", rev = "2cf14f4d34fd96fb763cfd9f909472a61145674a" }
 text-size = "1.1.0"
 thiserror = "2.0.18"
 tokio = "1.52.3"

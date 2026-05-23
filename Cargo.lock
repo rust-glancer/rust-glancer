@@ -1072,7 +1072,7 @@ checksum = "c5a797f0e07bdf071d15742978fc3128ec6c22891c31a3a931513263904c982a"
 [[package]]
 name = "paths"
 version = "0.0.0"
-source = "git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca#b8458013c217be4fccefc4e4f194026fa04ab4ca"
+source = "git+https://github.com/rust-lang/rust-analyzer?rev=2cf14f4d34fd96fb763cfd9f909472a61145674a#2cf14f4d34fd96fb763cfd9f909472a61145674a"
 dependencies = [
  "camino",
 ]
@@ -1190,12 +1190,11 @@ dependencies = [
 [[package]]
 name = "profile"
 version = "0.0.0"
-source = "git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca#b8458013c217be4fccefc4e4f194026fa04ab4ca"
+source = "git+https://github.com/rust-lang/rust-analyzer?rev=2cf14f4d34fd96fb763cfd9f909472a61145674a#2cf14f4d34fd96fb763cfd9f909472a61145674a"
 dependencies = [
- "cfg-if",
  "libc",
  "perf-event",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1441,7 +1440,7 @@ dependencies = [
  "itertools",
  "proc-macro2",
  "quote",
- "stdx",
+ "stdx 0.0.0 (git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca)",
  "ungrammar",
 ]
 
@@ -1552,7 +1551,7 @@ dependencies = [
  "rustc-hash",
  "smallvec",
  "smol_str",
- "stdx",
+ "stdx 0.0.0 (git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca)",
  "text-size",
 ]
 
@@ -1606,7 +1605,7 @@ dependencies = [
  "expect-test",
  "ra-ap-rustc_lexer",
  "rustc-literal-escaper",
- "stdx",
+ "stdx 0.0.0 (git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca)",
  "tracing",
  "winnow 0.7.15",
 ]
@@ -1671,7 +1670,7 @@ dependencies = [
  "rustc_apfloat",
  "smallvec",
  "smol_str",
- "stdx",
+ "stdx 0.0.0 (git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca)",
  "test-utils",
  "text-size",
  "tracing",
@@ -1694,7 +1693,7 @@ dependencies = [
  "rg_parser",
  "rg_syntax",
  "smol_str",
- "stdx",
+ "stdx 0.0.0 (git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca)",
  "text-size",
  "wincode",
 ]
@@ -1926,6 +1925,21 @@ dependencies = [
 [[package]]
 name = "stdx"
 version = "0.0.0"
+source = "git+https://github.com/rust-lang/rust-analyzer?rev=2cf14f4d34fd96fb763cfd9f909472a61145674a#2cf14f4d34fd96fb763cfd9f909472a61145674a"
+dependencies = [
+ "crossbeam-channel",
+ "crossbeam-utils",
+ "itertools",
+ "jod-thread",
+ "libc",
+ "miow",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "stdx"
+version = "0.0.0"
 source = "git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca#b8458013c217be4fccefc4e4f194026fa04ab4ca"
 dependencies = [
  "crossbeam-channel",
@@ -2023,13 +2037,13 @@ dependencies = [
 [[package]]
 name = "test-utils"
 version = "0.0.0"
-source = "git+https://github.com/rust-lang/rust-analyzer?rev=b8458013c217be4fccefc4e4f194026fa04ab4ca#b8458013c217be4fccefc4e4f194026fa04ab4ca"
+source = "git+https://github.com/rust-lang/rust-analyzer?rev=2cf14f4d34fd96fb763cfd9f909472a61145674a#2cf14f4d34fd96fb763cfd9f909472a61145674a"
 dependencies = [
  "dissimilar",
  "paths",
  "profile",
  "rustc-hash",
- "stdx",
+ "stdx 0.0.0 (git+https://github.com/rust-lang/rust-analyzer?rev=2cf14f4d34fd96fb763cfd9f909472a61145674a)",
  "text-size",
 ]
 
