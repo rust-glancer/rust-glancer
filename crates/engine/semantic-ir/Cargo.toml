@@ -12,6 +12,7 @@ description.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+derive_more = { workspace = true, features = ["from"] }
 wincode.workspace = true
 rg_arena = { workspace = true, features = ["memsize"] }
 rg_memsize.workspace = true

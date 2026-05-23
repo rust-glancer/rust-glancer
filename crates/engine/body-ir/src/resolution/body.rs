@@ -6,7 +6,7 @@
 use rg_def_map::{DefId, DefMapReadTxn, Path, PathSegment};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{FunctionRef, SemanticIrReadTxn, TypeDefId, TypePathContext};
+use rg_semantic_ir::{FunctionRef, SemanticIrReadTxn, SemanticItemRef, TypeDefId, TypePathContext};
 
 use crate::{
     ir::body::BodyData,
@@ -824,7 +824,12 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         let DefId::Local(local_def) = def else {
             return Ok(None);
         };
-        self.semantic_ir.function_for_local_def(local_def)
+        Ok(
+            match self.semantic_ir.semantic_item_for_local_def(local_def)? {
+                Some(SemanticItemRef::Function(function)) => Some(function),
+                Some(_) | None => None,
+            },
+        )
     }
 }
 
@@ -1308,7 +1313,9 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             let DefId::Local(local_def) = def else {
                 continue;
             };
-            let Some(type_def) = self.semantic_ir.type_def_for_local_def(*local_def)? else {
+            let Some(SemanticItemRef::TypeDef(type_def)) =
+                self.semantic_ir.semantic_item_for_local_def(*local_def)?
+            else {
                 continue;
             };
             push_unique(&mut type_defs, type_def);

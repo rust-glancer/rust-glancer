@@ -7,10 +7,11 @@ use rg_parse::TargetId;
 
 use crate::{
     AssocItemId, ConstData, ConstRef, EnumData, EnumVariantData, EnumVariantRef, FieldData,
-    FieldRef, FunctionData, FunctionRef, ImplData, ImplRef, ItemId, ItemOwner, PackageIr,
+    FieldRef, FunctionData, FunctionRef, ImplData, ImplRef, ItemOwner, PackageIr, SemanticItemRef,
     SemanticTypePathResolution, StaticData, StaticRef, StructData, TargetIr, TraitData,
     TraitImplRef, TraitRef, TypeAliasData, TypeAliasRef, TypeDefId, TypeDefRef, TypePathContext,
     UnionData, push_unique,
+    view::{SemanticItemData, SemanticItemView},
 };
 
 /// Read-only semantic IR access for one query transaction.
@@ -256,6 +257,158 @@ impl<'db> SemanticIrReadTxn<'db> {
         Ok(statics)
     }
 
+    pub fn semantic_items(
+        &self,
+        target: TargetRef,
+    ) -> Result<Vec<SemanticItemView<'_>>, PackageStoreError> {
+        let Some(target_ir) = self.target_ir(target)? else {
+            return Ok(Vec::new());
+        };
+        let items = target_ir.items();
+        let mut views = Vec::new();
+
+        for (id, data) in items.structs.iter_with_ids() {
+            views.push(SemanticItemView::new(
+                TypeDefRef {
+                    target,
+                    id: TypeDefId::Struct(id),
+                }
+                .into(),
+                SemanticItemData::Struct(data),
+            ));
+        }
+        for (id, data) in items.unions.iter_with_ids() {
+            views.push(SemanticItemView::new(
+                TypeDefRef {
+                    target,
+                    id: TypeDefId::Union(id),
+                }
+                .into(),
+                SemanticItemData::Union(data),
+            ));
+        }
+        for (id, data) in items.enums.iter_with_ids() {
+            views.push(SemanticItemView::new(
+                TypeDefRef {
+                    target,
+                    id: TypeDefId::Enum(id),
+                }
+                .into(),
+                SemanticItemData::Enum(data),
+            ));
+        }
+        for (id, data) in items.traits.iter_with_ids() {
+            views.push(SemanticItemView::new(
+                TraitRef { target, id }.into(),
+                SemanticItemData::Trait(data),
+            ));
+        }
+        for (id, data) in items.impls.iter_with_ids() {
+            views.push(SemanticItemView::new(
+                ImplRef { target, id }.into(),
+                SemanticItemData::Impl(data),
+            ));
+        }
+        for (id, data) in items.functions.iter_with_ids() {
+            views.push(SemanticItemView::new(
+                FunctionRef { target, id }.into(),
+                SemanticItemData::Function(data),
+            ));
+        }
+        for (id, data) in items.type_aliases.iter_with_ids() {
+            views.push(SemanticItemView::new(
+                TypeAliasRef { target, id }.into(),
+                SemanticItemData::TypeAlias(data),
+            ));
+        }
+        for (id, data) in items.consts.iter_with_ids() {
+            views.push(SemanticItemView::new(
+                ConstRef { target, id }.into(),
+                SemanticItemData::Const(data),
+            ));
+        }
+        for (id, data) in items.statics.iter_with_ids() {
+            views.push(SemanticItemView::new(
+                StaticRef { target, id }.into(),
+                SemanticItemData::Static(data),
+            ));
+        }
+
+        Ok(views)
+    }
+
+    pub fn semantic_item_view(
+        &self,
+        item: SemanticItemRef,
+    ) -> Result<Option<SemanticItemView<'_>>, PackageStoreError> {
+        let Some(target_ir) = self.target_ir(item.target())? else {
+            return Ok(None);
+        };
+
+        // This is the semantic item boundary: callers can ask item-shaped questions without
+        // spreading the arena-family match into higher layers.
+        let data = match item {
+            SemanticItemRef::TypeDef(ty) => match ty.id {
+                TypeDefId::Struct(id) => {
+                    let Some(data) = target_ir.items().struct_data(id) else {
+                        return Ok(None);
+                    };
+                    SemanticItemData::Struct(data)
+                }
+                TypeDefId::Union(id) => {
+                    let Some(data) = target_ir.items().union_data(id) else {
+                        return Ok(None);
+                    };
+                    SemanticItemData::Union(data)
+                }
+                TypeDefId::Enum(id) => {
+                    let Some(data) = target_ir.items().enum_data(id) else {
+                        return Ok(None);
+                    };
+                    SemanticItemData::Enum(data)
+                }
+            },
+            SemanticItemRef::Trait(trait_ref) => {
+                let Some(data) = target_ir.items().trait_data(trait_ref.id) else {
+                    return Ok(None);
+                };
+                SemanticItemData::Trait(data)
+            }
+            SemanticItemRef::Impl(impl_ref) => {
+                let Some(data) = target_ir.items().impl_data(impl_ref.id) else {
+                    return Ok(None);
+                };
+                SemanticItemData::Impl(data)
+            }
+            SemanticItemRef::Function(function_ref) => {
+                let Some(data) = target_ir.items().function_data(function_ref.id) else {
+                    return Ok(None);
+                };
+                SemanticItemData::Function(data)
+            }
+            SemanticItemRef::TypeAlias(type_alias_ref) => {
+                let Some(data) = target_ir.items().type_alias_data(type_alias_ref.id) else {
+                    return Ok(None);
+                };
+                SemanticItemData::TypeAlias(data)
+            }
+            SemanticItemRef::Const(const_ref) => {
+                let Some(data) = target_ir.items().const_data(const_ref.id) else {
+                    return Ok(None);
+                };
+                SemanticItemData::Const(data)
+            }
+            SemanticItemRef::Static(static_ref) => {
+                let Some(data) = target_ir.items().static_data(static_ref.id) else {
+                    return Ok(None);
+                };
+                SemanticItemData::Static(data)
+            }
+        };
+
+        Ok(Some(SemanticItemView::new(item, data)))
+    }
+
     pub fn resolve_type_path(
         &self,
         def_map: &DefMapReadTxn<'db>,
@@ -290,19 +443,63 @@ impl<'db> SemanticIrReadTxn<'db> {
         }
     }
 
+    pub fn semantic_items_for_path(
+        &self,
+        def_map: &DefMapReadTxn<'db>,
+        from: ModuleRef,
+        path: &Path,
+    ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
+        self.resolve_path(def_map, from, path, |db, def| {
+            let rg_def_map::DefId::Local(local_def) = def else {
+                return Ok(None);
+            };
+            db.semantic_item_for_local_def(local_def)
+        })
+    }
+
+    pub fn semantic_items_for_type_path(
+        &self,
+        def_map: &DefMapReadTxn<'db>,
+        context: TypePathContext,
+        path: &Path,
+    ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
+        if path.is_self_type() {
+            let Some(impl_ref) = context.impl_ref else {
+                return Ok(Vec::new());
+            };
+            let Some(data) = self.impl_data(impl_ref)? else {
+                return Ok(Vec::new());
+            };
+            return Ok(data
+                .resolved_self_tys
+                .iter()
+                .copied()
+                .map(SemanticItemRef::from)
+                .collect());
+        }
+
+        self.semantic_items_for_path(def_map, context.module, path)
+    }
+
     pub fn type_defs_for_path(
         &self,
         def_map: &DefMapReadTxn<'db>,
         from: ModuleRef,
         path: &Path,
     ) -> Result<Vec<TypeDefRef>, PackageStoreError> {
-        self.resolve_path(def_map, from, path, |db, def| {
-            let rg_def_map::DefId::Local(local_def) = def else {
-                return Ok(None);
-            };
-
-            db.type_def_for_local_def(local_def)
-        })
+        Ok(self
+            .semantic_items_for_path(def_map, from, path)?
+            .into_iter()
+            .filter_map(|item| match item {
+                SemanticItemRef::TypeDef(ty) => Some(ty),
+                SemanticItemRef::Trait(_)
+                | SemanticItemRef::Impl(_)
+                | SemanticItemRef::Function(_)
+                | SemanticItemRef::TypeAlias(_)
+                | SemanticItemRef::Const(_)
+                | SemanticItemRef::Static(_) => None,
+            })
+            .collect())
     }
 
     pub fn traits_for_path(
@@ -311,13 +508,19 @@ impl<'db> SemanticIrReadTxn<'db> {
         from: ModuleRef,
         path: &Path,
     ) -> Result<Vec<TraitRef>, PackageStoreError> {
-        self.resolve_path(def_map, from, path, |db, def| {
-            let rg_def_map::DefId::Local(local_def) = def else {
-                return Ok(None);
-            };
-
-            db.trait_for_local_def(local_def)
-        })
+        Ok(self
+            .semantic_items_for_path(def_map, from, path)?
+            .into_iter()
+            .filter_map(|item| match item {
+                SemanticItemRef::Trait(trait_ref) => Some(trait_ref),
+                SemanticItemRef::TypeDef(_)
+                | SemanticItemRef::Impl(_)
+                | SemanticItemRef::Function(_)
+                | SemanticItemRef::TypeAlias(_)
+                | SemanticItemRef::Const(_)
+                | SemanticItemRef::Static(_) => None,
+            })
+            .collect())
     }
 
     fn resolve_path<T: PartialEq>(
@@ -369,86 +572,34 @@ impl<'db> SemanticIrReadTxn<'db> {
         }
     }
 
-    pub fn type_def_for_local_def(
+    pub fn semantic_item_for_local_def(
         &self,
         def: LocalDefRef,
-    ) -> Result<Option<TypeDefRef>, PackageStoreError> {
+    ) -> Result<Option<SemanticItemRef>, PackageStoreError> {
         let Some(target_ir) = self.target_ir(def.target)? else {
             return Ok(None);
         };
         let Some(item) = target_ir.item_for_local_def(def.local_def) else {
             return Ok(None);
         };
-        let id = match item {
-            ItemId::Struct(id) => TypeDefId::Struct(id),
-            ItemId::Enum(id) => TypeDefId::Enum(id),
-            ItemId::Union(id) => TypeDefId::Union(id),
-            ItemId::Trait(_)
-            | ItemId::Function(_)
-            | ItemId::TypeAlias(_)
-            | ItemId::Const(_)
-            | ItemId::Static(_) => return Ok(None),
-        };
 
-        Ok(Some(TypeDefRef {
-            target: def.target,
-            id,
-        }))
-    }
-
-    pub fn trait_for_local_def(
-        &self,
-        def: LocalDefRef,
-    ) -> Result<Option<TraitRef>, PackageStoreError> {
-        let Some(target_ir) = self.target_ir(def.target)? else {
-            return Ok(None);
-        };
-        let Some(item) = target_ir.item_for_local_def(def.local_def) else {
-            return Ok(None);
-        };
-        let ItemId::Trait(id) = item else {
-            return Ok(None);
-        };
-
-        Ok(Some(TraitRef {
-            target: def.target,
-            id,
-        }))
-    }
-
-    pub fn function_for_local_def(
-        &self,
-        def: LocalDefRef,
-    ) -> Result<Option<FunctionRef>, PackageStoreError> {
-        let Some(target_ir) = self.target_ir(def.target)? else {
-            return Ok(None);
-        };
-        let Some(item) = target_ir.item_for_local_def(def.local_def) else {
-            return Ok(None);
-        };
-        let ItemId::Function(id) = item else {
-            return Ok(None);
-        };
-
-        Ok(Some(FunctionRef {
-            target: def.target,
-            id,
-        }))
+        Ok(Some(item.semantic_ref(def.target)))
     }
 
     pub fn local_def_for_type_def(
         &self,
         ty: TypeDefRef,
     ) -> Result<Option<LocalDefRef>, PackageStoreError> {
-        let Some(target_ir) = self.target_ir(ty.target)? else {
-            return Ok(None);
-        };
-        let local_def = match ty.id {
-            TypeDefId::Struct(id) => target_ir.items().struct_data(id).map(|data| data.local_def),
-            TypeDefId::Enum(id) => target_ir.items().enum_data(id).map(|data| data.local_def),
-            TypeDefId::Union(id) => target_ir.items().union_data(id).map(|data| data.local_def),
-        };
-        Ok(local_def)
+        self.local_def_for_semantic_item(ty.into())
+    }
+
+    pub fn local_def_for_semantic_item(
+        &self,
+        item: SemanticItemRef,
+    ) -> Result<Option<LocalDefRef>, PackageStoreError> {
+        Ok(self
+            .semantic_item_view(item)?
+            .and_then(|view| view.local_def()))
     }
 
     pub fn generic_params_for_type_def(

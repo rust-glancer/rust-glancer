@@ -5,7 +5,9 @@ use rg_body_ir::{
 };
 use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, TraitApplicability, TypePathContext};
+use rg_semantic_ir::{
+    EnumVariantRef, FieldRef, FunctionRef, SemanticItemKind, TraitApplicability, TypePathContext,
+};
 
 pub(super) struct SymbolCandidate {
     pub(super) symbol: SymbolAt,
@@ -274,6 +276,20 @@ impl SymbolKind {
         match kind {
             BodyValueItemKind::Const => Self::Const,
             BodyValueItemKind::Static => Self::Static,
+        }
+    }
+
+    pub(super) fn from_semantic_item_kind(kind: SemanticItemKind) -> Self {
+        match kind {
+            SemanticItemKind::Struct => Self::Struct,
+            SemanticItemKind::Enum => Self::Enum,
+            SemanticItemKind::Union => Self::Union,
+            SemanticItemKind::Trait => Self::Trait,
+            SemanticItemKind::Impl => Self::Impl,
+            SemanticItemKind::Function => Self::Function,
+            SemanticItemKind::TypeAlias => Self::TypeAlias,
+            SemanticItemKind::Const => Self::Const,
+            SemanticItemKind::Static => Self::Static,
         }
     }
 

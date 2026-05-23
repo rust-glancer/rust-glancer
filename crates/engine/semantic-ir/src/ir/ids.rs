@@ -283,6 +283,67 @@ pub struct StaticRef {
     pub id: StaticId,
 }
 
+/// Semantic item family used by read APIs that work with item-shaped facts.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+pub enum SemanticItemKind {
+    Struct,
+    Enum,
+    Union,
+    Trait,
+    Impl,
+    Function,
+    TypeAlias,
+    Const,
+    Static,
+}
+
+/// Stable identity for one top-level or associated semantic item.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::From,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+pub enum SemanticItemRef {
+    TypeDef(TypeDefRef),
+    Trait(TraitRef),
+    Impl(ImplRef),
+    Function(FunctionRef),
+    TypeAlias(TypeAliasRef),
+    Const(ConstRef),
+    Static(StaticRef),
+}
+
+impl SemanticItemRef {
+    pub fn target(self) -> TargetRef {
+        match self {
+            Self::TypeDef(item) => item.target,
+            Self::Trait(item) => item.target,
+            Self::Impl(item) => item.target,
+            Self::Function(item) => item.target,
+            Self::TypeAlias(item) => item.target,
+            Self::Const(item) => item.target,
+            Self::Static(item) => item.target,
+        }
+    }
+}
+
 #[derive(
     Debug,
     Clone,
@@ -395,6 +456,33 @@ pub enum ItemId {
     TypeAlias(TypeAliasId),
     Const(ConstId),
     Static(StaticId),
+}
+
+impl ItemId {
+    pub fn semantic_ref(self, target: TargetRef) -> SemanticItemRef {
+        match self {
+            Self::Struct(id) => TypeDefRef {
+                target,
+                id: TypeDefId::Struct(id),
+            }
+            .into(),
+            Self::Union(id) => TypeDefRef {
+                target,
+                id: TypeDefId::Union(id),
+            }
+            .into(),
+            Self::Enum(id) => TypeDefRef {
+                target,
+                id: TypeDefId::Enum(id),
+            }
+            .into(),
+            Self::Trait(id) => TraitRef { target, id }.into(),
+            Self::Function(id) => FunctionRef { target, id }.into(),
+            Self::TypeAlias(id) => TypeAliasRef { target, id }.into(),
+            Self::Const(id) => ConstRef { target, id }.into(),
+            Self::Static(id) => StaticRef { target, id }.into(),
+        }
+    }
 }
 
 #[derive(

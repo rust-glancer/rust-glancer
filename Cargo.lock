@@ -1644,6 +1644,7 @@ name = "rg_semantic_ir"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "derive_more",
  "expect-test",
  "rg_arena",
  "rg_def_map",

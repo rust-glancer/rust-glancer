@@ -5,7 +5,10 @@ use rg_body_ir::{
     ResolvedFunctionRef,
 };
 use rg_def_map::{LocalDefRef, ModuleOrigin, ModuleRef};
-use rg_semantic_ir::{ConstRef, ImplRef, StaticRef, TraitRef, TypeAliasRef, TypeDefRef, TypeRef};
+use rg_semantic_ir::{
+    ConstRef, FunctionRef, ImplRef, SemanticItemKind, SemanticItemRef, StaticRef, TraitRef,
+    TypeAliasRef, TypeDefRef, TypeRef,
+};
 
 use crate::{
     api::{Analysis, view::member::MemberLookup},
@@ -17,18 +20,55 @@ use crate::{
 pub(crate) enum DeclarationRef {
     Module(ModuleRef),
     LocalDef(LocalDefRef),
-    TypeDef(TypeDefRef),
-    Trait(TraitRef),
-    Impl(ImplRef),
+    SemanticItem(SemanticItemRef),
     BodyImpl(BodyImplRef),
     BodyItem(BodyItemRef),
     BodyValueItem(BodyValueItemRef),
     EnumVariant(ResolvedEnumVariantRef),
     Field(ResolvedFieldRef),
     Function(ResolvedFunctionRef),
-    TypeAlias(TypeAliasRef),
-    Const(ConstRef),
-    Static(StaticRef),
+}
+
+impl From<TypeDefRef> for DeclarationRef {
+    fn from(item: TypeDefRef) -> Self {
+        Self::SemanticItem(item.into())
+    }
+}
+
+impl From<TraitRef> for DeclarationRef {
+    fn from(item: TraitRef) -> Self {
+        Self::SemanticItem(item.into())
+    }
+}
+
+impl From<ImplRef> for DeclarationRef {
+    fn from(item: ImplRef) -> Self {
+        Self::SemanticItem(item.into())
+    }
+}
+
+impl From<FunctionRef> for DeclarationRef {
+    fn from(item: FunctionRef) -> Self {
+        Self::SemanticItem(item.into())
+    }
+}
+
+impl From<TypeAliasRef> for DeclarationRef {
+    fn from(item: TypeAliasRef) -> Self {
+        Self::SemanticItem(item.into())
+    }
+}
+
+impl From<ConstRef> for DeclarationRef {
+    fn from(item: ConstRef) -> Self {
+        Self::SemanticItem(item.into())
+    }
+}
+
+impl From<StaticRef> for DeclarationRef {
+    fn from(item: StaticRef) -> Self {
+        Self::SemanticItem(item.into())
+    }
 }
 
 /// Body IR stores impl ids inside a body, so the body id is part of the declaration identity.
@@ -55,18 +95,13 @@ impl<'a, 'db> DeclarationLookup<'a, 'db> {
         match declaration {
             DeclarationRef::Module(module_ref) => self.module(module_ref),
             DeclarationRef::LocalDef(local_def) => self.local_def(local_def),
-            DeclarationRef::TypeDef(ty) => self.type_def(ty),
-            DeclarationRef::Trait(trait_ref) => self.trait_def(trait_ref),
-            DeclarationRef::Impl(impl_ref) => self.impl_item(impl_ref),
+            DeclarationRef::SemanticItem(item) => self.semantic_item(item),
             DeclarationRef::BodyImpl(impl_ref) => self.body_impl(impl_ref),
             DeclarationRef::BodyItem(item_ref) => self.body_item(item_ref),
             DeclarationRef::BodyValueItem(item_ref) => self.body_value_item(item_ref),
             DeclarationRef::EnumVariant(variant) => self.enum_variant(variant),
             DeclarationRef::Field(field) => self.field(field),
             DeclarationRef::Function(function) => self.function(function),
-            DeclarationRef::TypeAlias(type_alias_ref) => self.type_alias(type_alias_ref),
-            DeclarationRef::Const(const_ref) => self.const_item(const_ref),
-            DeclarationRef::Static(static_ref) => self.static_item(static_ref),
         }
     }
 
@@ -115,38 +150,70 @@ impl<'a, 'db> DeclarationLookup<'a, 'db> {
         }))
     }
 
-    fn type_def(&self, ty: TypeDefRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(local_def) = self.analysis.semantic_ir.local_def_for_type_def(ty)? else {
+    fn semantic_item(&self, item: SemanticItemRef) -> anyhow::Result<Option<Declaration>> {
+        let Some(view) = self.analysis.semantic_ir.semantic_item_view(item)? else {
             return Ok(None);
         };
 
-        self.local_def(local_def)
-    }
+        match view.kind() {
+            SemanticItemKind::Struct
+            | SemanticItemKind::Enum
+            | SemanticItemKind::Union
+            | SemanticItemKind::Trait => {
+                let Some(local_def) = view.local_def() else {
+                    return Ok(None);
+                };
+                self.local_def(local_def)
+            }
+            SemanticItemKind::Impl => {
+                let Some(local_impl_ref) = view.local_impl() else {
+                    return Ok(None);
+                };
+                let Some(local_impl) = self.analysis.def_map.local_impl(local_impl_ref)? else {
+                    return Ok(None);
+                };
+                let Some((self_ty, trait_ref)) = view.impl_header() else {
+                    return Ok(None);
+                };
 
-    fn trait_def(&self, trait_ref: TraitRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(data) = self.analysis.semantic_ir.trait_data(trait_ref)? else {
-            return Ok(None);
-        };
+                Ok(Some(Declaration {
+                    target: item.target(),
+                    kind: SymbolKind::Impl,
+                    name: Self::impl_label(self_ty, trait_ref),
+                    file_id: local_impl.file_id,
+                    span: local_impl.span,
+                    selection_span: local_impl.span,
+                }))
+            }
+            SemanticItemKind::Function => match item {
+                SemanticItemRef::Function(function) => {
+                    self.function(ResolvedFunctionRef::Semantic(function))
+                }
+                SemanticItemRef::TypeDef(_)
+                | SemanticItemRef::Trait(_)
+                | SemanticItemRef::Impl(_)
+                | SemanticItemRef::TypeAlias(_)
+                | SemanticItemRef::Const(_)
+                | SemanticItemRef::Static(_) => Ok(None),
+            },
+            SemanticItemKind::TypeAlias | SemanticItemKind::Const | SemanticItemKind::Static => {
+                let Some(name) = view.name() else {
+                    return Ok(None);
+                };
+                let Some(span) = view.span() else {
+                    return Ok(None);
+                };
 
-        self.local_def(data.local_def)
-    }
-
-    fn impl_item(&self, impl_ref: ImplRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(data) = self.analysis.semantic_ir.impl_data(impl_ref)? else {
-            return Ok(None);
-        };
-        let Some(local_impl) = self.analysis.def_map.local_impl(data.local_impl)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(Declaration {
-            target: impl_ref.target,
-            kind: SymbolKind::Impl,
-            name: Self::impl_label(&data.self_ty, data.trait_ref.as_ref()),
-            file_id: local_impl.file_id,
-            span: local_impl.span,
-            selection_span: local_impl.span,
-        }))
+                Ok(Some(Declaration {
+                    target: item.target(),
+                    kind: SymbolKind::from_semantic_item_kind(view.kind()),
+                    name: name.to_string(),
+                    file_id: view.source().file_id,
+                    span,
+                    selection_span: view.name_span().unwrap_or(span),
+                }))
+            }
+        }
     }
 
     fn body_impl(&self, impl_ref: BodyImplRef) -> anyhow::Result<Option<Declaration>> {
@@ -246,51 +313,6 @@ impl<'a, 'db> DeclarationLookup<'a, 'db> {
         Ok(MemberLookup::new(self.analysis)
             .function_view(function)?
             .map(|function| function.declaration()))
-    }
-
-    fn type_alias(&self, type_alias_ref: TypeAliasRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(data) = self.analysis.semantic_ir.type_alias_data(type_alias_ref)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(Declaration {
-            target: type_alias_ref.target,
-            kind: SymbolKind::TypeAlias,
-            name: data.name.to_string(),
-            file_id: data.source.file_id,
-            span: data.span,
-            selection_span: data.name_span.unwrap_or(data.span),
-        }))
-    }
-
-    fn const_item(&self, const_ref: ConstRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(data) = self.analysis.semantic_ir.const_data(const_ref)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(Declaration {
-            target: const_ref.target,
-            kind: SymbolKind::Const,
-            name: data.name.to_string(),
-            file_id: data.source.file_id,
-            span: data.span,
-            selection_span: data.name_span.unwrap_or(data.span),
-        }))
-    }
-
-    fn static_item(&self, static_ref: StaticRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(data) = self.analysis.semantic_ir.static_data(static_ref)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(Declaration {
-            target: static_ref.target,
-            kind: SymbolKind::Static,
-            name: data.name.to_string(),
-            file_id: data.source.file_id,
-            span: data.span,
-            selection_span: data.name_span.unwrap_or(data.span),
-        }))
     }
 
     fn impl_label(self_ty: &TypeRef, trait_ref: Option<&TypeRef>) -> String {

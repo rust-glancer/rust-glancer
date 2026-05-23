@@ -2,7 +2,7 @@
 
 use rg_body_ir::{BodyRef, BodyResolution, BodyTypePathResolution, ScopeId};
 use rg_def_map::{ModuleRef, Path};
-use rg_semantic_ir::{SemanticTypePathResolution, TypePathContext};
+use rg_semantic_ir::{SemanticItemRef, TypePathContext};
 
 use super::target;
 use crate::{
@@ -196,12 +196,12 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
         context: TypePathContext,
         path: &Path,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
-        let resolution = self
-            .0
-            .semantic_ir
-            .resolve_type_path(&self.0.def_map, context, path)?;
+        let resolution =
+            self.0
+                .semantic_ir
+                .semantic_items_for_type_path(&self.0.def_map, context, path)?;
 
-        let targets = self.navigation_targets_for_semantic_type_path_resolution(resolution)?;
+        let targets = self.navigation_targets_for_semantic_items(resolution)?;
         if targets.is_empty() {
             // A cursor can sit on a non-type prefix inside a type path, for example `helper` in
             // `helper::Tool`. Semantic type resolution correctly says "not a type", but editor
@@ -274,34 +274,17 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
         self.navigation_targets_for_resolution(body_data, &resolution)
     }
 
-    fn navigation_targets_for_semantic_type_path_resolution(
+    fn navigation_targets_for_semantic_items(
         &self,
-        resolution: SemanticTypePathResolution,
+        items: Vec<SemanticItemRef>,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
-        // Type paths can legally resolve to traits in bound positions, so goto-definition should
-        // navigate to those traits instead of treating them as unknown.
-        match resolution {
-            SemanticTypePathResolution::SelfType(types)
-            | SemanticTypePathResolution::TypeDefs(types) => {
-                let mut targets = Vec::new();
-                for ty in types {
-                    if let Some(target) = self.targets().navigation_target_for_type_def(ty)? {
-                        targets.push(target);
-                    }
-                }
-                Ok(targets)
+        let mut targets = Vec::new();
+        for item in items {
+            if let Some(target) = self.targets().navigation_target_for_semantic_item(item)? {
+                targets.push(target);
             }
-            SemanticTypePathResolution::Traits(traits) => {
-                let mut targets = Vec::new();
-                for trait_ref in traits {
-                    if let Some(target) = self.targets().navigation_target_for_trait(trait_ref)? {
-                        targets.push(target);
-                    }
-                }
-                Ok(targets)
-            }
-            SemanticTypePathResolution::Unknown => Ok(Vec::new()),
         }
+        Ok(targets)
     }
 
     fn navigation_targets_for_body_type_path_resolution(

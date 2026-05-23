@@ -11,8 +11,9 @@ pub(crate) mod target;
 pub use self::{
     ids::{
         AssocItemId, ConstId, ConstRef, EnumId, EnumVariantRef, FieldRef, FunctionId, FunctionRef,
-        ImplId, ImplRef, ItemId, ItemOwner, StaticId, StaticRef, StructId, TraitApplicability,
-        TraitId, TraitImplRef, TraitRef, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
+        ImplId, ImplRef, ItemId, ItemOwner, SemanticItemKind, SemanticItemRef, StaticId, StaticRef,
+        StructId, TraitApplicability, TraitId, TraitImplRef, TraitRef, TypeAliasId, TypeAliasRef,
+        TypeDefId, TypeDefRef, UnionId,
     },
     items::{
         ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, ItemStore,

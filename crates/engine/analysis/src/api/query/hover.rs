@@ -1,10 +1,13 @@
 //! Builds hover payloads from resolved analysis entities.
 
-use rg_body_ir::{BodyTy, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef};
+use rg_body_ir::{
+    BodyFunctionRef, BodyTy, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
+};
 use rg_def_map::{LocalDefRef, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
-    ConstRef, Documentation, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    ConstRef, Documentation, SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId,
+    TypeDefRef,
 };
 
 use crate::{
@@ -66,14 +69,10 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                 module,
                 display_name,
             } => self.hover_for_module(module, display_name),
-            ResolvedEntity::TypeDef(ty) => self.hover_for_type_def(ty),
-            ResolvedEntity::Trait(trait_ref) => self.hover_for_trait(trait_ref),
-            ResolvedEntity::Function(function) => self.hover_for_function(function),
+            ResolvedEntity::SemanticItem(item) => self.hover_for_semantic_item(item),
+            ResolvedEntity::BodyFunction(function) => self.hover_for_body_function(function),
             ResolvedEntity::Field(field) => self.hover_for_field(field),
             ResolvedEntity::EnumVariant(variant) => self.hover_for_enum_variant(variant),
-            ResolvedEntity::TypeAlias(type_alias_ref) => self.hover_for_type_alias(type_alias_ref),
-            ResolvedEntity::Const(const_ref) => self.hover_for_const(const_ref),
-            ResolvedEntity::Static(static_ref) => self.hover_for_static(static_ref),
             ResolvedEntity::LocalBinding { body, binding } => {
                 let Some(body_data) = self.0.body_ir.body_data(body)? else {
                     return Ok(None);
@@ -131,6 +130,27 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             }
             ResolvedEntity::LocalDef(local_def) => self.hover_for_local_def(local_def),
         }
+    }
+
+    fn hover_for_semantic_item(&self, item: SemanticItemRef) -> anyhow::Result<Option<HoverBlock>> {
+        match item {
+            SemanticItemRef::TypeDef(ty) => self.hover_for_type_def(ty),
+            SemanticItemRef::Trait(trait_ref) => self.hover_for_trait(trait_ref),
+            SemanticItemRef::Impl(_) => Ok(None),
+            SemanticItemRef::Function(function) => {
+                self.hover_for_function(ResolvedFunctionRef::Semantic(function))
+            }
+            SemanticItemRef::TypeAlias(type_alias_ref) => self.hover_for_type_alias(type_alias_ref),
+            SemanticItemRef::Const(const_ref) => self.hover_for_const(const_ref),
+            SemanticItemRef::Static(static_ref) => self.hover_for_static(static_ref),
+        }
+    }
+
+    fn hover_for_body_function(
+        &self,
+        function: BodyFunctionRef,
+    ) -> anyhow::Result<Option<HoverBlock>> {
+        self.hover_for_function(ResolvedFunctionRef::BodyLocal(function))
     }
 
     fn hover_for_type_def(&self, ty: TypeDefRef) -> anyhow::Result<Option<HoverBlock>> {

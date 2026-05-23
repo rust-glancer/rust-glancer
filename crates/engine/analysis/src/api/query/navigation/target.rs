@@ -5,7 +5,9 @@ use rg_body_ir::{
     ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
 };
 use rg_def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef};
-use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, ImplRef, TraitRef, TypeDefRef};
+use rg_semantic_ir::{
+    EnumVariantRef, FieldRef, FunctionRef, ImplRef, SemanticItemRef, TraitRef, TypeDefRef,
+};
 
 use crate::{
     api::{
@@ -85,6 +87,13 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         Ok(self.declaration(item_ref)?.map(NavigationTarget::from))
     }
 
+    pub(crate) fn navigation_target_for_semantic_item(
+        &self,
+        item_ref: SemanticItemRef,
+    ) -> anyhow::Result<Option<NavigationTarget>> {
+        Ok(self.declaration(item_ref)?.map(NavigationTarget::from))
+    }
+
     pub(crate) fn navigation_target_for_field(
         &self,
         field_ref: FieldRef,
@@ -103,7 +112,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         function_ref: FunctionRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_resolved_function(ResolvedFunctionRef::Semantic(function_ref))
+        Ok(self.declaration(function_ref)?.map(NavigationTarget::from))
     }
 
     pub(crate) fn navigation_target_for_impl(

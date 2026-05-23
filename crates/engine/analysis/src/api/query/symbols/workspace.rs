@@ -1,15 +1,14 @@
 //! Workspace-wide symbol search.
 
 use anyhow::Result;
-use rg_body_ir::{ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef};
+use rg_body_ir::{ResolvedEnumVariantRef, ResolvedFieldRef};
 use rg_def_map::{ModuleId, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
-    AssocItemId, ConstRef, EnumVariantRef, FunctionRef, ItemOwner, TypeAliasRef, TypeDefId,
-    TypeDefRef,
+    AssocItemId, ConstRef, EnumVariantRef, FunctionRef, SemanticItemKind, SemanticItemView,
+    TypeAliasRef, TypeDefId, TypeDefRef,
 };
 
-use super::shared;
 use crate::{
     api::{
         Analysis,
@@ -31,13 +30,7 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
 
         for (target, _) in self.0.semantic_ir.materialize_included_target_irs()? {
             self.push_module_workspace_symbols(target, &query, &mut symbols)?;
-            self.push_nominal_workspace_symbols(target, &query, &mut symbols)?;
-            self.push_trait_workspace_symbols(target, &query, &mut symbols)?;
-            self.push_impl_workspace_symbols(target, &query, &mut symbols)?;
-            self.push_function_workspace_symbols(target, &query, &mut symbols)?;
-            self.push_type_alias_workspace_symbols(target, &query, &mut symbols)?;
-            self.push_const_workspace_symbols(target, &query, &mut symbols)?;
-            self.push_static_workspace_symbols(target, &query, &mut symbols)?;
+            self.push_semantic_workspace_symbols(target, &query, &mut symbols)?;
         }
 
         symbols.sort_by_key(|symbol| {
@@ -54,39 +47,87 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         Ok(symbols)
     }
 
-    fn push_nominal_workspace_symbols(
+    fn push_semantic_workspace_symbols(
         &self,
         target: TargetRef,
         query: &WorkspaceSymbolQuery,
         symbols: &mut Vec<WorkspaceSymbol>,
     ) -> Result<()> {
-        for (ty, data) in self.0.semantic_ir.structs(target)? {
-            self.push_declaration_workspace_symbol(ty, None, query, symbols)?;
-            self.push_field_workspace_symbols(ty, &data.name, query, symbols)?;
-        }
-
-        for (ty, data) in self.0.semantic_ir.unions(target)? {
-            self.push_declaration_workspace_symbol(ty, None, query, symbols)?;
-            self.push_field_workspace_symbols(ty, &data.name, query, symbols)?;
-        }
-
-        for (ty, data) in self.0.semantic_ir.enums(target)? {
-            self.push_declaration_workspace_symbol(ty, None, query, symbols)?;
-            let TypeDefId::Enum(enum_id) = ty.id else {
+        for item in self.0.semantic_ir.semantic_items(target)? {
+            if item.module_owner().is_none() {
                 continue;
-            };
-            for (index, _) in data.variants.iter().enumerate() {
-                let variant_ref = ResolvedEnumVariantRef::Semantic(EnumVariantRef {
-                    target,
-                    enum_id,
-                    index,
-                });
-                self.push_declaration_workspace_symbol(
-                    variant_ref,
-                    Some(data.name.to_string()),
+            }
+
+            self.push_semantic_workspace_symbol(item, query, symbols)?;
+        }
+
+        Ok(())
+    }
+
+    fn push_semantic_workspace_symbol(
+        &self,
+        item: SemanticItemView<'_>,
+        query: &WorkspaceSymbolQuery,
+        symbols: &mut Vec<WorkspaceSymbol>,
+    ) -> Result<()> {
+        match item.kind() {
+            SemanticItemKind::Struct | SemanticItemKind::Union => {
+                let Some(ty) = item.type_def() else {
+                    return Ok(());
+                };
+                self.push_declaration_workspace_symbol(item.item(), None, query, symbols)?;
+                let Some(name) = item.name() else {
+                    return Ok(());
+                };
+                self.push_field_workspace_symbols(ty, name.as_str(), query, symbols)?;
+            }
+            SemanticItemKind::Enum => {
+                let Some(ty) = item.type_def() else {
+                    return Ok(());
+                };
+                self.push_declaration_workspace_symbol(item.item(), None, query, symbols)?;
+                let Some(name) = item.name() else {
+                    return Ok(());
+                };
+                self.push_enum_variant_workspace_symbols(ty, name.as_str(), query, symbols)?;
+            }
+            SemanticItemKind::Trait => {
+                self.push_declaration_workspace_symbol(item.item(), None, query, symbols)?;
+                let Some(name) = item.name() else {
+                    return Ok(());
+                };
+                let Some(items) = item.assoc_items() else {
+                    return Ok(());
+                };
+                let container_name = format!("trait {name}");
+                self.push_assoc_item_workspace_symbols(
+                    item.item().target(),
+                    items,
+                    &container_name,
                     query,
                     symbols,
                 )?;
+            }
+            SemanticItemKind::Impl => {
+                let Some(declaration) = self.declaration(item.item())? else {
+                    return Ok(());
+                };
+                let Some(items) = item.assoc_items() else {
+                    return Ok(());
+                };
+                self.push_assoc_item_workspace_symbols(
+                    item.item().target(),
+                    items,
+                    &declaration.name,
+                    query,
+                    symbols,
+                )?;
+            }
+            SemanticItemKind::Function
+            | SemanticItemKind::TypeAlias
+            | SemanticItemKind::Const
+            | SemanticItemKind::Static => {
+                self.push_declaration_workspace_symbol(item.item(), None, query, symbols)?;
             }
         }
 
@@ -121,114 +162,6 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         Ok(())
     }
 
-    fn push_trait_workspace_symbols(
-        &self,
-        target: TargetRef,
-        query: &WorkspaceSymbolQuery,
-        symbols: &mut Vec<WorkspaceSymbol>,
-    ) -> Result<()> {
-        for (trait_ref, data) in self.0.semantic_ir.traits(target)? {
-            self.push_declaration_workspace_symbol(trait_ref, None, query, symbols)?;
-            self.push_assoc_item_workspace_symbols(
-                target,
-                &data.items,
-                &shared::trait_label(data),
-                query,
-                symbols,
-            )?;
-        }
-
-        Ok(())
-    }
-
-    fn push_impl_workspace_symbols(
-        &self,
-        target: TargetRef,
-        query: &WorkspaceSymbolQuery,
-        symbols: &mut Vec<WorkspaceSymbol>,
-    ) -> Result<()> {
-        for (impl_ref, data) in self.0.semantic_ir.impls(target)? {
-            let Some(declaration) = self.declaration(impl_ref)? else {
-                continue;
-            };
-            self.push_assoc_item_workspace_symbols(
-                impl_ref.target,
-                &data.items,
-                &declaration.name,
-                query,
-                symbols,
-            )?;
-        }
-
-        Ok(())
-    }
-
-    fn push_function_workspace_symbols(
-        &self,
-        target: TargetRef,
-        query: &WorkspaceSymbolQuery,
-        symbols: &mut Vec<WorkspaceSymbol>,
-    ) -> Result<()> {
-        for (function, data) in self.0.semantic_ir.functions(target)? {
-            if !matches!(data.owner, ItemOwner::Module(_)) {
-                continue;
-            }
-            self.push_declaration_workspace_symbol(
-                ResolvedFunctionRef::Semantic(function),
-                None,
-                query,
-                symbols,
-            )?;
-        }
-
-        Ok(())
-    }
-
-    fn push_type_alias_workspace_symbols(
-        &self,
-        target: TargetRef,
-        query: &WorkspaceSymbolQuery,
-        symbols: &mut Vec<WorkspaceSymbol>,
-    ) -> Result<()> {
-        for (type_alias_ref, data) in self.0.semantic_ir.type_aliases(target)? {
-            if !matches!(data.owner, ItemOwner::Module(_)) {
-                continue;
-            }
-            self.push_declaration_workspace_symbol(type_alias_ref, None, query, symbols)?;
-        }
-
-        Ok(())
-    }
-
-    fn push_const_workspace_symbols(
-        &self,
-        target: TargetRef,
-        query: &WorkspaceSymbolQuery,
-        symbols: &mut Vec<WorkspaceSymbol>,
-    ) -> Result<()> {
-        for (const_ref, data) in self.0.semantic_ir.consts(target)? {
-            if !matches!(data.owner, ItemOwner::Module(_)) {
-                continue;
-            }
-            self.push_declaration_workspace_symbol(const_ref, None, query, symbols)?;
-        }
-
-        Ok(())
-    }
-
-    fn push_static_workspace_symbols(
-        &self,
-        target: TargetRef,
-        query: &WorkspaceSymbolQuery,
-        symbols: &mut Vec<WorkspaceSymbol>,
-    ) -> Result<()> {
-        for (static_ref, _) in self.0.semantic_ir.statics(target)? {
-            self.push_declaration_workspace_symbol(static_ref, None, query, symbols)?;
-        }
-
-        Ok(())
-    }
-
     fn push_assoc_item_workspace_symbols(
         &self,
         target: TargetRef,
@@ -242,7 +175,7 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
                 AssocItemId::Function(id) => {
                     let function_ref = FunctionRef { target, id: *id };
                     self.push_declaration_workspace_symbol(
-                        ResolvedFunctionRef::Semantic(function_ref),
+                        function_ref,
                         Some(container_name.to_string()),
                         query,
                         symbols,
@@ -267,6 +200,36 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
                     )?;
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    fn push_enum_variant_workspace_symbols(
+        &self,
+        ty: TypeDefRef,
+        container_name: &str,
+        query: &WorkspaceSymbolQuery,
+        symbols: &mut Vec<WorkspaceSymbol>,
+    ) -> Result<()> {
+        let TypeDefId::Enum(enum_id) = ty.id else {
+            return Ok(());
+        };
+        let Some(data) = self.0.semantic_ir.enum_data_for_type_def(ty)? else {
+            return Ok(());
+        };
+        for index in 0..data.variants.len() {
+            let variant_ref = ResolvedEnumVariantRef::Semantic(EnumVariantRef {
+                target: ty.target,
+                enum_id,
+                index,
+            });
+            self.push_declaration_workspace_symbol(
+                variant_ref,
+                Some(container_name.to_string()),
+                query,
+                symbols,
+            )?;
         }
 
         Ok(())

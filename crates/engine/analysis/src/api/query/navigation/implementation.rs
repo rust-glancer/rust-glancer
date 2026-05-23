@@ -1,12 +1,14 @@
 //! Goto-implementation query flow.
 
 use rg_body_ir::{
-    BodyAutoderef, BodyAutoderefMode, BodyImplId, BodyResolution, BodyTy, ExprKind,
-    ResolvedFunctionRef,
+    BodyAutoderef, BodyAutoderefMode, BodyFunctionRef, BodyImplId, BodyResolution, BodyTy,
+    ExprKind, ResolvedFunctionRef,
 };
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
-use rg_semantic_ir::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitRef, TypeDefRef};
+use rg_semantic_ir::{
+    AssocItemId, FunctionRef, ImplRef, ItemOwner, SemanticItemRef, TraitRef, TypeDefRef,
+};
 
 use super::target::NavigationTargetResolver;
 use crate::{
@@ -100,10 +102,9 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         targets: &mut Vec<NavigationTarget>,
     ) -> anyhow::Result<()> {
         match entity {
-            ResolvedEntity::TypeDef(ty) => self.push_type_def_targets(ty, targets),
-            ResolvedEntity::Trait(trait_ref) => self.push_trait_impl_targets(trait_ref, targets),
-            ResolvedEntity::Function(function) => {
-                self.push_resolved_function_targets(function, None, targets)
+            ResolvedEntity::SemanticItem(item) => self.push_semantic_item_targets(item, targets),
+            ResolvedEntity::BodyFunction(function) => {
+                self.push_body_function_targets(function, targets)
             }
             ResolvedEntity::LocalBinding { body, binding } => {
                 let Some(body_data) = self.0.body_ir.body_data(body)? else {
@@ -118,12 +119,35 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
             ResolvedEntity::Module { .. }
             | ResolvedEntity::Field(_)
             | ResolvedEntity::EnumVariant(_)
-            | ResolvedEntity::TypeAlias(_)
-            | ResolvedEntity::Const(_)
-            | ResolvedEntity::Static(_)
             | ResolvedEntity::LocalValueItem(_)
             | ResolvedEntity::LocalDef(_) => Ok(()),
         }
+    }
+
+    fn push_semantic_item_targets(
+        &self,
+        item: SemanticItemRef,
+        targets: &mut Vec<NavigationTarget>,
+    ) -> anyhow::Result<()> {
+        match item {
+            SemanticItemRef::TypeDef(ty) => self.push_type_def_targets(ty, targets),
+            SemanticItemRef::Trait(trait_ref) => self.push_trait_impl_targets(trait_ref, targets),
+            SemanticItemRef::Function(function) => {
+                self.push_semantic_function_targets(function, None, targets)
+            }
+            SemanticItemRef::Impl(_)
+            | SemanticItemRef::TypeAlias(_)
+            | SemanticItemRef::Const(_)
+            | SemanticItemRef::Static(_) => Ok(()),
+        }
+    }
+
+    fn push_body_function_targets(
+        &self,
+        function: BodyFunctionRef,
+        targets: &mut Vec<NavigationTarget>,
+    ) -> anyhow::Result<()> {
+        self.push_resolved_function_targets(ResolvedFunctionRef::BodyLocal(function), None, targets)
     }
 
     fn push_ty_targets(

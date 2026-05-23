@@ -8,7 +8,7 @@ use rg_def_map::{
     DefId, DefMapPathCompletionSite, ModuleRef, Path, ScopeNamespace, VisibleScopeDef,
 };
 use rg_parse::Span;
-use rg_semantic_ir::{Documentation, EnumVariantRef, TypeDefId};
+use rg_semantic_ir::{Documentation, EnumVariantRef, SemanticItemRef, TypeDefId};
 
 use crate::{
     Analysis,
@@ -288,10 +288,10 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         let DefId::Local(local_def) = visible_def.def else {
             return Ok(None);
         };
-        let Some(function) = self
+        let Some(SemanticItemRef::Function(function)) = self
             .analysis
             .semantic_ir
-            .function_for_local_def(local_def)?
+            .semantic_item_for_local_def(local_def)?
         else {
             return Ok(None);
         };

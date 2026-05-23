@@ -8,7 +8,7 @@ use rg_body_ir::{
     ResolvedEnumVariantRef, ScopeId,
 };
 use rg_def_map::{DefId, Path};
-use rg_semantic_ir::{FieldRef, SemanticTypePathResolution, TypePathContext};
+use rg_semantic_ir::{FieldRef, SemanticItemRef, SemanticTypePathResolution, TypePathContext};
 
 use crate::{api::Analysis, model::SymbolAt};
 
@@ -128,7 +128,9 @@ impl<'a, 'db> TypeResolver<'a, 'db> {
         let DefId::Local(local_def) = def else {
             return Ok(None);
         };
-        let Some(ty) = self.0.semantic_ir.type_def_for_local_def(local_def)? else {
+        let Some(SemanticItemRef::TypeDef(ty)) =
+            self.0.semantic_ir.semantic_item_for_local_def(local_def)?
+        else {
             return Ok(None);
         };
 

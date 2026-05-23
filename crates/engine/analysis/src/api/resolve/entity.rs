@@ -4,14 +4,11 @@
 //! question: "what declaration-like entity does this cursor symbol denote?"
 
 use rg_body_ir::{
-    BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution, ResolvedEnumVariantRef,
-    ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
+    BodyFunctionRef, BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution,
+    ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
 };
 use rg_def_map::{DefId, LocalDefRef, ModuleRef, Path};
-use rg_semantic_ir::{
-    ConstRef, FunctionRef, ItemId, SemanticTypePathResolution, StaticRef, TraitRef, TypeAliasRef,
-    TypeDefId, TypeDefRef,
-};
+use rg_semantic_ir::SemanticItemRef;
 
 use crate::{api::Analysis, model::SymbolAt};
 
@@ -21,14 +18,10 @@ pub(crate) enum ResolvedEntity {
         module: ModuleRef,
         display_name: Option<String>,
     },
-    TypeDef(TypeDefRef),
-    Trait(TraitRef),
-    Function(ResolvedFunctionRef),
+    SemanticItem(SemanticItemRef),
+    BodyFunction(BodyFunctionRef),
     Field(ResolvedFieldRef),
     EnumVariant(ResolvedEnumVariantRef),
-    TypeAlias(TypeAliasRef),
-    Const(ConstRef),
-    Static(StaticRef),
     LocalBinding {
         body: BodyRef,
         binding: rg_body_ir::BindingId,
@@ -73,9 +66,9 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
             SymbolAt::Field { field, .. } => Ok(vec![ResolvedEntity::Field(
                 ResolvedFieldRef::Semantic(field),
             )]),
-            SymbolAt::Function { function, .. } => Ok(vec![ResolvedEntity::Function(
-                ResolvedFunctionRef::Semantic(function),
-            )]),
+            SymbolAt::Function { function, .. } => {
+                Ok(vec![ResolvedEntity::SemanticItem(function.into())])
+            }
             SymbolAt::EnumVariant { variant, .. } => Ok(vec![ResolvedEntity::EnumVariant(
                 ResolvedEnumVariantRef::Semantic(variant),
             )]),
@@ -87,15 +80,11 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
             SymbolAt::LocalField { field, .. } => Ok(vec![ResolvedEntity::Field(
                 ResolvedFieldRef::BodyLocal(field),
             )]),
-            SymbolAt::LocalFunction { function, .. } => Ok(vec![ResolvedEntity::Function(
-                ResolvedFunctionRef::BodyLocal(function),
-            )]),
+            SymbolAt::LocalFunction { function, .. } => {
+                Ok(vec![ResolvedEntity::BodyFunction(function)])
+            }
             SymbolAt::TypePath { context, path, .. } => {
-                let resolution =
-                    self.0
-                        .semantic_ir
-                        .resolve_type_path(&self.0.def_map, context, &path)?;
-                let entities = self.entities_for_semantic_type_path_resolution(resolution);
+                let entities = self.entities_for_semantic_type_path(context, &path)?;
                 if entities.is_empty() {
                     self.entities_for_use_path(context.module, &path)
                 } else {
@@ -104,6 +93,20 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
             }
             SymbolAt::UsePath { module, path, .. } => self.entities_for_use_path(module, &path),
         }
+    }
+
+    fn entities_for_semantic_type_path(
+        &self,
+        context: rg_semantic_ir::TypePathContext,
+        path: &Path,
+    ) -> anyhow::Result<Vec<ResolvedEntity>> {
+        Ok(self
+            .0
+            .semantic_ir
+            .semantic_items_for_type_path(&self.0.def_map, context, path)?
+            .into_iter()
+            .map(ResolvedEntity::SemanticItem)
+            .collect())
     }
 
     fn entities_for_def(&self, def: DefId) -> anyhow::Result<Vec<ResolvedEntity>> {
@@ -132,50 +135,11 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
         &self,
         local_def: LocalDefRef,
     ) -> anyhow::Result<Option<ResolvedEntity>> {
-        let Some(target_ir) = self.0.semantic_ir.target_ir(local_def.target)? else {
-            return Ok(None);
-        };
-        let Some(item) = target_ir.item_for_local_def(local_def.local_def) else {
+        let Some(item) = self.0.semantic_ir.semantic_item_for_local_def(local_def)? else {
             return Ok(None);
         };
 
-        let entity = match item {
-            ItemId::Struct(id) => ResolvedEntity::TypeDef(TypeDefRef {
-                target: local_def.target,
-                id: TypeDefId::Struct(id),
-            }),
-            ItemId::Union(id) => ResolvedEntity::TypeDef(TypeDefRef {
-                target: local_def.target,
-                id: TypeDefId::Union(id),
-            }),
-            ItemId::Enum(id) => ResolvedEntity::TypeDef(TypeDefRef {
-                target: local_def.target,
-                id: TypeDefId::Enum(id),
-            }),
-            ItemId::Trait(id) => ResolvedEntity::Trait(TraitRef {
-                target: local_def.target,
-                id,
-            }),
-            ItemId::Function(id) => {
-                ResolvedEntity::Function(ResolvedFunctionRef::Semantic(FunctionRef {
-                    target: local_def.target,
-                    id,
-                }))
-            }
-            ItemId::TypeAlias(id) => ResolvedEntity::TypeAlias(TypeAliasRef {
-                target: local_def.target,
-                id,
-            }),
-            ItemId::Const(id) => ResolvedEntity::Const(ConstRef {
-                target: local_def.target,
-                id,
-            }),
-            ItemId::Static(id) => ResolvedEntity::Static(StaticRef {
-                target: local_def.target,
-                id,
-            }),
-        };
-        Ok(Some(entity))
+        Ok(Some(ResolvedEntity::SemanticItem(item)))
     }
 
     fn entities_for_use_path(
@@ -267,7 +231,7 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
                 Ok(functions
                     .iter()
                     .copied()
-                    .map(ResolvedEntity::Function)
+                    .map(Self::entity_for_resolved_function)
                     .collect())
             }
             BodyResolution::EnumVariant(variants) => Ok(variants
@@ -279,19 +243,12 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
         }
     }
 
-    fn entities_for_semantic_type_path_resolution(
-        &self,
-        resolution: SemanticTypePathResolution,
-    ) -> Vec<ResolvedEntity> {
-        match resolution {
-            SemanticTypePathResolution::SelfType(types)
-            | SemanticTypePathResolution::TypeDefs(types) => {
-                types.into_iter().map(ResolvedEntity::TypeDef).collect()
+    fn entity_for_resolved_function(function: ResolvedFunctionRef) -> ResolvedEntity {
+        match function {
+            ResolvedFunctionRef::Semantic(function) => {
+                ResolvedEntity::SemanticItem(function.into())
             }
-            SemanticTypePathResolution::Traits(traits) => {
-                traits.into_iter().map(ResolvedEntity::Trait).collect()
-            }
-            SemanticTypePathResolution::Unknown => Vec::new(),
+            ResolvedFunctionRef::BodyLocal(function) => ResolvedEntity::BodyFunction(function),
         }
     }
 
@@ -302,11 +259,15 @@ impl<'a, 'db> EntityResolver<'a, 'db> {
         match resolution {
             BodyTypePathResolution::BodyLocal(item) => vec![ResolvedEntity::LocalItem(item)],
             BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
-                types.into_iter().map(ResolvedEntity::TypeDef).collect()
+                types
+                    .into_iter()
+                    .map(|ty| ResolvedEntity::SemanticItem(ty.into()))
+                    .collect()
             }
-            BodyTypePathResolution::Traits(traits) => {
-                traits.into_iter().map(ResolvedEntity::Trait).collect()
-            }
+            BodyTypePathResolution::Traits(traits) => traits
+                .into_iter()
+                .map(|trait_ref| ResolvedEntity::SemanticItem(trait_ref.into()))
+                .collect(),
             BodyTypePathResolution::Primitive(_) | BodyTypePathResolution::Unknown => Vec::new(),
         }
     }

@@ -5,14 +5,12 @@
 //! normalized through the same entity resolver before we compare declaration identities.
 
 use rg_body_ir::{
-    BodyCursorCandidate, BodyItemRef, BodyRef, BodyValueItemRef, ResolvedEnumVariantRef,
-    ResolvedFieldRef, ResolvedFunctionRef,
+    BodyCursorCandidate, BodyFunctionRef, BodyItemRef, BodyRef, BodyValueItemRef,
+    ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
 };
 use rg_def_map::{DefMapCursorCandidate, LocalDefRef, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{
-    ConstRef, SemanticCursorCandidate, StaticRef, TraitRef, TypeAliasRef, TypeDefRef,
-};
+use rg_semantic_ir::{SemanticCursorCandidate, SemanticItemRef};
 
 use crate::{
     api::{
@@ -314,7 +312,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             )?,
             SemanticCursorCandidate::Function { function, span } => self.declaration_candidate(
                 SymbolAt::Function { function, span },
-                ResolvedFunctionRef::Semantic(function),
+                function,
                 target,
                 span,
             )?,
@@ -528,14 +526,10 @@ struct ReferenceCandidate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ReferenceSubject {
     Module(ModuleRef),
-    TypeDef(TypeDefRef),
-    Trait(TraitRef),
-    Function(ResolvedFunctionRef),
+    SemanticItem(SemanticItemRef),
+    BodyFunction(BodyFunctionRef),
     Field(ResolvedFieldRef),
     EnumVariant(ResolvedEnumVariantRef),
-    TypeAlias(TypeAliasRef),
-    Const(ConstRef),
-    Static(StaticRef),
     LocalBinding {
         body: BodyRef,
         binding: rg_body_ir::BindingId,
@@ -549,14 +543,10 @@ impl ReferenceSubject {
     fn from_entity(entity: ResolvedEntity) -> Self {
         match entity {
             ResolvedEntity::Module { module, .. } => Self::Module(module),
-            ResolvedEntity::TypeDef(ty) => Self::TypeDef(ty),
-            ResolvedEntity::Trait(trait_ref) => Self::Trait(trait_ref),
-            ResolvedEntity::Function(function) => Self::Function(function),
+            ResolvedEntity::SemanticItem(item) => Self::SemanticItem(item),
+            ResolvedEntity::BodyFunction(function) => Self::BodyFunction(function),
             ResolvedEntity::Field(field) => Self::Field(field),
             ResolvedEntity::EnumVariant(variant) => Self::EnumVariant(variant),
-            ResolvedEntity::TypeAlias(type_alias) => Self::TypeAlias(type_alias),
-            ResolvedEntity::Const(const_ref) => Self::Const(const_ref),
-            ResolvedEntity::Static(static_ref) => Self::Static(static_ref),
             ResolvedEntity::LocalBinding { body, binding } => Self::LocalBinding { body, binding },
             ResolvedEntity::LocalItem(item) => Self::LocalItem(item),
             ResolvedEntity::LocalValueItem(item) => Self::LocalValueItem(item),
