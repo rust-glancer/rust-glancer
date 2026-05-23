@@ -11,8 +11,10 @@ use rg_semantic_ir::{
 
 use crate::{
     api::{Analysis, render::path::PathRenderer},
-    model::{Declaration, SymbolKind},
+    model::SymbolKind,
 };
+
+use super::declaration::Declaration;
 
 /// A nominal receiver type whose declarations may live in either Semantic IR or Body IR.
 #[derive(Debug, Clone, Copy)]
@@ -78,22 +80,22 @@ impl<'a> MemberFieldView<'a> {
     pub(crate) fn declaration(&self) -> Option<Declaration> {
         let key = self.key()?;
         Some(match self {
-            Self::Semantic { field, data } => Declaration {
-                target: field.owner.target,
-                kind: SymbolKind::Field,
-                name: key.declaration_label(),
-                file_id: data.file_id,
-                span: data.field.span,
-                selection_span: data.field.span,
-            },
-            Self::BodyLocal { field, data } => Declaration {
-                target: field.item.body.target,
-                kind: SymbolKind::Field,
-                name: key.declaration_label(),
-                file_id: data.item.source.file_id,
-                span: data.field.span,
-                selection_span: data.field.span,
-            },
+            Self::Semantic { field, data } => Declaration::new(
+                field.owner.target,
+                SymbolKind::Field,
+                key.declaration_label(),
+                data.file_id,
+                data.field.span,
+                data.field.span,
+            ),
+            Self::BodyLocal { field, data } => Declaration::new(
+                field.item.body.target,
+                SymbolKind::Field,
+                key.declaration_label(),
+                data.item.source.file_id,
+                data.field.span,
+                data.field.span,
+            ),
         })
     }
 
@@ -159,22 +161,22 @@ impl<'a> MemberFunctionView<'a> {
 
     pub(crate) fn declaration(&self) -> Declaration {
         match self {
-            Self::Semantic { function, data } => Declaration {
-                target: function.target,
-                kind: self.symbol_kind(),
-                name: data.name.to_string(),
-                file_id: data.source.file_id,
-                span: data.span,
-                selection_span: data.name_span.unwrap_or(data.span),
-            },
-            Self::BodyLocal { function, data } => Declaration {
-                target: function.body.target,
-                kind: self.symbol_kind(),
-                name: data.name.to_string(),
-                file_id: data.source.file_id,
-                span: data.source.span,
-                selection_span: data.name_source.span,
-            },
+            Self::Semantic { function, data } => Declaration::new(
+                function.target,
+                self.symbol_kind(),
+                data.name.to_string(),
+                data.source.file_id,
+                data.span,
+                data.name_span.unwrap_or(data.span),
+            ),
+            Self::BodyLocal { function, data } => Declaration::new(
+                function.body.target,
+                self.symbol_kind(),
+                data.name.to_string(),
+                data.source.file_id,
+                data.source.span,
+                data.name_source.span,
+            ),
         }
     }
 

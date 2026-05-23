@@ -11,9 +11,9 @@ use rg_semantic_ir::{
 use crate::{
     api::{
         Analysis,
-        view::declaration::{DeclarationLookup, DeclarationRef},
+        view::declaration::{Declaration, DeclarationRef, DeclarationView},
     },
-    model::{Declaration, SymbolKind, WorkspaceSymbol},
+    model::{SymbolKind, WorkspaceSymbol},
 };
 
 pub(crate) struct WorkspaceSymbolCollector<'a, 'db>(&'a Analysis<'db>);
@@ -117,7 +117,7 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
                 self.push_assoc_item_workspace_symbols(
                     item.item().target(),
                     items,
-                    &declaration.name,
+                    declaration.name(),
                     query,
                     symbols,
                 )?;
@@ -146,11 +146,11 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
 
             self.push_workspace_symbol(
                 WorkspaceSymbolInput {
-                    target: declaration.target,
-                    name: declaration.name,
-                    kind: declaration.kind,
-                    file_id: declaration.file_id,
-                    span: Some(declaration.selection_span),
+                    target: declaration.target(),
+                    name: declaration.name().to_string(),
+                    kind: declaration.kind(),
+                    file_id: declaration.file_id(),
+                    span: Some(declaration.selection_span()),
                     container_name: self.module_container_name(module_ref)?,
                 },
                 query,
@@ -266,11 +266,11 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
 
         self.push_workspace_symbol(
             WorkspaceSymbolInput {
-                target: declaration.target,
-                name: declaration.name,
-                kind: declaration.kind,
-                file_id: declaration.file_id,
-                span: Some(declaration.selection_span),
+                target: declaration.target(),
+                name: declaration.name().to_string(),
+                kind: declaration.kind(),
+                file_id: declaration.file_id(),
+                span: Some(declaration.selection_span()),
                 container_name,
             },
             query,
@@ -281,7 +281,7 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
     }
 
     fn declaration(&self, declaration: impl Into<DeclarationRef>) -> Result<Option<Declaration>> {
-        DeclarationLookup::new(self.0).declaration(declaration.into())
+        DeclarationView::new(self.0).declaration(declaration.into())
     }
 
     fn push_workspace_symbol(

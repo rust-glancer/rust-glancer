@@ -12,9 +12,9 @@ use rg_semantic_ir::{
 use crate::{
     api::{
         Analysis,
-        view::declaration::{DeclarationLookup, DeclarationRef},
+        view::declaration::{Declaration, DeclarationRef, DeclarationView},
     },
-    model::{Declaration, NavigationTarget, NavigationTargetKind},
+    model::{NavigationTarget, NavigationTargetKind},
 };
 
 /// Converts stable IR identities into concrete editor navigation targets.
@@ -57,13 +57,15 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
             }));
         };
 
-        Ok(self.declaration(module_ref)?.map(|declaration| {
-            let span = declaration.span;
-            NavigationTarget {
-                span: Some(span),
-                ..NavigationTarget::from(declaration)
-            }
-        }))
+        Ok(self
+            .declaration(module_ref)?
+            .map(|declaration| NavigationTarget {
+                target: declaration.target(),
+                kind: NavigationTargetKind::from(declaration.kind()),
+                name: declaration.name().to_string(),
+                file_id: declaration.file_id(),
+                span: Some(declaration.span()),
+            }))
     }
 
     fn navigation_target_for_local_def(
@@ -161,7 +163,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         &self,
         declaration: impl Into<DeclarationRef>,
     ) -> anyhow::Result<Option<Declaration>> {
-        DeclarationLookup::new(self.0).declaration(declaration.into())
+        DeclarationView::new(self.0).declaration(declaration.into())
     }
 
     pub(crate) fn navigation_target_for_enum_variant(

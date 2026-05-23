@@ -17,11 +17,11 @@ use crate::{
         render::{path::PathRenderer, signature::SignatureRenderer},
         resolve::declaration::SymbolDeclarationResolver,
         view::{
-            declaration::{DeclarationLookup, DeclarationRef},
+            declaration::{Declaration, DeclarationRef, DeclarationView},
             member::MemberLookup,
         },
     },
-    model::{Declaration, HoverBlock, HoverInfo, SymbolAt, SymbolKind},
+    model::{HoverBlock, HoverInfo, SymbolAt, SymbolKind},
 };
 
 pub(crate) struct HoverResolver<'a, 'db>(&'a Analysis<'db>);
@@ -131,7 +131,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     return Ok(None);
                 };
                 Ok(Some(HoverBlock {
-                    kind: declaration.kind,
+                    kind: declaration.kind(),
                     path: None,
                     signature: Some(SignatureRenderer::new(self.0).local_item_signature(item)),
                     ty: None,
@@ -149,7 +149,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
                     return Ok(None);
                 };
                 Ok(Some(HoverBlock {
-                    kind: declaration.kind,
+                    kind: declaration.kind(),
                     path: None,
                     signature: Some(
                         SignatureRenderer::new(self.0).local_value_item_signature(item),
@@ -427,7 +427,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         &self,
         declaration: impl Into<DeclarationRef>,
     ) -> anyhow::Result<Option<Declaration>> {
-        DeclarationLookup::new(self.0).declaration(declaration.into())
+        DeclarationView::new(self.0).declaration(declaration.into())
     }
 
     fn symbol_range(&self, symbol: &SymbolAt) -> anyhow::Result<Option<Span>> {

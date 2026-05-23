@@ -2,7 +2,7 @@
 //!
 //! The initial references implementation intentionally scans known source facts instead of building
 //! a separate index. That keeps the feature aligned with goto/hover resolution: every candidate is
-//! normalized through the same entity resolver before we compare declaration identities.
+//! normalized through the same declaration resolver before we compare declaration identities.
 
 use rg_body_ir::BodyCursorCandidate;
 use rg_def_map::{DefMapCursorCandidate, TargetRef};
@@ -14,9 +14,9 @@ use crate::{
         Analysis,
         query::navigation::SymbolResolver,
         resolve::declaration::SymbolDeclarationResolver,
-        view::declaration::{DeclarationLookup, DeclarationRef},
+        view::declaration::{DeclarationRef, DeclarationView},
     },
-    model::{Declaration, ReferenceLocation, SymbolAt},
+    model::{ReferenceLocation, SymbolAt},
 };
 
 /// Options for a source reference lookup.
@@ -469,37 +469,18 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         if !self.query.includes_declarations() {
             return Ok(None);
         }
-        let Some(declaration) = self.declaration(declaration)? else {
+        let Some(declaration) =
+            DeclarationView::new(self.analysis).declaration(declaration.into())?
+        else {
             return Ok(None);
         };
 
-        Ok(Some(Self::reference_candidate_for_declaration(
-            symbol,
-            declaration,
-            scan_target,
-            span,
-        )))
-    }
-
-    fn reference_candidate_for_declaration(
-        symbol: SymbolAt,
-        declaration: Declaration,
-        scan_target: TargetRef,
-        span: Span,
-    ) -> ReferenceCandidate {
-        ReferenceCandidate {
+        Ok(Some(ReferenceCandidate {
             symbol,
             target: scan_target,
-            file_id: declaration.file_id,
+            file_id: declaration.file_id(),
             span,
-        }
-    }
-
-    fn declaration(
-        &self,
-        declaration: impl Into<DeclarationRef>,
-    ) -> anyhow::Result<Option<Declaration>> {
-        DeclarationLookup::new(self.analysis).declaration(declaration.into())
+        }))
     }
 }
 

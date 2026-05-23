@@ -88,21 +88,6 @@ pub struct ReferenceLocation {
     pub span: Span,
 }
 
-/// Storage-independent declaration data for a source symbol.
-///
-/// Editor features project this into different API shapes: navigation targets use the selection
-/// span, outlines use both spans, and reference search keeps its own occurrence span while using
-/// this to recover the declaration file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Declaration {
-    pub(crate) target: TargetRef,
-    pub(crate) kind: SymbolKind,
-    pub(crate) name: String,
-    pub(crate) file_id: FileId,
-    pub(crate) span: Span,
-    pub(crate) selection_span: Span,
-}
-
 /// One goto-definition destination.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NavigationTarget {
@@ -129,18 +114,6 @@ impl NavigationTarget {
     }
 }
 
-impl From<Declaration> for NavigationTarget {
-    fn from(declaration: Declaration) -> Self {
-        Self {
-            target: declaration.target,
-            kind: NavigationTargetKind::from(declaration.kind),
-            name: declaration.name,
-            file_id: declaration.file_id,
-            span: Some(declaration.selection_span),
-        }
-    }
-}
-
 /// Hierarchical source outline for one file under one target context.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentSymbol {
@@ -156,19 +129,6 @@ impl DocumentSymbol {
     pub(crate) fn with_children(mut self, children: Vec<DocumentSymbol>) -> Self {
         self.children = children;
         self
-    }
-}
-
-impl From<Declaration> for DocumentSymbol {
-    fn from(declaration: Declaration) -> Self {
-        Self {
-            name: declaration.name,
-            kind: declaration.kind,
-            file_id: declaration.file_id,
-            span: declaration.span,
-            selection_span: declaration.selection_span,
-            children: Vec::new(),
-        }
     }
 }
 

@@ -4,7 +4,8 @@ use rg_body_ir::{
     BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef,
     BodyImplRef, BodyItemRef, BodyValueItemRef, ResolvedFieldRef, ResolvedFunctionRef,
 };
-use rg_def_map::{LocalDefRef, ModuleOrigin, ModuleRef};
+use rg_def_map::{LocalDefRef, ModuleOrigin, ModuleRef, TargetRef};
+use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
     ConstRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, SemanticDeclarationRef,
     SemanticItemKind, SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefRef, TypeRef,
@@ -12,7 +13,7 @@ use rg_semantic_ir::{
 
 use crate::{
     api::{Analysis, view::member::MemberLookup},
-    model::{Declaration, SymbolKind},
+    model::{DocumentSymbol, NavigationTarget, NavigationTargetKind, SymbolKind},
 };
 
 /// Storage-independent identity for declarations that editor features can project.
@@ -49,12 +50,67 @@ pub(crate) enum DeclarationRef {
     Body(BodyDeclarationRef),
 }
 
+/// Composite declaration facts shared by editor queries.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Declaration {
+    target: TargetRef,
+    kind: SymbolKind,
+    name: String,
+    file_id: FileId,
+    span: Span,
+    selection_span: Span,
+}
+
+impl Declaration {
+    pub(crate) fn new(
+        target: TargetRef,
+        kind: SymbolKind,
+        name: String,
+        file_id: FileId,
+        span: Span,
+        selection_span: Span,
+    ) -> Self {
+        Self {
+            target,
+            kind,
+            name,
+            file_id,
+            span,
+            selection_span,
+        }
+    }
+
+    pub(crate) fn target(&self) -> TargetRef {
+        self.target
+    }
+
+    pub(crate) fn kind(&self) -> SymbolKind {
+        self.kind
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn file_id(&self) -> FileId {
+        self.file_id
+    }
+
+    pub(crate) fn span(&self) -> Span {
+        self.span
+    }
+
+    pub(crate) fn selection_span(&self) -> Span {
+        self.selection_span
+    }
+}
+
 /// Reads declaration facts for IDs that already identify one source declaration.
-pub(crate) struct DeclarationLookup<'a, 'db> {
+pub(crate) struct DeclarationView<'a, 'db> {
     analysis: &'a Analysis<'db>,
 }
 
-impl<'a, 'db> DeclarationLookup<'a, 'db> {
+impl<'a, 'db> DeclarationView<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self { analysis }
     }
@@ -346,5 +402,30 @@ impl<'a, 'db> DeclarationLookup<'a, 'db> {
 
     fn field_label(name: Option<String>) -> String {
         name.unwrap_or_else(|| "<unsupported>".to_string())
+    }
+}
+
+impl From<Declaration> for NavigationTarget {
+    fn from(declaration: Declaration) -> Self {
+        Self {
+            target: declaration.target,
+            kind: NavigationTargetKind::from(declaration.kind),
+            name: declaration.name,
+            file_id: declaration.file_id,
+            span: Some(declaration.selection_span),
+        }
+    }
+}
+
+impl From<Declaration> for DocumentSymbol {
+    fn from(declaration: Declaration) -> Self {
+        Self {
+            name: declaration.name,
+            kind: declaration.kind,
+            file_id: declaration.file_id,
+            span: declaration.span,
+            selection_span: declaration.selection_span,
+            children: Vec::new(),
+        }
     }
 }

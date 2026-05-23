@@ -16,9 +16,9 @@ use super::shared;
 use crate::{
     api::{
         Analysis,
-        view::declaration::{DeclarationLookup, DeclarationRef},
+        view::declaration::{Declaration, DeclarationRef, DeclarationView},
     },
-    model::{Declaration, DocumentSymbol, SymbolKind},
+    model::{DocumentSymbol, SymbolKind},
 };
 
 pub(crate) struct DocumentSymbolCollector<'a, 'db>(&'a Analysis<'db>);
@@ -135,7 +135,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         let Some(declaration) = self.declaration(ty)? else {
             return Ok(None);
         };
-        if declaration.file_id != file_id {
+        if declaration.file_id() != file_id {
             return Ok(None);
         };
 
@@ -164,7 +164,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         let Some(declaration) = self.declaration(ty)? else {
             return Ok(None);
         };
-        if declaration.file_id != file_id {
+        if declaration.file_id() != file_id {
             return Ok(None);
         };
         let TypeDefId::Enum(enum_id) = ty.id else {
@@ -381,7 +381,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
             .iter()
             .map(|field| {
                 Self::field_document_symbol(
-                    declaration.file_id,
+                    declaration.file_id(),
                     shared::field_label(field.key_declaration_label()),
                     field.span,
                 )
@@ -453,8 +453,8 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         // Associated functions may already be nested below traits or impls, so search the outline
         // tree instead of assuming module-level placement.
         for symbol in symbols {
-            if symbol.name == function.name
-                && symbol.span == function.span
+            if symbol.name == function.name()
+                && symbol.span == function.span()
                 && matches!(symbol.kind, SymbolKind::Function | SymbolKind::Method)
             {
                 return Some(symbol);
@@ -479,7 +479,7 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
     }
 
     fn declaration(&self, declaration: impl Into<DeclarationRef>) -> Result<Option<Declaration>> {
-        DeclarationLookup::new(self.0).declaration(declaration.into())
+        DeclarationView::new(self.0).declaration(declaration.into())
     }
 
     fn nest_module_document_symbols(symbols: Vec<DocumentSymbol>) -> Vec<DocumentSymbol> {
