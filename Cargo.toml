@@ -82,7 +82,7 @@ serde = "1.0.228"
 serde_json = "1.0.149"
 smallvec = "1.15.1"
 smol_str = "0.3.2"
-stdx = { git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca" }
+stdx = { git = "https://github.com/rust-lang/rust-analyzer", rev = "2cf14f4d34fd96fb763cfd9f909472a61145674a" }
 syn = "2.0"
 tarpc = "0.37"
 tempfile = "3.27.0"
