@@ -2,3 +2,4 @@
 
 pub(crate) mod declaration;
 pub(crate) mod member;
+pub(crate) mod ty;
