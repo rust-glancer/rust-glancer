@@ -6,9 +6,7 @@ use rg_body_ir::{
 
 use crate::{
     Analysis,
-    api::view::member::{
-        MemberLookup, MemberMethodCandidate, MemberMethodOrigin, MemberReceiverTy,
-    },
+    api::view::member::{MemberMethodCandidate, MemberMethodOrigin, MemberReceiverTy, MemberView},
     model::{
         CompletionApplicability, CompletionEdit, CompletionItem, CompletionKind, CompletionTarget,
     },
@@ -44,7 +42,7 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
             replace: site.member_prefix_span,
         };
         let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
-        let members = MemberLookup::new(self.analysis);
+        let members = MemberView::new(self.analysis);
         let mut completions = Vec::new();
         for candidate in autoderef.candidates(BodyAutoderefMode::FieldLookup, receiver_ty) {
             let candidate = candidate?;

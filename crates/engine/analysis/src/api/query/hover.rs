@@ -18,7 +18,7 @@ use crate::{
         resolve::declaration::SymbolDeclarationResolver,
         view::{
             declaration::{Declaration, DeclarationRef, DeclarationView},
-            member::MemberLookup,
+            member::MemberView,
         },
     },
     model::{HoverBlock, HoverInfo, SymbolAt, SymbolKind},
@@ -267,8 +267,8 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         &self,
         function: ResolvedFunctionRef,
     ) -> anyhow::Result<Option<HoverBlock>> {
-        let members = MemberLookup::new(self.0);
-        let Some(function) = members.function_view(function)? else {
+        let members = MemberView::new(self.0);
+        let Some(function) = members.function(function)? else {
             return Ok(None);
         };
         let path = function.display_path(&PathRenderer::new(self.0))?;
@@ -283,8 +283,8 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
     }
 
     fn hover_for_field(&self, field: ResolvedFieldRef) -> anyhow::Result<Option<HoverBlock>> {
-        let members = MemberLookup::new(self.0);
-        let Some(field) = members.field_view(field)? else {
+        let members = MemberView::new(self.0);
+        let Some(field) = members.field(field)? else {
             return Ok(None);
         };
         let path = field.display_path(&PathRenderer::new(self.0))?;

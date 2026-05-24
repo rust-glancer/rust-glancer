@@ -4,7 +4,7 @@ use rg_body_ir::{BodyTypePathResolution, FieldKey, RecordFieldCompletionSite, Re
 
 use crate::{
     Analysis,
-    api::view::member::{MemberLookup, MemberOwner},
+    api::view::member::{MemberOwnerRef, MemberView},
     model::{CompletionEdit, CompletionItem},
 };
 
@@ -68,15 +68,16 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
             &site.owner,
         )?;
         let mut fields = Vec::new();
-        let members = MemberLookup::new(self.0);
+        let members = MemberView::new(self.0);
 
         match resolution {
             BodyTypePathResolution::BodyLocal(item) => {
-                fields.extend(members.field_candidates_for_owner(MemberOwner::BodyLocal(item))?);
+                fields.extend(members.field_candidates_for_owner(MemberOwnerRef::BodyLocal(item))?);
             }
             BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
                 for ty in types {
-                    fields.extend(members.field_candidates_for_owner(MemberOwner::Semantic(ty))?);
+                    fields
+                        .extend(members.field_candidates_for_owner(MemberOwnerRef::Semantic(ty))?);
                 }
             }
             BodyTypePathResolution::Primitive(_)

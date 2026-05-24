@@ -17,7 +17,7 @@ use rg_semantic_ir::{
 use crate::api::{
     Analysis,
     render::ty::TypeRenderer,
-    view::member::{MemberFieldView, MemberFunctionView},
+    view::member::{MemberField, MemberFunction},
 };
 
 const MEMBER_PREVIEW_LIMIT: usize = 5;
@@ -137,10 +137,10 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         field_signature(data.field)
     }
 
-    pub(crate) fn member_field_signature(&self, data: &MemberFieldView<'_>) -> Option<String> {
+    pub(crate) fn member_field_signature(&self, data: &MemberField<'_>) -> Option<String> {
         match data {
-            MemberFieldView::Semantic { data, .. } => self.field_signature(*data),
-            MemberFieldView::BodyLocal { data, .. } => self.local_field_signature(*data),
+            MemberField::Semantic { data, .. } => self.field_signature(*data),
+            MemberField::BodyLocal { data, .. } => self.local_field_signature(*data),
         }
     }
 
@@ -218,10 +218,10 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         function_signature(&data.name, &data.declaration)
     }
 
-    pub(crate) fn member_function_signature(&self, data: &MemberFunctionView<'_>) -> String {
+    pub(crate) fn member_function_signature(&self, data: &MemberFunction<'_>) -> String {
         match data {
-            MemberFunctionView::Semantic { data, .. } => self.function_signature(data),
-            MemberFunctionView::BodyLocal { data, .. } => self.local_function_signature(data),
+            MemberFunction::Semantic { data, .. } => self.function_signature(data),
+            MemberFunction::BodyLocal { data, .. } => self.local_function_signature(data),
         }
     }
 

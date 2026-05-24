@@ -8,7 +8,7 @@ use rg_semantic_ir::ParamItem;
 
 use crate::{
     Analysis,
-    api::{render::signature::SignatureRenderer, view::member::MemberLookup},
+    api::{render::signature::SignatureRenderer, view::member::MemberView},
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -111,8 +111,8 @@ impl<'a, 'db, 'source> FunctionCompletionRenderer<'a, 'db, 'source> {
         call_completion: FunctionCallCompletion,
         edit: CompletionEdit,
     ) -> anyhow::Result<Option<FunctionCompletionMetadata>> {
-        let members = MemberLookup::new(self.analysis);
-        let Some(function) = members.function_view(function)? else {
+        let members = MemberView::new(self.analysis);
+        let Some(function) = members.function(function)? else {
             return Ok(None);
         };
         let renderer = SignatureRenderer::new(self.analysis);

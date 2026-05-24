@@ -1,4 +1,4 @@
-//! Unified member lookup over semantic and body-local nominal types.
+//! Composite member view over semantic and body-local nominal types.
 
 use rg_body_ir::{
     BodyFieldData, BodyFieldRef, BodyFunctionData, BodyFunctionRef, BodyItemRef,
@@ -31,24 +31,24 @@ impl<'a> MemberReceiverTy<'a> {
             .chain(ty.as_nominals().iter().map(Self::Semantic))
     }
 
-    fn owner(self) -> MemberOwner {
+    fn owner(self) -> MemberOwnerRef {
         match self {
-            Self::Semantic(ty) => MemberOwner::Semantic(ty.def),
-            Self::BodyLocal(ty) => MemberOwner::BodyLocal(ty.item),
+            Self::Semantic(ty) => MemberOwnerRef::Semantic(ty.def),
+            Self::BodyLocal(ty) => MemberOwnerRef::BodyLocal(ty.item),
         }
     }
 }
 
-/// A declaration owner whose fields can be enumerated without receiver-specific generic args.
+/// Reference to a declaration owner whose fields can be enumerated without receiver generic args.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum MemberOwner {
+pub(crate) enum MemberOwnerRef {
     Semantic(TypeDefRef),
     BodyLocal(BodyItemRef),
 }
 
 /// Borrowed data for one resolved field, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum MemberFieldView<'a> {
+pub(crate) enum MemberField<'a> {
     Semantic {
         field: FieldRef,
         data: FieldData<'a>,
@@ -59,7 +59,7 @@ pub(crate) enum MemberFieldView<'a> {
     },
 }
 
-impl<'a> MemberFieldView<'a> {
+impl<'a> MemberField<'a> {
     pub(crate) fn key(&self) -> Option<&'a FieldKey> {
         match self {
             Self::Semantic { data, .. } => data.field.key.as_ref(),
@@ -113,7 +113,7 @@ impl<'a> MemberFieldView<'a> {
 
 /// Borrowed data for one resolved function, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum MemberFunctionView<'a> {
+pub(crate) enum MemberFunction<'a> {
     Semantic {
         function: FunctionRef,
         data: &'a FunctionData,
@@ -124,7 +124,7 @@ pub(crate) enum MemberFunctionView<'a> {
     },
 }
 
-impl<'a> MemberFunctionView<'a> {
+impl<'a> MemberFunction<'a> {
     pub(crate) fn name(&self) -> &'a str {
         match self {
             Self::Semantic { data, .. } => data.name.as_str(),
@@ -212,11 +212,11 @@ pub(crate) enum MemberMethodOrigin {
     Trait { applicability: TraitApplicability },
 }
 
-pub(crate) struct MemberLookup<'a, 'db> {
+pub(crate) struct MemberView<'a, 'db> {
     analysis: &'a Analysis<'db>,
 }
 
-impl<'a, 'db> MemberLookup<'a, 'db> {
+impl<'a, 'db> MemberView<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self { analysis }
     }
@@ -230,17 +230,17 @@ impl<'a, 'db> MemberLookup<'a, 'db> {
 
     pub(crate) fn field_candidates_for_owner(
         &self,
-        owner: MemberOwner,
+        owner: MemberOwnerRef,
     ) -> anyhow::Result<Vec<ResolvedFieldRef>> {
         match owner {
-            MemberOwner::Semantic(ty) => Ok(self
+            MemberOwnerRef::Semantic(ty) => Ok(self
                 .analysis
                 .semantic_ir
                 .fields_for_type(ty)?
                 .into_iter()
                 .map(ResolvedFieldRef::Semantic)
                 .collect()),
-            MemberOwner::BodyLocal(item) => Ok(self
+            MemberOwnerRef::BodyLocal(item) => Ok(self
                 .analysis
                 .body_ir
                 .fields_for_local_type(item)?
@@ -250,39 +250,36 @@ impl<'a, 'db> MemberLookup<'a, 'db> {
         }
     }
 
-    pub(crate) fn field_view(
-        &self,
-        field: ResolvedFieldRef,
-    ) -> anyhow::Result<Option<MemberFieldView<'_>>> {
+    pub(crate) fn field(&self, field: ResolvedFieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
         match field {
             ResolvedFieldRef::Semantic(field) => Ok(self
                 .analysis
                 .semantic_ir
                 .field_data(field)?
-                .map(|data| MemberFieldView::Semantic { field, data })),
+                .map(|data| MemberField::Semantic { field, data })),
             ResolvedFieldRef::BodyLocal(field) => Ok(self
                 .analysis
                 .body_ir
                 .local_field_data(field)?
-                .map(|data| MemberFieldView::BodyLocal { field, data })),
+                .map(|data| MemberField::BodyLocal { field, data })),
         }
     }
 
-    pub(crate) fn function_view(
+    pub(crate) fn function(
         &self,
         function: ResolvedFunctionRef,
-    ) -> anyhow::Result<Option<MemberFunctionView<'_>>> {
+    ) -> anyhow::Result<Option<MemberFunction<'_>>> {
         match function {
             ResolvedFunctionRef::Semantic(function) => Ok(self
                 .analysis
                 .semantic_ir
                 .function_data(function)?
-                .map(|data| MemberFunctionView::Semantic { function, data })),
+                .map(|data| MemberFunction::Semantic { function, data })),
             ResolvedFunctionRef::BodyLocal(function) => Ok(self
                 .analysis
                 .body_ir
                 .local_function_data(function)?
-                .map(|data| MemberFunctionView::BodyLocal { function, data })),
+                .map(|data| MemberFunction::BodyLocal { function, data })),
         }
     }
 

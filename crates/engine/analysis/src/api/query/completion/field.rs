@@ -7,7 +7,7 @@ use rg_body_ir::{FieldKey, ResolvedFieldRef};
 
 use crate::{
     Analysis,
-    api::{render::signature::SignatureRenderer, view::member::MemberLookup},
+    api::{render::signature::SignatureRenderer, view::member::MemberView},
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -60,8 +60,8 @@ impl<'a, 'db> FieldCompletionRenderer<'a, 'db> {
         &self,
         field: ResolvedFieldRef,
     ) -> anyhow::Result<Option<FieldCompletionMetadata>> {
-        let members = MemberLookup::new(self.0);
-        let Some(field) = members.field_view(field)? else {
+        let members = MemberView::new(self.0);
+        let Some(field) = members.field(field)? else {
             return Ok(None);
         };
         let Some(key) = field.key().cloned() else {

@@ -13,7 +13,7 @@ use rg_semantic_ir::{
 };
 
 use crate::{
-    api::{Analysis, view::member::MemberLookup},
+    api::{Analysis, view::member::MemberView},
     model::{DocumentSymbol, NavigationTarget, NavigationTargetKind, SymbolKind},
 };
 
@@ -394,14 +394,14 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     fn semantic_field(&self, field: FieldRef) -> anyhow::Result<Option<Declaration>> {
-        Ok(MemberLookup::new(self.analysis)
-            .field_view(ResolvedFieldRef::Semantic(field))?
+        Ok(MemberView::new(self.analysis)
+            .field(ResolvedFieldRef::Semantic(field))?
             .and_then(|field| field.declaration()))
     }
 
     fn semantic_function(&self, function: FunctionRef) -> anyhow::Result<Option<Declaration>> {
-        Ok(MemberLookup::new(self.analysis)
-            .function_view(ResolvedFunctionRef::Semantic(function))?
+        Ok(MemberView::new(self.analysis)
+            .function(ResolvedFunctionRef::Semantic(function))?
             .map(|function| function.declaration()))
     }
 
