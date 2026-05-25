@@ -137,6 +137,41 @@ impl<'a, 'db> SourceSymbolView<'a, 'db> {
         Ok(symbols)
     }
 
+    pub(crate) fn span_for_symbol(&self, symbol: &SymbolAt) -> anyhow::Result<Option<Span>> {
+        match symbol {
+            SymbolAt::Body { body } => Ok(self
+                .analysis
+                .body_ir
+                .body_data(*body)?
+                .map(|body_data| body_data.source().span)),
+            SymbolAt::Binding { body, binding } => Ok(self
+                .analysis
+                .body_ir
+                .body_data(*body)?
+                .and_then(|body_data| body_data.binding(*binding))
+                .map(|binding| binding.source.span)),
+            SymbolAt::BodyPath { span, .. }
+            | SymbolAt::BodyValuePath { span, .. }
+            | SymbolAt::Def { span, .. }
+            | SymbolAt::Field { span, .. }
+            | SymbolAt::Function { span, .. }
+            | SymbolAt::EnumVariant { span, .. }
+            | SymbolAt::LocalItem { span, .. }
+            | SymbolAt::LocalValueItem { span, .. }
+            | SymbolAt::LocalField { span, .. }
+            | SymbolAt::LocalEnumVariant { span, .. }
+            | SymbolAt::LocalFunction { span, .. }
+            | SymbolAt::TypePath { span, .. }
+            | SymbolAt::UsePath { span, .. } => Ok(Some(*span)),
+            SymbolAt::Expr { body, expr } => Ok(self
+                .analysis
+                .body_ir
+                .body_data(*body)?
+                .and_then(|body_data| body_data.expr(*expr))
+                .map(|expr| expr.source.span)),
+        }
+    }
+
     fn def_map_symbol(target: TargetRef, candidate: DefMapCursorCandidate) -> SourceSymbol {
         match candidate {
             DefMapCursorCandidate::Def { def, file_id, span } => {

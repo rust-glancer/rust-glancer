@@ -2,7 +2,7 @@
 
 use rg_body_ir::BodyTy;
 use rg_def_map::TargetRef;
-use rg_parse::{FileId, Span};
+use rg_parse::FileId;
 
 use crate::{
     api::{
@@ -10,7 +10,10 @@ use crate::{
         query::type_at::TypeResolver,
         render::signature::SignatureRenderer,
         resolve::declaration::SymbolDeclarationResolver,
-        view::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
+        view::{
+            details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
+            source::SourceSymbolView,
+        },
     },
     model::{HoverBlock, HoverInfo, SymbolAt, SymbolKind},
 };
@@ -31,7 +34,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         let Some(symbol) = self.0.symbol_at_for_query(target, file_id, offset)? else {
             return Ok(None);
         };
-        let range = self.symbol_range(&symbol)?;
+        let range = SourceSymbolView::new(self.0).span_for_symbol(&symbol)?;
         let declarations =
             SymbolDeclarationResolver::new(self.0).declarations_for_symbol(symbol.clone())?;
         let context = DeclarationDetailsContext {
@@ -101,41 +104,6 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             signature: details.signature,
             ty: None,
             docs: details.docs,
-        }
-    }
-
-    fn symbol_range(&self, symbol: &SymbolAt) -> anyhow::Result<Option<Span>> {
-        match symbol {
-            SymbolAt::Body { body } => Ok(self
-                .0
-                .body_ir
-                .body_data(*body)?
-                .map(|body_data| body_data.source().span)),
-            SymbolAt::Binding { body, binding } => Ok(self
-                .0
-                .body_ir
-                .body_data(*body)?
-                .and_then(|body_data| body_data.binding(*binding))
-                .map(|binding| binding.source.span)),
-            SymbolAt::BodyPath { span, .. }
-            | SymbolAt::BodyValuePath { span, .. }
-            | SymbolAt::Def { span, .. }
-            | SymbolAt::Field { span, .. }
-            | SymbolAt::Function { span, .. }
-            | SymbolAt::EnumVariant { span, .. }
-            | SymbolAt::LocalItem { span, .. }
-            | SymbolAt::LocalValueItem { span, .. }
-            | SymbolAt::LocalField { span, .. }
-            | SymbolAt::LocalEnumVariant { span, .. }
-            | SymbolAt::LocalFunction { span, .. }
-            | SymbolAt::TypePath { span, .. }
-            | SymbolAt::UsePath { span, .. } => Ok(Some(*span)),
-            SymbolAt::Expr { body, expr } => Ok(self
-                .0
-                .body_ir
-                .body_data(*body)?
-                .and_then(|body_data| body_data.expr(*expr))
-                .map(|expr| expr.source.span)),
         }
     }
 }

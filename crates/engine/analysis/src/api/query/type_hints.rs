@@ -1,11 +1,10 @@
 //! Inlay-style hints derived from the frozen analysis snapshot.
 
-use rg_body_ir::{BindingKind, BodyTy};
 use rg_def_map::TargetRef;
 use rg_parse::{FileId, TextSpan};
 
 use crate::{
-    api::{Analysis, render::ty::TypeRenderer},
+    api::{Analysis, render::ty::TypeRenderer, view::type_hint::TypeHintView},
     model::TypeHint,
 };
 
@@ -22,43 +21,21 @@ impl<'a, 'db> TypeHintCollector<'a, 'db> {
         file_id: FileId,
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<TypeHint>> {
-        let Some(target_bodies) = self.0.body_ir.target_bodies(target)? else {
-            return Ok(Vec::new());
-        };
-
         let renderer = TypeRenderer::new(self.0);
         let mut hints = Vec::new();
 
-        for body in target_bodies.bodies() {
-            for binding in body.bindings() {
-                if binding.source.file_id != file_id {
-                    continue;
-                }
-                if !matches!(binding.kind, BindingKind::Let) {
-                    continue;
-                }
-                if binding.name.is_none() || binding.annotation.is_some() {
-                    continue;
-                }
-                if matches!(binding.ty, BodyTy::Unknown) {
-                    continue;
-                }
-                if range.is_some_and(|range| !range.touches(binding.source.span.text.end)) {
-                    continue;
-                }
+        for binding in TypeHintView::new(self.0).inferred_binding_tys(target, file_id, range)? {
+            let Some(ty) = renderer.render(binding.ty())? else {
+                continue;
+            };
 
-                let Some(ty) = renderer.render(&binding.ty)? else {
-                    continue;
-                };
-
-                let hint = TypeHint {
-                    file_id,
-                    span: binding.source.span,
-                    label: format!(": {ty}"),
-                };
-                if !hints.contains(&hint) {
-                    hints.push(hint);
-                }
+            let hint = TypeHint {
+                file_id: binding.file_id(),
+                span: binding.span(),
+                label: format!(": {ty}"),
+            };
+            if !hints.contains(&hint) {
+                hints.push(hint);
             }
         }
 
