@@ -9,7 +9,7 @@ use expect_test::Expect;
 use crate::{
     BindingData, BodyData, BodyFunctionData, BodyFunctionOwner, BodyGenericArg, BodyImplData,
     BodyIrBuildPolicy, BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy,
-    BodyResolution, BodySource, BodyTy, BodyValueItemData, ClosureCapture, ClosureKind,
+    BodyResolution, BodySource, BodyTy, BodyTyRepr, BodyValueItemData, ClosureCapture, ClosureKind,
     ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode, PatData, PatId,
     PatKind, ResolvedDeclarationRef, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
     StmtKind, TargetBodiesStatus,
@@ -1251,11 +1251,11 @@ impl TargetBodyIrSnapshot<'_> {
             BodyTy::Unit => "()".to_string(),
             BodyTy::Never => "!".to_string(),
             BodyTy::Primitive(primitive) => primitive.label().to_string(),
-            BodyTy::Syntax(ty) => format!("syntax {ty}"),
+            BodyTy::Repr(BodyTyRepr::Syntax(ty)) => format!("syntax {ty}"),
             BodyTy::Reference { mutability, inner } => {
                 format!("{}{}", mutability.render_prefix(), self.render_ty(inner))
             }
-            BodyTy::LocalNominal(items) => {
+            BodyTy::Repr(BodyTyRepr::LocalNominal(items)) => {
                 let mut items = items
                     .iter()
                     .map(|ty| self.render_body_local_nominal_ty(ty))
@@ -1263,7 +1263,7 @@ impl TargetBodyIrSnapshot<'_> {
                 items.sort();
                 format!("local nominal {}", items.join(" | "))
             }
-            BodyTy::Nominal(types) => {
+            BodyTy::Repr(BodyTyRepr::Nominal(types)) => {
                 let mut types = types
                     .iter()
                     .map(|ty| self.render_body_nominal_ty(ty))
@@ -1271,7 +1271,7 @@ impl TargetBodyIrSnapshot<'_> {
                 types.sort();
                 format!("nominal {}", types.join(" | "))
             }
-            BodyTy::SelfTy(types) => {
+            BodyTy::Repr(BodyTyRepr::SelfTy(types)) => {
                 let mut types = types
                     .iter()
                     .map(|ty| self.render_body_nominal_ty(ty))

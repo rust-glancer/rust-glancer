@@ -1387,6 +1387,7 @@ dependencies = [
  "rg_parse",
  "rg_semantic_ir",
  "rg_syntax",
+ "rg_ty",
  "rg_workspace",
  "test_fixture",
 ]
@@ -1416,6 +1417,7 @@ dependencies = [
  "rg_semantic_ir",
  "rg_syntax",
  "rg_text",
+ "rg_ty",
  "rg_wincode_utils",
  "rg_workspace",
  "test_fixture",
@@ -1697,6 +1699,16 @@ dependencies = [
  "smol_str",
  "stdx",
  "text-size",
+ "wincode",
+]
+
+[[package]]
+name = "rg_ty"
+version = "0.1.0"
+dependencies = [
+ "rg_memsize",
+ "rg_text",
+ "rg_wincode_utils",
  "wincode",
 ]
 

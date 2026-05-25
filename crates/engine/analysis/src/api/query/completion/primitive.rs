@@ -1,9 +1,9 @@
 //! Primitive type completion assembly.
 //!
 //! Primitives are part of the Rust language rather than module-scope definitions, so completion
-//! renders them from the Body IR primitive vocabulary instead of pretending they live in DefMap.
+//! renders them from the shared type vocabulary instead of pretending they live in DefMap.
 
-use rg_body_ir::{BodyPrimitiveTy, UnqualifiedCompletionSite};
+use rg_body_ir::UnqualifiedCompletionSite;
 use rg_def_map::Path;
 
 use crate::{
@@ -29,7 +29,7 @@ impl PrimitiveTypeCompletionResolver {
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let mut completions = Vec::new();
 
-        for primitive in BodyPrimitiveTy::ALL
+        for primitive in rg_ty::PrimitiveTy::ALL
             .iter()
             .copied()
             .filter(|primitive| primitive.label().starts_with(&site.member_prefix))
@@ -51,7 +51,7 @@ impl PrimitiveTypeCompletionResolver {
         Ok(completions)
     }
 
-    fn completion(primitive: BodyPrimitiveTy, edit: CompletionEdit) -> CompletionItem {
+    fn completion(primitive: rg_ty::PrimitiveTy, edit: CompletionEdit) -> CompletionItem {
         let label = primitive.label().to_string();
         let kind = CompletionKind::PrimitiveType;
         let target = CompletionTarget::PrimitiveType(primitive);

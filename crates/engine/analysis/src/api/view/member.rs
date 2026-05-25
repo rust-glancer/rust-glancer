@@ -2,7 +2,7 @@
 
 use rg_body_ir::{
     BodyFieldData, BodyFieldRef, BodyFunctionData, BodyFunctionRef, BodyItemRef,
-    BodyLocalNominalTy, BodyNominalTy, BodyTy, ResolvedFieldRef, ResolvedFunctionRef,
+    BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt, ResolvedFieldRef, ResolvedFunctionRef,
 };
 use rg_semantic_ir::{
     Documentation, FieldData, FieldKey, FieldRef, FunctionData, FunctionRef, ItemOwner, ParamItem,

@@ -10,7 +10,7 @@ use rg_def_map::DefMapReadTxn;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
 
-use crate::ir::ty::{BodyRefMutability, BodyTy};
+use crate::ir::ty::BodyTy;
 
 use super::{deref::BodyDerefResolver, index::SemanticResolutionIndex};
 
@@ -124,7 +124,7 @@ impl BodyAutoderefMode {
 pub struct BodyAutoderefCandidate<'ty> {
     ty: Cow<'ty, BodyTy>,
     depth: usize,
-    mutability: Option<BodyRefMutability>,
+    mutability: Option<rg_ty::RefMutability>,
 }
 
 impl<'ty> BodyAutoderefCandidate<'ty> {
@@ -139,7 +139,7 @@ impl<'ty> BodyAutoderefCandidate<'ty> {
     }
 
     /// Mutability of the reference dereferenced to reach this candidate.
-    pub fn mutability(&self) -> Option<BodyRefMutability> {
+    pub fn mutability(&self) -> Option<rg_ty::RefMutability> {
         self.mutability
     }
 }
@@ -167,7 +167,7 @@ enum BodyAutoderefCandidatesKind<'ty> {
 struct PendingAutoderefCandidate<'ty> {
     ty: PendingAutoderefTy<'ty>,
     depth: usize,
-    mutability: Option<BodyRefMutability>,
+    mutability: Option<rg_ty::RefMutability>,
 }
 
 #[derive(Debug, Clone)]
@@ -191,7 +191,7 @@ impl<'ty> PendingAutoderefTy<'ty> {
         }
     }
 
-    fn reference_inner(&self) -> Option<(Self, BodyRefMutability)> {
+    fn reference_inner(&self) -> Option<(Self, rg_ty::RefMutability)> {
         match self {
             Self::Borrowed(ty) => ty
                 .reference_inner()
@@ -282,7 +282,7 @@ impl<'query, 'db, 'ty> Iterator for BodyAutoderefCandidates<'query, 'db, 'ty> {
 struct BodyReferencePeelingCandidates<'ty> {
     next_ty: Option<&'ty BodyTy>,
     next_depth: usize,
-    next_mutability: Option<BodyRefMutability>,
+    next_mutability: Option<rg_ty::RefMutability>,
 }
 
 impl<'ty> Iterator for BodyReferencePeelingCandidates<'ty> {

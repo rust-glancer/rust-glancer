@@ -270,6 +270,12 @@ impl TypeRef {
     }
 }
 
+impl rg_memsize::Shrink for TypeRef {
+    fn shrink_to_fit(&mut self) {
+        TypeRef::shrink_to_fit(self);
+    }
+}
+
 impl fmt::Display for TypeRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

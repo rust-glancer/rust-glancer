@@ -2,7 +2,7 @@
 
 use rg_body_ir::{
     BodyAutoderef, BodyAutoderefMode, BodyDeclarationRef, BodyImplId, BodyResolution, BodyTy,
-    ExprKind, ResolvedDeclarationRef,
+    BodyTyExt, ExprKind, ResolvedDeclarationRef,
 };
 use rg_def_map::TargetRef;
 use rg_parse::FileId;

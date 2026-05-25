@@ -8,7 +8,6 @@ use super::ids::{
     BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
     BodyFunctionRef, BodyImplRef, BodyItemRef, BodyValueItemRef,
 };
-use super::ty::BodyPrimitiveTy;
 
 /// Stable field identity across module-level Semantic IR and body-local declarations.
 #[derive(
@@ -168,7 +167,7 @@ pub enum BodyResolution {
 pub enum BodyTypePathResolution {
     BodyLocal(BodyItemRef),
     #[memsize(skip)]
-    Primitive(BodyPrimitiveTy),
+    Primitive(rg_ty::PrimitiveTy),
     SelfType(Vec<TypeDefRef>),
     TypeDefs(Vec<TypeDefRef>),
     Traits(Vec<TraitRef>),
@@ -176,7 +175,7 @@ pub enum BodyTypePathResolution {
 }
 
 impl BodyTypePathResolution {
-    pub fn is_primitive(&self, primitive: &BodyPrimitiveTy) -> bool {
+    pub fn is_primitive(&self, primitive: &rg_ty::PrimitiveTy) -> bool {
         matches!(self, Self::Primitive(resolved) if resolved == primitive)
     }
 }

@@ -17,7 +17,7 @@ use crate::{
     ir::body::BodyData,
     ir::ids::{BodyFunctionRef, BodyRef},
     ir::item::{BodyFunctionOwner, BodyImplData},
-    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy},
+    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyRepr},
 };
 
 use super::{
@@ -266,7 +266,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
                 self.semantic_ir,
                 impl_arg,
                 context,
-                BodyTy::Syntax(impl_arg.clone()),
+                BodyTyRepr::syntax(impl_arg.clone()),
                 &TypeSubst::new(),
             )?;
             if impl_arg_ty != receiver_arg {
@@ -324,7 +324,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
                 self.semantic_ir,
                 impl_arg,
                 context,
-                BodyTy::Syntax(impl_arg.clone()),
+                BodyTyRepr::syntax(impl_arg.clone()),
                 &TypeSubst::new(),
             )?;
             if Self::type_arg_comparison_is_uncertain(&impl_arg_ty)
@@ -400,7 +400,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
                 self.semantic_ir,
                 impl_arg,
                 context,
-                BodyTy::Syntax(impl_arg.clone()),
+                BodyTyRepr::syntax(impl_arg.clone()),
                 &TypeSubst::new(),
             )?;
             if Self::type_arg_comparison_is_uncertain(&impl_arg_ty)
@@ -523,14 +523,14 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     /// Returns whether comparing this type as a generic argument would overstate certainty.
     fn type_arg_comparison_is_uncertain(ty: &BodyTy) -> bool {
         match ty {
-            BodyTy::Syntax(_) | BodyTy::Unknown => true,
+            BodyTy::Repr(BodyTyRepr::Syntax(_)) | BodyTy::Unknown => true,
             BodyTy::Reference { inner, .. } => Self::type_arg_comparison_is_uncertain(inner),
             BodyTy::Unit
             | BodyTy::Never
             | BodyTy::Primitive(_)
-            | BodyTy::LocalNominal(_)
-            | BodyTy::Nominal(_)
-            | BodyTy::SelfTy(_) => false,
+            | BodyTy::Repr(
+                BodyTyRepr::LocalNominal(_) | BodyTyRepr::Nominal(_) | BodyTyRepr::SelfTy(_),
+            ) => false,
         }
     }
 }

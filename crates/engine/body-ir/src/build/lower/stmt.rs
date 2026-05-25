@@ -13,9 +13,9 @@ use rg_item_tree::{
 use crate::ir::{
     BindingData, BindingId, BindingKind, BodyFunctionData, BodyFunctionId, BodyFunctionOwner,
     BodyImplData, BodyImplId, BodyItemData, BodyItemDeclaration, BodyItemId, BodyItemKind,
-    BodyItemOwner, BodyRefMutability, BodySelfParamKind, BodyTy, BodyValueItemData,
-    BodyValueItemDeclaration, BodyValueItemId, BodyValueItemKind, BodyValueItemOwner,
-    ExprBlockKind, ExprId, ExprKind, ScopeId, StmtData, StmtId, StmtKind,
+    BodyItemOwner, BodySelfParamKind, BodyTy, BodyValueItemData, BodyValueItemDeclaration,
+    BodyValueItemId, BodyValueItemKind, BodyValueItemOwner, ExprBlockKind, ExprId, ExprKind,
+    ScopeId, StmtData, StmtId, StmtKind,
 };
 
 use super::function::FunctionBodyLowering;
@@ -53,7 +53,7 @@ impl FunctionBodyLowering<'_> {
             BodySelfParamKind::Explicit
         } else if param.amp_token().is_some() {
             BodySelfParamKind::Reference {
-                mutability: BodyRefMutability::from_mut_token(param.mut_token().is_some()),
+                mutability: rg_ty::RefMutability::from_mut_token(param.mut_token().is_some()),
             }
         } else {
             BodySelfParamKind::Value

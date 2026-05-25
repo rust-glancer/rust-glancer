@@ -1,7 +1,7 @@
 use rg_body_ir::{
     BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionOwner, BodyFunctionRef, BodyItemKind,
-    BodyItemRef, BodyPrimitiveTy, BodyRef, BodyValueItemKind, BodyValueItemRef, ExprId,
-    ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
+    BodyItemRef, BodyRef, BodyValueItemKind, BodyValueItemRef, ExprId, ResolvedEnumVariantRef,
+    ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
 };
 use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
@@ -337,7 +337,7 @@ pub enum CompletionTarget {
     Function(ResolvedFunctionRef),
     Def(DefId),
     Keyword(KeywordCompletion),
-    PrimitiveType(BodyPrimitiveTy),
+    PrimitiveType(rg_ty::PrimitiveTy),
 }
 
 /// Small, explicit set of Rust keyword and keyword-like snippet completions.

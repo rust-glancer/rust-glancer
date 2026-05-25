@@ -37,10 +37,7 @@ pub use self::{
         ResolvedFieldRef, ResolvedFunctionRef,
     },
     stmt::{BindingData, BindingKind, BodySelfParamKind, StmtData, StmtKind},
-    ty::{
-        BodyFloatTy, BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyPrimitiveTy,
-        BodyRefMutability, BodySignedIntTy, BodyTy, BodyUnsignedIntTy,
-    },
+    ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt, BodyTyRepr},
 };
 
 pub(crate) use self::body::BodyBuilder;

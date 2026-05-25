@@ -2,6 +2,7 @@
 
 use rg_body_ir::{
     BodyAutoderef, BodyDeclarationRef, BodyImplId, BodyImplRef, BodyItemRef, BodyRef, BodyTy,
+    BodyTyExt,
 };
 use rg_def_map::{LocalDefRef, ModuleOrigin, ModuleRef};
 use rg_semantic_ir::{FunctionRef, ImplRef, TypeDefRef};

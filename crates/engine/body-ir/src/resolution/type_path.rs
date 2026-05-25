@@ -14,7 +14,7 @@ use crate::{
     ir::ids::{BodyItemId, BodyItemRef, BodyRef, ScopeId},
     ir::item::BodyItemOwner,
     ir::resolved::BodyTypePathResolution,
-    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyPrimitiveTy, BodyTy},
+    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyTy, BodyTyExt, BodyTyRepr},
 };
 
 use super::{
@@ -76,7 +76,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             .resolve_type_path(self.def_map, context, path)?;
         let resolution = BodyTypePathResolution::from(resolution);
         if matches!(resolution, BodyTypePathResolution::Unknown)
-            && let Some(primitive) = path.single_name().and_then(BodyPrimitiveTy::from_name)
+            && let Some(primitive) = path.single_name().and_then(rg_ty::PrimitiveTy::from_name)
         {
             return Ok(BodyTypePathResolution::Primitive(primitive));
         }
@@ -122,7 +122,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
                         BodyItemKind::Struct | BodyItemKind::Enum | BodyItemKind::Union => {
                             Ok(ty_from_body_resolution(
                                 BodyTypePathResolution::BodyLocal(item_ref),
-                                BodyTy::Syntax(ty.clone()),
+                                BodyTyRepr::syntax(ty.clone()),
                                 args,
                             ))
                         }
@@ -138,16 +138,16 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
                                     &alias_subst,
                                 )
                             } else {
-                                Ok(BodyTy::Syntax(ty.clone()))
+                                Ok(BodyTyRepr::syntax(ty.clone()))
                             }
                         }
-                        BodyItemKind::Trait => Ok(BodyTy::Syntax(ty.clone())),
+                        BodyItemKind::Trait => Ok(BodyTyRepr::syntax(ty.clone())),
                     };
                 }
 
                 Ok(ty_from_body_resolution(
                     resolution,
-                    BodyTy::Syntax(ty.clone()),
+                    BodyTyRepr::syntax(ty.clone()),
                     args,
                 ))
             }
@@ -220,7 +220,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             self.semantic_ir,
             ty,
             context,
-            BodyTy::Syntax(ty.clone()),
+            BodyTyRepr::syntax(ty.clone()),
             subst,
         )
     }
@@ -366,7 +366,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             return Ok(BodyTy::Unknown);
         };
         if type_ref_is_self(aliased_ty) {
-            return Ok(BodyTy::LocalNominal(vec![receiver_ty.clone()]));
+            return Ok(BodyTyRepr::local_nominal(vec![receiver_ty.clone()]));
         }
 
         let BodyItemOwner::LocalImpl(impl_id) = item.owner else {

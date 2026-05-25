@@ -9,7 +9,7 @@ use super::{
     ids::{BindingId, ExprId, PatId, ScopeId, StmtId},
     path::BodyPath,
     resolved::BodyResolution,
-    ty::{BodyRefMutability, BodyTy},
+    ty::BodyTy,
 };
 
 /// One lowered expression.
@@ -491,7 +491,7 @@ pub enum ExprWrapperKind {
     Paren,
     /// `&<expr>` or `&mut <expr>`.
     #[display("ref")]
-    Ref { mutability: BodyRefMutability },
+    Ref { mutability: rg_ty::RefMutability },
     /// `<expr>.await`.
     #[display("await")]
     Await,

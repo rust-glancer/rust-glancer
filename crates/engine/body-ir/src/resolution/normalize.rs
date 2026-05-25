@@ -9,7 +9,7 @@ use rg_semantic_ir::SemanticIrReadTxn;
 use crate::{
     ir::body::BodyData,
     ir::expr::ExprWrapperKind,
-    ir::ty::{BodyGenericArg, BodyTy},
+    ir::ty::{BodyGenericArg, BodyTy, BodyTyExt},
 };
 
 use super::push_unique;
@@ -64,24 +64,10 @@ impl<'db, 'body> BodyTyNormalizer<'db, 'body> {
             }
         }
 
-        one_ty_or_unknown(outputs)
+        BodyTy::one_or_unknown(outputs)
     }
 }
 
 fn first_type_arg(args: &[BodyGenericArg]) -> Option<BodyTy> {
-    args.iter().find_map(|arg| match arg {
-        BodyGenericArg::Type(ty) => Some((**ty).clone()),
-        BodyGenericArg::Lifetime(_)
-        | BodyGenericArg::Const(_)
-        | BodyGenericArg::AssocType { .. }
-        | BodyGenericArg::Unsupported(_) => None,
-    })
-}
-
-fn one_ty_or_unknown(mut tys: Vec<BodyTy>) -> BodyTy {
-    if tys.len() == 1 {
-        tys.pop().expect("one type should exist")
-    } else {
-        BodyTy::Unknown
-    }
+    args.iter().find_map(|arg| arg.as_ty().cloned())
 }

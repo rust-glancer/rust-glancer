@@ -17,7 +17,7 @@ use crate::{
     ir::pat::{PatKind, RecordPatField},
     ir::path::BodyPath,
     ir::stmt::StmtKind,
-    ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
+    ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt},
 };
 
 use super::{

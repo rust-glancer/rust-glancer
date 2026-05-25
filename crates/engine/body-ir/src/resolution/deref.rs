@@ -12,7 +12,7 @@ use rg_semantic_ir::{
 };
 use rg_text::Name;
 
-use crate::ir::ty::{BodyNominalTy, BodyTy};
+use crate::ir::ty::{BodyNominalTy, BodyTy, BodyTyExt, BodyTyRepr};
 
 use super::{
     impl_match::BodyImplMatcher,
@@ -159,7 +159,10 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
             };
 
             let resolved = self.ty_from_target_type_ref(trait_impl, impl_data, target_ty, subst)?;
-            if matches!(resolved, BodyTy::Unknown | BodyTy::Syntax(_)) {
+            if matches!(
+                resolved,
+                BodyTy::Unknown | BodyTy::Repr(BodyTyRepr::Syntax(_))
+            ) {
                 return Ok(None);
             }
             return Ok(Some(resolved));
@@ -185,7 +188,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
             self.semantic_ir,
             target_ty,
             context,
-            BodyTy::Syntax(target_ty.clone()),
+            BodyTyRepr::syntax(target_ty.clone()),
             subst,
         )
     }

@@ -6,7 +6,7 @@ use super::{
     ids::{
         BindingId, BodyFunctionId, BodyImplId, BodyItemId, BodyValueItemId, ExprId, PatId, ScopeId,
     },
-    ty::{BodyRefMutability, BodyTy},
+    ty::BodyTy,
 };
 
 /// One local binding introduced by a parameter or `let`.
@@ -63,7 +63,7 @@ pub enum BindingKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub enum BodySelfParamKind {
     Value,
-    Reference { mutability: BodyRefMutability },
+    Reference { mutability: rg_ty::RefMutability },
     Explicit,
 }
 

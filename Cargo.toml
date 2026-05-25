@@ -14,6 +14,7 @@ members = [
   "crates/engine/item-tree",
   "crates/engine/def-map",
   "crates/engine/semantic-ir",
+  "crates/engine/ty",
   "crates/engine/body-ir",
   "crates/engine/analysis",
   "crates/engine/project",
@@ -111,6 +112,7 @@ rg_parse = { path = "crates/engine/parse" }
 rg_item_tree = { path = "crates/engine/item-tree" }
 rg_def_map = { path = "crates/engine/def-map" }
 rg_semantic_ir = { path = "crates/engine/semantic-ir" }
+rg_ty = { path = "crates/engine/ty" }
 rg_body_ir = { path = "crates/engine/body-ir" }
 rg_analysis = { path = "crates/engine/analysis" }
 rg_project = { path = "crates/engine/project" }

@@ -25,7 +25,7 @@ use crate::{
         ResolvedFieldRef, ResolvedFunctionRef,
     },
     ir::stmt::{BindingKind, BodySelfParamKind},
-    ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
+    ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt, BodyTyRepr},
 };
 
 use super::{
@@ -137,7 +137,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 .type_path_resolver()
                 .self_tys_for_function(self.body.owner)?;
             if !self_tys.is_empty() {
-                let ty = BodyTy::SelfTy(self_tys.into_iter().map(BodyNominalTy::bare).collect());
+                let ty =
+                    BodyTyRepr::self_ty(self_tys.into_iter().map(BodyNominalTy::bare).collect());
                 return Ok(match kind {
                     BodySelfParamKind::Value => ty,
                     BodySelfParamKind::Reference { mutability } => {
@@ -355,14 +356,14 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 {
                     return Ok((
                         BodyResolution::Declaration(vec![item_ref.into()]),
-                        BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item_ref)]),
+                        BodyTyRepr::local_nominal(vec![BodyLocalNominalTy::bare(item_ref)]),
                     ));
                 }
             }
             BodyTypePathResolution::SelfType(types) => {
                 return Ok((
                     BodyResolution::Unknown,
-                    BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect()),
+                    BodyTyRepr::self_ty(types.into_iter().map(BodyNominalTy::bare).collect()),
                 ));
             }
             BodyTypePathResolution::Primitive(_)
@@ -733,7 +734,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         if receiver_ty.is_some() && type_ref_is_self(ret_ty) {
             return Ok(receiver_ty
                 .cloned()
-                .map(|ty| BodyTy::Nominal(vec![ty]))
+                .map(|ty| BodyTyRepr::nominal(vec![ty]))
                 .unwrap_or(BodyTy::Unknown));
         }
 
@@ -769,11 +770,11 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             let path = Path::from_type_path(type_path);
             if path.is_self_type() {
                 if let Some(receiver_ty) = receiver_ty {
-                    return Ok(BodyTy::LocalNominal(vec![receiver_ty.clone()]));
+                    return Ok(BodyTyRepr::local_nominal(vec![receiver_ty.clone()]));
                 }
                 return Ok(impl_data
                     .self_item
-                    .map(|item| BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)]))
+                    .map(|item| BodyTyRepr::local_nominal(vec![BodyLocalNominalTy::bare(item)]))
                     .unwrap_or(BodyTy::Unknown));
             }
         }
@@ -802,7 +803,9 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 
         if matches!(
             callee_data.ty,
-            BodyTy::Nominal(_) | BodyTy::SelfTy(_) | BodyTy::LocalNominal(_)
+            BodyTy::Repr(
+                BodyTyRepr::Nominal(_) | BodyTyRepr::SelfTy(_) | BodyTyRepr::LocalNominal(_),
+            )
         ) {
             return Ok(callee_data.ty.clone());
         }
@@ -980,14 +983,14 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 {
                     return Ok((
                         BodyResolution::Declaration(vec![item_ref.into()]),
-                        BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item_ref)]),
+                        BodyTyRepr::local_nominal(vec![BodyLocalNominalTy::bare(item_ref)]),
                     ));
                 }
             }
             BodyTypePathResolution::SelfType(types) => {
                 return Ok((
                     BodyResolution::Unknown,
-                    BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect()),
+                    BodyTyRepr::self_ty(types.into_iter().map(BodyNominalTy::bare).collect()),
                 ));
             }
             BodyTypePathResolution::Primitive(_)
@@ -1109,7 +1112,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 };
                 Ok((
                     BodyResolution::Declaration(vec![item_ref.into()]),
-                    BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item_ref)]),
+                    BodyTyRepr::local_nominal(vec![BodyLocalNominalTy::bare(item_ref)]),
                 ))
             }
         }
@@ -1146,7 +1149,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 };
 
                 if type_ref_is_self(ty) {
-                    return Ok(BodyTy::LocalNominal(vec![receiver_ty.clone()]));
+                    return Ok(BodyTyRepr::local_nominal(vec![receiver_ty.clone()]));
                 }
 
                 let mut subst = local_type_subst(self.body, receiver_ty);
@@ -1188,7 +1191,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             );
             push_unique(
                 &mut variant_tys,
-                BodyTy::LocalNominal(vec![local_ty.clone()]),
+                BodyTyRepr::local_nominal(vec![local_ty.clone()]),
             );
         }
         for nominal_ty in prefix_ty.as_nominals() {
@@ -1202,7 +1205,10 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 continue;
             };
             push_unique(&mut variants, ResolvedEnumVariantRef::Semantic(variant_ref));
-            push_unique(&mut variant_tys, BodyTy::Nominal(vec![nominal_ty.clone()]));
+            push_unique(
+                &mut variant_tys,
+                BodyTyRepr::nominal(vec![nominal_ty.clone()]),
+            );
         }
 
         if !variants.is_empty() {
@@ -1388,13 +1394,13 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 .body
                 .local_item(item.item)
                 .filter(|data| data.is_nominal_type())
-                .map(|_| BodyTy::LocalNominal(vec![BodyLocalNominalTy::bare(item)]))
+                .map(|_| BodyTyRepr::local_nominal(vec![BodyLocalNominalTy::bare(item)]))
                 .unwrap_or(BodyTy::Unknown),
             BodyTypePathResolution::SelfType(types) => {
-                BodyTy::SelfTy(types.into_iter().map(BodyNominalTy::bare).collect())
+                BodyTyRepr::self_ty(types.into_iter().map(BodyNominalTy::bare).collect())
             }
             BodyTypePathResolution::TypeDefs(types) => {
-                BodyTy::Nominal(types.into_iter().map(BodyNominalTy::bare).collect())
+                BodyTyRepr::nominal(types.into_iter().map(BodyNominalTy::bare).collect())
             }
             BodyTypePathResolution::Primitive(primitive) => BodyTy::Primitive(primitive),
             BodyTypePathResolution::Traits(_) | BodyTypePathResolution::Unknown => BodyTy::Unknown,
@@ -1418,7 +1424,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         Ok(if type_defs.is_empty() {
             BodyTy::Unknown
         } else {
-            BodyTy::Nominal(type_defs.into_iter().map(BodyNominalTy::bare).collect())
+            BodyTyRepr::nominal(type_defs.into_iter().map(BodyNominalTy::bare).collect())
         })
     }
 }

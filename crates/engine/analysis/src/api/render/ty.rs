@@ -4,7 +4,7 @@
 //! The analysis layer already returns stable IDs; inlay hints and future hovers need labels that
 //! are useful while reading code.
 
-use rg_body_ir::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy};
+use rg_body_ir::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyRepr};
 use rg_semantic_ir::TypeDefId;
 
 use crate::api::Analysis;
@@ -21,11 +21,11 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             BodyTy::Unit => Ok(Some("()".to_string())),
             BodyTy::Never => Ok(Some("!".to_string())),
             BodyTy::Primitive(primitive) => Ok(Some(primitive.label().to_string())),
-            BodyTy::Syntax(ty) => Ok(Some(ty.to_string())),
+            BodyTy::Repr(BodyTyRepr::Syntax(ty)) => Ok(Some(ty.to_string())),
             BodyTy::Reference { mutability, inner } => Ok(self
                 .render(inner)?
                 .map(|inner| format!("{}{inner}", mutability.render_prefix()))),
-            BodyTy::LocalNominal(types) => {
+            BodyTy::Repr(BodyTyRepr::LocalNominal(types)) => {
                 let mut labels = Vec::new();
                 for ty in types {
                     if let Some(label) = self.render_local_nominal(ty)? {
@@ -34,7 +34,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 }
                 Ok(Self::render_joined(labels.into_iter()))
             }
-            BodyTy::Nominal(types) | BodyTy::SelfTy(types) => {
+            BodyTy::Repr(BodyTyRepr::Nominal(types) | BodyTyRepr::SelfTy(types)) => {
                 let mut labels = Vec::new();
                 for ty in types {
                     if let Some(label) = self.render_nominal(ty)? {
