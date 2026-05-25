@@ -9,11 +9,6 @@ use rg_semantic_ir::{
     EnumVariantRef, FieldRef, FunctionRef, SemanticItemKind, TraitApplicability, TypePathContext,
 };
 
-pub(super) struct SymbolCandidate {
-    pub(super) symbol: SymbolAt,
-    pub(super) span: Span,
-}
-
 /// Symbol found at one source offset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymbolAt {

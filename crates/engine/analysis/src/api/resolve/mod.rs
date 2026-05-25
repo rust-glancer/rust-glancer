@@ -4,5 +4,4 @@
 //! body IR into analysis-owned vocabularies before query modules turn them into navigation, hover,
 //! type, or symbol results.
 
-pub(crate) mod cursor;
 pub(crate) mod declaration;
