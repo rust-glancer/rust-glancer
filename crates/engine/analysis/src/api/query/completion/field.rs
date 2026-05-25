@@ -14,7 +14,7 @@ use crate::{
     },
 };
 
-use super::{CompletionMetadata, completion_sort::CompletionSortPolicy};
+use super::completion_sort::CompletionSortPolicy;
 
 pub(super) struct FieldCompletionRenderer<'a, 'db>(&'a Analysis<'db>);
 
@@ -82,4 +82,10 @@ pub(super) struct FieldCompletion {
 struct FieldCompletionMetadata {
     key: FieldKey,
     completion: CompletionMetadata,
+}
+
+struct CompletionMetadata {
+    label: String,
+    detail: Option<String>,
+    documentation: Option<String>,
 }

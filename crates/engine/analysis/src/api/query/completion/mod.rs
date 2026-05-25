@@ -10,7 +10,6 @@
 //! edits.
 
 mod completion_sort;
-mod context;
 mod dot;
 mod field;
 mod function;
@@ -23,6 +22,7 @@ mod unqualified;
 
 use crate::{
     Analysis,
+    api::view::completion::{CompletionSite, CompletionSiteSyntax, CompletionView},
     model::{CompletionItem, CompletionKind},
 };
 use rg_body_ir::UnqualifiedCompletionNamespace;
@@ -30,9 +30,9 @@ use rg_def_map::TargetRef;
 use rg_parse::FileId;
 
 use self::{
-    context::CompletionContext, dot::DotCompletionResolver, keyword::KeywordCompletionResolver,
-    path::PathCompletionResolver, record::RecordFieldCompletionResolver,
-    syntax::CompletionSyntaxContextCache, unqualified::UnqualifiedCompletionResolver,
+    dot::DotCompletionResolver, keyword::KeywordCompletionResolver, path::PathCompletionResolver,
+    record::RecordFieldCompletionResolver, syntax::CompletionSyntaxContextCache,
+    unqualified::UnqualifiedCompletionResolver,
 };
 
 /// Editor capabilities that affect how completion items should be rendered.
@@ -109,20 +109,32 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
         // Keyword fragments can be useful even when the cursor does not lower
         // into a semantic completion site. For example, `f$0` at item level is
         // just incomplete text, not a Body IR or DefMap path.
-        let Some(context) = CompletionContext::at(self.analysis, self.query, syntax_context.get())?
+        let syntax_hint = syntax_context.get().map(|syntax| {
+            CompletionSiteSyntax::new(
+                syntax.inside_use_item(),
+                syntax.after_dot(),
+                syntax.after_colon_colon(),
+            )
+        });
+        let Some(site) = CompletionView::new(self.analysis).site_at(
+            self.query.target,
+            self.query.file_id,
+            self.query.offset,
+            syntax_hint,
+        )?
         else {
             return KeywordCompletionResolver::new(self.query.client_capabilities)
                 .completions(syntax_context.get());
         };
 
-        match context {
-            CompletionContext::Dot(site) => {
+        match site {
+            CompletionSite::Dot(site) => {
                 DotCompletionResolver::new(self.analysis, self.query).completions(site)
             }
-            CompletionContext::BodyPath(site) => {
+            CompletionSite::BodyPath(site) => {
                 PathCompletionResolver::new(self.analysis, self.query).body_completions(site)
             }
-            CompletionContext::BodyUnqualified(site) => {
+            CompletionSite::BodyUnqualified(site) => {
                 // Plain body names come from lexical scope, but value positions
                 // also accept expression keywords. Keep those as low-priority
                 // overlay rows so semantic names remain the primary signal.
@@ -138,23 +150,17 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 }
                 Ok(completions)
             }
-            CompletionContext::RecordField(site) => {
+            CompletionSite::RecordField(site) => {
                 RecordFieldCompletionResolver::new(self.analysis).completions(site)
             }
-            CompletionContext::UsePath(site) => {
+            CompletionSite::UsePath(site) => {
                 PathCompletionResolver::new(self.analysis, self.query).use_completions(site)
             }
-            CompletionContext::UseUnqualified(site) => {
+            CompletionSite::UseUnqualified(site) => {
                 UnqualifiedCompletionResolver::new(self.analysis, self.query).use_completions(site)
             }
         }
     }
-}
-
-struct CompletionMetadata {
-    label: String,
-    detail: Option<String>,
-    documentation: Option<String>,
 }
 
 fn def_completion_detail(kind: CompletionKind, label: &str) -> String {

@@ -1,15 +1,13 @@
 //! Qualified path completion assembly for body and import positions.
 
 use rg_body_ir::{PathCompletionNamespace, PathCompletionSite};
-use rg_def_map::{
-    DefId, DefMapPathCompletionSite, ModuleRef, Path, ScopeNamespace, VisibleScopeDef,
-};
+use rg_def_map::DefMapPathCompletionSite;
 use rg_parse::Span;
-use rg_semantic_ir::Documentation;
 
 use crate::{
     Analysis,
     api::view::{
+        completion::{CompletionScopeNamespace, CompletionView, ModuleCompletionCandidate},
         enum_variant::{EnumVariant, EnumVariantView},
         member::MemberView,
     },
@@ -20,7 +18,7 @@ use crate::{
 };
 
 use super::{
-    CompletionMetadata, CompletionQuery,
+    CompletionQuery,
     completion_sort::CompletionSortPolicy,
     def_completion_detail,
     function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
@@ -42,16 +40,11 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         &self,
         site: PathCompletionSite,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        let Some(body) = self.analysis.body_ir.body_data(site.body)? else {
-            return Ok(Vec::new());
-        };
-
         let edit = CompletionEdit {
             replace: site.member_prefix_span,
         };
         let mut completions = self.module_path_completions(
-            body.owner_module(),
-            &site.qualifier,
+            CompletionView::new(self.analysis).module_candidates_for_body_path(&site)?,
             site.member_prefix_span,
             PathCompletionFilter::from(site.namespace),
             FunctionCallCompletion::FunctionCall,
@@ -71,54 +64,36 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         site: DefMapPathCompletionSite,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         self.module_path_completions(
-            site.module,
-            &site.qualifier,
+            CompletionView::new(self.analysis).module_candidates_for_use_path(&site)?,
             site.member_prefix_span,
             PathCompletionFilter::All,
             FunctionCallCompletion::Plain,
         )
     }
 
-    /// Resolves the qualifier in `crate::api::$0` and renders definitions visible
-    /// from the resolved module.
+    /// Renders definitions visible from a resolved module qualifier.
     fn module_path_completions(
         &self,
-        importing_module: ModuleRef,
-        qualifier: &Path,
+        candidates: Vec<ModuleCompletionCandidate>,
         member_prefix_span: Span,
         filter: PathCompletionFilter,
         function_call_completion: FunctionCallCompletion,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        let resolved = self
-            .analysis
-            .def_map
-            .resolve_path_in_type_namespace(importing_module, qualifier)?;
         let edit = CompletionEdit {
             replace: member_prefix_span,
         };
         let mut completions = Vec::new();
 
-        // Module path completion needs a module scope to list. Non-module qualifiers
-        // such as type names are ignored here because they expose associated items
-        // through a different lookup model.
-        for def in resolved.resolved {
-            let DefId::Module(source_module) = def else {
+        for candidate in candidates {
+            if !filter.accepts(candidate.namespace()) {
                 continue;
-            };
-            for visible_def in self
-                .analysis
-                .def_map
-                .visible_scope_defs(importing_module, source_module)?
-            {
-                if filter.accepts(visible_def.namespace) {
-                    self.push_visible_scope_completion(
-                        visible_def,
-                        edit,
-                        function_call_completion,
-                        &mut completions,
-                    )?;
-                }
             }
+            self.push_module_candidate_completion(
+                candidate,
+                edit,
+                function_call_completion,
+                &mut completions,
+            )?;
         }
 
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
@@ -179,15 +154,15 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
 
     /// Adds one visible module-scope definition for path completion, such as
     /// `HashMap` in `std::collections::Ha$0`.
-    fn push_visible_scope_completion(
+    fn push_module_candidate_completion(
         &self,
-        visible_def: VisibleScopeDef,
+        candidate: ModuleCompletionCandidate,
         edit: CompletionEdit,
         function_call_completion: FunctionCallCompletion,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
         if let Some(completion) =
-            self.function_completion(&visible_def, edit, function_call_completion)?
+            self.function_completion(&candidate, edit, function_call_completion)?
         {
             if completions.iter().any(|existing| {
                 existing.target == completion.target && existing.label == completion.label
@@ -198,27 +173,26 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             return Ok(());
         }
 
-        let Some((kind, metadata)) = self.visible_scope_completion_metadata(&visible_def)? else {
-            return Ok(());
-        };
-        let target = CompletionTarget::Def(visible_def.def);
+        let target = candidate.target();
+        let label = candidate.label();
+        let kind = candidate.kind();
         if completions
             .iter()
-            .any(|completion| completion.target == target && completion.label == metadata.label)
+            .any(|completion| completion.target == target && completion.label == label)
         {
             return Ok(());
         }
 
         completions.push(CompletionItem {
-            label: metadata.label.clone(),
+            label: label.to_string(),
             kind,
             target,
             applicability: CompletionApplicability::Known,
-            detail: metadata.detail,
-            documentation: metadata.documentation,
+            detail: Some(def_completion_detail(kind, label)),
+            documentation: candidate.documentation().map(ToString::to_string),
             sort_text: CompletionSortPolicy::General.sort_text(
                 None,
-                &metadata.label,
+                label,
                 kind,
                 CompletionApplicability::Known,
                 target,
@@ -231,22 +205,22 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
 
     fn function_completion(
         &self,
-        visible_def: &VisibleScopeDef,
+        candidate: &ModuleCompletionCandidate,
         edit: CompletionEdit,
         function_call_completion: FunctionCallCompletion,
     ) -> anyhow::Result<Option<CompletionItem>> {
-        let DefId::Local(local_def) = visible_def.def else {
+        let Some(function_ref) = candidate.function_ref() else {
             return Ok(None);
         };
         let members = MemberView::new(self.analysis);
-        let Some(function) = members.function_for_local_def(local_def)? else {
+        let Some(function) = members.function(function_ref)? else {
             return Ok(None);
         };
         Ok(Some(
             FunctionCompletionRenderer::new(self.analysis, self.query)
                 .completion(FunctionCompletionRequest {
                     function,
-                    label_override: Some(&visible_def.label),
+                    label_override: Some(candidate.label()),
                     kind: CompletionKind::Function,
                     applicability: CompletionApplicability::Known,
                     edit,
@@ -256,43 +230,6 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
                 })
                 .item,
         ))
-    }
-
-    fn visible_scope_completion_metadata(
-        &self,
-        visible_def: &VisibleScopeDef,
-    ) -> anyhow::Result<Option<(CompletionKind, CompletionMetadata)>> {
-        let (kind, metadata) = match visible_def.def {
-            DefId::Module(module) => {
-                let Some(data) = self.analysis.def_map.module(module)? else {
-                    return Ok(None);
-                };
-                (
-                    CompletionKind::Module,
-                    CompletionMetadata {
-                        label: visible_def.label.clone(),
-                        detail: Some(format!("mod {}", visible_def.label)),
-                        documentation: data.docs.as_ref().map(Documentation::text),
-                    },
-                )
-            }
-            DefId::Local(local_def) => {
-                let Some(data) = self.analysis.def_map.local_def(local_def)? else {
-                    return Ok(None);
-                };
-                let kind = CompletionKind::from_local_def_kind(data.kind);
-                (
-                    kind,
-                    CompletionMetadata {
-                        label: visible_def.label.clone(),
-                        detail: Some(def_completion_detail(kind, &visible_def.label)),
-                        documentation: None,
-                    },
-                )
-            }
-        };
-
-        Ok(Some((kind, metadata)))
     }
 }
 
@@ -309,9 +246,9 @@ enum PathCompletionFilter {
 }
 
 impl PathCompletionFilter {
-    fn accepts(self, namespace: ScopeNamespace) -> bool {
+    fn accepts(self, namespace: CompletionScopeNamespace) -> bool {
         match self {
-            Self::Types => matches!(namespace, ScopeNamespace::Types),
+            Self::Types => matches!(namespace, CompletionScopeNamespace::Types),
             Self::All => true,
         }
     }

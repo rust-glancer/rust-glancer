@@ -6,12 +6,18 @@ use rg_body_ir::{
     BodyUnqualifiedCompletionCandidate, ResolvedFunctionRef, UnqualifiedCompletionNamespace,
     UnqualifiedCompletionSite,
 };
-use rg_def_map::{DefId, DefMapUnqualifiedCompletionSite, ScopeNamespace, VisibleScopeDef};
+use rg_def_map::DefMapUnqualifiedCompletionSite;
 use rg_semantic_ir::Documentation;
 
 use crate::{
     Analysis,
-    api::{render::signature::SignatureRenderer, view::member::MemberView},
+    api::{
+        render::signature::SignatureRenderer,
+        view::{
+            completion::{CompletionScopeNamespace, CompletionView, ModuleCompletionCandidate},
+            member::MemberView,
+        },
+    },
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -19,7 +25,7 @@ use crate::{
 };
 
 use super::{
-    CompletionMetadata, CompletionQuery,
+    CompletionQuery,
     completion_sort::{CompletionSortPolicy, CompletionSortPriority},
     def_completion_detail,
     function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
@@ -67,11 +73,8 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             )?;
         }
 
-        let Some(body) = self.analysis.body_ir.body_data(site.body)? else {
-            return Ok(completions);
-        };
         self.push_module_completions(
-            body.owner_module(),
+            CompletionView::new(self.analysis).module_candidates_for_body_unqualified(&site)?,
             ModuleCompletionOptions {
                 filter,
                 edit,
@@ -105,7 +108,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let mut completions = Vec::new();
         let hidden = HashSet::new();
         self.push_module_completions(
-            site.module,
+            CompletionView::new(self.analysis).module_candidates_for_use_unqualified(&site)?,
             ModuleCompletionOptions {
                 filter: UnqualifiedCompletionFilter::All,
                 edit,
@@ -126,7 +129,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         site: &UnqualifiedCompletionSite,
         filter: UnqualifiedCompletionFilter,
         edit: CompletionEdit,
-        hidden: &mut HashSet<(String, ScopeNamespace)>,
+        hidden: &mut HashSet<(String, CompletionScopeNamespace)>,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
         match candidate {
@@ -135,7 +138,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 label,
                 scope_distance,
             } => {
-                hidden.insert((label.clone(), ScopeNamespace::Values));
+                hidden.insert((label.clone(), CompletionScopeNamespace::Values));
                 let Some(body) = self.analysis.body_ir.body_data(site.body)? else {
                     return Ok(());
                 };
@@ -176,11 +179,11 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 let Some(data) = body.local_item(item.item) else {
                     return Ok(());
                 };
-                hidden.insert((label.clone(), ScopeNamespace::Types));
+                hidden.insert((label.clone(), CompletionScopeNamespace::Types));
                 if matches!(site.namespace, UnqualifiedCompletionNamespace::Values)
                     && data.has_value_constructor()
                 {
-                    hidden.insert((label.clone(), ScopeNamespace::Values));
+                    hidden.insert((label.clone(), CompletionScopeNamespace::Values));
                 }
                 let kind = CompletionKind::from_body_item_kind(kind);
                 let target = CompletionTarget::BodyItem(item);
@@ -208,7 +211,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 label,
                 scope_distance,
             } => {
-                hidden.insert((label.clone(), ScopeNamespace::Values));
+                hidden.insert((label.clone(), CompletionScopeNamespace::Values));
                 let Some(body) = self.analysis.body_ir.body_data(item.body)? else {
                     return Ok(());
                 };
@@ -242,7 +245,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 label,
                 scope_distance,
             } => {
-                hidden.insert((label.clone(), ScopeNamespace::Values));
+                hidden.insert((label.clone(), CompletionScopeNamespace::Values));
                 let function = ResolvedFunctionRef::BodyLocal(function);
                 let members = MemberView::new(self.analysis);
                 let Some(function) = members.function(function)? else {
@@ -267,25 +270,21 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
 
     fn push_module_completions(
         &self,
-        module: rg_def_map::ModuleRef,
+        candidates: Vec<ModuleCompletionCandidate>,
         options: ModuleCompletionOptions,
-        hidden: &HashSet<(String, ScopeNamespace)>,
+        hidden: &HashSet<(String, CompletionScopeNamespace)>,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
-        for visible_def in self
-            .analysis
-            .def_map
-            .visible_unqualified_scope_defs(module)?
-        {
+        for candidate in candidates {
             if !options
                 .filter
-                .accepts_scope_namespace(visible_def.namespace)
-                || hidden.contains(&(visible_def.label.clone(), visible_def.namespace))
+                .accepts_scope_namespace(candidate.namespace())
+                || hidden.contains(&(candidate.label().to_string(), candidate.namespace()))
             {
                 continue;
             }
-            self.push_visible_scope_completion(
-                visible_def,
+            self.push_module_candidate_completion(
+                candidate,
                 options.filter,
                 options.edit,
                 options.visible_scope_sort,
@@ -296,9 +295,9 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         Ok(())
     }
 
-    fn push_visible_scope_completion(
+    fn push_module_candidate_completion(
         &self,
-        visible_def: VisibleScopeDef,
+        candidate: ModuleCompletionCandidate,
         filter: UnqualifiedCompletionFilter,
         edit: CompletionEdit,
         visible_scope_sort: VisibleScopeSort,
@@ -306,7 +305,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
         if let Some(completion) = self.function_completion(
-            &visible_def,
+            &candidate,
             filter,
             edit,
             visible_scope_sort,
@@ -321,13 +320,12 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             return Ok(());
         }
 
-        let Some((kind, metadata)) = self.visible_scope_completion_metadata(&visible_def)? else {
-            return Ok(());
-        };
-        let target = CompletionTarget::Def(visible_def.def);
+        let target = candidate.target();
+        let label = candidate.label();
+        let kind = candidate.kind();
         if completions
             .iter()
-            .any(|completion| completion.target == target && completion.label == metadata.label)
+            .any(|completion| completion.target == target && completion.label == label)
         {
             return Ok(());
         }
@@ -335,28 +333,24 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let sort_policy = filter.sort_policy();
         let sort_text = match visible_scope_sort {
             VisibleScopeSort::ByOrigin => sort_policy.sort_text(
-                Some(CompletionSortPriority::visible_scope(visible_def.origin)),
-                &metadata.label,
+                Some(CompletionSortPriority::visible_scope(candidate.origin())),
+                label,
                 kind,
                 CompletionApplicability::Known,
                 target,
             ),
-            VisibleScopeSort::General => sort_policy.sort_text(
-                None,
-                &metadata.label,
-                kind,
-                CompletionApplicability::Known,
-                target,
-            ),
+            VisibleScopeSort::General => {
+                sort_policy.sort_text(None, label, kind, CompletionApplicability::Known, target)
+            }
         };
 
         completions.push(CompletionItem {
-            label: metadata.label.clone(),
+            label: label.to_string(),
             kind,
             target,
             applicability: CompletionApplicability::Known,
-            detail: metadata.detail,
-            documentation: metadata.documentation,
+            detail: Some(def_completion_detail(kind, label)),
+            documentation: candidate.documentation().map(ToString::to_string),
             sort_text,
             insert_text: CompletionInsertText::Plain,
             edit: Some(edit),
@@ -366,23 +360,23 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
 
     fn function_completion(
         &self,
-        visible_def: &VisibleScopeDef,
+        candidate: &ModuleCompletionCandidate,
         filter: UnqualifiedCompletionFilter,
         edit: CompletionEdit,
         visible_scope_sort: VisibleScopeSort,
         function_call_completion: FunctionCallCompletion,
     ) -> anyhow::Result<Option<CompletionItem>> {
-        let DefId::Local(local_def) = visible_def.def else {
+        let Some(function_ref) = candidate.function_ref() else {
             return Ok(None);
         };
         let members = MemberView::new(self.analysis);
-        let Some(function) = members.function_for_local_def(local_def)? else {
+        let Some(function) = members.function(function_ref)? else {
             return Ok(None);
         };
         let sort_policy = filter.sort_policy();
         let sort_priority = match visible_scope_sort {
             VisibleScopeSort::ByOrigin => {
-                Some(CompletionSortPriority::visible_scope(visible_def.origin))
+                Some(CompletionSortPriority::visible_scope(candidate.origin()))
             }
             VisibleScopeSort::General => None,
         };
@@ -391,7 +385,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             FunctionCompletionRenderer::new(self.analysis, self.query)
                 .completion(FunctionCompletionRequest {
                     function,
-                    label_override: Some(&visible_def.label),
+                    label_override: Some(candidate.label()),
                     kind: CompletionKind::Function,
                     applicability: CompletionApplicability::Known,
                     edit,
@@ -401,43 +395,6 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                 })
                 .item,
         ))
-    }
-
-    fn visible_scope_completion_metadata(
-        &self,
-        visible_def: &VisibleScopeDef,
-    ) -> anyhow::Result<Option<(CompletionKind, CompletionMetadata)>> {
-        let (kind, metadata) = match visible_def.def {
-            DefId::Module(module) => {
-                let Some(data) = self.analysis.def_map.module(module)? else {
-                    return Ok(None);
-                };
-                (
-                    CompletionKind::Module,
-                    CompletionMetadata {
-                        label: visible_def.label.clone(),
-                        detail: Some(format!("mod {}", visible_def.label)),
-                        documentation: data.docs.as_ref().map(Documentation::text),
-                    },
-                )
-            }
-            DefId::Local(local_def) => {
-                let Some(data) = self.analysis.def_map.local_def(local_def)? else {
-                    return Ok(None);
-                };
-                let kind = CompletionKind::from_local_def_kind(data.kind);
-                (
-                    kind,
-                    CompletionMetadata {
-                        label: visible_def.label.clone(),
-                        detail: Some(def_completion_detail(kind, &visible_def.label)),
-                        documentation: None,
-                    },
-                )
-            }
-        };
-
-        Ok(Some((kind, metadata)))
     }
 }
 
@@ -464,9 +421,9 @@ struct ModuleCompletionOptions {
 }
 
 impl UnqualifiedCompletionFilter {
-    fn accepts_scope_namespace(self, namespace: ScopeNamespace) -> bool {
+    fn accepts_scope_namespace(self, namespace: CompletionScopeNamespace) -> bool {
         match self {
-            Self::Types => matches!(namespace, ScopeNamespace::Types),
+            Self::Types => matches!(namespace, CompletionScopeNamespace::Types),
             Self::All => true,
         }
     }

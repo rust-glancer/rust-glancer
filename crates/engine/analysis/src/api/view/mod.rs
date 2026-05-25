@@ -1,5 +1,6 @@
 //! Read-only analysis views over the underlying frozen stores.
 
+pub(crate) mod completion;
 pub(crate) mod declaration;
 pub(crate) mod details;
 pub(crate) mod enum_variant;

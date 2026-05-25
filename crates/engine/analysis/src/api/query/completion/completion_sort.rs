@@ -7,9 +7,10 @@
 
 use std::fmt::Write as _;
 
-use rg_def_map::VisibleScopeOrigin;
-
-use crate::model::{CompletionApplicability, CompletionKind, CompletionTarget};
+use crate::{
+    api::view::completion::CompletionScopeOrigin,
+    model::{CompletionApplicability, CompletionKind, CompletionTarget},
+};
 
 /// Context-sensitive policy for building LSP `sortText`.
 ///
@@ -41,11 +42,11 @@ impl CompletionSortPriority {
     }
 
     /// Returns the priority bucket for a visible module-scope name.
-    pub(super) fn visible_scope(origin: VisibleScopeOrigin) -> Self {
+    pub(super) fn visible_scope(origin: CompletionScopeOrigin) -> Self {
         match origin {
-            VisibleScopeOrigin::ModuleScope => Self::ModuleScope,
-            VisibleScopeOrigin::Prelude => Self::Prelude,
-            VisibleScopeOrigin::ExternRoot => Self::ExternRoot,
+            CompletionScopeOrigin::ModuleScope => Self::ModuleScope,
+            CompletionScopeOrigin::Prelude => Self::Prelude,
+            CompletionScopeOrigin::ExternRoot => Self::ExternRoot,
         }
     }
 }
