@@ -3,12 +3,11 @@
 //! Function and method completions need more than a label: they reuse signature
 //! details for display and turn parameter names into LSP snippet placeholders.
 
-use rg_body_ir::ResolvedFunctionRef;
 use rg_semantic_ir::ParamItem;
 
 use crate::{
     Analysis,
-    api::{render::signature::SignatureRenderer, view::member::MemberView},
+    api::{render::signature::SignatureRenderer, view::member::MemberFunction},
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -29,7 +28,7 @@ pub(super) enum FunctionCallCompletion {
 }
 
 /// Signature metadata and insertion text for one function completion.
-pub(super) struct FunctionCompletionMetadata {
+struct FunctionCompletionMetadata {
     label: String,
     detail: Option<String>,
     documentation: Option<String>,
@@ -44,8 +43,8 @@ pub(super) struct FunctionCompletion {
 }
 
 /// Inputs that vary between function completion sites.
-pub(super) struct FunctionCompletionRequest<'label> {
-    pub(super) function: ResolvedFunctionRef,
+pub(super) struct FunctionCompletionRequest<'label, 'member> {
+    pub(super) function: MemberFunction<'member>,
     pub(super) label_override: Option<&'label str>,
     pub(super) kind: CompletionKind,
     pub(super) applicability: CompletionApplicability,
@@ -68,18 +67,15 @@ impl<'a, 'db, 'source> FunctionCompletionRenderer<'a, 'db, 'source> {
     /// Builds display and snippet metadata for a resolved function declaration.
     pub(super) fn completion(
         &self,
-        request: FunctionCompletionRequest<'_>,
-    ) -> anyhow::Result<Option<FunctionCompletion>> {
-        let Some(metadata) = self.metadata(
+        request: FunctionCompletionRequest<'_, '_>,
+    ) -> FunctionCompletion {
+        let metadata = self.metadata(
             request.function,
             request.label_override,
             request.call_completion,
             request.edit,
-        )?
-        else {
-            return Ok(None);
-        };
-        let target = CompletionTarget::Function(request.function);
+        );
+        let target = CompletionTarget::Function(request.function.function_ref());
         let sort_text = request.sort_policy.sort_text(
             request.sort_priority,
             &metadata.label,
@@ -88,7 +84,7 @@ impl<'a, 'db, 'source> FunctionCompletionRenderer<'a, 'db, 'source> {
             target,
         );
 
-        Ok(Some(FunctionCompletion {
+        FunctionCompletion {
             has_self_receiver: metadata.has_self_receiver,
             item: CompletionItem {
                 label: metadata.label,
@@ -101,32 +97,28 @@ impl<'a, 'db, 'source> FunctionCompletionRenderer<'a, 'db, 'source> {
                 insert_text: metadata.insert_text,
                 edit: Some(request.edit),
             },
-        }))
+        }
     }
 
     fn metadata(
         &self,
-        function: ResolvedFunctionRef,
+        function: MemberFunction<'_>,
         label_override: Option<&str>,
         call_completion: FunctionCallCompletion,
         edit: CompletionEdit,
-    ) -> anyhow::Result<Option<FunctionCompletionMetadata>> {
-        let members = MemberView::new(self.analysis);
-        let Some(function) = members.function(function)? else {
-            return Ok(None);
-        };
+    ) -> FunctionCompletionMetadata {
         let renderer = SignatureRenderer::new(self.analysis);
         let label = label_override
             .unwrap_or_else(|| function.name())
             .to_string();
 
-        Ok(Some(FunctionCompletionMetadata {
+        FunctionCompletionMetadata {
             label: label.clone(),
             detail: Some(renderer.member_function_signature(&function)),
             documentation: function.docs_text(),
             insert_text: self.insert_text(&label, function.params(), call_completion, edit),
             has_self_receiver: function.has_self_receiver(),
-        }))
+        }
     }
 
     fn insert_text(

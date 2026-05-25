@@ -7,11 +7,11 @@ use rg_body_ir::{
     UnqualifiedCompletionSite,
 };
 use rg_def_map::{DefId, DefMapUnqualifiedCompletionSite, ScopeNamespace, VisibleScopeDef};
-use rg_semantic_ir::{Documentation, SemanticItemRef};
+use rg_semantic_ir::Documentation;
 
 use crate::{
     Analysis,
-    api::render::signature::SignatureRenderer,
+    api::{render::signature::SignatureRenderer, view::member::MemberView},
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -244,20 +244,21 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             } => {
                 hidden.insert((label.clone(), ScopeNamespace::Values));
                 let function = ResolvedFunctionRef::BodyLocal(function);
-                let Some(completion) = FunctionCompletionRenderer::new(self.analysis, self.query)
-                    .completion(FunctionCompletionRequest {
-                    function,
-                    label_override: Some(&label),
-                    kind: CompletionKind::Function,
-                    applicability: CompletionApplicability::Known,
-                    edit,
-                    call_completion: FunctionCallCompletion::Plain,
-                    sort_policy: filter.sort_policy(),
-                    sort_priority: Some(CompletionSortPriority::body_scope(scope_distance)),
-                })?
-                else {
+                let members = MemberView::new(self.analysis);
+                let Some(function) = members.function(function)? else {
                     return Ok(());
                 };
+                let completion = FunctionCompletionRenderer::new(self.analysis, self.query)
+                    .completion(FunctionCompletionRequest {
+                        function,
+                        label_override: Some(&label),
+                        kind: CompletionKind::Function,
+                        applicability: CompletionApplicability::Known,
+                        edit,
+                        call_completion: FunctionCallCompletion::Plain,
+                        sort_policy: filter.sort_policy(),
+                        sort_priority: Some(CompletionSortPriority::body_scope(scope_distance)),
+                    });
                 completions.push(completion.item);
             }
         }
@@ -374,14 +375,10 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let DefId::Local(local_def) = visible_def.def else {
             return Ok(None);
         };
-        let Some(SemanticItemRef::Function(function)) = self
-            .analysis
-            .semantic_ir
-            .semantic_item_for_local_def(local_def)?
-        else {
+        let members = MemberView::new(self.analysis);
+        let Some(function) = members.function_for_local_def(local_def)? else {
             return Ok(None);
         };
-        let function = ResolvedFunctionRef::Semantic(function);
         let sort_policy = filter.sort_policy();
         let sort_priority = match visible_scope_sort {
             VisibleScopeSort::ByOrigin => {
@@ -390,18 +387,20 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             VisibleScopeSort::General => None,
         };
 
-        Ok(FunctionCompletionRenderer::new(self.analysis, self.query)
-            .completion(FunctionCompletionRequest {
-                function,
-                label_override: Some(&visible_def.label),
-                kind: CompletionKind::Function,
-                applicability: CompletionApplicability::Known,
-                edit,
-                call_completion: function_call_completion,
-                sort_policy,
-                sort_priority,
-            })?
-            .map(|completion| completion.item))
+        Ok(Some(
+            FunctionCompletionRenderer::new(self.analysis, self.query)
+                .completion(FunctionCompletionRequest {
+                    function,
+                    label_override: Some(&visible_def.label),
+                    kind: CompletionKind::Function,
+                    applicability: CompletionApplicability::Known,
+                    edit,
+                    call_completion: function_call_completion,
+                    sort_policy,
+                    sort_priority,
+                })
+                .item,
+        ))
     }
 
     fn visible_scope_completion_metadata(

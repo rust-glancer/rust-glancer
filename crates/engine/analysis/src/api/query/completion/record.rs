@@ -1,10 +1,10 @@
 //! Record-field completion assembly for struct literals and record patterns.
 
-use rg_body_ir::{BodyTypePathResolution, FieldKey, RecordFieldCompletionSite, ResolvedFieldRef};
+use rg_body_ir::{BodyTypePathResolution, FieldKey, RecordFieldCompletionSite};
 
 use crate::{
     Analysis,
-    api::view::member::{MemberOwnerRef, MemberView},
+    api::view::member::{MemberField, MemberOwnerRef, MemberView},
     model::{CompletionEdit, CompletionItem},
 };
 
@@ -26,10 +26,11 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
             replace: site.member_prefix_span,
         };
         let mut completions = Vec::new();
+        let members = MemberView::new(self.0);
         let renderer = FieldCompletionRenderer::new(self.0);
 
-        for field in self.fields_for_record_owner(&site)? {
-            let Some(completion) = renderer.completion(field, edit)? else {
+        for field in self.fields_for_record_owner(&members, &site)? {
+            let Some(completion) = renderer.completion(field, edit) else {
                 continue;
             };
             if !matches!(completion.key, FieldKey::Named(_)) {
@@ -56,10 +57,11 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
     }
 
     /// Resolves the path before `{ ... }` into fields that can be written inside the record.
-    fn fields_for_record_owner(
+    fn fields_for_record_owner<'view>(
         &self,
+        members: &'view MemberView<'_, '_>,
         site: &RecordFieldCompletionSite,
-    ) -> anyhow::Result<Vec<ResolvedFieldRef>> {
+    ) -> anyhow::Result<Vec<MemberField<'view>>> {
         let resolution = self.0.body_ir.resolve_type_path_in_scope(
             &self.0.def_map,
             &self.0.semantic_ir,
@@ -68,7 +70,6 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
             &site.owner,
         )?;
         let mut fields = Vec::new();
-        let members = MemberView::new(self.0);
 
         match resolution {
             BodyTypePathResolution::BodyLocal(item) => {

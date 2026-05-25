@@ -1,12 +1,13 @@
 //! Dot-completion assembly for member access sites.
 
-use rg_body_ir::{
-    BodyAutoderef, BodyAutoderefMode, DotCompletionSite, ResolvedFieldRef, ResolvedFunctionRef,
-};
+use rg_body_ir::{BodyAutoderef, BodyAutoderefMode, DotCompletionSite};
 
 use crate::{
     Analysis,
-    api::view::member::{MemberMethodCandidate, MemberMethodOrigin, MemberReceiverTy, MemberView},
+    api::view::member::{
+        MemberField, MemberFunction, MemberMethodCandidate, MemberMethodOrigin, MemberReceiverTy,
+        MemberView,
+    },
     model::{
         CompletionApplicability, CompletionEdit, CompletionItem, CompletionKind, CompletionTarget,
     },
@@ -67,7 +68,7 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
 
     fn push_method_completion(
         &self,
-        method: MemberMethodCandidate,
+        method: MemberMethodCandidate<'_>,
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
@@ -91,12 +92,11 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
 
     fn push_field_completion(
         &self,
-        field: ResolvedFieldRef,
+        field: MemberField<'_>,
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
-        let Some(completion) =
-            FieldCompletionRenderer::new(self.analysis).completion(field, edit)?
+        let Some(completion) = FieldCompletionRenderer::new(self.analysis).completion(field, edit)
         else {
             return Ok(());
         };
@@ -113,15 +113,15 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
 
     fn push_function_completion(
         &self,
-        function: ResolvedFunctionRef,
+        function: MemberFunction<'_>,
         kind: CompletionKind,
         applicability: CompletionApplicability,
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
         let renderer = FunctionCompletionRenderer::new(self.analysis, self.query);
-        let target = CompletionTarget::Function(function);
-        let Some(completion) = renderer.completion(FunctionCompletionRequest {
+        let target = CompletionTarget::Function(function.function_ref());
+        let completion = renderer.completion(FunctionCompletionRequest {
             function,
             label_override: None,
             kind,
@@ -130,10 +130,7 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
             call_completion: FunctionCallCompletion::MethodCall,
             sort_policy: CompletionSortPolicy::General,
             sort_priority: None,
-        })?
-        else {
-            return Ok(());
-        };
+        });
         if !completion.has_self_receiver {
             return Ok(());
         }

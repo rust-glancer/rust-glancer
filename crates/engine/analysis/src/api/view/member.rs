@@ -4,9 +4,10 @@ use rg_body_ir::{
     BodyFieldData, BodyFieldRef, BodyFunctionData, BodyFunctionRef, BodyItemRef,
     BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt, ResolvedFieldRef, ResolvedFunctionRef,
 };
+use rg_def_map::LocalDefRef;
 use rg_semantic_ir::{
     Documentation, FieldData, FieldKey, FieldRef, FunctionData, FunctionRef, ItemOwner, ParamItem,
-    TraitApplicability, TypeDefRef,
+    SemanticItemRef, TraitApplicability, TypeDefRef,
 };
 
 use crate::{
@@ -60,6 +61,13 @@ pub(crate) enum MemberField<'a> {
 }
 
 impl<'a> MemberField<'a> {
+    pub(crate) fn field_ref(&self) -> ResolvedFieldRef {
+        match self {
+            Self::Semantic { field, .. } => ResolvedFieldRef::Semantic(*field),
+            Self::BodyLocal { field, .. } => ResolvedFieldRef::BodyLocal(*field),
+        }
+    }
+
     pub(crate) fn key(&self) -> Option<&'a FieldKey> {
         match self {
             Self::Semantic { data, .. } => data.field.key.as_ref(),
@@ -125,6 +133,13 @@ pub(crate) enum MemberFunction<'a> {
 }
 
 impl<'a> MemberFunction<'a> {
+    pub(crate) fn function_ref(&self) -> ResolvedFunctionRef {
+        match self {
+            Self::Semantic { function, .. } => ResolvedFunctionRef::Semantic(*function),
+            Self::BodyLocal { function, .. } => ResolvedFunctionRef::BodyLocal(*function),
+        }
+    }
+
     pub(crate) fn name(&self) -> &'a str {
         match self {
             Self::Semantic { data, .. } => data.name.as_str(),
@@ -201,8 +216,8 @@ impl<'a> MemberFunction<'a> {
 
 /// One method candidate with enough origin information for UI ranking and labels.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MemberMethodCandidate {
-    pub(crate) function: ResolvedFunctionRef,
+pub(crate) struct MemberMethodCandidate<'a> {
+    pub(crate) function: MemberFunction<'a>,
     pub(crate) origin: MemberMethodOrigin,
 }
 
@@ -221,33 +236,43 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Self { analysis }
     }
 
-    pub(crate) fn field_candidates(
-        &self,
+    pub(crate) fn field_candidates<'view>(
+        &'view self,
         receiver_ty: MemberReceiverTy<'_>,
-    ) -> anyhow::Result<Vec<ResolvedFieldRef>> {
+    ) -> anyhow::Result<Vec<MemberField<'view>>> {
         self.field_candidates_for_owner(receiver_ty.owner())
     }
 
-    pub(crate) fn field_candidates_for_owner(
-        &self,
+    pub(crate) fn field_candidates_for_owner<'view>(
+        &'view self,
         owner: MemberOwnerRef,
-    ) -> anyhow::Result<Vec<ResolvedFieldRef>> {
-        match owner {
-            MemberOwnerRef::Semantic(ty) => Ok(self
+    ) -> anyhow::Result<Vec<MemberField<'view>>> {
+        let field_refs: Vec<_> = match owner {
+            MemberOwnerRef::Semantic(ty) => self
                 .analysis
                 .semantic_ir
                 .fields_for_type(ty)?
                 .into_iter()
                 .map(ResolvedFieldRef::Semantic)
-                .collect()),
-            MemberOwnerRef::BodyLocal(item) => Ok(self
+                .collect(),
+            MemberOwnerRef::BodyLocal(item) => self
                 .analysis
                 .body_ir
                 .fields_for_local_type(item)?
                 .into_iter()
                 .map(ResolvedFieldRef::BodyLocal)
-                .collect()),
+                .collect(),
+        };
+
+        let mut fields = Vec::new();
+        for field_ref in field_refs {
+            let Some(field) = self.field(field_ref)? else {
+                continue;
+            };
+            fields.push(field);
         }
+
+        Ok(fields)
     }
 
     pub(crate) fn field(&self, field: ResolvedFieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
@@ -283,10 +308,25 @@ impl<'a, 'db> MemberView<'a, 'db> {
         }
     }
 
-    pub(crate) fn method_candidates(
+    pub(crate) fn function_for_local_def(
         &self,
+        local_def: LocalDefRef,
+    ) -> anyhow::Result<Option<MemberFunction<'_>>> {
+        let Some(SemanticItemRef::Function(function)) = self
+            .analysis
+            .semantic_ir
+            .semantic_item_for_local_def(local_def)?
+        else {
+            return Ok(None);
+        };
+
+        self.function(ResolvedFunctionRef::Semantic(function))
+    }
+
+    pub(crate) fn method_candidates<'view>(
+        &'view self,
         receiver_ty: MemberReceiverTy<'_>,
-    ) -> anyhow::Result<Vec<MemberMethodCandidate>> {
+    ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
         let mut candidates = Vec::new();
 
         match receiver_ty {
@@ -309,8 +349,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
                         continue;
                     }
 
+                    let Some(function) = self.function(ResolvedFunctionRef::Semantic(function))?
+                    else {
+                        continue;
+                    };
                     candidates.push(MemberMethodCandidate {
-                        function: ResolvedFunctionRef::Semantic(function),
+                        function,
                         origin: MemberMethodOrigin::Inherent,
                     });
                 }
@@ -326,8 +370,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
                         ty,
                     )?
                 {
+                    let Some(function) = self.function(ResolvedFunctionRef::Semantic(function))?
+                    else {
+                        continue;
+                    };
                     candidates.push(MemberMethodCandidate {
-                        function: ResolvedFunctionRef::Semantic(function),
+                        function,
                         origin: MemberMethodOrigin::Trait { applicability },
                     });
                 }
@@ -347,8 +395,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
                         continue;
                     }
 
+                    let Some(function) = self.function(ResolvedFunctionRef::BodyLocal(function))?
+                    else {
+                        continue;
+                    };
                     candidates.push(MemberMethodCandidate {
-                        function: ResolvedFunctionRef::BodyLocal(function),
+                        function,
                         origin: MemberMethodOrigin::Inherent,
                     });
                 }

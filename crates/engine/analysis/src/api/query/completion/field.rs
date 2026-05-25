@@ -3,11 +3,11 @@
 //! Dot completions and record-field completions both render the same field metadata: label,
 //! signature detail, docs, sort text, and replacement edit.
 
-use rg_body_ir::{FieldKey, ResolvedFieldRef};
+use rg_body_ir::FieldKey;
 
 use crate::{
     Analysis,
-    api::{render::signature::SignatureRenderer, view::member::MemberView},
+    api::{render::signature::SignatureRenderer, view::member::MemberField},
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -26,15 +26,15 @@ impl<'a, 'db> FieldCompletionRenderer<'a, 'db> {
     /// Builds one completion item for a resolved field declaration.
     pub(super) fn completion(
         &self,
-        field: ResolvedFieldRef,
+        field: MemberField<'_>,
         edit: CompletionEdit,
-    ) -> anyhow::Result<Option<FieldCompletion>> {
-        let Some(metadata) = self.field_completion_metadata(field)? else {
-            return Ok(None);
+    ) -> Option<FieldCompletion> {
+        let target = CompletionTarget::Field(field.field_ref());
+        let Some(metadata) = self.field_completion_metadata(field) else {
+            return None;
         };
-        let target = CompletionTarget::Field(field);
 
-        Ok(Some(FieldCompletion {
+        Some(FieldCompletion {
             key: metadata.key,
             item: CompletionItem {
                 label: metadata.completion.label.clone(),
@@ -53,30 +53,23 @@ impl<'a, 'db> FieldCompletionRenderer<'a, 'db> {
                 insert_text: CompletionInsertText::Plain,
                 edit: Some(edit),
             },
-        }))
+        })
     }
 
-    fn field_completion_metadata(
-        &self,
-        field: ResolvedFieldRef,
-    ) -> anyhow::Result<Option<FieldCompletionMetadata>> {
-        let members = MemberView::new(self.0);
-        let Some(field) = members.field(field)? else {
-            return Ok(None);
-        };
+    fn field_completion_metadata(&self, field: MemberField<'_>) -> Option<FieldCompletionMetadata> {
         let Some(key) = field.key().cloned() else {
-            return Ok(None);
+            return None;
         };
         let renderer = SignatureRenderer::new(self.0);
 
-        Ok(Some(FieldCompletionMetadata {
+        Some(FieldCompletionMetadata {
             completion: CompletionMetadata {
                 label: key.to_string(),
                 detail: renderer.member_field_signature(&field),
                 documentation: field.docs_text(),
             },
             key,
-        }))
+        })
     }
 }
 

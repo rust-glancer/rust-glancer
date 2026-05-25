@@ -2,16 +2,17 @@
 
 use rg_body_ir::{
     BodyEnumVariantRef, BodyTypePathResolution, PathCompletionNamespace, PathCompletionSite,
-    ResolvedEnumVariantRef, ResolvedFunctionRef,
+    ResolvedEnumVariantRef,
 };
 use rg_def_map::{
     DefId, DefMapPathCompletionSite, ModuleRef, Path, ScopeNamespace, VisibleScopeDef,
 };
 use rg_parse::Span;
-use rg_semantic_ir::{Documentation, EnumVariantRef, SemanticItemRef, TypeDefId};
+use rg_semantic_ir::{Documentation, EnumVariantRef, TypeDefId};
 
 use crate::{
     Analysis,
+    api::view::member::MemberView,
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -288,26 +289,24 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         let DefId::Local(local_def) = visible_def.def else {
             return Ok(None);
         };
-        let Some(SemanticItemRef::Function(function)) = self
-            .analysis
-            .semantic_ir
-            .semantic_item_for_local_def(local_def)?
-        else {
+        let members = MemberView::new(self.analysis);
+        let Some(function) = members.function_for_local_def(local_def)? else {
             return Ok(None);
         };
-        let function = ResolvedFunctionRef::Semantic(function);
-        Ok(FunctionCompletionRenderer::new(self.analysis, self.query)
-            .completion(FunctionCompletionRequest {
-                function,
-                label_override: Some(&visible_def.label),
-                kind: CompletionKind::Function,
-                applicability: CompletionApplicability::Known,
-                edit,
-                call_completion: function_call_completion,
-                sort_policy: CompletionSortPolicy::General,
-                sort_priority: None,
-            })?
-            .map(|completion| completion.item))
+        Ok(Some(
+            FunctionCompletionRenderer::new(self.analysis, self.query)
+                .completion(FunctionCompletionRequest {
+                    function,
+                    label_override: Some(&visible_def.label),
+                    kind: CompletionKind::Function,
+                    applicability: CompletionApplicability::Known,
+                    edit,
+                    call_completion: function_call_completion,
+                    sort_policy: CompletionSortPolicy::General,
+                    sort_priority: None,
+                })
+                .item,
+        ))
     }
 
     fn visible_scope_completion_metadata(
