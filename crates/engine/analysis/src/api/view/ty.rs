@@ -13,7 +13,13 @@ use rg_semantic_ir::{
     FieldRef, SemanticDeclarationRef, SemanticItemRef, SemanticTypePathResolution, TypePathContext,
 };
 
-use crate::api::{Analysis, view::declaration::DeclarationRef};
+use crate::{
+    api::{
+        Analysis, resolve::declaration::SymbolDeclarationResolver,
+        view::declaration::DeclarationRef,
+    },
+    model::SymbolAt,
+};
 
 pub(crate) struct TyView<'a, 'db> {
     analysis: &'a Analysis<'db>,
@@ -24,10 +30,56 @@ impl<'a, 'db> TyView<'a, 'db> {
         Self { analysis }
     }
 
-    pub(crate) fn ty_for_declaration(
-        &self,
-        declaration: DeclarationRef,
-    ) -> anyhow::Result<Option<BodyTy>> {
+    pub(crate) fn ty_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Option<BodyTy>> {
+        let ty = match symbol {
+            SymbolAt::Expr { body, expr } => self
+                .analysis
+                .body_ir
+                .body_data(body)?
+                .and_then(|body_data| body_data.expr(expr))
+                .map(|data| data.ty.clone()),
+            SymbolAt::Binding { body, binding } => self
+                .analysis
+                .body_ir
+                .body_data(body)?
+                .and_then(|body_data| body_data.binding(binding))
+                .map(|data| data.ty.clone()),
+            SymbolAt::BodyPath {
+                body, scope, path, ..
+            } => Some(self.ty_for_body_type_path(body, scope, &path)?),
+            SymbolAt::BodyValuePath {
+                body, scope, path, ..
+            } => Some(self.ty_for_body_value_path(body, scope, &path)?),
+            declaration_symbol @ (SymbolAt::Def { .. }
+            | SymbolAt::Field { .. }
+            | SymbolAt::Function { .. }
+            | SymbolAt::EnumVariant { .. }
+            | SymbolAt::LocalItem { .. }
+            | SymbolAt::LocalValueItem { .. }
+            | SymbolAt::LocalField { .. }
+            | SymbolAt::LocalEnumVariant { .. }
+            | SymbolAt::LocalFunction { .. }) => {
+                let declarations = SymbolDeclarationResolver::new(self.analysis)
+                    .declarations_for_symbol(declaration_symbol)?;
+                let mut ty = None;
+                for declaration in declarations {
+                    if let Some(declaration_ty) = self.ty_for_declaration(declaration)? {
+                        ty = Some(declaration_ty);
+                        break;
+                    }
+                }
+                ty
+            }
+            SymbolAt::TypePath { context, path, .. } => {
+                Some(self.ty_for_type_path(context, &path)?)
+            }
+            SymbolAt::UsePath { .. } => None,
+            SymbolAt::Body { .. } => None,
+        };
+        Ok(ty)
+    }
+
+    fn ty_for_declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<BodyTy>> {
         match declaration {
             DeclarationRef::Module(_) => Ok(None),
             DeclarationRef::LocalDef(local_def) => {
@@ -86,11 +138,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         }
     }
 
-    pub(crate) fn ty_for_type_path(
-        &self,
-        context: TypePathContext,
-        path: &Path,
-    ) -> anyhow::Result<BodyTy> {
+    fn ty_for_type_path(&self, context: TypePathContext, path: &Path) -> anyhow::Result<BodyTy> {
         let resolution =
             self.analysis
                 .semantic_ir
@@ -104,7 +152,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         Ok(Self::semantic_type_path_resolution_to_ty(resolution))
     }
 
-    pub(crate) fn ty_for_body_type_path(
+    fn ty_for_body_type_path(
         &self,
         body_ref: BodyRef,
         scope: ScopeId,
@@ -119,6 +167,24 @@ impl<'a, 'db> TyView<'a, 'db> {
                 path,
             )?,
         ))
+    }
+
+    fn ty_for_body_value_path(
+        &self,
+        body_ref: BodyRef,
+        scope: ScopeId,
+        path: &Path,
+    ) -> anyhow::Result<BodyTy> {
+        // Value-path type queries should use the same Body IR resolver as the main body pass, so
+        // enum variants and associated functions agree between snapshots and cursor queries.
+        let (_, ty) = self.analysis.body_ir.resolve_value_path_in_scope(
+            &self.analysis.def_map,
+            &self.analysis.semantic_ir,
+            body_ref,
+            scope,
+            path,
+        )?;
+        Ok(ty)
     }
 
     fn ty_for_field(&self, field: FieldRef) -> anyhow::Result<Option<BodyTy>> {
