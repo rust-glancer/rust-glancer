@@ -1,18 +1,18 @@
 //! Qualified path completion assembly for body and import positions.
 
-use rg_body_ir::{
-    BodyEnumVariantRef, BodyTypePathResolution, PathCompletionNamespace, PathCompletionSite,
-    ResolvedEnumVariantRef,
-};
+use rg_body_ir::{PathCompletionNamespace, PathCompletionSite};
 use rg_def_map::{
     DefId, DefMapPathCompletionSite, ModuleRef, Path, ScopeNamespace, VisibleScopeDef,
 };
 use rg_parse::Span;
-use rg_semantic_ir::{Documentation, EnumVariantRef, TypeDefId};
+use rg_semantic_ir::Documentation;
 
 use crate::{
     Analysis,
-    api::view::member::MemberView,
+    api::view::{
+        enum_variant::{EnumVariant, EnumVariantView},
+        member::MemberView,
+    },
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -132,62 +132,12 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
-        let resolution = self.analysis.body_ir.resolve_type_path_in_scope(
-            &self.analysis.def_map,
-            &self.analysis.semantic_ir,
+        for variant in EnumVariantView::new(self.analysis).variants_for_body_type_path(
             site.body,
             site.scope,
             &site.qualifier,
-        )?;
-
-        match resolution {
-            BodyTypePathResolution::BodyLocal(item_ref) => {
-                let Some(body) = self.analysis.body_ir.body_data(item_ref.body)? else {
-                    return Ok(());
-                };
-                let Some(item) = body.local_item(item_ref.item) else {
-                    return Ok(());
-                };
-                for (index, variant) in item.enum_variants().iter().enumerate() {
-                    self.push_enum_variant_completion(
-                        ResolvedEnumVariantRef::BodyLocal(BodyEnumVariantRef {
-                            item: item_ref,
-                            index,
-                        }),
-                        variant.name.to_string(),
-                        variant.docs.as_ref().map(Documentation::text),
-                        edit,
-                        completions,
-                    );
-                }
-            }
-            BodyTypePathResolution::TypeDefs(type_defs)
-            | BodyTypePathResolution::SelfType(type_defs) => {
-                for ty in type_defs {
-                    let TypeDefId::Enum(enum_id) = ty.id else {
-                        continue;
-                    };
-                    let Some(data) = self.analysis.semantic_ir.enum_data_for_type_def(ty)? else {
-                        continue;
-                    };
-                    for (index, variant) in data.variants.iter().enumerate() {
-                        self.push_enum_variant_completion(
-                            ResolvedEnumVariantRef::Semantic(EnumVariantRef {
-                                target: ty.target,
-                                enum_id,
-                                index,
-                            }),
-                            variant.name.to_string(),
-                            variant.docs.as_ref().map(Documentation::text),
-                            edit,
-                            completions,
-                        );
-                    }
-                }
-            }
-            BodyTypePathResolution::Primitive(_)
-            | BodyTypePathResolution::Traits(_)
-            | BodyTypePathResolution::Unknown => {}
+        )? {
+            self.push_enum_variant_completion(variant, edit, completions);
         }
 
         Ok(())
@@ -195,13 +145,12 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
 
     fn push_enum_variant_completion(
         &self,
-        variant: ResolvedEnumVariantRef,
-        label: String,
-        documentation: Option<String>,
+        variant: EnumVariant<'_>,
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) {
-        let target = CompletionTarget::EnumVariant(variant);
+        let target = CompletionTarget::EnumVariant(variant.variant_ref());
+        let label = variant.name();
         if completions
             .iter()
             .any(|completion| completion.target == target && completion.label == label)
@@ -210,15 +159,15 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         }
 
         completions.push(CompletionItem {
-            label: label.clone(),
+            label: label.to_string(),
             kind: CompletionKind::EnumVariant,
             target,
             applicability: CompletionApplicability::Known,
-            detail: Some(def_completion_detail(CompletionKind::EnumVariant, &label)),
-            documentation,
+            detail: Some(def_completion_detail(CompletionKind::EnumVariant, label)),
+            documentation: variant.docs_text(),
             sort_text: CompletionSortPolicy::General.sort_text(
                 None,
-                &label,
+                label,
                 CompletionKind::EnumVariant,
                 CompletionApplicability::Known,
                 target,

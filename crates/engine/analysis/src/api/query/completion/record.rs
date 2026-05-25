@@ -1,10 +1,10 @@
 //! Record-field completion assembly for struct literals and record patterns.
 
-use rg_body_ir::{BodyTypePathResolution, FieldKey, RecordFieldCompletionSite};
+use rg_body_ir::{FieldKey, RecordFieldCompletionSite};
 
 use crate::{
     Analysis,
-    api::view::member::{MemberField, MemberOwnerRef, MemberView},
+    api::view::member::MemberView,
     model::{CompletionEdit, CompletionItem},
 };
 
@@ -29,7 +29,9 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
         let members = MemberView::new(self.0);
         let renderer = FieldCompletionRenderer::new(self.0);
 
-        for field in self.fields_for_record_owner(&members, &site)? {
+        for field in
+            members.field_candidates_for_body_type_path(site.body, site.scope, &site.owner)?
+        {
             let Some(completion) = renderer.completion(field, edit) else {
                 continue;
             };
@@ -54,38 +56,5 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
 
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
-    }
-
-    /// Resolves the path before `{ ... }` into fields that can be written inside the record.
-    fn fields_for_record_owner<'view>(
-        &self,
-        members: &'view MemberView<'_, '_>,
-        site: &RecordFieldCompletionSite,
-    ) -> anyhow::Result<Vec<MemberField<'view>>> {
-        let resolution = self.0.body_ir.resolve_type_path_in_scope(
-            &self.0.def_map,
-            &self.0.semantic_ir,
-            site.body,
-            site.scope,
-            &site.owner,
-        )?;
-        let mut fields = Vec::new();
-
-        match resolution {
-            BodyTypePathResolution::BodyLocal(item) => {
-                fields.extend(members.field_candidates_for_owner(MemberOwnerRef::BodyLocal(item))?);
-            }
-            BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
-                for ty in types {
-                    fields
-                        .extend(members.field_candidates_for_owner(MemberOwnerRef::Semantic(ty))?);
-                }
-            }
-            BodyTypePathResolution::Primitive(_)
-            | BodyTypePathResolution::Traits(_)
-            | BodyTypePathResolution::Unknown => {}
-        }
-
-        Ok(fields)
     }
 }
