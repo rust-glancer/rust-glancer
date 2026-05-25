@@ -1,5 +1,4 @@
 mod document;
-pub(crate) mod shared;
 mod workspace;
 
 use anyhow::Result;

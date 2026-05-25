@@ -109,13 +109,6 @@ pub struct DocumentSymbol {
     pub children: Vec<DocumentSymbol>,
 }
 
-impl DocumentSymbol {
-    pub(crate) fn with_children(mut self, children: Vec<DocumentSymbol>) -> Self {
-        self.children = children;
-        self
-    }
-}
-
 /// Flat symbol row suitable for workspace-wide search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceSymbol {
