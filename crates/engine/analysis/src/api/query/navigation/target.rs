@@ -1,11 +1,8 @@
 //! Concrete navigation target projection.
 
-use rg_body_ir::{
-    BodyAutoderef, BodyDeclarationRef, BodyImplId, BodyImplRef, BodyItemRef, BodyRef, BodyTy,
-    BodyTyExt,
-};
+use rg_body_ir::{BodyAutoderef, BodyItemRef, BodyTy, BodyTyExt};
 use rg_def_map::{LocalDefRef, ModuleOrigin, ModuleRef};
-use rg_semantic_ir::{FunctionRef, ImplRef, TypeDefRef};
+use rg_semantic_ir::TypeDefRef;
 
 use crate::{
     api::{
@@ -63,46 +60,11 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         Ok(self.declaration(local_def)?.map(NavigationTarget::from))
     }
 
-    pub(crate) fn navigation_target_for_body_item(
+    fn navigation_target_for_body_item(
         &self,
         item_ref: BodyItemRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_body_declaration(item_ref.into())
-    }
-
-    pub(crate) fn navigation_target_for_body_declaration(
-        &self,
-        declaration: BodyDeclarationRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_declaration(declaration.into())
-    }
-
-    pub(crate) fn navigation_target_for_function(
-        &self,
-        function_ref: FunctionRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_declaration(function_ref.into())
-    }
-
-    pub(crate) fn navigation_target_for_impl(
-        &self,
-        impl_ref: ImplRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_declaration(impl_ref.into())
-    }
-
-    pub(crate) fn navigation_target_for_body_impl(
-        &self,
-        body_ref: BodyRef,
-        impl_id: BodyImplId,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_body_declaration(
-            BodyImplRef {
-                body: body_ref,
-                impl_id,
-            }
-            .into(),
-        )
+        self.navigation_target_for_declaration(item_ref.into())
     }
 
     pub(crate) fn navigation_targets_for_declarations(
@@ -112,7 +74,9 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         let mut targets = Vec::new();
         for declaration in declarations {
             if let Some(target) = self.navigation_target_for_declaration(declaration)? {
-                targets.push(target);
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
             }
         }
         Ok(targets)
@@ -125,7 +89,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         DeclarationView::new(self.0).declaration(declaration.into())
     }
 
-    pub(crate) fn navigation_target_for_type_def(
+    fn navigation_target_for_type_def(
         &self,
         ty: TypeDefRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
