@@ -11,7 +11,7 @@ use crate::{
     BodyIrBuildPolicy, BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy,
     BodyResolution, BodySource, BodyTy, BodyTyRepr, BodyValueItemData, ClosureCapture, ClosureKind,
     ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode, PatData, PatId,
-    PatKind, ResolvedDeclarationRef, StmtKind, TargetBodiesStatus,
+    PatKind, StmtKind, TargetBodiesStatus,
     ir::{
         ids::{
             BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
@@ -22,6 +22,7 @@ use crate::{
     },
 };
 use rg_def_map::{DefId, DefMapDb, LocalDefRef, ModuleRef, TargetRef};
+use rg_ir_model::ResolvedDeclarationRef;
 use rg_item_tree::{ItemTreeDb, PackageNameInterners};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{Package, ParseDb, Target};

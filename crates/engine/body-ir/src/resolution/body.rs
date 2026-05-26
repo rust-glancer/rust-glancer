@@ -4,6 +4,7 @@
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
 use rg_def_map::{DefId, DefMapReadTxn, Path, PathSegment};
+use rg_ir_model::ResolvedDeclarationRef;
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{
@@ -21,8 +22,8 @@ use crate::{
     },
     ir::item::{BodyFunctionOwner, BodyValueItemOwner},
     ir::resolved::{
-        BodyResolution, BodyTypePathResolution, ResolvedDeclarationRef, ResolvedEnumVariantRef,
-        ResolvedFieldRef, ResolvedFunctionRef,
+        BodyResolution, BodyTypePathResolution, ResolvedEnumVariantRef, ResolvedFieldRef,
+        ResolvedFunctionRef,
     },
     ir::stmt::{BindingKind, BodySelfParamKind},
     ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt, BodyTyRepr},

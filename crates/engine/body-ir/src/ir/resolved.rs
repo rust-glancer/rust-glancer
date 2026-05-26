@@ -1,13 +1,9 @@
-use rg_def_map::DefId;
+use rg_ir_model::ResolvedDeclarationRef;
 use rg_semantic_ir::{
-    ConstRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, SemanticDeclarationRef,
-    SemanticItemRef, SemanticTypePathResolution, StaticRef, TraitRef, TypeAliasRef, TypeDefRef,
+    EnumVariantRef, FieldRef, FunctionRef, SemanticTypePathResolution, TraitRef, TypeDefRef,
 };
 
-use super::ids::{
-    BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
-    BodyFunctionRef, BodyImplRef, BodyItemRef, BodyValueItemRef,
-};
+use super::ids::{BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef, BodyItemRef};
 
 /// Stable field identity across module-level Semantic IR and body-local declarations.
 #[derive(
@@ -58,49 +54,6 @@ pub(crate) enum ResolvedFunctionRef {
 pub(crate) enum ResolvedEnumVariantRef {
     Semantic(EnumVariantRef),
     BodyLocal(BodyEnumVariantRef),
-}
-
-/// Stable declaration identity across DefMap, Semantic IR, and body-local declarations.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    derive_more::From,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-pub enum ResolvedDeclarationRef {
-    #[from]
-    Def(DefId),
-    #[from(
-        SemanticDeclarationRef,
-        SemanticItemRef,
-        TypeDefRef,
-        TraitRef,
-        ImplRef,
-        FunctionRef,
-        TypeAliasRef,
-        ConstRef,
-        StaticRef,
-        FieldRef,
-        EnumVariantRef
-    )]
-    Semantic(SemanticDeclarationRef),
-    #[from(
-        BodyDeclarationRef,
-        BodyBindingRef,
-        BodyItemRef,
-        BodyValueItemRef,
-        BodyImplRef,
-        BodyFieldRef,
-        BodyEnumVariantRef,
-        BodyFunctionRef
-    )]
-    Body(BodyDeclarationRef),
 }
 
 impl From<ResolvedFieldRef> for ResolvedDeclarationRef {

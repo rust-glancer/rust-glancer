@@ -1382,6 +1382,7 @@ dependencies = [
  "expect-test",
  "rg_body_ir",
  "rg_def_map",
+ "rg_ir_model",
  "rg_item_tree",
  "rg_package_store",
  "rg_parse",
@@ -1410,6 +1411,7 @@ dependencies = [
  "rayon",
  "rg_arena",
  "rg_def_map",
+ "rg_ir_model",
  "rg_item_tree",
  "rg_memsize",
  "rg_package_store",
@@ -1457,6 +1459,7 @@ dependencies = [
  "rayon",
  "rg_arena",
  "rg_cfg_eval",
+ "rg_ir_model",
  "rg_item_tree",
  "rg_macro_expand",
  "rg_memsize",
@@ -1467,6 +1470,18 @@ dependencies = [
  "rg_tt",
  "rg_workspace",
  "test_fixture",
+ "wincode",
+]
+
+[[package]]
+name = "rg_ir_model"
+version = "0.1.0"
+dependencies = [
+ "derive_more",
+ "rg_arena",
+ "rg_memsize",
+ "rg_parse",
+ "rg_workspace",
  "wincode",
 ]
 
@@ -1650,6 +1665,7 @@ dependencies = [
  "expect-test",
  "rg_arena",
  "rg_def_map",
+ "rg_ir_model",
  "rg_item_tree",
  "rg_memsize",
  "rg_package_store",

@@ -3,11 +3,9 @@
 //! Navigation and hover need different presentation payloads, but they start from the same core
 //! question: "what declaration does this cursor symbol denote?"
 
-use rg_body_ir::{
-    BodyBindingRef, BodyRef, BodyResolution, BodyTypePathResolution, ResolvedDeclarationRef,
-    ScopeId,
-};
+use rg_body_ir::{BodyBindingRef, BodyRef, BodyResolution, BodyTypePathResolution, ScopeId};
 use rg_def_map::{DefId, LocalDefRef, ModuleRef, Path};
+use rg_ir_model::ResolvedDeclarationRef;
 
 use crate::{
     api::Analysis,

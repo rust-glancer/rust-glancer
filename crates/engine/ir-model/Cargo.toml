@@ -1,5 +1,5 @@
 [package]
-name = "rg_semantic_ir"
+name = "rg_ir_model"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,19 +11,9 @@ readme.workspace = true
 description.workspace = true
 
 [dependencies]
-anyhow.workspace = true
 derive_more = { workspace = true, features = ["from"] }
 wincode.workspace = true
 rg_arena = { workspace = true, features = ["memsize"] }
 rg_memsize.workspace = true
-rg_package_store.workspace = true
-rg_def_map.workspace = true
-rg_ir_model.workspace = true
-rg_item_tree.workspace = true
 rg_parse.workspace = true
-rg_text = { workspace = true, features = ["memsize"] }
-
-[dev-dependencies]
-expect-test.workspace = true
 rg_workspace.workspace = true
-test_fixture.workspace = true

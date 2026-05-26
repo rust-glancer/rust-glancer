@@ -37,7 +37,7 @@ pub use self::{
 };
 
 // TODO: Shouldn't be exposed normally; remove after analysis owns resolver projection.
-pub use self::ir::{BodyResolution, BodyTypePathResolution, ResolvedDeclarationRef};
+pub use self::ir::{BodyResolution, BodyTypePathResolution};
 
 // TODO: Shouldn't be exposed normally; remove after the type model boundary is extracted.
 pub use self::{
