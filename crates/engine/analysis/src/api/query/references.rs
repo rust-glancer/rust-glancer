@@ -11,8 +11,8 @@ use crate::{
     api::{
         Analysis,
         resolve::declaration::SymbolDeclarationResolver,
+        source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolRole},
         view::declaration::{DeclarationRef, DeclarationView},
-        view::source::{SourceSymbol, SourceSymbolRole, SourceSymbolView},
     },
     model::{ReferenceLocation, SymbolAt},
 };
@@ -130,15 +130,15 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         }
 
         for candidate in self.reference_candidates()? {
-            let candidate_subjects = self.subjects_for_symbol(candidate.symbol)?;
+            let candidate_subjects = self.subjects_for_symbol(candidate.symbol().clone())?;
             if candidate_subjects
                 .iter()
                 .any(|candidate| subjects.contains(candidate))
             {
                 locations.push(ReferenceLocation {
-                    target: candidate.target,
-                    file_id: candidate.file_id,
-                    span: candidate.span,
+                    target: candidate.target(),
+                    file_id: candidate.file_id(),
+                    span: candidate.span(),
                 });
             }
         }
@@ -232,9 +232,9 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         candidates: &mut Vec<SourceSymbol>,
     ) -> anyhow::Result<()> {
         for candidate in
-            SourceSymbolView::new(self.analysis).symbols_in_target(scan.target, scan.file_id)?
+            SourceSymbolIndex::new(self.analysis).symbols_in_target(scan.target, scan.file_id)?
         {
-            match candidate.role {
+            match candidate.role() {
                 SourceSymbolRole::Reference => candidates.push(candidate),
                 SourceSymbolRole::Declaration if self.query.includes_declarations() => {
                     candidates.push(candidate);

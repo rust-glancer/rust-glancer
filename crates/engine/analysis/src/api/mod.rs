@@ -2,6 +2,7 @@ mod completion_site;
 mod query;
 mod render;
 mod resolve;
+mod source_symbol;
 mod view;
 
 pub use query::{

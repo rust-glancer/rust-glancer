@@ -10,10 +10,8 @@ use crate::{
         query::type_at::TypeResolver,
         render::signature::SignatureRenderer,
         resolve::declaration::SymbolDeclarationResolver,
-        view::{
-            details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
-            source::SourceSymbolView,
-        },
+        source_symbol::SourceSymbolIndex,
+        view::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
     },
     model::{HoverBlock, HoverInfo, SymbolAt, SymbolKind},
 };
@@ -34,7 +32,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         let Some(symbol) = self.0.symbol_at_for_query(target, file_id, offset)? else {
             return Ok(None);
         };
-        let range = SourceSymbolView::new(self.0).span_for_symbol(&symbol)?;
+        let range = SourceSymbolIndex::new(self.0).span_for_symbol(&symbol)?;
         let declarations =
             SymbolDeclarationResolver::new(self.0).declarations_for_symbol(symbol.clone())?;
         let context = DeclarationDetailsContext {

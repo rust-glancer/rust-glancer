@@ -4,7 +4,7 @@ use rg_def_map::TargetRef;
 use rg_parse::FileId;
 
 use crate::{
-    api::{Analysis, view::source::SourceSymbolView},
+    api::{Analysis, source_symbol::SourceSymbolIndex},
     model::SymbolAt,
 };
 
@@ -23,11 +23,11 @@ impl<'a, 'db> SymbolFinder<'a, 'db> {
     ) -> anyhow::Result<Option<SymbolAt>> {
         // Overlapping syntax is common around type paths and expressions. The narrowest span is
         // the best proxy for the thing the user actually placed the cursor on.
-        let symbol = SourceSymbolView::new(self.0)
+        let symbol = SourceSymbolIndex::new(self.0)
             .symbols_at(target, file_id, offset)?
             .into_iter()
-            .min_by_key(|candidate| candidate.span.len())
-            .map(|candidate| candidate.symbol);
+            .min_by_key(|candidate| candidate.span().len())
+            .map(|candidate| candidate.into_symbol());
         Ok(symbol)
     }
 }

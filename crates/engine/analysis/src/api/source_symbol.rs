@@ -1,4 +1,4 @@
-//! Composite source-symbol view over cursor candidates from all indexing layers.
+//! Source symbol classification over cursor candidates from all indexing layers.
 
 use rg_body_ir::BodyCursorCandidate;
 use rg_def_map::{DefMapCursorCandidate, TargetRef};
@@ -24,14 +24,38 @@ pub(crate) enum SourceSymbolRole {
 /// One source span that can resolve to an analysis symbol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SourceSymbol {
-    pub(crate) symbol: SymbolAt,
-    pub(crate) target: TargetRef,
-    pub(crate) file_id: FileId,
-    pub(crate) span: Span,
-    pub(crate) role: SourceSymbolRole,
+    symbol: SymbolAt,
+    target: TargetRef,
+    file_id: FileId,
+    span: Span,
+    role: SourceSymbolRole,
 }
 
 impl SourceSymbol {
+    pub(crate) fn symbol(&self) -> &SymbolAt {
+        &self.symbol
+    }
+
+    pub(crate) fn into_symbol(self) -> SymbolAt {
+        self.symbol
+    }
+
+    pub(crate) fn target(&self) -> TargetRef {
+        self.target
+    }
+
+    pub(crate) fn file_id(&self) -> FileId {
+        self.file_id
+    }
+
+    pub(crate) fn span(&self) -> Span {
+        self.span
+    }
+
+    pub(crate) fn role(&self) -> SourceSymbolRole {
+        self.role
+    }
+
     fn declaration(symbol: SymbolAt, target: TargetRef, file_id: FileId, span: Span) -> Self {
         Self {
             symbol,
@@ -63,11 +87,11 @@ impl SourceSymbol {
     }
 }
 
-pub(crate) struct SourceSymbolView<'a, 'db> {
+pub(crate) struct SourceSymbolIndex<'a, 'db> {
     analysis: &'a Analysis<'db>,
 }
 
-impl<'a, 'db> SourceSymbolView<'a, 'db> {
+impl<'a, 'db> SourceSymbolIndex<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self { analysis }
     }
