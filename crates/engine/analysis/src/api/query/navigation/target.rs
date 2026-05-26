@@ -39,9 +39,13 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
     ) -> anyhow::Result<Option<NavigationTarget>> {
         match declaration.repr() {
             DeclarationRefRepr::Module(module) => self.target_for_module(module),
-            DeclarationRefRepr::LocalDef(_)
-            | DeclarationRefRepr::Semantic(_)
-            | DeclarationRefRepr::Body(_) => Ok(DeclarationView::new(self.0)
+            DeclarationRefRepr::NameDef(_)
+            | DeclarationRefRepr::Item(_)
+            | DeclarationRefRepr::Function(_)
+            | DeclarationRefRepr::Field(_)
+            | DeclarationRefRepr::EnumVariant(_)
+            | DeclarationRefRepr::Binding(_)
+            | DeclarationRefRepr::Impl(_) => Ok(DeclarationView::new(self.0)
                 .declaration(declaration)?
                 .map(NavigationTarget::from)),
         }

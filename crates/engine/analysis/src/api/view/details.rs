@@ -7,8 +7,8 @@
 use rg_body_ir::BodyDeclarationRef;
 use rg_def_map::{LocalDefRef, ModuleRef};
 use rg_semantic_ir::{
-    ConstRef, Documentation, SemanticDeclarationRef, SemanticItemRef, StaticRef, TraitRef,
-    TypeAliasRef, TypeDefId, TypeDefRef,
+    ConstRef, Documentation, SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId,
+    TypeDefRef,
 };
 
 use crate::{
@@ -18,7 +18,7 @@ use crate::{
     },
     model::{
         DeclarationRef, DeclarationRefRepr, EnumVariantRef, EnumVariantRefRepr, FieldRef,
-        FunctionRef, SymbolKind,
+        FunctionRef, ItemRef, ItemRefRepr, NameDefRefRepr, SymbolKind,
     },
 };
 
@@ -53,11 +53,17 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     ) -> anyhow::Result<Option<DeclarationDetails>> {
         match declaration.repr() {
             DeclarationRefRepr::Module(module) => self.module_details(module, context),
-            DeclarationRefRepr::LocalDef(local_def) => self.local_def_details(local_def),
-            DeclarationRefRepr::Semantic(declaration) => {
-                self.semantic_declaration_details(declaration)
+            DeclarationRefRepr::NameDef(name_def) => match name_def.repr() {
+                NameDefRefRepr::DefMapLocal(local_def) => self.local_def_details(local_def),
+            },
+            DeclarationRefRepr::Item(item) => self.item_details(item),
+            DeclarationRefRepr::Function(function) => self.function_details(function),
+            DeclarationRefRepr::Field(field) => self.field_details(field),
+            DeclarationRefRepr::EnumVariant(variant) => self.enum_variant_details(variant),
+            DeclarationRefRepr::Binding(binding) => {
+                self.body_declaration_details(BodyDeclarationRef::Binding(binding.body_ir()))
             }
-            DeclarationRefRepr::Body(declaration) => self.body_declaration_details(declaration),
+            DeclarationRefRepr::Impl(_) => Ok(None),
         }
     }
 
@@ -135,15 +141,14 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }
     }
 
-    fn semantic_declaration_details(
-        &self,
-        declaration: SemanticDeclarationRef,
-    ) -> anyhow::Result<Option<DeclarationDetails>> {
-        match declaration {
-            SemanticDeclarationRef::Item(item) => self.semantic_item_details(item),
-            SemanticDeclarationRef::Field(field) => self.field_details(FieldRef::semantic(field)),
-            SemanticDeclarationRef::EnumVariant(variant) => {
-                self.enum_variant_details(EnumVariantRef::semantic(variant))
+    fn item_details(&self, item: ItemRef) -> anyhow::Result<Option<DeclarationDetails>> {
+        match item.repr() {
+            ItemRefRepr::Semantic(item) => self.semantic_item_details(item),
+            ItemRefRepr::BodyLocal(item) => {
+                self.body_declaration_details(BodyDeclarationRef::Item(item))
+            }
+            ItemRefRepr::BodyLocalValue(item) => {
+                self.body_declaration_details(BodyDeclarationRef::ValueItem(item))
             }
         }
     }

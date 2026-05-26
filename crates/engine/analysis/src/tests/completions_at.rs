@@ -474,11 +474,11 @@ pub fn use_it(c_a_outer: u8) {
             unqualified value proximity
             - variable c_z_inner
               detail: let c_z_inner: u8
-              sort: 00-body:0000|c_z_inner|07|00|Declaration(DeclarationRef { kind: "body", declaration: Binding(BodyBindingRef { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(1) }, binding: BindingId(1) }) })
+              sort: 00-body:0000|c_z_inner|07|00|Declaration(DeclarationRef { kind: "binding", binding: BindingRef { body: FunctionBodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(1) }, binding: BindingId(1) } })
               replace: 107..108
             - variable c_a_outer
               detail: let c_a_outer: u8
-              sort: 00-body:0002|c_a_outer|07|00|Declaration(DeclarationRef { kind: "body", declaration: Binding(BodyBindingRef { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(1) }, binding: BindingId(0) }) })
+              sort: 00-body:0002|c_a_outer|07|00|Declaration(DeclarationRef { kind: "binding", binding: BindingRef { body: FunctionBodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(1) }, binding: BindingId(0) } })
               replace: 107..108
             - fn c_module_item
               detail: pub fn c_module_item()
@@ -556,15 +556,15 @@ pub fn use_it() {
             unqualified type proximity
             - struct ZLocal
               detail: struct ZLocal
-              sort: 00-body:0000|00|ZLocal|00|Declaration(DeclarationRef { kind: "body", declaration: Item(BodyItemRef { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(0) }, item: BodyItemId(0) }) })
+              sort: 00-body:0000|00|ZLocal|00|Declaration(DeclarationRef { kind: "item", item: ItemRef { kind: "body_local", item: BodyItemRef { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(0) }, item: BodyItemId(0) } } })
               replace: 112..113
             - struct AModule
               detail: struct AModule
-              sort: 01-module|00|AModule|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) } })
+              sort: 01-module|00|AModule|00|Declaration(DeclarationRef { kind: "name_def", name_def: NameDefRef { kind: "def_map", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) } } })
               replace: 112..113
             - trait ATrait
               detail: trait ATrait
-              sort: 01-module|01|ATrait|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) } })
+              sort: 01-module|01|ATrait|00|Declaration(DeclarationRef { kind: "name_def", name_def: NameDefRef { kind: "def_map", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) } } })
               replace: 112..113
             - module a_mod
               detail: mod a_mod
@@ -875,11 +875,11 @@ pub fn use_it() {
             unqualified type sorting
             - struct Zed
               detail: struct Zed
-              sort: 01-module|00|Zed|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) } })
+              sort: 01-module|00|Zed|00|Declaration(DeclarationRef { kind: "name_def", name_def: NameDefRef { kind: "def_map", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) } } })
               replace: 89..90
             - trait Mid
               detail: trait Mid
-              sort: 01-module|01|Mid|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) } })
+              sort: 01-module|01|Mid|00|Declaration(DeclarationRef { kind: "name_def", name_def: NameDefRef { kind: "def_map", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) } } })
               replace: 89..90
             - module aa_prefix
               detail: mod aa_prefix
@@ -1181,7 +1181,7 @@ pub fn use_it() {
             path metadata completions
             - struct User
               detail: struct User
-              sort: User|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) } })
+              sort: User|04|00|Declaration(DeclarationRef { kind: "name_def", name_def: NameDefRef { kind: "def_map", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) } } })
               replace: 79..81
         "#]],
     );

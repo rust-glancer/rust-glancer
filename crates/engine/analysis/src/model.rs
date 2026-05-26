@@ -2,15 +2,15 @@ use std::fmt;
 
 use rg_body_ir::{
     BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionOwner,
-    BodyFunctionRef, BodyItemKind, BodyItemRef, BodyRef as BodyIrBodyRef, BodyValueItemKind,
-    BodyValueItemRef, ExprId, ScopeId,
+    BodyFunctionRef, BodyImplRef, BodyItemKind, BodyItemRef, BodyRef as BodyIrBodyRef,
+    BodyValueItemKind, BodyValueItemRef, ExprId, ScopeId,
 };
 use rg_def_map::{DefId, LocalDefKind, LocalDefRef, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
     EnumVariantRef as SemanticEnumVariantRef, FieldRef as SemanticFieldRef,
-    FunctionRef as SemanticFunctionRef, SemanticDeclarationRef, SemanticItemKind,
-    TraitApplicability, TypePathContext,
+    FunctionRef as SemanticFunctionRef, ImplRef as SemanticImplRef, SemanticDeclarationRef,
+    SemanticItemKind, SemanticItemRef, TraitApplicability, TypePathContext,
 };
 
 /// Stable identity for one lowered function body.
@@ -149,9 +149,13 @@ pub struct DeclarationRef(DeclarationRefRepr);
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum DeclarationRefRepr {
     Module(ModuleRef),
-    LocalDef(LocalDefRef),
-    Semantic(SemanticDeclarationRef),
-    Body(BodyDeclarationRef),
+    NameDef(NameDefRef),
+    Item(ItemRef),
+    Function(FunctionRef),
+    Field(FieldRef),
+    EnumVariant(EnumVariantRef),
+    Binding(BindingRef),
+    Impl(ImplRef),
 }
 
 impl DeclarationRef {
@@ -159,47 +163,101 @@ impl DeclarationRef {
         Self(DeclarationRefRepr::Module(module))
     }
 
-    pub(crate) fn local_def(local_def: LocalDefRef) -> Self {
-        Self(DeclarationRefRepr::LocalDef(local_def))
+    pub(crate) fn name_def(name_def: NameDefRef) -> Self {
+        Self(DeclarationRefRepr::NameDef(name_def))
+    }
+
+    pub(crate) fn item(item: ItemRef) -> Self {
+        Self(DeclarationRefRepr::Item(item))
+    }
+
+    pub(crate) fn function(function: FunctionRef) -> Self {
+        Self(DeclarationRefRepr::Function(function))
+    }
+
+    pub(crate) fn field(field: FieldRef) -> Self {
+        Self(DeclarationRefRepr::Field(field))
+    }
+
+    pub(crate) fn enum_variant(variant: EnumVariantRef) -> Self {
+        Self(DeclarationRefRepr::EnumVariant(variant))
+    }
+
+    pub(crate) fn binding(binding: BindingRef) -> Self {
+        Self(DeclarationRefRepr::Binding(binding))
+    }
+
+    pub(crate) fn impl_ref(impl_ref: ImplRef) -> Self {
+        Self(DeclarationRefRepr::Impl(impl_ref))
     }
 
     pub(crate) fn semantic(declaration: SemanticDeclarationRef) -> Self {
-        Self(DeclarationRefRepr::Semantic(declaration))
+        match declaration {
+            SemanticDeclarationRef::Item(item) => Self::semantic_item(item),
+            SemanticDeclarationRef::Field(field) => Self::field(FieldRef::semantic(field)),
+            SemanticDeclarationRef::EnumVariant(variant) => {
+                Self::enum_variant(EnumVariantRef::semantic(variant))
+            }
+        }
+    }
+
+    pub(crate) fn semantic_item(item: SemanticItemRef) -> Self {
+        match item {
+            SemanticItemRef::Function(function) => Self::function(FunctionRef::semantic(function)),
+            SemanticItemRef::Impl(impl_ref) => Self::impl_ref(ImplRef::semantic(impl_ref)),
+            SemanticItemRef::TypeDef(_)
+            | SemanticItemRef::Trait(_)
+            | SemanticItemRef::TypeAlias(_)
+            | SemanticItemRef::Const(_)
+            | SemanticItemRef::Static(_) => Self::item(ItemRef::semantic(item)),
+        }
     }
 
     pub(crate) fn body(declaration: BodyDeclarationRef) -> Self {
-        Self(DeclarationRefRepr::Body(declaration))
+        match declaration {
+            BodyDeclarationRef::Binding(binding) => Self::binding(BindingRef::body_local(binding)),
+            BodyDeclarationRef::Item(item) => Self::body_item(item),
+            BodyDeclarationRef::ValueItem(item) => Self::body_value_item(item),
+            BodyDeclarationRef::Impl(impl_ref) => Self::impl_ref(ImplRef::body_local(impl_ref)),
+            BodyDeclarationRef::Field(field) => Self::field(FieldRef::body_local(field)),
+            BodyDeclarationRef::EnumVariant(variant) => {
+                Self::enum_variant(EnumVariantRef::body_local(variant))
+            }
+            BodyDeclarationRef::Function(function) => {
+                Self::function(FunctionRef::body_local(function))
+            }
+        }
     }
 
     pub(crate) fn from_def(def: DefId) -> Self {
         match def {
             DefId::Module(module) => Self::module(module),
-            DefId::Local(local_def) => Self::local_def(local_def),
+            DefId::Local(local_def) => Self::name_def(NameDefRef::def_map_local(local_def)),
         }
     }
 
-    pub(crate) fn binding(binding: BodyBindingRef) -> Self {
-        Self::body(BodyDeclarationRef::Binding(binding))
+    pub(crate) fn body_binding(binding: BodyBindingRef) -> Self {
+        Self::binding(BindingRef::body_local(binding))
     }
 
     pub(crate) fn body_item(item: BodyItemRef) -> Self {
-        Self::body(BodyDeclarationRef::Item(item))
+        Self::item(ItemRef::body_item(item))
     }
 
     pub(crate) fn body_value_item(item: BodyValueItemRef) -> Self {
-        Self::body(BodyDeclarationRef::ValueItem(item))
+        Self::item(ItemRef::body_value_item(item))
     }
 
     pub(crate) fn body_field(field: BodyFieldRef) -> Self {
-        Self::body(BodyDeclarationRef::Field(field))
+        Self::field(FieldRef::body_local(field))
     }
 
     pub(crate) fn body_enum_variant(variant: BodyEnumVariantRef) -> Self {
-        Self::body(BodyDeclarationRef::EnumVariant(variant))
+        Self::enum_variant(EnumVariantRef::body_local(variant))
     }
 
     pub(crate) fn body_function(function: BodyFunctionRef) -> Self {
-        Self::body(BodyDeclarationRef::Function(function))
+        Self::function(FunctionRef::body_local(function))
     }
 
     pub(crate) fn repr(self) -> DeclarationRefRepr {
@@ -215,20 +273,186 @@ impl fmt::Debug for DeclarationRef {
                 .field("kind", &"module")
                 .field("module", &module)
                 .finish(),
-            DeclarationRefRepr::LocalDef(local_def) => f
+            DeclarationRefRepr::NameDef(name_def) => f
                 .debug_struct("DeclarationRef")
-                .field("kind", &"local_def")
+                .field("kind", &"name_def")
+                .field("name_def", &name_def)
+                .finish(),
+            DeclarationRefRepr::Item(item) => f
+                .debug_struct("DeclarationRef")
+                .field("kind", &"item")
+                .field("item", &item)
+                .finish(),
+            DeclarationRefRepr::Function(function) => f
+                .debug_struct("DeclarationRef")
+                .field("kind", &"function")
+                .field("function", &function)
+                .finish(),
+            DeclarationRefRepr::Field(field) => f
+                .debug_struct("DeclarationRef")
+                .field("kind", &"field")
+                .field("field", &field)
+                .finish(),
+            DeclarationRefRepr::EnumVariant(variant) => f
+                .debug_struct("DeclarationRef")
+                .field("kind", &"enum_variant")
+                .field("variant", &variant)
+                .finish(),
+            DeclarationRefRepr::Binding(binding) => f
+                .debug_struct("DeclarationRef")
+                .field("kind", &"binding")
+                .field("binding", &binding)
+                .finish(),
+            DeclarationRefRepr::Impl(impl_ref) => f
+                .debug_struct("DeclarationRef")
+                .field("kind", &"impl")
+                .field("impl_ref", &impl_ref)
+                .finish(),
+        }
+    }
+}
+
+/// Stable identity for a namespace definition that has not been promoted into an item model.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NameDefRef(NameDefRefRepr);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum NameDefRefRepr {
+    DefMapLocal(LocalDefRef),
+}
+
+impl NameDefRef {
+    pub(crate) fn def_map_local(local_def: LocalDefRef) -> Self {
+        Self(NameDefRefRepr::DefMapLocal(local_def))
+    }
+
+    pub(crate) fn repr(self) -> NameDefRefRepr {
+        self.0
+    }
+}
+
+impl fmt::Debug for NameDefRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            NameDefRefRepr::DefMapLocal(local_def) => f
+                .debug_struct("NameDefRef")
+                .field("kind", &"def_map")
                 .field("local_def", &local_def)
                 .finish(),
-            DeclarationRefRepr::Semantic(declaration) => f
-                .debug_struct("DeclarationRef")
+        }
+    }
+}
+
+/// Stable item identity exposed by analysis-facing features.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ItemRef(ItemRefRepr);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum ItemRefRepr {
+    Semantic(SemanticItemRef),
+    BodyLocal(BodyItemRef),
+    BodyLocalValue(BodyValueItemRef),
+}
+
+impl ItemRef {
+    pub(crate) fn semantic(item: SemanticItemRef) -> Self {
+        Self(ItemRefRepr::Semantic(item))
+    }
+
+    pub(crate) fn body_item(item: BodyItemRef) -> Self {
+        Self(ItemRefRepr::BodyLocal(item))
+    }
+
+    pub(crate) fn body_value_item(item: BodyValueItemRef) -> Self {
+        Self(ItemRefRepr::BodyLocalValue(item))
+    }
+
+    pub(crate) fn repr(self) -> ItemRefRepr {
+        self.0
+    }
+}
+
+impl fmt::Debug for ItemRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            ItemRefRepr::Semantic(item) => f
+                .debug_struct("ItemRef")
                 .field("kind", &"signature")
-                .field("declaration", &declaration)
+                .field("item", &item)
                 .finish(),
-            DeclarationRefRepr::Body(declaration) => f
-                .debug_struct("DeclarationRef")
-                .field("kind", &"body")
-                .field("declaration", &declaration)
+            ItemRefRepr::BodyLocal(item) => f
+                .debug_struct("ItemRef")
+                .field("kind", &"body_local")
+                .field("item", &item)
+                .finish(),
+            ItemRefRepr::BodyLocalValue(item) => f
+                .debug_struct("ItemRef")
+                .field("kind", &"body_local_value")
+                .field("item", &item)
+                .finish(),
+        }
+    }
+}
+
+/// Stable binding identity exposed by analysis-facing features.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BindingRef(BodyBindingRef);
+
+impl BindingRef {
+    pub(crate) fn body_local(binding: BodyBindingRef) -> Self {
+        Self(binding)
+    }
+
+    pub(crate) fn body_ir(self) -> BodyBindingRef {
+        self.0
+    }
+}
+
+impl fmt::Debug for BindingRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BindingRef")
+            .field("body", &FunctionBodyRef::from_body_ir(self.0.body))
+            .field("binding", &self.0.binding)
+            .finish()
+    }
+}
+
+/// Stable impl-block identity exposed by analysis-facing features.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ImplRef(ImplRefRepr);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum ImplRefRepr {
+    Semantic(SemanticImplRef),
+    BodyLocal(BodyImplRef),
+}
+
+impl ImplRef {
+    pub(crate) fn semantic(impl_ref: SemanticImplRef) -> Self {
+        Self(ImplRefRepr::Semantic(impl_ref))
+    }
+
+    pub(crate) fn body_local(impl_ref: BodyImplRef) -> Self {
+        Self(ImplRefRepr::BodyLocal(impl_ref))
+    }
+
+    pub(crate) fn repr(self) -> ImplRefRepr {
+        self.0
+    }
+}
+
+impl fmt::Debug for ImplRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            ImplRefRepr::Semantic(impl_ref) => f
+                .debug_struct("ImplRef")
+                .field("target", &impl_ref.target)
+                .field("impl", &impl_ref.id)
+                .finish(),
+            ImplRefRepr::BodyLocal(impl_ref) => f
+                .debug_struct("ImplRef")
+                .field("body", &FunctionBodyRef::from_body_ir(impl_ref.body))
+                .field("impl", &impl_ref.impl_id)
                 .finish(),
         }
     }

@@ -8,11 +8,11 @@ mod tests;
 pub use self::{
     api::{Analysis, CompletionClientCapabilities, CompletionQuery, ReferenceQuery},
     model::{
-        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        BindingRef, CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget, DeclarationRef, DocumentSymbol, EnumVariantRef, ExprRef,
-        FieldRef, FunctionBodyRef, FunctionRef, HoverBlock, HoverInfo, KeywordCompletion,
-        LexicalScopeRef, NavigationTarget, NavigationTargetKind, ReferenceLocation, SymbolAt,
-        SymbolKind, TypeHint, TypePathScopeRef, WorkspaceSymbol,
+        FieldRef, FunctionBodyRef, FunctionRef, HoverBlock, HoverInfo, ImplRef, ItemRef,
+        KeywordCompletion, LexicalScopeRef, NameDefRef, NavigationTarget, NavigationTargetKind,
+        ReferenceLocation, SymbolAt, SymbolKind, TypeHint, TypePathScopeRef, WorkspaceSymbol,
     },
     txn::AnalysisReadTxn,
 };

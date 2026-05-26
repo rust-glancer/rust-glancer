@@ -483,7 +483,7 @@ impl<'a, 'db> CompletionView<'a, 'db> {
                     body: site.body,
                     binding,
                 };
-                let declaration = DeclarationRef::binding(binding);
+                let declaration = DeclarationRef::body_binding(binding);
                 LexicalCompletionCandidate {
                     label,
                     namespace: CompletionScopeNamespace::Values,

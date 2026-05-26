@@ -270,7 +270,7 @@ impl<'a, 'db> SourceSymbolIndex<'a, 'db> {
                 ))
             }
             BodyCursorCandidate::Binding { body, binding, .. } => {
-                let declaration = DeclarationRef::binding(BodyBindingRef { body, binding });
+                let declaration = DeclarationRef::body_binding(BodyBindingRef { body, binding });
                 self.declaration_symbol(
                     SymbolAt::Declaration { declaration, span },
                     declaration,

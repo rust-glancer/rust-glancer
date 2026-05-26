@@ -11,7 +11,9 @@ use rg_def_map::{DefId, LocalDefRef, ModuleRef, Path};
 
 use crate::{
     api::Analysis,
-    model::{DeclarationRef, DeclarationRefRepr, SymbolAt, TypePathScopeRepr},
+    model::{
+        DeclarationRef, DeclarationRefRepr, NameDefRef, NameDefRefRepr, SymbolAt, TypePathScopeRepr,
+    },
 };
 
 pub(crate) struct SymbolDeclarationResolver<'a, 'db>(&'a Analysis<'db>);
@@ -80,11 +82,22 @@ impl<'a, 'db> SymbolDeclarationResolver<'a, 'db> {
     ) -> anyhow::Result<Vec<DeclarationRef>> {
         match declaration.repr() {
             DeclarationRefRepr::Module(module) => self.declarations_for_def(DefId::Module(module)),
-            DeclarationRefRepr::LocalDef(local_def) => {
-                self.declarations_for_def(DefId::Local(local_def))
-            }
-            DeclarationRefRepr::Semantic(_) | DeclarationRefRepr::Body(_) => Ok(vec![declaration]),
+            DeclarationRefRepr::NameDef(name_def) => match name_def.repr() {
+                NameDefRefRepr::DefMapLocal(local_def) => {
+                    self.declarations_for_def(DefId::Local(local_def))
+                }
+            },
+            DeclarationRefRepr::Item(_)
+            | DeclarationRefRepr::Function(_)
+            | DeclarationRefRepr::Field(_)
+            | DeclarationRefRepr::EnumVariant(_)
+            | DeclarationRefRepr::Binding(_)
+            | DeclarationRefRepr::Impl(_) => Ok(vec![declaration]),
         }
+    }
+
+    fn fallback_name_def(&self, local_def: LocalDefRef) -> DeclarationRef {
+        DeclarationRef::name_def(NameDefRef::def_map_local(local_def))
     }
 
     fn declarations_for_def(&self, def: DefId) -> anyhow::Result<Vec<DeclarationRef>> {
@@ -93,7 +106,7 @@ impl<'a, 'db> SymbolDeclarationResolver<'a, 'db> {
             DefId::Local(local_def) => {
                 let declaration = self
                     .declaration_for_local_def(local_def)?
-                    .unwrap_or_else(|| DeclarationRef::local_def(local_def));
+                    .unwrap_or_else(|| self.fallback_name_def(local_def));
                 Ok(vec![declaration])
             }
         }
@@ -174,7 +187,7 @@ impl<'a, 'db> SymbolDeclarationResolver<'a, 'db> {
                     body,
                     binding: *binding,
                 })
-                .map(DeclarationRef::binding)
+                .map(DeclarationRef::body_binding)
                 .into_iter()
                 .collect()),
             BodyResolution::Declaration(resolved)
