@@ -1,14 +1,13 @@
 //! Qualified path completion assembly for body and import positions.
 
-use rg_body_ir::{PathCompletionNamespace, PathCompletionSite};
-use rg_def_map::DefMapPathCompletionSite;
-use rg_parse::Span;
-
 use crate::{
     Analysis,
-    api::view::{
-        completion::{CompletionScopeNamespace, CompletionView, ModuleCompletionCandidate},
-        enum_variant::{EnumVariant, EnumVariantView},
+    api::{
+        completion_site::{PathCompletionContext, PathCompletionSite},
+        view::{
+            completion::{CompletionScopeNamespace, CompletionView, ModuleCompletionCandidate},
+            enum_variant::{EnumVariant, EnumVariantView},
+        },
     },
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
@@ -34,54 +33,48 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         Self { analysis, query }
     }
 
-    /// Collects qualified-path completions inside a body, such as
-    /// `let value = crate::$0` or `let value: crate::api::Us$0`.
-    pub(super) fn body_completions(
+    /// Collects qualified path completions, such as `crate::$0` or `use crate::api::$0`.
+    pub(super) fn completions(
         &self,
         site: PathCompletionSite,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let edit = CompletionEdit {
-            replace: site.member_prefix_span,
+            replace: site.replace_span(),
         };
+        let context = site.context();
+        let completion_view = CompletionView::new(self.analysis);
         let mut completions = self.module_path_completions(
-            CompletionView::new(self.analysis).module_candidates_for_body_path(&site)?,
-            site.member_prefix_span,
-            PathCompletionFilter::from(site.namespace),
-            FunctionCallCompletion::FunctionCall,
+            completion_view.module_candidates_for_path(&site)?,
+            edit,
+            PathCompletionFilter::from(context),
+            match context {
+                PathCompletionContext::Type | PathCompletionContext::Value => {
+                    FunctionCallCompletion::FunctionCall
+                }
+                PathCompletionContext::Import => FunctionCallCompletion::Plain,
+            },
         )?;
 
-        if matches!(site.namespace, PathCompletionNamespace::Values) {
-            self.enum_variant_completions(site, edit, &mut completions)?;
-            completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
+        let enum_variants = EnumVariantView::new(self.analysis);
+        for variant in completion_view.enum_variant_candidates_for_path(&site)? {
+            let Some(variant) = enum_variants.variant(variant)? else {
+                continue;
+            };
+            self.push_enum_variant_completion(variant, edit, &mut completions);
         }
+        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
 
         Ok(completions)
-    }
-
-    /// Collects qualified import completions, such as `use crate::api::$0`.
-    pub(super) fn use_completions(
-        &self,
-        site: DefMapPathCompletionSite,
-    ) -> anyhow::Result<Vec<CompletionItem>> {
-        self.module_path_completions(
-            CompletionView::new(self.analysis).module_candidates_for_use_path(&site)?,
-            site.member_prefix_span,
-            PathCompletionFilter::All,
-            FunctionCallCompletion::Plain,
-        )
     }
 
     /// Renders definitions visible from a resolved module qualifier.
     fn module_path_completions(
         &self,
         candidates: Vec<ModuleCompletionCandidate>,
-        member_prefix_span: Span,
+        edit: CompletionEdit,
         filter: PathCompletionFilter,
         function_call_completion: FunctionCallCompletion,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        let edit = CompletionEdit {
-            replace: member_prefix_span,
-        };
         let renderer = ModuleCompletionRenderer::new(self.analysis, self.query);
         let mut completions: Vec<CompletionItem> = Vec::new();
 
@@ -109,24 +102,6 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
 
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
-    }
-
-    /// Adds enum variants for type-qualified value paths, such as `Action::Sta$0`.
-    fn enum_variant_completions(
-        &self,
-        site: PathCompletionSite,
-        edit: CompletionEdit,
-        completions: &mut Vec<CompletionItem>,
-    ) -> anyhow::Result<()> {
-        for variant in EnumVariantView::new(self.analysis).variants_for_body_type_path(
-            site.body,
-            site.scope,
-            &site.qualifier,
-        )? {
-            self.push_enum_variant_completion(variant, edit, completions);
-        }
-
-        Ok(())
     }
 
     fn push_enum_variant_completion(
@@ -185,11 +160,11 @@ impl PathCompletionFilter {
     }
 }
 
-impl From<PathCompletionNamespace> for PathCompletionFilter {
-    fn from(namespace: PathCompletionNamespace) -> Self {
-        match namespace {
-            PathCompletionNamespace::Types => Self::Types,
-            PathCompletionNamespace::Values => Self::All,
+impl From<PathCompletionContext> for PathCompletionFilter {
+    fn from(context: PathCompletionContext) -> Self {
+        match context {
+            PathCompletionContext::Type => Self::Types,
+            PathCompletionContext::Value | PathCompletionContext::Import => Self::All,
         }
     }
 }

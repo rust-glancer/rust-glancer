@@ -1,3 +1,4 @@
+mod completion_site;
 mod query;
 mod render;
 mod resolve;

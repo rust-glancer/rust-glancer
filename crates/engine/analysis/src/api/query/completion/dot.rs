@@ -1,10 +1,11 @@
 //! Dot-completion assembly for member access sites.
 
-use rg_body_ir::DotCompletionSite;
-
 use crate::{
     Analysis,
-    api::view::{completion::CompletionView, member::MemberView},
+    api::{
+        completion_site::DotCompletionSite,
+        view::{completion::CompletionView, member::MemberView},
+    },
     model::{CompletionEdit, CompletionItem, CompletionTarget},
 };
 
@@ -31,7 +32,7 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
         site: DotCompletionSite,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let edit = CompletionEdit {
-            replace: site.member_prefix_span,
+            replace: site.replace_span(),
         };
         let completion_view = CompletionView::new(self.analysis);
         let members = MemberView::new(self.analysis);

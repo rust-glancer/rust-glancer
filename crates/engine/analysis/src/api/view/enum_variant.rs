@@ -142,7 +142,10 @@ impl<'a, 'db> EnumVariantView<'a, 'db> {
         Ok(variants)
     }
 
-    fn variant(&self, variant: ResolvedEnumVariantRef) -> anyhow::Result<Option<EnumVariant<'_>>> {
+    pub(crate) fn variant(
+        &self,
+        variant: ResolvedEnumVariantRef,
+    ) -> anyhow::Result<Option<EnumVariant<'_>>> {
         match variant {
             ResolvedEnumVariantRef::Semantic(variant) => Ok(self
                 .analysis

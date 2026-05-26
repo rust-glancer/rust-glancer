@@ -1,10 +1,11 @@
 //! Record-field completion assembly for struct literals and record patterns.
 
-use rg_body_ir::RecordFieldCompletionSite;
-
 use crate::{
     Analysis,
-    api::view::{completion::CompletionView, member::MemberView},
+    api::{
+        completion_site::RecordFieldCompletionSite,
+        view::{completion::CompletionView, member::MemberView},
+    },
     model::{CompletionEdit, CompletionItem},
 };
 
@@ -23,7 +24,7 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
         site: RecordFieldCompletionSite,
     ) -> anyhow::Result<Vec<CompletionItem>> {
         let edit = CompletionEdit {
-            replace: site.member_prefix_span,
+            replace: site.replace_span(),
         };
         let completion_view = CompletionView::new(self.0);
         let members = MemberView::new(self.0);

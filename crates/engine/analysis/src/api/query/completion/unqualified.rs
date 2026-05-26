@@ -2,18 +2,18 @@
 
 use std::collections::HashSet;
 
-use rg_body_ir::{UnqualifiedCompletionNamespace, UnqualifiedCompletionSite};
-use rg_def_map::DefMapUnqualifiedCompletionSite;
-
 use crate::{
     Analysis,
-    api::view::{
-        completion::{
-            CompletionScopeNamespace, CompletionView, LexicalCompletionCandidate,
-            ModuleCompletionCandidate,
+    api::{
+        completion_site::{UnqualifiedCompletionContext, UnqualifiedCompletionSite},
+        view::{
+            completion::{
+                CompletionScopeNamespace, CompletionView, LexicalCompletionCandidate,
+                ModuleCompletionCandidate,
+            },
+            details::{DeclarationDetailsContext, DeclarationDetailsView},
+            member::MemberView,
         },
-        details::{DeclarationDetailsContext, DeclarationDetailsView},
-        member::MemberView,
     },
     model::{CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem},
 };
@@ -36,15 +36,15 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         Self { analysis, query }
     }
 
-    /// Collects lexical and module-scope completions inside a body, such as
-    /// `let value = inp$0` or `let value: Us$0`.
-    pub(super) fn body_completions(
+    /// Collects unqualified completions, such as `inp$0`, `Us$0`, or `use st$0`.
+    pub(super) fn completions(
         &self,
         site: UnqualifiedCompletionSite,
     ) -> anyhow::Result<Vec<CompletionItem>> {
-        let filter = UnqualifiedCompletionFilter::from(site.namespace);
+        let context = site.context();
+        let filter = UnqualifiedCompletionFilter::from(context);
         let edit = CompletionEdit {
-            replace: site.member_prefix_span,
+            replace: site.replace_span(),
         };
         let mut completions = Vec::new();
         let mut hidden = HashSet::new();
@@ -58,49 +58,33 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         }
 
         self.push_module_completions(
-            completion_view.module_candidates_for_body_unqualified(&site)?,
+            completion_view.module_candidates_for_unqualified(&site)?,
             ModuleCompletionOptions {
                 filter,
                 edit,
-                visible_scope_sort: VisibleScopeSort::ByOrigin,
-                function_call_completion: FunctionCallCompletion::FunctionCall,
+                visible_scope_sort: match context {
+                    UnqualifiedCompletionContext::Type | UnqualifiedCompletionContext::Value => {
+                        VisibleScopeSort::ByOrigin
+                    }
+                    UnqualifiedCompletionContext::Import => VisibleScopeSort::General,
+                },
+                function_call_completion: match context {
+                    UnqualifiedCompletionContext::Type | UnqualifiedCompletionContext::Value => {
+                        FunctionCallCompletion::FunctionCall
+                    }
+                    UnqualifiedCompletionContext::Import => FunctionCallCompletion::Plain,
+                },
             },
             &hidden,
             &mut completions,
         )?;
 
-        if matches!(site.namespace, UnqualifiedCompletionNamespace::Types) {
+        if matches!(context, UnqualifiedCompletionContext::Type) {
             completions.extend(PrimitiveTypeCompletionResolver::completions(
                 completion_view.primitive_type_candidates_for_unqualified(&site)?,
                 edit,
             ));
         }
-
-        completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
-        Ok(completions)
-    }
-
-    /// Collects import-root completions such as `use st$0`.
-    pub(super) fn use_completions(
-        &self,
-        site: DefMapUnqualifiedCompletionSite,
-    ) -> anyhow::Result<Vec<CompletionItem>> {
-        let edit = CompletionEdit {
-            replace: site.member_prefix_span,
-        };
-        let mut completions = Vec::new();
-        let hidden = HashSet::new();
-        self.push_module_completions(
-            CompletionView::new(self.analysis).module_candidates_for_use_unqualified(&site)?,
-            ModuleCompletionOptions {
-                filter: UnqualifiedCompletionFilter::All,
-                edit,
-                visible_scope_sort: VisibleScopeSort::General,
-                function_call_completion: FunctionCallCompletion::Plain,
-            },
-            &hidden,
-            &mut completions,
-        )?;
 
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
         Ok(completions)
@@ -254,11 +238,11 @@ impl UnqualifiedCompletionFilter {
     }
 }
 
-impl From<UnqualifiedCompletionNamespace> for UnqualifiedCompletionFilter {
-    fn from(namespace: UnqualifiedCompletionNamespace) -> Self {
-        match namespace {
-            UnqualifiedCompletionNamespace::Types => Self::Types,
-            UnqualifiedCompletionNamespace::Values => Self::All,
+impl From<UnqualifiedCompletionContext> for UnqualifiedCompletionFilter {
+    fn from(context: UnqualifiedCompletionContext) -> Self {
+        match context {
+            UnqualifiedCompletionContext::Type => Self::Types,
+            UnqualifiedCompletionContext::Value | UnqualifiedCompletionContext::Import => Self::All,
         }
     }
 }

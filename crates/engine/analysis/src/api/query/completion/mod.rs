@@ -23,10 +23,9 @@ mod unqualified;
 
 use crate::{
     Analysis,
-    api::view::completion::{CompletionSite, CompletionSiteSyntax, CompletionView},
+    api::completion_site::{CompletionSite, CompletionSiteDetector, CompletionSiteSyntax},
     model::{CompletionItem, CompletionKind},
 };
-use rg_body_ir::UnqualifiedCompletionNamespace;
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
 
@@ -117,7 +116,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 syntax.after_colon_colon(),
             )
         });
-        let Some(site) = CompletionView::new(self.analysis).site_at(
+        let Some(site) = CompletionSiteDetector::new(self.analysis).site_at(
             self.query.target,
             self.query.file_id,
             self.query.offset,
@@ -132,17 +131,17 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
             CompletionSite::Dot(site) => {
                 DotCompletionResolver::new(self.analysis, self.query).completions(site)
             }
-            CompletionSite::BodyPath(site) => {
-                PathCompletionResolver::new(self.analysis, self.query).body_completions(site)
+            CompletionSite::Path(site) => {
+                PathCompletionResolver::new(self.analysis, self.query).completions(site)
             }
-            CompletionSite::BodyUnqualified(site) => {
+            CompletionSite::Unqualified(site) => {
                 // Plain body names come from lexical scope, but value positions
                 // also accept expression keywords. Keep those as low-priority
                 // overlay rows so semantic names remain the primary signal.
-                let namespace = site.namespace;
+                let include_keyword_overlay = site.includes_keyword_overlay();
                 let mut completions = UnqualifiedCompletionResolver::new(self.analysis, self.query)
-                    .body_completions(site)?;
-                if matches!(namespace, UnqualifiedCompletionNamespace::Values) {
+                    .completions(site)?;
+                if include_keyword_overlay {
                     completions.extend(
                         KeywordCompletionResolver::new(self.query.client_capabilities)
                             .overlay_completions(syntax_context.get())?,
@@ -153,12 +152,6 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
             }
             CompletionSite::RecordField(site) => {
                 RecordFieldCompletionResolver::new(self.analysis).completions(site)
-            }
-            CompletionSite::UsePath(site) => {
-                PathCompletionResolver::new(self.analysis, self.query).use_completions(site)
-            }
-            CompletionSite::UseUnqualified(site) => {
-                UnqualifiedCompletionResolver::new(self.analysis, self.query).use_completions(site)
             }
         }
     }

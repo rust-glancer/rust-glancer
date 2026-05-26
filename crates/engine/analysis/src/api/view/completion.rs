@@ -1,65 +1,32 @@
-//! Composite completion-site and module-scope views.
+//! Composite completion candidate views.
 //!
 //! Completion renderers need editor-specific policies, but they should not know which frozen
-//! storage owns cursor-site scanning or module visibility. This view keeps those storage lookups in
-//! one place and exposes completion-ready facts.
+//! storage owns candidate lookup. This view accepts completion-domain cursor sites and projects
+//! storage-specific facts into completion-ready candidates.
 
 use rg_body_ir::{
     BodyAutoderef, BodyAutoderefMode, BodyBindingRef, BodyDeclarationRef, BodyTypePathResolution,
-    BodyUnqualifiedCompletionCandidate, DotCompletionSite, FieldKey, PathCompletionSite,
-    RecordFieldCompletionSite, ResolvedFieldRef, ResolvedFunctionRef, UnqualifiedCompletionSite,
+    BodyUnqualifiedCompletionCandidate, FieldKey, ResolvedEnumVariantRef, ResolvedFieldRef,
+    ResolvedFunctionRef, UnqualifiedCompletionSite as BodyUnqualifiedCompletionSite,
 };
-use rg_def_map::{
-    DefId, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite, ModuleRef, Path,
-    ScopeNamespace, VisibleScopeOrigin,
-};
-use rg_parse::FileId;
+use rg_def_map::{DefId, ModuleRef, Path, ScopeNamespace, VisibleScopeOrigin};
 use rg_semantic_ir::Documentation;
 
 use crate::{
     api::{
         Analysis,
+        completion_site::{
+            DotCompletionSite, PathCompletionSite, RecordFieldCompletionSite,
+            UnqualifiedCompletionSite,
+        },
         view::{
             declaration::DeclarationRef,
+            enum_variant::EnumVariantView,
             member::{MemberMethodOrigin, MemberOwnerRef, MemberReceiverTy, MemberView},
         },
     },
     model::{CompletionApplicability, CompletionKind, CompletionTarget},
 };
-
-/// Cursor shape recognized before semantic completion rendering.
-pub(crate) enum CompletionSite {
-    /// Member access, such as `user.na$0`.
-    Dot(DotCompletionSite),
-    /// Body path position, such as `let value = crate::$0`.
-    BodyPath(PathCompletionSite),
-    /// Body lexical position, such as `let value = inp$0`.
-    BodyUnqualified(UnqualifiedCompletionSite),
-    /// Record field position, such as `User { na$0 }`.
-    RecordField(RecordFieldCompletionSite),
-    /// Import path position, such as `use crate::api::$0`.
-    UsePath(DefMapPathCompletionSite),
-    /// Import root position, such as `use st$0`.
-    UseUnqualified(DefMapUnqualifiedCompletionSite),
-}
-
-/// Cheap syntax facts that let completion avoid impossible scanner families.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct CompletionSiteSyntax {
-    inside_use_item: bool,
-    after_dot: bool,
-    after_colon_colon: bool,
-}
-
-impl CompletionSiteSyntax {
-    pub(crate) fn new(inside_use_item: bool, after_dot: bool, after_colon_colon: bool) -> Self {
-        Self {
-            inside_use_item,
-            after_dot,
-            after_colon_colon,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum CompletionScopeNamespace {
@@ -212,74 +179,70 @@ impl<'a, 'db> CompletionView<'a, 'db> {
         Self { analysis }
     }
 
-    /// Classifies the cursor offset by asking the scanner that owns each syntax shape.
-    pub(crate) fn site_at(
-        &self,
-        target: rg_def_map::TargetRef,
-        file_id: FileId,
-        offset: u32,
-        syntax: Option<CompletionSiteSyntax>,
-    ) -> anyhow::Result<Option<CompletionSite>> {
-        if let Some(syntax) = syntax {
-            if syntax.inside_use_item {
-                return self.use_site_at(target, file_id, offset);
-            }
-            if syntax.after_dot {
-                return self.dot_site_at(target, file_id, offset);
-            }
-            if syntax.after_colon_colon {
-                return self.body_path_site_at(target, file_id, offset);
-            }
-        }
-
-        self.general_site_at(target, file_id, offset)
-    }
-
-    pub(crate) fn module_candidates_for_body_path(
+    pub(crate) fn module_candidates_for_path(
         &self,
         site: &PathCompletionSite,
     ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
+        let Some(site) = site.body_site() else {
+            let Some(site) = site.import_site() else {
+                return Ok(Vec::new());
+            };
+            return self.module_path_candidates(site.module, &site.qualifier);
+        };
         let Some(body) = self.analysis.body_ir.body_data(site.body)? else {
             return Ok(Vec::new());
         };
         self.module_path_candidates(body.owner_module(), &site.qualifier)
     }
 
-    pub(crate) fn module_candidates_for_use_path(
+    pub(crate) fn enum_variant_candidates_for_path(
         &self,
-        site: &DefMapPathCompletionSite,
-    ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
-        self.module_path_candidates(site.module, &site.qualifier)
+        site: &PathCompletionSite,
+    ) -> anyhow::Result<Vec<ResolvedEnumVariantRef>> {
+        let Some(site) = site.body_site() else {
+            return Ok(Vec::new());
+        };
+        if !matches!(site.namespace, rg_body_ir::PathCompletionNamespace::Values) {
+            return Ok(Vec::new());
+        }
+
+        Ok(EnumVariantView::new(self.analysis)
+            .variants_for_body_type_path(site.body, site.scope, &site.qualifier)?
+            .into_iter()
+            .map(|variant| variant.variant_ref())
+            .collect())
     }
 
-    pub(crate) fn module_candidates_for_body_unqualified(
+    pub(crate) fn module_candidates_for_unqualified(
         &self,
         site: &UnqualifiedCompletionSite,
     ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
+        let Some(site) = site.body_site() else {
+            let Some(site) = site.import_site() else {
+                return Ok(Vec::new());
+            };
+            return self.unqualified_module_candidates(site.module);
+        };
         let Some(body) = self.analysis.body_ir.body_data(site.body)? else {
             return Ok(Vec::new());
         };
         self.unqualified_module_candidates(body.owner_module())
     }
 
-    pub(crate) fn module_candidates_for_use_unqualified(
-        &self,
-        site: &DefMapUnqualifiedCompletionSite,
-    ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
-        self.unqualified_module_candidates(site.module)
-    }
-
     pub(crate) fn lexical_candidates_for_unqualified(
         &self,
         site: &UnqualifiedCompletionSite,
     ) -> anyhow::Result<Vec<LexicalCompletionCandidate>> {
+        let Some(body_site) = site.body_site() else {
+            return Ok(Vec::new());
+        };
         let mut candidates = Vec::new();
         for candidate in self
             .analysis
             .body_ir
-            .unqualified_completion_candidates(site)?
+            .unqualified_completion_candidates(body_site)?
         {
-            if let Some(candidate) = self.lexical_candidate(site, candidate)? {
+            if let Some(candidate) = self.lexical_candidate(body_site, candidate)? {
                 candidates.push(candidate);
             }
         }
@@ -290,6 +253,16 @@ impl<'a, 'db> CompletionView<'a, 'db> {
         &self,
         site: &UnqualifiedCompletionSite,
     ) -> anyhow::Result<Vec<rg_ty::PrimitiveTy>> {
+        let Some(site) = site.body_site() else {
+            return Ok(Vec::new());
+        };
+        if !matches!(
+            site.namespace,
+            rg_body_ir::UnqualifiedCompletionNamespace::Types
+        ) {
+            return Ok(Vec::new());
+        }
+
         let mut candidates = Vec::new();
 
         for primitive in rg_ty::PrimitiveTy::ALL
@@ -317,7 +290,7 @@ impl<'a, 'db> CompletionView<'a, 'db> {
         &self,
         site: &DotCompletionSite,
     ) -> anyhow::Result<Vec<ResolvedFieldRef>> {
-        let Some(receiver_ty) = self.analysis.body_ir.receiver_ty(*site)? else {
+        let Some(receiver_ty) = self.analysis.body_ir.receiver_ty(site.body_site())? else {
             return Ok(Vec::new());
         };
 
@@ -341,6 +314,7 @@ impl<'a, 'db> CompletionView<'a, 'db> {
         &self,
         site: &RecordFieldCompletionSite,
     ) -> anyhow::Result<Vec<ResolvedFieldRef>> {
+        let site = site.body_site();
         let resolution = self.analysis.body_ir.resolve_type_path_in_scope(
             &self.analysis.def_map,
             &self.analysis.semantic_ir,
@@ -381,7 +355,7 @@ impl<'a, 'db> CompletionView<'a, 'db> {
         &self,
         site: &DotCompletionSite,
     ) -> anyhow::Result<Vec<DotMethodCompletionCandidate>> {
-        let Some(receiver_ty) = self.analysis.body_ir.receiver_ty(*site)? else {
+        let Some(receiver_ty) = self.analysis.body_ir.receiver_ty(site.body_site())? else {
             return Ok(Vec::new());
         };
 
@@ -399,106 +373,6 @@ impl<'a, 'db> CompletionView<'a, 'db> {
         }
 
         Ok(methods)
-    }
-
-    fn general_site_at(
-        &self,
-        target: rg_def_map::TargetRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> anyhow::Result<Option<CompletionSite>> {
-        if let Some(site) = self
-            .analysis
-            .body_ir
-            .dot_completion_site(target, file_id, offset)?
-        {
-            return Ok(Some(CompletionSite::Dot(site)));
-        }
-
-        if let Some(site) = self
-            .analysis
-            .body_ir
-            .path_completion_site(target, file_id, offset)?
-        {
-            return Ok(Some(CompletionSite::BodyPath(site)));
-        }
-
-        if let Some(site) = self
-            .analysis
-            .body_ir
-            .record_field_completion_site(target, file_id, offset)?
-        {
-            return Ok(Some(CompletionSite::RecordField(site)));
-        }
-
-        if let Some(site) = self
-            .analysis
-            .body_ir
-            .unqualified_completion_site(target, file_id, offset)?
-        {
-            return Ok(Some(CompletionSite::BodyUnqualified(site)));
-        }
-
-        if let Some(site) = self
-            .analysis
-            .def_map
-            .path_completion_site(target, file_id, offset)?
-        {
-            return Ok(Some(CompletionSite::UsePath(site)));
-        }
-
-        Ok(self
-            .analysis
-            .def_map
-            .unqualified_completion_site(target, file_id, offset)?
-            .map(CompletionSite::UseUnqualified))
-    }
-
-    fn dot_site_at(
-        &self,
-        target: rg_def_map::TargetRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> anyhow::Result<Option<CompletionSite>> {
-        Ok(self
-            .analysis
-            .body_ir
-            .dot_completion_site(target, file_id, offset)?
-            .map(CompletionSite::Dot))
-    }
-
-    fn body_path_site_at(
-        &self,
-        target: rg_def_map::TargetRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> anyhow::Result<Option<CompletionSite>> {
-        Ok(self
-            .analysis
-            .body_ir
-            .path_completion_site(target, file_id, offset)?
-            .map(CompletionSite::BodyPath))
-    }
-
-    fn use_site_at(
-        &self,
-        target: rg_def_map::TargetRef,
-        file_id: FileId,
-        offset: u32,
-    ) -> anyhow::Result<Option<CompletionSite>> {
-        if let Some(site) = self
-            .analysis
-            .def_map
-            .path_completion_site(target, file_id, offset)?
-        {
-            return Ok(Some(CompletionSite::UsePath(site)));
-        }
-
-        Ok(self
-            .analysis
-            .def_map
-            .unqualified_completion_site(target, file_id, offset)?
-            .map(CompletionSite::UseUnqualified))
     }
 
     fn module_path_candidates(
@@ -594,7 +468,7 @@ impl<'a, 'db> CompletionView<'a, 'db> {
 
     fn lexical_candidate(
         &self,
-        site: &UnqualifiedCompletionSite,
+        site: &BodyUnqualifiedCompletionSite,
         candidate: BodyUnqualifiedCompletionCandidate,
     ) -> anyhow::Result<Option<LexicalCompletionCandidate>> {
         let candidate = match candidate {
