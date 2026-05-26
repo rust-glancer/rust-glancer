@@ -4,10 +4,7 @@ use crate::{
     Analysis,
     api::{
         completion_site::{PathCompletionContext, PathCompletionSite},
-        view::{
-            completion::{CompletionScopeNamespace, CompletionView, ModuleCompletionCandidate},
-            enum_variant::{EnumVariant, EnumVariantView},
-        },
+        view::enum_variant::{EnumVariant, EnumVariantView},
     },
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
@@ -17,6 +14,7 @@ use crate::{
 
 use super::{
     CompletionQuery,
+    candidates::{CompletionCandidateSource, CompletionScopeNamespace, ModuleCompletionCandidate},
     completion_sort::CompletionSortPolicy,
     def_completion_detail,
     function::FunctionCallCompletion,
@@ -42,9 +40,9 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             replace: site.replace_span(),
         };
         let context = site.context();
-        let completion_view = CompletionView::new(self.analysis);
+        let completion_candidates = CompletionCandidateSource::new(self.analysis);
         let mut completions = self.module_path_completions(
-            completion_view.module_candidates_for_path(&site)?,
+            completion_candidates.module_candidates_for_path(&site)?,
             edit,
             PathCompletionFilter::from(context),
             match context {
@@ -56,7 +54,7 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         )?;
 
         let enum_variants = EnumVariantView::new(self.analysis);
-        for variant in completion_view.enum_variant_candidates_for_path(&site)? {
+        for variant in completion_candidates.enum_variant_candidates_for_path(&site)? {
             let Some(variant) = enum_variants.variant(variant)? else {
                 continue;
             };

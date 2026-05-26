@@ -2,12 +2,14 @@
 
 use crate::{
     Analysis,
-    api::view::{completion::ModuleCompletionCandidate, member::MemberView},
+    api::view::member::MemberView,
     model::{CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem},
 };
 
 use super::{
-    CompletionQuery, def_completion_detail,
+    CompletionQuery,
+    candidates::ModuleCompletionCandidate,
+    def_completion_detail,
     function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
 };
 

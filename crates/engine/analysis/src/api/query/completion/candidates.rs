@@ -172,11 +172,11 @@ impl DotMethodCompletionCandidate {
     }
 }
 
-pub(crate) struct CompletionView<'a, 'db> {
+pub(crate) struct CompletionCandidateSource<'a, 'db> {
     analysis: &'a Analysis<'db>,
 }
 
-impl<'a, 'db> CompletionView<'a, 'db> {
+impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self { analysis }
     }

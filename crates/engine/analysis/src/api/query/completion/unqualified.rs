@@ -7,10 +7,6 @@ use crate::{
     api::{
         completion_site::{UnqualifiedCompletionContext, UnqualifiedCompletionSite},
         view::{
-            completion::{
-                CompletionScopeNamespace, CompletionView, LexicalCompletionCandidate,
-                ModuleCompletionCandidate,
-            },
             details::{DeclarationDetailsContext, DeclarationDetailsView},
             member::MemberView,
         },
@@ -20,6 +16,10 @@ use crate::{
 
 use super::{
     CompletionQuery,
+    candidates::{
+        CompletionCandidateSource, CompletionScopeNamespace, LexicalCompletionCandidate,
+        ModuleCompletionCandidate,
+    },
     completion_sort::{CompletionSortPolicy, CompletionSortPriority},
     function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
     module_scope::{ModuleCompletionRenderer, ModuleCompletionRequest},
@@ -49,8 +49,8 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let mut completions = Vec::new();
         let mut hidden = HashSet::new();
 
-        let completion_view = CompletionView::new(self.analysis);
-        for candidate in completion_view.lexical_candidates_for_unqualified(&site)? {
+        let completion_candidates = CompletionCandidateSource::new(self.analysis);
+        for candidate in completion_candidates.lexical_candidates_for_unqualified(&site)? {
             if !filter.accepts_scope_namespace(candidate.namespace()) {
                 continue;
             }
@@ -58,7 +58,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         }
 
         self.push_module_completions(
-            completion_view.module_candidates_for_unqualified(&site)?,
+            completion_candidates.module_candidates_for_unqualified(&site)?,
             ModuleCompletionOptions {
                 filter,
                 edit,
@@ -81,7 +81,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
 
         if matches!(context, UnqualifiedCompletionContext::Type) {
             completions.extend(PrimitiveTypeCompletionResolver::completions(
-                completion_view.primitive_type_candidates_for_unqualified(&site)?,
+                completion_candidates.primitive_type_candidates_for_unqualified(&site)?,
                 edit,
             ));
         }

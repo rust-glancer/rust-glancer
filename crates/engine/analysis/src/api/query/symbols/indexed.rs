@@ -134,11 +134,11 @@ impl From<WorkspaceSymbolEntry> for WorkspaceSymbol {
 }
 
 /// Enumerates symbols while hiding whether declarations came from def-map, semantic IR, or body IR.
-pub(crate) struct SymbolView<'a, 'db> {
+pub(crate) struct IndexedSymbols<'a, 'db> {
     analysis: &'a Analysis<'db>,
 }
 
-impl<'a, 'db> SymbolView<'a, 'db> {
+impl<'a, 'db> IndexedSymbols<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self { analysis }
     }

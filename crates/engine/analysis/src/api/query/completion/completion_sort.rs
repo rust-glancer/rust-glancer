@@ -7,10 +7,9 @@
 
 use std::fmt::Write as _;
 
-use crate::{
-    api::view::completion::CompletionScopeOrigin,
-    model::{CompletionApplicability, CompletionKind, CompletionTarget},
-};
+use crate::model::{CompletionApplicability, CompletionKind, CompletionTarget};
+
+use super::candidates::CompletionScopeOrigin;
 
 /// Context-sensitive policy for building LSP `sortText`.
 ///

@@ -2,14 +2,11 @@
 
 use crate::{
     Analysis,
-    api::{
-        completion_site::RecordFieldCompletionSite,
-        view::{completion::CompletionView, member::MemberView},
-    },
+    api::{completion_site::RecordFieldCompletionSite, view::member::MemberView},
     model::{CompletionEdit, CompletionItem},
 };
 
-use super::field::FieldCompletionRenderer;
+use super::{candidates::CompletionCandidateSource, field::FieldCompletionRenderer};
 
 pub(super) struct RecordFieldCompletionResolver<'a, 'db>(&'a Analysis<'db>);
 
@@ -26,12 +23,12 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
         let edit = CompletionEdit {
             replace: site.replace_span(),
         };
-        let completion_view = CompletionView::new(self.0);
+        let completion_candidates = CompletionCandidateSource::new(self.0);
         let members = MemberView::new(self.0);
         let renderer = FieldCompletionRenderer::new(self.0);
         let mut completions = Vec::new();
 
-        for field_ref in completion_view.field_candidates_for_record(&site)? {
+        for field_ref in completion_candidates.field_candidates_for_record(&site)? {
             let Some(field) = members.field(field_ref)? else {
                 continue;
             };

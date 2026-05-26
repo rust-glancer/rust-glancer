@@ -2,15 +2,13 @@
 
 use crate::{
     Analysis,
-    api::{
-        completion_site::DotCompletionSite,
-        view::{completion::CompletionView, member::MemberView},
-    },
+    api::{completion_site::DotCompletionSite, view::member::MemberView},
     model::{CompletionEdit, CompletionItem, CompletionTarget},
 };
 
 use super::{
     CompletionQuery,
+    candidates::CompletionCandidateSource,
     completion_sort::CompletionSortPolicy,
     field::FieldCompletionRenderer,
     function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
@@ -34,12 +32,12 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
         let edit = CompletionEdit {
             replace: site.replace_span(),
         };
-        let completion_view = CompletionView::new(self.analysis);
+        let completion_candidates = CompletionCandidateSource::new(self.analysis);
         let members = MemberView::new(self.analysis);
         let mut completions = Vec::new();
 
         let field_renderer = FieldCompletionRenderer::new(self.analysis);
-        for field_ref in completion_view.field_candidates_for_dot(&site)? {
+        for field_ref in completion_candidates.field_candidates_for_dot(&site)? {
             let Some(field) = members.field(field_ref)? else {
                 continue;
             };
@@ -57,7 +55,7 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
         }
 
         let function_renderer = FunctionCompletionRenderer::new(self.analysis, self.query);
-        for method in completion_view.method_candidates_for_dot(&site)? {
+        for method in completion_candidates.method_candidates_for_dot(&site)? {
             let Some(function) = members.function(method.function_ref())? else {
                 continue;
             };

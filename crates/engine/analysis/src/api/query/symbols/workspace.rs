@@ -2,10 +2,9 @@
 
 use anyhow::Result;
 
-use crate::{
-    api::{Analysis, view::symbol::SymbolView},
-    model::WorkspaceSymbol,
-};
+use crate::{api::Analysis, model::WorkspaceSymbol};
+
+use super::indexed::IndexedSymbols;
 
 pub(crate) struct WorkspaceSymbolCollector<'a, 'db>(&'a Analysis<'db>);
 
@@ -18,7 +17,7 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         let query = WorkspaceSymbolQuery::new(query);
         let mut symbols = Vec::new();
 
-        for symbol in SymbolView::new(self.0).workspace_symbols()? {
+        for symbol in IndexedSymbols::new(self.0).workspace_symbols()? {
             if !query.matches(symbol.name()) {
                 continue;
             }

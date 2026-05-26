@@ -1,4 +1,5 @@
 mod document;
+mod indexed;
 mod workspace;
 
 use anyhow::Result;

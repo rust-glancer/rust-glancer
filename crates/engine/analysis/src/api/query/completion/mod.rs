@@ -9,6 +9,7 @@
 //! that site into labels, detail text, documentation, sort keys, and replacement
 //! edits.
 
+mod candidates;
 mod completion_sort;
 mod dot;
 mod field;
