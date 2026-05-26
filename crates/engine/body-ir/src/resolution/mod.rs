@@ -15,10 +15,9 @@ mod ty;
 mod type_path;
 
 use rg_def_map::{DefMapReadTxn, Path};
+use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TraitImplRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{
-    FieldRef, FunctionRef, SemanticIrReadTxn, TraitApplicability, TraitImplRef, TypePathContext,
-};
+use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 
 use crate::{
     BodyData, BodyResolution,

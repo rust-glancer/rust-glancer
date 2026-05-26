@@ -1,5 +1,5 @@
 use rg_arena::Arena;
-use rg_def_map::LocalDefId;
+use rg_ir_model::LocalDefId;
 
 use super::{
     ids::{ImplId, ItemId},

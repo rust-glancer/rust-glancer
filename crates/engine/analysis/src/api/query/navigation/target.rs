@@ -1,6 +1,7 @@
 //! Concrete navigation target projection.
 
-use rg_def_map::{ModuleOrigin, ModuleRef};
+use rg_def_map::ModuleOrigin;
+use rg_ir_model::ModuleRef;
 
 use crate::{
     api::{Analysis, view::declaration::DeclarationView},

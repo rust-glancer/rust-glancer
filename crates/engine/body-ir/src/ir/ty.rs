@@ -1,6 +1,6 @@
+use rg_ir_model::TypeDefRef;
 use rg_item_tree::TypeRef;
 use rg_memsize::Shrink;
-use rg_semantic_ir::TypeDefRef;
 
 use super::ids::BodyItemRef;
 

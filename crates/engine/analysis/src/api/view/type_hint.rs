@@ -1,7 +1,7 @@
 //! Source facts for inferred local binding type hints.
 
 use rg_body_ir::{BindingKind, BodyTy};
-use rg_def_map::TargetRef;
+use rg_ir_model::TargetRef;
 use rg_parse::{FileId, Span, TextSpan};
 
 use crate::api::Analysis;

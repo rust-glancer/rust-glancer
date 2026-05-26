@@ -10,7 +10,8 @@ use crate::{
     ItemStore, SemanticIrDb, SemanticIrReadTxn,
     ir::ids::{FunctionRef, ImplRef, TraitRef, TypeDefId, TypeDefRef},
 };
-use rg_def_map::{DefMapDb, ModuleId, ModuleRef, PackageSlot, Path, PathSegment, TargetRef};
+use rg_def_map::{DefMapDb, PackageSlot, Path, PathSegment};
+use rg_ir_model::{ModuleId, ModuleRef, TargetRef};
 use rg_item_tree::{
     FieldItem, FieldList, ItemTreeDb, PackageNameInterners, ParamKind, VisibilityLevel,
 };

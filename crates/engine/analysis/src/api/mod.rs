@@ -11,7 +11,8 @@ pub use query::{
 };
 
 use rg_body_ir::{BodyIrReadTxn, BodyTy};
-use rg_def_map::{DefMapReadTxn, PackageSlot, TargetRef};
+use rg_def_map::{DefMapReadTxn, PackageSlot};
+use rg_ir_model::TargetRef;
 use rg_parse::FileId;
 use rg_semantic_ir::SemanticIrReadTxn;
 

@@ -3,14 +3,13 @@
 //! This module walks lowered bodies and fills resolution/type slots on bindings and expressions.
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
-use rg_def_map::{DefId, DefMapReadTxn, Path, PathSegment};
-use rg_ir_model::ResolvedDeclarationRef;
+use rg_def_map::{DefMapReadTxn, Path, PathSegment};
+use rg_ir_model::{
+    DefId, FunctionRef, ResolvedDeclarationRef, SemanticDeclarationRef, SemanticItemRef, TypeDefId,
+};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{
-    FunctionRef, SemanticDeclarationRef, SemanticIrReadTxn, SemanticItemRef, TypeDefId,
-    TypePathContext,
-};
+use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 
 use crate::{
     ir::body::BodyData,

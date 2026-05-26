@@ -8,7 +8,8 @@ mod scan;
 
 use std::collections::HashSet;
 
-use rg_def_map::{Path, TargetRef};
+use rg_def_map::Path;
+use rg_ir_model::TargetRef;
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};

@@ -3,10 +3,11 @@
 //! Semantic IR can resolve module items, but body-local structs live in lexical scopes. This
 //! resolver checks those scopes first and then falls back to the semantic/def-map context.
 
-use rg_def_map::{DefMapReadTxn, ModuleRef, Path, PathSegment};
+use rg_def_map::{DefMapReadTxn, Path, PathSegment};
+use rg_ir_model::{FunctionRef, ModuleRef, TypeDefRef};
 use rg_item_tree::{GenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{FunctionRef, SemanticIrReadTxn, TypeDefRef, TypePathContext};
+use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 
 use crate::{
     BodyItemKind,

@@ -1,7 +1,7 @@
-use rg_ir_model::ResolvedDeclarationRef;
-use rg_semantic_ir::{
-    EnumVariantRef, FieldRef, FunctionRef, SemanticTypePathResolution, TraitRef, TypeDefRef,
+use rg_ir_model::{
+    EnumVariantRef, FieldRef, FunctionRef, ResolvedDeclarationRef, TraitRef, TypeDefRef,
 };
+use rg_semantic_ir::SemanticTypePathResolution;
 
 use super::ids::{BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef, BodyItemRef};
 

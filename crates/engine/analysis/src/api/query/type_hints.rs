@@ -1,6 +1,6 @@
 //! Inlay-style hints derived from the frozen analysis snapshot.
 
-use rg_def_map::TargetRef;
+use rg_ir_model::TargetRef;
 use rg_parse::{FileId, TextSpan};
 
 use crate::{

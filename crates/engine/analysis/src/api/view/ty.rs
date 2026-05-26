@@ -5,13 +5,12 @@
 //! orchestration.
 
 use rg_body_ir::{
-    BodyAutoderef, BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyTy, BodyTyExt, BodyTyRepr,
-    BodyTypePathResolution, ScopeId,
+    BodyAutoderef, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt, BodyTyRepr,
+    BodyTypePathResolution,
 };
 use rg_def_map::Path;
-use rg_semantic_ir::{
-    FieldRef as SemanticFieldRef, SemanticItemRef, SemanticTypePathResolution, TypePathContext,
-};
+use rg_ir_model::{BodyRef, FieldRef as SemanticFieldRef, ScopeId, SemanticItemRef};
+use rg_semantic_ir::{SemanticTypePathResolution, TypePathContext};
 
 use crate::{
     api::{Analysis, resolve::declaration::SymbolDeclarationResolver},

@@ -1,5 +1,6 @@
 use rg_arena::Arena;
-use rg_def_map::{ItemSource, LocalDefRef, LocalImplRef, ModuleRef};
+use rg_def_map::ItemSource;
+use rg_ir_model::{LocalDefRef, LocalImplRef, ModuleRef};
 use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, Mutability, ParamKind,
     TypeBound, TypeRef, VisibilityLevel,

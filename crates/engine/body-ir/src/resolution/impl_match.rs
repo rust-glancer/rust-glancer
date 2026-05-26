@@ -5,12 +5,10 @@
 //! substitutions that make associated signatures readable in the receiver context.
 
 use rg_def_map::DefMapReadTxn;
+use rg_ir_model::{FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef};
 use rg_item_tree::{GenericArg, GenericParams, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{
-    FunctionRef, ImplRef, ItemOwner, SemanticIrReadTxn, TraitApplicability, TraitImplRef,
-    TypePathContext,
-};
+use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
 
 use crate::{

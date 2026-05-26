@@ -26,7 +26,7 @@ use crate::{
     api::completion_site::{CompletionSite, CompletionSiteDetector, CompletionSiteSyntax},
     model::{CompletionItem, CompletionKind},
 };
-use rg_def_map::TargetRef;
+use rg_ir_model::TargetRef;
 use rg_parse::FileId;
 
 use self::{

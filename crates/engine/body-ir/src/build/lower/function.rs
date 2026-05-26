@@ -2,9 +2,8 @@
 
 use rg_syntax::ast;
 
-use rg_def_map::ModuleRef;
+use rg_ir_model::{FunctionRef, ModuleRef};
 use rg_parse::LineIndex;
-use rg_semantic_ir::FunctionRef;
 use rg_text::NameInterner;
 
 use crate::ir::{

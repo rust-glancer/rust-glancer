@@ -4,7 +4,7 @@
 //! The query owns the search surface and declaration-inclusion policy, while `ReferenceView`
 //! normalizes source symbols into declaration identities before comparison.
 
-use rg_def_map::TargetRef;
+use rg_ir_model::TargetRef;
 use rg_parse::FileId;
 
 use crate::{

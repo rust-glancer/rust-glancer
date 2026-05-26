@@ -4,10 +4,9 @@
 //! parents and Semantic IR owners, but it does not try to reconstruct import aliases or
 //! rustdoc-style canonical paths.
 
-use rg_def_map::{ModuleRef, TargetRef};
-use rg_semantic_ir::{
-    ConstRef, FunctionRef, ImplId, ItemOwner, StaticRef, TraitRef, TypeAliasRef, TypeDefId,
-    TypeDefRef,
+use rg_ir_model::{
+    ConstRef, EnumVariantRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef,
+    TargetRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 
 use crate::api::Analysis;
@@ -109,7 +108,7 @@ impl<'a, 'db> PathRenderer<'a, 'db> {
 
     pub(crate) fn enum_variant_path(
         &self,
-        variant_ref: rg_semantic_ir::EnumVariantRef,
+        variant_ref: EnumVariantRef,
     ) -> anyhow::Result<Option<String>> {
         let Some(data) = self.0.semantic_ir.enum_variant_data(variant_ref)? else {
             return Ok(None);
@@ -141,7 +140,7 @@ impl<'a, 'db> PathRenderer<'a, 'db> {
     }
 
     fn impl_self_path(&self, target: TargetRef, impl_id: ImplId) -> anyhow::Result<Option<String>> {
-        let Some(data) = self.0.semantic_ir.impl_data(rg_semantic_ir::ImplRef {
+        let Some(data) = self.0.semantic_ir.impl_data(ImplRef {
             target,
             id: impl_id,
         })?

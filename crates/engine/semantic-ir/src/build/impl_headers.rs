@@ -1,6 +1,7 @@
 //! Resolves impl headers after semantic item identities are available.
 
-use rg_def_map::{DefMapDb, DefMapReadTxn, ModuleRef, PackageSlot, Path, TargetRef};
+use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot, Path};
+use rg_ir_model::{ModuleRef, TargetRef};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;

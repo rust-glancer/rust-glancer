@@ -6,7 +6,8 @@
 
 use anyhow::Context as _;
 
-use rg_def_map::{PackageSlot, TargetRef};
+use rg_def_map::PackageSlot;
+use rg_ir_model::TargetRef;
 
 use super::{affected_packages, package};
 use crate::project::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange};

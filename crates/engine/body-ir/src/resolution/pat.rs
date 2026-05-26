@@ -5,9 +5,10 @@
 //! not infer the scrutinee type by themselves.
 
 use rg_def_map::{DefMapReadTxn, Path, PathSegment};
+use rg_ir_model::TypeDefId;
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{SemanticIrReadTxn, TypeDefId, TypePathContext};
+use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 
 use crate::{
     BodyItemKind,

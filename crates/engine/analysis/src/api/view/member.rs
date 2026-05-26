@@ -1,15 +1,14 @@
 //! Composite member view over semantic and body-local nominal types.
 
 use rg_body_ir::{
-    BodyFieldData, BodyFieldRef, BodyFunctionData, BodyFunctionRef, BodyItemRef,
-    BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt,
+    BodyFieldData, BodyFunctionData, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt,
 };
-use rg_def_map::LocalDefRef;
-use rg_semantic_ir::{
-    Documentation, FieldData, FieldKey, FieldRef as SemanticFieldRef, FunctionData,
-    FunctionRef as SemanticFunctionRef, ItemOwner, ParamItem, SemanticItemRef, TraitApplicability,
-    TypeDefRef,
+use rg_ir_model::{
+    BodyFieldRef, BodyFunctionRef, BodyItemRef, FieldRef as SemanticFieldRef,
+    FunctionRef as SemanticFunctionRef, ItemOwner, LocalDefRef, SemanticItemRef,
+    TraitApplicability, TypeDefRef,
 };
+use rg_semantic_ir::{Documentation, FieldData, FieldKey, FunctionData, ParamItem};
 
 use crate::{
     api::{Analysis, render::path::PathRenderer},

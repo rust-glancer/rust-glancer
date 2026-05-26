@@ -1,7 +1,8 @@
 //! Source symbol classification over cursor candidates from all indexing layers.
 
-use rg_body_ir::{BodyBindingRef, BodyCursorCandidate};
-use rg_def_map::{DefMapCursorCandidate, TargetRef};
+use rg_body_ir::BodyCursorCandidate;
+use rg_def_map::DefMapCursorCandidate;
+use rg_ir_model::{BodyBindingRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::SemanticCursorCandidate;
 

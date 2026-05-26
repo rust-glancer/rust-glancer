@@ -21,15 +21,16 @@ use crate::{
         resolved::{ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef},
     },
 };
-use rg_def_map::{DefId, DefMapDb, LocalDefRef, ModuleRef, TargetRef};
-use rg_ir_model::ResolvedDeclarationRef;
+use rg_def_map::DefMapDb;
+use rg_ir_model::{
+    DefId, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemId, ItemOwner, LocalDefRef,
+    ModuleRef, ResolvedDeclarationRef, SemanticDeclarationRef, SemanticItemRef, TargetRef,
+    TraitRef, TypeDefId, TypeDefRef,
+};
 use rg_item_tree::{ItemTreeDb, PackageNameInterners};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{Package, ParseDb, Target};
-use rg_semantic_ir::{
-    FieldRef, FunctionRef, ImplRef, ItemId, ItemOwner, SemanticDeclarationRef, SemanticIrDb,
-    SemanticIrReadTxn, SemanticItemRef, TraitRef, TypeDefId, TypeDefRef,
-};
+use rg_semantic_ir::{SemanticIrDb, SemanticIrReadTxn};
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, fixture_crate};
 
@@ -1684,7 +1685,7 @@ impl TargetBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_enum_variant_ref(&self, variant_ref: rg_semantic_ir::EnumVariantRef) -> String {
+    fn render_enum_variant_ref(&self, variant_ref: EnumVariantRef) -> String {
         let semantic_ir = self.semantic_ir_txn();
         let data = semantic_ir
             .enum_variant_data(variant_ref)

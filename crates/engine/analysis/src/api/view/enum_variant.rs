@@ -1,12 +1,12 @@
 //! Composite enum-variant view over semantic and body-local enum declarations.
 
-use rg_body_ir::{
-    BodyEnumVariantData, BodyEnumVariantRef, BodyRef, BodyTypePathResolution, ScopeId,
-};
+use rg_body_ir::{BodyEnumVariantData, BodyTypePathResolution};
 use rg_def_map::Path;
-use rg_semantic_ir::{
-    Documentation, EnumVariantData, EnumVariantRef as SemanticEnumVariantRef, TypeDefId, TypeDefRef,
+use rg_ir_model::{
+    BodyEnumVariantRef, BodyItemRef, BodyRef, EnumVariantRef as SemanticEnumVariantRef, ScopeId,
+    TypeDefId, TypeDefRef,
 };
+use rg_semantic_ir::{Documentation, EnumVariantData};
 
 use crate::{
     api::Analysis,
@@ -118,10 +118,7 @@ impl<'a, 'db> EnumVariantView<'a, 'db> {
         Ok(variants)
     }
 
-    fn body_local_variants(
-        &self,
-        item_ref: rg_body_ir::BodyItemRef,
-    ) -> anyhow::Result<Vec<EnumVariant<'_>>> {
+    fn body_local_variants(&self, item_ref: BodyItemRef) -> anyhow::Result<Vec<EnumVariant<'_>>> {
         let Some(body) = self.analysis.body_ir.body_data(item_ref.body)? else {
             return Ok(Vec::new());
         };

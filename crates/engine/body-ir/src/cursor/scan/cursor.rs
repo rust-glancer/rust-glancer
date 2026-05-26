@@ -3,7 +3,7 @@
 //! Point queries pick the most specific body-local node under the cursor, then
 //! add any extra path-segment candidates visible at the same offset.
 
-use rg_def_map::TargetRef;
+use rg_ir_model::TargetRef;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 

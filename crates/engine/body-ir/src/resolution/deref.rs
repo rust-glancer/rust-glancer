@@ -4,12 +4,10 @@
 //! nominal receiver and resolves the impl's associated `Target` type with the receiver substitution.
 
 use rg_def_map::{DefMapReadTxn, Path, PathSegment};
+use rg_ir_model::{AssocItemId, TraitImplRef, TypeAliasRef};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{
-    AssocItemId, SemanticIrReadTxn, SemanticTypePathResolution, TraitImplRef, TypeAliasRef,
-    TypePathContext,
-};
+use rg_semantic_ir::{SemanticIrReadTxn, SemanticTypePathResolution, TypePathContext};
 use rg_text::Name;
 
 use crate::ir::ty::{BodyNominalTy, BodyTy, BodyTyExt, BodyTyRepr};

@@ -1,17 +1,17 @@
 use std::fmt;
 
-use rg_body_ir::{
-    BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionOwner,
-    BodyFunctionRef, BodyImplRef, BodyItemKind, BodyItemRef, BodyRef as BodyIrBodyRef,
-    BodyValueItemKind, BodyValueItemRef, ExprId, ScopeId,
+use rg_body_ir::{BodyFunctionOwner, BodyItemKind, BodyValueItemKind};
+use rg_def_map::{LocalDefKind, Path};
+use rg_ir_model::{
+    BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef,
+    BodyImplRef, BodyItemRef, BodyRef as BodyIrBodyRef, BodyValueItemRef, DefId,
+    EnumVariantRef as SemanticEnumVariantRef, ExprId, FieldRef as SemanticFieldRef,
+    FunctionRef as SemanticFunctionRef, ImplRef as SemanticImplRef, LocalDefRef, ModuleRef,
+    ScopeId, SemanticDeclarationRef, SemanticItemKind, SemanticItemRef, TargetRef,
+    TraitApplicability,
 };
-use rg_def_map::{DefId, LocalDefKind, LocalDefRef, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{
-    EnumVariantRef as SemanticEnumVariantRef, FieldRef as SemanticFieldRef,
-    FunctionRef as SemanticFunctionRef, ImplRef as SemanticImplRef, SemanticDeclarationRef,
-    SemanticItemKind, SemanticItemRef, TraitApplicability, TypePathContext,
-};
+use rg_semantic_ir::TypePathContext;
 
 /// Stable identity for one lowered function body.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

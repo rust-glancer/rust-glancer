@@ -6,10 +6,8 @@
 
 use anyhow::Context as _;
 
-use rg_def_map::{
-    DefMapDb, DefMapReadTxn, ItemSource, ItemSourceKind, LocalDefRef, LocalImplRef, ModuleRef,
-    PackageSlot, TargetRef,
-};
+use rg_def_map::{DefMapDb, DefMapReadTxn, ItemSource, ItemSourceKind, PackageSlot};
+use rg_ir_model::{LocalDefRef, LocalImplRef, ModuleRef, TargetRef};
 use rg_item_tree::{
     ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
     Package as ItemTreePackage, StaticItem, TraitItem, TypeAliasItem,

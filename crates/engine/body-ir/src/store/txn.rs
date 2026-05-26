@@ -1,8 +1,9 @@
 //! Read transactions over frozen Body IR package data.
 
-use rg_def_map::{DefMapReadTxn, PackageSlot, Path, TargetRef};
+use rg_def_map::{DefMapReadTxn, PackageSlot, Path};
+use rg_ir_model::{FieldRef, FunctionRef, TargetRef, TraitApplicability, TraitImplRef};
 use rg_package_store::{PackageRead, PackageStoreError, PackageStoreReadTxn};
-use rg_semantic_ir::{FieldRef, FunctionRef, SemanticIrReadTxn, TraitApplicability, TraitImplRef};
+use rg_semantic_ir::SemanticIrReadTxn;
 
 use crate::{
     BindingData, BodyBindingRef, BodyData, BodyDeclarationRef, BodyDeclarationView,

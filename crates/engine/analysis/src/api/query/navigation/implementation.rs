@@ -1,6 +1,6 @@
 //! Goto-implementation query flow.
 
-use rg_def_map::TargetRef;
+use rg_ir_model::TargetRef;
 use rg_parse::FileId;
 
 use super::target::NavigationTargetProjection;

@@ -1,12 +1,13 @@
 //! Source-level declaration lookup shared by editor queries.
 
-use rg_body_ir::BodyDeclarationRef;
-use rg_def_map::{LocalDefRef, ModuleOrigin, ModuleRef, TargetRef};
-use rg_parse::{FileId, Span};
-use rg_semantic_ir::{
-    EnumVariantRef as SemanticEnumVariantRef, FieldRef as SemanticFieldRef,
-    FunctionRef as SemanticFunctionRef, SemanticItemKind, SemanticItemRef, TypeRef,
+use rg_def_map::ModuleOrigin;
+use rg_ir_model::{
+    BodyDeclarationRef, EnumVariantRef as SemanticEnumVariantRef, FieldRef as SemanticFieldRef,
+    FunctionRef as SemanticFunctionRef, LocalDefRef, ModuleRef, SemanticItemKind, SemanticItemRef,
+    TargetRef,
 };
+use rg_parse::{FileId, Span};
+use rg_semantic_ir::TypeRef;
 
 use crate::{
     api::{Analysis, view::member::MemberView},

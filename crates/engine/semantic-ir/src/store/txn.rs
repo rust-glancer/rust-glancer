@@ -1,6 +1,7 @@
 //! Read transactions over frozen Semantic IR package data.
 
-use rg_def_map::{DefMapReadTxn, LocalDefRef, ModuleRef, PackageSlot, Path, TargetRef};
+use rg_def_map::{DefMapReadTxn, PackageSlot, Path};
+use rg_ir_model::{DefId, LocalDefRef, ModuleRef, TargetRef};
 use rg_item_tree::FieldKey;
 use rg_package_store::{PackageRead, PackageStoreError, PackageStoreReadTxn};
 use rg_parse::TargetId;
@@ -450,7 +451,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         path: &Path,
     ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
         self.resolve_path(def_map, from, path, |db, def| {
-            let rg_def_map::DefId::Local(local_def) = def else {
+            let DefId::Local(local_def) = def else {
                 return Ok(None);
             };
             db.semantic_item_for_local_def(local_def)
@@ -528,7 +529,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         def_map: &DefMapReadTxn<'db>,
         owner: ModuleRef,
         path: &Path,
-        map_def: impl Fn(&Self, rg_def_map::DefId) -> Result<Option<T>, PackageStoreError>,
+        map_def: impl Fn(&Self, DefId) -> Result<Option<T>, PackageStoreError>,
     ) -> Result<Vec<T>, PackageStoreError> {
         let mut resolved_items = Vec::new();
         let result = def_map.resolve_path_in_type_namespace(owner, path)?;

@@ -5,7 +5,7 @@
 //! are useful while reading code.
 
 use rg_body_ir::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyRepr};
-use rg_semantic_ir::TypeDefId;
+use rg_ir_model::TypeDefId;
 
 use crate::api::Analysis;
 

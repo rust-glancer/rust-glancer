@@ -3,7 +3,7 @@
 //! Record-field sites are the field-name slots inside struct literals and record patterns, such
 //! as `User { na$0 }` or `let User { na$0 } = user`.
 
-use rg_def_map::TargetRef;
+use rg_ir_model::TargetRef;
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};

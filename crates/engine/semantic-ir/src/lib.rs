@@ -10,17 +10,19 @@ mod tests;
 pub use self::{
     cursor::SemanticCursorCandidate,
     ir::{
-        AssocItemId, ConstData, ConstId, ConstRef, ConstSignature, EnumData, EnumId,
-        EnumVariantData, EnumVariantRef, FieldData, FieldRef, FunctionData, FunctionId,
-        FunctionRef, FunctionSignature, ImplData, ImplId, ImplRef, ItemId, ItemOwner, ItemStore,
-        PackageIr, SemanticDeclarationRef, SemanticIrStats, SemanticItemKind, SemanticItemRef,
-        SemanticTypePathResolution, StaticData, StaticId, StaticRef, StructData, StructId,
-        TargetIr, TraitApplicability, TraitData, TraitId, TraitImplRef, TraitRef, TypeAliasData,
-        TypeAliasId, TypeAliasRef, TypeAliasSignature, TypeDefId, TypeDefRef, TypePathContext,
-        UnionData, UnionId,
+        ConstData, ConstSignature, EnumData, EnumVariantData, FieldData, FunctionData,
+        FunctionSignature, ImplData, ItemStore, PackageIr, SemanticIrStats,
+        SemanticTypePathResolution, StaticData, StructData, TargetIr, TraitData, TypeAliasData,
+        TypeAliasSignature, TypePathContext, UnionData,
     },
     store::{SemanticIrDb, SemanticIrReadTxn},
     view::SemanticItemView,
+};
+
+pub(crate) use self::ir::{
+    AssocItemId, ConstRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner,
+    SemanticItemKind, SemanticItemRef, StaticRef, TraitImplRef, TraitRef, TypeAliasRef, TypeDefId,
+    TypeDefRef,
 };
 pub use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,

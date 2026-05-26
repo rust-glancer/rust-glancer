@@ -9,16 +9,17 @@ use crate::{
     TypeHint, WorkspaceSymbol,
 };
 use rg_body_ir::{
-    BodyGenericArg, BodyIrDb, BodyIrReadTxn, BodyItemRef, BodyLocalNominalTy, BodyNominalTy,
-    BodyTy, BodyTyRepr, ExprData, ExprKind,
+    BodyGenericArg, BodyIrDb, BodyIrReadTxn, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyRepr,
+    ExprData, ExprKind,
 };
-use rg_def_map::{DefMapDb, ModuleRef, PackageSlot, TargetRef};
+use rg_def_map::{DefMapDb, PackageSlot};
+use rg_ir_model::{
+    BodyItemRef, FunctionRef, ItemOwner, ModuleRef, TargetRef, TraitRef, TypeDefId, TypeDefRef,
+};
 use rg_item_tree::{ItemTreeDb, PackageNameInterners};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb, Span};
-use rg_semantic_ir::{
-    FunctionRef, ItemOwner, SemanticIrDb, SemanticIrReadTxn, TraitRef, TypeDefId, TypeDefRef,
-};
+use rg_semantic_ir::{SemanticIrDb, SemanticIrReadTxn};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
 use test_fixture::{FixtureMarkers, fixture_crate, fixture_crate_with_markers};
 

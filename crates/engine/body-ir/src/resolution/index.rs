@@ -5,10 +5,9 @@
 
 use std::collections::HashMap;
 
+use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, TraitImplRef, TraitRef, TypeDefRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{
-    AssocItemId, FunctionRef, ImplRef, SemanticIrReadTxn, TraitImplRef, TraitRef, TypeDefRef,
-};
+use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::Name;
 
 use super::push_unique;

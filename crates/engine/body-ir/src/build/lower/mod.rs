@@ -13,9 +13,10 @@ mod target;
 use anyhow::Context as _;
 use rayon::prelude::*;
 
-use rg_def_map::{PackageSlot, TargetRef};
+use rg_def_map::PackageSlot;
+use rg_ir_model::{FunctionRef, TargetRef};
 use rg_parse::{FileId, ParseDb, Span, TargetId};
-use rg_semantic_ir::{FunctionRef, SemanticIrReadTxn};
+use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
 
 use crate::{

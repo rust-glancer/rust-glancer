@@ -2,7 +2,8 @@
 
 use anyhow::Context as _;
 use rayon::prelude::*;
-use rg_def_map::{DefMapReadTxn, PackageSlot, TargetRef};
+use rg_def_map::{DefMapReadTxn, PackageSlot};
+use rg_ir_model::TargetRef;
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
 use rg_semantic_ir::SemanticIrReadTxn;

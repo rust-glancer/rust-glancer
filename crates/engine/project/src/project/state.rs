@@ -2,7 +2,8 @@ use std::{path::Path, sync::Arc};
 
 use rg_analysis::Analysis;
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
-use rg_def_map::{DefMapDb, PackageSlot, TargetRef};
+use rg_def_map::{DefMapDb, PackageSlot};
+use rg_ir_model::TargetRef;
 use rg_package_store::{PackageStoreError, PackageSubset};
 use rg_parse::{FileId, ParseDb};
 use rg_semantic_ir::SemanticIrDb;

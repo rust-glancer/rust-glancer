@@ -1,6 +1,7 @@
 //! Borrowed semantic item views shared by read transactions and downstream queries.
 
-use rg_def_map::{ItemSource, LocalDefRef, LocalImplRef, ModuleRef};
+use rg_def_map::ItemSource;
+use rg_ir_model::{LocalDefRef, LocalImplRef, ModuleRef};
 use rg_item_tree::{Documentation, GenericParams, TypeRef, VisibilityLevel};
 use rg_parse::Span;
 use rg_text::Name;

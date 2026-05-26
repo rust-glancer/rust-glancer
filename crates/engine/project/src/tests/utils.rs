@@ -13,7 +13,8 @@ use rg_analysis::{
     WorkspaceSymbol,
 };
 use rg_body_ir::{BodyAutoderef, BodyTyExt};
-use rg_def_map::{PackageSlot, TargetRef};
+use rg_def_map::PackageSlot;
+use rg_ir_model::TargetRef;
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb};
 use rg_workspace::WorkspaceMetadata;

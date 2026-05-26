@@ -5,11 +5,11 @@
 //! storage-specific facts into completion-ready candidates.
 
 use rg_body_ir::{
-    BodyAutoderef, BodyAutoderefMode, BodyBindingRef, BodyTypePathResolution,
-    BodyUnqualifiedCompletionCandidate, FieldKey,
-    UnqualifiedCompletionSite as BodyUnqualifiedCompletionSite,
+    BodyAutoderef, BodyAutoderefMode, BodyTypePathResolution, BodyUnqualifiedCompletionCandidate,
+    FieldKey, UnqualifiedCompletionSite as BodyUnqualifiedCompletionSite,
 };
-use rg_def_map::{DefId, ModuleRef, Path, ScopeNamespace, VisibleScopeOrigin};
+use rg_def_map::{Path, ScopeNamespace, VisibleScopeOrigin};
+use rg_ir_model::{BodyBindingRef, DefId, ModuleRef};
 use rg_semantic_ir::Documentation;
 
 use crate::{

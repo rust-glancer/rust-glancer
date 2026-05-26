@@ -12,7 +12,8 @@ use rg_body_ir::{
     UnqualifiedCompletionNamespace as BodyUnqualifiedCompletionNamespace,
     UnqualifiedCompletionSite as BodyUnqualifiedCompletionSite,
 };
-use rg_def_map::{DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite, TargetRef};
+use rg_def_map::{DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite};
+use rg_ir_model::TargetRef;
 use rg_parse::{FileId, Span};
 
 use crate::api::Analysis;

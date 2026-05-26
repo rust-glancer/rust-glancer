@@ -4,7 +4,8 @@
 //! signatures. Keeping this scan here prevents analysis from knowing how every semantic item stores
 //! generic params, field types, enum variants, impl headers, and associated function declarations.
 
-use rg_def_map::{Path, TargetRef};
+use rg_def_map::Path;
+use rg_ir_model::TargetRef;
 use rg_item_tree::{
     FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypeRef, WherePredicate,
 };

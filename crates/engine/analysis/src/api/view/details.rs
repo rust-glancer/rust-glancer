@@ -4,12 +4,11 @@
 //! facts as well: docs, display path, symbol kind, and a compact signature. This view keeps that
 //! storage-specific projection out of feature queries.
 
-use rg_body_ir::BodyDeclarationRef;
-use rg_def_map::{LocalDefRef, ModuleRef};
-use rg_semantic_ir::{
-    ConstRef, Documentation, SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId,
-    TypeDefRef,
+use rg_ir_model::{
+    BodyDeclarationRef, ConstRef, LocalDefRef, ModuleRef, SemanticItemRef, StaticRef, TraitRef,
+    TypeAliasRef, TypeDefId, TypeDefRef,
 };
+use rg_semantic_ir::Documentation;
 
 use crate::{
     api::{

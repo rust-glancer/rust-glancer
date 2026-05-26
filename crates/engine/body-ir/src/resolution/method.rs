@@ -4,8 +4,9 @@
 //! `impl_match` so receiver-based resolution can share it.
 
 use rg_def_map::DefMapReadTxn;
+use rg_ir_model::{FunctionRef, TraitApplicability};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{FunctionRef, SemanticIrReadTxn, TraitApplicability};
+use rg_semantic_ir::SemanticIrReadTxn;
 
 use crate::{
     ir::body::BodyData,

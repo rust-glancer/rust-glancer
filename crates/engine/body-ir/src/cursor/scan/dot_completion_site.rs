@@ -4,7 +4,7 @@
 //! can host member completions, then return the receiver expression and typed
 //! member prefix.
 
-use rg_def_map::TargetRef;
+use rg_ir_model::TargetRef;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 

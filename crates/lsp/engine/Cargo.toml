@@ -18,6 +18,7 @@ futures.workspace = true
 ls_types.workspace = true
 rg_analysis.workspace = true
 rg_def_map.workspace = true
+rg_ir_model.workspace = true
 rg_lsp_proto.workspace = true
 rg_parse.workspace = true
 rg_project.workspace = true

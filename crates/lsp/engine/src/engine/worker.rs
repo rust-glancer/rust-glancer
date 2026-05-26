@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::Context as _;
 use rg_analysis::{CompletionQuery, ReferenceQuery, TypeHint};
-use rg_def_map::TargetRef;
+use rg_ir_model::TargetRef;
 use rg_lsp_proto::{AnalysisConfig, CompletionClientCapabilities};
 use rg_parse::TextSpan;
 use rg_project::{

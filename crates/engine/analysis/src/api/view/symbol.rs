@@ -1,17 +1,15 @@
 //! Composite symbol enumeration over declaration-producing stores.
 
 use anyhow::Result;
-use rg_body_ir::{
-    BodyData, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplData, BodyImplId, BodyImplRef,
-    BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef,
+use rg_body_ir::{BodyData, BodyImplData};
+use rg_ir_model::{
+    AssocItemId, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyImplRef, BodyItemId,
+    BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ConstRef,
+    EnumVariantRef as SemanticEnumVariantRef, FunctionRef as SemanticFunctionRef, ModuleId,
+    ModuleRef, SemanticItemKind, TargetRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
-use rg_def_map::{ModuleId, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{
-    AssocItemId, ConstRef, EnumVariantRef as SemanticEnumVariantRef,
-    FunctionRef as SemanticFunctionRef, SemanticItemKind, SemanticItemView, TypeAliasRef,
-    TypeDefId, TypeDefRef,
-};
+use rg_semantic_ir::SemanticItemView;
 
 use crate::{
     api::{

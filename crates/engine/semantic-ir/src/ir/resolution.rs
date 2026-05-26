@@ -1,6 +1,6 @@
 //! Query-facing semantic resolution result types.
 
-use rg_def_map::ModuleRef;
+use rg_ir_model::ModuleRef;
 
 use super::ids::{ImplRef, TraitRef, TypeDefRef};
 

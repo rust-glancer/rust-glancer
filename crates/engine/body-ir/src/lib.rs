@@ -21,19 +21,23 @@ pub use self::{
         UnqualifiedCompletionNamespace, UnqualifiedCompletionSite,
     },
     ir::{
-        BindingData, BindingId, BindingKind, BodyBindingRef, BodyData, BodyDeclarationRef,
-        BodyEnumVariantData, BodyEnumVariantRef, BodyFieldData, BodyFieldRef, BodyFunctionData,
-        BodyFunctionId, BodyFunctionOwner, BodyFunctionRef, BodyId, BodyImplData, BodyImplId,
-        BodyImplRef, BodyIrStats, BodyItemData, BodyItemDeclaration, BodyItemId, BodyItemKind,
-        BodyItemOwner, BodyItemRef, BodyPath, BodyRef, BodySelfParamKind, BodySource,
-        BodyValueItemData, BodyValueItemDeclaration, BodyValueItemId, BodyValueItemKind,
-        BodyValueItemOwner, BodyValueItemRef, ClosureCapture, ClosureKind, ClosureParamData,
-        ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprId, ExprKind, ExprRangeKind,
-        ExprUnaryOp, LabelData, LiteralKind, PackageBodies, PatBindingMode, PatData, PatId,
-        PatKind, PatMutability, PatRangeKind, RecordExprField, RecordExprSpread, RecordPatField,
-        ScopeData, ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
+        BindingData, BindingKind, BodyData, BodyEnumVariantData, BodyFieldData, BodyFunctionData,
+        BodyFunctionOwner, BodyImplData, BodyIrStats, BodyItemData, BodyItemDeclaration,
+        BodyItemKind, BodyItemOwner, BodyPath, BodySelfParamKind, BodySource, BodyValueItemData,
+        BodyValueItemDeclaration, BodyValueItemKind, BodyValueItemOwner, ClosureCapture,
+        ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData,
+        ExprKind, ExprRangeKind, ExprUnaryOp, LabelData, LiteralKind, PackageBodies,
+        PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordExprField,
+        RecordExprSpread, RecordPatField, ScopeData, StmtData, StmtKind, TargetBodies,
+        TargetBodiesStatus,
     },
     store::{BodyIrDb, BodyIrReadTxn},
+};
+
+pub(crate) use self::ir::{
+    BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
+    BodyFunctionId, BodyFunctionRef, BodyId, BodyImplRef, BodyItemId, BodyItemRef, BodyRef,
+    BodyValueItemId, BodyValueItemRef, ExprId, PatId, ScopeId,
 };
 
 // TODO: Shouldn't be exposed normally; remove after analysis owns resolver projection.

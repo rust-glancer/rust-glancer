@@ -4,14 +4,12 @@
 //! trait method. This view owns the storage-specific lookup rules so query code can stay focused on
 //! cursor policy and editor projection.
 
-use rg_body_ir::{
-    BodyAutoderef, BodyAutoderefMode, BodyImplId, BodyImplRef, BodyResolution, BodyTy, BodyTyExt,
-    ExprKind,
-};
-use rg_semantic_ir::{
+use rg_body_ir::{BodyAutoderef, BodyAutoderefMode, BodyResolution, BodyTy, BodyTyExt, ExprKind};
+use rg_ir_model::{
     AssocItemId, FunctionRef as SemanticFunctionRef, ImplRef as SemanticImplRef, ItemOwner,
     SemanticItemRef, TraitRef, TypeDefRef,
 };
+use rg_ir_model::{BodyImplId, BodyImplRef, BodyItemRef};
 
 use crate::{
     api::{Analysis, resolve::declaration::SymbolDeclarationResolver},
@@ -183,7 +181,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     fn extend_local_type_implementations(
         &self,
         implementations: &mut Vec<DeclarationRef>,
-        item: rg_body_ir::BodyItemRef,
+        item: BodyItemRef,
     ) -> anyhow::Result<()> {
         let Some(body) = self.analysis.body_ir.body_data(item.body)? else {
             return Ok(());

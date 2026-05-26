@@ -1,6 +1,7 @@
 use rg_arena::Arena;
+use rg_ir_model::ModuleRef;
+use rg_ir_model::{FunctionId, FunctionRef};
 use rg_parse::{FileId, Span, TargetId};
-use rg_semantic_ir::{FunctionId, FunctionRef};
 
 use super::{
     expr::ExprData,
@@ -181,7 +182,7 @@ impl TargetBodies {
 )]
 pub struct BodyData {
     pub(crate) owner: FunctionRef,
-    pub(crate) owner_module: rg_def_map::ModuleRef,
+    pub(crate) owner_module: ModuleRef,
     pub(crate) source: BodySource,
     pub(crate) param_scope: ScopeId,
     pub(crate) root_expr: ExprId,
@@ -202,7 +203,7 @@ impl BodyData {
         self.owner
     }
 
-    pub fn owner_module(&self) -> rg_def_map::ModuleRef {
+    pub fn owner_module(&self) -> ModuleRef {
         self.owner_module
     }
 
@@ -313,7 +314,7 @@ impl BodyData {
 
     pub(crate) fn new(
         owner: FunctionRef,
-        owner_module: rg_def_map::ModuleRef,
+        owner_module: ModuleRef,
         source: BodySource,
         param_scope: ScopeId,
         root_expr: ExprId,
