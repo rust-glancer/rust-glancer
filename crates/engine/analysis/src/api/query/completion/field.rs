@@ -1,9 +1,4 @@
 //! Shared field-completion rendering.
-//!
-//! Dot completions and record-field completions both render the same field metadata: label,
-//! signature detail, docs, sort text, and replacement edit.
-
-use rg_body_ir::FieldKey;
 
 use crate::{
     Analysis,
@@ -28,64 +23,27 @@ impl<'a, 'db> FieldCompletionRenderer<'a, 'db> {
         &self,
         field: MemberField<'_>,
         edit: CompletionEdit,
-    ) -> Option<FieldCompletion> {
+    ) -> Option<CompletionItem> {
         let target = CompletionTarget::Field(field.field_ref());
-        let Some(metadata) = self.field_completion_metadata(field) else {
-            return None;
-        };
-
-        Some(FieldCompletion {
-            key: metadata.key,
-            item: CompletionItem {
-                label: metadata.completion.label.clone(),
-                kind: CompletionKind::Field,
-                target,
-                applicability: CompletionApplicability::Known,
-                detail: metadata.completion.detail,
-                documentation: metadata.completion.documentation,
-                sort_text: CompletionSortPolicy::General.sort_text(
-                    None,
-                    &metadata.completion.label,
-                    CompletionKind::Field,
-                    CompletionApplicability::Known,
-                    target,
-                ),
-                insert_text: CompletionInsertText::Plain,
-                edit: Some(edit),
-            },
-        })
-    }
-
-    fn field_completion_metadata(&self, field: MemberField<'_>) -> Option<FieldCompletionMetadata> {
-        let Some(key) = field.key().cloned() else {
-            return None;
-        };
+        let label = field.key()?.to_string();
         let renderer = SignatureRenderer::new(self.0);
 
-        Some(FieldCompletionMetadata {
-            completion: CompletionMetadata {
-                label: key.to_string(),
-                detail: renderer.member_field_signature(&field),
-                documentation: field.docs_text(),
-            },
-            key,
+        Some(CompletionItem {
+            label: label.clone(),
+            kind: CompletionKind::Field,
+            target,
+            applicability: CompletionApplicability::Known,
+            detail: renderer.member_field_signature(&field),
+            documentation: field.docs_text(),
+            sort_text: CompletionSortPolicy::General.sort_text(
+                None,
+                &label,
+                CompletionKind::Field,
+                CompletionApplicability::Known,
+                target,
+            ),
+            insert_text: CompletionInsertText::Plain,
+            edit: Some(edit),
         })
     }
-}
-
-/// Rendered field completion plus its source-level field key.
-pub(super) struct FieldCompletion {
-    pub(super) key: FieldKey,
-    pub(super) item: CompletionItem,
-}
-
-struct FieldCompletionMetadata {
-    key: FieldKey,
-    completion: CompletionMetadata,
-}
-
-struct CompletionMetadata {
-    label: String,
-    detail: Option<String>,
-    documentation: Option<String>,
 }

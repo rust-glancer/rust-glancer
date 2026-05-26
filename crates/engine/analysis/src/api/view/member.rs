@@ -2,10 +2,9 @@
 
 use rg_body_ir::{
     BodyFieldData, BodyFieldRef, BodyFunctionData, BodyFunctionRef, BodyItemRef,
-    BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyTy, BodyTyExt, BodyTypePathResolution,
-    ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
+    BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt, ResolvedFieldRef, ResolvedFunctionRef,
 };
-use rg_def_map::{LocalDefRef, Path};
+use rg_def_map::LocalDefRef;
 use rg_semantic_ir::{
     Documentation, FieldData, FieldKey, FieldRef, FunctionData, FunctionRef, ItemOwner, ParamItem,
     SemanticItemRef, TraitApplicability, TypeDefRef,
@@ -271,38 +270,6 @@ impl<'a, 'db> MemberView<'a, 'db> {
                 continue;
             };
             fields.push(field);
-        }
-
-        Ok(fields)
-    }
-
-    pub(crate) fn field_candidates_for_body_type_path<'view>(
-        &'view self,
-        body: BodyRef,
-        scope: ScopeId,
-        path: &Path,
-    ) -> anyhow::Result<Vec<MemberField<'view>>> {
-        let resolution = self.analysis.body_ir.resolve_type_path_in_scope(
-            &self.analysis.def_map,
-            &self.analysis.semantic_ir,
-            body,
-            scope,
-            path,
-        )?;
-        let mut fields = Vec::new();
-
-        match resolution {
-            BodyTypePathResolution::BodyLocal(item) => {
-                fields.extend(self.field_candidates_for_owner(MemberOwnerRef::BodyLocal(item))?);
-            }
-            BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
-                for ty in types {
-                    fields.extend(self.field_candidates_for_owner(MemberOwnerRef::Semantic(ty))?);
-                }
-            }
-            BodyTypePathResolution::Primitive(_)
-            | BodyTypePathResolution::Traits(_)
-            | BodyTypePathResolution::Unknown => {}
         }
 
         Ok(fields)

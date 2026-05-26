@@ -2,33 +2,27 @@
 
 use std::collections::HashSet;
 
-use rg_body_ir::{
-    BodyUnqualifiedCompletionCandidate, ResolvedFunctionRef, UnqualifiedCompletionNamespace,
-    UnqualifiedCompletionSite,
-};
+use rg_body_ir::{UnqualifiedCompletionNamespace, UnqualifiedCompletionSite};
 use rg_def_map::DefMapUnqualifiedCompletionSite;
-use rg_semantic_ir::Documentation;
 
 use crate::{
     Analysis,
-    api::{
-        render::signature::SignatureRenderer,
-        view::{
-            completion::{CompletionScopeNamespace, CompletionView, ModuleCompletionCandidate},
-            member::MemberView,
+    api::view::{
+        completion::{
+            CompletionScopeNamespace, CompletionView, LexicalCompletionCandidate,
+            ModuleCompletionCandidate,
         },
+        details::{DeclarationDetailsContext, DeclarationDetailsView},
+        member::MemberView,
     },
-    model::{
-        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
-        CompletionKind, CompletionTarget,
-    },
+    model::{CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem},
 };
 
 use super::{
     CompletionQuery,
     completion_sort::{CompletionSortPolicy, CompletionSortPriority},
-    def_completion_detail,
     function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
+    module_scope::{ModuleCompletionRenderer, ModuleCompletionRequest},
     primitive::PrimitiveTypeCompletionResolver,
 };
 
@@ -55,26 +49,16 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let mut completions = Vec::new();
         let mut hidden = HashSet::new();
 
-        for candidate in self
-            .analysis
-            .body_ir
-            .unqualified_completion_candidates(&site)?
-        {
-            if !filter.accepts_body_candidate(&candidate) {
+        let completion_view = CompletionView::new(self.analysis);
+        for candidate in completion_view.lexical_candidates_for_unqualified(&site)? {
+            if !filter.accepts_scope_namespace(candidate.namespace()) {
                 continue;
             }
-            self.push_body_completion(
-                candidate,
-                &site,
-                filter,
-                edit,
-                &mut hidden,
-                &mut completions,
-            )?;
+            self.push_lexical_completion(candidate, filter, edit, &mut hidden, &mut completions)?;
         }
 
         self.push_module_completions(
-            CompletionView::new(self.analysis).module_candidates_for_body_unqualified(&site)?,
+            completion_view.module_candidates_for_body_unqualified(&site)?,
             ModuleCompletionOptions {
                 filter,
                 edit,
@@ -86,11 +70,10 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         )?;
 
         if matches!(site.namespace, UnqualifiedCompletionNamespace::Types) {
-            completions.extend(PrimitiveTypeCompletionResolver::body_completions(
-                self.analysis,
-                &site,
+            completions.extend(PrimitiveTypeCompletionResolver::completions(
+                completion_view.primitive_type_candidates_for_unqualified(&site)?,
                 edit,
-            )?);
+            ));
         }
 
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
@@ -123,148 +106,70 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         Ok(completions)
     }
 
-    fn push_body_completion(
+    fn push_lexical_completion(
         &self,
-        candidate: BodyUnqualifiedCompletionCandidate,
-        site: &UnqualifiedCompletionSite,
+        candidate: LexicalCompletionCandidate,
         filter: UnqualifiedCompletionFilter,
         edit: CompletionEdit,
         hidden: &mut HashSet<(String, CompletionScopeNamespace)>,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
-        match candidate {
-            BodyUnqualifiedCompletionCandidate::Binding {
-                binding,
-                label,
-                scope_distance,
-            } => {
-                hidden.insert((label.clone(), CompletionScopeNamespace::Values));
-                let Some(body) = self.analysis.body_ir.body_data(site.body)? else {
-                    return Ok(());
-                };
-                let Some(data) = body.binding(binding) else {
-                    return Ok(());
-                };
-                let target = CompletionTarget::Binding {
-                    body: site.body,
-                    binding,
-                };
-                completions.push(CompletionItem {
-                    label,
-                    kind: CompletionKind::Variable,
-                    target,
-                    applicability: CompletionApplicability::Known,
-                    detail: Some(SignatureRenderer::new(self.analysis).binding_signature(data)?),
-                    documentation: None,
-                    sort_text: filter.sort_policy().sort_text(
-                        Some(CompletionSortPriority::body_scope(scope_distance)),
-                        data.name.as_deref().unwrap_or("<unsupported>"),
-                        CompletionKind::Variable,
-                        CompletionApplicability::Known,
-                        target,
-                    ),
-                    insert_text: CompletionInsertText::Plain,
-                    edit: Some(edit),
-                });
-            }
-            BodyUnqualifiedCompletionCandidate::LocalItem {
-                item,
-                kind,
-                label,
-                scope_distance,
-            } => {
-                let Some(body) = self.analysis.body_ir.body_data(item.body)? else {
-                    return Ok(());
-                };
-                let Some(data) = body.local_item(item.item) else {
-                    return Ok(());
-                };
-                hidden.insert((label.clone(), CompletionScopeNamespace::Types));
-                if matches!(site.namespace, UnqualifiedCompletionNamespace::Values)
-                    && data.has_value_constructor()
-                {
-                    hidden.insert((label.clone(), CompletionScopeNamespace::Values));
-                }
-                let kind = CompletionKind::from_body_item_kind(kind);
-                let target = CompletionTarget::BodyItem(item);
-                completions.push(CompletionItem {
-                    label: label.clone(),
-                    kind,
-                    target,
-                    applicability: CompletionApplicability::Known,
-                    detail: Some(SignatureRenderer::new(self.analysis).local_item_signature(data)),
-                    documentation: data.docs.as_ref().map(Documentation::text),
-                    sort_text: filter.sort_policy().sort_text(
-                        Some(CompletionSortPriority::body_scope(scope_distance)),
-                        &label,
-                        kind,
-                        CompletionApplicability::Known,
-                        target,
-                    ),
-                    insert_text: CompletionInsertText::Plain,
-                    edit: Some(edit),
-                });
-            }
-            BodyUnqualifiedCompletionCandidate::LocalValueItem {
-                item,
-                kind,
-                label,
-                scope_distance,
-            } => {
-                hidden.insert((label.clone(), CompletionScopeNamespace::Values));
-                let Some(body) = self.analysis.body_ir.body_data(item.body)? else {
-                    return Ok(());
-                };
-                let Some(data) = body.local_value_item(item.item) else {
-                    return Ok(());
-                };
-                let kind = CompletionKind::from_body_value_item_kind(kind);
-                let target = CompletionTarget::BodyValueItem(item);
-                completions.push(CompletionItem {
-                    label: label.clone(),
-                    kind,
-                    target,
-                    applicability: CompletionApplicability::Known,
-                    detail: Some(
-                        SignatureRenderer::new(self.analysis).local_value_item_signature(data),
-                    ),
-                    documentation: data.docs.as_ref().map(Documentation::text),
-                    sort_text: filter.sort_policy().sort_text(
-                        Some(CompletionSortPriority::body_scope(scope_distance)),
-                        &label,
-                        kind,
-                        CompletionApplicability::Known,
-                        target,
-                    ),
-                    insert_text: CompletionInsertText::Plain,
-                    edit: Some(edit),
-                });
-            }
-            BodyUnqualifiedCompletionCandidate::LocalFunction {
-                function,
-                label,
-                scope_distance,
-            } => {
-                hidden.insert((label.clone(), CompletionScopeNamespace::Values));
-                let function = ResolvedFunctionRef::BodyLocal(function);
-                let members = MemberView::new(self.analysis);
-                let Some(function) = members.function(function)? else {
-                    return Ok(());
-                };
-                let completion = FunctionCompletionRenderer::new(self.analysis, self.query)
-                    .completion(FunctionCompletionRequest {
-                        function,
-                        label_override: Some(&label),
-                        kind: CompletionKind::Function,
-                        applicability: CompletionApplicability::Known,
-                        edit,
-                        call_completion: FunctionCallCompletion::Plain,
-                        sort_policy: filter.sort_policy(),
-                        sort_priority: Some(CompletionSortPriority::body_scope(scope_distance)),
-                    });
-                completions.push(completion.item);
-            }
+        for namespace in candidate.shadow_namespaces() {
+            hidden.insert((candidate.label().to_string(), *namespace));
         }
+
+        if let Some(function_ref) = candidate.function_ref() {
+            let members = MemberView::new(self.analysis);
+            let Some(function) = members.function(function_ref)? else {
+                return Ok(());
+            };
+            let completion = FunctionCompletionRenderer::new(self.analysis, self.query).completion(
+                FunctionCompletionRequest {
+                    function,
+                    label_override: Some(candidate.label()),
+                    kind: candidate.kind(),
+                    applicability: CompletionApplicability::Known,
+                    edit,
+                    call_completion: FunctionCallCompletion::Plain,
+                    sort_policy: filter.sort_policy(),
+                    sort_priority: Some(CompletionSortPriority::body_scope(
+                        candidate.scope_distance(),
+                    )),
+                },
+            );
+            completions.push(completion.item);
+            return Ok(());
+        }
+
+        let Some(declaration_ref) = candidate.declaration_ref() else {
+            return Ok(());
+        };
+        let Some(details) = DeclarationDetailsView::new(self.analysis)
+            .details_for_declaration(declaration_ref, &DeclarationDetailsContext::default())?
+        else {
+            return Ok(());
+        };
+        let target = candidate.target();
+        let kind = candidate.kind();
+        completions.push(CompletionItem {
+            label: candidate.label().to_string(),
+            kind,
+            target,
+            applicability: CompletionApplicability::Known,
+            detail: details.signature,
+            documentation: details.docs,
+            sort_text: filter.sort_policy().sort_text(
+                Some(CompletionSortPriority::body_scope(
+                    candidate.scope_distance(),
+                )),
+                candidate.label(),
+                kind,
+                CompletionApplicability::Known,
+                target,
+            ),
+            insert_text: CompletionInsertText::Plain,
+            edit: Some(edit),
+        });
         Ok(())
     }
 
@@ -275,6 +180,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         hidden: &HashSet<(String, CompletionScopeNamespace)>,
         completions: &mut Vec<CompletionItem>,
     ) -> anyhow::Result<()> {
+        let renderer = ModuleCompletionRenderer::new(self.analysis, self.query);
         for candidate in candidates {
             if !options
                 .filter
@@ -283,118 +189,30 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             {
                 continue;
             }
-            self.push_module_candidate_completion(
-                candidate,
-                options.filter,
-                options.edit,
-                options.visible_scope_sort,
-                options.function_call_completion,
-                completions,
-            )?;
-        }
-        Ok(())
-    }
 
-    fn push_module_candidate_completion(
-        &self,
-        candidate: ModuleCompletionCandidate,
-        filter: UnqualifiedCompletionFilter,
-        edit: CompletionEdit,
-        visible_scope_sort: VisibleScopeSort,
-        function_call_completion: FunctionCallCompletion,
-        completions: &mut Vec<CompletionItem>,
-    ) -> anyhow::Result<()> {
-        if let Some(completion) = self.function_completion(
-            &candidate,
-            filter,
-            edit,
-            visible_scope_sort,
-            function_call_completion,
-        )? {
+            let Some(completion) = renderer.completion(ModuleCompletionRequest {
+                candidate: &candidate,
+                edit: options.edit,
+                function_call_completion: options.function_call_completion,
+                sort_policy: options.filter.sort_policy(),
+                sort_priority: match options.visible_scope_sort {
+                    VisibleScopeSort::ByOrigin => {
+                        Some(CompletionSortPriority::visible_scope(candidate.origin()))
+                    }
+                    VisibleScopeSort::General => None,
+                },
+            })?
+            else {
+                continue;
+            };
             if completions.iter().any(|existing| {
                 existing.target == completion.target && existing.label == completion.label
             }) {
-                return Ok(());
+                continue;
             }
             completions.push(completion);
-            return Ok(());
         }
-
-        let target = candidate.target();
-        let label = candidate.label();
-        let kind = candidate.kind();
-        if completions
-            .iter()
-            .any(|completion| completion.target == target && completion.label == label)
-        {
-            return Ok(());
-        }
-
-        let sort_policy = filter.sort_policy();
-        let sort_text = match visible_scope_sort {
-            VisibleScopeSort::ByOrigin => sort_policy.sort_text(
-                Some(CompletionSortPriority::visible_scope(candidate.origin())),
-                label,
-                kind,
-                CompletionApplicability::Known,
-                target,
-            ),
-            VisibleScopeSort::General => {
-                sort_policy.sort_text(None, label, kind, CompletionApplicability::Known, target)
-            }
-        };
-
-        completions.push(CompletionItem {
-            label: label.to_string(),
-            kind,
-            target,
-            applicability: CompletionApplicability::Known,
-            detail: Some(def_completion_detail(kind, label)),
-            documentation: candidate.documentation().map(ToString::to_string),
-            sort_text,
-            insert_text: CompletionInsertText::Plain,
-            edit: Some(edit),
-        });
         Ok(())
-    }
-
-    fn function_completion(
-        &self,
-        candidate: &ModuleCompletionCandidate,
-        filter: UnqualifiedCompletionFilter,
-        edit: CompletionEdit,
-        visible_scope_sort: VisibleScopeSort,
-        function_call_completion: FunctionCallCompletion,
-    ) -> anyhow::Result<Option<CompletionItem>> {
-        let Some(function_ref) = candidate.function_ref() else {
-            return Ok(None);
-        };
-        let members = MemberView::new(self.analysis);
-        let Some(function) = members.function(function_ref)? else {
-            return Ok(None);
-        };
-        let sort_policy = filter.sort_policy();
-        let sort_priority = match visible_scope_sort {
-            VisibleScopeSort::ByOrigin => {
-                Some(CompletionSortPriority::visible_scope(candidate.origin()))
-            }
-            VisibleScopeSort::General => None,
-        };
-
-        Ok(Some(
-            FunctionCompletionRenderer::new(self.analysis, self.query)
-                .completion(FunctionCompletionRequest {
-                    function,
-                    label_override: Some(candidate.label()),
-                    kind: CompletionKind::Function,
-                    applicability: CompletionApplicability::Known,
-                    edit,
-                    call_completion: function_call_completion,
-                    sort_policy,
-                    sort_priority,
-                })
-                .item,
-        ))
     }
 }
 
@@ -424,16 +242,6 @@ impl UnqualifiedCompletionFilter {
     fn accepts_scope_namespace(self, namespace: CompletionScopeNamespace) -> bool {
         match self {
             Self::Types => matches!(namespace, CompletionScopeNamespace::Types),
-            Self::All => true,
-        }
-    }
-
-    fn accepts_body_candidate(self, candidate: &BodyUnqualifiedCompletionCandidate) -> bool {
-        match self {
-            Self::Types => matches!(
-                candidate,
-                BodyUnqualifiedCompletionCandidate::LocalItem { .. }
-            ),
             Self::All => true,
         }
     }

@@ -1,10 +1,10 @@
 //! Record-field completion assembly for struct literals and record patterns.
 
-use rg_body_ir::{FieldKey, RecordFieldCompletionSite};
+use rg_body_ir::RecordFieldCompletionSite;
 
 use crate::{
     Analysis,
-    api::view::member::MemberView,
+    api::view::{completion::CompletionView, member::MemberView},
     model::{CompletionEdit, CompletionItem},
 };
 
@@ -25,33 +25,25 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
         let edit = CompletionEdit {
             replace: site.member_prefix_span,
         };
-        let mut completions = Vec::new();
+        let completion_view = CompletionView::new(self.0);
         let members = MemberView::new(self.0);
         let renderer = FieldCompletionRenderer::new(self.0);
+        let mut completions = Vec::new();
 
-        for field in
-            members.field_candidates_for_body_type_path(site.body, site.scope, &site.owner)?
-        {
+        for field_ref in completion_view.field_candidates_for_record(&site)? {
+            let Some(field) = members.field(field_ref)? else {
+                continue;
+            };
             let Some(completion) = renderer.completion(field, edit) else {
                 continue;
             };
-            if !matches!(completion.key, FieldKey::Named(_)) {
-                continue;
-            }
-            if site
-                .existing_fields
-                .iter()
-                .any(|existing| existing == &completion.key)
-            {
-                continue;
-            }
             if completions.iter().any(|existing: &CompletionItem| {
-                existing.target == completion.item.target && existing.label == completion.item.label
+                existing.target == completion.target && existing.label == completion.label
             }) {
                 continue;
             }
 
-            completions.push(completion.item);
+            completions.push(completion);
         }
 
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));

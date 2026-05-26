@@ -14,6 +14,7 @@ mod dot;
 mod field;
 mod function;
 mod keyword;
+mod module_scope;
 mod path;
 mod primitive;
 mod record;

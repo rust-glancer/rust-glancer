@@ -5,19 +5,26 @@
 //! one place and exposes completion-ready facts.
 
 use rg_body_ir::{
-    DotCompletionSite, PathCompletionSite, RecordFieldCompletionSite, ResolvedFunctionRef,
-    UnqualifiedCompletionSite,
+    BodyAutoderef, BodyAutoderefMode, BodyBindingRef, BodyDeclarationRef, BodyTypePathResolution,
+    BodyUnqualifiedCompletionCandidate, DotCompletionSite, FieldKey, PathCompletionSite,
+    RecordFieldCompletionSite, ResolvedFieldRef, ResolvedFunctionRef, UnqualifiedCompletionSite,
 };
 use rg_def_map::{
-    DefId, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite, ModuleRef, ScopeNamespace,
-    VisibleScopeOrigin,
+    DefId, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite, ModuleRef, Path,
+    ScopeNamespace, VisibleScopeOrigin,
 };
 use rg_parse::FileId;
 use rg_semantic_ir::Documentation;
 
 use crate::{
-    api::{Analysis, view::member::MemberView},
-    model::{CompletionKind, CompletionTarget},
+    api::{
+        Analysis,
+        view::{
+            declaration::DeclarationRef,
+            member::{MemberMethodOrigin, MemberOwnerRef, MemberReceiverTy, MemberView},
+        },
+    },
+    model::{CompletionApplicability, CompletionKind, CompletionTarget},
 };
 
 /// Cursor shape recognized before semantic completion rendering.
@@ -129,6 +136,73 @@ impl ModuleCompletionCandidate {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LexicalCompletionCandidate {
+    label: String,
+    namespace: CompletionScopeNamespace,
+    scope_distance: usize,
+    target: CompletionTarget,
+    kind: CompletionKind,
+    declaration: Option<DeclarationRef>,
+    function: Option<ResolvedFunctionRef>,
+    shadow_namespaces: Vec<CompletionScopeNamespace>,
+}
+
+impl LexicalCompletionCandidate {
+    pub(crate) fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub(crate) fn namespace(&self) -> CompletionScopeNamespace {
+        self.namespace
+    }
+
+    pub(crate) fn scope_distance(&self) -> usize {
+        self.scope_distance
+    }
+
+    pub(crate) fn target(&self) -> CompletionTarget {
+        self.target
+    }
+
+    pub(crate) fn kind(&self) -> CompletionKind {
+        self.kind
+    }
+
+    pub(crate) fn declaration_ref(&self) -> Option<DeclarationRef> {
+        self.declaration
+    }
+
+    pub(crate) fn function_ref(&self) -> Option<ResolvedFunctionRef> {
+        self.function
+    }
+
+    pub(crate) fn shadow_namespaces(&self) -> &[CompletionScopeNamespace] {
+        &self.shadow_namespaces
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DotMethodCompletionCandidate {
+    function: ResolvedFunctionRef,
+    kind: CompletionKind,
+    applicability: CompletionApplicability,
+}
+
+impl DotMethodCompletionCandidate {
+    pub(crate) fn function_ref(&self) -> ResolvedFunctionRef {
+        self.function
+    }
+
+    pub(crate) fn kind(&self) -> CompletionKind {
+        self.kind
+    }
+
+    pub(crate) fn applicability(&self) -> CompletionApplicability {
+        self.applicability
+    }
+}
+
 pub(crate) struct CompletionView<'a, 'db> {
     analysis: &'a Analysis<'db>,
 }
@@ -193,6 +267,138 @@ impl<'a, 'db> CompletionView<'a, 'db> {
         site: &DefMapUnqualifiedCompletionSite,
     ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
         self.unqualified_module_candidates(site.module)
+    }
+
+    pub(crate) fn lexical_candidates_for_unqualified(
+        &self,
+        site: &UnqualifiedCompletionSite,
+    ) -> anyhow::Result<Vec<LexicalCompletionCandidate>> {
+        let mut candidates = Vec::new();
+        for candidate in self
+            .analysis
+            .body_ir
+            .unqualified_completion_candidates(site)?
+        {
+            if let Some(candidate) = self.lexical_candidate(site, candidate)? {
+                candidates.push(candidate);
+            }
+        }
+        Ok(candidates)
+    }
+
+    pub(crate) fn primitive_type_candidates_for_unqualified(
+        &self,
+        site: &UnqualifiedCompletionSite,
+    ) -> anyhow::Result<Vec<rg_ty::PrimitiveTy>> {
+        let mut candidates = Vec::new();
+
+        for primitive in rg_ty::PrimitiveTy::ALL
+            .iter()
+            .copied()
+            .filter(|primitive| primitive.label().starts_with(&site.member_prefix))
+        {
+            let path = Path::unqualified_name(primitive.label());
+            let resolution = self.analysis.body_ir.resolve_type_path_in_scope(
+                &self.analysis.def_map,
+                &self.analysis.semantic_ir,
+                site.body,
+                site.scope,
+                &path,
+            )?;
+            if resolution.is_primitive(&primitive) {
+                candidates.push(primitive);
+            }
+        }
+
+        Ok(candidates)
+    }
+
+    pub(crate) fn field_candidates_for_dot(
+        &self,
+        site: &DotCompletionSite,
+    ) -> anyhow::Result<Vec<ResolvedFieldRef>> {
+        let Some(receiver_ty) = self.analysis.body_ir.receiver_ty(*site)? else {
+            return Ok(Vec::new());
+        };
+
+        let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
+        let members = MemberView::new(self.analysis);
+        let mut fields = Vec::new();
+
+        for candidate in autoderef.candidates(BodyAutoderefMode::FieldLookup, receiver_ty) {
+            let candidate = candidate?;
+            for ty in MemberReceiverTy::in_body_ty(candidate.ty()) {
+                for field in members.field_candidates(ty)? {
+                    fields.push(field.field_ref());
+                }
+            }
+        }
+
+        Ok(fields)
+    }
+
+    pub(crate) fn field_candidates_for_record(
+        &self,
+        site: &RecordFieldCompletionSite,
+    ) -> anyhow::Result<Vec<ResolvedFieldRef>> {
+        let resolution = self.analysis.body_ir.resolve_type_path_in_scope(
+            &self.analysis.def_map,
+            &self.analysis.semantic_ir,
+            site.body,
+            site.scope,
+            &site.owner,
+        )?;
+        let owners: Vec<_> = match resolution {
+            BodyTypePathResolution::BodyLocal(item) => vec![MemberOwnerRef::BodyLocal(item)],
+            BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
+                types.into_iter().map(MemberOwnerRef::Semantic).collect()
+            }
+            BodyTypePathResolution::Primitive(_)
+            | BodyTypePathResolution::Traits(_)
+            | BodyTypePathResolution::Unknown => Vec::new(),
+        };
+
+        let members = MemberView::new(self.analysis);
+        let mut fields = Vec::new();
+        for owner in owners {
+            for field in members.field_candidates_for_owner(owner)? {
+                let Some(key) = field.key() else {
+                    continue;
+                };
+                if !matches!(key, FieldKey::Named(_))
+                    || site.existing_fields.iter().any(|existing| existing == key)
+                {
+                    continue;
+                }
+                fields.push(field.field_ref());
+            }
+        }
+
+        Ok(fields)
+    }
+
+    pub(crate) fn method_candidates_for_dot(
+        &self,
+        site: &DotCompletionSite,
+    ) -> anyhow::Result<Vec<DotMethodCompletionCandidate>> {
+        let Some(receiver_ty) = self.analysis.body_ir.receiver_ty(*site)? else {
+            return Ok(Vec::new());
+        };
+
+        let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
+        let members = MemberView::new(self.analysis);
+        let mut methods = Vec::new();
+
+        for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, receiver_ty) {
+            let candidate = candidate?;
+            for ty in MemberReceiverTy::in_body_ty(candidate.ty()) {
+                for method in members.method_candidates(ty)? {
+                    methods.push(Self::dot_method_candidate(method));
+                }
+            }
+        }
+
+        Ok(methods)
     }
 
     fn general_site_at(
@@ -384,5 +590,119 @@ impl<'a, 'db> CompletionView<'a, 'db> {
             documentation,
             function,
         }))
+    }
+
+    fn lexical_candidate(
+        &self,
+        site: &UnqualifiedCompletionSite,
+        candidate: BodyUnqualifiedCompletionCandidate,
+    ) -> anyhow::Result<Option<LexicalCompletionCandidate>> {
+        let candidate = match candidate {
+            BodyUnqualifiedCompletionCandidate::Binding {
+                binding,
+                label,
+                scope_distance,
+            } => {
+                let binding = BodyBindingRef {
+                    body: site.body,
+                    binding,
+                };
+                LexicalCompletionCandidate {
+                    label,
+                    namespace: CompletionScopeNamespace::Values,
+                    scope_distance,
+                    target: CompletionTarget::Binding {
+                        body: binding.body,
+                        binding: binding.binding,
+                    },
+                    kind: CompletionKind::Variable,
+                    declaration: Some(binding.into()),
+                    function: None,
+                    shadow_namespaces: vec![CompletionScopeNamespace::Values],
+                }
+            }
+            BodyUnqualifiedCompletionCandidate::LocalItem {
+                item,
+                kind,
+                label,
+                scope_distance,
+            } => {
+                let Some(body) = self.analysis.body_ir.body_data(item.body)? else {
+                    return Ok(None);
+                };
+                let Some(data) = body.local_item(item.item) else {
+                    return Ok(None);
+                };
+                let mut shadow_namespaces = vec![CompletionScopeNamespace::Types];
+                if matches!(
+                    site.namespace,
+                    rg_body_ir::UnqualifiedCompletionNamespace::Values
+                ) && data.has_value_constructor()
+                {
+                    shadow_namespaces.push(CompletionScopeNamespace::Values);
+                }
+                LexicalCompletionCandidate {
+                    label,
+                    namespace: CompletionScopeNamespace::Types,
+                    scope_distance,
+                    target: CompletionTarget::BodyItem(item),
+                    kind: CompletionKind::from_body_item_kind(kind),
+                    declaration: Some(item.into()),
+                    function: None,
+                    shadow_namespaces,
+                }
+            }
+            BodyUnqualifiedCompletionCandidate::LocalValueItem {
+                item,
+                kind,
+                label,
+                scope_distance,
+            } => LexicalCompletionCandidate {
+                label,
+                namespace: CompletionScopeNamespace::Values,
+                scope_distance,
+                target: CompletionTarget::BodyValueItem(item),
+                kind: CompletionKind::from_body_value_item_kind(kind),
+                declaration: Some(item.into()),
+                function: None,
+                shadow_namespaces: vec![CompletionScopeNamespace::Values],
+            },
+            BodyUnqualifiedCompletionCandidate::LocalFunction {
+                function,
+                label,
+                scope_distance,
+            } => {
+                let function_ref = ResolvedFunctionRef::BodyLocal(function);
+                LexicalCompletionCandidate {
+                    label,
+                    namespace: CompletionScopeNamespace::Values,
+                    scope_distance,
+                    target: CompletionTarget::Function(function_ref),
+                    kind: CompletionKind::Function,
+                    declaration: Some(BodyDeclarationRef::Function(function).into()),
+                    function: Some(function_ref),
+                    shadow_namespaces: vec![CompletionScopeNamespace::Values],
+                }
+            }
+        };
+
+        Ok(Some(candidate))
+    }
+
+    fn dot_method_candidate(
+        method: crate::api::view::member::MemberMethodCandidate<'_>,
+    ) -> DotMethodCompletionCandidate {
+        match method.origin {
+            MemberMethodOrigin::Inherent => DotMethodCompletionCandidate {
+                function: method.function.function_ref(),
+                kind: CompletionKind::InherentMethod,
+                applicability: CompletionApplicability::Known,
+            },
+            MemberMethodOrigin::Trait { applicability } => DotMethodCompletionCandidate {
+                function: method.function.function_ref(),
+                kind: CompletionKind::TraitMethod,
+                applicability: CompletionApplicability::from(applicability),
+            },
+        }
     }
 }

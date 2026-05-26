@@ -9,7 +9,6 @@ use crate::{
     api::view::{
         completion::{CompletionScopeNamespace, CompletionView, ModuleCompletionCandidate},
         enum_variant::{EnumVariant, EnumVariantView},
-        member::MemberView,
     },
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
@@ -21,7 +20,8 @@ use super::{
     CompletionQuery,
     completion_sort::CompletionSortPolicy,
     def_completion_detail,
-    function::{FunctionCallCompletion, FunctionCompletionRenderer, FunctionCompletionRequest},
+    function::FunctionCallCompletion,
+    module_scope::{ModuleCompletionRenderer, ModuleCompletionRequest},
 };
 
 pub(super) struct PathCompletionResolver<'a, 'db, 'source> {
@@ -82,18 +82,29 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         let edit = CompletionEdit {
             replace: member_prefix_span,
         };
-        let mut completions = Vec::new();
+        let renderer = ModuleCompletionRenderer::new(self.analysis, self.query);
+        let mut completions: Vec<CompletionItem> = Vec::new();
 
         for candidate in candidates {
             if !filter.accepts(candidate.namespace()) {
                 continue;
             }
-            self.push_module_candidate_completion(
-                candidate,
+            let Some(completion) = renderer.completion(ModuleCompletionRequest {
+                candidate: &candidate,
                 edit,
                 function_call_completion,
-                &mut completions,
-            )?;
+                sort_policy: CompletionSortPolicy::General,
+                sort_priority: None,
+            })?
+            else {
+                continue;
+            };
+            if completions.iter().any(|existing| {
+                existing.target == completion.target && existing.label == completion.label
+            }) {
+                continue;
+            }
+            completions.push(completion);
         }
 
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
@@ -150,86 +161,6 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             insert_text: CompletionInsertText::Plain,
             edit: Some(edit),
         });
-    }
-
-    /// Adds one visible module-scope definition for path completion, such as
-    /// `HashMap` in `std::collections::Ha$0`.
-    fn push_module_candidate_completion(
-        &self,
-        candidate: ModuleCompletionCandidate,
-        edit: CompletionEdit,
-        function_call_completion: FunctionCallCompletion,
-        completions: &mut Vec<CompletionItem>,
-    ) -> anyhow::Result<()> {
-        if let Some(completion) =
-            self.function_completion(&candidate, edit, function_call_completion)?
-        {
-            if completions.iter().any(|existing| {
-                existing.target == completion.target && existing.label == completion.label
-            }) {
-                return Ok(());
-            }
-            completions.push(completion);
-            return Ok(());
-        }
-
-        let target = candidate.target();
-        let label = candidate.label();
-        let kind = candidate.kind();
-        if completions
-            .iter()
-            .any(|completion| completion.target == target && completion.label == label)
-        {
-            return Ok(());
-        }
-
-        completions.push(CompletionItem {
-            label: label.to_string(),
-            kind,
-            target,
-            applicability: CompletionApplicability::Known,
-            detail: Some(def_completion_detail(kind, label)),
-            documentation: candidate.documentation().map(ToString::to_string),
-            sort_text: CompletionSortPolicy::General.sort_text(
-                None,
-                label,
-                kind,
-                CompletionApplicability::Known,
-                target,
-            ),
-            insert_text: CompletionInsertText::Plain,
-            edit: Some(edit),
-        });
-        Ok(())
-    }
-
-    fn function_completion(
-        &self,
-        candidate: &ModuleCompletionCandidate,
-        edit: CompletionEdit,
-        function_call_completion: FunctionCallCompletion,
-    ) -> anyhow::Result<Option<CompletionItem>> {
-        let Some(function_ref) = candidate.function_ref() else {
-            return Ok(None);
-        };
-        let members = MemberView::new(self.analysis);
-        let Some(function) = members.function(function_ref)? else {
-            return Ok(None);
-        };
-        Ok(Some(
-            FunctionCompletionRenderer::new(self.analysis, self.query)
-                .completion(FunctionCompletionRequest {
-                    function,
-                    label_override: Some(candidate.label()),
-                    kind: CompletionKind::Function,
-                    applicability: CompletionApplicability::Known,
-                    edit,
-                    call_completion: function_call_completion,
-                    sort_policy: CompletionSortPolicy::General,
-                    sort_priority: None,
-                })
-                .item,
-        ))
     }
 }
 
