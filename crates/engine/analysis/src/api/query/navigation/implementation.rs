@@ -3,7 +3,7 @@
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
 
-use super::target::NavigationTargetResolver;
+use super::target::NavigationTargetProjection;
 use crate::{
     api::{
         Analysis,
@@ -37,8 +37,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
 
         let implementations = ImplementationView::new(self.0);
         if let Some(declarations) = implementations.implementations_for_method_call(&symbol)? {
-            return NavigationTargetResolver::new(self.0)
-                .navigation_targets_for_declarations(declarations);
+            return NavigationTargetProjection::new(self.0).targets_for_declarations(declarations);
         }
 
         let mut declarations = Vec::new();
@@ -60,7 +59,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
             );
         }
 
-        NavigationTargetResolver::new(self.0).navigation_targets_for_declarations(declarations)
+        NavigationTargetProjection::new(self.0).targets_for_declarations(declarations)
     }
 
     fn extend_unique_declarations(

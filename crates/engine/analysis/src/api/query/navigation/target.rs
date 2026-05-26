@@ -5,26 +5,52 @@ use rg_def_map::{ModuleOrigin, ModuleRef};
 use crate::{
     api::{
         Analysis,
-        view::declaration::{Declaration, DeclarationRef, DeclarationView},
+        view::declaration::{DeclarationRef, DeclarationView},
     },
     model::{NavigationTarget, NavigationTargetKind},
 };
 
 /// Converts stable IR identities into concrete editor navigation targets.
 ///
-/// This resolver does not decide what the cursor means. It receives already-resolved def-map,
+/// This projection does not decide what the cursor means. It receives already-resolved def-map,
 /// semantic IR, or body IR IDs and projects them into the public `NavigationTarget` shape.
-pub(crate) struct NavigationTargetResolver<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct NavigationTargetProjection<'a, 'db>(&'a Analysis<'db>);
 
-impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
+impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }
 
-    fn navigation_target_for_module(
+    pub(crate) fn targets_for_declarations(
         &self,
-        module_ref: ModuleRef,
+        declarations: impl IntoIterator<Item = DeclarationRef>,
+    ) -> anyhow::Result<Vec<NavigationTarget>> {
+        let mut targets = Vec::new();
+        for declaration in declarations {
+            if let Some(target) = self.target_for_declaration(declaration)?
+                && !targets.contains(&target)
+            {
+                targets.push(target);
+            }
+        }
+        Ok(targets)
+    }
+
+    fn target_for_declaration(
+        &self,
+        declaration: DeclarationRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
+        match declaration {
+            DeclarationRef::Module(module) => self.target_for_module(module),
+            DeclarationRef::LocalDef(_) | DeclarationRef::Semantic(_) | DeclarationRef::Body(_) => {
+                Ok(DeclarationView::new(self.0)
+                    .declaration(declaration)?
+                    .map(NavigationTarget::from))
+            }
+        }
+    }
+
+    fn target_for_module(&self, module_ref: ModuleRef) -> anyhow::Result<Option<NavigationTarget>> {
         let Some(module) = self.0.def_map.module(module_ref)? else {
             return Ok(None);
         };
@@ -40,7 +66,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
             }));
         };
 
-        Ok(self
+        Ok(DeclarationView::new(self.0)
             .declaration(DeclarationRef::Module(module_ref))?
             .map(|declaration| NavigationTarget {
                 target: declaration.target(),
@@ -49,36 +75,5 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
                 file_id: declaration.file_id(),
                 span: Some(declaration.span()),
             }))
-    }
-
-    pub(crate) fn navigation_targets_for_declarations(
-        &self,
-        declarations: Vec<DeclarationRef>,
-    ) -> anyhow::Result<Vec<NavigationTarget>> {
-        let mut targets = Vec::new();
-        for declaration in declarations {
-            if let Some(target) = self.navigation_target_for_declaration(declaration)? {
-                if !targets.contains(&target) {
-                    targets.push(target);
-                }
-            }
-        }
-        Ok(targets)
-    }
-
-    pub(crate) fn navigation_target_for_declaration(
-        &self,
-        declaration: DeclarationRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        match declaration {
-            DeclarationRef::Module(module) => self.navigation_target_for_module(module),
-            DeclarationRef::LocalDef(_) | DeclarationRef::Semantic(_) | DeclarationRef::Body(_) => {
-                Ok(self.declaration(declaration)?.map(NavigationTarget::from))
-            }
-        }
-    }
-
-    fn declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<Declaration>> {
-        DeclarationView::new(self.0).declaration(declaration)
     }
 }

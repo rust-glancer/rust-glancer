@@ -3,7 +3,7 @@
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
 
-use super::target::NavigationTargetResolver;
+use super::target::NavigationTargetProjection;
 use crate::{
     api::{Analysis, view::ty::TyView},
     model::NavigationTarget,
@@ -36,6 +36,6 @@ impl<'a, 'db> TypeDefinitionResolver<'a, 'db> {
         };
 
         let declarations = ty_view.declarations_for_ty(&ty);
-        NavigationTargetResolver::new(self.0).navigation_targets_for_declarations(declarations)
+        NavigationTargetProjection::new(self.0).targets_for_declarations(declarations)
     }
 }
