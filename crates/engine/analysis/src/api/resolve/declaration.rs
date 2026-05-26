@@ -156,7 +156,7 @@ impl<'a, 'db> SymbolDeclarationResolver<'a, 'db> {
         self.declarations_for_body_resolution(Some(body_ref), &resolution)
     }
 
-    fn declarations_for_body_resolution(
+    pub(crate) fn declarations_for_body_resolution(
         &self,
         body_ref: Option<BodyRef>,
         resolution: &BodyResolution,

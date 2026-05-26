@@ -2,9 +2,9 @@
 
 use rg_body_ir::{
     BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef,
-    BodyImplRef, BodyItemRef, BodyValueItemRef, ResolvedDeclarationRef,
+    BodyImplRef, BodyItemRef, BodyValueItemRef,
 };
-use rg_def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef, TargetRef};
+use rg_def_map::{LocalDefRef, ModuleOrigin, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
     ConstRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, SemanticDeclarationRef,
@@ -51,17 +51,6 @@ pub(crate) enum DeclarationRef {
         BodyFunctionRef
     )]
     Body(BodyDeclarationRef),
-}
-
-impl From<ResolvedDeclarationRef> for DeclarationRef {
-    fn from(declaration: ResolvedDeclarationRef) -> Self {
-        match declaration {
-            ResolvedDeclarationRef::Def(DefId::Module(module)) => module.into(),
-            ResolvedDeclarationRef::Def(DefId::Local(local_def)) => local_def.into(),
-            ResolvedDeclarationRef::Semantic(declaration) => declaration.into(),
-            ResolvedDeclarationRef::Body(declaration) => declaration.into(),
-        }
-    }
 }
 
 /// Composite declaration facts shared by editor queries.
