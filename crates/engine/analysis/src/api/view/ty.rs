@@ -6,7 +6,7 @@
 
 use rg_body_ir::{
     BodyAutoderef, BodyDeclarationRef, BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyTy,
-    BodyTyExt, BodyTyRepr, BodyTypePathResolution, ResolvedEnumVariantRef, ScopeId,
+    BodyTyExt, BodyTyRepr, BodyTypePathResolution, ScopeId,
 };
 use rg_def_map::Path;
 use rg_semantic_ir::{
@@ -18,7 +18,7 @@ use crate::{
         Analysis, resolve::declaration::SymbolDeclarationResolver,
         view::declaration::DeclarationRef,
     },
-    model::SymbolAt,
+    model::{EnumVariantRef, SymbolAt},
 };
 
 pub(crate) struct TyView<'a, 'db> {
@@ -135,7 +135,7 @@ impl<'a, 'db> TyView<'a, 'db> {
                 self.ty_for_field(field)
             }
             DeclarationRef::Semantic(SemanticDeclarationRef::EnumVariant(variant)) => {
-                self.ty_for_enum_variant(ResolvedEnumVariantRef::Semantic(variant))
+                self.ty_for_enum_variant(EnumVariantRef::Semantic(variant))
             }
             DeclarationRef::Body(BodyDeclarationRef::Binding(binding)) => Ok(self
                 .analysis
@@ -156,7 +156,7 @@ impl<'a, 'db> TyView<'a, 'db> {
                 .and_then(|data| data.ty().cloned())
                 .map(BodyTyRepr::syntax)),
             DeclarationRef::Body(BodyDeclarationRef::EnumVariant(variant)) => {
-                self.ty_for_enum_variant(ResolvedEnumVariantRef::BodyLocal(variant))
+                self.ty_for_enum_variant(EnumVariantRef::BodyLocal(variant))
             }
             DeclarationRef::Body(
                 BodyDeclarationRef::Impl(_)
@@ -223,12 +223,9 @@ impl<'a, 'db> TyView<'a, 'db> {
         )?)
     }
 
-    fn ty_for_enum_variant(
-        &self,
-        variant: ResolvedEnumVariantRef,
-    ) -> anyhow::Result<Option<BodyTy>> {
+    fn ty_for_enum_variant(&self, variant: EnumVariantRef) -> anyhow::Result<Option<BodyTy>> {
         match variant {
-            ResolvedEnumVariantRef::Semantic(variant) => {
+            EnumVariantRef::Semantic(variant) => {
                 let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant)? else {
                     return Ok(None);
                 };
@@ -236,11 +233,9 @@ impl<'a, 'db> TyView<'a, 'db> {
                     data.owner,
                 )])))
             }
-            ResolvedEnumVariantRef::BodyLocal(variant) => {
-                Ok(Some(BodyTyRepr::local_nominal(vec![
-                    BodyLocalNominalTy::bare(variant.item),
-                ])))
-            }
+            EnumVariantRef::BodyLocal(variant) => Ok(Some(BodyTyRepr::local_nominal(vec![
+                BodyLocalNominalTy::bare(variant.item),
+            ]))),
         }
     }
 

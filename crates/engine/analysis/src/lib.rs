@@ -9,9 +9,9 @@ pub use self::{
     api::{Analysis, CompletionClientCapabilities, CompletionQuery, ReferenceQuery},
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
-        CompletionKind, CompletionTarget, DocumentSymbol, HoverBlock, HoverInfo, KeywordCompletion,
-        NavigationTarget, NavigationTargetKind, ReferenceLocation, SymbolAt, SymbolKind, TypeHint,
-        WorkspaceSymbol,
+        CompletionKind, CompletionTarget, DocumentSymbol, EnumVariantRef, HoverBlock, HoverInfo,
+        KeywordCompletion, MemberFieldRef, MemberFunctionRef, NavigationTarget,
+        NavigationTargetKind, ReferenceLocation, SymbolAt, SymbolKind, TypeHint, WorkspaceSymbol,
     },
     txn::AnalysisReadTxn,
 };

@@ -2,8 +2,7 @@
 
 use rg_body_ir::{
     BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef,
-    BodyImplRef, BodyItemRef, BodyValueItemRef, ResolvedDeclarationRef, ResolvedFieldRef,
-    ResolvedFunctionRef,
+    BodyImplRef, BodyItemRef, BodyValueItemRef, ResolvedDeclarationRef,
 };
 use rg_def_map::{DefId, LocalDefRef, ModuleOrigin, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
@@ -14,7 +13,10 @@ use rg_semantic_ir::{
 
 use crate::{
     api::{Analysis, view::member::MemberView},
-    model::{DocumentSymbol, NavigationTarget, NavigationTargetKind, SymbolKind},
+    model::{
+        DocumentSymbol, MemberFieldRef, MemberFunctionRef, NavigationTarget, NavigationTargetKind,
+        SymbolKind,
+    },
 };
 
 /// Storage-independent identity for declarations that editor features can project.
@@ -395,13 +397,13 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
 
     fn semantic_field(&self, field: FieldRef) -> anyhow::Result<Option<Declaration>> {
         Ok(MemberView::new(self.analysis)
-            .field(ResolvedFieldRef::Semantic(field))?
+            .field(MemberFieldRef::Semantic(field))?
             .and_then(|field| field.declaration()))
     }
 
     fn semantic_function(&self, function: FunctionRef) -> anyhow::Result<Option<Declaration>> {
         Ok(MemberView::new(self.analysis)
-            .function(ResolvedFunctionRef::Semantic(function))?
+            .function(MemberFunctionRef::Semantic(function))?
             .map(|function| function.declaration()))
     }
 

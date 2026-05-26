@@ -6,8 +6,8 @@
 
 use rg_body_ir::{
     BodyAutoderef, BodyAutoderefMode, BodyBindingRef, BodyDeclarationRef, BodyTypePathResolution,
-    BodyUnqualifiedCompletionCandidate, FieldKey, ResolvedEnumVariantRef, ResolvedFieldRef,
-    ResolvedFunctionRef, UnqualifiedCompletionSite as BodyUnqualifiedCompletionSite,
+    BodyUnqualifiedCompletionCandidate, FieldKey,
+    UnqualifiedCompletionSite as BodyUnqualifiedCompletionSite,
 };
 use rg_def_map::{DefId, ModuleRef, Path, ScopeNamespace, VisibleScopeOrigin};
 use rg_semantic_ir::Documentation;
@@ -25,7 +25,10 @@ use crate::{
             member::{MemberMethodOrigin, MemberOwnerRef, MemberReceiverTy, MemberView},
         },
     },
-    model::{CompletionApplicability, CompletionKind, CompletionTarget},
+    model::{
+        CompletionApplicability, CompletionKind, CompletionTarget, EnumVariantRef, MemberFieldRef,
+        MemberFunctionRef,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -70,7 +73,7 @@ pub(crate) struct ModuleCompletionCandidate {
     target: CompletionTarget,
     kind: CompletionKind,
     documentation: Option<String>,
-    function: Option<ResolvedFunctionRef>,
+    function: Option<MemberFunctionRef>,
 }
 
 impl ModuleCompletionCandidate {
@@ -98,7 +101,7 @@ impl ModuleCompletionCandidate {
         self.documentation.as_deref()
     }
 
-    pub(crate) fn function_ref(&self) -> Option<ResolvedFunctionRef> {
+    pub(crate) fn function_ref(&self) -> Option<MemberFunctionRef> {
         self.function
     }
 }
@@ -111,7 +114,7 @@ pub(crate) struct LexicalCompletionCandidate {
     target: CompletionTarget,
     kind: CompletionKind,
     declaration: Option<DeclarationRef>,
-    function: Option<ResolvedFunctionRef>,
+    function: Option<MemberFunctionRef>,
     shadow_namespaces: Vec<CompletionScopeNamespace>,
 }
 
@@ -140,7 +143,7 @@ impl LexicalCompletionCandidate {
         self.declaration
     }
 
-    pub(crate) fn function_ref(&self) -> Option<ResolvedFunctionRef> {
+    pub(crate) fn function_ref(&self) -> Option<MemberFunctionRef> {
         self.function
     }
 
@@ -151,13 +154,13 @@ impl LexicalCompletionCandidate {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DotMethodCompletionCandidate {
-    function: ResolvedFunctionRef,
+    function: MemberFunctionRef,
     kind: CompletionKind,
     applicability: CompletionApplicability,
 }
 
 impl DotMethodCompletionCandidate {
-    pub(crate) fn function_ref(&self) -> ResolvedFunctionRef {
+    pub(crate) fn function_ref(&self) -> MemberFunctionRef {
         self.function
     }
 
@@ -198,7 +201,7 @@ impl<'a, 'db> CompletionView<'a, 'db> {
     pub(crate) fn enum_variant_candidates_for_path(
         &self,
         site: &PathCompletionSite,
-    ) -> anyhow::Result<Vec<ResolvedEnumVariantRef>> {
+    ) -> anyhow::Result<Vec<EnumVariantRef>> {
         let Some(site) = site.body_site() else {
             return Ok(Vec::new());
         };
@@ -289,7 +292,7 @@ impl<'a, 'db> CompletionView<'a, 'db> {
     pub(crate) fn field_candidates_for_dot(
         &self,
         site: &DotCompletionSite,
-    ) -> anyhow::Result<Vec<ResolvedFieldRef>> {
+    ) -> anyhow::Result<Vec<MemberFieldRef>> {
         let Some(receiver_ty) = self.analysis.body_ir.receiver_ty(site.body_site())? else {
             return Ok(Vec::new());
         };
@@ -313,7 +316,7 @@ impl<'a, 'db> CompletionView<'a, 'db> {
     pub(crate) fn field_candidates_for_record(
         &self,
         site: &RecordFieldCompletionSite,
-    ) -> anyhow::Result<Vec<ResolvedFieldRef>> {
+    ) -> anyhow::Result<Vec<MemberFieldRef>> {
         let site = site.body_site();
         let resolution = self.analysis.body_ir.resolve_type_path_in_scope(
             &self.analysis.def_map,
@@ -546,7 +549,7 @@ impl<'a, 'db> CompletionView<'a, 'db> {
                 label,
                 scope_distance,
             } => {
-                let function_ref = ResolvedFunctionRef::BodyLocal(function);
+                let function_ref = MemberFunctionRef::BodyLocal(function);
                 LexicalCompletionCandidate {
                     label,
                     namespace: CompletionScopeNamespace::Values,

@@ -11,12 +11,14 @@ use crate::{
     BodyIrBuildPolicy, BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy,
     BodyResolution, BodySource, BodyTy, BodyTyRepr, BodyValueItemData, ClosureCapture, ClosureKind,
     ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode, PatData, PatId,
-    PatKind, ResolvedDeclarationRef, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
-    StmtKind, TargetBodiesStatus,
-    ir::ids::{
-        BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
-        BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyImplRef, BodyItemId, BodyItemRef,
-        BodyValueItemId, BodyValueItemRef, ExprId, StmtId,
+    PatKind, ResolvedDeclarationRef, StmtKind, TargetBodiesStatus,
+    ir::{
+        ids::{
+            BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
+            BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyImplRef, BodyItemId,
+            BodyItemRef, BodyValueItemId, BodyValueItemRef, ExprId, StmtId,
+        },
+        resolved::{ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef},
     },
 };
 use rg_def_map::{DefId, DefMapDb, LocalDefRef, ModuleRef, TargetRef};

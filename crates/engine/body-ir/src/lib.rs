@@ -23,25 +23,32 @@ pub use self::{
     ir::{
         BindingData, BindingId, BindingKind, BodyBindingRef, BodyData, BodyDeclarationRef,
         BodyEnumVariantData, BodyEnumVariantRef, BodyFieldData, BodyFieldRef, BodyFunctionData,
-        BodyFunctionId, BodyFunctionOwner, BodyFunctionRef, BodyGenericArg, BodyId, BodyImplData,
-        BodyImplId, BodyImplRef, BodyIrStats, BodyItemData, BodyItemDeclaration, BodyItemId,
-        BodyItemKind, BodyItemOwner, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath,
-        BodyRef, BodyResolution, BodySelfParamKind, BodySource, BodyTy, BodyTyExt, BodyTyRepr,
-        BodyTypePathResolution, BodyValueItemData, BodyValueItemDeclaration, BodyValueItemId,
-        BodyValueItemKind, BodyValueItemOwner, BodyValueItemRef, ClosureCapture, ClosureKind,
-        ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprId, ExprKind,
-        ExprRangeKind, ExprUnaryOp, LabelData, LiteralKind, PackageBodies, PatBindingMode, PatData,
-        PatId, PatKind, PatMutability, PatRangeKind, RecordExprField, RecordExprSpread,
-        RecordPatField, ResolvedDeclarationRef, ResolvedEnumVariantRef, ResolvedFieldRef,
-        ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
-        TargetBodiesStatus,
+        BodyFunctionId, BodyFunctionOwner, BodyFunctionRef, BodyId, BodyImplData, BodyImplId,
+        BodyImplRef, BodyIrStats, BodyItemData, BodyItemDeclaration, BodyItemId, BodyItemKind,
+        BodyItemOwner, BodyItemRef, BodyPath, BodyRef, BodySelfParamKind, BodySource,
+        BodyValueItemData, BodyValueItemDeclaration, BodyValueItemId, BodyValueItemKind,
+        BodyValueItemOwner, BodyValueItemRef, ClosureCapture, ClosureKind, ClosureParamData,
+        ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprId, ExprKind, ExprRangeKind,
+        ExprUnaryOp, LabelData, LiteralKind, PackageBodies, PatBindingMode, PatData, PatId,
+        PatKind, PatMutability, PatRangeKind, RecordExprField, RecordExprSpread, RecordPatField,
+        ScopeData, ScopeId, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
     },
+    store::{BodyIrDb, BodyIrReadTxn},
+};
+
+// TODO: Shouldn't be exposed normally; remove after analysis owns resolver projection.
+pub use self::ir::{BodyResolution, BodyTypePathResolution, ResolvedDeclarationRef};
+
+// TODO: Shouldn't be exposed normally; remove after the type model boundary is extracted.
+pub use self::{
+    ir::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt, BodyTyRepr},
     resolution::{
         BodyAutoderef, BodyAutoderefCandidate, BodyAutoderefCandidates, BodyAutoderefMode,
     },
-    store::{BodyIrDb, BodyIrReadTxn},
-    view::BodyDeclarationView,
 };
+
+// TODO: Shouldn't be exposed normally; remove after body-local declaration projection moves out.
+pub use self::view::BodyDeclarationView;
 
 /// One package-local source file whose function bodies should be lowered during a partial rebuild.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

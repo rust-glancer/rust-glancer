@@ -4,9 +4,7 @@
 //! facts as well: docs, display path, symbol kind, and a compact signature. This view keeps that
 //! storage-specific projection out of feature queries.
 
-use rg_body_ir::{
-    BodyDeclarationRef, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef,
-};
+use rg_body_ir::BodyDeclarationRef;
 use rg_def_map::{LocalDefRef, ModuleRef};
 use rg_semantic_ir::{
     ConstRef, Documentation, SemanticDeclarationRef, SemanticItemRef, StaticRef, TraitRef,
@@ -18,7 +16,7 @@ use crate::{
         Analysis,
         render::{path::PathRenderer, signature::SignatureRenderer},
     },
-    model::SymbolKind,
+    model::{EnumVariantRef, MemberFieldRef, MemberFunctionRef, SymbolKind},
 };
 
 use super::{
@@ -125,13 +123,13 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 }))
             }
             BodyDeclarationRef::Function(function) => {
-                self.function_details(ResolvedFunctionRef::BodyLocal(function))
+                self.function_details(MemberFunctionRef::BodyLocal(function))
             }
             BodyDeclarationRef::Field(field) => {
-                self.field_details(ResolvedFieldRef::BodyLocal(field))
+                self.field_details(MemberFieldRef::BodyLocal(field))
             }
             BodyDeclarationRef::EnumVariant(variant) => {
-                self.enum_variant_details(ResolvedEnumVariantRef::BodyLocal(variant))
+                self.enum_variant_details(EnumVariantRef::BodyLocal(variant))
             }
             BodyDeclarationRef::Impl(_) => Ok(None),
         }
@@ -144,10 +142,10 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         match declaration {
             SemanticDeclarationRef::Item(item) => self.semantic_item_details(item),
             SemanticDeclarationRef::Field(field) => {
-                self.field_details(ResolvedFieldRef::Semantic(field))
+                self.field_details(MemberFieldRef::Semantic(field))
             }
             SemanticDeclarationRef::EnumVariant(variant) => {
-                self.enum_variant_details(ResolvedEnumVariantRef::Semantic(variant))
+                self.enum_variant_details(EnumVariantRef::Semantic(variant))
             }
         }
     }
@@ -161,7 +159,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             SemanticItemRef::Trait(trait_ref) => self.trait_details(trait_ref),
             SemanticItemRef::Impl(_) => Ok(None),
             SemanticItemRef::Function(function) => {
-                self.function_details(ResolvedFunctionRef::Semantic(function))
+                self.function_details(MemberFunctionRef::Semantic(function))
             }
             SemanticItemRef::TypeAlias(type_alias_ref) => self.type_alias_details(type_alias_ref),
             SemanticItemRef::Const(const_ref) => self.const_details(const_ref),
@@ -226,7 +224,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
 
     fn function_details(
         &self,
-        function: ResolvedFunctionRef,
+        function: MemberFunctionRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
         let members = MemberView::new(self.analysis);
         let Some(function) = members.function(function)? else {
@@ -242,7 +240,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }))
     }
 
-    fn field_details(&self, field: ResolvedFieldRef) -> anyhow::Result<Option<DeclarationDetails>> {
+    fn field_details(&self, field: MemberFieldRef) -> anyhow::Result<Option<DeclarationDetails>> {
         let members = MemberView::new(self.analysis);
         let Some(field) = members.field(field)? else {
             return Ok(None);
@@ -257,10 +255,10 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
 
     fn enum_variant_details(
         &self,
-        variant: ResolvedEnumVariantRef,
+        variant: EnumVariantRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
         match variant {
-            ResolvedEnumVariantRef::Semantic(variant_ref) => {
+            EnumVariantRef::Semantic(variant_ref) => {
                 let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant_ref)? else {
                     return Ok(None);
                 };
@@ -273,7 +271,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                     docs: data.variant.docs.as_ref().map(Documentation::text),
                 }))
             }
-            ResolvedEnumVariantRef::BodyLocal(variant_ref) => {
+            EnumVariantRef::BodyLocal(variant_ref) => {
                 let Some(data) = self.analysis.body_ir.local_enum_variant_data(variant_ref)? else {
                     return Ok(None);
                 };

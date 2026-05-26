@@ -2,7 +2,7 @@
 
 use rg_body_ir::{
     BodyFieldData, BodyFieldRef, BodyFunctionData, BodyFunctionRef, BodyItemRef,
-    BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt, ResolvedFieldRef, ResolvedFunctionRef,
+    BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt,
 };
 use rg_def_map::LocalDefRef;
 use rg_semantic_ir::{
@@ -12,7 +12,7 @@ use rg_semantic_ir::{
 
 use crate::{
     api::{Analysis, render::path::PathRenderer},
-    model::SymbolKind,
+    model::{MemberFieldRef, MemberFunctionRef, SymbolKind},
 };
 
 use super::declaration::Declaration;
@@ -61,10 +61,10 @@ pub(crate) enum MemberField<'a> {
 }
 
 impl<'a> MemberField<'a> {
-    pub(crate) fn field_ref(&self) -> ResolvedFieldRef {
+    pub(crate) fn field_ref(&self) -> MemberFieldRef {
         match self {
-            Self::Semantic { field, .. } => ResolvedFieldRef::Semantic(*field),
-            Self::BodyLocal { field, .. } => ResolvedFieldRef::BodyLocal(*field),
+            Self::Semantic { field, .. } => MemberFieldRef::Semantic(*field),
+            Self::BodyLocal { field, .. } => MemberFieldRef::BodyLocal(*field),
         }
     }
 
@@ -133,10 +133,10 @@ pub(crate) enum MemberFunction<'a> {
 }
 
 impl<'a> MemberFunction<'a> {
-    pub(crate) fn function_ref(&self) -> ResolvedFunctionRef {
+    pub(crate) fn function_ref(&self) -> MemberFunctionRef {
         match self {
-            Self::Semantic { function, .. } => ResolvedFunctionRef::Semantic(*function),
-            Self::BodyLocal { function, .. } => ResolvedFunctionRef::BodyLocal(*function),
+            Self::Semantic { function, .. } => MemberFunctionRef::Semantic(*function),
+            Self::BodyLocal { function, .. } => MemberFunctionRef::BodyLocal(*function),
         }
     }
 
@@ -253,14 +253,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
                 .semantic_ir
                 .fields_for_type(ty)?
                 .into_iter()
-                .map(ResolvedFieldRef::Semantic)
+                .map(MemberFieldRef::Semantic)
                 .collect(),
             MemberOwnerRef::BodyLocal(item) => self
                 .analysis
                 .body_ir
                 .fields_for_local_type(item)?
                 .into_iter()
-                .map(ResolvedFieldRef::BodyLocal)
+                .map(MemberFieldRef::BodyLocal)
                 .collect(),
         };
 
@@ -275,14 +275,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(fields)
     }
 
-    pub(crate) fn field(&self, field: ResolvedFieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
+    pub(crate) fn field(&self, field: MemberFieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
         match field {
-            ResolvedFieldRef::Semantic(field) => Ok(self
+            MemberFieldRef::Semantic(field) => Ok(self
                 .analysis
                 .semantic_ir
                 .field_data(field)?
                 .map(|data| MemberField::Semantic { field, data })),
-            ResolvedFieldRef::BodyLocal(field) => Ok(self
+            MemberFieldRef::BodyLocal(field) => Ok(self
                 .analysis
                 .body_ir
                 .local_field_data(field)?
@@ -292,15 +292,15 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
     pub(crate) fn function(
         &self,
-        function: ResolvedFunctionRef,
+        function: MemberFunctionRef,
     ) -> anyhow::Result<Option<MemberFunction<'_>>> {
         match function {
-            ResolvedFunctionRef::Semantic(function) => Ok(self
+            MemberFunctionRef::Semantic(function) => Ok(self
                 .analysis
                 .semantic_ir
                 .function_data(function)?
                 .map(|data| MemberFunction::Semantic { function, data })),
-            ResolvedFunctionRef::BodyLocal(function) => Ok(self
+            MemberFunctionRef::BodyLocal(function) => Ok(self
                 .analysis
                 .body_ir
                 .local_function_data(function)?
@@ -320,7 +320,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
             return Ok(None);
         };
 
-        self.function(ResolvedFunctionRef::Semantic(function))
+        self.function(MemberFunctionRef::Semantic(function))
     }
 
     pub(crate) fn method_candidates<'view>(
@@ -349,7 +349,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                         continue;
                     }
 
-                    let Some(function) = self.function(ResolvedFunctionRef::Semantic(function))?
+                    let Some(function) = self.function(MemberFunctionRef::Semantic(function))?
                     else {
                         continue;
                     };
@@ -370,7 +370,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                         ty,
                     )?
                 {
-                    let Some(function) = self.function(ResolvedFunctionRef::Semantic(function))?
+                    let Some(function) = self.function(MemberFunctionRef::Semantic(function))?
                     else {
                         continue;
                     };
@@ -395,7 +395,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                         continue;
                     }
 
-                    let Some(function) = self.function(ResolvedFunctionRef::BodyLocal(function))?
+                    let Some(function) = self.function(MemberFunctionRef::BodyLocal(function))?
                     else {
                         continue;
                     };

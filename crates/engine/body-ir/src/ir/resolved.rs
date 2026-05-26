@@ -21,7 +21,7 @@ use super::ids::{
     wincode::SchemaWrite,
     rg_memsize::MemorySize,
 )]
-pub enum ResolvedFieldRef {
+pub(crate) enum ResolvedFieldRef {
     Semantic(FieldRef),
     BodyLocal(BodyFieldRef),
 }
@@ -38,7 +38,7 @@ pub enum ResolvedFieldRef {
     wincode::SchemaWrite,
     rg_memsize::MemorySize,
 )]
-pub enum ResolvedFunctionRef {
+pub(crate) enum ResolvedFunctionRef {
     Semantic(FunctionRef),
     BodyLocal(BodyFunctionRef),
 }
@@ -55,7 +55,7 @@ pub enum ResolvedFunctionRef {
     wincode::SchemaWrite,
     rg_memsize::MemorySize,
 )]
-pub enum ResolvedEnumVariantRef {
+pub(crate) enum ResolvedEnumVariantRef {
     Semantic(EnumVariantRef),
     BodyLocal(BodyEnumVariantRef),
 }

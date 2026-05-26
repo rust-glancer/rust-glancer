@@ -32,10 +32,7 @@ pub use self::{
     },
     pat::{PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordPatField},
     path::BodyPath,
-    resolved::{
-        BodyResolution, BodyTypePathResolution, ResolvedDeclarationRef, ResolvedEnumVariantRef,
-        ResolvedFieldRef, ResolvedFunctionRef,
-    },
+    resolved::{BodyResolution, BodyTypePathResolution, ResolvedDeclarationRef},
     stmt::{BindingData, BindingKind, BodySelfParamKind, StmtData, StmtKind},
     ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt, BodyTyRepr},
 };

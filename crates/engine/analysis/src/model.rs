@@ -1,13 +1,40 @@
 use rg_body_ir::{
     BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionOwner, BodyFunctionRef, BodyItemKind,
-    BodyItemRef, BodyRef, BodyValueItemKind, BodyValueItemRef, ExprId, ResolvedEnumVariantRef,
-    ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
+    BodyItemRef, BodyRef, BodyValueItemKind, BodyValueItemRef, ExprId, ScopeId,
 };
 use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
-    EnumVariantRef, FieldRef, FunctionRef, SemanticItemKind, TraitApplicability, TypePathContext,
+    EnumVariantRef as SemanticEnumVariantRef, FieldRef as SemanticFieldRef,
+    FunctionRef as SemanticFunctionRef, SemanticItemKind, TraitApplicability, TypePathContext,
 };
+
+/// Stable field identity exposed by analysis-facing features.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::From)]
+pub enum MemberFieldRef {
+    #[from]
+    Semantic(SemanticFieldRef),
+    #[from]
+    BodyLocal(BodyFieldRef),
+}
+
+/// Stable function identity exposed by analysis-facing features.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::From)]
+pub enum MemberFunctionRef {
+    #[from]
+    Semantic(SemanticFunctionRef),
+    #[from]
+    BodyLocal(BodyFunctionRef),
+}
+
+/// Stable enum variant identity exposed by analysis-facing features.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::From)]
+pub enum EnumVariantRef {
+    #[from]
+    Semantic(SemanticEnumVariantRef),
+    #[from]
+    BodyLocal(BodyEnumVariantRef),
+}
 
 /// Symbol found at one source offset.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,11 +62,17 @@ pub enum SymbolAt {
     /// Lowered expression node, e.g. the whole `user.id()` call expression.
     Expr { body: BodyRef, expr: ExprId },
     /// Semantic field declaration, e.g. `id` in a module-level `struct User { id: Id }`.
-    Field { field: FieldRef, span: Span },
+    Field { field: SemanticFieldRef, span: Span },
     /// Semantic function declaration, e.g. `make_user` in `fn make_user() -> User`.
-    Function { function: FunctionRef, span: Span },
+    Function {
+        function: SemanticFunctionRef,
+        span: Span,
+    },
     /// Semantic enum variant declaration, e.g. `Some` in `enum Maybe<T> { Some(T) }`.
-    EnumVariant { variant: EnumVariantRef, span: Span },
+    EnumVariant {
+        variant: SemanticEnumVariantRef,
+        span: Span,
+    },
     /// Variant declared on a body-local enum, e.g. `Start` in `enum Action { Start }`.
     LocalEnumVariant {
         variant: BodyEnumVariantRef,
@@ -320,9 +353,9 @@ pub enum CompletionTarget {
     Binding { body: BodyRef, binding: BindingId },
     BodyItem(BodyItemRef),
     BodyValueItem(BodyValueItemRef),
-    EnumVariant(ResolvedEnumVariantRef),
-    Field(ResolvedFieldRef),
-    Function(ResolvedFunctionRef),
+    EnumVariant(EnumVariantRef),
+    Field(MemberFieldRef),
+    Function(MemberFunctionRef),
     Def(DefId),
     Keyword(KeywordCompletion),
     PrimitiveType(rg_ty::PrimitiveTy),
