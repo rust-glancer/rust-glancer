@@ -16,6 +16,7 @@ use rg_parse::FileId;
 use rg_semantic_ir::SemanticIrReadTxn;
 
 use crate::{
+    api::source_symbol::{SourceSymbol, SourceSymbolIndex},
     model::{
         CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget, ReferenceLocation, SymbolAt,
         TypeHint, WorkspaceSymbol,
@@ -62,7 +63,23 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<SymbolAt>> {
-        query::symbol_at::SymbolFinder::new(self).symbol_at(target, file_id, offset)
+        Ok(self
+            .source_symbol_at_for_query(target, file_id, offset)?
+            .map(SourceSymbol::into_symbol))
+    }
+
+    pub(crate) fn source_symbol_at_for_query(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<SourceSymbol>> {
+        // Overlapping syntax is common around type paths and expressions. The narrowest span is
+        // the best proxy for the thing the user actually placed the cursor on.
+        Ok(SourceSymbolIndex::new(self)
+            .symbols_at(target, file_id, offset)?
+            .into_iter()
+            .min_by_key(|candidate| candidate.span().len()))
     }
 
     /// Resolves a previously found symbol to navigation targets.
