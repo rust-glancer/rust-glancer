@@ -1,8 +1,8 @@
 //! Reference search over the facts already held by the analysis graph.
 //!
-//! The initial references implementation intentionally scans known source facts instead of building
-//! a separate index. That keeps the feature aligned with goto/hover resolution: every candidate is
-//! normalized through the same declaration resolver before we compare declaration identities.
+//! Reference lookup intentionally scans known source facts instead of building a separate index.
+//! The query owns the search surface and declaration-inclusion policy, while `ReferenceView`
+//! normalizes source symbols into declaration identities before comparison.
 
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
@@ -10,11 +10,10 @@ use rg_parse::FileId;
 use crate::{
     api::{
         Analysis,
-        resolve::declaration::SymbolDeclarationResolver,
         source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolRole},
-        view::declaration::{DeclarationRef, DeclarationView},
+        view::reference::ReferenceView,
     },
-    model::{ReferenceLocation, SymbolAt},
+    model::ReferenceLocation,
 };
 
 /// Options for a source reference lookup.
@@ -119,21 +118,27 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         let Some(symbol) = self.analysis.symbol_at_for_query(target, file_id, offset)? else {
             return Ok(Vec::new());
         };
-        let subjects = self.subjects_for_symbol(symbol.clone())?;
-        if subjects.is_empty() {
+        let reference_view = ReferenceView::new(self.analysis);
+        let declarations = reference_view.declarations_for_symbol(symbol)?;
+        if declarations.is_empty() {
             return Ok(Vec::new());
         }
 
         let mut locations = Vec::new();
         if self.query.includes_declarations() {
-            self.push_selected_declarations(symbol, &mut locations)?;
+            for location in reference_view.declaration_locations(&declarations)? {
+                if self
+                    .query
+                    .accepts_declaration(location.target, location.file_id)
+                {
+                    locations.push(location);
+                }
+            }
         }
 
         for candidate in self.reference_candidates()? {
-            let candidate_subjects = self.subjects_for_symbol(candidate.symbol().clone())?;
-            if candidate_subjects
-                .iter()
-                .any(|candidate| subjects.contains(candidate))
+            if reference_view
+                .symbol_matches_declarations(candidate.symbol().clone(), &declarations)?
             {
                 locations.push(ReferenceLocation {
                     target: candidate.target(),
@@ -154,44 +159,6 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         });
         locations.dedup();
         Ok(locations)
-    }
-
-    fn push_selected_declarations(
-        &self,
-        symbol: SymbolAt,
-        locations: &mut Vec<ReferenceLocation>,
-    ) -> anyhow::Result<()> {
-        for declaration_ref in self.subjects_for_symbol(symbol)? {
-            let Some(declaration) =
-                DeclarationView::new(self.analysis).declaration(declaration_ref)?
-            else {
-                continue;
-            };
-            if !self
-                .query
-                .accepts_declaration(declaration.target(), declaration.file_id())
-            {
-                continue;
-            }
-            locations.push(ReferenceLocation {
-                target: declaration.target(),
-                file_id: declaration.file_id(),
-                span: declaration.selection_span(),
-            });
-        }
-        Ok(())
-    }
-
-    fn subjects_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Vec<DeclarationRef>> {
-        let declarations =
-            SymbolDeclarationResolver::new(self.analysis).declarations_for_symbol(symbol)?;
-        let mut subjects = Vec::new();
-        for declaration in declarations {
-            if !subjects.contains(&declaration) {
-                subjects.push(declaration);
-            }
-        }
-        Ok(subjects)
     }
 
     fn reference_candidates(&self) -> anyhow::Result<Vec<SourceSymbol>> {
