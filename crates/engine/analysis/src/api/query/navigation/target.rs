@@ -1,8 +1,6 @@
 //! Concrete navigation target projection.
 
-use rg_body_ir::{BodyAutoderef, BodyItemRef, BodyTy, BodyTyExt};
-use rg_def_map::{LocalDefRef, ModuleOrigin, ModuleRef};
-use rg_semantic_ir::TypeDefRef;
+use rg_def_map::{ModuleOrigin, ModuleRef};
 
 use crate::{
     api::{
@@ -43,7 +41,7 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         };
 
         Ok(self
-            .declaration(module_ref)?
+            .declaration(DeclarationRef::Module(module_ref))?
             .map(|declaration| NavigationTarget {
                 target: declaration.target(),
                 kind: NavigationTargetKind::from(declaration.kind()),
@@ -51,20 +49,6 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
                 file_id: declaration.file_id(),
                 span: Some(declaration.span()),
             }))
-    }
-
-    fn navigation_target_for_local_def(
-        &self,
-        local_def: LocalDefRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        Ok(self.declaration(local_def)?.map(NavigationTarget::from))
-    }
-
-    fn navigation_target_for_body_item(
-        &self,
-        item_ref: BodyItemRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_declaration(item_ref.into())
     }
 
     pub(crate) fn navigation_targets_for_declarations(
@@ -82,57 +66,19 @@ impl<'a, 'db> NavigationTargetResolver<'a, 'db> {
         Ok(targets)
     }
 
-    fn declaration(
-        &self,
-        declaration: impl Into<DeclarationRef>,
-    ) -> anyhow::Result<Option<Declaration>> {
-        DeclarationView::new(self.0).declaration(declaration.into())
-    }
-
-    fn navigation_target_for_type_def(
-        &self,
-        ty: TypeDefRef,
-    ) -> anyhow::Result<Option<NavigationTarget>> {
-        self.navigation_target_for_declaration(ty.into())
-    }
-
-    pub(crate) fn navigation_targets_for_body_ty(
-        &self,
-        ty: &BodyTy,
-    ) -> anyhow::Result<Vec<NavigationTarget>> {
-        let mut local_targets = Vec::new();
-        for candidate in BodyAutoderef::peel_references(ty) {
-            for ty in candidate.ty().as_local_nominals() {
-                if let Some(target) = self.navigation_target_for_body_item(ty.item)? {
-                    local_targets.push(target);
-                }
-            }
-        }
-        if !local_targets.is_empty() {
-            return Ok(local_targets);
-        }
-
-        let mut targets = Vec::new();
-        for candidate in BodyAutoderef::peel_references(ty) {
-            for ty in candidate.ty().as_nominals() {
-                if let Some(target) = self.navigation_target_for_type_def(ty.def)? {
-                    targets.push(target);
-                }
-            }
-        }
-        Ok(targets)
-    }
-
     pub(crate) fn navigation_target_for_declaration(
         &self,
         declaration: DeclarationRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
         match declaration {
             DeclarationRef::Module(module) => self.navigation_target_for_module(module),
-            DeclarationRef::LocalDef(local_def) => self.navigation_target_for_local_def(local_def),
-            DeclarationRef::Semantic(_) | DeclarationRef::Body(_) => {
+            DeclarationRef::LocalDef(_) | DeclarationRef::Semantic(_) | DeclarationRef::Body(_) => {
                 Ok(self.declaration(declaration)?.map(NavigationTarget::from))
             }
         }
+    }
+
+    fn declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<Declaration>> {
+        DeclarationView::new(self.0).declaration(declaration)
     }
 }

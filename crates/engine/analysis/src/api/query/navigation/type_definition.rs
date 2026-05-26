@@ -3,9 +3,9 @@
 use rg_def_map::TargetRef;
 use rg_parse::FileId;
 
-use super::target;
+use super::target::NavigationTargetResolver;
 use crate::{
-    api::{Analysis, query::type_at::TypeResolver},
+    api::{Analysis, query::type_at::TypeResolver, view::ty::TyView},
     model::NavigationTarget,
 };
 
@@ -30,6 +30,7 @@ impl<'a, 'db> TypeDefinitionResolver<'a, 'db> {
             return Ok(Vec::new());
         };
 
-        target::NavigationTargetResolver::new(self.0).navigation_targets_for_body_ty(&ty)
+        let declarations = TyView::new(self.0).declarations_for_ty(&ty);
+        NavigationTargetResolver::new(self.0).navigation_targets_for_declarations(declarations)
     }
 }

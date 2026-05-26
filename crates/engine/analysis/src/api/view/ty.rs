@@ -5,8 +5,8 @@
 //! orchestration.
 
 use rg_body_ir::{
-    BodyDeclarationRef, BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyTy, BodyTyRepr,
-    BodyTypePathResolution, ResolvedEnumVariantRef, ScopeId,
+    BodyAutoderef, BodyDeclarationRef, BodyLocalNominalTy, BodyNominalTy, BodyRef, BodyTy,
+    BodyTyExt, BodyTyRepr, BodyTypePathResolution, ResolvedEnumVariantRef, ScopeId,
 };
 use rg_def_map::Path;
 use rg_semantic_ir::{
@@ -77,6 +77,34 @@ impl<'a, 'db> TyView<'a, 'db> {
             SymbolAt::Body { .. } => None,
         };
         Ok(ty)
+    }
+
+    pub(crate) fn declarations_for_ty(&self, ty: &BodyTy) -> Vec<DeclarationRef> {
+        // Body-local nominal types shadow module-level types in the same expression type. Preserve
+        // that lookup order when turning an inferred type back into navigation declarations.
+        let mut local_declarations = Vec::new();
+        for candidate in BodyAutoderef::peel_references(ty) {
+            for ty in candidate.ty().as_local_nominals() {
+                let declaration = DeclarationRef::from(ty.item);
+                if !local_declarations.contains(&declaration) {
+                    local_declarations.push(declaration);
+                }
+            }
+        }
+        if !local_declarations.is_empty() {
+            return local_declarations;
+        }
+
+        let mut declarations = Vec::new();
+        for candidate in BodyAutoderef::peel_references(ty) {
+            for ty in candidate.ty().as_nominals() {
+                let declaration = DeclarationRef::from(ty.def);
+                if !declarations.contains(&declaration) {
+                    declarations.push(declaration);
+                }
+            }
+        }
+        declarations
     }
 
     fn ty_for_declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<BodyTy>> {
