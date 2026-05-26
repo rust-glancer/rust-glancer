@@ -8,16 +8,17 @@ use rg_body_ir::{
 use rg_def_map::{ModuleId, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
-    AssocItemId, ConstRef, EnumVariantRef, FunctionRef, SemanticItemKind, SemanticItemView,
-    TypeAliasRef, TypeDefId, TypeDefRef,
+    AssocItemId, ConstRef, EnumVariantRef as SemanticEnumVariantRef,
+    FunctionRef as SemanticFunctionRef, SemanticItemKind, SemanticItemView, TypeAliasRef,
+    TypeDefId, TypeDefRef,
 };
 
 use crate::{
     api::{
         Analysis,
-        view::declaration::{Declaration, DeclarationRef, DeclarationView},
+        view::declaration::{Declaration, DeclarationView},
     },
-    model::{DocumentSymbol, SymbolKind, WorkspaceSymbol},
+    model::{DeclarationRef, DocumentSymbol, SymbolKind, WorkspaceSymbol},
 };
 
 /// One outline declaration. Most nodes come from real declarations, but some syntax-only
@@ -187,7 +188,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
     ) -> Result<()> {
         for (module_ref, _) in self.analysis.def_map.modules(target)? {
             let Some(symbol) = self
-                .declaration(module_ref.into())?
+                .declaration(DeclarationRef::module(module_ref))?
                 .map(DocumentSymbolNode::new)
             else {
                 continue;
@@ -240,7 +241,9 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 self.enum_document_symbol(ty, file_id)
             }
             SemanticItemKind::Trait | SemanticItemKind::Impl => {
-                let Some(declaration) = self.declaration(item.item().into())? else {
+                let Some(declaration) =
+                    self.declaration(DeclarationRef::semantic(item.item().into()))?
+                else {
                     return Ok(None);
                 };
                 let children = item
@@ -257,7 +260,9 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             SemanticItemKind::Function
             | SemanticItemKind::TypeAlias
             | SemanticItemKind::Const
-            | SemanticItemKind::Static => self.declaration_document_symbol(item.item().into()),
+            | SemanticItemKind::Static => {
+                self.declaration_document_symbol(DeclarationRef::semantic(item.item().into()))
+            }
         }
     }
 
@@ -266,7 +271,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         ty: TypeDefRef,
         file_id: FileId,
     ) -> Result<Option<DocumentSymbolNode>> {
-        let Some(declaration) = self.declaration(ty.into())? else {
+        let Some(declaration) = self.declaration(DeclarationRef::semantic(ty.into()))? else {
             return Ok(None);
         };
         if declaration.file_id() != file_id {
@@ -293,7 +298,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         ty: TypeDefRef,
         file_id: FileId,
     ) -> Result<Option<DocumentSymbolNode>> {
-        let Some(declaration) = self.declaration(ty.into())? else {
+        let Some(declaration) = self.declaration(DeclarationRef::semantic(ty.into()))? else {
             return Ok(None);
         };
         if declaration.file_id() != file_id {
@@ -302,7 +307,9 @@ impl<'a, 'db> SymbolView<'a, 'db> {
 
         let mut children = Vec::new();
         for variant_ref in self.enum_variant_refs(ty)? {
-            let Some(declaration) = self.declaration(variant_ref.into())? else {
+            let Some(declaration) =
+                self.declaration(DeclarationRef::semantic(variant_ref.into()))?
+            else {
                 continue;
             };
             let Some(variant) = self.analysis.semantic_ir.enum_variant_data(variant_ref)? else {
@@ -360,9 +367,13 @@ impl<'a, 'db> SymbolView<'a, 'db> {
 
     fn assoc_item_declaration(target: TargetRef, item: &AssocItemId) -> DeclarationRef {
         match item {
-            AssocItemId::Function(id) => FunctionRef { target, id: *id }.into(),
-            AssocItemId::TypeAlias(id) => TypeAliasRef { target, id: *id }.into(),
-            AssocItemId::Const(id) => ConstRef { target, id: *id }.into(),
+            AssocItemId::Function(id) => {
+                DeclarationRef::semantic(SemanticFunctionRef { target, id: *id }.into())
+            }
+            AssocItemId::TypeAlias(id) => {
+                DeclarationRef::semantic(TypeAliasRef { target, id: *id }.into())
+            }
+            AssocItemId::Const(id) => DeclarationRef::semantic(ConstRef { target, id: *id }.into()),
         }
     }
 
@@ -372,11 +383,11 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             .semantic_ir
             .fields_for_type(ty)?
             .into_iter()
-            .map(DeclarationRef::from)
+            .map(|field| DeclarationRef::semantic(field.into()))
             .collect())
     }
 
-    fn enum_variant_refs(&self, ty: TypeDefRef) -> Result<Vec<EnumVariantRef>> {
+    fn enum_variant_refs(&self, ty: TypeDefRef) -> Result<Vec<SemanticEnumVariantRef>> {
         let TypeDefId::Enum(enum_id) = ty.id else {
             return Ok(Vec::new());
         };
@@ -385,7 +396,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         };
 
         Ok((0..data.variants.len())
-            .map(|index| EnumVariantRef {
+            .map(|index| SemanticEnumVariantRef {
                 target: ty.target,
                 enum_id,
                 index,
@@ -424,7 +435,8 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 continue;
             }
 
-            let Some(function) = self.declaration(body.owner().into())? else {
+            let Some(function) = self.declaration(DeclarationRef::semantic(body.owner().into()))?
+            else {
                 continue;
             };
             // Body-local structs and impls should appear under the function that contains them,
@@ -468,7 +480,9 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                     body: body_ref,
                     item: BodyValueItemId(item_idx),
                 };
-                let Some(symbol) = self.declaration_document_symbol(item_ref.into())? else {
+                let Some(symbol) =
+                    self.declaration_document_symbol(DeclarationRef::body_value_item(item_ref))?
+                else {
                     continue;
                 };
                 symbols.push(symbol);
@@ -483,7 +497,9 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                     body: body_ref,
                     function: BodyFunctionId(function_idx),
                 };
-                let Some(symbol) = self.declaration_document_symbol(function.into())? else {
+                let Some(symbol) =
+                    self.declaration_document_symbol(DeclarationRef::body_function(function))?
+                else {
                     continue;
                 };
                 symbols.push(symbol);
@@ -510,13 +526,15 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         &self,
         item_ref: BodyItemRef,
     ) -> Result<Option<DocumentSymbolNode>> {
-        let Some(declaration) = self.declaration(item_ref.into())? else {
+        let Some(declaration) = self.declaration(DeclarationRef::body_item(item_ref))? else {
             return Ok(None);
         };
 
         let mut children = Vec::new();
         for field_ref in self.analysis.body_ir.fields_for_local_type(item_ref)? {
-            let Some(symbol) = self.declaration_document_symbol(field_ref.into())? else {
+            let Some(symbol) =
+                self.declaration_document_symbol(DeclarationRef::body_field(field_ref))?
+            else {
                 continue;
             };
             if symbol.declaration.file_id == declaration.file_id() {
@@ -552,7 +570,9 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 body: impl_ref.body,
                 item: *item,
             };
-            let Some(symbol) = self.declaration_document_symbol(item_ref.into())? else {
+            let Some(symbol) =
+                self.declaration_document_symbol(DeclarationRef::body_value_item(item_ref))?
+            else {
                 continue;
             };
             children.push(symbol);
@@ -563,13 +583,15 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 body: impl_ref.body,
                 function: *function,
             };
-            let Some(symbol) = self.declaration_document_symbol(function.into())? else {
+            let Some(symbol) =
+                self.declaration_document_symbol(DeclarationRef::body_function(function))?
+            else {
                 continue;
             };
             children.push(symbol);
         }
 
-        let Some(declaration) = self.declaration(impl_ref.into())? else {
+        let Some(declaration) = self.declaration(DeclarationRef::body(impl_ref.into()))? else {
             return Ok(None);
         };
 
@@ -604,7 +626,11 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 let Some(ty) = item.type_def() else {
                     return Ok(());
                 };
-                self.push_declaration_workspace_symbol(item.item().into(), None, symbols)?;
+                self.push_declaration_workspace_symbol(
+                    DeclarationRef::semantic(item.item().into()),
+                    None,
+                    symbols,
+                )?;
                 let Some(name) = item.name() else {
                     return Ok(());
                 };
@@ -614,14 +640,22 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 let Some(ty) = item.type_def() else {
                     return Ok(());
                 };
-                self.push_declaration_workspace_symbol(item.item().into(), None, symbols)?;
+                self.push_declaration_workspace_symbol(
+                    DeclarationRef::semantic(item.item().into()),
+                    None,
+                    symbols,
+                )?;
                 let Some(name) = item.name() else {
                     return Ok(());
                 };
                 self.push_enum_variant_workspace_symbols(ty, name.as_str(), symbols)?;
             }
             SemanticItemKind::Trait => {
-                self.push_declaration_workspace_symbol(item.item().into(), None, symbols)?;
+                self.push_declaration_workspace_symbol(
+                    DeclarationRef::semantic(item.item().into()),
+                    None,
+                    symbols,
+                )?;
                 let Some(name) = item.name() else {
                     return Ok(());
                 };
@@ -637,7 +671,9 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 )?;
             }
             SemanticItemKind::Impl => {
-                let Some(declaration) = self.declaration(item.item().into())? else {
+                let Some(declaration) =
+                    self.declaration(DeclarationRef::semantic(item.item().into()))?
+                else {
                     return Ok(());
                 };
                 let Some(items) = item.assoc_items() else {
@@ -654,7 +690,11 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             | SemanticItemKind::TypeAlias
             | SemanticItemKind::Const
             | SemanticItemKind::Static => {
-                self.push_declaration_workspace_symbol(item.item().into(), None, symbols)?;
+                self.push_declaration_workspace_symbol(
+                    DeclarationRef::semantic(item.item().into()),
+                    None,
+                    symbols,
+                )?;
             }
         }
 
@@ -667,7 +707,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         symbols: &mut Vec<WorkspaceSymbolEntry>,
     ) -> Result<()> {
         for (module_ref, _) in self.analysis.def_map.modules(target)? {
-            let Some(declaration) = self.declaration(module_ref.into())? else {
+            let Some(declaration) = self.declaration(DeclarationRef::module(module_ref))? else {
                 continue;
             };
             let container_name = self.module_container_name(module_ref)?;
@@ -704,7 +744,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
     ) -> Result<()> {
         for variant_ref in self.enum_variant_refs(ty)? {
             self.push_declaration_workspace_symbol(
-                variant_ref.into(),
+                DeclarationRef::semantic(variant_ref.into()),
                 Some(container_name.to_string()),
                 symbols,
             )?;

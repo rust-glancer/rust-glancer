@@ -16,13 +16,13 @@ use crate::{
         Analysis,
         render::{path::PathRenderer, signature::SignatureRenderer},
     },
-    model::{EnumVariantRef, MemberFieldRef, MemberFunctionRef, SymbolKind},
+    model::{
+        DeclarationRef, DeclarationRefRepr, EnumVariantRef, EnumVariantRefRepr, FieldRef,
+        FunctionRef, SymbolKind,
+    },
 };
 
-use super::{
-    declaration::{DeclarationRef, DeclarationView},
-    member::MemberView,
-};
+use super::{declaration::DeclarationView, member::MemberView};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct DeclarationDetailsContext {
@@ -51,11 +51,13 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         declaration: DeclarationRef,
         context: &DeclarationDetailsContext,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        match declaration {
-            DeclarationRef::Module(module) => self.module_details(module, context),
-            DeclarationRef::LocalDef(local_def) => self.local_def_details(local_def),
-            DeclarationRef::Semantic(declaration) => self.semantic_declaration_details(declaration),
-            DeclarationRef::Body(declaration) => self.body_declaration_details(declaration),
+        match declaration.repr() {
+            DeclarationRefRepr::Module(module) => self.module_details(module, context),
+            DeclarationRefRepr::LocalDef(local_def) => self.local_def_details(local_def),
+            DeclarationRefRepr::Semantic(declaration) => {
+                self.semantic_declaration_details(declaration)
+            }
+            DeclarationRefRepr::Body(declaration) => self.body_declaration_details(declaration),
         }
     }
 
@@ -87,8 +89,8 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 let Some(item) = view.item_data() else {
                     return Ok(None);
                 };
-                let Some(declaration_view) =
-                    DeclarationView::new(self.analysis).declaration(declaration.into())?
+                let Some(declaration_view) = DeclarationView::new(self.analysis)
+                    .declaration(DeclarationRef::body(declaration))?
                 else {
                     return Ok(None);
                 };
@@ -108,8 +110,8 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 let Some(item) = view.value_item_data() else {
                     return Ok(None);
                 };
-                let Some(declaration_view) =
-                    DeclarationView::new(self.analysis).declaration(declaration.into())?
+                let Some(declaration_view) = DeclarationView::new(self.analysis)
+                    .declaration(DeclarationRef::body(declaration))?
                 else {
                     return Ok(None);
                 };
@@ -123,13 +125,11 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 }))
             }
             BodyDeclarationRef::Function(function) => {
-                self.function_details(MemberFunctionRef::BodyLocal(function))
+                self.function_details(FunctionRef::body_local(function))
             }
-            BodyDeclarationRef::Field(field) => {
-                self.field_details(MemberFieldRef::BodyLocal(field))
-            }
+            BodyDeclarationRef::Field(field) => self.field_details(FieldRef::body_local(field)),
             BodyDeclarationRef::EnumVariant(variant) => {
-                self.enum_variant_details(EnumVariantRef::BodyLocal(variant))
+                self.enum_variant_details(EnumVariantRef::body_local(variant))
             }
             BodyDeclarationRef::Impl(_) => Ok(None),
         }
@@ -141,11 +141,9 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     ) -> anyhow::Result<Option<DeclarationDetails>> {
         match declaration {
             SemanticDeclarationRef::Item(item) => self.semantic_item_details(item),
-            SemanticDeclarationRef::Field(field) => {
-                self.field_details(MemberFieldRef::Semantic(field))
-            }
+            SemanticDeclarationRef::Field(field) => self.field_details(FieldRef::semantic(field)),
             SemanticDeclarationRef::EnumVariant(variant) => {
-                self.enum_variant_details(EnumVariantRef::Semantic(variant))
+                self.enum_variant_details(EnumVariantRef::semantic(variant))
             }
         }
     }
@@ -159,7 +157,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             SemanticItemRef::Trait(trait_ref) => self.trait_details(trait_ref),
             SemanticItemRef::Impl(_) => Ok(None),
             SemanticItemRef::Function(function) => {
-                self.function_details(MemberFunctionRef::Semantic(function))
+                self.function_details(FunctionRef::semantic(function))
             }
             SemanticItemRef::TypeAlias(type_alias_ref) => self.type_alias_details(type_alias_ref),
             SemanticItemRef::Const(const_ref) => self.const_details(const_ref),
@@ -224,7 +222,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
 
     fn function_details(
         &self,
-        function: MemberFunctionRef,
+        function: FunctionRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
         let members = MemberView::new(self.analysis);
         let Some(function) = members.function(function)? else {
@@ -240,7 +238,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }))
     }
 
-    fn field_details(&self, field: MemberFieldRef) -> anyhow::Result<Option<DeclarationDetails>> {
+    fn field_details(&self, field: FieldRef) -> anyhow::Result<Option<DeclarationDetails>> {
         let members = MemberView::new(self.analysis);
         let Some(field) = members.field(field)? else {
             return Ok(None);
@@ -257,8 +255,8 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         &self,
         variant: EnumVariantRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        match variant {
-            EnumVariantRef::Semantic(variant_ref) => {
+        match variant.repr() {
+            EnumVariantRefRepr::Semantic(variant_ref) => {
                 let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant_ref)? else {
                     return Ok(None);
                 };
@@ -271,7 +269,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                     docs: data.variant.docs.as_ref().map(Documentation::text),
                 }))
             }
-            EnumVariantRef::BodyLocal(variant_ref) => {
+            EnumVariantRefRepr::BodyLocal(variant_ref) => {
                 let Some(data) = self.analysis.body_ir.local_enum_variant_data(variant_ref)? else {
                     return Ok(None);
                 };

@@ -8,7 +8,10 @@ use rg_semantic_ir::{
     Documentation, EnumVariantData, EnumVariantRef as SemanticEnumVariantRef, TypeDefId, TypeDefRef,
 };
 
-use crate::{api::Analysis, model::EnumVariantRef};
+use crate::{
+    api::Analysis,
+    model::{EnumVariantRef, EnumVariantRefRepr},
+};
 
 /// Borrowed data for one resolved enum variant, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
@@ -26,8 +29,8 @@ pub(crate) enum EnumVariant<'a> {
 impl<'a> EnumVariant<'a> {
     pub(crate) fn variant_ref(&self) -> EnumVariantRef {
         match self {
-            Self::Semantic { variant, .. } => EnumVariantRef::Semantic(*variant),
-            Self::BodyLocal { variant, .. } => EnumVariantRef::BodyLocal(*variant),
+            Self::Semantic { variant, .. } => EnumVariantRef::semantic(*variant),
+            Self::BodyLocal { variant, .. } => EnumVariantRef::body_local(*variant),
         }
     }
 
@@ -106,7 +109,7 @@ impl<'a, 'db> EnumVariantView<'a, 'db> {
 
         let mut variants = Vec::new();
         for variant_ref in variant_refs {
-            let Some(variant) = self.variant(EnumVariantRef::Semantic(variant_ref))? else {
+            let Some(variant) = self.variant(EnumVariantRef::semantic(variant_ref))? else {
                 continue;
             };
             variants.push(variant);
@@ -126,7 +129,7 @@ impl<'a, 'db> EnumVariantView<'a, 'db> {
             return Ok(Vec::new());
         };
         let variant_refs = (0..item.enum_variants().len()).map(|index| {
-            EnumVariantRef::BodyLocal(BodyEnumVariantRef {
+            EnumVariantRef::body_local(BodyEnumVariantRef {
                 item: item_ref,
                 index,
             })
@@ -147,13 +150,13 @@ impl<'a, 'db> EnumVariantView<'a, 'db> {
         &self,
         variant: EnumVariantRef,
     ) -> anyhow::Result<Option<EnumVariant<'_>>> {
-        match variant {
-            EnumVariantRef::Semantic(variant) => Ok(self
+        match variant.repr() {
+            EnumVariantRefRepr::Semantic(variant) => Ok(self
                 .analysis
                 .semantic_ir
                 .enum_variant_data(variant)?
                 .map(|data| EnumVariant::Semantic { variant, data })),
-            EnumVariantRef::BodyLocal(variant) => Ok(self
+            EnumVariantRefRepr::BodyLocal(variant) => Ok(self
                 .analysis
                 .body_ir
                 .local_enum_variant_data(variant)?

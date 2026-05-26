@@ -122,12 +122,12 @@ pub fn use_it(user: User) {
             bare dot before statement completions
             - inherent_method id
               detail: pub fn id(&self)
-              sort: id|01|00|Function(Semantic(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: FunctionId(1) }))
+              sort: id|01|00|Function(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, function: FunctionId(1) })
               replace: 119..119
               snippet: id()$0
             - field name
               detail: pub name: String
-              sort: name|00|00|Field(Semantic(FieldRef { owner: TypeDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: Struct(StructId(0)) }, index: 0 }))
+              sort: name|00|00|Field(FieldRef { owner: TypeDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: Struct(StructId(0)) }, index: 0 })
               replace: 119..119
         "#]],
     );
@@ -474,20 +474,20 @@ pub fn use_it(c_a_outer: u8) {
             unqualified value proximity
             - variable c_z_inner
               detail: let c_z_inner: u8
-              sort: 00-body:0000|c_z_inner|07|00|Binding { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(1) }, binding: BindingId(1) }
+              sort: 00-body:0000|c_z_inner|07|00|Declaration(DeclarationRef { kind: "body", declaration: Binding(BodyBindingRef { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(1) }, binding: BindingId(1) }) })
               replace: 107..108
             - variable c_a_outer
               detail: let c_a_outer: u8
-              sort: 00-body:0002|c_a_outer|07|00|Binding { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(1) }, binding: BindingId(0) }
+              sort: 00-body:0002|c_a_outer|07|00|Declaration(DeclarationRef { kind: "body", declaration: Binding(BodyBindingRef { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(1) }, binding: BindingId(0) }) })
               replace: 107..108
             - fn c_module_item
               detail: pub fn c_module_item()
-              sort: 01-module|c_module_item|06|00|Function(Semantic(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: FunctionId(0) }))
+              sort: 01-module|c_module_item|06|00|Function(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, function: FunctionId(0) })
               replace: 107..108
               snippet: c_module_item()$0
             - fn use_it
               detail: pub fn use_it(c_a_outer: u8)
-              sort: 01-module|use_it|06|00|Function(Semantic(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: FunctionId(1) }))
+              sort: 01-module|use_it|06|00|Function(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, function: FunctionId(1) })
               replace: 107..108
               snippet: use_it(${1:c_a_outer})$0
         "#]],
@@ -556,19 +556,19 @@ pub fn use_it() {
             unqualified type proximity
             - struct ZLocal
               detail: struct ZLocal
-              sort: 00-body:0000|00|ZLocal|00|BodyItem(BodyItemRef { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(0) }, item: BodyItemId(0) })
+              sort: 00-body:0000|00|ZLocal|00|Declaration(DeclarationRef { kind: "body", declaration: Item(BodyItemRef { body: BodyRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, body: BodyId(0) }, item: BodyItemId(0) }) })
               replace: 112..113
             - struct AModule
               detail: struct AModule
-              sort: 01-module|00|AModule|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) }))
+              sort: 01-module|00|AModule|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) } })
               replace: 112..113
             - trait ATrait
               detail: trait ATrait
-              sort: 01-module|01|ATrait|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) }))
+              sort: 01-module|01|ATrait|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) } })
               replace: 112..113
             - module a_mod
               detail: mod a_mod
-              sort: 01-module|02|a_mod|00|Def(Module(ModuleRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, module: ModuleId(1) }))
+              sort: 01-module|02|a_mod|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, module: ModuleId(1) } })
               replace: 112..113
         "#]],
     );
@@ -708,7 +708,7 @@ pub fn use_it() {
             module named like primitive completions
             - module usize
               detail: mod usize
-              sort: 01-module|02|usize|00|Def(Module(ModuleRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, module: ModuleId(1) }))
+              sort: 01-module|02|usize|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, module: ModuleId(1) } })
               replace: 52..54
             - primitive_type usize
               detail: primitive type usize
@@ -875,15 +875,15 @@ pub fn use_it() {
             unqualified type sorting
             - struct Zed
               detail: struct Zed
-              sort: 01-module|00|Zed|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) }))
+              sort: 01-module|00|Zed|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(1) } })
               replace: 89..90
             - trait Mid
               detail: trait Mid
-              sort: 01-module|01|Mid|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) }))
+              sort: 01-module|01|Mid|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) } })
               replace: 89..90
             - module aa_prefix
               detail: mod aa_prefix
-              sort: 01-module|02|aa_prefix|00|Def(Module(ModuleRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, module: ModuleId(1) }))
+              sort: 01-module|02|aa_prefix|00|Declaration(DeclarationRef { kind: "module", module: ModuleRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, module: ModuleId(1) } })
               replace: 89..90
         "#]],
     );
@@ -1181,7 +1181,7 @@ pub fn use_it() {
             path metadata completions
             - struct User
               detail: struct User
-              sort: User|04|00|Def(Local(LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) }))
+              sort: User|04|00|Declaration(DeclarationRef { kind: "local_def", local_def: LocalDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, local_def: LocalDefId(0) } })
               replace: 79..81
         "#]],
     );
@@ -2038,12 +2038,12 @@ pub fn use_it(user: User) {
             - field name
               detail: pub name: Profile
               docs: Name field.
-              sort: name|00|00|Field(Semantic(FieldRef { owner: TypeDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: Struct(StructId(1)) }, index: 0 }))
+              sort: name|00|00|Field(FieldRef { owner: TypeDefRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: Struct(StructId(1)) }, index: 0 })
               replace: 216..218
             - inherent_method name
               detail: pub fn name(&self) -> Profile
               docs: Name method.
-              sort: name|01|00|Function(Semantic(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, id: FunctionId(1) }))
+              sort: name|01|00|Function(FunctionRef { target: TargetRef { package: PackageSlot(0), target: TargetId(0) }, function: FunctionId(1) })
               replace: 216..218
               snippet: name()$0
         "#]],

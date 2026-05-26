@@ -6,11 +6,10 @@
 
 use crate::{
     api::{
-        Analysis,
-        resolve::declaration::SymbolDeclarationResolver,
-        view::declaration::{DeclarationRef, DeclarationView},
+        Analysis, resolve::declaration::SymbolDeclarationResolver,
+        view::declaration::DeclarationView,
     },
-    model::{ReferenceLocation, SymbolAt},
+    model::{DeclarationRef, ReferenceLocation, SymbolAt},
 };
 
 pub(crate) struct ReferenceView<'a, 'db> {

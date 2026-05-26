@@ -1,57 +1,20 @@
 //! Source-level declaration lookup shared by editor queries.
 
-use rg_body_ir::{
-    BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef,
-    BodyImplRef, BodyItemRef, BodyValueItemRef,
-};
+use rg_body_ir::BodyDeclarationRef;
 use rg_def_map::{LocalDefRef, ModuleOrigin, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
-    ConstRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, SemanticDeclarationRef,
-    SemanticItemKind, SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefRef, TypeRef,
+    EnumVariantRef, FieldRef as SemanticFieldRef, FunctionRef as SemanticFunctionRef,
+    SemanticDeclarationRef, SemanticItemKind, SemanticItemRef, TypeRef,
 };
 
 use crate::{
     api::{Analysis, view::member::MemberView},
     model::{
-        DocumentSymbol, MemberFieldRef, MemberFunctionRef, NavigationTarget, NavigationTargetKind,
+        DeclarationRef, DeclarationRefRepr, DocumentSymbol, NavigationTarget, NavigationTargetKind,
         SymbolKind,
     },
 };
-
-/// Storage-independent identity for declarations that editor features can project.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, derive_more::From)]
-pub(crate) enum DeclarationRef {
-    #[from]
-    Module(ModuleRef),
-    #[from]
-    LocalDef(LocalDefRef),
-    #[from(
-        SemanticDeclarationRef,
-        SemanticItemRef,
-        TypeDefRef,
-        TraitRef,
-        ImplRef,
-        FunctionRef,
-        TypeAliasRef,
-        ConstRef,
-        StaticRef,
-        FieldRef,
-        EnumVariantRef
-    )]
-    Semantic(SemanticDeclarationRef),
-    #[from(
-        BodyDeclarationRef,
-        BodyBindingRef,
-        BodyItemRef,
-        BodyValueItemRef,
-        BodyImplRef,
-        BodyFieldRef,
-        BodyEnumVariantRef,
-        BodyFunctionRef
-    )]
-    Body(BodyDeclarationRef),
-}
 
 /// Composite declaration facts shared by editor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,11 +85,11 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         &self,
         declaration: DeclarationRef,
     ) -> anyhow::Result<Option<Declaration>> {
-        match declaration {
-            DeclarationRef::Module(module_ref) => self.module(module_ref),
-            DeclarationRef::LocalDef(local_def) => self.local_def(local_def),
-            DeclarationRef::Semantic(declaration) => self.semantic_declaration(declaration),
-            DeclarationRef::Body(declaration) => self.body_declaration(declaration),
+        match declaration.repr() {
+            DeclarationRefRepr::Module(module_ref) => self.module(module_ref),
+            DeclarationRefRepr::LocalDef(local_def) => self.local_def(local_def),
+            DeclarationRefRepr::Semantic(declaration) => self.semantic_declaration(declaration),
+            DeclarationRefRepr::Body(declaration) => self.body_declaration(declaration),
         }
     }
 
@@ -384,15 +347,18 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }))
     }
 
-    fn semantic_field(&self, field: FieldRef) -> anyhow::Result<Option<Declaration>> {
+    fn semantic_field(&self, field: SemanticFieldRef) -> anyhow::Result<Option<Declaration>> {
         Ok(MemberView::new(self.analysis)
-            .field(MemberFieldRef::Semantic(field))?
+            .field(crate::model::FieldRef::semantic(field))?
             .and_then(|field| field.declaration()))
     }
 
-    fn semantic_function(&self, function: FunctionRef) -> anyhow::Result<Option<Declaration>> {
+    fn semantic_function(
+        &self,
+        function: SemanticFunctionRef,
+    ) -> anyhow::Result<Option<Declaration>> {
         Ok(MemberView::new(self.analysis)
-            .function(MemberFunctionRef::Semantic(function))?
+            .function(crate::model::FunctionRef::semantic(function))?
             .map(|function| function.declaration()))
     }
 

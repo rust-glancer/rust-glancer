@@ -5,7 +5,7 @@
 //! storage-specific facts into completion-ready candidates.
 
 use rg_body_ir::{
-    BodyAutoderef, BodyAutoderefMode, BodyBindingRef, BodyDeclarationRef, BodyTypePathResolution,
+    BodyAutoderef, BodyAutoderefMode, BodyBindingRef, BodyTypePathResolution,
     BodyUnqualifiedCompletionCandidate, FieldKey,
     UnqualifiedCompletionSite as BodyUnqualifiedCompletionSite,
 };
@@ -20,14 +20,13 @@ use crate::{
             UnqualifiedCompletionSite,
         },
         view::{
-            declaration::DeclarationRef,
             enum_variant::EnumVariantView,
             member::{MemberMethodOrigin, MemberOwnerRef, MemberReceiverTy, MemberView},
         },
     },
     model::{
-        CompletionApplicability, CompletionKind, CompletionTarget, EnumVariantRef, MemberFieldRef,
-        MemberFunctionRef,
+        CompletionApplicability, CompletionKind, CompletionTarget, DeclarationRef, EnumVariantRef,
+        FieldRef, FunctionRef,
     },
 };
 
@@ -73,7 +72,7 @@ pub(crate) struct ModuleCompletionCandidate {
     target: CompletionTarget,
     kind: CompletionKind,
     documentation: Option<String>,
-    function: Option<MemberFunctionRef>,
+    function: Option<FunctionRef>,
 }
 
 impl ModuleCompletionCandidate {
@@ -101,7 +100,7 @@ impl ModuleCompletionCandidate {
         self.documentation.as_deref()
     }
 
-    pub(crate) fn function_ref(&self) -> Option<MemberFunctionRef> {
+    pub(crate) fn function_ref(&self) -> Option<FunctionRef> {
         self.function
     }
 }
@@ -114,7 +113,7 @@ pub(crate) struct LexicalCompletionCandidate {
     target: CompletionTarget,
     kind: CompletionKind,
     declaration: Option<DeclarationRef>,
-    function: Option<MemberFunctionRef>,
+    function: Option<FunctionRef>,
     shadow_namespaces: Vec<CompletionScopeNamespace>,
 }
 
@@ -143,7 +142,7 @@ impl LexicalCompletionCandidate {
         self.declaration
     }
 
-    pub(crate) fn function_ref(&self) -> Option<MemberFunctionRef> {
+    pub(crate) fn function_ref(&self) -> Option<FunctionRef> {
         self.function
     }
 
@@ -154,13 +153,13 @@ impl LexicalCompletionCandidate {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DotMethodCompletionCandidate {
-    function: MemberFunctionRef,
+    function: FunctionRef,
     kind: CompletionKind,
     applicability: CompletionApplicability,
 }
 
 impl DotMethodCompletionCandidate {
-    pub(crate) fn function_ref(&self) -> MemberFunctionRef {
+    pub(crate) fn function_ref(&self) -> FunctionRef {
         self.function
     }
 
@@ -292,7 +291,7 @@ impl<'a, 'db> CompletionView<'a, 'db> {
     pub(crate) fn field_candidates_for_dot(
         &self,
         site: &DotCompletionSite,
-    ) -> anyhow::Result<Vec<MemberFieldRef>> {
+    ) -> anyhow::Result<Vec<FieldRef>> {
         let Some(receiver_ty) = self.analysis.body_ir.receiver_ty(site.body_site())? else {
             return Ok(Vec::new());
         };
@@ -316,7 +315,7 @@ impl<'a, 'db> CompletionView<'a, 'db> {
     pub(crate) fn field_candidates_for_record(
         &self,
         site: &RecordFieldCompletionSite,
-    ) -> anyhow::Result<Vec<MemberFieldRef>> {
+    ) -> anyhow::Result<Vec<FieldRef>> {
         let site = site.body_site();
         let resolution = self.analysis.body_ir.resolve_type_path_in_scope(
             &self.analysis.def_map,
@@ -430,7 +429,7 @@ impl<'a, 'db> CompletionView<'a, 'db> {
         &self,
         visible_def: rg_def_map::VisibleScopeDef,
     ) -> anyhow::Result<Option<ModuleCompletionCandidate>> {
-        let mut target = CompletionTarget::Def(visible_def.def);
+        let mut target = CompletionTarget::Declaration(DeclarationRef::from_def(visible_def.def));
         let mut function = None;
         let (kind, documentation) = match visible_def.def {
             DefId::Module(module) => {
@@ -484,16 +483,14 @@ impl<'a, 'db> CompletionView<'a, 'db> {
                     body: site.body,
                     binding,
                 };
+                let declaration = DeclarationRef::binding(binding);
                 LexicalCompletionCandidate {
                     label,
                     namespace: CompletionScopeNamespace::Values,
                     scope_distance,
-                    target: CompletionTarget::Binding {
-                        body: binding.body,
-                        binding: binding.binding,
-                    },
+                    target: CompletionTarget::Declaration(declaration),
                     kind: CompletionKind::Variable,
-                    declaration: Some(binding.into()),
+                    declaration: Some(declaration),
                     function: None,
                     shadow_namespaces: vec![CompletionScopeNamespace::Values],
                 }
@@ -518,13 +515,14 @@ impl<'a, 'db> CompletionView<'a, 'db> {
                 {
                     shadow_namespaces.push(CompletionScopeNamespace::Values);
                 }
+                let declaration = DeclarationRef::body_item(item);
                 LexicalCompletionCandidate {
                     label,
                     namespace: CompletionScopeNamespace::Types,
                     scope_distance,
-                    target: CompletionTarget::BodyItem(item),
+                    target: CompletionTarget::Declaration(declaration),
                     kind: CompletionKind::from_body_item_kind(kind),
-                    declaration: Some(item.into()),
+                    declaration: Some(declaration),
                     function: None,
                     shadow_namespaces,
                 }
@@ -538,9 +536,9 @@ impl<'a, 'db> CompletionView<'a, 'db> {
                 label,
                 namespace: CompletionScopeNamespace::Values,
                 scope_distance,
-                target: CompletionTarget::BodyValueItem(item),
+                target: CompletionTarget::Declaration(DeclarationRef::body_value_item(item)),
                 kind: CompletionKind::from_body_value_item_kind(kind),
-                declaration: Some(item.into()),
+                declaration: Some(DeclarationRef::body_value_item(item)),
                 function: None,
                 shadow_namespaces: vec![CompletionScopeNamespace::Values],
             },
@@ -549,14 +547,15 @@ impl<'a, 'db> CompletionView<'a, 'db> {
                 label,
                 scope_distance,
             } => {
-                let function_ref = MemberFunctionRef::BodyLocal(function);
+                let function_ref = FunctionRef::body_local(function);
+                let declaration = DeclarationRef::body_function(function);
                 LexicalCompletionCandidate {
                     label,
                     namespace: CompletionScopeNamespace::Values,
                     scope_distance,
                     target: CompletionTarget::Function(function_ref),
                     kind: CompletionKind::Function,
-                    declaration: Some(BodyDeclarationRef::Function(function).into()),
+                    declaration: Some(declaration),
                     function: Some(function_ref),
                     shadow_namespaces: vec![CompletionScopeNamespace::Values],
                 }

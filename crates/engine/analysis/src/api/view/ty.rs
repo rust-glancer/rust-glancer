@@ -10,15 +10,16 @@ use rg_body_ir::{
 };
 use rg_def_map::Path;
 use rg_semantic_ir::{
-    FieldRef, SemanticDeclarationRef, SemanticItemRef, SemanticTypePathResolution, TypePathContext,
+    FieldRef as SemanticFieldRef, SemanticDeclarationRef, SemanticItemRef,
+    SemanticTypePathResolution, TypePathContext,
 };
 
 use crate::{
-    api::{
-        Analysis, resolve::declaration::SymbolDeclarationResolver,
-        view::declaration::DeclarationRef,
+    api::{Analysis, resolve::declaration::SymbolDeclarationResolver},
+    model::{
+        DeclarationRef, DeclarationRefRepr, EnumVariantRef, EnumVariantRefRepr, SymbolAt,
+        TypePathScopeRepr,
     },
-    model::{EnumVariantRef, SymbolAt},
 };
 
 pub(crate) struct TyView<'a, 'db> {
@@ -32,33 +33,13 @@ impl<'a, 'db> TyView<'a, 'db> {
 
     pub(crate) fn ty_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Option<BodyTy>> {
         let ty = match symbol {
-            SymbolAt::Expr { body, expr } => self
+            SymbolAt::Expr { expr } => self
                 .analysis
                 .body_ir
-                .body_data(body)?
-                .and_then(|body_data| body_data.expr(expr))
+                .body_data(expr.body_ir())?
+                .and_then(|body_data| body_data.expr(expr.expr_id()))
                 .map(|data| data.ty.clone()),
-            SymbolAt::Binding { body, binding } => self
-                .analysis
-                .body_ir
-                .body_data(body)?
-                .and_then(|body_data| body_data.binding(binding))
-                .map(|data| data.ty.clone()),
-            SymbolAt::BodyPath {
-                body, scope, path, ..
-            } => Some(self.ty_for_body_type_path(body, scope, &path)?),
-            SymbolAt::BodyValuePath {
-                body, scope, path, ..
-            } => Some(self.ty_for_body_value_path(body, scope, &path)?),
-            declaration_symbol @ (SymbolAt::Def { .. }
-            | SymbolAt::Field { .. }
-            | SymbolAt::Function { .. }
-            | SymbolAt::EnumVariant { .. }
-            | SymbolAt::LocalItem { .. }
-            | SymbolAt::LocalValueItem { .. }
-            | SymbolAt::LocalField { .. }
-            | SymbolAt::LocalEnumVariant { .. }
-            | SymbolAt::LocalFunction { .. }) => {
+            declaration_symbol @ SymbolAt::Declaration { .. } => {
                 let declarations = SymbolDeclarationResolver::new(self.analysis)
                     .declarations_for_symbol(declaration_symbol)?;
                 let mut ty = None;
@@ -70,11 +51,19 @@ impl<'a, 'db> TyView<'a, 'db> {
                 }
                 ty
             }
-            SymbolAt::TypePath { context, path, .. } => {
-                Some(self.ty_for_type_path(context, &path)?)
+            SymbolAt::TypePath { scope, path, .. } => match scope.repr() {
+                TypePathScopeRepr::Signature(context) => {
+                    Some(self.ty_for_type_path(context, &path)?)
+                }
+                TypePathScopeRepr::Body(scope) => {
+                    Some(self.ty_for_body_type_path(scope.body_ir(), scope.scope_id(), &path)?)
+                }
+            },
+            SymbolAt::ValuePath { scope, path, .. } => {
+                Some(self.ty_for_body_value_path(scope.body_ir(), scope.scope_id(), &path)?)
             }
             SymbolAt::UsePath { .. } => None,
-            SymbolAt::Body { .. } => None,
+            SymbolAt::FunctionBody { .. } => None,
         };
         Ok(ty)
     }
@@ -85,7 +74,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         let mut local_declarations = Vec::new();
         for candidate in BodyAutoderef::peel_references(ty) {
             for ty in candidate.ty().as_local_nominals() {
-                let declaration = DeclarationRef::from(ty.item);
+                let declaration = DeclarationRef::body_item(ty.item);
                 if !local_declarations.contains(&declaration) {
                     local_declarations.push(declaration);
                 }
@@ -98,7 +87,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         let mut declarations = Vec::new();
         for candidate in BodyAutoderef::peel_references(ty) {
             for ty in candidate.ty().as_nominals() {
-                let declaration = DeclarationRef::from(ty.def);
+                let declaration = DeclarationRef::semantic(ty.def.into());
                 if !declarations.contains(&declaration) {
                     declarations.push(declaration);
                 }
@@ -108,9 +97,9 @@ impl<'a, 'db> TyView<'a, 'db> {
     }
 
     fn ty_for_declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<BodyTy>> {
-        match declaration {
-            DeclarationRef::Module(_) => Ok(None),
-            DeclarationRef::LocalDef(local_def) => {
+        match declaration.repr() {
+            DeclarationRefRepr::Module(_) => Ok(None),
+            DeclarationRefRepr::LocalDef(local_def) => {
                 let Some(SemanticItemRef::TypeDef(ty)) = self
                     .analysis
                     .semantic_ir
@@ -120,10 +109,10 @@ impl<'a, 'db> TyView<'a, 'db> {
                 };
                 Ok(Some(BodyTyRepr::nominal(vec![BodyNominalTy::bare(ty)])))
             }
-            DeclarationRef::Semantic(SemanticDeclarationRef::Item(SemanticItemRef::TypeDef(
-                ty,
-            ))) => Ok(Some(BodyTyRepr::nominal(vec![BodyNominalTy::bare(ty)]))),
-            DeclarationRef::Semantic(SemanticDeclarationRef::Item(
+            DeclarationRefRepr::Semantic(SemanticDeclarationRef::Item(
+                SemanticItemRef::TypeDef(ty),
+            )) => Ok(Some(BodyTyRepr::nominal(vec![BodyNominalTy::bare(ty)]))),
+            DeclarationRefRepr::Semantic(SemanticDeclarationRef::Item(
                 SemanticItemRef::Trait(_)
                 | SemanticItemRef::Impl(_)
                 | SemanticItemRef::Function(_)
@@ -131,34 +120,34 @@ impl<'a, 'db> TyView<'a, 'db> {
                 | SemanticItemRef::Const(_)
                 | SemanticItemRef::Static(_),
             )) => Ok(None),
-            DeclarationRef::Semantic(SemanticDeclarationRef::Field(field)) => {
+            DeclarationRefRepr::Semantic(SemanticDeclarationRef::Field(field)) => {
                 self.ty_for_field(field)
             }
-            DeclarationRef::Semantic(SemanticDeclarationRef::EnumVariant(variant)) => {
-                self.ty_for_enum_variant(EnumVariantRef::Semantic(variant))
+            DeclarationRefRepr::Semantic(SemanticDeclarationRef::EnumVariant(variant)) => {
+                self.ty_for_enum_variant(EnumVariantRef::semantic(variant))
             }
-            DeclarationRef::Body(BodyDeclarationRef::Binding(binding)) => Ok(self
+            DeclarationRefRepr::Body(BodyDeclarationRef::Binding(binding)) => Ok(self
                 .analysis
                 .body_ir
                 .body_data(binding.body)?
                 .and_then(|body_data| body_data.binding(binding.binding))
                 .map(|data| data.ty.clone())),
-            DeclarationRef::Body(BodyDeclarationRef::Item(item)) => {
+            DeclarationRefRepr::Body(BodyDeclarationRef::Item(item)) => {
                 Ok(Some(BodyTyRepr::local_nominal(vec![
                     BodyLocalNominalTy::bare(item),
                 ])))
             }
-            DeclarationRef::Body(BodyDeclarationRef::ValueItem(item)) => Ok(self
+            DeclarationRefRepr::Body(BodyDeclarationRef::ValueItem(item)) => Ok(self
                 .analysis
                 .body_ir
                 .body_data(item.body)?
                 .and_then(|body_data| body_data.local_value_item(item.item))
                 .and_then(|data| data.ty().cloned())
                 .map(BodyTyRepr::syntax)),
-            DeclarationRef::Body(BodyDeclarationRef::EnumVariant(variant)) => {
-                self.ty_for_enum_variant(EnumVariantRef::BodyLocal(variant))
+            DeclarationRefRepr::Body(BodyDeclarationRef::EnumVariant(variant)) => {
+                self.ty_for_enum_variant(EnumVariantRef::body_local(variant))
             }
-            DeclarationRef::Body(
+            DeclarationRefRepr::Body(
                 BodyDeclarationRef::Impl(_)
                 | BodyDeclarationRef::Field(_)
                 | BodyDeclarationRef::Function(_),
@@ -215,7 +204,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         Ok(ty)
     }
 
-    fn ty_for_field(&self, field: FieldRef) -> anyhow::Result<Option<BodyTy>> {
+    fn ty_for_field(&self, field: SemanticFieldRef) -> anyhow::Result<Option<BodyTy>> {
         Ok(self.analysis.body_ir.ty_for_field(
             &self.analysis.def_map,
             &self.analysis.semantic_ir,
@@ -224,8 +213,8 @@ impl<'a, 'db> TyView<'a, 'db> {
     }
 
     fn ty_for_enum_variant(&self, variant: EnumVariantRef) -> anyhow::Result<Option<BodyTy>> {
-        match variant {
-            EnumVariantRef::Semantic(variant) => {
+        match variant.repr() {
+            EnumVariantRefRepr::Semantic(variant) => {
                 let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant)? else {
                     return Ok(None);
                 };
@@ -233,7 +222,7 @@ impl<'a, 'db> TyView<'a, 'db> {
                     data.owner,
                 )])))
             }
-            EnumVariantRef::BodyLocal(variant) => Ok(Some(BodyTyRepr::local_nominal(vec![
+            EnumVariantRefRepr::BodyLocal(variant) => Ok(Some(BodyTyRepr::local_nominal(vec![
                 BodyLocalNominalTy::bare(variant.item),
             ]))),
         }

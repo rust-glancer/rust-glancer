@@ -1,102 +1,384 @@
+use std::fmt;
+
 use rg_body_ir::{
-    BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionOwner, BodyFunctionRef, BodyItemKind,
-    BodyItemRef, BodyRef, BodyValueItemKind, BodyValueItemRef, ExprId, ScopeId,
+    BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionOwner,
+    BodyFunctionRef, BodyItemKind, BodyItemRef, BodyRef as BodyIrBodyRef, BodyValueItemKind,
+    BodyValueItemRef, ExprId, ScopeId,
 };
-use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path, TargetRef};
+use rg_def_map::{DefId, LocalDefKind, LocalDefRef, ModuleRef, Path, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{
     EnumVariantRef as SemanticEnumVariantRef, FieldRef as SemanticFieldRef,
-    FunctionRef as SemanticFunctionRef, SemanticItemKind, TraitApplicability, TypePathContext,
+    FunctionRef as SemanticFunctionRef, SemanticDeclarationRef, SemanticItemKind,
+    TraitApplicability, TypePathContext,
 };
 
+/// Stable identity for one lowered function body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FunctionBodyRef(BodyIrBodyRef);
+
+impl FunctionBodyRef {
+    #[cfg(test)]
+    pub(crate) fn body_ir(self) -> BodyIrBodyRef {
+        self.0
+    }
+
+    pub(crate) fn from_body_ir(body: BodyIrBodyRef) -> Self {
+        Self(body)
+    }
+
+    pub fn target(self) -> TargetRef {
+        self.0.target
+    }
+}
+
+impl fmt::Debug for FunctionBodyRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FunctionBodyRef")
+            .field("target", &self.0.target)
+            .field("body", &self.0.body)
+            .finish()
+    }
+}
+
+/// Stable identity for one expression inside a lowered body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ExprRef {
+    body: BodyIrBodyRef,
+    expr: ExprId,
+}
+
+impl ExprRef {
+    pub(crate) fn new(body: BodyIrBodyRef, expr: ExprId) -> Self {
+        Self { body, expr }
+    }
+
+    pub(crate) fn body_ir(self) -> BodyIrBodyRef {
+        self.body
+    }
+
+    pub(crate) fn expr_id(self) -> ExprId {
+        self.expr
+    }
+}
+
+impl fmt::Debug for ExprRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExprRef")
+            .field("body", &FunctionBodyRef::from_body_ir(self.body))
+            .field("expr", &self.expr)
+            .finish()
+    }
+}
+
+/// Stable identity for one lexical scope inside a lowered body.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LexicalScopeRef {
+    body: BodyIrBodyRef,
+    scope: ScopeId,
+}
+
+impl LexicalScopeRef {
+    pub(crate) fn new(body: BodyIrBodyRef, scope: ScopeId) -> Self {
+        Self { body, scope }
+    }
+
+    pub(crate) fn body_ir(self) -> BodyIrBodyRef {
+        self.body
+    }
+
+    pub(crate) fn scope_id(self) -> ScopeId {
+        self.scope
+    }
+}
+
+impl fmt::Debug for LexicalScopeRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LexicalScopeRef")
+            .field("body", &FunctionBodyRef::from_body_ir(self.body))
+            .field("scope", &self.scope)
+            .finish()
+    }
+}
+
+/// Scope in which a type path should be resolved.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct TypePathScopeRef(TypePathScopeRepr);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TypePathScopeRepr {
+    Signature(TypePathContext),
+    Body(LexicalScopeRef),
+}
+
+impl TypePathScopeRef {
+    pub(crate) fn signature(context: TypePathContext) -> Self {
+        Self(TypePathScopeRepr::Signature(context))
+    }
+
+    pub(crate) fn body(scope: LexicalScopeRef) -> Self {
+        Self(TypePathScopeRepr::Body(scope))
+    }
+
+    pub(crate) fn repr(self) -> TypePathScopeRepr {
+        self.0
+    }
+}
+
+impl fmt::Debug for TypePathScopeRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            TypePathScopeRepr::Signature(context) => f
+                .debug_struct("TypePathScopeRef")
+                .field("kind", &"signature")
+                .field("module", &context.module)
+                .finish(),
+            TypePathScopeRepr::Body(scope) => f
+                .debug_struct("TypePathScopeRef")
+                .field("kind", &"body")
+                .field("scope", &scope)
+                .finish(),
+        }
+    }
+}
+
+/// Stable declaration identity exposed by analysis-facing features.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct DeclarationRef(DeclarationRefRepr);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum DeclarationRefRepr {
+    Module(ModuleRef),
+    LocalDef(LocalDefRef),
+    Semantic(SemanticDeclarationRef),
+    Body(BodyDeclarationRef),
+}
+
+impl DeclarationRef {
+    pub(crate) fn module(module: ModuleRef) -> Self {
+        Self(DeclarationRefRepr::Module(module))
+    }
+
+    pub(crate) fn local_def(local_def: LocalDefRef) -> Self {
+        Self(DeclarationRefRepr::LocalDef(local_def))
+    }
+
+    pub(crate) fn semantic(declaration: SemanticDeclarationRef) -> Self {
+        Self(DeclarationRefRepr::Semantic(declaration))
+    }
+
+    pub(crate) fn body(declaration: BodyDeclarationRef) -> Self {
+        Self(DeclarationRefRepr::Body(declaration))
+    }
+
+    pub(crate) fn from_def(def: DefId) -> Self {
+        match def {
+            DefId::Module(module) => Self::module(module),
+            DefId::Local(local_def) => Self::local_def(local_def),
+        }
+    }
+
+    pub(crate) fn binding(binding: BodyBindingRef) -> Self {
+        Self::body(BodyDeclarationRef::Binding(binding))
+    }
+
+    pub(crate) fn body_item(item: BodyItemRef) -> Self {
+        Self::body(BodyDeclarationRef::Item(item))
+    }
+
+    pub(crate) fn body_value_item(item: BodyValueItemRef) -> Self {
+        Self::body(BodyDeclarationRef::ValueItem(item))
+    }
+
+    pub(crate) fn body_field(field: BodyFieldRef) -> Self {
+        Self::body(BodyDeclarationRef::Field(field))
+    }
+
+    pub(crate) fn body_enum_variant(variant: BodyEnumVariantRef) -> Self {
+        Self::body(BodyDeclarationRef::EnumVariant(variant))
+    }
+
+    pub(crate) fn body_function(function: BodyFunctionRef) -> Self {
+        Self::body(BodyDeclarationRef::Function(function))
+    }
+
+    pub(crate) fn repr(self) -> DeclarationRefRepr {
+        self.0
+    }
+}
+
+impl fmt::Debug for DeclarationRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            DeclarationRefRepr::Module(module) => f
+                .debug_struct("DeclarationRef")
+                .field("kind", &"module")
+                .field("module", &module)
+                .finish(),
+            DeclarationRefRepr::LocalDef(local_def) => f
+                .debug_struct("DeclarationRef")
+                .field("kind", &"local_def")
+                .field("local_def", &local_def)
+                .finish(),
+            DeclarationRefRepr::Semantic(declaration) => f
+                .debug_struct("DeclarationRef")
+                .field("kind", &"signature")
+                .field("declaration", &declaration)
+                .finish(),
+            DeclarationRefRepr::Body(declaration) => f
+                .debug_struct("DeclarationRef")
+                .field("kind", &"body")
+                .field("declaration", &declaration)
+                .finish(),
+        }
+    }
+}
+
 /// Stable field identity exposed by analysis-facing features.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::From)]
-pub enum MemberFieldRef {
-    #[from]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FieldRef(FieldRefRepr);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum FieldRefRepr {
     Semantic(SemanticFieldRef),
-    #[from]
     BodyLocal(BodyFieldRef),
 }
 
+impl FieldRef {
+    pub(crate) fn semantic(field: SemanticFieldRef) -> Self {
+        Self(FieldRefRepr::Semantic(field))
+    }
+
+    pub(crate) fn body_local(field: BodyFieldRef) -> Self {
+        Self(FieldRefRepr::BodyLocal(field))
+    }
+
+    pub(crate) fn repr(self) -> FieldRefRepr {
+        self.0
+    }
+}
+
+impl fmt::Debug for FieldRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            FieldRefRepr::Semantic(field) => f
+                .debug_struct("FieldRef")
+                .field("owner", &field.owner)
+                .field("index", &field.index)
+                .finish(),
+            FieldRefRepr::BodyLocal(field) => f
+                .debug_struct("FieldRef")
+                .field("owner", &field.item)
+                .field("index", &field.index)
+                .finish(),
+        }
+    }
+}
+
 /// Stable function identity exposed by analysis-facing features.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::From)]
-pub enum MemberFunctionRef {
-    #[from]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FunctionRef(FunctionRefRepr);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum FunctionRefRepr {
     Semantic(SemanticFunctionRef),
-    #[from]
     BodyLocal(BodyFunctionRef),
 }
 
+impl FunctionRef {
+    pub(crate) fn semantic(function: SemanticFunctionRef) -> Self {
+        Self(FunctionRefRepr::Semantic(function))
+    }
+
+    pub(crate) fn body_local(function: BodyFunctionRef) -> Self {
+        Self(FunctionRefRepr::BodyLocal(function))
+    }
+
+    pub(crate) fn repr(self) -> FunctionRefRepr {
+        self.0
+    }
+}
+
+impl fmt::Debug for FunctionRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            FunctionRefRepr::Semantic(function) => f
+                .debug_struct("FunctionRef")
+                .field("target", &function.target)
+                .field("function", &function.id)
+                .finish(),
+            FunctionRefRepr::BodyLocal(function) => f
+                .debug_struct("FunctionRef")
+                .field("body", &FunctionBodyRef::from_body_ir(function.body))
+                .field("function", &function.function)
+                .finish(),
+        }
+    }
+}
+
 /// Stable enum variant identity exposed by analysis-facing features.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::From)]
-pub enum EnumVariantRef {
-    #[from]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EnumVariantRef(EnumVariantRefRepr);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum EnumVariantRefRepr {
     Semantic(SemanticEnumVariantRef),
-    #[from]
     BodyLocal(BodyEnumVariantRef),
+}
+
+impl EnumVariantRef {
+    pub(crate) fn semantic(variant: SemanticEnumVariantRef) -> Self {
+        Self(EnumVariantRefRepr::Semantic(variant))
+    }
+
+    pub(crate) fn body_local(variant: BodyEnumVariantRef) -> Self {
+        Self(EnumVariantRefRepr::BodyLocal(variant))
+    }
+
+    pub(crate) fn repr(self) -> EnumVariantRefRepr {
+        self.0
+    }
+}
+
+impl fmt::Debug for EnumVariantRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            EnumVariantRefRepr::Semantic(variant) => f
+                .debug_struct("EnumVariantRef")
+                .field("target", &variant.target)
+                .field("enum", &variant.enum_id)
+                .field("index", &variant.index)
+                .finish(),
+            EnumVariantRefRepr::BodyLocal(variant) => f
+                .debug_struct("EnumVariantRef")
+                .field("owner", &variant.item)
+                .field("index", &variant.index)
+                .finish(),
+        }
+    }
 }
 
 /// Symbol found at one source offset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymbolAt {
     /// Function body declaration, e.g. the name in `fn use_it() { ... }`.
-    Body { body: BodyRef },
-    /// Local binding introduced by a parameter or pattern, e.g. `user` in `let user = input;`.
-    Binding { body: BodyRef, binding: BindingId },
-    /// Body-local type path, e.g. `User` in `let user: User;`.
-    BodyPath {
-        body: BodyRef,
-        scope: ScopeId,
-        path: Path,
+    FunctionBody { body: FunctionBodyRef },
+    /// Declaration-like source node.
+    Declaration {
+        declaration: DeclarationRef,
         span: Span,
     },
-    /// Body-local value path, e.g. `DEFAULT` in `let value = DEFAULT;`.
-    BodyValuePath {
-        body: BodyRef,
-        scope: ScopeId,
-        path: Path,
-        span: Span,
-    },
-    /// DefMap-backed declaration, e.g. a module-level `struct User;`.
-    Def { def: DefId, span: Span },
     /// Lowered expression node, e.g. the whole `user.id()` call expression.
-    Expr { body: BodyRef, expr: ExprId },
-    /// Semantic field declaration, e.g. `id` in a module-level `struct User { id: Id }`.
-    Field { field: SemanticFieldRef, span: Span },
-    /// Semantic function declaration, e.g. `make_user` in `fn make_user() -> User`.
-    Function {
-        function: SemanticFunctionRef,
-        span: Span,
-    },
-    /// Semantic enum variant declaration, e.g. `Some` in `enum Maybe<T> { Some(T) }`.
-    EnumVariant {
-        variant: SemanticEnumVariantRef,
-        span: Span,
-    },
-    /// Variant declared on a body-local enum, e.g. `Start` in `enum Action { Start }`.
-    LocalEnumVariant {
-        variant: BodyEnumVariantRef,
-        span: Span,
-    },
-    /// Body-local type-namespace item, e.g. `User` in `fn f() { struct User; }`.
-    ///
-    /// This also covers local `enum`, `union`, `type`, and `trait` declarations.
-    LocalItem { item: BodyItemRef, span: Span },
-    /// Body-local value-namespace item, e.g. `DEFAULT` in `fn f() { const DEFAULT: u8 = 0; }`.
-    ///
-    /// This covers local `const` and `static` declarations, not `let` bindings.
-    LocalValueItem { item: BodyValueItemRef, span: Span },
-    /// Field declared on a body-local struct or union,
-    /// e.g. `id` in `fn f() { struct User { id: Id } }`.
-    LocalField { field: BodyFieldRef, span: Span },
-    /// Body-local function-like item, e.g. `helper` in `fn f() { fn helper() {} }`.
-    LocalFunction {
-        function: BodyFunctionRef,
-        span: Span,
-    },
-    /// Semantic type path outside body IR, e.g. `User` in a function signature.
+    Expr { expr: ExprRef },
+    /// Type-namespace path, e.g. `User` in a signature or `let user: User;`.
     TypePath {
-        context: TypePathContext,
+        scope: TypePathScopeRef,
+        path: Path,
+        span: Span,
+    },
+    /// Value-namespace path inside a lowered body.
+    ValuePath {
+        scope: LexicalScopeRef,
         path: Path,
         span: Span,
     },
@@ -350,13 +632,10 @@ pub struct CompletionEdit {
 /// Stable analysis identity behind one completion row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionTarget {
-    Binding { body: BodyRef, binding: BindingId },
-    BodyItem(BodyItemRef),
-    BodyValueItem(BodyValueItemRef),
+    Declaration(DeclarationRef),
     EnumVariant(EnumVariantRef),
-    Field(MemberFieldRef),
-    Function(MemberFunctionRef),
-    Def(DefId),
+    Field(FieldRef),
+    Function(FunctionRef),
     Keyword(KeywordCompletion),
     PrimitiveType(rg_ty::PrimitiveTy),
 }

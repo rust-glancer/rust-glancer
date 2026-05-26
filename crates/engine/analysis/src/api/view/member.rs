@@ -6,13 +6,14 @@ use rg_body_ir::{
 };
 use rg_def_map::LocalDefRef;
 use rg_semantic_ir::{
-    Documentation, FieldData, FieldKey, FieldRef, FunctionData, FunctionRef, ItemOwner, ParamItem,
-    SemanticItemRef, TraitApplicability, TypeDefRef,
+    Documentation, FieldData, FieldKey, FieldRef as SemanticFieldRef, FunctionData,
+    FunctionRef as SemanticFunctionRef, ItemOwner, ParamItem, SemanticItemRef, TraitApplicability,
+    TypeDefRef,
 };
 
 use crate::{
     api::{Analysis, render::path::PathRenderer},
-    model::{MemberFieldRef, MemberFunctionRef, SymbolKind},
+    model::{FieldRef, FieldRefRepr, FunctionRef, FunctionRefRepr, SymbolKind},
 };
 
 use super::declaration::Declaration;
@@ -51,7 +52,7 @@ pub(crate) enum MemberOwnerRef {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum MemberField<'a> {
     Semantic {
-        field: FieldRef,
+        field: SemanticFieldRef,
         data: FieldData<'a>,
     },
     BodyLocal {
@@ -61,10 +62,10 @@ pub(crate) enum MemberField<'a> {
 }
 
 impl<'a> MemberField<'a> {
-    pub(crate) fn field_ref(&self) -> MemberFieldRef {
+    pub(crate) fn field_ref(&self) -> FieldRef {
         match self {
-            Self::Semantic { field, .. } => MemberFieldRef::Semantic(*field),
-            Self::BodyLocal { field, .. } => MemberFieldRef::BodyLocal(*field),
+            Self::Semantic { field, .. } => FieldRef::semantic(*field),
+            Self::BodyLocal { field, .. } => FieldRef::body_local(*field),
         }
     }
 
@@ -123,7 +124,7 @@ impl<'a> MemberField<'a> {
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum MemberFunction<'a> {
     Semantic {
-        function: FunctionRef,
+        function: SemanticFunctionRef,
         data: &'a FunctionData,
     },
     BodyLocal {
@@ -133,10 +134,10 @@ pub(crate) enum MemberFunction<'a> {
 }
 
 impl<'a> MemberFunction<'a> {
-    pub(crate) fn function_ref(&self) -> MemberFunctionRef {
+    pub(crate) fn function_ref(&self) -> FunctionRef {
         match self {
-            Self::Semantic { function, .. } => MemberFunctionRef::Semantic(*function),
-            Self::BodyLocal { function, .. } => MemberFunctionRef::BodyLocal(*function),
+            Self::Semantic { function, .. } => FunctionRef::semantic(*function),
+            Self::BodyLocal { function, .. } => FunctionRef::body_local(*function),
         }
     }
 
@@ -253,14 +254,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
                 .semantic_ir
                 .fields_for_type(ty)?
                 .into_iter()
-                .map(MemberFieldRef::Semantic)
+                .map(FieldRef::semantic)
                 .collect(),
             MemberOwnerRef::BodyLocal(item) => self
                 .analysis
                 .body_ir
                 .fields_for_local_type(item)?
                 .into_iter()
-                .map(MemberFieldRef::BodyLocal)
+                .map(FieldRef::body_local)
                 .collect(),
         };
 
@@ -275,14 +276,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(fields)
     }
 
-    pub(crate) fn field(&self, field: MemberFieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
-        match field {
-            MemberFieldRef::Semantic(field) => Ok(self
+    pub(crate) fn field(&self, field: FieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
+        match field.repr() {
+            FieldRefRepr::Semantic(field) => Ok(self
                 .analysis
                 .semantic_ir
                 .field_data(field)?
                 .map(|data| MemberField::Semantic { field, data })),
-            MemberFieldRef::BodyLocal(field) => Ok(self
+            FieldRefRepr::BodyLocal(field) => Ok(self
                 .analysis
                 .body_ir
                 .local_field_data(field)?
@@ -292,15 +293,15 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
     pub(crate) fn function(
         &self,
-        function: MemberFunctionRef,
+        function: FunctionRef,
     ) -> anyhow::Result<Option<MemberFunction<'_>>> {
-        match function {
-            MemberFunctionRef::Semantic(function) => Ok(self
+        match function.repr() {
+            FunctionRefRepr::Semantic(function) => Ok(self
                 .analysis
                 .semantic_ir
                 .function_data(function)?
                 .map(|data| MemberFunction::Semantic { function, data })),
-            MemberFunctionRef::BodyLocal(function) => Ok(self
+            FunctionRefRepr::BodyLocal(function) => Ok(self
                 .analysis
                 .body_ir
                 .local_function_data(function)?
@@ -320,7 +321,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
             return Ok(None);
         };
 
-        self.function(MemberFunctionRef::Semantic(function))
+        self.function(FunctionRef::semantic(function))
     }
 
     pub(crate) fn method_candidates<'view>(
@@ -349,8 +350,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                         continue;
                     }
 
-                    let Some(function) = self.function(MemberFunctionRef::Semantic(function))?
-                    else {
+                    let Some(function) = self.function(FunctionRef::semantic(function))? else {
                         continue;
                     };
                     candidates.push(MemberMethodCandidate {
@@ -370,8 +370,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                         ty,
                     )?
                 {
-                    let Some(function) = self.function(MemberFunctionRef::Semantic(function))?
-                    else {
+                    let Some(function) = self.function(FunctionRef::semantic(function))? else {
                         continue;
                     };
                     candidates.push(MemberMethodCandidate {
@@ -395,8 +394,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
                         continue;
                     }
 
-                    let Some(function) = self.function(MemberFunctionRef::BodyLocal(function))?
-                    else {
+                    let Some(function) = self.function(FunctionRef::body_local(function))? else {
                         continue;
                     };
                     candidates.push(MemberMethodCandidate {

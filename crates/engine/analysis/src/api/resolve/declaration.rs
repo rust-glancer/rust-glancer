@@ -10,8 +10,8 @@ use rg_body_ir::{
 use rg_def_map::{DefId, LocalDefRef, ModuleRef, Path};
 
 use crate::{
-    api::{Analysis, view::declaration::DeclarationRef},
-    model::SymbolAt,
+    api::Analysis,
+    model::{DeclarationRef, DeclarationRefRepr, SymbolAt, TypePathScopeRepr},
 };
 
 pub(crate) struct SymbolDeclarationResolver<'a, 'db>(&'a Analysis<'db>);
@@ -26,41 +26,35 @@ impl<'a, 'db> SymbolDeclarationResolver<'a, 'db> {
         symbol: SymbolAt,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
         match symbol {
-            SymbolAt::Body { .. } => Ok(Vec::new()),
-            SymbolAt::Binding { body, binding } => {
-                Ok(vec![BodyBindingRef { body, binding }.into()])
+            SymbolAt::FunctionBody { .. } => Ok(Vec::new()),
+            SymbolAt::Declaration { declaration, .. } => {
+                self.declarations_for_declaration(declaration)
             }
-            SymbolAt::BodyPath {
-                body, scope, path, ..
-            } => self.declarations_for_body_type_path(body, scope, &path),
-            SymbolAt::BodyValuePath {
-                body, scope, path, ..
-            } => self.declarations_for_body_value_path(body, scope, &path),
-            SymbolAt::Def { def, .. } => self.declarations_for_def(def),
-            SymbolAt::Expr { body, expr } => {
+            SymbolAt::Expr { expr } => {
+                let body = expr.body_ir();
                 let Some(body_data) = self.0.body_ir.body_data(body)? else {
                     return Ok(Vec::new());
                 };
-                let Some(expr_data) = body_data.expr(expr) else {
+                let Some(expr_data) = body_data.expr(expr.expr_id()) else {
                     return Ok(Vec::new());
                 };
                 self.declarations_for_body_resolution(Some(body), &expr_data.resolution)
             }
-            SymbolAt::Field { field, .. } => Ok(vec![field.into()]),
-            SymbolAt::Function { function, .. } => Ok(vec![function.into()]),
-            SymbolAt::EnumVariant { variant, .. } => Ok(vec![variant.into()]),
-            SymbolAt::LocalEnumVariant { variant, .. } => Ok(vec![variant.into()]),
-            SymbolAt::LocalItem { item, .. } => Ok(vec![item.into()]),
-            SymbolAt::LocalValueItem { item, .. } => Ok(vec![item.into()]),
-            SymbolAt::LocalField { field, .. } => Ok(vec![field.into()]),
-            SymbolAt::LocalFunction { function, .. } => Ok(vec![function.into()]),
-            SymbolAt::TypePath { context, path, .. } => {
-                let declarations = self.declarations_for_semantic_type_path(context, &path)?;
-                if declarations.is_empty() {
-                    self.declarations_for_use_path(context.module, &path)
-                } else {
-                    Ok(declarations)
+            SymbolAt::TypePath { scope, path, .. } => match scope.repr() {
+                TypePathScopeRepr::Signature(context) => {
+                    let declarations = self.declarations_for_semantic_type_path(context, &path)?;
+                    if declarations.is_empty() {
+                        self.declarations_for_use_path(context.module, &path)
+                    } else {
+                        Ok(declarations)
+                    }
                 }
+                TypePathScopeRepr::Body(scope) => {
+                    self.declarations_for_body_type_path(scope.body_ir(), scope.scope_id(), &path)
+                }
+            },
+            SymbolAt::ValuePath { scope, path, .. } => {
+                self.declarations_for_body_value_path(scope.body_ir(), scope.scope_id(), &path)
             }
             SymbolAt::UsePath { module, path, .. } => self.declarations_for_use_path(module, &path),
         }
@@ -76,17 +70,30 @@ impl<'a, 'db> SymbolDeclarationResolver<'a, 'db> {
             .semantic_ir
             .semantic_items_for_type_path(&self.0.def_map, context, path)?
             .into_iter()
-            .map(DeclarationRef::from)
+            .map(|item| DeclarationRef::semantic(item.into()))
             .collect())
+    }
+
+    fn declarations_for_declaration(
+        &self,
+        declaration: DeclarationRef,
+    ) -> anyhow::Result<Vec<DeclarationRef>> {
+        match declaration.repr() {
+            DeclarationRefRepr::Module(module) => self.declarations_for_def(DefId::Module(module)),
+            DeclarationRefRepr::LocalDef(local_def) => {
+                self.declarations_for_def(DefId::Local(local_def))
+            }
+            DeclarationRefRepr::Semantic(_) | DeclarationRefRepr::Body(_) => Ok(vec![declaration]),
+        }
     }
 
     fn declarations_for_def(&self, def: DefId) -> anyhow::Result<Vec<DeclarationRef>> {
         match def {
-            DefId::Module(module) => Ok(vec![module.into()]),
+            DefId::Module(module) => Ok(vec![DeclarationRef::module(module)]),
             DefId::Local(local_def) => {
                 let declaration = self
                     .declaration_for_local_def(local_def)?
-                    .unwrap_or_else(|| local_def.into());
+                    .unwrap_or_else(|| DeclarationRef::local_def(local_def));
                 Ok(vec![declaration])
             }
         }
@@ -100,7 +107,7 @@ impl<'a, 'db> SymbolDeclarationResolver<'a, 'db> {
             return Ok(None);
         };
 
-        Ok(Some(item.into()))
+        Ok(Some(DeclarationRef::semantic(item.into())))
     }
 
     fn declarations_for_use_path(
@@ -167,7 +174,7 @@ impl<'a, 'db> SymbolDeclarationResolver<'a, 'db> {
                     body,
                     binding: *binding,
                 })
-                .map(DeclarationRef::from)
+                .map(DeclarationRef::binding)
                 .into_iter()
                 .collect()),
             BodyResolution::Declaration(resolved)
@@ -191,8 +198,12 @@ impl<'a, 'db> SymbolDeclarationResolver<'a, 'db> {
     ) -> anyhow::Result<Vec<DeclarationRef>> {
         match declaration {
             ResolvedDeclarationRef::Def(def) => self.declarations_for_def(def),
-            ResolvedDeclarationRef::Semantic(declaration) => Ok(vec![declaration.into()]),
-            ResolvedDeclarationRef::Body(declaration) => Ok(vec![declaration.into()]),
+            ResolvedDeclarationRef::Semantic(declaration) => {
+                Ok(vec![DeclarationRef::semantic(declaration)])
+            }
+            ResolvedDeclarationRef::Body(declaration) => {
+                Ok(vec![DeclarationRef::body(declaration)])
+            }
         }
     }
 
@@ -201,13 +212,17 @@ impl<'a, 'db> SymbolDeclarationResolver<'a, 'db> {
         resolution: BodyTypePathResolution,
     ) -> Vec<DeclarationRef> {
         match resolution {
-            BodyTypePathResolution::BodyLocal(item) => vec![item.into()],
+            BodyTypePathResolution::BodyLocal(item) => vec![DeclarationRef::body_item(item)],
             BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
-                types.into_iter().map(DeclarationRef::from).collect()
+                types
+                    .into_iter()
+                    .map(|ty| DeclarationRef::semantic(ty.into()))
+                    .collect()
             }
-            BodyTypePathResolution::Traits(traits) => {
-                traits.into_iter().map(DeclarationRef::from).collect()
-            }
+            BodyTypePathResolution::Traits(traits) => traits
+                .into_iter()
+                .map(|ty| DeclarationRef::semantic(ty.into()))
+                .collect(),
             BodyTypePathResolution::Primitive(_) | BodyTypePathResolution::Unknown => Vec::new(),
         }
     }

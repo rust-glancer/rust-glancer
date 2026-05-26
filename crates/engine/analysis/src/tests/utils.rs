@@ -688,7 +688,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         };
 
         match symbol {
-            SymbolAt::Body { body } => {
+            SymbolAt::FunctionBody { body } => {
+                let body = body.body_ir();
                 let body_ir = self.body_ir_txn();
                 let body_data = body_ir
                     .body_data(body)
@@ -705,64 +706,16 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
-            SymbolAt::Binding { body, binding } => {
-                let body_ir = self.body_ir_txn();
-                let body_data = body_ir
-                    .body_data(body)
-                    .expect("body ref should load while rendering analysis symbol")
-                    .expect("body ref should exist while rendering analysis symbol");
-                let binding_data = body_data
-                    .binding(binding)
-                    .expect("binding id should exist while rendering analysis symbol");
-                writeln!(
-                    dump,
-                    "\n- binding {} {} @ {}",
-                    binding_data.kind,
-                    binding_data.name.as_deref().unwrap_or("<unsupported>"),
-                    self.render_source_span(
-                        body.target.package,
-                        binding_data.source.file_id,
-                        binding_data.source.span,
-                    )
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::BodyPath {
-                body,
-                ref path,
-                span,
-                ..
-            } => {
-                writeln!(
-                    dump,
-                    "\n- body path {path} @ {}",
-                    self.render_source_span(body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::BodyValuePath {
-                body,
-                ref path,
-                span,
-                ..
-            } => {
-                writeln!(
-                    dump,
-                    "\n- body value path {path} @ {}",
-                    self.render_source_span(body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::Def { def, span } => {
+            SymbolAt::Declaration { declaration, span } => {
                 let targets = self
                     .db
                     .analysis()
-                    .resolve_symbol(SymbolAt::Def { def, span })
+                    .resolve_symbol(SymbolAt::Declaration { declaration, span })
                     .expect("fixture symbol resolution should resolve");
                 let label = targets
                     .first()
                     .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "def <unresolved>".to_string());
+                    .unwrap_or_else(|| "declaration <unresolved>".to_string());
                 writeln!(
                     dump,
                     "\n- {label} @ {}",
@@ -770,14 +723,15 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
-            SymbolAt::Expr { body, expr } => {
+            SymbolAt::Expr { expr } => {
+                let body = expr.body_ir();
                 let body_ir = self.body_ir_txn();
                 let body_data = body_ir
                     .body_data(body)
                     .expect("body ref should load while rendering analysis symbol")
                     .expect("body ref should exist while rendering analysis symbol");
                 let expr_data = body_data
-                    .expr(expr)
+                    .expr(expr.expr_id())
                     .expect("expr id should exist while rendering analysis symbol");
                 writeln!(
                     dump,
@@ -786,136 +740,23 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
-            SymbolAt::Field { field, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::Field { field, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "field <unresolved>".to_string());
+            SymbolAt::TypePath { ref path, span, .. } => {
                 writeln!(
                     dump,
-                    "\n- {label} @ {}",
+                    "\n- type path {path} @ {}",
                     self.render_source_span(package, file_id, span)
                 )
                 .expect("string writes should not fail");
             }
-            SymbolAt::Function { function, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::Function { function, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "fn <unresolved>".to_string());
+            SymbolAt::ValuePath { ref path, span, .. } => {
                 writeln!(
                     dump,
-                    "\n- {label} @ {}",
+                    "\n- value path {path} @ {}",
                     self.render_source_span(package, file_id, span)
                 )
                 .expect("string writes should not fail");
             }
-            SymbolAt::EnumVariant { variant, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::EnumVariant { variant, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "variant <unresolved>".to_string());
-                writeln!(
-                    dump,
-                    "\n- {label} @ {}",
-                    self.render_source_span(package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::LocalItem { item, span } => {
-                let label = self.render_body_item_ref(item);
-                writeln!(
-                    dump,
-                    "\n- {label} @ {}",
-                    self.render_source_span(item.body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::LocalValueItem { item, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::LocalValueItem { item, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "value <unresolved>".to_string());
-                writeln!(
-                    dump,
-                    "\n- {label} @ {}",
-                    self.render_source_span(item.body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::LocalField { field, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::LocalField { field, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "field <unresolved>".to_string());
-                writeln!(
-                    dump,
-                    "\n- {label} @ {}",
-                    self.render_source_span(field.item.body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::LocalEnumVariant { variant, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::LocalEnumVariant { variant, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "variant <unresolved>".to_string());
-                writeln!(
-                    dump,
-                    "\n- {label} @ {}",
-                    self.render_source_span(variant.item.body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::LocalFunction { function, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::LocalFunction { function, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "fn <unresolved>".to_string());
-                writeln!(
-                    dump,
-                    "\n- {label} @ {}",
-                    self.render_source_span(function.body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::TypePath { ref path, span, .. }
-            | SymbolAt::UsePath { ref path, span, .. } => {
+            SymbolAt::UsePath { ref path, span, .. } => {
                 writeln!(
                     dump,
                     "\n- path {path} @ {}",

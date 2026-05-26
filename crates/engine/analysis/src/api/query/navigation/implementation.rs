@@ -8,9 +8,9 @@ use crate::{
     api::{
         Analysis,
         resolve::declaration::SymbolDeclarationResolver,
-        view::{declaration::DeclarationRef, implementation::ImplementationView, ty::TyView},
+        view::{implementation::ImplementationView, ty::TyView},
     },
-    model::NavigationTarget,
+    model::{DeclarationRef, NavigationTarget},
 };
 
 /// Implements goto-implementation with the facts rust-glancer already collects.

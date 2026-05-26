@@ -3,11 +3,8 @@
 use rg_def_map::{ModuleOrigin, ModuleRef};
 
 use crate::{
-    api::{
-        Analysis,
-        view::declaration::{DeclarationRef, DeclarationView},
-    },
-    model::{NavigationTarget, NavigationTargetKind},
+    api::{Analysis, view::declaration::DeclarationView},
+    model::{DeclarationRef, DeclarationRefRepr, NavigationTarget, NavigationTargetKind},
 };
 
 /// Converts stable IR identities into concrete editor navigation targets.
@@ -40,13 +37,13 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
         &self,
         declaration: DeclarationRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        match declaration {
-            DeclarationRef::Module(module) => self.target_for_module(module),
-            DeclarationRef::LocalDef(_) | DeclarationRef::Semantic(_) | DeclarationRef::Body(_) => {
-                Ok(DeclarationView::new(self.0)
-                    .declaration(declaration)?
-                    .map(NavigationTarget::from))
-            }
+        match declaration.repr() {
+            DeclarationRefRepr::Module(module) => self.target_for_module(module),
+            DeclarationRefRepr::LocalDef(_)
+            | DeclarationRefRepr::Semantic(_)
+            | DeclarationRefRepr::Body(_) => Ok(DeclarationView::new(self.0)
+                .declaration(declaration)?
+                .map(NavigationTarget::from)),
         }
     }
 
@@ -67,7 +64,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
         };
 
         Ok(DeclarationView::new(self.0)
-            .declaration(DeclarationRef::Module(module_ref))?
+            .declaration(DeclarationRef::module(module_ref))?
             .map(|declaration| NavigationTarget {
                 target: declaration.target(),
                 kind: NavigationTargetKind::from(declaration.kind()),

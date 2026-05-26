@@ -66,22 +66,12 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
 
     fn module_display_name_for_symbol(symbol: &SymbolAt) -> Option<String> {
         match symbol {
-            SymbolAt::BodyPath { path, .. }
-            | SymbolAt::BodyValuePath { path, .. }
-            | SymbolAt::TypePath { path, .. }
+            SymbolAt::TypePath { path, .. }
+            | SymbolAt::ValuePath { path, .. }
             | SymbolAt::UsePath { path, .. } => path.last_segment_label(),
-            SymbolAt::Body { .. }
-            | SymbolAt::Binding { .. }
-            | SymbolAt::Def { .. }
-            | SymbolAt::Expr { .. }
-            | SymbolAt::Field { .. }
-            | SymbolAt::Function { .. }
-            | SymbolAt::EnumVariant { .. }
-            | SymbolAt::LocalEnumVariant { .. }
-            | SymbolAt::LocalItem { .. }
-            | SymbolAt::LocalValueItem { .. }
-            | SymbolAt::LocalField { .. }
-            | SymbolAt::LocalFunction { .. } => None,
+            SymbolAt::FunctionBody { .. }
+            | SymbolAt::Declaration { .. }
+            | SymbolAt::Expr { .. } => None,
         }
     }
 
