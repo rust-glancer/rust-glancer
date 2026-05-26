@@ -7,9 +7,8 @@ use super::target::NavigationTargetResolver;
 use crate::{
     api::{
         Analysis,
-        query::type_at::TypeResolver,
         resolve::declaration::SymbolDeclarationResolver,
-        view::{declaration::DeclarationRef, implementation::ImplementationView},
+        view::{declaration::DeclarationRef, implementation::ImplementationView, ty::TyView},
     },
     model::NavigationTarget,
 };
@@ -43,7 +42,9 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         }
 
         let mut declarations = Vec::new();
-        for declaration in SymbolDeclarationResolver::new(self.0).declarations_for_symbol(symbol)? {
+        for declaration in
+            SymbolDeclarationResolver::new(self.0).declarations_for_symbol(symbol.clone())?
+        {
             Self::extend_unique_declarations(
                 &mut declarations,
                 implementations.implementations_for_declaration(declaration)?,
@@ -51,7 +52,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         }
 
         if declarations.is_empty()
-            && let Some(ty) = TypeResolver::new(self.0).type_at(target, file_id, offset)?
+            && let Some(ty) = TyView::new(self.0).ty_for_symbol(symbol)?
         {
             Self::extend_unique_declarations(
                 &mut declarations,

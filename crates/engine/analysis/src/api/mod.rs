@@ -126,7 +126,10 @@ impl<'a> Analysis<'a> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Option<BodyTy>> {
-        query::type_at::TypeResolver::new(self).type_at(target, file_id, offset)
+        let Some(symbol) = self.symbol_at_for_query(target, file_id, offset)? else {
+            return Ok(None);
+        };
+        view::ty::TyView::new(self).ty_for_symbol(symbol)
     }
 
     /// Returns best-effort inferred type hints for local bindings in one file.

@@ -10,5 +10,4 @@ pub(crate) mod hover;
 pub(crate) mod navigation;
 pub(crate) mod references;
 pub(crate) mod symbols;
-pub(crate) mod type_at;
 pub(crate) mod type_hints;

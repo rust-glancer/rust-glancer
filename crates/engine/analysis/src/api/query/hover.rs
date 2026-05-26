@@ -7,10 +7,12 @@ use rg_parse::FileId;
 use crate::{
     api::{
         Analysis,
-        query::type_at::TypeResolver,
         render::signature::SignatureRenderer,
         resolve::declaration::SymbolDeclarationResolver,
-        view::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
+        view::{
+            details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
+            ty::TyView,
+        },
     },
     model::{HoverBlock, HoverInfo, SymbolAt, SymbolKind},
 };
@@ -53,7 +55,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         }
 
         if blocks.is_empty()
-            && let Some(ty) = TypeResolver::new(self.0).type_at(target, file_id, offset)?
+            && let Some(ty) = TyView::new(self.0).ty_for_symbol(symbol)?
             && let Some(block) = self.hover_for_ty(&ty)?
         {
             blocks.push(block);

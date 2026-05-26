@@ -5,7 +5,7 @@ use rg_parse::FileId;
 
 use super::target::NavigationTargetResolver;
 use crate::{
-    api::{Analysis, query::type_at::TypeResolver, view::ty::TyView},
+    api::{Analysis, view::ty::TyView},
     model::NavigationTarget,
 };
 
@@ -26,11 +26,16 @@ impl<'a, 'db> TypeDefinitionResolver<'a, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<NavigationTarget>> {
-        let Some(ty) = TypeResolver::new(self.0).type_at(target, file_id, offset)? else {
+        let Some(symbol) = self.0.symbol_at_for_query(target, file_id, offset)? else {
             return Ok(Vec::new());
         };
 
-        let declarations = TyView::new(self.0).declarations_for_ty(&ty);
+        let ty_view = TyView::new(self.0);
+        let Some(ty) = ty_view.ty_for_symbol(symbol)? else {
+            return Ok(Vec::new());
+        };
+
+        let declarations = ty_view.declarations_for_ty(&ty);
         NavigationTargetResolver::new(self.0).navigation_targets_for_declarations(declarations)
     }
 }
