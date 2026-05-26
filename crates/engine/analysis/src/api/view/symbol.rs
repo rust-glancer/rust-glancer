@@ -186,7 +186,10 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         symbols: &mut Vec<DocumentSymbolNode>,
     ) -> Result<()> {
         for (module_ref, _) in self.analysis.def_map.modules(target)? {
-            let Some(symbol) = self.declaration(module_ref)?.map(DocumentSymbolNode::new) else {
+            let Some(symbol) = self
+                .declaration(module_ref.into())?
+                .map(DocumentSymbolNode::new)
+            else {
                 continue;
             };
             if symbol.declaration.file_id != file_id {
@@ -237,7 +240,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 self.enum_document_symbol(ty, file_id)
             }
             SemanticItemKind::Trait | SemanticItemKind::Impl => {
-                let Some(declaration) = self.declaration(item.item())? else {
+                let Some(declaration) = self.declaration(item.item().into())? else {
                     return Ok(None);
                 };
                 let children = item
@@ -254,7 +257,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             SemanticItemKind::Function
             | SemanticItemKind::TypeAlias
             | SemanticItemKind::Const
-            | SemanticItemKind::Static => self.declaration_document_symbol(item.item()),
+            | SemanticItemKind::Static => self.declaration_document_symbol(item.item().into()),
         }
     }
 
@@ -263,7 +266,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         ty: TypeDefRef,
         file_id: FileId,
     ) -> Result<Option<DocumentSymbolNode>> {
-        let Some(declaration) = self.declaration(ty)? else {
+        let Some(declaration) = self.declaration(ty.into())? else {
             return Ok(None);
         };
         if declaration.file_id() != file_id {
@@ -271,7 +274,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         };
 
         let mut children = Vec::new();
-        for field_ref in self.analysis.semantic_ir.fields_for_type(ty)? {
+        for field_ref in self.field_declarations_for_type(ty)? {
             let Some(symbol) = self.declaration_document_symbol(field_ref)? else {
                 continue;
             };
@@ -290,27 +293,16 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         ty: TypeDefRef,
         file_id: FileId,
     ) -> Result<Option<DocumentSymbolNode>> {
-        let Some(declaration) = self.declaration(ty)? else {
+        let Some(declaration) = self.declaration(ty.into())? else {
             return Ok(None);
         };
         if declaration.file_id() != file_id {
             return Ok(None);
         };
-        let TypeDefId::Enum(enum_id) = ty.id else {
-            return Ok(None);
-        };
-        let Some(data) = self.analysis.semantic_ir.enum_data_for_type_def(ty)? else {
-            return Ok(None);
-        };
 
         let mut children = Vec::new();
-        for index in 0..data.variants.len() {
-            let variant_ref = EnumVariantRef {
-                target: ty.target,
-                enum_id,
-                index,
-            };
-            let Some(declaration) = self.declaration(variant_ref)? else {
+        for variant_ref in self.enum_variant_refs(ty)? {
+            let Some(declaration) = self.declaration(variant_ref.into())? else {
                 continue;
             };
             let Some(variant) = self.analysis.semantic_ir.enum_variant_data(variant_ref)? else {
@@ -345,44 +337,65 @@ impl<'a, 'db> SymbolView<'a, 'db> {
     ) -> Result<Vec<DocumentSymbolNode>> {
         let mut symbols = Vec::new();
 
-        for item in items {
-            match item {
-                AssocItemId::Function(id) => {
-                    let function_ref = FunctionRef { target, id: *id };
-                    let Some(symbol) = self.declaration_document_symbol(function_ref)? else {
-                        continue;
-                    };
-                    if symbol.declaration.file_id == file_id {
-                        symbols.push(symbol);
-                    }
-                }
-                AssocItemId::TypeAlias(id) => {
-                    let type_alias_ref = TypeAliasRef { target, id: *id };
-                    let Some(symbol) = self.declaration_document_symbol(type_alias_ref)? else {
-                        continue;
-                    };
-                    if symbol.declaration.file_id == file_id {
-                        symbols.push(symbol);
-                    }
-                }
-                AssocItemId::Const(id) => {
-                    let const_ref = ConstRef { target, id: *id };
-                    let Some(symbol) = self.declaration_document_symbol(const_ref)? else {
-                        continue;
-                    };
-                    if symbol.declaration.file_id == file_id {
-                        symbols.push(symbol);
-                    }
-                }
+        for declaration in Self::assoc_item_declarations(target, items) {
+            let Some(symbol) = self.declaration_document_symbol(declaration)? else {
+                continue;
+            };
+            if symbol.declaration.file_id == file_id {
+                symbols.push(symbol);
             }
         }
 
         Ok(symbols)
     }
 
+    fn assoc_item_declarations(
+        target: TargetRef,
+        items: &[AssocItemId],
+    ) -> impl Iterator<Item = DeclarationRef> + '_ {
+        items
+            .iter()
+            .map(move |item| Self::assoc_item_declaration(target, item))
+    }
+
+    fn assoc_item_declaration(target: TargetRef, item: &AssocItemId) -> DeclarationRef {
+        match item {
+            AssocItemId::Function(id) => FunctionRef { target, id: *id }.into(),
+            AssocItemId::TypeAlias(id) => TypeAliasRef { target, id: *id }.into(),
+            AssocItemId::Const(id) => ConstRef { target, id: *id }.into(),
+        }
+    }
+
+    fn field_declarations_for_type(&self, ty: TypeDefRef) -> Result<Vec<DeclarationRef>> {
+        Ok(self
+            .analysis
+            .semantic_ir
+            .fields_for_type(ty)?
+            .into_iter()
+            .map(DeclarationRef::from)
+            .collect())
+    }
+
+    fn enum_variant_refs(&self, ty: TypeDefRef) -> Result<Vec<EnumVariantRef>> {
+        let TypeDefId::Enum(enum_id) = ty.id else {
+            return Ok(Vec::new());
+        };
+        let Some(data) = self.analysis.semantic_ir.enum_data_for_type_def(ty)? else {
+            return Ok(Vec::new());
+        };
+
+        Ok((0..data.variants.len())
+            .map(|index| EnumVariantRef {
+                target: ty.target,
+                enum_id,
+                index,
+            })
+            .collect())
+    }
+
     fn declaration_document_symbol(
         &self,
-        declaration: impl Into<DeclarationRef>,
+        declaration: DeclarationRef,
     ) -> Result<Option<DocumentSymbolNode>> {
         Ok(self.declaration(declaration)?.map(DocumentSymbolNode::new))
     }
@@ -411,7 +424,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 continue;
             }
 
-            let Some(function) = self.declaration(body.owner())? else {
+            let Some(function) = self.declaration(body.owner().into())? else {
                 continue;
             };
             // Body-local structs and impls should appear under the function that contains them,
@@ -455,7 +468,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                     body: body_ref,
                     item: BodyValueItemId(item_idx),
                 };
-                let Some(symbol) = self.declaration_document_symbol(item_ref)? else {
+                let Some(symbol) = self.declaration_document_symbol(item_ref.into())? else {
                     continue;
                 };
                 symbols.push(symbol);
@@ -470,7 +483,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                     body: body_ref,
                     function: BodyFunctionId(function_idx),
                 };
-                let Some(symbol) = self.declaration_document_symbol(function)? else {
+                let Some(symbol) = self.declaration_document_symbol(function.into())? else {
                     continue;
                 };
                 symbols.push(symbol);
@@ -497,13 +510,13 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         &self,
         item_ref: BodyItemRef,
     ) -> Result<Option<DocumentSymbolNode>> {
-        let Some(declaration) = self.declaration(item_ref)? else {
+        let Some(declaration) = self.declaration(item_ref.into())? else {
             return Ok(None);
         };
 
         let mut children = Vec::new();
         for field_ref in self.analysis.body_ir.fields_for_local_type(item_ref)? {
-            let Some(symbol) = self.declaration_document_symbol(field_ref)? else {
+            let Some(symbol) = self.declaration_document_symbol(field_ref.into())? else {
                 continue;
             };
             if symbol.declaration.file_id == declaration.file_id() {
@@ -539,7 +552,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 body: impl_ref.body,
                 item: *item,
             };
-            let Some(symbol) = self.declaration_document_symbol(item_ref)? else {
+            let Some(symbol) = self.declaration_document_symbol(item_ref.into())? else {
                 continue;
             };
             children.push(symbol);
@@ -550,13 +563,13 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 body: impl_ref.body,
                 function: *function,
             };
-            let Some(symbol) = self.declaration_document_symbol(function)? else {
+            let Some(symbol) = self.declaration_document_symbol(function.into())? else {
                 continue;
             };
             children.push(symbol);
         }
 
-        let Some(declaration) = self.declaration(impl_ref)? else {
+        let Some(declaration) = self.declaration(impl_ref.into())? else {
             return Ok(None);
         };
 
@@ -591,7 +604,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 let Some(ty) = item.type_def() else {
                     return Ok(());
                 };
-                self.push_declaration_workspace_symbol(item.item(), None, symbols)?;
+                self.push_declaration_workspace_symbol(item.item().into(), None, symbols)?;
                 let Some(name) = item.name() else {
                     return Ok(());
                 };
@@ -601,14 +614,14 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 let Some(ty) = item.type_def() else {
                     return Ok(());
                 };
-                self.push_declaration_workspace_symbol(item.item(), None, symbols)?;
+                self.push_declaration_workspace_symbol(item.item().into(), None, symbols)?;
                 let Some(name) = item.name() else {
                     return Ok(());
                 };
                 self.push_enum_variant_workspace_symbols(ty, name.as_str(), symbols)?;
             }
             SemanticItemKind::Trait => {
-                self.push_declaration_workspace_symbol(item.item(), None, symbols)?;
+                self.push_declaration_workspace_symbol(item.item().into(), None, symbols)?;
                 let Some(name) = item.name() else {
                     return Ok(());
                 };
@@ -624,7 +637,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
                 )?;
             }
             SemanticItemKind::Impl => {
-                let Some(declaration) = self.declaration(item.item())? else {
+                let Some(declaration) = self.declaration(item.item().into())? else {
                     return Ok(());
                 };
                 let Some(items) = item.assoc_items() else {
@@ -641,7 +654,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             | SemanticItemKind::TypeAlias
             | SemanticItemKind::Const
             | SemanticItemKind::Static => {
-                self.push_declaration_workspace_symbol(item.item(), None, symbols)?;
+                self.push_declaration_workspace_symbol(item.item().into(), None, symbols)?;
             }
         }
 
@@ -654,7 +667,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         symbols: &mut Vec<WorkspaceSymbolEntry>,
     ) -> Result<()> {
         for (module_ref, _) in self.analysis.def_map.modules(target)? {
-            let Some(declaration) = self.declaration(module_ref)? else {
+            let Some(declaration) = self.declaration(module_ref.into())? else {
                 continue;
             };
             let container_name = self.module_container_name(module_ref)?;
@@ -672,33 +685,12 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         container_name: &str,
         symbols: &mut Vec<WorkspaceSymbolEntry>,
     ) -> Result<()> {
-        for item in items {
-            match item {
-                AssocItemId::Function(id) => {
-                    let function_ref = FunctionRef { target, id: *id };
-                    self.push_declaration_workspace_symbol(
-                        function_ref,
-                        Some(container_name.to_string()),
-                        symbols,
-                    )?;
-                }
-                AssocItemId::TypeAlias(id) => {
-                    let type_alias_ref = TypeAliasRef { target, id: *id };
-                    self.push_declaration_workspace_symbol(
-                        type_alias_ref,
-                        Some(container_name.to_string()),
-                        symbols,
-                    )?;
-                }
-                AssocItemId::Const(id) => {
-                    let const_ref = ConstRef { target, id: *id };
-                    self.push_declaration_workspace_symbol(
-                        const_ref,
-                        Some(container_name.to_string()),
-                        symbols,
-                    )?;
-                }
-            }
+        for declaration in Self::assoc_item_declarations(target, items) {
+            self.push_declaration_workspace_symbol(
+                declaration,
+                Some(container_name.to_string()),
+                symbols,
+            )?;
         }
 
         Ok(())
@@ -710,20 +702,9 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         container_name: &str,
         symbols: &mut Vec<WorkspaceSymbolEntry>,
     ) -> Result<()> {
-        let TypeDefId::Enum(enum_id) = ty.id else {
-            return Ok(());
-        };
-        let Some(data) = self.analysis.semantic_ir.enum_data_for_type_def(ty)? else {
-            return Ok(());
-        };
-        for index in 0..data.variants.len() {
-            let variant_ref = EnumVariantRef {
-                target: ty.target,
-                enum_id,
-                index,
-            };
+        for variant_ref in self.enum_variant_refs(ty)? {
             self.push_declaration_workspace_symbol(
-                variant_ref,
+                variant_ref.into(),
                 Some(container_name.to_string()),
                 symbols,
             )?;
@@ -738,7 +719,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         container_name: &str,
         symbols: &mut Vec<WorkspaceSymbolEntry>,
     ) -> Result<()> {
-        for field_ref in self.analysis.semantic_ir.fields_for_type(ty)? {
+        for field_ref in self.field_declarations_for_type(ty)? {
             self.push_declaration_workspace_symbol(
                 field_ref,
                 Some(container_name.to_string()),
@@ -751,7 +732,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
 
     fn push_declaration_workspace_symbol(
         &self,
-        declaration: impl Into<DeclarationRef>,
+        declaration: DeclarationRef,
         container_name: Option<String>,
         symbols: &mut Vec<WorkspaceSymbolEntry>,
     ) -> Result<()> {
@@ -763,8 +744,8 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         Ok(())
     }
 
-    fn declaration(&self, declaration: impl Into<DeclarationRef>) -> Result<Option<Declaration>> {
-        DeclarationView::new(self.analysis).declaration(declaration.into())
+    fn declaration(&self, declaration: DeclarationRef) -> Result<Option<Declaration>> {
+        DeclarationView::new(self.analysis).declaration(declaration)
     }
 
     fn module_container_name(&self, module_ref: ModuleRef) -> Result<Option<String>> {
