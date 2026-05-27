@@ -10,10 +10,10 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::Documentation;
 
-use crate::api::view::{IndexedSymbolKind, IndexedViewDb};
+use crate::{IndexedSymbolKind, IndexedViewDb};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum NameNamespace {
+pub enum NameNamespace {
     Types,
     Values,
     Macros,
@@ -30,7 +30,7 @@ impl From<ScopeNamespace> for NameNamespace {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NameOrigin {
+pub enum NameOrigin {
     ModuleScope,
     Prelude,
     ExternRoot,
@@ -47,7 +47,7 @@ impl From<VisibleScopeOrigin> for NameOrigin {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ModuleScopeName {
+pub struct ModuleScopeName {
     label: String,
     namespace: NameNamespace,
     origin: NameOrigin,
@@ -58,45 +58,45 @@ pub(crate) struct ModuleScopeName {
 }
 
 impl ModuleScopeName {
-    pub(crate) fn label(&self) -> &str {
+    pub fn label(&self) -> &str {
         &self.label
     }
 
-    pub(crate) fn namespace(&self) -> NameNamespace {
+    pub fn namespace(&self) -> NameNamespace {
         self.namespace
     }
 
-    pub(crate) fn origin(&self) -> NameOrigin {
+    pub fn origin(&self) -> NameOrigin {
         self.origin
     }
 
-    pub(crate) fn declaration(&self) -> DeclarationRef {
+    pub fn declaration(&self) -> DeclarationRef {
         self.declaration
     }
 
-    pub(crate) fn kind(&self) -> IndexedSymbolKind {
+    pub fn kind(&self) -> IndexedSymbolKind {
         self.kind
     }
 
-    pub(crate) fn documentation(&self) -> Option<&str> {
+    pub fn documentation(&self) -> Option<&str> {
         self.documentation.as_deref()
     }
 
-    pub(crate) fn function(&self) -> Option<AnalysisFunctionRef> {
+    pub fn function(&self) -> Option<AnalysisFunctionRef> {
         self.function
     }
 }
 
-pub(crate) struct NameLookupView<'a, 'db> {
+pub struct NameLookupView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> NameLookupView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
-    pub(crate) fn module_names_for_path(
+    pub fn module_names_for_path(
         &self,
         importing_module: ModuleRef,
         qualifier: &Path,
@@ -127,7 +127,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         Ok(names)
     }
 
-    pub(crate) fn unqualified_module_names(
+    pub fn unqualified_module_names(
         &self,
         module: ModuleRef,
     ) -> anyhow::Result<Vec<ModuleScopeName>> {

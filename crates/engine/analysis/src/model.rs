@@ -10,7 +10,7 @@ use rg_ir_model::{ModuleRef, TargetRef, TraitApplicability};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::TypePathContext;
 
-use crate::api::view::IndexedSymbolKind;
+use rg_ir_view::IndexedSymbolKind;
 
 /// Scope in which a type path should be resolved.
 #[derive(Clone, Copy, PartialEq, Eq)]

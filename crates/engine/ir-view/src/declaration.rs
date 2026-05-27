@@ -14,11 +14,11 @@ use rg_ir_model::{
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::TypeRef;
 
-use crate::api::view::{IndexedSymbolKind, IndexedViewDb, member::MemberView};
+use crate::{IndexedSymbolKind, IndexedViewDb, member::MemberView};
 
 /// Composite declaration facts shared by editor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Declaration {
+pub struct Declaration {
     target: TargetRef,
     kind: IndexedSymbolKind,
     name: String,
@@ -28,7 +28,7 @@ pub(crate) struct Declaration {
 }
 
 impl Declaration {
-    pub(crate) fn new(
+    pub fn new(
         target: TargetRef,
         kind: IndexedSymbolKind,
         name: String,
@@ -46,45 +46,42 @@ impl Declaration {
         }
     }
 
-    pub(crate) fn target(&self) -> TargetRef {
+    pub fn target(&self) -> TargetRef {
         self.target
     }
 
-    pub(crate) fn kind(&self) -> IndexedSymbolKind {
+    pub fn kind(&self) -> IndexedSymbolKind {
         self.kind
     }
 
-    pub(crate) fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         &self.name
     }
 
-    pub(crate) fn file_id(&self) -> FileId {
+    pub fn file_id(&self) -> FileId {
         self.file_id
     }
 
-    pub(crate) fn span(&self) -> Span {
+    pub fn span(&self) -> Span {
         self.span
     }
 
-    pub(crate) fn selection_span(&self) -> Span {
+    pub fn selection_span(&self) -> Span {
         self.selection_span
     }
 }
 
 /// Reads declaration facts for IDs that already identify one source declaration.
-pub(crate) struct DeclarationView<'a, 'db> {
+pub struct DeclarationView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> DeclarationView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
-    pub(crate) fn declaration(
-        &self,
-        declaration: DeclarationRef,
-    ) -> anyhow::Result<Option<Declaration>> {
+    pub fn declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<Declaration>> {
         match declaration.repr() {
             DeclarationRefRepr::Module(module_ref) => self.module(module_ref),
             DeclarationRefRepr::NameDef(name_def) => match name_def.repr() {

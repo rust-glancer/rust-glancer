@@ -1,9 +1,10 @@
 //! Symbol-to-navigation resolution.
 
+use rg_ir_view::IndexedViewDb;
+
 use crate::{
     api::{
         query::navigation::target::NavigationTargetProjection, source_symbol::SourceSymbolResolver,
-        view::IndexedViewDb,
     },
     model::{NavigationTarget, SymbolAt},
 };

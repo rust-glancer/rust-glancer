@@ -15,7 +15,7 @@ use rg_semantic_ir::{
 };
 use rg_ty::IndexedTy;
 
-use crate::api::view::{
+use crate::{
     IndexedViewDb,
     member::{MemberField, MemberFunction},
     ty_label::TypeRenderer,
@@ -23,14 +23,14 @@ use crate::api::view::{
 
 const MEMBER_PREVIEW_LIMIT: usize = 5;
 
-pub(crate) struct SignatureRenderer<'a, 'db>(&'a IndexedViewDb<'db>);
+pub struct SignatureRenderer<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> SignatureRenderer<'a, 'db> {
-    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
         Self(db)
     }
 
-    pub(crate) fn struct_signature(&self, data: &StructData) -> String {
+    pub fn struct_signature(&self, data: &StructData) -> String {
         let header = format!(
             "{}struct {}{}{}",
             visibility_prefix(&data.visibility),
@@ -41,7 +41,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         item_with_fields(header, &data.fields)
     }
 
-    pub(crate) fn union_signature(&self, data: &UnionData) -> String {
+    pub fn union_signature(&self, data: &UnionData) -> String {
         let header = format!(
             "{}union {}{}{}",
             visibility_prefix(&data.visibility),
@@ -52,7 +52,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         item_with_record_fields(header, &data.fields)
     }
 
-    pub(crate) fn enum_signature(&self, data: &EnumData) -> String {
+    pub fn enum_signature(&self, data: &EnumData) -> String {
         let header = format!(
             "{}enum {}{}{}",
             visibility_prefix(&data.visibility),
@@ -67,7 +67,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         format_block(header, data.variants.iter().map(enum_variant_signature))
     }
 
-    pub(crate) fn trait_signature(&self, data: &TraitData) -> String {
+    pub fn trait_signature(&self, data: &TraitData) -> String {
         let unsafe_prefix = if data.is_unsafe { "unsafe " } else { "" };
         let super_traits = if data.super_traits.is_empty() {
             String::new()
@@ -91,7 +91,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         )
     }
 
-    pub(crate) fn function_signature(&self, data: &FunctionData) -> String {
+    pub fn function_signature(&self, data: &FunctionData) -> String {
         format!(
             "{}{}",
             visibility_prefix(&data.visibility),
@@ -105,7 +105,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         )
     }
 
-    pub(crate) fn type_alias_signature(&self, data: &TypeAliasData) -> String {
+    pub fn type_alias_signature(&self, data: &TypeAliasData) -> String {
         format!(
             "{}{}",
             visibility_prefix(&data.visibility),
@@ -118,7 +118,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         )
     }
 
-    pub(crate) fn const_signature(&self, data: &ConstData) -> String {
+    pub fn const_signature(&self, data: &ConstData) -> String {
         format!(
             "{}{}",
             visibility_prefix(&data.visibility),
@@ -126,7 +126,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         )
     }
 
-    pub(crate) fn static_signature(&self, data: &StaticData) -> String {
+    pub fn static_signature(&self, data: &StaticData) -> String {
         format!(
             "{}{}",
             visibility_prefix(&data.visibility),
@@ -134,22 +134,22 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         )
     }
 
-    pub(crate) fn field_signature(&self, data: FieldData<'_>) -> Option<String> {
+    pub fn field_signature(&self, data: FieldData<'_>) -> Option<String> {
         field_signature(data.field)
     }
 
-    pub(crate) fn member_field_signature(&self, data: &MemberField<'_>) -> Option<String> {
+    pub fn member_field_signature(&self, data: &MemberField<'_>) -> Option<String> {
         match data {
             MemberField::Semantic { data, .. } => self.field_signature(*data),
             MemberField::BodyLocal { data, .. } => self.local_field_signature(*data),
         }
     }
 
-    pub(crate) fn enum_variant_signature(&self, data: EnumVariantData<'_>) -> String {
+    pub fn enum_variant_signature(&self, data: EnumVariantData<'_>) -> String {
         enum_variant_signature(data.variant)
     }
 
-    pub(crate) fn local_item_signature(&self, data: &BodyItemData) -> String {
+    pub fn local_item_signature(&self, data: &BodyItemData) -> String {
         match &data.declaration {
             BodyItemDeclaration::Struct(item) => {
                 let header = format!(
@@ -206,7 +206,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         }
     }
 
-    pub(crate) fn local_value_item_signature(&self, data: &BodyValueItemData) -> String {
+    pub fn local_value_item_signature(&self, data: &BodyValueItemData) -> String {
         match &data.declaration {
             BodyValueItemDeclaration::Const(item) => const_signature(&data.name, item.ty.as_ref()),
             BodyValueItemDeclaration::Static(item) => {
@@ -215,26 +215,26 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         }
     }
 
-    pub(crate) fn local_function_signature(&self, data: &BodyFunctionData) -> String {
+    pub fn local_function_signature(&self, data: &BodyFunctionData) -> String {
         function_signature(&data.name, &data.declaration)
     }
 
-    pub(crate) fn member_function_signature(&self, data: &MemberFunction<'_>) -> String {
+    pub fn member_function_signature(&self, data: &MemberFunction<'_>) -> String {
         match data {
             MemberFunction::Semantic { data, .. } => self.function_signature(data),
             MemberFunction::BodyLocal { data, .. } => self.local_function_signature(data),
         }
     }
 
-    pub(crate) fn local_field_signature(&self, data: BodyFieldData<'_>) -> Option<String> {
+    pub fn local_field_signature(&self, data: BodyFieldData<'_>) -> Option<String> {
         field_signature(data.field)
     }
 
-    pub(crate) fn local_enum_variant_signature(&self, data: BodyEnumVariantData<'_>) -> String {
+    pub fn local_enum_variant_signature(&self, data: BodyEnumVariantData<'_>) -> String {
         enum_variant_signature(data.variant)
     }
 
-    pub(crate) fn binding_signature(&self, data: &BindingData) -> anyhow::Result<String> {
+    pub fn binding_signature(&self, data: &BindingData) -> anyhow::Result<String> {
         let name = data.name.as_deref().unwrap_or("<unsupported>");
         let ty = TypeRenderer::new(self.0)
             .render(&data.ty)?
@@ -244,7 +244,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         Ok(format!("let {name}: {ty}"))
     }
 
-    pub(crate) fn ty_signature(&self, ty: &IndexedTy) -> anyhow::Result<Option<String>> {
+    pub fn ty_signature(&self, ty: &IndexedTy) -> anyhow::Result<Option<String>> {
         TypeRenderer::new(self.0).render(ty)
     }
 }

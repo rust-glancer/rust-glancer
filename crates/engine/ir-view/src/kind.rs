@@ -6,7 +6,7 @@ use rg_ir_model::SemanticItemKind;
 
 /// Generic indexed declaration category independent from any editor transport model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
-pub(crate) enum IndexedSymbolKind {
+pub enum IndexedSymbolKind {
     #[display("const")]
     Const,
     #[display("enum")]
@@ -40,7 +40,7 @@ pub(crate) enum IndexedSymbolKind {
 }
 
 impl IndexedSymbolKind {
-    pub(crate) fn from_local_def_kind(kind: LocalDefKind) -> Self {
+    pub fn from_local_def_kind(kind: LocalDefKind) -> Self {
         match kind {
             LocalDefKind::Const => Self::Const,
             LocalDefKind::Enum => Self::Enum,
@@ -54,7 +54,7 @@ impl IndexedSymbolKind {
         }
     }
 
-    pub(crate) fn from_body_item_kind(kind: BodyItemKind) -> Self {
+    pub fn from_body_item_kind(kind: BodyItemKind) -> Self {
         match kind {
             BodyItemKind::Struct => Self::Struct,
             BodyItemKind::Enum => Self::Enum,
@@ -64,14 +64,14 @@ impl IndexedSymbolKind {
         }
     }
 
-    pub(crate) fn from_body_value_item_kind(kind: BodyValueItemKind) -> Self {
+    pub fn from_body_value_item_kind(kind: BodyValueItemKind) -> Self {
         match kind {
             BodyValueItemKind::Const => Self::Const,
             BodyValueItemKind::Static => Self::Static,
         }
     }
 
-    pub(crate) fn from_semantic_item_kind(kind: SemanticItemKind) -> Self {
+    pub fn from_semantic_item_kind(kind: SemanticItemKind) -> Self {
         match kind {
             SemanticItemKind::Struct => Self::Struct,
             SemanticItemKind::Enum => Self::Enum,
@@ -85,7 +85,7 @@ impl IndexedSymbolKind {
         }
     }
 
-    pub(crate) fn from_body_function_owner(owner: BodyFunctionOwner) -> Self {
+    pub fn from_body_function_owner(owner: BodyFunctionOwner) -> Self {
         match owner {
             BodyFunctionOwner::LocalScope(_) => Self::Function,
             BodyFunctionOwner::LocalImpl(_) => Self::Method,

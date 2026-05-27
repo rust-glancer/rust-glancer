@@ -4,18 +4,18 @@ use rg_def_map::{ModuleOrigin, PackageSlot};
 use rg_ir_model::{ModuleRef, TargetRef};
 use rg_parse::{FileId, TargetId};
 
-use crate::api::view::IndexedViewDb;
+use crate::IndexedViewDb;
 
-pub(crate) struct ModuleView<'a, 'db> {
+pub struct ModuleView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> ModuleView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
-    pub(crate) fn root_file(&self, module_ref: ModuleRef) -> anyhow::Result<Option<FileId>> {
+    pub fn root_file(&self, module_ref: ModuleRef) -> anyhow::Result<Option<FileId>> {
         let Some(module) = self.analysis.def_map.module(module_ref)? else {
             return Ok(None);
         };
@@ -25,7 +25,7 @@ impl<'a, 'db> ModuleView<'a, 'db> {
         }
     }
 
-    pub(crate) fn targets_containing_file(
+    pub fn targets_containing_file(
         &self,
         package: PackageSlot,
         file: FileId,

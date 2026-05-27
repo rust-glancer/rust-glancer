@@ -12,19 +12,19 @@ use rg_ir_model::{
 use rg_semantic_ir::{Documentation, FieldData, FieldKey, FunctionData, ParamItem};
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt};
 
-use crate::api::view::{IndexedSymbolKind, IndexedViewDb, path::PathView};
+use crate::{IndexedSymbolKind, IndexedViewDb, path::PathView};
 
 use super::declaration::Declaration;
 
 /// A nominal receiver type whose declarations may live in either Semantic IR or Body IR.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum MemberReceiverTy<'a> {
+pub enum MemberReceiverTy<'a> {
     Semantic(&'a IndexedNominalTy),
     BodyLocal(&'a IndexedLocalNominalTy),
 }
 
 impl<'a> MemberReceiverTy<'a> {
-    pub(crate) fn in_indexed_ty(ty: &'a IndexedTy) -> impl Iterator<Item = Self> + 'a {
+    pub fn in_indexed_ty(ty: &'a IndexedTy) -> impl Iterator<Item = Self> + 'a {
         ty.as_local_nominals()
             .iter()
             .map(Self::BodyLocal)
@@ -41,14 +41,14 @@ impl<'a> MemberReceiverTy<'a> {
 
 /// Reference to a declaration owner whose fields can be enumerated without receiver generic args.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum MemberOwnerRef {
+pub enum MemberOwnerRef {
     Semantic(TypeDefRef),
     BodyLocal(BodyItemRef),
 }
 
 /// Borrowed data for one resolved field, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum MemberField<'a> {
+pub enum MemberField<'a> {
     Semantic {
         field: SemanticFieldRef,
         data: FieldData<'a>,
@@ -60,28 +60,28 @@ pub(crate) enum MemberField<'a> {
 }
 
 impl<'a> MemberField<'a> {
-    pub(crate) fn field_ref(&self) -> FieldRef {
+    pub fn field_ref(&self) -> FieldRef {
         match self {
             Self::Semantic { field, .. } => FieldRef::semantic(*field),
             Self::BodyLocal { field, .. } => FieldRef::body_local(*field),
         }
     }
 
-    pub(crate) fn key(&self) -> Option<&'a FieldKey> {
+    pub fn key(&self) -> Option<&'a FieldKey> {
         match self {
             Self::Semantic { data, .. } => data.field.key.as_ref(),
             Self::BodyLocal { data, .. } => data.field.key.as_ref(),
         }
     }
 
-    pub(crate) fn display_path(&self, paths: &PathView<'_, '_>) -> anyhow::Result<Option<String>> {
+    pub fn display_path(&self, paths: &PathView<'_, '_>) -> anyhow::Result<Option<String>> {
         match self {
             Self::Semantic { field, .. } => paths.type_def_path(field.owner),
             Self::BodyLocal { .. } => Ok(None),
         }
     }
 
-    pub(crate) fn declaration(&self) -> Option<Declaration> {
+    pub fn declaration(&self) -> Option<Declaration> {
         let key = self.key()?;
         Some(match self {
             Self::Semantic { field, data } => Declaration::new(
@@ -103,7 +103,7 @@ impl<'a> MemberField<'a> {
         })
     }
 
-    pub(crate) fn docs_text(&self) -> Option<String> {
+    pub fn docs_text(&self) -> Option<String> {
         self.docs().map(Documentation::text)
     }
 
@@ -117,7 +117,7 @@ impl<'a> MemberField<'a> {
 
 /// Borrowed data for one resolved function, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum MemberFunction<'a> {
+pub enum MemberFunction<'a> {
     Semantic {
         function: SemanticFunctionRef,
         data: &'a FunctionData,
@@ -129,35 +129,35 @@ pub(crate) enum MemberFunction<'a> {
 }
 
 impl<'a> MemberFunction<'a> {
-    pub(crate) fn function_ref(&self) -> FunctionRef {
+    pub fn function_ref(&self) -> FunctionRef {
         match self {
             Self::Semantic { function, .. } => FunctionRef::semantic(*function),
             Self::BodyLocal { function, .. } => FunctionRef::body_local(*function),
         }
     }
 
-    pub(crate) fn name(&self) -> &'a str {
+    pub fn name(&self) -> &'a str {
         match self {
             Self::Semantic { data, .. } => data.name.as_str(),
             Self::BodyLocal { data, .. } => data.name.as_str(),
         }
     }
 
-    pub(crate) fn params(&self) -> &'a [ParamItem] {
+    pub fn params(&self) -> &'a [ParamItem] {
         match self {
             Self::Semantic { data, .. } => data.signature.params(),
             Self::BodyLocal { data, .. } => &data.declaration.params,
         }
     }
 
-    pub(crate) fn display_path(&self, paths: &PathView<'_, '_>) -> anyhow::Result<Option<String>> {
+    pub fn display_path(&self, paths: &PathView<'_, '_>) -> anyhow::Result<Option<String>> {
         match self {
             Self::Semantic { function, .. } => paths.function_path(*function),
             Self::BodyLocal { .. } => Ok(None),
         }
     }
 
-    pub(crate) fn symbol_kind(&self) -> IndexedSymbolKind {
+    pub fn symbol_kind(&self) -> IndexedSymbolKind {
         match self {
             Self::Semantic { data, .. } => match data.owner {
                 ItemOwner::Module(_) => IndexedSymbolKind::Function,
@@ -167,7 +167,7 @@ impl<'a> MemberFunction<'a> {
         }
     }
 
-    pub(crate) fn declaration(&self) -> Declaration {
+    pub fn declaration(&self) -> Declaration {
         match self {
             Self::Semantic { function, data } => Declaration::new(
                 function.target,
@@ -188,11 +188,11 @@ impl<'a> MemberFunction<'a> {
         }
     }
 
-    pub(crate) fn docs_text(&self) -> Option<String> {
+    pub fn docs_text(&self) -> Option<String> {
         self.docs().map(Documentation::text)
     }
 
-    pub(crate) fn has_self_receiver(&self) -> bool {
+    pub fn has_self_receiver(&self) -> bool {
         match self {
             Self::Semantic { data, .. } => data.has_self_receiver(),
             Self::BodyLocal { data, .. } => data.has_self_receiver(),
@@ -209,27 +209,37 @@ impl<'a> MemberFunction<'a> {
 
 /// One method candidate with enough origin information for UI ranking and labels.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MemberMethodCandidate<'a> {
-    pub(crate) function: MemberFunction<'a>,
-    pub(crate) origin: MemberMethodOrigin,
+pub struct MemberMethodCandidate<'a> {
+    function: MemberFunction<'a>,
+    origin: MemberMethodOrigin,
+}
+
+impl<'a> MemberMethodCandidate<'a> {
+    pub fn function(&self) -> MemberFunction<'a> {
+        self.function
+    }
+
+    pub fn origin(&self) -> MemberMethodOrigin {
+        self.origin
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum MemberMethodOrigin {
+pub enum MemberMethodOrigin {
     Inherent,
     Trait { applicability: TraitApplicability },
 }
 
-pub(crate) struct MemberView<'a, 'db> {
+pub struct MemberView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> MemberView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
-    pub(crate) fn field_candidates_for_ty<'view>(
+    pub fn field_candidates_for_ty<'view>(
         &'view self,
         ty: &IndexedTy,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
@@ -246,7 +256,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(fields)
     }
 
-    pub(crate) fn field_candidates_for_body_type_path<'view>(
+    pub fn field_candidates_for_body_type_path<'view>(
         &'view self,
         body: BodyRef,
         scope: ScopeId,
@@ -259,14 +269,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(fields)
     }
 
-    pub(crate) fn field_candidates<'view>(
+    pub fn field_candidates<'view>(
         &'view self,
         receiver_ty: MemberReceiverTy<'_>,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         self.field_candidates_for_owner(receiver_ty.owner())
     }
 
-    pub(crate) fn field_candidates_for_owner<'view>(
+    pub fn field_candidates_for_owner<'view>(
         &'view self,
         owner: MemberOwnerRef,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
@@ -298,7 +308,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(fields)
     }
 
-    pub(crate) fn field(&self, field: FieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
+    pub fn field(&self, field: FieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
         match field.repr() {
             FieldRefRepr::Semantic(field) => Ok(self
                 .analysis
@@ -313,10 +323,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         }
     }
 
-    pub(crate) fn function(
-        &self,
-        function: FunctionRef,
-    ) -> anyhow::Result<Option<MemberFunction<'_>>> {
+    pub fn function(&self, function: FunctionRef) -> anyhow::Result<Option<MemberFunction<'_>>> {
         match function.repr() {
             FunctionRefRepr::Semantic(function) => Ok(self
                 .analysis
@@ -331,7 +338,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         }
     }
 
-    pub(crate) fn method_candidates<'view>(
+    pub fn method_candidates<'view>(
         &'view self,
         receiver_ty: MemberReceiverTy<'_>,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
@@ -415,7 +422,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(candidates)
     }
 
-    pub(crate) fn method_candidates_for_ty<'view>(
+    pub fn method_candidates_for_ty<'view>(
         &'view self,
         ty: &IndexedTy,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {

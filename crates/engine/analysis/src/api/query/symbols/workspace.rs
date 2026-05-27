@@ -1,8 +1,9 @@
 //! Workspace-wide symbol search.
 
 use anyhow::Result;
+use rg_ir_view::IndexedViewDb;
 
-use crate::{api::view::IndexedViewDb, model::WorkspaceSymbol};
+use crate::model::WorkspaceSymbol;
 
 use super::indexed::IndexedSymbols;
 

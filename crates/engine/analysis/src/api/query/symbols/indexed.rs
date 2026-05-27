@@ -5,16 +5,14 @@ use rg_ir_model::{
     TargetRef,
     identity::{DeclarationRef, DeclarationRefRepr},
 };
+use rg_ir_view::{
+    IndexedSymbolKind, IndexedViewDb,
+    declaration::{Declaration, DeclarationView},
+    item_index::{IndexedItem, IndexedItemChild, ItemIndexView},
+};
 use rg_parse::{FileId, Span};
 
-use crate::{
-    api::view::{
-        IndexedSymbolKind, IndexedViewDb,
-        declaration::{Declaration, DeclarationView},
-        item_index::{IndexedItem, IndexedItemChild, ItemIndexView},
-    },
-    model::{DocumentSymbol, SymbolKind, WorkspaceSymbol},
-};
+use crate::model::{DocumentSymbol, SymbolKind, WorkspaceSymbol};
 
 /// One outline declaration. Most nodes come from real declarations, but some syntax-only
 /// children, such as tuple variant fields, only exist as document outline entries.

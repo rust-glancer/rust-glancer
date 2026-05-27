@@ -1,18 +1,15 @@
 //! Builds hover payloads from resolved analysis declarations.
 
 use rg_ir_model::TargetRef;
+use rg_ir_view::{
+    details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
+    signature::SignatureRenderer,
+};
 use rg_parse::FileId;
 use rg_ty::IndexedTy;
 
 use crate::{
-    api::{
-        Analysis,
-        source_symbol::SourceSymbolResolver,
-        view::{
-            details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
-            signature::SignatureRenderer,
-        },
-    },
+    api::{Analysis, source_symbol::SourceSymbolResolver},
     model::{HoverBlock, HoverInfo, SymbolAt, SymbolKind},
 };
 

@@ -9,26 +9,21 @@ use rg_ir_model::{
     ModuleRef,
     identity::{DeclarationRef, EnumVariantRef, FieldRef, FunctionRef},
 };
+use rg_ir_view::{
+    IndexedSymbolKind, IndexedViewDb,
+    body::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
+    enum_variant::EnumVariantView,
+    member::{MemberMethodCandidate, MemberMethodOrigin, MemberView},
+    name_lookup::{ModuleScopeName, NameLookupView, NameNamespace, NameOrigin},
+    source::{IndexedNameNamespace, IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
+    ty::TyView,
+};
 use rg_semantic_ir::FieldKey;
 use rg_ty::IndexedTy;
 
 use crate::{
-    api::{
-        completion_site::{
-            DotCompletionSite, PathCompletionSite, RecordFieldCompletionSite,
-            UnqualifiedCompletionSite,
-        },
-        view::{
-            IndexedSymbolKind, IndexedViewDb,
-            body::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
-            enum_variant::EnumVariantView,
-            member::{MemberMethodOrigin, MemberView},
-            name_lookup::{ModuleScopeName, NameLookupView, NameNamespace, NameOrigin},
-            source::{
-                IndexedNameNamespace, IndexedQualifiedPathScope, IndexedUnqualifiedNameScope,
-            },
-            ty::TyView,
-        },
+    api::completion_site::{
+        DotCompletionSite, PathCompletionSite, RecordFieldCompletionSite, UnqualifiedCompletionSite,
     },
     model::{CompletionApplicability, CompletionKind, CompletionTarget},
 };
@@ -532,17 +527,15 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         })
     }
 
-    fn dot_method_candidate(
-        method: crate::api::view::member::MemberMethodCandidate<'_>,
-    ) -> DotMethodCompletionCandidate {
-        match method.origin {
+    fn dot_method_candidate(method: MemberMethodCandidate<'_>) -> DotMethodCompletionCandidate {
+        match method.origin() {
             MemberMethodOrigin::Inherent => DotMethodCompletionCandidate {
-                function: method.function.function_ref(),
+                function: method.function().function_ref(),
                 kind: CompletionKind::InherentMethod,
                 applicability: CompletionApplicability::Known,
             },
             MemberMethodOrigin::Trait { applicability } => DotMethodCompletionCandidate {
-                function: method.function.function_ref(),
+                function: method.function().function_ref(),
                 kind: CompletionKind::TraitMethod,
                 applicability: CompletionApplicability::from(applicability),
             },

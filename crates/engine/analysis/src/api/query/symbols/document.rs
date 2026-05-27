@@ -2,9 +2,10 @@
 
 use anyhow::Result;
 use rg_ir_model::TargetRef;
+use rg_ir_view::IndexedViewDb;
 use rg_parse::FileId;
 
-use crate::{api::view::IndexedViewDb, model::DocumentSymbol};
+use crate::model::DocumentSymbol;
 
 use super::indexed::IndexedSymbols;
 

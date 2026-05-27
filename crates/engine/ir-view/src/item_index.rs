@@ -13,17 +13,17 @@ use rg_ir_model::{
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::SemanticItemView;
 
-use crate::api::view::{IndexedViewDb, body::BodyView};
+use crate::{IndexedViewDb, body::BodyView};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IndexedSyntaxChild {
+pub struct IndexedSyntaxChild {
     name: String,
     file_id: FileId,
     span: Span,
 }
 
 impl IndexedSyntaxChild {
-    pub(crate) fn field(file_id: FileId, name: String, span: Span) -> Self {
+    pub fn field(file_id: FileId, name: String, span: Span) -> Self {
         Self {
             name,
             file_id,
@@ -31,37 +31,37 @@ impl IndexedSyntaxChild {
         }
     }
 
-    pub(crate) fn name(&self) -> &str {
+    pub fn name(&self) -> &str {
         &self.name
     }
 
-    pub(crate) fn file_id(&self) -> FileId {
+    pub fn file_id(&self) -> FileId {
         self.file_id
     }
 
-    pub(crate) fn span(&self) -> Span {
+    pub fn span(&self) -> Span {
         self.span
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum IndexedItemChild {
+pub enum IndexedItemChild {
     Declaration(IndexedItem),
     Syntax(IndexedSyntaxChild),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IndexedItem {
+pub struct IndexedItem {
     declaration: DeclarationRef,
     children: Vec<IndexedItemChild>,
 }
 
 impl IndexedItem {
-    pub(crate) fn declaration(&self) -> DeclarationRef {
+    pub fn declaration(&self) -> DeclarationRef {
         self.declaration
     }
 
-    pub(crate) fn children(&self) -> &[IndexedItemChild] {
+    pub fn children(&self) -> &[IndexedItemChild] {
         &self.children
     }
 
@@ -81,31 +81,31 @@ impl IndexedItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IndexedBodyLocalGroup {
+pub struct IndexedBodyLocalGroup {
     owner: DeclarationRef,
     children: Vec<IndexedItem>,
 }
 
 impl IndexedBodyLocalGroup {
-    pub(crate) fn owner(&self) -> DeclarationRef {
+    pub fn owner(&self) -> DeclarationRef {
         self.owner
     }
 
-    pub(crate) fn children(&self) -> &[IndexedItem] {
+    pub fn children(&self) -> &[IndexedItem] {
         &self.children
     }
 }
 
-pub(crate) struct ItemIndexView<'a, 'db> {
+pub struct ItemIndexView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> ItemIndexView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
-    pub(crate) fn included_targets(&self) -> anyhow::Result<Vec<TargetRef>> {
+    pub fn included_targets(&self) -> anyhow::Result<Vec<TargetRef>> {
         Ok(self
             .analysis
             .semantic_ir
@@ -115,10 +115,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
             .collect())
     }
 
-    pub(crate) fn module_declarations(
-        &self,
-        target: TargetRef,
-    ) -> anyhow::Result<Vec<DeclarationRef>> {
+    pub fn module_declarations(&self, target: TargetRef) -> anyhow::Result<Vec<DeclarationRef>> {
         Ok(self
             .analysis
             .def_map
@@ -128,10 +125,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
             .collect())
     }
 
-    pub(crate) fn module_container_name(
-        &self,
-        module_ref: ModuleRef,
-    ) -> anyhow::Result<Option<String>> {
+    pub fn module_container_name(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {
         let Some(module) = self.analysis.def_map.module(module_ref)? else {
             return Ok(None);
         };
@@ -145,7 +139,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         Ok((!path.is_empty()).then_some(path))
     }
 
-    pub(crate) fn module_owned_items(
+    pub fn module_owned_items(
         &self,
         target: TargetRef,
         file_id: Option<FileId>,
@@ -165,7 +159,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         Ok(items)
     }
 
-    pub(crate) fn body_local_groups(
+    pub fn body_local_groups(
         &self,
         target: TargetRef,
         file_id: FileId,

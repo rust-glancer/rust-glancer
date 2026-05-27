@@ -6,26 +6,26 @@
 use rg_ir_model::{TargetRef, identity::DeclarationRef};
 use rg_parse::{FileId, Span};
 
-use crate::api::view::{IndexedViewDb, declaration::DeclarationView};
+use crate::{IndexedViewDb, declaration::DeclarationView};
 
 /// One indexed source location for a declaration or use-site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct IndexedSourceLocation {
-    pub(crate) target: TargetRef,
-    pub(crate) file_id: FileId,
-    pub(crate) span: Span,
+pub struct IndexedSourceLocation {
+    pub target: TargetRef,
+    pub file_id: FileId,
+    pub span: Span,
 }
 
-pub(crate) struct ReferenceView<'a, 'db> {
+pub struct ReferenceView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> ReferenceView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
-    pub(crate) fn declaration_locations(
+    pub fn declaration_locations(
         &self,
         declarations: &[DeclarationRef],
     ) -> anyhow::Result<Vec<IndexedSourceLocation>> {

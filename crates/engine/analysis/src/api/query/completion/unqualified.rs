@@ -2,15 +2,14 @@
 
 use std::collections::HashSet;
 
+use rg_ir_view::{
+    details::{DeclarationDetailsContext, DeclarationDetailsView},
+    member::MemberView,
+};
+
 use crate::{
     Analysis,
-    api::{
-        completion_site::{UnqualifiedCompletionContext, UnqualifiedCompletionSite},
-        view::{
-            details::{DeclarationDetailsContext, DeclarationDetailsView},
-            member::MemberView,
-        },
-    },
+    api::completion_site::{UnqualifiedCompletionContext, UnqualifiedCompletionSite},
     model::{CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem},
 };
 

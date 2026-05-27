@@ -17,22 +17,22 @@ use rg_ir_model::{
 use rg_semantic_ir::{SemanticTypePathResolution, TypePathContext};
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
 
-use crate::api::view::{IndexedViewDb, body::BodyView};
+use crate::{IndexedViewDb, body::BodyView};
 
-pub(crate) struct TyView<'a, 'db> {
+pub struct TyView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> TyView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
-    pub(crate) fn ty_for_expr(&self, expr: ExprRef) -> anyhow::Result<Option<IndexedTy>> {
+    pub fn ty_for_expr(&self, expr: ExprRef) -> anyhow::Result<Option<IndexedTy>> {
         self.body_view().expr_ty(expr.body_ir(), expr.expr_id())
     }
 
-    pub(crate) fn declarations_for_ty(&self, ty: &IndexedTy) -> Vec<DeclarationRef> {
+    pub fn declarations_for_ty(&self, ty: &IndexedTy) -> Vec<DeclarationRef> {
         // Body-local nominal types shadow module-level types in the same expression type. Preserve
         // that lookup order when turning an inferred type back into navigation declarations.
         let mut local_declarations = Vec::new();
@@ -60,7 +60,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         declarations
     }
 
-    pub(crate) fn ty_for_declaration(
+    pub fn ty_for_declaration(
         &self,
         declaration: DeclarationRef,
     ) -> anyhow::Result<Option<IndexedTy>> {
@@ -109,7 +109,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         }
     }
 
-    pub(crate) fn ty_for_type_path(
+    pub fn ty_for_type_path(
         &self,
         context: TypePathContext,
         path: &Path,
@@ -127,7 +127,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         Ok(Self::semantic_type_path_resolution_to_ty(resolution))
     }
 
-    pub(crate) fn ty_for_body_type_path(
+    pub fn ty_for_body_type_path(
         &self,
         body_ref: BodyRef,
         scope: ScopeId,
@@ -144,7 +144,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         ))
     }
 
-    pub(crate) fn ty_for_body_value_path(
+    pub fn ty_for_body_value_path(
         &self,
         body_ref: BodyRef,
         scope: ScopeId,

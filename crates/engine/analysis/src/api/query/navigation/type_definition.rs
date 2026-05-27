@@ -1,11 +1,12 @@
 //! Goto-type-definition query flow.
 
 use rg_ir_model::TargetRef;
+use rg_ir_view::ty::TyView;
 use rg_parse::FileId;
 
 use super::target::NavigationTargetProjection;
 use crate::{
-    api::{Analysis, source_symbol::SourceSymbolResolver, view::ty::TyView},
+    api::{Analysis, source_symbol::SourceSymbolResolver},
     model::NavigationTarget,
 };
 

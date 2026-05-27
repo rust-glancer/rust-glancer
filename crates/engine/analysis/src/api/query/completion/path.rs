@@ -1,11 +1,10 @@
 //! Qualified path completion assembly for body and import positions.
 
+use rg_ir_view::enum_variant::{EnumVariant, EnumVariantView};
+
 use crate::{
     Analysis,
-    api::{
-        completion_site::{PathCompletionContext, PathCompletionSite},
-        view::enum_variant::{EnumVariant, EnumVariantView},
-    },
+    api::completion_site::{PathCompletionContext, PathCompletionSite},
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,

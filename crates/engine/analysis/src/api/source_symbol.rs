@@ -4,19 +4,16 @@ use rg_ir_model::{TargetRef, identity::DeclarationRef};
 use rg_parse::{FileId, Span};
 use rg_ty::IndexedTy;
 
-use crate::{
-    api::view::{
-        IndexedViewDb,
-        resolution::ResolutionView,
-        source::{
-            IndexedSourceFact, IndexedSourceOccurrence, IndexedTypePathScope, SourceFactsView,
-        },
-        ty::TyView,
-    },
-    model::{SymbolAt, TypePathScopeRef, TypePathScopeRepr},
+use rg_ir_view::{
+    IndexedViewDb,
+    resolution::ResolutionView,
+    source::{IndexedSourceFact, IndexedSourceOccurrence, IndexedTypePathScope, SourceFactsView},
+    ty::TyView,
 };
 
-pub(crate) use crate::api::view::source::IndexedSourceRole as SourceSymbolRole;
+use crate::model::{SymbolAt, TypePathScopeRef, TypePathScopeRepr};
+
+pub(crate) use rg_ir_view::source::IndexedSourceRole as SourceSymbolRole;
 
 /// One source span that can resolve to an analysis symbol.
 #[derive(Debug, Clone, PartialEq, Eq)]

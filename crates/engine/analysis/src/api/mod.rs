@@ -1,7 +1,6 @@
 mod completion_site;
 mod query;
 mod source_symbol;
-pub(crate) mod view;
 
 pub use query::{
     completion::{CompletionClientCapabilities, CompletionQuery},
@@ -10,14 +9,12 @@ pub use query::{
 
 use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
+use rg_ir_view::{IndexedViewDb, module::ModuleView};
 use rg_parse::FileId;
 use rg_ty::IndexedTy;
 
 use crate::{
-    api::{
-        source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver},
-        view::IndexedViewDb,
-    },
+    api::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver},
     model::{
         CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget, ReferenceLocation, SymbolAt,
         TypeHint, WorkspaceSymbol,
@@ -203,6 +200,6 @@ impl<'a> Analysis<'a> {
         package: PackageSlot,
         file: FileId,
     ) -> anyhow::Result<Vec<TargetRef>> {
-        view::module::ModuleView::new(self.view_db()).targets_containing_file(package, file)
+        ModuleView::new(self.view_db()).targets_containing_file(package, file)
     }
 }

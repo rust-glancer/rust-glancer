@@ -9,11 +9,11 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::{Documentation, EnumVariantData};
 
-use crate::api::view::IndexedViewDb;
+use crate::IndexedViewDb;
 
 /// Borrowed data for one resolved enum variant, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum EnumVariant<'a> {
+pub enum EnumVariant<'a> {
     Semantic {
         variant: SemanticEnumVariantRef,
         data: EnumVariantData<'a>,
@@ -25,21 +25,21 @@ pub(crate) enum EnumVariant<'a> {
 }
 
 impl<'a> EnumVariant<'a> {
-    pub(crate) fn variant_ref(&self) -> EnumVariantRef {
+    pub fn variant_ref(&self) -> EnumVariantRef {
         match self {
             Self::Semantic { variant, .. } => EnumVariantRef::semantic(*variant),
             Self::BodyLocal { variant, .. } => EnumVariantRef::body_local(*variant),
         }
     }
 
-    pub(crate) fn name(&self) -> &'a str {
+    pub fn name(&self) -> &'a str {
         match self {
             Self::Semantic { data, .. } => data.variant.name.as_str(),
             Self::BodyLocal { data, .. } => data.variant.name.as_str(),
         }
     }
 
-    pub(crate) fn docs_text(&self) -> Option<String> {
+    pub fn docs_text(&self) -> Option<String> {
         self.docs().map(Documentation::text)
     }
 
@@ -51,16 +51,16 @@ impl<'a> EnumVariant<'a> {
     }
 }
 
-pub(crate) struct EnumVariantView<'a, 'db> {
+pub struct EnumVariantView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> EnumVariantView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
-    pub(crate) fn variants_for_body_type_path(
+    pub fn variants_for_body_type_path(
         &self,
         body: BodyRef,
         scope: ScopeId,
@@ -141,10 +141,7 @@ impl<'a, 'db> EnumVariantView<'a, 'db> {
         Ok(variants)
     }
 
-    pub(crate) fn variant(
-        &self,
-        variant: EnumVariantRef,
-    ) -> anyhow::Result<Option<EnumVariant<'_>>> {
+    pub fn variant(&self, variant: EnumVariantRef) -> anyhow::Result<Option<EnumVariant<'_>>> {
         match variant.repr() {
             EnumVariantRefRepr::Semantic(variant) => Ok(self
                 .analysis

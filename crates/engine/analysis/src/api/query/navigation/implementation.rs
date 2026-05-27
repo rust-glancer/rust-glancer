@@ -1,13 +1,12 @@
 //! Goto-implementation query flow.
 
 use rg_ir_model::{TargetRef, identity::DeclarationRef};
+use rg_ir_view::implementation::ImplementationView;
 use rg_parse::FileId;
 
 use super::target::NavigationTargetProjection;
 use crate::{
-    api::{
-        Analysis, source_symbol::SourceSymbolResolver, view::implementation::ImplementationView,
-    },
+    api::{Analysis, source_symbol::SourceSymbolResolver},
     model::{NavigationTarget, SymbolAt},
 };
 

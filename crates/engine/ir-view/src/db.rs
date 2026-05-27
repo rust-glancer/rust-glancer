@@ -10,14 +10,14 @@ use rg_semantic_ir::SemanticIrReadTxn;
 /// easy to extract as one crate first; a trait facade can replace these fields later once the
 /// method surface settles.
 #[derive(Debug, Clone)]
-pub(crate) struct IndexedViewDb<'db> {
+pub struct IndexedViewDb<'db> {
     pub(crate) def_map: DefMapReadTxn<'db>,
     pub(crate) semantic_ir: SemanticIrReadTxn<'db>,
     pub(crate) body_ir: BodyIrReadTxn<'db>,
 }
 
 impl<'db> IndexedViewDb<'db> {
-    pub(crate) fn new(
+    pub fn new(
         def_map: DefMapReadTxn<'db>,
         semantic_ir: SemanticIrReadTxn<'db>,
         body_ir: BodyIrReadTxn<'db>,

@@ -5,6 +5,7 @@
 //! projects declaration identities into source locations.
 
 use rg_ir_model::{TargetRef, identity::DeclarationRef};
+use rg_ir_view::reference::{IndexedSourceLocation, ReferenceView};
 use rg_parse::FileId;
 
 use crate::{
@@ -12,7 +13,6 @@ use crate::{
         Analysis,
         source_symbol::SourceSymbolResolver,
         source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolRole},
-        view::reference::{IndexedSourceLocation, ReferenceView},
     },
     model::{ReferenceLocation, SymbolAt},
 };

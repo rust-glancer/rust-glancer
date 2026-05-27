@@ -16,11 +16,11 @@ use rg_ir_model::{
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{FieldKey, SemanticCursorCandidate, TypePathContext};
 
-use crate::api::view::{IndexedViewDb, declaration::DeclarationView};
+use crate::{IndexedViewDb, declaration::DeclarationView};
 
 /// Why an indexed source occurrence exists in the scanned source surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IndexedSourceRole {
+pub enum IndexedSourceRole {
     Declaration,
     Reference,
     Structural,
@@ -28,7 +28,7 @@ pub(crate) enum IndexedSourceRole {
 
 /// One indexed source span that can be interpreted by analysis queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IndexedSourceOccurrence {
+pub struct IndexedSourceOccurrence {
     target: TargetRef,
     file_id: FileId,
     span: Span,
@@ -37,7 +37,7 @@ pub(crate) struct IndexedSourceOccurrence {
 }
 
 impl IndexedSourceOccurrence {
-    pub(crate) fn into_parts(
+    pub fn into_parts(
         self,
     ) -> (
         IndexedSourceFact,
@@ -87,7 +87,7 @@ impl IndexedSourceOccurrence {
 
 /// Indexed fact occupying one source occurrence.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum IndexedSourceFact {
+pub enum IndexedSourceFact {
     Declaration(DeclarationRef),
     FunctionBody(FunctionBodyRef),
     Expr(ExprRef),
@@ -107,14 +107,14 @@ pub(crate) enum IndexedSourceFact {
 
 /// Resolution context for a type-looking path in source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IndexedTypePathScope {
+pub enum IndexedTypePathScope {
     Signature(TypePathContext),
     Body(LexicalScopeRef),
 }
 
 /// Namespace expected by an indexed name site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IndexedNameNamespace {
+pub enum IndexedNameNamespace {
     Types,
     Values,
 }
@@ -139,46 +139,46 @@ impl From<BodyUnqualifiedCompletionNamespace> for IndexedNameNamespace {
 
 /// Source site for member access after a dot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct IndexedMemberAccessSite {
+pub struct IndexedMemberAccessSite {
     receiver: ExprRef,
     member_prefix_span: Span,
 }
 
 impl IndexedMemberAccessSite {
-    pub(crate) fn receiver(self) -> ExprRef {
+    pub fn receiver(self) -> ExprRef {
         self.receiver
     }
 
-    pub(crate) fn member_prefix_span(self) -> Span {
+    pub fn member_prefix_span(self) -> Span {
         self.member_prefix_span
     }
 }
 
 /// Source site for a qualified path segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IndexedQualifiedPathSite {
+pub struct IndexedQualifiedPathSite {
     scope: IndexedQualifiedPathScope,
     qualifier: Path,
     member_prefix_span: Span,
 }
 
 impl IndexedQualifiedPathSite {
-    pub(crate) fn scope(&self) -> IndexedQualifiedPathScope {
+    pub fn scope(&self) -> IndexedQualifiedPathScope {
         self.scope
     }
 
-    pub(crate) fn qualifier(&self) -> &Path {
+    pub fn qualifier(&self) -> &Path {
         &self.qualifier
     }
 
-    pub(crate) fn member_prefix_span(&self) -> Span {
+    pub fn member_prefix_span(&self) -> Span {
         self.member_prefix_span
     }
 }
 
 /// Resolution context for a qualified path source site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum IndexedQualifiedPathScope {
+pub enum IndexedQualifiedPathScope {
     Body {
         scope: LexicalScopeRef,
         namespace: IndexedNameNamespace,
@@ -190,24 +190,24 @@ pub(crate) enum IndexedQualifiedPathScope {
 
 /// Source site for an unqualified name.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IndexedUnqualifiedNameSite {
+pub struct IndexedUnqualifiedNameSite {
     scope: IndexedUnqualifiedNameScope,
     member_prefix_span: Span,
 }
 
 impl IndexedUnqualifiedNameSite {
-    pub(crate) fn scope(&self) -> &IndexedUnqualifiedNameScope {
+    pub fn scope(&self) -> &IndexedUnqualifiedNameScope {
         &self.scope
     }
 
-    pub(crate) fn member_prefix_span(&self) -> Span {
+    pub fn member_prefix_span(&self) -> Span {
         self.member_prefix_span
     }
 }
 
 /// Resolution context for an unqualified name source site.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum IndexedUnqualifiedNameScope {
+pub enum IndexedUnqualifiedNameScope {
     Body {
         scope: LexicalScopeRef,
         namespace: IndexedNameNamespace,
@@ -221,7 +221,7 @@ pub(crate) enum IndexedUnqualifiedNameScope {
 
 /// Source site for record literal or pattern field names.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct IndexedRecordFieldListSite {
+pub struct IndexedRecordFieldListSite {
     scope: LexicalScopeRef,
     owner: Path,
     member_prefix_span: Span,
@@ -229,33 +229,33 @@ pub(crate) struct IndexedRecordFieldListSite {
 }
 
 impl IndexedRecordFieldListSite {
-    pub(crate) fn scope(&self) -> LexicalScopeRef {
+    pub fn scope(&self) -> LexicalScopeRef {
         self.scope
     }
 
-    pub(crate) fn owner(&self) -> &Path {
+    pub fn owner(&self) -> &Path {
         &self.owner
     }
 
-    pub(crate) fn member_prefix_span(&self) -> Span {
+    pub fn member_prefix_span(&self) -> Span {
         self.member_prefix_span
     }
 
-    pub(crate) fn existing_fields(&self) -> &[FieldKey] {
+    pub fn existing_fields(&self) -> &[FieldKey] {
         &self.existing_fields
     }
 }
 
-pub(crate) struct SourceFactsView<'a, 'db> {
+pub struct SourceFactsView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> SourceFactsView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
-    pub(crate) fn occurrences_at(
+    pub fn occurrences_at(
         &self,
         target: TargetRef,
         file_id: FileId,
@@ -292,7 +292,7 @@ impl<'a, 'db> SourceFactsView<'a, 'db> {
         Ok(occurrences)
     }
 
-    pub(crate) fn occurrences_in_target(
+    pub fn occurrences_in_target(
         &self,
         target: TargetRef,
         file_id: Option<FileId>,
@@ -320,7 +320,7 @@ impl<'a, 'db> SourceFactsView<'a, 'db> {
         Ok(occurrences)
     }
 
-    pub(crate) fn member_access_site_at(
+    pub fn member_access_site_at(
         &self,
         target: TargetRef,
         file_id: FileId,
@@ -336,7 +336,7 @@ impl<'a, 'db> SourceFactsView<'a, 'db> {
             }))
     }
 
-    pub(crate) fn body_qualified_path_site_at(
+    pub fn body_qualified_path_site_at(
         &self,
         target: TargetRef,
         file_id: FileId,
@@ -356,7 +356,7 @@ impl<'a, 'db> SourceFactsView<'a, 'db> {
             }))
     }
 
-    pub(crate) fn import_qualified_path_site_at(
+    pub fn import_qualified_path_site_at(
         &self,
         target: TargetRef,
         file_id: FileId,
@@ -375,7 +375,7 @@ impl<'a, 'db> SourceFactsView<'a, 'db> {
             }))
     }
 
-    pub(crate) fn body_unqualified_name_site_at(
+    pub fn body_unqualified_name_site_at(
         &self,
         target: TargetRef,
         file_id: FileId,
@@ -396,7 +396,7 @@ impl<'a, 'db> SourceFactsView<'a, 'db> {
             }))
     }
 
-    pub(crate) fn import_unqualified_name_site_at(
+    pub fn import_unqualified_name_site_at(
         &self,
         target: TargetRef,
         file_id: FileId,
@@ -414,7 +414,7 @@ impl<'a, 'db> SourceFactsView<'a, 'db> {
             }))
     }
 
-    pub(crate) fn record_field_list_site_at(
+    pub fn record_field_list_site_at(
         &self,
         target: TargetRef,
         file_id: FileId,

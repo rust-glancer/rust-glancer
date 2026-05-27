@@ -1,8 +1,9 @@
 //! Shared rendering for module-scope completion candidates.
 
+use rg_ir_view::member::MemberView;
+
 use crate::{
     Analysis,
-    api::view::member::MemberView,
     model::{CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem},
 };
 

@@ -14,35 +14,33 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::Documentation;
 
-use crate::api::view::{
-    IndexedSymbolKind, IndexedViewDb, path::PathView, signature::SignatureRenderer,
-};
+use crate::{IndexedSymbolKind, IndexedViewDb, path::PathView, signature::SignatureRenderer};
 
 use super::{declaration::DeclarationView, member::MemberView};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct DeclarationDetailsContext {
-    pub(crate) module_display_name: Option<String>,
+pub struct DeclarationDetailsContext {
+    pub module_display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DeclarationDetails {
-    pub(crate) kind: IndexedSymbolKind,
-    pub(crate) path: Option<String>,
-    pub(crate) signature: Option<String>,
-    pub(crate) docs: Option<String>,
+pub struct DeclarationDetails {
+    pub kind: IndexedSymbolKind,
+    pub path: Option<String>,
+    pub signature: Option<String>,
+    pub docs: Option<String>,
 }
 
-pub(crate) struct DeclarationDetailsView<'a, 'db> {
+pub struct DeclarationDetailsView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
-    pub(crate) fn details_for_declaration(
+    pub fn details_for_declaration(
         &self,
         declaration: DeclarationRef,
         context: &DeclarationDetailsContext,

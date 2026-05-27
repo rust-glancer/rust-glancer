@@ -16,18 +16,18 @@ use rg_ir_model::{
 use rg_ir_model::{BodyImplId, BodyImplRef, BodyItemRef};
 use rg_ty::{IndexedTy, IndexedTyExt};
 
-use crate::api::view::{IndexedViewDb, resolution::ResolutionView};
+use crate::{IndexedViewDb, resolution::ResolutionView};
 
-pub(crate) struct ImplementationView<'a, 'db> {
+pub struct ImplementationView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> ImplementationView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
-    pub(crate) fn implementations_for_method_call_expr(
+    pub fn implementations_for_method_call_expr(
         &self,
         expr: ExprRef,
     ) -> anyhow::Result<Option<Vec<DeclarationRef>>> {
@@ -59,7 +59,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         Ok(Some(implementations))
     }
 
-    pub(crate) fn implementations_for_declaration(
+    pub fn implementations_for_declaration(
         &self,
         declaration: DeclarationRef,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
@@ -133,10 +133,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         Ok(implementations)
     }
 
-    pub(crate) fn implementations_for_ty(
-        &self,
-        ty: &IndexedTy,
-    ) -> anyhow::Result<Vec<DeclarationRef>> {
+    pub fn implementations_for_ty(&self, ty: &IndexedTy) -> anyhow::Result<Vec<DeclarationRef>> {
         let mut implementations = Vec::new();
         self.extend_ty_implementations(&mut implementations, ty)?;
         Ok(implementations)

@@ -7,7 +7,7 @@
 use rg_ir_model::TargetRef;
 use rg_parse::{FileId, Span};
 
-use crate::api::view::{
+use rg_ir_view::{
     IndexedViewDb,
     source::{
         IndexedMemberAccessSite, IndexedNameNamespace, IndexedQualifiedPathScope,

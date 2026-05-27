@@ -11,16 +11,16 @@ use rg_ir_model::{
     identity::{DeclarationRef, DeclarationRefRepr, ExprRef, NameDefRef, NameDefRefRepr},
 };
 
-use crate::api::view::IndexedViewDb;
+use crate::IndexedViewDb;
 
-pub(crate) struct ResolutionView<'a, 'db>(&'a IndexedViewDb<'db>);
+pub struct ResolutionView<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> ResolutionView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self(analysis)
     }
 
-    pub(crate) fn declarations_for_semantic_type_path(
+    pub fn declarations_for_semantic_type_path(
         &self,
         context: rg_semantic_ir::TypePathContext,
         path: &Path,
@@ -34,7 +34,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
             .collect())
     }
 
-    pub(crate) fn declarations_for_declaration(
+    pub fn declarations_for_declaration(
         &self,
         declaration: DeclarationRef,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
@@ -54,10 +54,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         }
     }
 
-    pub(crate) fn declarations_for_expr(
-        &self,
-        expr: ExprRef,
-    ) -> anyhow::Result<Vec<DeclarationRef>> {
+    pub fn declarations_for_expr(&self, expr: ExprRef) -> anyhow::Result<Vec<DeclarationRef>> {
         let body_ref = expr.body_ir();
         let Some(body) = self.0.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
@@ -95,7 +92,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         Ok(Some(DeclarationRef::semantic(item.into())))
     }
 
-    pub(crate) fn declarations_for_use_path(
+    pub fn declarations_for_use_path(
         &self,
         module: ModuleRef,
         path: &Path,
@@ -107,7 +104,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         Ok(declarations)
     }
 
-    pub(crate) fn declarations_for_body_type_path(
+    pub fn declarations_for_body_type_path(
         &self,
         body_ref: BodyRef,
         scope: ScopeId,
@@ -132,7 +129,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         self.declarations_for_use_path(body.owner_module(), path)
     }
 
-    pub(crate) fn declarations_for_body_value_path(
+    pub fn declarations_for_body_value_path(
         &self,
         body_ref: BodyRef,
         scope: ScopeId,
@@ -148,7 +145,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         self.declarations_for_body_resolution(Some(body_ref), &resolution)
     }
 
-    pub(crate) fn declarations_for_body_resolution(
+    pub fn declarations_for_body_resolution(
         &self,
         body_ref: Option<BodyRef>,
         resolution: &BodyResolution,

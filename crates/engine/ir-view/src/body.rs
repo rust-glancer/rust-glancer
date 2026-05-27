@@ -13,16 +13,16 @@ use rg_ir_model::{
 use rg_parse::{FileId, Span, TextSpan};
 use rg_ty::{IndexedTy, IndexedTyRepr};
 
-use crate::api::view::IndexedViewDb;
+use crate::IndexedViewDb;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum BodyNameNamespace {
+pub enum BodyNameNamespace {
     Types,
     Values,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BodyNameScope {
+pub struct BodyNameScope {
     body: BodyRef,
     scope: ScopeId,
     namespace: BodyNameNamespace,
@@ -30,7 +30,7 @@ pub(crate) struct BodyNameScope {
 }
 
 impl BodyNameScope {
-    pub(crate) fn new(
+    pub fn new(
         body: BodyRef,
         scope: ScopeId,
         namespace: BodyNameNamespace,
@@ -46,7 +46,7 @@ impl BodyNameScope {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum BodyLexicalName {
+pub enum BodyLexicalName {
     Binding {
         binding: BodyBindingRef,
         label: String,
@@ -73,52 +73,52 @@ pub(crate) enum BodyLexicalName {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct InferredBindingTy {
+pub struct InferredBindingTy {
     file_id: FileId,
     span: Span,
     ty: IndexedTy,
 }
 
 impl InferredBindingTy {
-    pub(crate) fn file_id(&self) -> FileId {
+    pub fn file_id(&self) -> FileId {
         self.file_id
     }
 
-    pub(crate) fn span(&self) -> Span {
+    pub fn span(&self) -> Span {
         self.span
     }
 
-    pub(crate) fn ty(&self) -> &IndexedTy {
+    pub fn ty(&self) -> &IndexedTy {
         &self.ty
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct BodyLocalGroup {
+pub struct BodyLocalGroup {
     owner: DeclarationRef,
     body: BodyRef,
 }
 
 impl BodyLocalGroup {
-    pub(crate) fn owner(&self) -> DeclarationRef {
+    pub fn owner(&self) -> DeclarationRef {
         self.owner
     }
 
-    pub(crate) fn body(&self) -> BodyRef {
+    pub fn body(&self) -> BodyRef {
         self.body
     }
 }
 
-pub(crate) struct BodyView<'a, 'db> {
+pub struct BodyView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> BodyView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
-    pub(crate) fn owner_module(&self, body_ref: BodyRef) -> anyhow::Result<Option<ModuleRef>> {
+    pub fn owner_module(&self, body_ref: BodyRef) -> anyhow::Result<Option<ModuleRef>> {
         Ok(self
             .analysis
             .body_ir
@@ -126,11 +126,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .map(|body| body.owner_module()))
     }
 
-    pub(crate) fn expr_ty(
-        &self,
-        body_ref: BodyRef,
-        expr: ExprId,
-    ) -> anyhow::Result<Option<IndexedTy>> {
+    pub fn expr_ty(&self, body_ref: BodyRef, expr: ExprId) -> anyhow::Result<Option<IndexedTy>> {
         Ok(self
             .analysis
             .body_ir
@@ -139,7 +135,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .map(|expr| expr.ty.clone()))
     }
 
-    pub(crate) fn binding_ty(&self, binding: BodyBindingRef) -> anyhow::Result<Option<IndexedTy>> {
+    pub fn binding_ty(&self, binding: BodyBindingRef) -> anyhow::Result<Option<IndexedTy>> {
         Ok(self
             .analysis
             .body_ir
@@ -148,10 +144,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .map(|binding| binding.ty.clone()))
     }
 
-    pub(crate) fn local_value_item_ty(
-        &self,
-        item: BodyValueItemRef,
-    ) -> anyhow::Result<Option<IndexedTy>> {
+    pub fn local_value_item_ty(&self, item: BodyValueItemRef) -> anyhow::Result<Option<IndexedTy>> {
         Ok(self
             .analysis
             .body_ir
@@ -161,7 +154,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .map(IndexedTyRepr::syntax))
     }
 
-    pub(crate) fn receiver_ty(
+    pub fn receiver_ty(
         &self,
         body_ref: BodyRef,
         receiver: ExprId,
@@ -169,17 +162,11 @@ impl<'a, 'db> BodyView<'a, 'db> {
         self.expr_ty(body_ref, receiver)
     }
 
-    pub(crate) fn fields_for_local_type(
-        &self,
-        item: BodyItemRef,
-    ) -> anyhow::Result<Vec<BodyFieldRef>> {
+    pub fn fields_for_local_type(&self, item: BodyItemRef) -> anyhow::Result<Vec<BodyFieldRef>> {
         Ok(self.analysis.body_ir.fields_for_local_type(item)?)
     }
 
-    pub(crate) fn lexical_names(
-        &self,
-        scope: BodyNameScope,
-    ) -> anyhow::Result<Vec<BodyLexicalName>> {
+    pub fn lexical_names(&self, scope: BodyNameScope) -> anyhow::Result<Vec<BodyLexicalName>> {
         let Some(body) = self.analysis.body_ir.body_data(scope.body)? else {
             return Ok(Vec::new());
         };
@@ -295,7 +282,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(names)
     }
 
-    pub(crate) fn inferred_binding_tys(
+    pub fn inferred_binding_tys(
         &self,
         target: TargetRef,
         file_id: FileId,
@@ -335,7 +322,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(bindings)
     }
 
-    pub(crate) fn local_groups(
+    pub fn local_groups(
         &self,
         target: TargetRef,
         file_id: FileId,
@@ -362,7 +349,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(groups)
     }
 
-    pub(crate) fn local_scope_declarations(
+    pub fn local_scope_declarations(
         &self,
         body_ref: BodyRef,
         file_id: FileId,

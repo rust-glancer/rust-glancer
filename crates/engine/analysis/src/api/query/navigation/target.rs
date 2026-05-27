@@ -4,15 +4,13 @@ use rg_ir_model::{
     ModuleRef,
     identity::{DeclarationRef, DeclarationRefRepr},
 };
-
-use crate::{
-    api::view::{
-        IndexedViewDb,
-        declaration::{Declaration, DeclarationView},
-        module::ModuleView,
-    },
-    model::{NavigationTarget, NavigationTargetKind},
+use rg_ir_view::{
+    IndexedViewDb,
+    declaration::{Declaration, DeclarationView},
+    module::ModuleView,
 };
+
+use crate::model::{NavigationTarget, NavigationTargetKind};
 
 /// Converts stable IR identities into concrete editor navigation targets.
 ///

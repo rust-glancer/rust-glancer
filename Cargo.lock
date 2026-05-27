@@ -1383,6 +1383,7 @@ dependencies = [
  "rg_body_ir",
  "rg_def_map",
  "rg_ir_model",
+ "rg_ir_view",
  "rg_item_tree",
  "rg_package_store",
  "rg_parse",
@@ -1483,6 +1484,20 @@ dependencies = [
  "rg_parse",
  "rg_workspace",
  "wincode",
+]
+
+[[package]]
+name = "rg_ir_view"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "rg_body_ir",
+ "rg_def_map",
+ "rg_ir_model",
+ "rg_parse",
+ "rg_semantic_ir",
+ "rg_ty",
 ]
 
 [[package]]

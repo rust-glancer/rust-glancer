@@ -1,11 +1,10 @@
 //! Shared field-completion rendering.
 
-use crate::{
-    api::view::{IndexedViewDb, member::MemberField, signature::SignatureRenderer},
-    model::{
-        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
-        CompletionKind, CompletionTarget,
-    },
+use rg_ir_view::{IndexedViewDb, member::MemberField, signature::SignatureRenderer};
+
+use crate::model::{
+    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
+    CompletionTarget,
 };
 
 use super::completion_sort::CompletionSortPolicy;
