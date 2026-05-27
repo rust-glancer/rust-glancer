@@ -260,8 +260,10 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 };
                 Ok(Some(DeclarationDetails {
                     kind: SymbolKind::EnumVariant,
-                    path: PathView::new(self.db).enum_variant_path(variant_ref)?,
-                    signature: Some(SignatureRenderer::new(self.db).enum_variant_signature(data)),
+                    path: PathView::new(self.db).enum_variant_path(data)?,
+                    signature: Some(
+                        SignatureRenderer::new(self.db).enum_variant_signature(data.variant),
+                    ),
                     docs: data.variant.docs.as_ref().map(Documentation::text),
                 }))
             }
@@ -273,7 +275,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                     kind: SymbolKind::EnumVariant,
                     path: None,
                     signature: Some(
-                        SignatureRenderer::new(self.db).local_enum_variant_signature(data),
+                        SignatureRenderer::new(self.db).enum_variant_signature(data.variant),
                     ),
                     docs: data.variant.docs.as_ref().map(Documentation::text),
                 }))

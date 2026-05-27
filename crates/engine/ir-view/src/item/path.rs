@@ -5,9 +5,10 @@
 //! reconstruct import aliases or rustdoc-style canonicalization.
 
 use rg_ir_model::{
-    ConstRef, EnumVariantRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef,
-    TargetRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    ConstRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef, TargetRef, TraitRef,
+    TypeAliasRef, TypeDefId, TypeDefRef,
 };
+use rg_semantic_ir::EnumVariantData;
 
 use crate::IndexedViewDb;
 
@@ -100,10 +101,7 @@ impl<'a, 'db> PathView<'a, 'db> {
         self.path_in_module(data.owner, &data.name)
     }
 
-    pub fn enum_variant_path(&self, variant_ref: EnumVariantRef) -> anyhow::Result<Option<String>> {
-        let Some(data) = self.0.semantic_ir.enum_variant_data(variant_ref)? else {
-            return Ok(None);
-        };
+    pub fn enum_variant_path(&self, data: EnumVariantData<'_>) -> anyhow::Result<Option<String>> {
         Ok(self
             .type_def_path(data.owner)?
             .map(|owner| format!("{owner}::{}", data.variant.name)))

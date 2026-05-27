@@ -4,14 +4,13 @@
 //! stores instead of trying to reconstruct rustc-perfect signatures.
 
 use rg_body_ir::{
-    BindingData, BodyEnumVariantData, BodyFieldData, BodyFunctionData, BodyItemData,
-    BodyItemDeclaration, BodyValueItemData, BodyValueItemDeclaration,
+    BindingData, BodyFieldData, BodyFunctionData, BodyItemData, BodyItemDeclaration,
+    BodyValueItemData, BodyValueItemDeclaration,
 };
 use rg_semantic_ir::{
-    ConstData, EnumData, EnumVariantData, EnumVariantItem, FieldData, FieldItem, FieldKey,
-    FieldList, FunctionData, FunctionItem, FunctionQualifiers, GenericParams, Mutability,
-    ParamItem, StaticData, StructData, TraitData, TypeAliasData, TypeBound, TypeRef, UnionData,
-    VisibilityLevel, WherePredicate,
+    ConstData, EnumData, EnumVariantItem, FieldData, FieldItem, FieldKey, FieldList, FunctionData,
+    FunctionItem, FunctionQualifiers, GenericParams, Mutability, ParamItem, StaticData, StructData,
+    TraitData, TypeAliasData, TypeBound, TypeRef, UnionData, VisibilityLevel, WherePredicate,
 };
 
 use crate::{
@@ -144,8 +143,8 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         }
     }
 
-    pub fn enum_variant_signature(&self, data: EnumVariantData<'_>) -> String {
-        enum_variant_signature(data.variant)
+    pub fn enum_variant_signature(&self, variant: &EnumVariantItem) -> String {
+        enum_variant_signature(variant)
     }
 
     pub fn local_item_signature(&self, data: &BodyItemData) -> String {
@@ -227,10 +226,6 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
 
     pub fn local_field_signature(&self, data: BodyFieldData<'_>) -> Option<String> {
         field_signature(data.field)
-    }
-
-    pub fn local_enum_variant_signature(&self, data: BodyEnumVariantData<'_>) -> String {
-        enum_variant_signature(data.variant)
     }
 
     pub fn binding_signature(&self, data: &BindingData) -> anyhow::Result<String> {
