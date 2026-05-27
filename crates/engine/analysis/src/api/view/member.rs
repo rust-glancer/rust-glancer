@@ -26,7 +26,7 @@ pub(crate) enum MemberReceiverTy<'a> {
 }
 
 impl<'a> MemberReceiverTy<'a> {
-    pub(crate) fn in_body_ty(ty: &'a IndexedTy) -> impl Iterator<Item = Self> + 'a {
+    pub(crate) fn in_indexed_ty(ty: &'a IndexedTy) -> impl Iterator<Item = Self> + 'a {
         ty.as_local_nominals()
             .iter()
             .map(Self::BodyLocal)
@@ -246,7 +246,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
         for candidate in autoderef.candidates(BodyAutoderefMode::FieldLookup, ty) {
             let candidate = candidate?;
-            for receiver_ty in MemberReceiverTy::in_body_ty(candidate.ty()) {
+            for receiver_ty in MemberReceiverTy::in_indexed_ty(candidate.ty()) {
                 fields.extend(self.field_candidates(receiver_ty)?);
             }
         }
@@ -432,7 +432,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
         for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, ty) {
             let candidate = candidate?;
-            for receiver_ty in MemberReceiverTy::in_body_ty(candidate.ty()) {
+            for receiver_ty in MemberReceiverTy::in_indexed_ty(candidate.ty()) {
                 methods.extend(self.method_candidates(receiver_ty)?);
             }
         }

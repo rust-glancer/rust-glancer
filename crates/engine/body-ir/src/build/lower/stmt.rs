@@ -9,13 +9,14 @@ use rg_item_tree::{
     ConstItem, Documentation, EnumItem, FunctionItem, ImplItem, StaticItem, StructItem, TraitItem,
     TypeAliasItem, TypeRef, UnionItem,
 };
+use rg_ty::IndexedTy;
 
 use crate::ir::{
     BindingData, BindingId, BindingKind, BodyFunctionData, BodyFunctionId, BodyFunctionOwner,
     BodyImplData, BodyImplId, BodyItemData, BodyItemDeclaration, BodyItemId, BodyItemKind,
     BodyItemOwner, BodySelfParamKind, BodyValueItemData, BodyValueItemDeclaration, BodyValueItemId,
     BodyValueItemKind, BodyValueItemOwner, ExprBlockKind, ExprId, ExprKind, ScopeId, StmtData,
-    StmtId, StmtKind, ty::BodyTy,
+    StmtId, StmtKind,
 };
 
 use super::function::FunctionBodyLowering;
@@ -64,7 +65,7 @@ impl FunctionBodyLowering<'_> {
             kind: BindingKind::SelfParam(self_kind),
             name: Some(self.interner.intern("self")),
             annotation,
-            ty: BodyTy::Unknown,
+            ty: IndexedTy::Unknown,
         })
     }
 
@@ -80,7 +81,7 @@ impl FunctionBodyLowering<'_> {
                 kind: BindingKind::Param,
                 name: None,
                 annotation,
-                ty: BodyTy::Unknown,
+                ty: IndexedTy::Unknown,
             })],
         }
     }

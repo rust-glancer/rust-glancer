@@ -35,6 +35,7 @@ serde = { workspace = true, features = ["derive"] }
 cargo_metadata.workspace = true
 divan.workspace = true
 expect-test.workspace = true
+rg_ty.workspace = true
 test_fixture.workspace = true
 
 [[bench]]

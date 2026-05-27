@@ -5,10 +5,10 @@ use rg_syntax::ast;
 use rg_ir_model::{FunctionRef, ModuleRef};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
+use rg_ty::IndexedTy;
 
 use crate::ir::{
     BodyBuilder, BodyData, BodyResolution, BodySource, ExprData, ExprId, ExprKind, ScopeId,
-    ty::BodyTy,
 };
 
 use super::syntax::source_for;
@@ -75,7 +75,7 @@ impl FunctionBodyLowering<'_> {
             visible_bindings,
             kind,
             resolution: BodyResolution::Unknown,
-            ty: BodyTy::Unknown,
+            ty: IndexedTy::Unknown,
         })
     }
 

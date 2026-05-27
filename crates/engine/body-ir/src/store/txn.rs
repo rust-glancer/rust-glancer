@@ -4,6 +4,7 @@ use rg_def_map::{DefMapReadTxn, PackageSlot, Path};
 use rg_ir_model::{FieldRef, FunctionRef, TargetRef, TraitApplicability, TraitImplRef};
 use rg_package_store::{PackageRead, PackageStoreError, PackageStoreReadTxn};
 use rg_semantic_ir::SemanticIrReadTxn;
+use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy};
 
 use crate::{
     BindingData, BodyBindingRef, BodyData, BodyDeclarationRef, BodyDeclarationView,
@@ -11,8 +12,6 @@ use crate::{
     BodyFunctionRef, BodyImplRef, BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution,
     BodyValueItemRef, PackageBodies, ScopeId, TargetBodies, resolution, view::BodyDeclarationData,
 };
-
-use crate::ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy};
 
 /// Read-only Body IR access for one query transaction.
 #[derive(Debug, Clone)]
@@ -124,7 +123,7 @@ impl<'db> BodyIrReadTxn<'db> {
         body_ref: BodyRef,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<(BodyResolution, BodyTy), PackageStoreError> {
+    ) -> Result<(BodyResolution, IndexedTy), PackageStoreError> {
         let body = self.body_data(body_ref)?;
         resolution::resolve_value_path_in_scope(body, def_map, semantic_ir, body_ref, scope, path)
     }
@@ -135,7 +134,7 @@ impl<'db> BodyIrReadTxn<'db> {
         def_map: &DefMapReadTxn<'db>,
         semantic_ir: &SemanticIrReadTxn<'db>,
         field_ref: FieldRef,
-    ) -> Result<Option<BodyTy>, PackageStoreError> {
+    ) -> Result<Option<IndexedTy>, PackageStoreError> {
         resolution::ty_for_field(def_map, semantic_ir, field_ref)
     }
 
@@ -145,7 +144,7 @@ impl<'db> BodyIrReadTxn<'db> {
         def_map: &DefMapReadTxn<'db>,
         semantic_ir: &SemanticIrReadTxn<'db>,
         function_ref: FunctionRef,
-        receiver_ty: &BodyNominalTy,
+        receiver_ty: &IndexedNominalTy,
     ) -> Result<bool, PackageStoreError> {
         resolution::semantic_function_applies_to_receiver(
             def_map,
@@ -160,7 +159,7 @@ impl<'db> BodyIrReadTxn<'db> {
         &self,
         def_map: &DefMapReadTxn<'db>,
         semantic_ir: &SemanticIrReadTxn<'db>,
-        receiver_ty: &BodyNominalTy,
+        receiver_ty: &IndexedNominalTy,
     ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
         resolution::semantic_trait_function_candidates_for_receiver(
             def_map,
@@ -175,7 +174,7 @@ impl<'db> BodyIrReadTxn<'db> {
         def_map: &DefMapReadTxn<'db>,
         semantic_ir: &SemanticIrReadTxn<'db>,
         trait_impl: TraitImplRef,
-        receiver_ty: &BodyNominalTy,
+        receiver_ty: &IndexedNominalTy,
     ) -> Result<bool, PackageStoreError> {
         resolution::semantic_trait_impl_applies_to_receiver(
             def_map,
@@ -191,7 +190,7 @@ impl<'db> BodyIrReadTxn<'db> {
         def_map: &DefMapReadTxn<'db>,
         semantic_ir: &SemanticIrReadTxn<'db>,
         function_ref: BodyFunctionRef,
-        receiver_ty: &BodyLocalNominalTy,
+        receiver_ty: &IndexedLocalNominalTy,
     ) -> Result<bool, PackageStoreError> {
         let body = self.body_data(function_ref.body)?;
         resolution::local_function_applies_to_receiver(

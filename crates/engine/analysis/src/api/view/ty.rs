@@ -1,4 +1,4 @@
-//! Composite projection from declarations and paths into Body IR types.
+//! Composite projection from declarations and paths into indexed types.
 //!
 //! `IndexedTy` is the common type vocabulary analysis exposes today, even when the source fact lives
 //! in Semantic IR or DefMap. This view keeps the storage-specific projection rules out of query

@@ -3,13 +3,13 @@ use std::fmt;
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::Span;
 use rg_text::Name;
+use rg_ty::IndexedTy;
 
 use super::{
     body::BodySource,
     ids::{BindingId, ExprId, PatId, ScopeId, StmtId},
     path::BodyPath,
     resolved::BodyResolution,
-    ty::BodyTy,
 };
 
 /// One lowered expression.
@@ -26,7 +26,7 @@ pub struct ExprData {
     pub visible_bindings: usize,
     pub kind: ExprKind,
     pub resolution: BodyResolution,
-    pub ty: BodyTy,
+    pub ty: IndexedTy,
 }
 
 impl ExprData {

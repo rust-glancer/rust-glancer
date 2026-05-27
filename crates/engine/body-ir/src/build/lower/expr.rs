@@ -10,11 +10,12 @@ use rg_syntax::{
 
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::{Span, TextSpan};
+use rg_ty::IndexedTy;
 
 use crate::ir::{
     BindingData, BindingKind, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
     ExprBinaryOp, ExprId, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LiteralKind,
-    MatchArmData, RecordExprField, RecordExprSpread, ScopeId, ty::BodyTy,
+    MatchArmData, RecordExprField, RecordExprSpread, ScopeId,
 };
 
 use super::function::FunctionBodyLowering;
@@ -291,7 +292,7 @@ impl FunctionBodyLowering<'_> {
                     kind: BindingKind::Param,
                     name: None,
                     annotation: annotation.clone(),
-                    ty: BodyTy::Unknown,
+                    ty: IndexedTy::Unknown,
                 });
                 (None, vec![binding])
             }

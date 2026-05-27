@@ -9,6 +9,7 @@ use rg_ir_model::TypeDefId;
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
+use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt};
 
 use crate::{
     BodyItemKind,
@@ -18,7 +19,6 @@ use crate::{
     ir::pat::{PatKind, RecordPatField},
     ir::path::BodyPath,
     ir::stmt::StmtKind,
-    ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt},
 };
 
 use super::{
@@ -134,27 +134,27 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         scope: ScopeId,
         annotation: Option<&rg_item_tree::TypeRef>,
         initializer: Option<ExprId>,
-    ) -> Result<BodyTy, PackageStoreError> {
+    ) -> Result<IndexedTy, PackageStoreError> {
         if let Some(annotation) = annotation {
             let ty =
                 BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
                     .ty_from_type_ref_in_scope(annotation, scope)?;
-            if !matches!(ty, BodyTy::Unknown) {
+            if !matches!(ty, IndexedTy::Unknown) {
                 return Ok(ty);
             }
         }
 
         Ok(initializer
             .map(|expr| self.body.exprs[expr].ty.clone())
-            .unwrap_or(BodyTy::Unknown))
+            .unwrap_or(IndexedTy::Unknown))
     }
 
     fn propagate_pat(
         &mut self,
         pat: PatId,
-        expected_ty: &BodyTy,
+        expected_ty: &IndexedTy,
     ) -> Result<bool, PackageStoreError> {
-        if matches!(expected_ty, BodyTy::Unknown) {
+        if matches!(expected_ty, IndexedTy::Unknown) {
             return Ok(false);
         }
 
@@ -204,7 +204,7 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         &mut self,
         path: Option<&BodyPath>,
         fields: &[PatId],
-        expected_ty: &BodyTy,
+        expected_ty: &IndexedTy,
     ) -> Result<bool, PackageStoreError> {
         let def_map_path = path.and_then(|path| path.as_def_map_path());
         let Some(variant_name) = variant_name(def_map_path.as_ref()) else {
@@ -225,7 +225,7 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         &mut self,
         path: Option<&BodyPath>,
         fields: &[RecordPatField],
-        expected_ty: &BodyTy,
+        expected_ty: &IndexedTy,
     ) -> Result<bool, PackageStoreError> {
         let def_map_path = path.and_then(|path| path.as_def_map_path());
         let Some(variant_name) = variant_name(def_map_path.as_ref()) else {
@@ -243,10 +243,10 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
 
     fn variant_field_ty(
         &self,
-        expected_ty: &BodyTy,
+        expected_ty: &IndexedTy,
         variant_name: &str,
         field_key: &FieldKey,
-    ) -> Result<Option<BodyTy>, PackageStoreError> {
+    ) -> Result<Option<IndexedTy>, PackageStoreError> {
         let mut candidates = Vec::new();
 
         // Pattern propagation peels only reference wrappers so enum payload inference remains
@@ -286,10 +286,10 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
 
     fn variant_field_ty_for_enum(
         &self,
-        enum_ty: &BodyNominalTy,
+        enum_ty: &IndexedNominalTy,
         variant_name: &str,
         field_key: &FieldKey,
-    ) -> Result<Option<BodyTy>, PackageStoreError> {
+    ) -> Result<Option<IndexedTy>, PackageStoreError> {
         if !matches!(enum_ty.def.id, TypeDefId::Enum(_)) {
             return Ok(None);
         }
@@ -317,17 +317,17 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
             self.semantic_ir,
             &field.ty,
             TypePathContext::module(enum_data.owner),
-            BodyTy::Unknown,
+            IndexedTy::Unknown,
             &subst,
         )?))
     }
 
     fn variant_field_ty_for_local_enum(
         &self,
-        enum_ty: &BodyLocalNominalTy,
+        enum_ty: &IndexedLocalNominalTy,
         variant_name: &str,
         field_key: &FieldKey,
-    ) -> Result<Option<BodyTy>, PackageStoreError> {
+    ) -> Result<Option<IndexedTy>, PackageStoreError> {
         if enum_ty.item.body != self.body_ref {
             return Ok(None);
         }
@@ -355,15 +355,15 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         ))
     }
 
-    fn set_binding_ty(&mut self, binding: BindingId, ty: BodyTy) -> bool {
-        if matches!(ty, BodyTy::Unknown) {
+    fn set_binding_ty(&mut self, binding: BindingId, ty: IndexedTy) -> bool {
+        if matches!(ty, IndexedTy::Unknown) {
             return false;
         }
 
         let Some(binding_data) = self.body.bindings.get_mut(binding) else {
             return false;
         };
-        if !matches!(binding_data.ty, BodyTy::Unknown) {
+        if !matches!(binding_data.ty, IndexedTy::Unknown) {
             return false;
         }
 

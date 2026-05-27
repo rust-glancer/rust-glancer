@@ -18,12 +18,12 @@ use rg_def_map::{DefMapReadTxn, Path};
 use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TraitImplRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
+use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy};
 
 use crate::{
     BodyData, BodyResolution,
     ir::ids::{BodyFunctionRef, BodyRef, ScopeId},
     ir::resolved::BodyTypePathResolution,
-    ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy},
 };
 
 use self::{
@@ -66,9 +66,9 @@ pub(super) fn resolve_value_path_in_scope(
     body_ref: BodyRef,
     scope: ScopeId,
     path: &Path,
-) -> Result<(BodyResolution, BodyTy), PackageStoreError> {
+) -> Result<(BodyResolution, IndexedTy), PackageStoreError> {
     let Some(body) = body else {
-        return Ok((BodyResolution::Unknown, BodyTy::Unknown));
+        return Ok((BodyResolution::Unknown, IndexedTy::Unknown));
     };
 
     BodyValuePathResolver::new(def_map, semantic_ir, None, body_ref, body)
@@ -79,7 +79,7 @@ pub(super) fn ty_for_field(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     field_ref: FieldRef,
-) -> Result<Option<BodyTy>, PackageStoreError> {
+) -> Result<Option<IndexedTy>, PackageStoreError> {
     // Field declarations live in Semantic IR, but Analysis expects Body IR's small type
     // vocabulary. Use the owning module as the type-path context for the field signature.
     let Some(field_data) = semantic_ir.field_data(field_ref)? else {
@@ -90,7 +90,7 @@ pub(super) fn ty_for_field(
         semantic_ir,
         &field_data.field.ty,
         TypePathContext::module(field_data.owner_module),
-        BodyTy::Unknown,
+        IndexedTy::Unknown,
         &TypeSubst::new(),
     )?))
 }
@@ -99,7 +99,7 @@ pub(super) fn semantic_function_applies_to_receiver(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     function_ref: FunctionRef,
-    receiver_ty: &BodyNominalTy,
+    receiver_ty: &IndexedNominalTy,
 ) -> Result<bool, PackageStoreError> {
     semantic_function_applies_to_receiver_impl(def_map, semantic_ir, function_ref, receiver_ty)
 }
@@ -107,7 +107,7 @@ pub(super) fn semantic_function_applies_to_receiver(
 pub(super) fn semantic_trait_function_candidates_for_receiver(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    receiver_ty: &BodyNominalTy,
+    receiver_ty: &IndexedNominalTy,
 ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
     semantic_trait_function_candidates_for_receiver_impl(
         None,
@@ -122,7 +122,7 @@ pub(super) fn semantic_trait_impl_applies_to_receiver(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     trait_impl: TraitImplRef,
-    receiver_ty: &BodyNominalTy,
+    receiver_ty: &IndexedNominalTy,
 ) -> Result<bool, PackageStoreError> {
     Ok(BodyImplMatcher::new(def_map, semantic_ir)
         .semantic_trait_impl_applicability(trait_impl, receiver_ty)?
@@ -134,7 +134,7 @@ pub(super) fn local_function_applies_to_receiver(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     function_ref: BodyFunctionRef,
-    receiver_ty: &BodyLocalNominalTy,
+    receiver_ty: &IndexedLocalNominalTy,
 ) -> Result<bool, PackageStoreError> {
     let Some(body) = body else {
         return Ok(false);

@@ -8,7 +8,6 @@ pub(crate) mod pat;
 pub(crate) mod path;
 pub(crate) mod resolved;
 pub(crate) mod stmt;
-pub(crate) mod ty;
 
 pub use self::{
     body::{

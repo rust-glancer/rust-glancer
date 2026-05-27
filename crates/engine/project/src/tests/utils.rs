@@ -12,11 +12,12 @@ use rg_analysis::{
     CompletionApplicability, CompletionClientCapabilities, CompletionItem, CompletionQuery,
     WorkspaceSymbol,
 };
-use rg_body_ir::{BodyAutoderef, BodyTyExt};
+use rg_body_ir::BodyAutoderef;
 use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb};
+use rg_ty::IndexedTyExt;
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate_with_markers};
 

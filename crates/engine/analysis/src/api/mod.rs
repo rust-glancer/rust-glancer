@@ -120,7 +120,7 @@ impl<'a> Analysis<'a> {
             .goto_implementation(target, file_id, offset)
     }
 
-    /// Returns the best-effort Body IR type under a source offset.
+    /// Returns the best-effort indexed type under a source offset.
     pub fn type_at(
         &self,
         target: TargetRef,

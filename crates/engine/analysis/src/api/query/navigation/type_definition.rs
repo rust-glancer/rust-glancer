@@ -11,7 +11,7 @@ use crate::{
 
 /// Implements goto-type-definition through the shared type query.
 ///
-/// This resolver asks `type_at` for the best-effort body type at the cursor and then navigates to
+/// This resolver asks `type_at` for the best-effort indexed type at the cursor and then navigates to
 /// the nominal declarations represented by that type.
 pub(crate) struct TypeDefinitionResolver<'a, 'db>(&'a Analysis<'db>);
 

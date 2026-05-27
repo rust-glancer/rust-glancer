@@ -7,12 +7,12 @@ use rg_syntax::{
 
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_text::Name;
+use rg_ty::IndexedTy;
 
 use crate::ir::{
     BindingData, BindingId, BindingKind, BodyPath, ExprId, LiteralKind, PatBindingMode, PatData,
     PatId, PatKind, PatMutability, PatRangeKind, RecordPatField, ScopeId,
     path::{BodyPathSegment, BodyPathSegmentKind},
-    ty::BodyTy,
 };
 
 use super::function::FunctionBodyLowering;
@@ -287,7 +287,7 @@ impl FunctionBodyLowering<'_> {
             kind,
             name: Some(name),
             annotation,
-            ty: BodyTy::Unknown,
+            ty: IndexedTy::Unknown,
         });
         bindings.push(binding);
         Some(binding)

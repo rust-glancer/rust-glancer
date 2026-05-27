@@ -1,12 +1,12 @@
 use rg_item_tree::TypeRef;
 use rg_text::Name;
+use rg_ty::IndexedTy;
 
 use super::{
     body::BodySource,
     ids::{
         BindingId, BodyFunctionId, BodyImplId, BodyItemId, BodyValueItemId, ExprId, PatId, ScopeId,
     },
-    ty::BodyTy,
 };
 
 /// One local binding introduced by a parameter or `let`.
@@ -19,7 +19,7 @@ pub struct BindingData {
     pub kind: BindingKind,
     pub name: Option<Name>,
     pub annotation: Option<TypeRef>,
-    pub ty: BodyTy,
+    pub ty: IndexedTy,
 }
 
 impl BindingData {

@@ -1652,6 +1652,7 @@ dependencies = [
  "rg_parse",
  "rg_semantic_ir",
  "rg_text",
+ "rg_ty",
  "rg_workspace",
  "serde",
  "test_fixture",

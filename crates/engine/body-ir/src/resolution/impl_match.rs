@@ -10,12 +10,12 @@ use rg_item_tree::{GenericArg, GenericParams, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
+use rg_ty::{IndexedGenericArg, IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyRepr};
 
 use crate::{
     ir::body::BodyData,
     ir::ids::{BodyFunctionRef, BodyRef},
     ir::item::{BodyFunctionOwner, BodyImplData},
-    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyRepr},
 };
 
 use super::{
@@ -78,7 +78,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     pub(super) fn semantic_function_applies_to_receiver(
         &self,
         function_ref: FunctionRef,
-        receiver_ty: &BodyNominalTy,
+        receiver_ty: &IndexedNominalTy,
     ) -> Result<bool, PackageStoreError> {
         // Trait items are shared by all impl candidates in the best-effort model. Inherent impl
         // items, however, must at least match the receiver's resolved self type.
@@ -109,7 +109,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     pub(super) fn semantic_trait_impl_match(
         &self,
         trait_impl: TraitImplRef,
-        receiver_ty: &BodyNominalTy,
+        receiver_ty: &IndexedNominalTy,
     ) -> Result<Option<TraitImplMatch>, PackageStoreError> {
         let Some(impl_data) = self.semantic_ir.impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
@@ -150,7 +150,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     pub(super) fn semantic_trait_impl_structural_match(
         &self,
         trait_impl: TraitImplRef,
-        receiver_ty: &BodyNominalTy,
+        receiver_ty: &IndexedNominalTy,
     ) -> Result<Option<TypeSubst>, PackageStoreError> {
         let Some(impl_data) = self.semantic_ir.impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
@@ -170,7 +170,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     pub(super) fn semantic_trait_impl_applicability(
         &self,
         trait_impl: TraitImplRef,
-        receiver_ty: &BodyNominalTy,
+        receiver_ty: &IndexedNominalTy,
     ) -> Result<TraitApplicability, PackageStoreError> {
         Ok(self
             .semantic_trait_impl_match(trait_impl, receiver_ty)?
@@ -185,7 +185,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     pub(super) fn semantic_impl_self_subst(
         &self,
         function_ref: FunctionRef,
-        receiver_ty: &BodyNominalTy,
+        receiver_ty: &IndexedNominalTy,
     ) -> TypeSubst {
         // Convert the impl header into substitutions for method signatures. For
         // `impl<U> Wrapper<U>`, a `Wrapper<User>` receiver gives `U -> User`.
@@ -212,7 +212,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     pub(super) fn semantic_impl_self_subst_for_impl(
         &self,
         impl_data: &rg_semantic_ir::ImplData,
-        receiver_ty: &BodyNominalTy,
+        receiver_ty: &IndexedNominalTy,
     ) -> TypeSubst {
         Self::impl_self_subst(&impl_data.generics, &impl_data.self_ty, &receiver_ty.args)
     }
@@ -225,7 +225,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
         &self,
         impl_ref: ImplRef,
         impl_data: &rg_semantic_ir::ImplData,
-        receiver_ty: &BodyNominalTy,
+        receiver_ty: &IndexedNominalTy,
     ) -> Result<bool, PackageStoreError> {
         // Type parameters in the impl self type act as wildcards. Concrete args such as
         // `impl Wrapper<User>` must equal the receiver's known args.
@@ -239,7 +239,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
         let Some(impl_type_args) = Self::item_tree_type_args(&segment.args) else {
             return Ok(false);
         };
-        let Some(receiver_type_args) = Self::body_type_args(&receiver_ty.args) else {
+        let Some(receiver_type_args) = Self::indexed_type_args(&receiver_ty.args) else {
             return Ok(false);
         };
         if impl_type_args.len() != receiver_type_args.len() {
@@ -264,7 +264,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
                 self.semantic_ir,
                 impl_arg,
                 context,
-                BodyTyRepr::syntax(impl_arg.clone()),
+                IndexedTyRepr::syntax(impl_arg.clone()),
                 &TypeSubst::new(),
             )?;
             if impl_arg_ty != receiver_arg {
@@ -283,7 +283,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
         &self,
         impl_ref: ImplRef,
         impl_data: &rg_semantic_ir::ImplData,
-        receiver_ty: &BodyNominalTy,
+        receiver_ty: &IndexedNominalTy,
     ) -> Result<TraitApplicability, PackageStoreError> {
         // This mirrors inherent impl matching, but returns `Maybe` instead of rejecting patterns
         // that contain generic parameters or unsupported pieces we intentionally do not solve.
@@ -297,7 +297,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
         let Some(impl_type_args) = Self::item_tree_type_args(&segment.args) else {
             return Ok(TraitApplicability::Maybe);
         };
-        let Some(receiver_type_args) = Self::body_type_args(&receiver_ty.args) else {
+        let Some(receiver_type_args) = Self::indexed_type_args(&receiver_ty.args) else {
             return Ok(TraitApplicability::Maybe);
         };
         if impl_type_args.len() != receiver_type_args.len() {
@@ -322,7 +322,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
                 self.semantic_ir,
                 impl_arg,
                 context,
-                BodyTyRepr::syntax(impl_arg.clone()),
+                IndexedTyRepr::syntax(impl_arg.clone()),
                 &TypeSubst::new(),
             )?;
             if Self::type_arg_comparison_is_uncertain(&impl_arg_ty)
@@ -349,7 +349,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
         &self,
         impl_ref: ImplRef,
         impl_data: &rg_semantic_ir::ImplData,
-        receiver_ty: &BodyNominalTy,
+        receiver_ty: &IndexedNominalTy,
     ) -> Result<Option<TypeSubst>, PackageStoreError> {
         if !Self::impl_header_has_only_plain_type_params(impl_data) {
             return Ok(None);
@@ -398,7 +398,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
                 self.semantic_ir,
                 impl_arg,
                 context,
-                BodyTyRepr::syntax(impl_arg.clone()),
+                IndexedTyRepr::syntax(impl_arg.clone()),
                 &TypeSubst::new(),
             )?;
             if Self::type_arg_comparison_is_uncertain(&impl_arg_ty)
@@ -421,7 +421,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     fn impl_self_subst(
         generics: &GenericParams,
         self_ty: &TypeRef,
-        receiver_args: &[crate::ir::ty::BodyGenericArg],
+        receiver_args: &[IndexedGenericArg],
     ) -> TypeSubst {
         let TypeRef::Path(self_ty) = self_ty else {
             return TypeSubst::new();
@@ -451,7 +451,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     }
 
     /// Records a strict direct-param substitution, rejecting conflicting repeated params.
-    fn push_structural_subst(subst: &mut TypeSubst, name: Name, ty: BodyTy) -> bool {
+    fn push_structural_subst(subst: &mut TypeSubst, name: Name, ty: IndexedTy) -> bool {
         if let Some((_, existing_ty)) = subst
             .iter()
             .find(|(existing_name, _)| existing_name == &name)
@@ -481,8 +481,8 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
         Some(type_args)
     }
 
-    /// Returns Body IR type args only when no lifetime/const/assoc args were preserved.
-    fn body_type_args(args: &[BodyGenericArg]) -> Option<Vec<BodyTy>> {
+    /// Returns type args only when no lifetime/const/assoc args were preserved.
+    fn indexed_type_args(args: &[IndexedGenericArg]) -> Option<Vec<IndexedTy>> {
         let mut type_args = Vec::new();
         for arg in args {
             type_args.push(body_generic_arg_ty(arg)?);
@@ -519,15 +519,17 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     }
 
     /// Returns whether comparing this type as a generic argument would overstate certainty.
-    fn type_arg_comparison_is_uncertain(ty: &BodyTy) -> bool {
+    fn type_arg_comparison_is_uncertain(ty: &IndexedTy) -> bool {
         match ty {
-            BodyTy::Repr(BodyTyRepr::Syntax(_)) | BodyTy::Unknown => true,
-            BodyTy::Reference { inner, .. } => Self::type_arg_comparison_is_uncertain(inner),
-            BodyTy::Unit
-            | BodyTy::Never
-            | BodyTy::Primitive(_)
-            | BodyTy::Repr(
-                BodyTyRepr::LocalNominal(_) | BodyTyRepr::Nominal(_) | BodyTyRepr::SelfTy(_),
+            IndexedTy::Repr(IndexedTyRepr::Syntax(_)) | IndexedTy::Unknown => true,
+            IndexedTy::Reference { inner, .. } => Self::type_arg_comparison_is_uncertain(inner),
+            IndexedTy::Unit
+            | IndexedTy::Never
+            | IndexedTy::Primitive(_)
+            | IndexedTy::Repr(
+                IndexedTyRepr::LocalNominal(_)
+                | IndexedTyRepr::Nominal(_)
+                | IndexedTyRepr::SelfTy(_),
             ) => false,
         }
     }
@@ -562,7 +564,7 @@ impl<'query, 'db, 'body> LocalImplMatcher<'query, 'db, 'body> {
     pub(super) fn local_function_applies_to_receiver(
         &self,
         function_ref: BodyFunctionRef,
-        receiver_ty: &BodyLocalNominalTy,
+        receiver_ty: &IndexedLocalNominalTy,
     ) -> Result<bool, PackageStoreError> {
         // Body-local inherent impls are selected by exact local item identity, then refined by the
         // same shallow generic-argument compatibility rule used for module-level impls.
@@ -588,7 +590,7 @@ impl<'query, 'db, 'body> LocalImplMatcher<'query, 'db, 'body> {
     pub(super) fn local_impl_applies_to_receiver(
         &self,
         impl_data: &BodyImplData,
-        receiver_ty: &BodyLocalNominalTy,
+        receiver_ty: &IndexedLocalNominalTy,
     ) -> Result<bool, PackageStoreError> {
         // Body-local trait impls are an explicit non-goal. They are rare enough that modeling
         // their lookup would add more complexity than useful LSP signal at this stage.
@@ -606,7 +608,7 @@ impl<'query, 'db, 'body> LocalImplMatcher<'query, 'db, 'body> {
     pub(super) fn local_impl_self_subst(
         &self,
         function_ref: BodyFunctionRef,
-        receiver_ty: &BodyLocalNominalTy,
+        receiver_ty: &IndexedLocalNominalTy,
     ) -> TypeSubst {
         // Convert body-local impl generics into method-signature substitutions. For
         // `impl<U> Wrapper<U>`, a `Wrapper<User>` receiver gives `U -> User`.
@@ -633,7 +635,7 @@ impl<'query, 'db, 'body> LocalImplMatcher<'query, 'db, 'body> {
     pub(super) fn local_impl_self_subst_for_impl(
         &self,
         impl_data: &BodyImplData,
-        receiver_ty: &BodyLocalNominalTy,
+        receiver_ty: &IndexedLocalNominalTy,
     ) -> TypeSubst {
         if impl_data.self_item != Some(receiver_ty.item) {
             return TypeSubst::new();
@@ -649,7 +651,7 @@ impl<'query, 'db, 'body> LocalImplMatcher<'query, 'db, 'body> {
     fn local_impl_self_args_match_receiver(
         &self,
         impl_data: &BodyImplData,
-        receiver_ty: &BodyLocalNominalTy,
+        receiver_ty: &IndexedLocalNominalTy,
     ) -> Result<bool, PackageStoreError> {
         // Local impl matching is intentionally shallow. Type parameters act as wildcards, while
         // concrete args such as `impl Wrapper<User>` must equal the receiver's known args.
@@ -663,7 +665,7 @@ impl<'query, 'db, 'body> LocalImplMatcher<'query, 'db, 'body> {
         let Some(impl_type_args) = BodyImplMatcher::item_tree_type_args(&segment.args) else {
             return Ok(false);
         };
-        let Some(receiver_type_args) = BodyImplMatcher::body_type_args(&receiver_ty.args) else {
+        let Some(receiver_type_args) = BodyImplMatcher::indexed_type_args(&receiver_ty.args) else {
             return Ok(false);
         };
         if impl_type_args.len() != receiver_type_args.len() {

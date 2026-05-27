@@ -14,13 +14,12 @@ use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 use rg_text::Name;
+use rg_ty::IndexedTy;
 
 use crate::{
     BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef, BodyIrReadTxn, BodyItemKind,
     BodyItemRef, BodyRef, BodyValueItemKind, BodyValueItemRef, ExprId, ScopeId,
 };
-
-use crate::ir::ty::BodyTy;
 
 use self::scan::{
     BodyCursorScanner, BodySourceScanner, DotCompletionSiteScanner, PathCompletionSiteScanner,
@@ -386,7 +385,7 @@ impl BodyIrReadTxn<'_> {
     pub fn receiver_ty(
         &self,
         site: DotCompletionSite,
-    ) -> Result<Option<&BodyTy>, PackageStoreError> {
+    ) -> Result<Option<&IndexedTy>, PackageStoreError> {
         Ok(self
             .body_data(site.body)?
             .and_then(|body| body.expr(site.receiver))

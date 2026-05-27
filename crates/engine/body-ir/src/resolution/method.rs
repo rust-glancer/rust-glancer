@@ -7,11 +7,11 @@ use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{FunctionRef, TraitApplicability};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
+use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy};
 
 use crate::{
     ir::body::BodyData,
     ir::ids::{BodyFunctionRef, BodyRef},
-    ir::ty::{BodyLocalNominalTy, BodyNominalTy},
 };
 
 use super::{
@@ -23,7 +23,7 @@ pub(super) fn semantic_function_applies_to_receiver(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     function_ref: FunctionRef,
-    receiver_ty: &BodyNominalTy,
+    receiver_ty: &IndexedNominalTy,
 ) -> Result<bool, PackageStoreError> {
     BodyImplMatcher::new(def_map, semantic_ir)
         .semantic_function_applies_to_receiver(function_ref, receiver_ty)
@@ -33,7 +33,7 @@ pub(super) fn semantic_trait_function_candidates_for_receiver(
     index: Option<&SemanticResolutionIndex>,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    receiver_ty: &BodyNominalTy,
+    receiver_ty: &IndexedNominalTy,
     method_name: Option<&str>,
 ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
     let matcher = BodyImplMatcher::new(def_map, semantic_ir);
@@ -106,7 +106,7 @@ pub(super) fn local_function_applies_to_receiver(
     body_ref: BodyRef,
     body: &BodyData,
     function_ref: BodyFunctionRef,
-    receiver_ty: &BodyLocalNominalTy,
+    receiver_ty: &IndexedLocalNominalTy,
 ) -> Result<bool, PackageStoreError> {
     LocalImplMatcher::new(def_map, semantic_ir, body_ref, body)
         .local_function_applies_to_receiver(function_ref, receiver_ty)
