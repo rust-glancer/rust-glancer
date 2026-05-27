@@ -14,16 +14,13 @@ use rg_ir_model::{
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::TypeRef;
 
-use crate::{
-    api::{Analysis, view::member::MemberView},
-    model::{DocumentSymbol, NavigationTarget, NavigationTargetKind, SymbolKind},
-};
+use crate::api::view::{IndexedSymbolKind, IndexedViewDb, member::MemberView};
 
 /// Composite declaration facts shared by editor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Declaration {
     target: TargetRef,
-    kind: SymbolKind,
+    kind: IndexedSymbolKind,
     name: String,
     file_id: FileId,
     span: Span,
@@ -33,7 +30,7 @@ pub(crate) struct Declaration {
 impl Declaration {
     pub(crate) fn new(
         target: TargetRef,
-        kind: SymbolKind,
+        kind: IndexedSymbolKind,
         name: String,
         file_id: FileId,
         span: Span,
@@ -53,7 +50,7 @@ impl Declaration {
         self.target
     }
 
-    pub(crate) fn kind(&self) -> SymbolKind {
+    pub(crate) fn kind(&self) -> IndexedSymbolKind {
         self.kind
     }
 
@@ -76,11 +73,11 @@ impl Declaration {
 
 /// Reads declaration facts for IDs that already identify one source declaration.
 pub(crate) struct DeclarationView<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> DeclarationView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
@@ -126,7 +123,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
 
         Ok(Some(Declaration {
             target: module_ref.target,
-            kind: SymbolKind::Module,
+            kind: IndexedSymbolKind::Module,
             name,
             file_id,
             span,
@@ -141,7 +138,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
 
         Ok(Some(Declaration {
             target: local_def.target,
-            kind: SymbolKind::from_local_def_kind(data.kind),
+            kind: IndexedSymbolKind::from_local_def_kind(data.kind),
             name: data.name.to_string(),
             file_id: data.file_id,
             span: data.span,
@@ -223,7 +220,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
 
                 Ok(Some(Declaration {
                     target: item.target(),
-                    kind: SymbolKind::Impl,
+                    kind: IndexedSymbolKind::Impl,
                     name: Self::impl_label(self_ty, trait_ref),
                     file_id: local_impl.file_id,
                     span: local_impl.span,
@@ -249,7 +246,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
 
                 Ok(Some(Declaration {
                     target: item.target(),
-                    kind: SymbolKind::from_semantic_item_kind(view.kind()),
+                    kind: IndexedSymbolKind::from_semantic_item_kind(view.kind()),
                     name: name.to_string(),
                     file_id: view.source().file_id,
                     span,
@@ -274,7 +271,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         let declaration = match declaration {
             BodyDeclarationRef::Binding(_) => Declaration {
                 target,
-                kind: SymbolKind::Variable,
+                kind: IndexedSymbolKind::Variable,
                 name: view
                     .name()
                     .map(ToString::to_string)
@@ -292,7 +289,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 };
                 Declaration {
                     target,
-                    kind: SymbolKind::from_body_item_kind(kind),
+                    kind: IndexedSymbolKind::from_body_item_kind(kind),
                     name: name.to_string(),
                     file_id: source.file_id,
                     span: source.span,
@@ -308,7 +305,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 };
                 Declaration {
                     target,
-                    kind: SymbolKind::from_body_value_item_kind(kind),
+                    kind: IndexedSymbolKind::from_body_value_item_kind(kind),
                     name: name.to_string(),
                     file_id: source.file_id,
                     span: source.span,
@@ -321,7 +318,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 };
                 Declaration {
                     target,
-                    kind: SymbolKind::Impl,
+                    kind: IndexedSymbolKind::Impl,
                     name: Self::impl_label(self_ty, trait_ref),
                     file_id: source.file_id,
                     span: source.span,
@@ -334,7 +331,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 };
                 Declaration {
                     target,
-                    kind: SymbolKind::Field,
+                    kind: IndexedSymbolKind::Field,
                     name: Self::field_label(data.field.key_declaration_label()),
                     file_id: source.file_id,
                     span: source.span,
@@ -347,7 +344,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 };
                 Declaration {
                     target,
-                    kind: SymbolKind::EnumVariant,
+                    kind: IndexedSymbolKind::EnumVariant,
                     name: name.to_string(),
                     file_id: source.file_id,
                     span: source.span,
@@ -363,7 +360,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 };
                 Declaration {
                     target,
-                    kind: SymbolKind::from_body_function_owner(owner),
+                    kind: IndexedSymbolKind::from_body_function_owner(owner),
                     name: name.to_string(),
                     file_id: source.file_id,
                     span: source.span,
@@ -385,7 +382,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
 
         Ok(Some(Declaration {
             target: variant_ref.target,
-            kind: SymbolKind::EnumVariant,
+            kind: IndexedSymbolKind::EnumVariant,
             name: data.variant.name.to_string(),
             file_id: data.file_id,
             span: data.variant.span,
@@ -417,30 +414,5 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
 
     fn field_label(name: Option<String>) -> String {
         name.unwrap_or_else(|| "<unsupported>".to_string())
-    }
-}
-
-impl From<Declaration> for NavigationTarget {
-    fn from(declaration: Declaration) -> Self {
-        Self {
-            target: declaration.target,
-            kind: NavigationTargetKind::from(declaration.kind),
-            name: declaration.name,
-            file_id: declaration.file_id,
-            span: Some(declaration.selection_span),
-        }
-    }
-}
-
-impl From<Declaration> for DocumentSymbol {
-    fn from(declaration: Declaration) -> Self {
-        Self {
-            name: declaration.name,
-            kind: declaration.kind,
-            file_id: declaration.file_id,
-            span: declaration.span,
-            selection_span: declaration.selection_span,
-            children: Vec::new(),
-        }
     }
 }

@@ -2,8 +2,8 @@
 
 use crate::{
     api::{
-        Analysis, query::navigation::target::NavigationTargetProjection,
-        source_symbol::SourceSymbolResolver,
+        query::navigation::target::NavigationTargetProjection, source_symbol::SourceSymbolResolver,
+        view::IndexedViewDb,
     },
     model::{NavigationTarget, SymbolAt},
 };
@@ -13,11 +13,11 @@ use crate::{
 /// `SymbolAt` is cursor vocabulary, not a declaration identity. This resolver performs the
 /// cross-IR lookups, path fallbacks, and body-resolution handling needed to turn one cursor symbol
 /// into zero or more concrete targets.
-pub(crate) struct SymbolResolver<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct SymbolResolver<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> SymbolResolver<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self(db)
     }
 
     pub(crate) fn resolve_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Vec<NavigationTarget>> {

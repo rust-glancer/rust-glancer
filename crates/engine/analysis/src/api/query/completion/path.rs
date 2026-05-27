@@ -40,7 +40,7 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             replace: site.replace_span(),
         };
         let context = site.context();
-        let completion_candidates = CompletionCandidateSource::new(self.analysis);
+        let completion_candidates = CompletionCandidateSource::new(self.analysis.view_db());
         let mut completions = self.module_path_completions(
             completion_candidates.module_candidates_for_path(&site)?,
             edit,
@@ -53,7 +53,7 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             },
         )?;
 
-        let enum_variants = EnumVariantView::new(self.analysis);
+        let enum_variants = EnumVariantView::new(self.analysis.view_db());
         for variant in completion_candidates.enum_variant_candidates_for_path(&site)? {
             let Some(variant) = enum_variants.variant(variant)? else {
                 continue;

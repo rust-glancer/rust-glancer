@@ -1,23 +1,23 @@
 mod completion_site;
 mod query;
-mod render;
 mod source_symbol;
-mod view;
+pub(crate) mod view;
 
 pub use query::{
     completion::{CompletionClientCapabilities, CompletionQuery},
     references::ReferenceQuery,
 };
 
-use rg_body_ir::BodyIrReadTxn;
-use rg_def_map::{DefMapReadTxn, PackageSlot};
+use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
 use rg_parse::FileId;
-use rg_semantic_ir::SemanticIrReadTxn;
 use rg_ty::IndexedTy;
 
 use crate::{
-    api::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver},
+    api::{
+        source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver},
+        view::IndexedViewDb,
+    },
     model::{
         CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget, ReferenceLocation, SymbolAt,
         TypeHint, WorkspaceSymbol,
@@ -27,9 +27,7 @@ use crate::{
 
 /// High-level LSP-facing query API over one request-scoped project transaction.
 pub struct Analysis<'a> {
-    def_map: DefMapReadTxn<'a>,
-    semantic_ir: SemanticIrReadTxn<'a>,
-    body_ir: BodyIrReadTxn<'a>,
+    view_db: IndexedViewDb<'a>,
 }
 
 impl<'a> Analysis<'a> {
@@ -42,10 +40,16 @@ impl<'a> Analysis<'a> {
     /// unrelated source files, package slots, or line indexes.
     pub fn new(txn: &AnalysisReadTxn<'a>) -> Self {
         Self {
-            def_map: txn.def_map().clone(),
-            semantic_ir: txn.semantic_ir().clone(),
-            body_ir: txn.body_ir().clone(),
+            view_db: IndexedViewDb::new(
+                txn.def_map().clone(),
+                txn.semantic_ir().clone(),
+                txn.body_ir().clone(),
+            ),
         }
+    }
+
+    pub(crate) fn view_db(&self) -> &IndexedViewDb<'a> {
+        &self.view_db
     }
 
     /// Returns the smallest known symbol under a source offset.
@@ -77,7 +81,7 @@ impl<'a> Analysis<'a> {
     ) -> anyhow::Result<Option<SourceSymbol>> {
         // Overlapping syntax is common around type paths and expressions. The narrowest span is
         // the best proxy for the thing the user actually placed the cursor on.
-        Ok(SourceSymbolIndex::new(self)
+        Ok(SourceSymbolIndex::new(self.view_db())
             .symbols_at(target, file_id, offset)?
             .into_iter()
             .min_by_key(|candidate| candidate.span().len()))
@@ -85,7 +89,7 @@ impl<'a> Analysis<'a> {
 
     /// Resolves a previously found symbol to navigation targets.
     pub fn resolve_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Vec<NavigationTarget>> {
-        query::navigation::SymbolResolver::new(self).resolve_symbol(symbol)
+        query::navigation::SymbolResolver::new(self.view_db()).resolve_symbol(symbol)
     }
 
     /// Returns best-effort definitions for the symbol under a source offset.
@@ -130,7 +134,7 @@ impl<'a> Analysis<'a> {
         let Some(symbol) = self.symbol_at_for_query(target, file_id, offset)? else {
             return Ok(None);
         };
-        SourceSymbolResolver::new(self).ty_for_symbol(symbol)
+        SourceSymbolResolver::new(self.view_db()).ty_for_symbol(symbol)
     }
 
     /// Returns best-effort inferred type hints for local bindings in one file.
@@ -199,6 +203,6 @@ impl<'a> Analysis<'a> {
         package: PackageSlot,
         file: FileId,
     ) -> anyhow::Result<Vec<TargetRef>> {
-        view::module::ModuleView::new(self).targets_containing_file(package, file)
+        view::module::ModuleView::new(self.view_db()).targets_containing_file(package, file)
     }
 }

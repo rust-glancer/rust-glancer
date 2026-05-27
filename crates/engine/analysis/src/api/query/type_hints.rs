@@ -4,7 +4,10 @@ use rg_ir_model::TargetRef;
 use rg_parse::{FileId, TextSpan};
 
 use crate::{
-    api::{Analysis, render::ty::TypeRenderer, view::body::BodyView},
+    api::{
+        Analysis,
+        view::{body::BodyView, ty_label::TypeRenderer},
+    },
     model::TypeHint,
 };
 
@@ -21,10 +24,12 @@ impl<'a, 'db> TypeHintCollector<'a, 'db> {
         file_id: FileId,
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<TypeHint>> {
-        let renderer = TypeRenderer::new(self.0);
+        let renderer = TypeRenderer::new(self.0.view_db());
         let mut hints = Vec::new();
 
-        for binding in BodyView::new(self.0).inferred_binding_tys(target, file_id, range)? {
+        for binding in
+            BodyView::new(self.0.view_db()).inferred_binding_tys(target, file_id, range)?
+        {
             let Some(ty) = renderer.render(binding.ty())? else {
                 continue;
             };

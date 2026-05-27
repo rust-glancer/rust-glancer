@@ -4,14 +4,14 @@ use rg_def_map::{ModuleOrigin, PackageSlot};
 use rg_ir_model::{ModuleRef, TargetRef};
 use rg_parse::{FileId, TargetId};
 
-use crate::api::Analysis;
+use crate::api::view::IndexedViewDb;
 
 pub(crate) struct ModuleView<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> ModuleView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 

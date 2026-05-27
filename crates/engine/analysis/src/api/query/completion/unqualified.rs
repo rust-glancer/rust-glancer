@@ -49,7 +49,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let mut completions = Vec::new();
         let mut hidden = HashSet::new();
 
-        let completion_candidates = CompletionCandidateSource::new(self.analysis);
+        let completion_candidates = CompletionCandidateSource::new(self.analysis.view_db());
         for candidate in completion_candidates.lexical_candidates_for_unqualified(&site)? {
             if !filter.accepts_scope_namespace(candidate.namespace()) {
                 continue;
@@ -103,7 +103,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         }
 
         if let Some(function_ref) = candidate.function_ref() {
-            let members = MemberView::new(self.analysis);
+            let members = MemberView::new(self.analysis.view_db());
             let Some(function) = members.function(function_ref)? else {
                 return Ok(());
             };
@@ -128,7 +128,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let Some(declaration_ref) = candidate.declaration_ref() else {
             return Ok(());
         };
-        let Some(details) = DeclarationDetailsView::new(self.analysis)
+        let Some(details) = DeclarationDetailsView::new(self.analysis.view_db())
             .details_for_declaration(declaration_ref, &DeclarationDetailsContext::default())?
         else {
             return Ok(());

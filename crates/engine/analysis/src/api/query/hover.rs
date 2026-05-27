@@ -7,9 +7,11 @@ use rg_ty::IndexedTy;
 use crate::{
     api::{
         Analysis,
-        render::signature::SignatureRenderer,
         source_symbol::SourceSymbolResolver,
-        view::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
+        view::{
+            details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
+            signature::SignatureRenderer,
+        },
     },
     model::{HoverBlock, HoverInfo, SymbolAt, SymbolKind},
 };
@@ -33,12 +35,12 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         };
         let range = Some(source_symbol.span());
         let symbol = source_symbol.symbol().clone();
-        let source_symbols = SourceSymbolResolver::new(self.0);
+        let source_symbols = SourceSymbolResolver::new(self.0.view_db());
         let declarations = source_symbols.declarations_for_symbol(symbol.clone())?;
         let context = DeclarationDetailsContext {
             module_display_name: Self::module_display_name_for_symbol(&symbol),
         };
-        let details = DeclarationDetailsView::new(self.0);
+        let details = DeclarationDetailsView::new(self.0.view_db());
         let mut blocks = Vec::new();
 
         for declaration in declarations {
@@ -73,7 +75,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
     }
 
     fn hover_for_ty(&self, ty: &IndexedTy) -> anyhow::Result<Option<HoverBlock>> {
-        let Some(signature) = SignatureRenderer::new(self.0).ty_signature(ty)? else {
+        let Some(signature) = SignatureRenderer::new(self.0.view_db()).ty_signature(ty)? else {
             return Ok(None);
         };
         Ok(Some(HoverBlock {
@@ -87,7 +89,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
 
     fn hover_block(details: DeclarationDetails) -> HoverBlock {
         HoverBlock {
-            kind: details.kind,
+            kind: details.kind.into(),
             path: details.path,
             signature: details.signature,
             ty: None,

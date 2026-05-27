@@ -117,7 +117,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 syntax.after_colon_colon(),
             )
         });
-        let Some(site) = CompletionSiteDetector::new(self.analysis).site_at(
+        let Some(site) = CompletionSiteDetector::new(self.analysis.view_db()).site_at(
             self.query.target,
             self.query.file_id,
             self.query.offset,
@@ -152,7 +152,7 @@ impl<'a, 'db, 'source> CompletionResolver<'a, 'db, 'source> {
                 Ok(completions)
             }
             CompletionSite::RecordField(site) => {
-                RecordFieldCompletionResolver::new(self.analysis).completions(site)
+                RecordFieldCompletionResolver::new(self.analysis.view_db()).completions(site)
             }
         }
     }

@@ -11,12 +11,12 @@ use rg_ir_model::{
     identity::{DeclarationRef, DeclarationRefRepr, ExprRef, NameDefRef, NameDefRefRepr},
 };
 
-use crate::api::Analysis;
+use crate::api::view::IndexedViewDb;
 
-pub(crate) struct ResolutionView<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct ResolutionView<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> ResolutionView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self(analysis)
     }
 

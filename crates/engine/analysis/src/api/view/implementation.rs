@@ -16,14 +16,14 @@ use rg_ir_model::{
 use rg_ir_model::{BodyImplId, BodyImplRef, BodyItemRef};
 use rg_ty::{IndexedTy, IndexedTyExt};
 
-use crate::api::{Analysis, view::resolution::ResolutionView};
+use crate::api::view::{IndexedViewDb, resolution::ResolutionView};
 
 pub(crate) struct ImplementationView<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> ImplementationView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 

@@ -7,13 +7,13 @@
 use rg_ir_model::identity::DeclarationRef;
 use rg_ty::{IndexedGenericArg, IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyRepr};
 
-use crate::api::{Analysis, view::declaration::DeclarationView};
+use crate::api::view::{IndexedViewDb, declaration::DeclarationView};
 
-pub(crate) struct TypeRenderer<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct TypeRenderer<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> TypeRenderer<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self(db)
     }
 
     pub(crate) fn render(&self, ty: &IndexedTy) -> anyhow::Result<Option<String>> {

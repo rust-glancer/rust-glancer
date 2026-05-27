@@ -30,12 +30,12 @@ impl<'a, 'db> TypeDefinitionResolver<'a, 'db> {
             return Ok(Vec::new());
         };
 
-        let ty_view = TyView::new(self.0);
-        let Some(ty) = SourceSymbolResolver::new(self.0).ty_for_symbol(symbol)? else {
+        let ty_view = TyView::new(self.0.view_db());
+        let Some(ty) = SourceSymbolResolver::new(self.0.view_db()).ty_for_symbol(symbol)? else {
             return Ok(Vec::new());
         };
 
         let declarations = ty_view.declarations_for_ty(&ty);
-        NavigationTargetProjection::new(self.0).targets_for_declarations(declarations)
+        NavigationTargetProjection::new(self.0.view_db()).targets_for_declarations(declarations)
     }
 }

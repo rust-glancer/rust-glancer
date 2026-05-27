@@ -7,9 +7,9 @@
 use rg_ir_model::TargetRef;
 use rg_parse::{FileId, Span};
 
-use crate::api::{
-    Analysis,
-    view::source::{
+use crate::api::view::{
+    IndexedViewDb,
+    source::{
         IndexedMemberAccessSite, IndexedNameNamespace, IndexedQualifiedPathScope,
         IndexedQualifiedPathSite, IndexedRecordFieldListSite, IndexedUnqualifiedNameScope,
         IndexedUnqualifiedNameSite, SourceFactsView,
@@ -156,12 +156,12 @@ impl RecordFieldCompletionSite {
 }
 
 pub(crate) struct CompletionSiteDetector<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self { analysis }
+    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     /// Classifies the cursor offset by asking the scanner that owns each syntax shape.
@@ -172,7 +172,7 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
         offset: u32,
         syntax: Option<CompletionSiteSyntax>,
     ) -> anyhow::Result<Option<CompletionSite>> {
-        let source = SourceFactsView::new(self.analysis);
+        let source = SourceFactsView::new(self.db);
         if let Some(syntax) = syntax {
             if syntax.inside_use_item {
                 if let Some(site) = source.import_qualified_path_site_at(target, file_id, offset)? {

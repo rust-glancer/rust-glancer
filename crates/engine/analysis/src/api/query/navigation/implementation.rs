@@ -33,16 +33,17 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
             return Ok(Vec::new());
         };
 
-        let implementations = ImplementationView::new(self.0);
+        let implementations = ImplementationView::new(self.0.view_db());
         if let SymbolAt::Expr { expr } = &symbol
             && let Some(declarations) =
                 implementations.implementations_for_method_call_expr(*expr)?
         {
-            return NavigationTargetProjection::new(self.0).targets_for_declarations(declarations);
+            return NavigationTargetProjection::new(self.0.view_db())
+                .targets_for_declarations(declarations);
         }
 
         let mut declarations = Vec::new();
-        let source_symbols = SourceSymbolResolver::new(self.0);
+        let source_symbols = SourceSymbolResolver::new(self.0.view_db());
         for declaration in source_symbols.declarations_for_symbol(symbol.clone())? {
             Self::extend_unique_declarations(
                 &mut declarations,
@@ -59,7 +60,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
             );
         }
 
-        NavigationTargetProjection::new(self.0).targets_for_declarations(declarations)
+        NavigationTargetProjection::new(self.0.view_db()).targets_for_declarations(declarations)
     }
 
     fn extend_unique_declarations(

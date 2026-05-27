@@ -14,12 +14,12 @@ use rg_ty::IndexedTy;
 
 use crate::{
     api::{
-        Analysis,
         completion_site::{
             DotCompletionSite, PathCompletionSite, RecordFieldCompletionSite,
             UnqualifiedCompletionSite,
         },
         view::{
+            IndexedSymbolKind, IndexedViewDb,
             body::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
             enum_variant::EnumVariantView,
             member::{MemberMethodOrigin, MemberView},
@@ -30,7 +30,7 @@ use crate::{
             ty::TyView,
         },
     },
-    model::{CompletionApplicability, CompletionKind, CompletionTarget, SymbolKind},
+    model::{CompletionApplicability, CompletionKind, CompletionTarget},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -176,12 +176,12 @@ impl DotMethodCompletionCandidate {
 }
 
 pub(crate) struct CompletionCandidateSource<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self { analysis }
+    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub(crate) fn module_candidates_for_path(
@@ -191,8 +191,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         let source = site.source();
         let importing_module = match source.scope() {
             IndexedQualifiedPathScope::Body { scope, .. } => {
-                let Some(module) = BodyView::new(self.analysis).owner_module(scope.body_ir())?
-                else {
+                let Some(module) = BodyView::new(self.db).owner_module(scope.body_ir())? else {
                     return Ok(Vec::new());
                 };
                 module
@@ -213,7 +212,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             return Ok(Vec::new());
         }
 
-        Ok(EnumVariantView::new(self.analysis)
+        Ok(EnumVariantView::new(self.db)
             .variants_for_body_type_path(
                 scope.body_ir(),
                 scope.scope_id(),
@@ -230,8 +229,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
         let module = match site.source().scope() {
             IndexedUnqualifiedNameScope::Body { scope, .. } => {
-                let Some(module) = BodyView::new(self.analysis).owner_module(scope.body_ir())?
-                else {
+                let Some(module) = BodyView::new(self.db).owner_module(scope.body_ir())? else {
                     return Ok(Vec::new());
                 };
                 module
@@ -265,7 +263,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             *visible_bindings,
         );
         let mut candidates = Vec::new();
-        for candidate in BodyView::new(self.analysis).lexical_names(scope)? {
+        for candidate in BodyView::new(self.db).lexical_names(scope)? {
             if let Some(candidate) = self.lexical_candidate(*namespace, candidate) {
                 candidates.push(candidate);
             }
@@ -299,7 +297,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         {
             let path = Path::unqualified_name(primitive.label());
             if matches!(
-                TyView::new(self.analysis).ty_for_body_type_path(
+                TyView::new(self.db).ty_for_body_type_path(
                     scope.body_ir(),
                     scope.scope_id(),
                     &path
@@ -319,12 +317,12 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     ) -> anyhow::Result<Vec<FieldRef>> {
         let receiver = site.source().receiver();
         let Some(receiver_ty) =
-            BodyView::new(self.analysis).receiver_ty(receiver.body_ir(), receiver.expr_id())?
+            BodyView::new(self.db).receiver_ty(receiver.body_ir(), receiver.expr_id())?
         else {
             return Ok(Vec::new());
         };
 
-        let members = MemberView::new(self.analysis);
+        let members = MemberView::new(self.db);
         let mut fields = Vec::new();
         for field in members.field_candidates_for_ty(&receiver_ty)? {
             fields.push(field.field_ref());
@@ -339,7 +337,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     ) -> anyhow::Result<Vec<FieldRef>> {
         let site = site.source();
         let scope = site.scope();
-        let members = MemberView::new(self.analysis);
+        let members = MemberView::new(self.db);
         let mut fields = Vec::new();
         for field in members.field_candidates_for_body_type_path(
             scope.body_ir(),
@@ -369,12 +367,12 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     ) -> anyhow::Result<Vec<DotMethodCompletionCandidate>> {
         let receiver = site.source().receiver();
         let Some(receiver_ty) =
-            BodyView::new(self.analysis).receiver_ty(receiver.body_ir(), receiver.expr_id())?
+            BodyView::new(self.db).receiver_ty(receiver.body_ir(), receiver.expr_id())?
         else {
             return Ok(Vec::new());
         };
 
-        let members = MemberView::new(self.analysis);
+        let members = MemberView::new(self.db);
         let mut methods = Vec::new();
         for method in members.method_candidates_for_ty(&receiver_ty)? {
             methods.push(Self::dot_method_candidate(method));
@@ -390,7 +388,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
         let mut candidates = Vec::new();
         for name in
-            NameLookupView::new(self.analysis).module_names_for_path(importing_module, qualifier)?
+            NameLookupView::new(self.db).module_names_for_path(importing_module, qualifier)?
         {
             if let Some(candidate) = self.module_candidate(name) {
                 candidates.push(candidate);
@@ -404,7 +402,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         module: ModuleRef,
     ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
         let mut candidates = Vec::new();
-        for name in NameLookupView::new(self.analysis).unqualified_module_names(module)? {
+        for name in NameLookupView::new(self.db).unqualified_module_names(module)? {
             if let Some(candidate) = self.module_candidate(name) {
                 candidates.push(candidate);
             }
@@ -514,23 +512,23 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         Some(candidate)
     }
 
-    fn completion_kind(kind: SymbolKind) -> Option<CompletionKind> {
+    fn completion_kind(kind: IndexedSymbolKind) -> Option<CompletionKind> {
         Some(match kind {
-            SymbolKind::Const => CompletionKind::Const,
-            SymbolKind::Enum => CompletionKind::Enum,
-            SymbolKind::EnumVariant => CompletionKind::EnumVariant,
-            SymbolKind::Field => CompletionKind::Field,
-            SymbolKind::Function => CompletionKind::Function,
-            SymbolKind::Macro => CompletionKind::Macro,
-            SymbolKind::Method => CompletionKind::Function,
-            SymbolKind::Module => CompletionKind::Module,
-            SymbolKind::Static => CompletionKind::Static,
-            SymbolKind::Struct => CompletionKind::Struct,
-            SymbolKind::Trait => CompletionKind::Trait,
-            SymbolKind::TypeAlias => CompletionKind::TypeAlias,
-            SymbolKind::Union => CompletionKind::Union,
-            SymbolKind::Variable => CompletionKind::Variable,
-            SymbolKind::Impl => return None,
+            IndexedSymbolKind::Const => CompletionKind::Const,
+            IndexedSymbolKind::Enum => CompletionKind::Enum,
+            IndexedSymbolKind::EnumVariant => CompletionKind::EnumVariant,
+            IndexedSymbolKind::Field => CompletionKind::Field,
+            IndexedSymbolKind::Function => CompletionKind::Function,
+            IndexedSymbolKind::Macro => CompletionKind::Macro,
+            IndexedSymbolKind::Method => CompletionKind::Function,
+            IndexedSymbolKind::Module => CompletionKind::Module,
+            IndexedSymbolKind::Static => CompletionKind::Static,
+            IndexedSymbolKind::Struct => CompletionKind::Struct,
+            IndexedSymbolKind::Trait => CompletionKind::Trait,
+            IndexedSymbolKind::TypeAlias => CompletionKind::TypeAlias,
+            IndexedSymbolKind::Union => CompletionKind::Union,
+            IndexedSymbolKind::Variable => CompletionKind::Variable,
+            IndexedSymbolKind::Impl => return None,
         })
     }
 

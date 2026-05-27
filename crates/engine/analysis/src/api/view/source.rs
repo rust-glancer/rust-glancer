@@ -16,7 +16,7 @@ use rg_ir_model::{
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{FieldKey, SemanticCursorCandidate, TypePathContext};
 
-use crate::api::{Analysis, view::declaration::DeclarationView};
+use crate::api::view::{IndexedViewDb, declaration::DeclarationView};
 
 /// Why an indexed source occurrence exists in the scanned source surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,11 +247,11 @@ impl IndexedRecordFieldListSite {
 }
 
 pub(crate) struct SourceFactsView<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> SourceFactsView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 

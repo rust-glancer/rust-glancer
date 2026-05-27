@@ -38,7 +38,7 @@ impl<'a, 'db, 'source> ModuleCompletionRenderer<'a, 'db, 'source> {
         request: ModuleCompletionRequest<'_>,
     ) -> anyhow::Result<Option<CompletionItem>> {
         if let Some(function_ref) = request.candidate.function_ref() {
-            let members = MemberView::new(self.analysis);
+            let members = MemberView::new(self.analysis.view_db());
             let Some(function) = members.function(function_ref)? else {
                 return Ok(None);
             };

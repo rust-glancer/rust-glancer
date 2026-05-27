@@ -9,7 +9,7 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::{Documentation, EnumVariantData};
 
-use crate::api::Analysis;
+use crate::api::view::IndexedViewDb;
 
 /// Borrowed data for one resolved enum variant, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
@@ -52,11 +52,11 @@ impl<'a> EnumVariant<'a> {
 }
 
 pub(crate) struct EnumVariantView<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> EnumVariantView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 

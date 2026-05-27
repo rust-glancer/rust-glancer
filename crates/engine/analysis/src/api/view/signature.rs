@@ -15,19 +15,19 @@ use rg_semantic_ir::{
 };
 use rg_ty::IndexedTy;
 
-use crate::api::{
-    Analysis,
-    render::ty::TypeRenderer,
-    view::member::{MemberField, MemberFunction},
+use crate::api::view::{
+    IndexedViewDb,
+    member::{MemberField, MemberFunction},
+    ty_label::TypeRenderer,
 };
 
 const MEMBER_PREVIEW_LIMIT: usize = 5;
 
-pub(crate) struct SignatureRenderer<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct SignatureRenderer<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> SignatureRenderer<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self(db)
     }
 
     pub(crate) fn struct_signature(&self, data: &StructData) -> String {

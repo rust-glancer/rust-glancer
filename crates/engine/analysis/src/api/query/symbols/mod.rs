@@ -23,10 +23,10 @@ impl<'a, 'db> SymbolCollector<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
     ) -> Result<Vec<DocumentSymbol>> {
-        document::DocumentSymbolCollector::new(self.0).document_symbols(target, file_id)
+        document::DocumentSymbolCollector::new(self.0.view_db()).document_symbols(target, file_id)
     }
 
     pub(crate) fn workspace_symbols(&self, query: &str) -> Result<Vec<WorkspaceSymbol>> {
-        workspace::WorkspaceSymbolCollector::new(self.0).workspace_symbols(query)
+        workspace::WorkspaceSymbolCollector::new(self.0.view_db()).workspace_symbols(query)
     }
 }

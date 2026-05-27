@@ -9,12 +9,12 @@ use rg_ir_model::{
     TargetRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 
-use crate::api::Analysis;
+use crate::api::view::IndexedViewDb;
 
-pub(crate) struct PathView<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct PathView<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> PathView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self(analysis)
     }
 

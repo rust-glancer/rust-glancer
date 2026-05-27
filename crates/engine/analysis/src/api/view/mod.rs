@@ -6,16 +6,23 @@
 //! generic projections.
 
 pub(crate) mod body;
+pub(crate) mod db;
 pub(crate) mod declaration;
 pub(crate) mod details;
 pub(crate) mod enum_variant;
 pub(crate) mod implementation;
 pub(crate) mod item_index;
+pub(crate) mod kind;
 pub(crate) mod member;
 pub(crate) mod module;
 pub(crate) mod name_lookup;
 pub(crate) mod path;
 pub(crate) mod reference;
 pub(crate) mod resolution;
+pub(crate) mod signature;
 pub(crate) mod source;
 pub(crate) mod ty;
+pub(crate) mod ty_label;
+
+pub(crate) use db::IndexedViewDb;
+pub(crate) use kind::IndexedSymbolKind;

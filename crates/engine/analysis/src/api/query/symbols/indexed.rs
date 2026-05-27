@@ -8,12 +8,10 @@ use rg_ir_model::{
 use rg_parse::{FileId, Span};
 
 use crate::{
-    api::{
-        Analysis,
-        view::{
-            declaration::{Declaration, DeclarationView},
-            item_index::{IndexedItem, IndexedItemChild, ItemIndexView},
-        },
+    api::view::{
+        IndexedSymbolKind, IndexedViewDb,
+        declaration::{Declaration, DeclarationView},
+        item_index::{IndexedItem, IndexedItemChild, ItemIndexView},
     },
     model::{DocumentSymbol, SymbolKind, WorkspaceSymbol},
 };
@@ -45,7 +43,7 @@ impl From<Declaration> for DocumentSymbolDeclaration {
     fn from(declaration: Declaration) -> Self {
         Self {
             name: declaration.name().to_string(),
-            kind: declaration.kind(),
+            kind: declaration.kind().into(),
             file_id: declaration.file_id(),
             span: declaration.span(),
             selection_span: declaration.selection_span(),
@@ -124,7 +122,7 @@ impl From<WorkspaceSymbolEntry> for WorkspaceSymbol {
         Self {
             target: entry.declaration.target(),
             name: entry.declaration.name().to_string(),
-            kind: entry.declaration.kind(),
+            kind: entry.declaration.kind().into(),
             file_id: entry.declaration.file_id(),
             span: Some(entry.declaration.selection_span()),
             container_name: entry.container_name,
@@ -134,12 +132,12 @@ impl From<WorkspaceSymbolEntry> for WorkspaceSymbol {
 
 /// Enumerates symbols from generic indexed items, leaving editor shaping in this module.
 pub(crate) struct IndexedSymbols<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> IndexedSymbols<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self { analysis }
+    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub(crate) fn document_symbols(
@@ -147,7 +145,7 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
     ) -> Result<Vec<DocumentSymbolNode>> {
-        let index = ItemIndexView::new(self.analysis);
+        let index = ItemIndexView::new(self.db);
         let mut symbols = Vec::new();
 
         for declaration in index.module_declarations(target)? {
@@ -186,7 +184,7 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
     }
 
     pub(crate) fn workspace_symbols(&self) -> Result<Vec<WorkspaceSymbolEntry>> {
-        let index = ItemIndexView::new(self.analysis);
+        let index = ItemIndexView::new(self.db);
         let mut symbols = Vec::new();
 
         for target in index.included_targets()? {
@@ -265,7 +263,7 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
             return Ok(());
         };
         let child_container_name = Self::child_container_name(&declaration);
-        if declaration.kind() != SymbolKind::Impl {
+        if declaration.kind() != IndexedSymbolKind::Impl {
             symbols.push(WorkspaceSymbolEntry::new(declaration, container_name));
         }
 
@@ -281,26 +279,26 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
 
     fn child_container_name(declaration: &Declaration) -> Option<String> {
         match declaration.kind() {
-            SymbolKind::Trait => Some(format!("trait {}", declaration.name())),
-            SymbolKind::Struct
-            | SymbolKind::Union
-            | SymbolKind::Enum
-            | SymbolKind::Impl
-            | SymbolKind::EnumVariant
-            | SymbolKind::Function
-            | SymbolKind::Method
-            | SymbolKind::Module
-            | SymbolKind::Const
-            | SymbolKind::Field
-            | SymbolKind::Macro
-            | SymbolKind::Static
-            | SymbolKind::TypeAlias
-            | SymbolKind::Variable => Some(declaration.name().to_string()),
+            IndexedSymbolKind::Trait => Some(format!("trait {}", declaration.name())),
+            IndexedSymbolKind::Struct
+            | IndexedSymbolKind::Union
+            | IndexedSymbolKind::Enum
+            | IndexedSymbolKind::Impl
+            | IndexedSymbolKind::EnumVariant
+            | IndexedSymbolKind::Function
+            | IndexedSymbolKind::Method
+            | IndexedSymbolKind::Module
+            | IndexedSymbolKind::Const
+            | IndexedSymbolKind::Field
+            | IndexedSymbolKind::Macro
+            | IndexedSymbolKind::Static
+            | IndexedSymbolKind::TypeAlias
+            | IndexedSymbolKind::Variable => Some(declaration.name().to_string()),
         }
     }
 
     fn declaration(&self, declaration: DeclarationRef) -> Result<Option<Declaration>> {
-        DeclarationView::new(self.analysis).declaration(declaration)
+        DeclarationView::new(self.db).declaration(declaration)
     }
 
     fn declaration_document_symbol(

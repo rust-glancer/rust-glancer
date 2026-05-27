@@ -6,9 +6,10 @@ use rg_ir_model::{
 };
 
 use crate::{
-    api::{
-        Analysis,
-        view::{declaration::DeclarationView, module::ModuleView},
+    api::view::{
+        IndexedViewDb,
+        declaration::{Declaration, DeclarationView},
+        module::ModuleView,
     },
     model::{NavigationTarget, NavigationTargetKind},
 };
@@ -17,11 +18,11 @@ use crate::{
 ///
 /// This projection does not decide what the cursor means. It receives already-resolved def-map,
 /// semantic IR, or body IR IDs and projects them into the public `NavigationTarget` shape.
-pub(crate) struct NavigationTargetProjection<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct NavigationTargetProjection<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self(db)
     }
 
     pub(crate) fn targets_for_declarations(
@@ -53,7 +54,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
             | DeclarationRefRepr::Binding(_)
             | DeclarationRefRepr::Impl(_) => Ok(DeclarationView::new(self.0)
                 .declaration(declaration)?
-                .map(NavigationTarget::from)),
+                .map(Self::navigation_target)),
         }
     }
 
@@ -79,5 +80,15 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
                 file_id: declaration.file_id(),
                 span: Some(declaration.span()),
             }))
+    }
+
+    fn navigation_target(declaration: Declaration) -> NavigationTarget {
+        NavigationTarget {
+            target: declaration.target(),
+            kind: NavigationTargetKind::from(declaration.kind()),
+            name: declaration.name().to_string(),
+            file_id: declaration.file_id(),
+            span: Some(declaration.selection_span()),
+        }
     }
 }

@@ -2,15 +2,15 @@
 
 use anyhow::Result;
 
-use crate::{api::Analysis, model::WorkspaceSymbol};
+use crate::{api::view::IndexedViewDb, model::WorkspaceSymbol};
 
 use super::indexed::IndexedSymbols;
 
-pub(crate) struct WorkspaceSymbolCollector<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct WorkspaceSymbolCollector<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self(db)
     }
 
     pub(crate) fn workspace_symbols(&self, query: &str) -> Result<Vec<WorkspaceSymbol>> {

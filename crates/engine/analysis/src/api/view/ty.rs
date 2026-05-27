@@ -17,14 +17,14 @@ use rg_ir_model::{
 use rg_semantic_ir::{SemanticTypePathResolution, TypePathContext};
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
 
-use crate::api::{Analysis, view::body::BodyView};
+use crate::api::view::{IndexedViewDb, body::BodyView};
 
 pub(crate) struct TyView<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> TyView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 

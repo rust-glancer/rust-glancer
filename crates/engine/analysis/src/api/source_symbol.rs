@@ -5,15 +5,13 @@ use rg_parse::{FileId, Span};
 use rg_ty::IndexedTy;
 
 use crate::{
-    api::{
-        Analysis,
-        view::{
-            resolution::ResolutionView,
-            source::{
-                IndexedSourceFact, IndexedSourceOccurrence, IndexedTypePathScope, SourceFactsView,
-            },
-            ty::TyView,
+    api::view::{
+        IndexedViewDb,
+        resolution::ResolutionView,
+        source::{
+            IndexedSourceFact, IndexedSourceOccurrence, IndexedTypePathScope, SourceFactsView,
         },
+        ty::TyView,
     },
     model::{SymbolAt, TypePathScopeRef, TypePathScopeRepr},
 };
@@ -89,12 +87,12 @@ impl SourceSymbol {
 }
 
 pub(crate) struct SourceSymbolIndex<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> SourceSymbolIndex<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self { analysis }
+    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub(crate) fn symbols_at(
@@ -103,7 +101,7 @@ impl<'a, 'db> SourceSymbolIndex<'a, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<SourceSymbol>> {
-        Ok(SourceFactsView::new(self.analysis)
+        Ok(SourceFactsView::new(self.db)
             .occurrences_at(target, file_id, offset)?
             .into_iter()
             .map(SourceSymbol::from_occurrence)
@@ -115,7 +113,7 @@ impl<'a, 'db> SourceSymbolIndex<'a, 'db> {
         target: TargetRef,
         file_id: Option<FileId>,
     ) -> anyhow::Result<Vec<SourceSymbol>> {
-        Ok(SourceFactsView::new(self.analysis)
+        Ok(SourceFactsView::new(self.db)
             .occurrences_in_target(target, file_id)?
             .into_iter()
             .map(SourceSymbol::from_occurrence)
@@ -124,19 +122,19 @@ impl<'a, 'db> SourceSymbolIndex<'a, 'db> {
 }
 
 pub(crate) struct SourceSymbolResolver<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self { analysis }
+    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub(crate) fn declarations_for_symbol(
         &self,
         symbol: SymbolAt,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let resolution = ResolutionView::new(self.analysis);
+        let resolution = ResolutionView::new(self.db);
         match symbol {
             SymbolAt::FunctionBody { .. } => Ok(Vec::new()),
             SymbolAt::Declaration { declaration, .. } => {
@@ -171,13 +169,13 @@ impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
     }
 
     pub(crate) fn ty_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Option<IndexedTy>> {
-        let ty_view = TyView::new(self.analysis);
+        let ty_view = TyView::new(self.db);
         let ty = match symbol {
             SymbolAt::Expr { expr } => ty_view.ty_for_expr(expr)?,
             SymbolAt::Declaration { declaration, .. } => {
                 let mut ty = None;
                 for declaration in
-                    ResolutionView::new(self.analysis).declarations_for_declaration(declaration)?
+                    ResolutionView::new(self.db).declarations_for_declaration(declaration)?
                 {
                     if let Some(declaration_ty) = ty_view.ty_for_declaration(declaration)? {
                         ty = Some(declaration_ty);

@@ -27,6 +27,6 @@ impl<'a, 'db> GotoResolver<'a, 'db> {
             return Ok(Vec::new());
         };
 
-        SymbolResolver::new(self.0).resolve_symbol(symbol)
+        SymbolResolver::new(self.0.view_db()).resolve_symbol(symbol)
     }
 }

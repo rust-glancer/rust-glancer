@@ -13,7 +13,7 @@ use rg_ir_model::{
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::SemanticItemView;
 
-use crate::api::{Analysis, view::body::BodyView};
+use crate::api::view::{IndexedViewDb, body::BodyView};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IndexedSyntaxChild {
@@ -97,11 +97,11 @@ impl IndexedBodyLocalGroup {
 }
 
 pub(crate) struct ItemIndexView<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> ItemIndexView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 

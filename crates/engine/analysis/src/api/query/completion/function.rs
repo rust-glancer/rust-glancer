@@ -7,7 +7,7 @@ use rg_semantic_ir::ParamItem;
 
 use crate::{
     Analysis,
-    api::{render::signature::SignatureRenderer, view::member::MemberFunction},
+    api::view::{member::MemberFunction, signature::SignatureRenderer},
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -107,7 +107,7 @@ impl<'a, 'db, 'source> FunctionCompletionRenderer<'a, 'db, 'source> {
         call_completion: FunctionCallCompletion,
         edit: CompletionEdit,
     ) -> FunctionCompletionMetadata {
-        let renderer = SignatureRenderer::new(self.analysis);
+        let renderer = SignatureRenderer::new(self.analysis.view_db());
         let label = label_override
             .unwrap_or_else(|| function.name())
             .to_string();

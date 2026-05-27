@@ -1,18 +1,20 @@
 //! Record-field completion assembly for struct literals and record patterns.
 
 use crate::{
-    Analysis,
-    api::{completion_site::RecordFieldCompletionSite, view::member::MemberView},
+    api::{
+        completion_site::RecordFieldCompletionSite,
+        view::{IndexedViewDb, member::MemberView},
+    },
     model::{CompletionEdit, CompletionItem},
 };
 
 use super::{candidates::CompletionCandidateSource, field::FieldCompletionRenderer};
 
-pub(super) struct RecordFieldCompletionResolver<'a, 'db>(&'a Analysis<'db>);
+pub(super) struct RecordFieldCompletionResolver<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+    pub(super) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self(db)
     }
 
     /// Collects named fields for a record site like `User { na$0 }`.

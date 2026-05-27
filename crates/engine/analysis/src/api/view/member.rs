@@ -12,10 +12,7 @@ use rg_ir_model::{
 use rg_semantic_ir::{Documentation, FieldData, FieldKey, FunctionData, ParamItem};
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt};
 
-use crate::{
-    api::{Analysis, render::path::PathRenderer},
-    model::SymbolKind,
-};
+use crate::api::view::{IndexedSymbolKind, IndexedViewDb, path::PathView};
 
 use super::declaration::Declaration;
 
@@ -77,10 +74,7 @@ impl<'a> MemberField<'a> {
         }
     }
 
-    pub(crate) fn display_path(
-        &self,
-        paths: &PathRenderer<'_, '_>,
-    ) -> anyhow::Result<Option<String>> {
+    pub(crate) fn display_path(&self, paths: &PathView<'_, '_>) -> anyhow::Result<Option<String>> {
         match self {
             Self::Semantic { field, .. } => paths.type_def_path(field.owner),
             Self::BodyLocal { .. } => Ok(None),
@@ -92,7 +86,7 @@ impl<'a> MemberField<'a> {
         Some(match self {
             Self::Semantic { field, data } => Declaration::new(
                 field.owner.target,
-                SymbolKind::Field,
+                IndexedSymbolKind::Field,
                 key.declaration_label(),
                 data.file_id,
                 data.field.span,
@@ -100,7 +94,7 @@ impl<'a> MemberField<'a> {
             ),
             Self::BodyLocal { field, data } => Declaration::new(
                 field.item.body.target,
-                SymbolKind::Field,
+                IndexedSymbolKind::Field,
                 key.declaration_label(),
                 data.item.source.file_id,
                 data.field.span,
@@ -156,23 +150,20 @@ impl<'a> MemberFunction<'a> {
         }
     }
 
-    pub(crate) fn display_path(
-        &self,
-        paths: &PathRenderer<'_, '_>,
-    ) -> anyhow::Result<Option<String>> {
+    pub(crate) fn display_path(&self, paths: &PathView<'_, '_>) -> anyhow::Result<Option<String>> {
         match self {
             Self::Semantic { function, .. } => paths.function_path(*function),
             Self::BodyLocal { .. } => Ok(None),
         }
     }
 
-    pub(crate) fn symbol_kind(&self) -> SymbolKind {
+    pub(crate) fn symbol_kind(&self) -> IndexedSymbolKind {
         match self {
             Self::Semantic { data, .. } => match data.owner {
-                ItemOwner::Module(_) => SymbolKind::Function,
-                ItemOwner::Trait(_) | ItemOwner::Impl(_) => SymbolKind::Method,
+                ItemOwner::Module(_) => IndexedSymbolKind::Function,
+                ItemOwner::Trait(_) | ItemOwner::Impl(_) => IndexedSymbolKind::Method,
             },
-            Self::BodyLocal { data, .. } => SymbolKind::from_body_function_owner(data.owner),
+            Self::BodyLocal { data, .. } => IndexedSymbolKind::from_body_function_owner(data.owner),
         }
     }
 
@@ -230,11 +221,11 @@ pub(crate) enum MemberMethodOrigin {
 }
 
 pub(crate) struct MemberView<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> MemberView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 

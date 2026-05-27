@@ -32,11 +32,11 @@ impl<'a, 'db, 'source> DotCompletionResolver<'a, 'db, 'source> {
         let edit = CompletionEdit {
             replace: site.replace_span(),
         };
-        let completion_candidates = CompletionCandidateSource::new(self.analysis);
-        let members = MemberView::new(self.analysis);
+        let completion_candidates = CompletionCandidateSource::new(self.analysis.view_db());
+        let members = MemberView::new(self.analysis.view_db());
         let mut completions = Vec::new();
 
-        let field_renderer = FieldCompletionRenderer::new(self.analysis);
+        let field_renderer = FieldCompletionRenderer::new(self.analysis.view_db());
         for field_ref in completion_candidates.field_candidates_for_dot(&site)? {
             let Some(field) = members.field(field_ref)? else {
                 continue;

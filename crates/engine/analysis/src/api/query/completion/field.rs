@@ -1,8 +1,7 @@
 //! Shared field-completion rendering.
 
 use crate::{
-    Analysis,
-    api::{render::signature::SignatureRenderer, view::member::MemberField},
+    api::view::{IndexedViewDb, member::MemberField, signature::SignatureRenderer},
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -11,11 +10,11 @@ use crate::{
 
 use super::completion_sort::CompletionSortPolicy;
 
-pub(super) struct FieldCompletionRenderer<'a, 'db>(&'a Analysis<'db>);
+pub(super) struct FieldCompletionRenderer<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> FieldCompletionRenderer<'a, 'db> {
-    pub(super) fn new(analysis: &'a Analysis<'db>) -> Self {
-        Self(analysis)
+    pub(super) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self(db)
     }
 
     /// Builds one completion item for a resolved field declaration.

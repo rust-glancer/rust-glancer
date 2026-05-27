@@ -12,7 +12,7 @@ use crate::{
         Analysis,
         source_symbol::SourceSymbolResolver,
         source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolRole},
-        view::reference::ReferenceView,
+        view::reference::{IndexedSourceLocation, ReferenceView},
     },
     model::{ReferenceLocation, SymbolAt},
 };
@@ -119,7 +119,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         let Some(symbol) = self.analysis.symbol_at_for_query(target, file_id, offset)? else {
             return Ok(Vec::new());
         };
-        let reference_view = ReferenceView::new(self.analysis);
+        let reference_view = ReferenceView::new(self.analysis.view_db());
         let declarations = self.unique_declarations_for_symbol(symbol)?;
         if declarations.is_empty() {
             return Ok(Vec::new());
@@ -132,7 +132,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                     .query
                     .accepts_declaration(location.target, location.file_id)
                 {
-                    locations.push(location);
+                    locations.push(Self::reference_location(location));
                 }
             }
         }
@@ -165,7 +165,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         symbol: SymbolAt,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
         let declarations =
-            SourceSymbolResolver::new(self.analysis).declarations_for_symbol(symbol)?;
+            SourceSymbolResolver::new(self.analysis.view_db()).declarations_for_symbol(symbol)?;
         let mut unique = Vec::new();
         for declaration in declarations {
             if !unique.contains(&declaration) {
@@ -223,8 +223,8 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         scan: ReferenceScanTarget,
         candidates: &mut Vec<SourceSymbol>,
     ) -> anyhow::Result<()> {
-        for candidate in
-            SourceSymbolIndex::new(self.analysis).symbols_in_target(scan.target, scan.file_id)?
+        for candidate in SourceSymbolIndex::new(self.analysis.view_db())
+            .symbols_in_target(scan.target, scan.file_id)?
         {
             match candidate.role() {
                 SourceSymbolRole::Reference => candidates.push(candidate),
@@ -235,6 +235,14 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             }
         }
         Ok(())
+    }
+
+    fn reference_location(location: IndexedSourceLocation) -> ReferenceLocation {
+        ReferenceLocation {
+            target: location.target,
+            file_id: location.file_id,
+            span: location.span,
+        }
     }
 }
 

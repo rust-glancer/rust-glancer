@@ -1,14 +1,16 @@
 use std::fmt;
 
-use rg_body_ir::{BodyFunctionOwner, BodyItemKind, BodyValueItemKind};
-use rg_def_map::{LocalDefKind, Path};
+use rg_body_ir::{BodyItemKind, BodyValueItemKind};
+use rg_def_map::Path;
 use rg_ir_model::identity::{
     DeclarationRef, EnumVariantRef, ExprRef, FieldRef, FunctionBodyRef, FunctionRef,
     LexicalScopeRef,
 };
-use rg_ir_model::{ModuleRef, SemanticItemKind, TargetRef, TraitApplicability};
+use rg_ir_model::{ModuleRef, TargetRef, TraitApplicability};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::TypePathContext;
+
+use crate::api::view::IndexedSymbolKind;
 
 /// Scope in which a type path should be resolved.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -187,56 +189,24 @@ pub enum SymbolKind {
     Variable,
 }
 
-impl SymbolKind {
-    pub(super) fn from_local_def_kind(kind: LocalDefKind) -> Self {
+impl From<IndexedSymbolKind> for SymbolKind {
+    fn from(kind: IndexedSymbolKind) -> Self {
         match kind {
-            LocalDefKind::Const => Self::Const,
-            LocalDefKind::Enum => Self::Enum,
-            LocalDefKind::Function => Self::Function,
-            LocalDefKind::MacroDefinition => Self::Macro,
-            LocalDefKind::Static => Self::Static,
-            LocalDefKind::Struct => Self::Struct,
-            LocalDefKind::Trait => Self::Trait,
-            LocalDefKind::TypeAlias => Self::TypeAlias,
-            LocalDefKind::Union => Self::Union,
-        }
-    }
-
-    pub(super) fn from_body_item_kind(kind: BodyItemKind) -> Self {
-        match kind {
-            BodyItemKind::Struct => Self::Struct,
-            BodyItemKind::Enum => Self::Enum,
-            BodyItemKind::Union => Self::Union,
-            BodyItemKind::TypeAlias => Self::TypeAlias,
-            BodyItemKind::Trait => Self::Trait,
-        }
-    }
-
-    pub(super) fn from_body_value_item_kind(kind: BodyValueItemKind) -> Self {
-        match kind {
-            BodyValueItemKind::Const => Self::Const,
-            BodyValueItemKind::Static => Self::Static,
-        }
-    }
-
-    pub(super) fn from_semantic_item_kind(kind: SemanticItemKind) -> Self {
-        match kind {
-            SemanticItemKind::Struct => Self::Struct,
-            SemanticItemKind::Enum => Self::Enum,
-            SemanticItemKind::Union => Self::Union,
-            SemanticItemKind::Trait => Self::Trait,
-            SemanticItemKind::Impl => Self::Impl,
-            SemanticItemKind::Function => Self::Function,
-            SemanticItemKind::TypeAlias => Self::TypeAlias,
-            SemanticItemKind::Const => Self::Const,
-            SemanticItemKind::Static => Self::Static,
-        }
-    }
-
-    pub(super) fn from_body_function_owner(owner: BodyFunctionOwner) -> Self {
-        match owner {
-            BodyFunctionOwner::LocalScope(_) => Self::Function,
-            BodyFunctionOwner::LocalImpl(_) => Self::Method,
+            IndexedSymbolKind::Const => Self::Const,
+            IndexedSymbolKind::Enum => Self::Enum,
+            IndexedSymbolKind::EnumVariant => Self::EnumVariant,
+            IndexedSymbolKind::Field => Self::Field,
+            IndexedSymbolKind::Function => Self::Function,
+            IndexedSymbolKind::Impl => Self::Impl,
+            IndexedSymbolKind::Macro => Self::Macro,
+            IndexedSymbolKind::Method => Self::Method,
+            IndexedSymbolKind::Module => Self::Module,
+            IndexedSymbolKind::Static => Self::Static,
+            IndexedSymbolKind::Struct => Self::Struct,
+            IndexedSymbolKind::Trait => Self::Trait,
+            IndexedSymbolKind::TypeAlias => Self::TypeAlias,
+            IndexedSymbolKind::Union => Self::Union,
+            IndexedSymbolKind::Variable => Self::Variable,
         }
     }
 }
@@ -292,6 +262,12 @@ impl From<SymbolKind> for NavigationTargetKind {
             SymbolKind::Union => Self::Union,
             SymbolKind::Variable => Self::LocalBinding,
         }
+    }
+}
+
+impl From<IndexedSymbolKind> for NavigationTargetKind {
+    fn from(kind: IndexedSymbolKind) -> Self {
+        Self::from(SymbolKind::from(kind))
     }
 }
 

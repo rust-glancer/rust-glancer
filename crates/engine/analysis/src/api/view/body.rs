@@ -13,7 +13,7 @@ use rg_ir_model::{
 use rg_parse::{FileId, Span, TextSpan};
 use rg_ty::{IndexedTy, IndexedTyRepr};
 
-use crate::api::Analysis;
+use crate::api::view::IndexedViewDb;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BodyNameNamespace {
@@ -110,11 +110,11 @@ impl BodyLocalGroup {
 }
 
 pub(crate) struct BodyView<'a, 'db> {
-    analysis: &'a Analysis<'db>,
+    analysis: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> BodyView<'a, 'db> {
-    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+    pub(crate) fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
         Self { analysis }
     }
 
