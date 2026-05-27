@@ -2,7 +2,7 @@
 //!
 //! Reference lookup intentionally scans known source facts instead of building a separate index.
 //! The query owns the search surface and declaration-inclusion policy, while `ReferenceView`
-//! normalizes source symbols into declaration identities before comparison.
+//! projects declaration identities into source locations.
 
 use rg_ir_model::TargetRef;
 use rg_parse::FileId;
@@ -13,7 +13,7 @@ use crate::{
         source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolRole},
         view::reference::ReferenceView,
     },
-    model::ReferenceLocation,
+    model::{DeclarationRef, ReferenceLocation, SymbolAt},
 };
 
 /// Options for a source reference lookup.
@@ -119,7 +119,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             return Ok(Vec::new());
         };
         let reference_view = ReferenceView::new(self.analysis);
-        let declarations = reference_view.declarations_for_symbol(symbol)?;
+        let declarations = self.declarations_for_source_symbol(symbol)?;
         if declarations.is_empty() {
             return Ok(Vec::new());
         }
@@ -137,9 +137,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         }
 
         for candidate in self.reference_candidates()? {
-            if reference_view
-                .symbol_matches_declarations(candidate.symbol().clone(), &declarations)?
-            {
+            if self.source_symbol_matches_declarations(candidate.symbol().clone(), &declarations)? {
                 locations.push(ReferenceLocation {
                     target: candidate.target(),
                     file_id: candidate.file_id(),
@@ -159,6 +157,31 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         });
         locations.dedup();
         Ok(locations)
+    }
+
+    fn declarations_for_source_symbol(
+        &self,
+        symbol: SymbolAt,
+    ) -> anyhow::Result<Vec<DeclarationRef>> {
+        let declarations = self.analysis.declarations_for_source_symbol(symbol)?;
+        let mut unique = Vec::new();
+        for declaration in declarations {
+            if !unique.contains(&declaration) {
+                unique.push(declaration);
+            }
+        }
+        Ok(unique)
+    }
+
+    fn source_symbol_matches_declarations(
+        &self,
+        symbol: SymbolAt,
+        declarations: &[DeclarationRef],
+    ) -> anyhow::Result<bool> {
+        let candidate_declarations = self.declarations_for_source_symbol(symbol)?;
+        Ok(candidate_declarations
+            .iter()
+            .any(|candidate| declarations.contains(candidate)))
     }
 
     fn reference_candidates(&self) -> anyhow::Result<Vec<SourceSymbol>> {

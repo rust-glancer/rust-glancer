@@ -22,6 +22,7 @@ macro_rules! impl_arena_id {
 
 mod body;
 mod def_map;
+pub mod identity;
 mod resolution;
 mod semantic;
 

@@ -31,7 +31,7 @@ impl<'a, 'db> TypeDefinitionResolver<'a, 'db> {
         };
 
         let ty_view = TyView::new(self.0);
-        let Some(ty) = ty_view.ty_for_symbol(symbol)? else {
+        let Some(ty) = self.0.ty_for_source_symbol(symbol)? else {
             return Ok(Vec::new());
         };
 

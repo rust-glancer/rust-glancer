@@ -6,18 +6,17 @@
 
 use rg_body_ir::{BodyAutoderef, BodyTypePathResolution};
 use rg_def_map::Path;
-use rg_ir_model::{BodyRef, FieldRef as SemanticFieldRef, ScopeId, SemanticItemRef};
+use rg_ir_model::{
+    BodyRef, FieldRef as SemanticFieldRef, ScopeId, SemanticItemRef, identity::ExprRef,
+};
 use rg_semantic_ir::{SemanticTypePathResolution, TypePathContext};
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
 
 use crate::{
-    api::{
-        Analysis,
-        view::{body::BodyView, resolution::ResolutionView},
-    },
+    api::{Analysis, view::body::BodyView},
     model::{
         DeclarationRef, DeclarationRefRepr, EnumVariantRef, EnumVariantRefRepr, FieldRefRepr,
-        ItemRefRepr, NameDefRefRepr, SymbolAt, TypePathScopeRepr,
+        ItemRefRepr, NameDefRefRepr,
     },
 };
 
@@ -30,36 +29,8 @@ impl<'a, 'db> TyView<'a, 'db> {
         Self { analysis }
     }
 
-    pub(crate) fn ty_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Option<IndexedTy>> {
-        let ty = match symbol {
-            SymbolAt::Expr { expr } => self.body_view().expr_ty(expr.body_ir(), expr.expr_id())?,
-            declaration_symbol @ SymbolAt::Declaration { .. } => {
-                let declarations = ResolutionView::new(self.analysis)
-                    .declarations_for_symbol(declaration_symbol)?;
-                let mut ty = None;
-                for declaration in declarations {
-                    if let Some(declaration_ty) = self.ty_for_declaration(declaration)? {
-                        ty = Some(declaration_ty);
-                        break;
-                    }
-                }
-                ty
-            }
-            SymbolAt::TypePath { scope, path, .. } => match scope.repr() {
-                TypePathScopeRepr::Signature(context) => {
-                    Some(self.ty_for_type_path(context, &path)?)
-                }
-                TypePathScopeRepr::Body(scope) => {
-                    Some(self.ty_for_body_type_path(scope.body_ir(), scope.scope_id(), &path)?)
-                }
-            },
-            SymbolAt::ValuePath { scope, path, .. } => {
-                Some(self.ty_for_body_value_path(scope.body_ir(), scope.scope_id(), &path)?)
-            }
-            SymbolAt::UsePath { .. } => None,
-            SymbolAt::FunctionBody { .. } => None,
-        };
-        Ok(ty)
+    pub(crate) fn ty_for_expr(&self, expr: ExprRef) -> anyhow::Result<Option<IndexedTy>> {
+        self.body_view().expr_ty(expr.body_ir(), expr.expr_id())
     }
 
     pub(crate) fn declarations_for_ty(&self, ty: &IndexedTy) -> Vec<DeclarationRef> {
@@ -90,7 +61,10 @@ impl<'a, 'db> TyView<'a, 'db> {
         declarations
     }
 
-    fn ty_for_declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<IndexedTy>> {
+    pub(crate) fn ty_for_declaration(
+        &self,
+        declaration: DeclarationRef,
+    ) -> anyhow::Result<Option<IndexedTy>> {
         match declaration.repr() {
             DeclarationRefRepr::Module(_) => Ok(None),
             DeclarationRefRepr::NameDef(name_def) => {

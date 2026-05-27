@@ -1,7 +1,7 @@
 //! Generic resolution view from indexed symbols and path facts to declarations.
 //!
 //! Query modules choose the cursor policy and presentation. This view owns the cross-layer lookup
-//! rules that turn selected source symbols, paths, and body resolutions into canonical declaration
+//! rules that turn paths, declaration refs, and body resolutions into canonical declaration
 //! identities.
 
 use rg_body_ir::{BodyResolution, BodyTypePathResolution};
@@ -12,9 +12,7 @@ use rg_ir_model::{
 
 use crate::{
     api::Analysis,
-    model::{
-        DeclarationRef, DeclarationRefRepr, NameDefRef, NameDefRefRepr, SymbolAt, TypePathScopeRepr,
-    },
+    model::{DeclarationRef, DeclarationRefRepr, NameDefRef, NameDefRefRepr},
 };
 
 pub(crate) struct ResolutionView<'a, 'db>(&'a Analysis<'db>);
@@ -24,46 +22,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         Self(analysis)
     }
 
-    pub(crate) fn declarations_for_symbol(
-        &self,
-        symbol: SymbolAt,
-    ) -> anyhow::Result<Vec<DeclarationRef>> {
-        match symbol {
-            SymbolAt::FunctionBody { .. } => Ok(Vec::new()),
-            SymbolAt::Declaration { declaration, .. } => {
-                self.declarations_for_declaration(declaration)
-            }
-            SymbolAt::Expr { expr } => {
-                let body = expr.body_ir();
-                let Some(body_data) = self.0.body_ir.body_data(body)? else {
-                    return Ok(Vec::new());
-                };
-                let Some(expr_data) = body_data.expr(expr.expr_id()) else {
-                    return Ok(Vec::new());
-                };
-                self.declarations_for_body_resolution(Some(body), &expr_data.resolution)
-            }
-            SymbolAt::TypePath { scope, path, .. } => match scope.repr() {
-                TypePathScopeRepr::Signature(context) => {
-                    let declarations = self.declarations_for_semantic_type_path(context, &path)?;
-                    if declarations.is_empty() {
-                        self.declarations_for_use_path(context.module, &path)
-                    } else {
-                        Ok(declarations)
-                    }
-                }
-                TypePathScopeRepr::Body(scope) => {
-                    self.declarations_for_body_type_path(scope.body_ir(), scope.scope_id(), &path)
-                }
-            },
-            SymbolAt::ValuePath { scope, path, .. } => {
-                self.declarations_for_body_value_path(scope.body_ir(), scope.scope_id(), &path)
-            }
-            SymbolAt::UsePath { module, path, .. } => self.declarations_for_use_path(module, &path),
-        }
-    }
-
-    fn declarations_for_semantic_type_path(
+    pub(crate) fn declarations_for_semantic_type_path(
         &self,
         context: rg_semantic_ir::TypePathContext,
         path: &Path,
@@ -77,7 +36,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
             .collect())
     }
 
-    fn declarations_for_declaration(
+    pub(crate) fn declarations_for_declaration(
         &self,
         declaration: DeclarationRef,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
@@ -124,7 +83,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         Ok(Some(DeclarationRef::semantic(item.into())))
     }
 
-    fn declarations_for_use_path(
+    pub(crate) fn declarations_for_use_path(
         &self,
         module: ModuleRef,
         path: &Path,
@@ -136,7 +95,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         Ok(declarations)
     }
 
-    fn declarations_for_body_type_path(
+    pub(crate) fn declarations_for_body_type_path(
         &self,
         body_ref: BodyRef,
         scope: ScopeId,
@@ -161,7 +120,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         self.declarations_for_use_path(body.owner_module(), path)
     }
 
-    fn declarations_for_body_value_path(
+    pub(crate) fn declarations_for_body_value_path(
         &self,
         body_ref: BodyRef,
         scope: ScopeId,

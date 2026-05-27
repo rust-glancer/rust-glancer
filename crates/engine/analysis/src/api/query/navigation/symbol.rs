@@ -1,10 +1,7 @@
 //! Symbol-to-navigation resolution.
 
 use crate::{
-    api::{
-        Analysis, query::navigation::target::NavigationTargetProjection,
-        view::resolution::ResolutionView,
-    },
+    api::{Analysis, query::navigation::target::NavigationTargetProjection},
     model::{NavigationTarget, SymbolAt},
 };
 
@@ -21,7 +18,7 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
     }
 
     pub(crate) fn resolve_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Vec<NavigationTarget>> {
-        let declarations = ResolutionView::new(self.0).declarations_for_symbol(symbol)?;
+        let declarations = self.0.declarations_for_source_symbol(symbol)?;
         NavigationTargetProjection::new(self.0).targets_for_declarations(declarations)
     }
 }

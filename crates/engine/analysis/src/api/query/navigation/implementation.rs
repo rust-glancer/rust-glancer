@@ -5,11 +5,8 @@ use rg_parse::FileId;
 
 use super::target::NavigationTargetProjection;
 use crate::{
-    api::{
-        Analysis,
-        view::{implementation::ImplementationView, resolution::ResolutionView, ty::TyView},
-    },
-    model::{DeclarationRef, NavigationTarget},
+    api::{Analysis, view::implementation::ImplementationView},
+    model::{DeclarationRef, NavigationTarget, SymbolAt},
 };
 
 /// Implements goto-implementation with the facts rust-glancer already collects.
@@ -35,12 +32,15 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         };
 
         let implementations = ImplementationView::new(self.0);
-        if let Some(declarations) = implementations.implementations_for_method_call(&symbol)? {
+        if let SymbolAt::Expr { expr } = &symbol
+            && let Some(declarations) =
+                implementations.implementations_for_method_call_expr(*expr)?
+        {
             return NavigationTargetProjection::new(self.0).targets_for_declarations(declarations);
         }
 
         let mut declarations = Vec::new();
-        for declaration in ResolutionView::new(self.0).declarations_for_symbol(symbol.clone())? {
+        for declaration in self.0.declarations_for_source_symbol(symbol.clone())? {
             Self::extend_unique_declarations(
                 &mut declarations,
                 implementations.implementations_for_declaration(declaration)?,
@@ -48,7 +48,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         }
 
         if declarations.is_empty()
-            && let Some(ty) = TyView::new(self.0).ty_for_symbol(symbol)?
+            && let Some(ty) = self.0.ty_for_source_symbol(symbol)?
         {
             Self::extend_unique_declarations(
                 &mut declarations,

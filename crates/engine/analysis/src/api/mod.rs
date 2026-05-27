@@ -19,8 +19,8 @@ use rg_ty::IndexedTy;
 use crate::{
     api::source_symbol::{SourceSymbol, SourceSymbolIndex},
     model::{
-        CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget, ReferenceLocation, SymbolAt,
-        TypeHint, WorkspaceSymbol,
+        CompletionItem, DeclarationRef, DocumentSymbol, HoverInfo, NavigationTarget,
+        ReferenceLocation, SymbolAt, TypeHint, TypePathScopeRepr, WorkspaceSymbol,
     },
     txn::AnalysisReadTxn,
 };
@@ -83,6 +83,88 @@ impl<'a> Analysis<'a> {
             .min_by_key(|candidate| candidate.span().len()))
     }
 
+    pub(crate) fn declarations_for_source_symbol(
+        &self,
+        symbol: SymbolAt,
+    ) -> anyhow::Result<Vec<DeclarationRef>> {
+        let resolution = view::resolution::ResolutionView::new(self);
+        match symbol {
+            SymbolAt::FunctionBody { .. } => Ok(Vec::new()),
+            SymbolAt::Declaration { declaration, .. } => {
+                resolution.declarations_for_declaration(declaration)
+            }
+            SymbolAt::Expr { expr } => {
+                let body = expr.body_ir();
+                let Some(body_data) = self.body_ir.body_data(body)? else {
+                    return Ok(Vec::new());
+                };
+                let Some(expr_data) = body_data.expr(expr.expr_id()) else {
+                    return Ok(Vec::new());
+                };
+                resolution.declarations_for_body_resolution(Some(body), &expr_data.resolution)
+            }
+            SymbolAt::TypePath { scope, path, .. } => match scope.repr() {
+                TypePathScopeRepr::Signature(context) => {
+                    let declarations =
+                        resolution.declarations_for_semantic_type_path(context, &path)?;
+                    if declarations.is_empty() {
+                        resolution.declarations_for_use_path(context.module, &path)
+                    } else {
+                        Ok(declarations)
+                    }
+                }
+                TypePathScopeRepr::Body(scope) => resolution.declarations_for_body_type_path(
+                    scope.body_ir(),
+                    scope.scope_id(),
+                    &path,
+                ),
+            },
+            SymbolAt::ValuePath { scope, path, .. } => resolution.declarations_for_body_value_path(
+                scope.body_ir(),
+                scope.scope_id(),
+                &path,
+            ),
+            SymbolAt::UsePath { module, path, .. } => {
+                resolution.declarations_for_use_path(module, &path)
+            }
+        }
+    }
+
+    pub(crate) fn ty_for_source_symbol(
+        &self,
+        symbol: SymbolAt,
+    ) -> anyhow::Result<Option<IndexedTy>> {
+        let ty_view = view::ty::TyView::new(self);
+        let ty = match symbol {
+            SymbolAt::Expr { expr } => ty_view.ty_for_expr(expr)?,
+            SymbolAt::Declaration { declaration, .. } => {
+                let mut ty = None;
+                for declaration in view::resolution::ResolutionView::new(self)
+                    .declarations_for_declaration(declaration)?
+                {
+                    if let Some(declaration_ty) = ty_view.ty_for_declaration(declaration)? {
+                        ty = Some(declaration_ty);
+                        break;
+                    }
+                }
+                ty
+            }
+            SymbolAt::TypePath { scope, path, .. } => match scope.repr() {
+                TypePathScopeRepr::Signature(context) => {
+                    Some(ty_view.ty_for_type_path(context, &path)?)
+                }
+                TypePathScopeRepr::Body(scope) => {
+                    Some(ty_view.ty_for_body_type_path(scope.body_ir(), scope.scope_id(), &path)?)
+                }
+            },
+            SymbolAt::ValuePath { scope, path, .. } => {
+                Some(ty_view.ty_for_body_value_path(scope.body_ir(), scope.scope_id(), &path)?)
+            }
+            SymbolAt::UsePath { .. } | SymbolAt::FunctionBody { .. } => None,
+        };
+        Ok(ty)
+    }
+
     /// Resolves a previously found symbol to navigation targets.
     pub fn resolve_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Vec<NavigationTarget>> {
         query::navigation::SymbolResolver::new(self).resolve_symbol(symbol)
@@ -130,7 +212,7 @@ impl<'a> Analysis<'a> {
         let Some(symbol) = self.symbol_at_for_query(target, file_id, offset)? else {
             return Ok(None);
         };
-        view::ty::TyView::new(self).ty_for_symbol(symbol)
+        self.ty_for_source_symbol(symbol)
     }
 
     /// Returns best-effort inferred type hints for local bindings in one file.

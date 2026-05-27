@@ -15,8 +15,8 @@ use rg_ty::{IndexedTy, IndexedTyExt};
 use crate::{
     api::{Analysis, view::resolution::ResolutionView},
     model::{
-        DeclarationRef, DeclarationRefRepr, FunctionRef, FunctionRefRepr, ImplRef, ItemRefRepr,
-        NameDefRefRepr, SymbolAt,
+        DeclarationRef, DeclarationRefRepr, ExprRef, FunctionRef, FunctionRefRepr, ImplRef,
+        ItemRefRepr, NameDefRefRepr,
     },
 };
 
@@ -29,13 +29,10 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         Self { analysis }
     }
 
-    pub(crate) fn implementations_for_method_call(
+    pub(crate) fn implementations_for_method_call_expr(
         &self,
-        symbol: &SymbolAt,
+        expr: ExprRef,
     ) -> anyhow::Result<Option<Vec<DeclarationRef>>> {
-        let SymbolAt::Expr { expr } = *symbol else {
-            return Ok(None);
-        };
         let body = expr.body_ir();
         let Some(body_data) = self.analysis.body_ir.body_data(body)? else {
             return Ok(None);
