@@ -4,13 +4,13 @@
 //! Analysis can therefore ask a read transaction for cursor candidates without reaching back into
 //! item-tree storage.
 
+use rg_ir_model::{DefId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 
 use rg_package_store::PackageStoreError;
 
 use crate::{
-    DefId, DefMap, DefMapReadTxn, LocalDefId, LocalDefRef, ModuleId, ModuleOrigin, ModuleRef, Path,
-    TargetRef,
+    DefMap, DefMapReadTxn, ModuleOrigin, Path,
 };
 
 /// One def-map source node that can participate in cursor queries.

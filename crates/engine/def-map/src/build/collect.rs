@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
+use rg_ir_model::{DefId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_item_tree::{
     Documentation, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
     MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
@@ -25,10 +26,9 @@ use rg_text::Name;
 use rg_workspace::{RustEdition, TargetKind};
 
 use crate::{
-    DefId, DefMap, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
-    LocalDefData, LocalDefId, LocalDefKind, LocalDefRef, LocalImplData, MacroDefinitionData,
-    ModuleData, ModuleId, ModuleOrigin, ModuleRef, ModuleScope, PackageSlot, ScopeBinding,
-    ScopeBindingOrigin, TargetRef,
+    DefMap, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
+    LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope,
+    PackageSlot, ScopeBinding, ScopeBindingOrigin,
     model::{ModuleScopeBuilder, Namespace},
 };
 

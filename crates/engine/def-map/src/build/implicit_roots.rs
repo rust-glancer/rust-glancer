@@ -18,7 +18,9 @@ use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
 
-use crate::{ModuleId, ModuleRef, PackageSlot, TargetRef};
+use rg_ir_model::{ModuleId, ModuleRef, TargetRef};
+
+use crate::PackageSlot;
 
 /// Implicit roots for one target.
 type TargetImplicitRoots = HashMap<Name, ModuleRef>;

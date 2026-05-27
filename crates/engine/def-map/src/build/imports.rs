@@ -5,8 +5,10 @@
 //! the imported bindings into the next scope snapshot, and recording imports that still fail once
 //! the fixed point has stabilized.
 
+use rg_ir_model::{ImportId, ModuleRef, TargetRef};
+
 use crate::{
-    ImportData, ImportId, ImportKind, ModuleRef, ScopeBinding, ScopeBindingOrigin,
+    ImportData, ImportKind, ScopeBinding, ScopeBindingOrigin,
     query::path_resolution::{
         PathResolutionEnv, namespace_for_def_with_env, resolve_path_to_defs_with_env,
         resolve_path_to_modules_with_env, visible_module_scope_entry_set_with_env,
@@ -57,7 +59,7 @@ impl UnresolvedImports {
         Ok(Self { packages })
     }
 
-    pub(super) fn target_imports(&self, target: crate::TargetRef) -> Option<&[Vec<ImportId>]> {
+    pub(super) fn target_imports(&self, target: TargetRef) -> Option<&[Vec<ImportId>]> {
         self.packages
             .get(target.package.0)?
             .as_ref()?

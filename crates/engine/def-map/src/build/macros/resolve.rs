@@ -5,11 +5,12 @@
 
 use anyhow::Result;
 
+use rg_ir_model::{DefId, LocalDefRef, ModuleRef, TargetRef};
 use rg_text::Name;
 
 use crate::{
-    DefId, ImportPath, LocalDefData, LocalDefKind, LocalDefRef, MacroDefinitionData, ModuleRef,
-    PathSegment, ScopeBinding, ScopeBindingOrigin, TargetRef,
+    ImportPath, LocalDefData, LocalDefKind, MacroDefinitionData, PathSegment, ScopeBinding,
+    ScopeBindingOrigin,
     build::{collect::TargetState, finalize::FinalizeTargetStates},
     query::path_resolution::{
         PathResolutionEnv, resolve_path_to_macro_bindings_with_env,

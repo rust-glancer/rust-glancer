@@ -1,6 +1,7 @@
 //! Def-map package store and transaction entry points.
 
 use rg_item_tree::ItemTreeDb;
+use rg_ir_model::TargetRef;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_parse::{self, TargetId};
 use rg_text::PackageNameInterners;
@@ -9,7 +10,6 @@ use rg_workspace::WorkspaceMetadata;
 use crate::{
     DefMap, DefMapReadTxn, PackageDefMaps, PackageSlot,
     build::{DefMapDbBuilder, DefMapDbPackageRebuilder},
-    model::ResidentTargetRef,
 };
 
 /// Frozen def maps for all parsed packages and targets.
@@ -65,7 +65,7 @@ impl DefMapDb {
     }
 
     /// Iterates over every resident target def map together with a resident-only target reference.
-    fn resident_target_maps(&self) -> impl Iterator<Item = (ResidentTargetRef, &DefMap)> {
+    fn resident_target_maps(&self) -> impl Iterator<Item = (TargetRef, &DefMap)> {
         self.packages
             .raw_entries_with_slots()
             .filter_map(|(package_slot, entry)| {
@@ -77,7 +77,7 @@ impl DefMapDb {
                     .iter()
                     .enumerate()
                     .map(move |(target_idx, def_map)| {
-                        let target_ref = ResidentTargetRef {
+                        let target_ref = TargetRef {
                             package: package_slot,
                             target: TargetId(target_idx),
                         };

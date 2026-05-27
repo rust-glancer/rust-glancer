@@ -5,11 +5,12 @@
 
 use std::collections::HashSet;
 
+use rg_ir_model::{DefId, ModuleRef, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
 use crate::{
-    DefId, DefMap, DefMapReadTxn, ImportSourcePath, ModuleRef, Path, TargetRef,
+    DefMap, DefMapReadTxn, ImportSourcePath, Path,
     query::path_resolution,
 };
 

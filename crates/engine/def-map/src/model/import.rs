@@ -1,11 +1,12 @@
 use std::fmt;
 
 use rg_item_tree::{ImportAlias, ItemTreeRef, UseImportKind, UsePath, VisibilityLevel};
+use rg_ir_model::ModuleId;
 use rg_parse::Span;
 use rg_text::{Name, NameInterner};
 use rg_workspace::RustEdition;
 
-use super::{ModuleId, Path, PathSegment, path::last_segment_name};
+use super::{Path, PathSegment, path::last_segment_name};
 
 /// One lowered import declaration.
 #[derive(

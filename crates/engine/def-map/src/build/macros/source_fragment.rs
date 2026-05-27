@@ -11,13 +11,14 @@ use rg_item_tree::{
     MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleItem,
     ModuleSource, Package as ItemTreePackage, UseImport, UseItem, VisibilityLevel,
 };
+use rg_ir_model::{DefId, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_parse::FileId;
 use rg_text::Name;
 
 use crate::{
-    DefId, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
-    LocalDefId, LocalDefKind, LocalDefRef, LocalImplData, ModuleData, ModuleId, ModuleOrigin,
-    ModuleRef, ModuleScope, ScopeBinding, ScopeBindingOrigin,
+    ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
+    LocalDefKind, LocalImplData, ModuleData, ModuleOrigin, ModuleScope, ScopeBinding,
+    ScopeBindingOrigin,
     build::{collect::TargetState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult},
     model::Namespace,
 };

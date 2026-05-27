@@ -3,9 +3,10 @@ use std::{fmt, marker::PhantomData, sync::Arc};
 use expect_test::Expect;
 
 use crate::{
-    DefId, DefMap, DefMapDb, DefMapFinalizationStats, ImportData, ImportKind, ModuleId, ModuleRef,
-    Path, PathSegment, ResolvePathResult, ScopeBinding, ScopeEntry, TargetRef,
+    DefMap, DefMapDb, DefMapFinalizationStats, ImportData, ImportKind, Path, PathSegment,
+    ResolvePathResult, ScopeBinding, ScopeEntry,
 };
+use rg_ir_model::{DefId, ModuleId, ModuleRef, TargetRef};
 use rg_item_tree::{ItemTreeDb, PackageNameInterners, VisibilityLevel};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, Package, ParseDb, Target};
@@ -835,7 +836,7 @@ impl ResolvedDefOrigin<'_> {
                     .expect("target def map should exist while dumping")
                     .local_def(local_def_ref.local_def)
                     .expect("local def id should exist while dumping");
-                let module_path = self.render_module_path(crate::ModuleRef {
+                let module_path = self.render_module_path(ModuleRef {
                     target: local_def_ref.target,
                     module: local_def.module,
                 });
@@ -845,7 +846,7 @@ impl ResolvedDefOrigin<'_> {
         }
     }
 
-    fn render_module_path(&self, module_ref: crate::ModuleRef) -> String {
+    fn render_module_path(&self, module_ref: ModuleRef) -> String {
         let package = self
             .project
             .parse_db()

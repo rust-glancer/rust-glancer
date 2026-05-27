@@ -1,9 +1,8 @@
 use std::fmt;
 
 use rg_item_tree::{TypePath, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind};
+use rg_ir_model::TargetRef;
 use rg_text::Name;
-
-use crate::TargetRef;
 
 /// Structured path used by def-map path resolution queries.
 #[derive(

@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
+use rg_ir_model::TargetRef;
 use rg_macro_expand::{Edition, ExpansionSyntax};
 use rg_parse::{FileId, Span};
 use rg_text::PackageNameInterners;
@@ -16,7 +17,7 @@ use rg_tt::{Span as TtSpan, syntax_bridge::SpanFactory};
 use rg_workspace::RustEdition;
 
 use crate::{
-    ScopeBindingOrigin, TargetRef,
+    ScopeBindingOrigin,
     build::{
         collect::TargetState,
         finalize::{FinalizeTargetStates, ScopeMatrix},

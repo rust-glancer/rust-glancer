@@ -8,14 +8,16 @@
 //! During def-map construction this module reads from the fixed-point scope snapshot. After
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
-use crate::{
-    DefId, DefMapReadTxn, ImportPath, LocalDefData, LocalDefKind, LocalDefRef, MacroDefinitionData,
-    ModuleData, ModuleId, ModuleRef, Path, PathSegment, ScopeBinding, TargetRef,
-    model::{ModuleScopeBuilder, Namespace, ScopeEntryRef},
-};
+use rg_ir_model::{DefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_item_tree::VisibilityLevel;
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
+
+use crate::{
+    DefMapReadTxn, ImportPath, LocalDefData, LocalDefKind, MacroDefinitionData, ModuleData, Path,
+    PathSegment, ScopeBinding,
+    model::{ModuleScopeBuilder, Namespace, ScopeEntryRef},
+};
 
 /// Result of resolving a path against the frozen def-map graph.
 #[derive(Debug, Clone, PartialEq, Eq)]

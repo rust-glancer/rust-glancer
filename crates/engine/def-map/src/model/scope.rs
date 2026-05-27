@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
 use rg_item_tree::VisibilityLevel;
+use rg_ir_model::{DefId, ModuleRef};
 use rg_text::Name;
-
-use crate::{DefId, ModuleRef};
 
 /// Frozen module scope optimized for retained query data.
 ///
@@ -316,9 +315,10 @@ pub(crate) enum Namespace {
 #[cfg(test)]
 mod tests {
     use rg_item_tree::VisibilityLevel;
+    use rg_ir_model::{DefId, ModuleId, ModuleRef, TargetRef};
     use rg_parse::TargetId;
 
-    use crate::{DefId, ModuleId, ModuleRef, PackageSlot, TargetRef};
+    use crate::PackageSlot;
 
     use super::{ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin};
 

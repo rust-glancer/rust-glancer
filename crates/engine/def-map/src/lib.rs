@@ -22,11 +22,6 @@ pub use self::{
     store::{DefMapDb, DefMapReadTxn, DefMapStats},
 };
 
-pub(crate) use self::model::{
-    DefId, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
-    TargetRef,
-};
-
 mod def_map;
 
 #[cfg(test)]

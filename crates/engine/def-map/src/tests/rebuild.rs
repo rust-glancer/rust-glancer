@@ -7,7 +7,9 @@ use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
-use crate::{DefMapDb, PackageDefMaps, PackageSlot, TargetRef};
+use rg_ir_model::TargetRef;
+
+use crate::{DefMapDb, PackageDefMaps, PackageSlot};
 
 #[test]
 fn rebuild_resolves_dirty_imports_through_clean_packages() {

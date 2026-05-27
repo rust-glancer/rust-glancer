@@ -11,14 +11,15 @@ mod rebuild;
 
 use anyhow::Context as _;
 
+use rg_ir_model::{LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_item_tree::ItemTreeDb;
 use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    DefMap as FrozenDefMap, DefMapReadTxn, LocalDefData, LocalDefRef, MacroDefinitionData,
-    ModuleData, ModuleId, ModuleRef, PackageDefMaps as DefMapPackage, PackageSlot, TargetRef,
+    DefMap as FrozenDefMap, DefMapReadTxn, LocalDefData, MacroDefinitionData, ModuleData,
+    PackageDefMaps as DefMapPackage, PackageSlot,
     model::{ModuleScopeBuilder, ScopeEntryRef},
     query::path_resolution::{PathResolutionEnv, resolve_path_to_modules_with_env},
 };

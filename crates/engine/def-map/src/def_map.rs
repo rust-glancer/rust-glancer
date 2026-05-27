@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 
 use rg_arena::Arena;
-use rg_ir_model::{LocalDefRef, LocalImplRef, TargetRef};
+use rg_ir_model::{
+    ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef, TargetRef,
+};
 use rg_text::Name;
 
-use super::{
-    GeneratedSourceData, GeneratedSourceId, ImportData, ImportId, LocalDefId, LocalImplId,
-    ModuleId, ModuleRef,
-};
+use super::{GeneratedSourceData, GeneratedSourceId, ImportData};
 use crate::{LocalDefData, LocalImplData, MacroDefinitionData, ModuleData};
 
 /// Frozen namespace map for one analyzed target.

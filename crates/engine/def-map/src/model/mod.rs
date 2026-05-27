@@ -1,7 +1,6 @@
 //! Def-map domain model.
 
 pub(crate) mod data;
-pub(crate) mod ids;
 pub(crate) mod import;
 pub(crate) mod package;
 pub(crate) mod path;
@@ -13,10 +12,6 @@ pub use self::{
         LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData, MacroDefinitionPayload,
         ModuleData, ModuleOrigin,
     },
-    ids::{
-        DefId, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
-        TargetRef,
-    },
     import::{ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath},
     package::PackageDefMaps,
     path::{Path, PathSegment},
@@ -26,7 +21,4 @@ pub use self::{
     },
 };
 
-pub(crate) use self::{
-    ids::ResidentTargetRef,
-    scope::{ModuleScopeBuilder, Namespace, ScopeEntryRef},
-};
+pub(crate) use self::scope::{ModuleScopeBuilder, Namespace, ScopeEntryRef};

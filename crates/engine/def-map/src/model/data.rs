@@ -1,11 +1,12 @@
 use rg_item_tree::{Documentation, ItemTag, MacroDefinitionItem, VisibilityLevel};
+use rg_ir_model::{ImportId, LocalDefId, LocalImplId, ModuleId, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 use rg_tt::TopSubtree;
 use rg_workspace::RustEdition;
 
 use super::scope::Namespace;
-use super::{ImportId, ItemSource, LocalDefId, LocalImplId, ModuleId, ModuleScope, TargetRef};
+use super::{ItemSource, ModuleScope};
 
 /// One module in the frozen namespace graph.
 #[derive(
