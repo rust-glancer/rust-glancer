@@ -1,6 +1,6 @@
 //! Qualified path completion assembly for body and import positions.
 
-use rg_ir_view::enum_variant::{EnumVariant, EnumVariantView};
+use rg_ir_view::item::enum_variant::{EnumVariant, EnumVariantView};
 
 use crate::{
     Analysis,

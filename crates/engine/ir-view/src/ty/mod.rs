@@ -4,6 +4,10 @@
 //! in Semantic IR or DefMap. This view keeps the storage-specific projection rules out of query
 //! orchestration.
 
+pub mod implementation;
+pub mod locals;
+pub mod member;
+
 use rg_body_ir::{BodyAutoderef, BodyTypePathResolution};
 use rg_def_map::Path;
 use rg_ir_model::{
@@ -17,7 +21,7 @@ use rg_ir_model::{
 use rg_semantic_ir::{SemanticTypePathResolution, TypePathContext};
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
 
-use crate::{IndexedViewDb, body::BodyView};
+use crate::{IndexedViewDb, ty::locals::BodyView};
 
 pub struct TyView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,

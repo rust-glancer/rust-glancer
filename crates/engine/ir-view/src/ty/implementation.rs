@@ -16,7 +16,7 @@ use rg_ir_model::{
 use rg_ir_model::{BodyImplId, BodyImplRef, BodyItemRef};
 use rg_ty::{IndexedTy, IndexedTyExt};
 
-use crate::{IndexedViewDb, resolution::ResolutionView};
+use crate::{IndexedViewDb, lookup::resolution::ResolutionView};
 
 pub struct ImplementationView<'a, 'db> {
     analysis: &'a IndexedViewDb<'db>,

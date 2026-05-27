@@ -14,9 +14,12 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::Documentation;
 
-use crate::{IndexedViewDb, SymbolKind, path::PathView, signature::SignatureRenderer};
+use crate::{
+    IndexedViewDb, SymbolKind, display::signature::SignatureRenderer, item::path::PathView,
+    ty::member::MemberView,
+};
 
-use super::{declaration::DeclarationView, member::MemberView};
+use super::declaration::DeclarationView;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DeclarationDetailsContext {

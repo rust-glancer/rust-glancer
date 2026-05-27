@@ -1,7 +1,7 @@
 //! Goto-implementation query flow.
 
 use rg_ir_model::{TargetRef, identity::DeclarationRef};
-use rg_ir_view::implementation::ImplementationView;
+use rg_ir_view::ty::implementation::ImplementationView;
 use rg_parse::FileId;
 
 use super::target::NavigationTargetProjection;

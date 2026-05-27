@@ -17,8 +17,8 @@ use rg_ty::IndexedTy;
 
 use crate::{
     IndexedViewDb,
-    member::{MemberField, MemberFunction},
-    ty_label::TypeRenderer,
+    display::ty_label::TypeRenderer,
+    ty::member::{MemberField, MemberFunction},
 };
 
 const MEMBER_PREVIEW_LIMIT: usize = 5;

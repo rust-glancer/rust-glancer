@@ -11,12 +11,12 @@ use rg_ir_model::{
 };
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
-    body::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
-    enum_variant::EnumVariantView,
-    member::{MemberMethodCandidate, MemberMethodOrigin, MemberView},
-    name_lookup::{ModuleScopeName, NameLookupView, NameNamespace, NameOrigin},
-    source::{IndexedNameNamespace, IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
+    item::enum_variant::EnumVariantView,
+    lookup::name::{ModuleScopeName, NameLookupView, NameNamespace, NameOrigin},
+    source::facts::{IndexedNameNamespace, IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
     ty::TyView,
+    ty::locals::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
+    ty::member::{MemberMethodCandidate, MemberMethodOrigin, MemberView},
 };
 use rg_semantic_ir::FieldKey;
 use rg_ty::IndexedTy;
@@ -288,7 +288,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         for primitive in rg_ty::PrimitiveTy::ALL
             .iter()
             .copied()
-            .filter(|primitive| primitive.label().starts_with(member_prefix))
+            .filter(|primitive| primitive.label().starts_with(member_prefix.as_str()))
         {
             let path = Path::unqualified_name(primitive.label());
             if matches!(

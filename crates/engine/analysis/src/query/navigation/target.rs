@@ -6,8 +6,8 @@ use rg_ir_model::{
 };
 use rg_ir_view::{
     IndexedViewDb,
-    declaration::{Declaration, DeclarationView},
-    module::ModuleView,
+    item::declaration::{Declaration, DeclarationView},
+    item::module::ModuleView,
 };
 
 use crate::model::{NavigationTarget, NavigationTargetKind};

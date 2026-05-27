@@ -1,7 +1,7 @@
 //! Inlay-style hints derived from the frozen analysis snapshot.
 
 use rg_ir_model::TargetRef;
-use rg_ir_view::{body::BodyView, ty_label::TypeRenderer};
+use rg_ir_view::{display::ty_label::TypeRenderer, ty::locals::BodyView};
 use rg_parse::{FileId, TextSpan};
 
 use crate::{Analysis, model::TypeHint};

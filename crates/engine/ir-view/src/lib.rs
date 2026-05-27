@@ -5,24 +5,13 @@
 //! hover, symbols, and other query modules should build feature-specific behavior on top of these
 //! generic projections.
 
-pub mod body;
 pub mod db;
-pub mod declaration;
-pub mod details;
-pub mod enum_variant;
-pub mod implementation;
-pub mod item_index;
-pub mod member;
-pub mod module;
-pub mod name_lookup;
-pub mod path;
-pub mod reference;
-pub mod resolution;
-pub mod signature;
+pub mod display;
+pub mod item;
+pub mod lookup;
 pub mod source;
 pub mod symbol;
 pub mod ty;
-pub mod ty_label;
 
 pub use db::IndexedViewDb;
 pub use symbol::SymbolKind;

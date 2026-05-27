@@ -7,8 +7,8 @@ use rg_ir_model::{
 };
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
-    declaration::{Declaration, DeclarationView},
-    item_index::{IndexedItem, IndexedItemChild, ItemIndexView},
+    item::declaration::{Declaration, DeclarationView},
+    item::index::{IndexedItem, IndexedItemChild, ItemIndexView},
 };
 use rg_parse::{FileId, Span};
 

@@ -3,8 +3,8 @@
 use std::collections::HashSet;
 
 use rg_ir_view::{
-    details::{DeclarationDetailsContext, DeclarationDetailsView},
-    member::MemberView,
+    item::details::{DeclarationDetailsContext, DeclarationDetailsView},
+    ty::member::MemberView,
 };
 
 use crate::{

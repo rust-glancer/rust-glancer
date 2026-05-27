@@ -9,7 +9,7 @@ use rg_parse::{FileId, Span};
 
 use rg_ir_view::{
     IndexedViewDb,
-    source::{
+    source::facts::{
         IndexedMemberAccessSite, IndexedNameNamespace, IndexedQualifiedPathScope,
         IndexedQualifiedPathSite, IndexedRecordFieldListSite, IndexedUnqualifiedNameScope,
         IndexedUnqualifiedNameSite, SourceFactsView,

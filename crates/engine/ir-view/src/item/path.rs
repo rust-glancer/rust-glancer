@@ -27,7 +27,7 @@ impl<'a, 'db> PathView<'a, 'db> {
         let mut current = module_ref.module;
 
         // Module ids form a parent chain rooted at the target module. Walking it upward and then
-        // reversing gives us the same crate::module::child shape users see in Rust paths.
+        // reversing gives us the same crate::item::module::child shape users see in Rust paths.
         loop {
             let Some(module) = def_map.module(current) else {
                 return Ok(None);

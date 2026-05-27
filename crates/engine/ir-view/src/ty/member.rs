@@ -12,9 +12,7 @@ use rg_ir_model::{
 use rg_semantic_ir::{Documentation, FieldData, FieldKey, FunctionData, ParamItem};
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt};
 
-use crate::{IndexedViewDb, SymbolKind, path::PathView};
-
-use super::declaration::Declaration;
+use crate::{IndexedViewDb, SymbolKind, item::declaration::Declaration, item::path::PathView};
 
 /// A nominal receiver type whose declarations may live in either Semantic IR or Body IR.
 #[derive(Debug, Clone, Copy)]

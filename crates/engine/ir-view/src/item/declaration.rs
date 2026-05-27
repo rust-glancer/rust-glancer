@@ -14,7 +14,7 @@ use rg_ir_model::{
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::TypeRef;
 
-use crate::{IndexedViewDb, SymbolKind, member::MemberView};
+use crate::{IndexedViewDb, SymbolKind, ty::member::MemberView};
 
 /// Composite declaration facts shared by editor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]

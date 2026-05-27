@@ -1,6 +1,6 @@
 //! Record-field completion assembly for struct literals and record patterns.
 
-use rg_ir_view::{IndexedViewDb, member::MemberView};
+use rg_ir_view::{IndexedViewDb, ty::member::MemberView};
 
 use crate::{
     completion_site::RecordFieldCompletionSite,

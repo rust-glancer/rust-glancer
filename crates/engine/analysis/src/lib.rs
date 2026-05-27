@@ -14,7 +14,7 @@ pub use rg_ir_view::SymbolKind;
 
 use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
-use rg_ir_view::{IndexedViewDb, module::ModuleView};
+use rg_ir_view::{IndexedViewDb, item::module::ModuleView};
 use rg_parse::FileId;
 use rg_ty::IndexedTy;
 

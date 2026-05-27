@@ -2,8 +2,8 @@
 
 use rg_ir_model::TargetRef;
 use rg_ir_view::{
-    details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
-    signature::SignatureRenderer,
+    display::signature::SignatureRenderer,
+    item::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
 };
 use rg_parse::FileId;
 use rg_ty::IndexedTy;

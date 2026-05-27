@@ -16,7 +16,7 @@ use rg_ir_model::{
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{FieldKey, SemanticCursorCandidate, TypePathContext};
 
-use crate::{IndexedViewDb, declaration::DeclarationView};
+use crate::{IndexedViewDb, item::declaration::DeclarationView};
 
 /// Why an indexed source occurrence exists in the scanned source surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

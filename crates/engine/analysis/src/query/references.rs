@@ -5,7 +5,7 @@
 //! projects declaration identities into source locations.
 
 use rg_ir_model::{TargetRef, identity::DeclarationRef};
-use rg_ir_view::reference::{IndexedSourceLocation, ReferenceView};
+use rg_ir_view::source::reference::{IndexedSourceLocation, ReferenceView};
 use rg_parse::FileId;
 
 use crate::{

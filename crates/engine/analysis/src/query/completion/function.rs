@@ -3,7 +3,7 @@
 //! Function and method completions need more than a label: they reuse signature
 //! details for display and turn parameter names into LSP snippet placeholders.
 
-use rg_ir_view::{member::MemberFunction, signature::SignatureRenderer};
+use rg_ir_view::{display::signature::SignatureRenderer, ty::member::MemberFunction};
 use rg_semantic_ir::ParamItem;
 
 use crate::{

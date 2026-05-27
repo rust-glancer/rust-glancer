@@ -13,7 +13,7 @@ use rg_ir_model::{
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::SemanticItemView;
 
-use crate::{IndexedViewDb, body::BodyView};
+use crate::{IndexedViewDb, ty::locals::BodyView};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedSyntaxChild {

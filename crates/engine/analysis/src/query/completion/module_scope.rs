@@ -1,6 +1,6 @@
 //! Shared rendering for module-scope completion candidates.
 
-use rg_ir_view::member::MemberView;
+use rg_ir_view::ty::member::MemberView;
 
 use crate::{
     Analysis,

@@ -7,7 +7,7 @@
 use rg_ir_model::identity::DeclarationRef;
 use rg_ty::{IndexedGenericArg, IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyRepr};
 
-use crate::{IndexedViewDb, declaration::DeclarationView};
+use crate::{IndexedViewDb, item::declaration::DeclarationView};
 
 pub struct TypeRenderer<'a, 'db>(&'a IndexedViewDb<'db>);
 

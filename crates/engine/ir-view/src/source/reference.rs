@@ -6,7 +6,7 @@
 use rg_ir_model::{TargetRef, identity::DeclarationRef};
 use rg_parse::{FileId, Span};
 
-use crate::{IndexedViewDb, declaration::DeclarationView};
+use crate::{IndexedViewDb, item::declaration::DeclarationView};
 
 /// One indexed source location for a declaration or use-site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

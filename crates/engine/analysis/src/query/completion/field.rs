@@ -1,6 +1,6 @@
 //! Shared field-completion rendering.
 
-use rg_ir_view::{IndexedViewDb, member::MemberField, signature::SignatureRenderer};
+use rg_ir_view::{IndexedViewDb, display::signature::SignatureRenderer, ty::member::MemberField};
 
 use crate::model::{
     CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
