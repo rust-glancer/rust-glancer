@@ -10,6 +10,7 @@ use rg_parse::FileId;
 use crate::{
     api::{
         Analysis,
+        source_symbol::SourceSymbolResolver,
         source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolRole},
         view::reference::ReferenceView,
     },
@@ -119,7 +120,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             return Ok(Vec::new());
         };
         let reference_view = ReferenceView::new(self.analysis);
-        let declarations = self.declarations_for_source_symbol(symbol)?;
+        let declarations = self.unique_declarations_for_symbol(symbol)?;
         if declarations.is_empty() {
             return Ok(Vec::new());
         }
@@ -159,11 +160,12 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         Ok(locations)
     }
 
-    fn declarations_for_source_symbol(
+    fn unique_declarations_for_symbol(
         &self,
         symbol: SymbolAt,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let declarations = self.analysis.declarations_for_source_symbol(symbol)?;
+        let declarations =
+            SourceSymbolResolver::new(self.analysis).declarations_for_symbol(symbol)?;
         let mut unique = Vec::new();
         for declaration in declarations {
             if !unique.contains(&declaration) {
@@ -178,7 +180,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         symbol: SymbolAt,
         declarations: &[DeclarationRef],
     ) -> anyhow::Result<bool> {
-        let candidate_declarations = self.declarations_for_source_symbol(symbol)?;
+        let candidate_declarations = self.unique_declarations_for_symbol(symbol)?;
         Ok(candidate_declarations
             .iter()
             .any(|candidate| declarations.contains(candidate)))

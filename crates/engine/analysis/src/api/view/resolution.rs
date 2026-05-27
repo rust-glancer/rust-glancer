@@ -8,7 +8,7 @@ use rg_body_ir::{BodyResolution, BodyTypePathResolution};
 use rg_def_map::Path;
 use rg_ir_model::{
     BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ResolvedDeclarationRef, ScopeId,
-    identity::{DeclarationRef, DeclarationRefRepr, NameDefRef, NameDefRefRepr},
+    identity::{DeclarationRef, DeclarationRefRepr, ExprRef, NameDefRef, NameDefRefRepr},
 };
 
 use crate::api::Analysis;
@@ -52,6 +52,20 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
             | DeclarationRefRepr::Binding(_)
             | DeclarationRefRepr::Impl(_) => Ok(vec![declaration]),
         }
+    }
+
+    pub(crate) fn declarations_for_expr(
+        &self,
+        expr: ExprRef,
+    ) -> anyhow::Result<Vec<DeclarationRef>> {
+        let body_ref = expr.body_ir();
+        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
+            return Ok(Vec::new());
+        };
+        let Some(expr_data) = body.expr(expr.expr_id()) else {
+            return Ok(Vec::new());
+        };
+        self.declarations_for_body_resolution(Some(body_ref), &expr_data.resolution)
     }
 
     fn fallback_name_def(&self, local_def: LocalDefRef) -> DeclarationRef {

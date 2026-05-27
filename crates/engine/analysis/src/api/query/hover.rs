@@ -8,6 +8,7 @@ use crate::{
     api::{
         Analysis,
         render::signature::SignatureRenderer,
+        source_symbol::SourceSymbolResolver,
         view::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
     },
     model::{HoverBlock, HoverInfo, SymbolAt, SymbolKind},
@@ -32,7 +33,8 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         };
         let range = Some(source_symbol.span());
         let symbol = source_symbol.symbol().clone();
-        let declarations = self.0.declarations_for_source_symbol(symbol.clone())?;
+        let source_symbols = SourceSymbolResolver::new(self.0);
+        let declarations = source_symbols.declarations_for_symbol(symbol.clone())?;
         let context = DeclarationDetailsContext {
             module_display_name: Self::module_display_name_for_symbol(&symbol),
         };
@@ -50,7 +52,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         }
 
         if blocks.is_empty()
-            && let Some(ty) = self.0.ty_for_source_symbol(symbol)?
+            && let Some(ty) = source_symbols.ty_for_symbol(symbol)?
             && let Some(block) = self.hover_for_ty(&ty)?
         {
             blocks.push(block);

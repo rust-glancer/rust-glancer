@@ -1,7 +1,10 @@
 //! Symbol-to-navigation resolution.
 
 use crate::{
-    api::{Analysis, query::navigation::target::NavigationTargetProjection},
+    api::{
+        Analysis, query::navigation::target::NavigationTargetProjection,
+        source_symbol::SourceSymbolResolver,
+    },
     model::{NavigationTarget, SymbolAt},
 };
 
@@ -18,7 +21,7 @@ impl<'a, 'db> SymbolResolver<'a, 'db> {
     }
 
     pub(crate) fn resolve_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Vec<NavigationTarget>> {
-        let declarations = self.0.declarations_for_source_symbol(symbol)?;
+        let declarations = SourceSymbolResolver::new(self.0).declarations_for_symbol(symbol)?;
         NavigationTargetProjection::new(self.0).targets_for_declarations(declarations)
     }
 }

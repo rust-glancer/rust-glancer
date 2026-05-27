@@ -5,7 +5,9 @@ use rg_parse::FileId;
 
 use super::target::NavigationTargetProjection;
 use crate::{
-    api::{Analysis, view::implementation::ImplementationView},
+    api::{
+        Analysis, source_symbol::SourceSymbolResolver, view::implementation::ImplementationView,
+    },
     model::{NavigationTarget, SymbolAt},
 };
 
@@ -40,7 +42,8 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         }
 
         let mut declarations = Vec::new();
-        for declaration in self.0.declarations_for_source_symbol(symbol.clone())? {
+        let source_symbols = SourceSymbolResolver::new(self.0);
+        for declaration in source_symbols.declarations_for_symbol(symbol.clone())? {
             Self::extend_unique_declarations(
                 &mut declarations,
                 implementations.implementations_for_declaration(declaration)?,
@@ -48,7 +51,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         }
 
         if declarations.is_empty()
-            && let Some(ty) = self.0.ty_for_source_symbol(symbol)?
+            && let Some(ty) = source_symbols.ty_for_symbol(symbol)?
         {
             Self::extend_unique_declarations(
                 &mut declarations,

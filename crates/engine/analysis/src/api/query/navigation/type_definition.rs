@@ -5,7 +5,7 @@ use rg_parse::FileId;
 
 use super::target::NavigationTargetProjection;
 use crate::{
-    api::{Analysis, view::ty::TyView},
+    api::{Analysis, source_symbol::SourceSymbolResolver, view::ty::TyView},
     model::NavigationTarget,
 };
 
@@ -31,7 +31,7 @@ impl<'a, 'db> TypeDefinitionResolver<'a, 'db> {
         };
 
         let ty_view = TyView::new(self.0);
-        let Some(ty) = self.0.ty_for_source_symbol(symbol)? else {
+        let Some(ty) = SourceSymbolResolver::new(self.0).ty_for_symbol(symbol)? else {
             return Ok(Vec::new());
         };
 

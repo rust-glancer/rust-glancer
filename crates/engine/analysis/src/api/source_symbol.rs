@@ -1,16 +1,21 @@
 //! Analysis cursor symbols built from generic indexed source facts.
 
-use rg_ir_model::TargetRef;
+use rg_ir_model::{TargetRef, identity::DeclarationRef};
 use rg_parse::{FileId, Span};
+use rg_ty::IndexedTy;
 
 use crate::{
     api::{
         Analysis,
-        view::source::{
-            IndexedSourceFact, IndexedSourceOccurrence, IndexedTypePathScope, SourceFactsView,
+        view::{
+            resolution::ResolutionView,
+            source::{
+                IndexedSourceFact, IndexedSourceOccurrence, IndexedTypePathScope, SourceFactsView,
+            },
+            ty::TyView,
         },
     },
-    model::{SymbolAt, TypePathScopeRef},
+    model::{SymbolAt, TypePathScopeRef, TypePathScopeRepr},
 };
 
 pub(crate) use crate::api::view::source::IndexedSourceRole as SourceSymbolRole;
@@ -115,5 +120,85 @@ impl<'a, 'db> SourceSymbolIndex<'a, 'db> {
             .into_iter()
             .map(SourceSymbol::from_occurrence)
             .collect())
+    }
+}
+
+pub(crate) struct SourceSymbolResolver<'a, 'db> {
+    analysis: &'a Analysis<'db>,
+}
+
+impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
+    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+        Self { analysis }
+    }
+
+    pub(crate) fn declarations_for_symbol(
+        &self,
+        symbol: SymbolAt,
+    ) -> anyhow::Result<Vec<DeclarationRef>> {
+        let resolution = ResolutionView::new(self.analysis);
+        match symbol {
+            SymbolAt::FunctionBody { .. } => Ok(Vec::new()),
+            SymbolAt::Declaration { declaration, .. } => {
+                resolution.declarations_for_declaration(declaration)
+            }
+            SymbolAt::Expr { expr } => resolution.declarations_for_expr(expr),
+            SymbolAt::TypePath { scope, path, .. } => match scope.repr() {
+                TypePathScopeRepr::Signature(context) => {
+                    let declarations =
+                        resolution.declarations_for_semantic_type_path(context, &path)?;
+                    if declarations.is_empty() {
+                        resolution.declarations_for_use_path(context.module, &path)
+                    } else {
+                        Ok(declarations)
+                    }
+                }
+                TypePathScopeRepr::Body(scope) => resolution.declarations_for_body_type_path(
+                    scope.body_ir(),
+                    scope.scope_id(),
+                    &path,
+                ),
+            },
+            SymbolAt::ValuePath { scope, path, .. } => resolution.declarations_for_body_value_path(
+                scope.body_ir(),
+                scope.scope_id(),
+                &path,
+            ),
+            SymbolAt::UsePath { module, path, .. } => {
+                resolution.declarations_for_use_path(module, &path)
+            }
+        }
+    }
+
+    pub(crate) fn ty_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Option<IndexedTy>> {
+        let ty_view = TyView::new(self.analysis);
+        let ty = match symbol {
+            SymbolAt::Expr { expr } => ty_view.ty_for_expr(expr)?,
+            SymbolAt::Declaration { declaration, .. } => {
+                let mut ty = None;
+                for declaration in
+                    ResolutionView::new(self.analysis).declarations_for_declaration(declaration)?
+                {
+                    if let Some(declaration_ty) = ty_view.ty_for_declaration(declaration)? {
+                        ty = Some(declaration_ty);
+                        break;
+                    }
+                }
+                ty
+            }
+            SymbolAt::TypePath { scope, path, .. } => match scope.repr() {
+                TypePathScopeRepr::Signature(context) => {
+                    Some(ty_view.ty_for_type_path(context, &path)?)
+                }
+                TypePathScopeRepr::Body(scope) => {
+                    Some(ty_view.ty_for_body_type_path(scope.body_ir(), scope.scope_id(), &path)?)
+                }
+            },
+            SymbolAt::ValuePath { scope, path, .. } => {
+                Some(ty_view.ty_for_body_value_path(scope.body_ir(), scope.scope_id(), &path)?)
+            }
+            SymbolAt::UsePath { .. } | SymbolAt::FunctionBody { .. } => None,
+        };
+        Ok(ty)
     }
 }
