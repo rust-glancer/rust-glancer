@@ -24,12 +24,12 @@ use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt, In
 use crate::{IndexedViewDb, ty::locals::BodyView};
 
 pub struct TyView<'a, 'db> {
-    analysis: &'a IndexedViewDb<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> TyView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self { analysis }
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub fn ty_for_expr(&self, expr: ExprRef) -> anyhow::Result<Option<IndexedTy>> {
@@ -72,10 +72,8 @@ impl<'a, 'db> TyView<'a, 'db> {
             DeclarationRefRepr::Module(_) => Ok(None),
             DeclarationRefRepr::NameDef(name_def) => {
                 let NameDefRefRepr::DefMapLocal(local_def) = name_def.repr();
-                let Some(SemanticItemRef::TypeDef(ty)) = self
-                    .analysis
-                    .semantic_ir
-                    .semantic_item_for_local_def(local_def)?
+                let Some(SemanticItemRef::TypeDef(ty)) =
+                    self.db.semantic_ir.semantic_item_for_local_def(local_def)?
                 else {
                     return Ok(None);
                 };
@@ -118,10 +116,10 @@ impl<'a, 'db> TyView<'a, 'db> {
         context: TypePathContext,
         path: &Path,
     ) -> anyhow::Result<IndexedTy> {
-        let resolution =
-            self.analysis
-                .semantic_ir
-                .resolve_type_path(&self.analysis.def_map, context, path)?;
+        let resolution = self
+            .db
+            .semantic_ir
+            .resolve_type_path(&self.db.def_map, context, path)?;
         if matches!(resolution, SemanticTypePathResolution::Unknown)
             && let Some(primitive) = path.single_name().and_then(rg_ty::PrimitiveTy::from_name)
         {
@@ -138,9 +136,9 @@ impl<'a, 'db> TyView<'a, 'db> {
         path: &Path,
     ) -> anyhow::Result<IndexedTy> {
         Ok(Self::body_type_path_resolution_to_ty(
-            self.analysis.body_ir.resolve_type_path_in_scope(
-                &self.analysis.def_map,
-                &self.analysis.semantic_ir,
+            self.db.body_ir.resolve_type_path_in_scope(
+                &self.db.def_map,
+                &self.db.semantic_ir,
                 body_ref,
                 scope,
                 path,
@@ -156,9 +154,9 @@ impl<'a, 'db> TyView<'a, 'db> {
     ) -> anyhow::Result<IndexedTy> {
         // Value-path type queries should use the same Body IR resolver as the main body pass, so
         // enum variants and associated functions agree between snapshots and cursor queries.
-        let (_, ty) = self.analysis.body_ir.resolve_value_path_in_scope(
-            &self.analysis.def_map,
-            &self.analysis.semantic_ir,
+        let (_, ty) = self.db.body_ir.resolve_value_path_in_scope(
+            &self.db.def_map,
+            &self.db.semantic_ir,
             body_ref,
             scope,
             path,
@@ -167,17 +165,16 @@ impl<'a, 'db> TyView<'a, 'db> {
     }
 
     fn ty_for_field(&self, field: SemanticFieldRef) -> anyhow::Result<Option<IndexedTy>> {
-        Ok(self.analysis.body_ir.ty_for_field(
-            &self.analysis.def_map,
-            &self.analysis.semantic_ir,
-            field,
-        )?)
+        Ok(self
+            .db
+            .body_ir
+            .ty_for_field(&self.db.def_map, &self.db.semantic_ir, field)?)
     }
 
     fn ty_for_enum_variant(&self, variant: EnumVariantRef) -> anyhow::Result<Option<IndexedTy>> {
         match variant.repr() {
             EnumVariantRefRepr::Semantic(variant) => {
-                let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant)? else {
+                let Some(data) = self.db.semantic_ir.enum_variant_data(variant)? else {
                     return Ok(None);
                 };
                 Ok(Some(IndexedTyRepr::nominal(vec![IndexedNominalTy::bare(
@@ -225,6 +222,6 @@ impl<'a, 'db> TyView<'a, 'db> {
     }
 
     fn body_view(&self) -> BodyView<'a, 'db> {
-        BodyView::new(self.analysis)
+        BodyView::new(self.db)
     }
 }

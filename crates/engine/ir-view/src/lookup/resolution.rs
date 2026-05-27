@@ -16,8 +16,8 @@ use crate::IndexedViewDb;
 pub struct ResolutionView<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> ResolutionView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self(analysis)
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self(db)
     }
 
     pub fn declarations_for_semantic_type_path(
@@ -145,7 +145,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         self.declarations_for_body_resolution(Some(body_ref), &resolution)
     }
 
-    pub fn declarations_for_body_resolution(
+    pub(crate) fn declarations_for_body_resolution(
         &self,
         body_ref: Option<BodyRef>,
         resolution: &BodyResolution,

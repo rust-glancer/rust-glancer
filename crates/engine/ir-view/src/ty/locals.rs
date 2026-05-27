@@ -110,17 +110,17 @@ impl BodyLocalGroup {
 }
 
 pub struct BodyView<'a, 'db> {
-    analysis: &'a IndexedViewDb<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> BodyView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self { analysis }
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub fn owner_module(&self, body_ref: BodyRef) -> anyhow::Result<Option<ModuleRef>> {
         Ok(self
-            .analysis
+            .db
             .body_ir
             .body_data(body_ref)?
             .map(|body| body.owner_module()))
@@ -128,7 +128,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
 
     pub fn expr_ty(&self, body_ref: BodyRef, expr: ExprId) -> anyhow::Result<Option<IndexedTy>> {
         Ok(self
-            .analysis
+            .db
             .body_ir
             .body_data(body_ref)?
             .and_then(|body| body.expr(expr))
@@ -137,7 +137,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
 
     pub fn binding_ty(&self, binding: BodyBindingRef) -> anyhow::Result<Option<IndexedTy>> {
         Ok(self
-            .analysis
+            .db
             .body_ir
             .body_data(binding.body)?
             .and_then(|body| body.binding(binding.binding))
@@ -146,7 +146,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
 
     pub fn local_value_item_ty(&self, item: BodyValueItemRef) -> anyhow::Result<Option<IndexedTy>> {
         Ok(self
-            .analysis
+            .db
             .body_ir
             .body_data(item.body)?
             .and_then(|body| body.local_value_item(item.item))
@@ -163,11 +163,11 @@ impl<'a, 'db> BodyView<'a, 'db> {
     }
 
     pub fn fields_for_local_type(&self, item: BodyItemRef) -> anyhow::Result<Vec<BodyFieldRef>> {
-        Ok(self.analysis.body_ir.fields_for_local_type(item)?)
+        Ok(self.db.body_ir.fields_for_local_type(item)?)
     }
 
     pub fn lexical_names(&self, scope: BodyNameScope) -> anyhow::Result<Vec<BodyLexicalName>> {
-        let Some(body) = self.analysis.body_ir.body_data(scope.body)? else {
+        let Some(body) = self.db.body_ir.body_data(scope.body)? else {
             return Ok(Vec::new());
         };
         let mut names = Vec::new();
@@ -288,7 +288,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         file_id: FileId,
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<InferredBindingTy>> {
-        let Some(target_bodies) = self.analysis.body_ir.target_bodies(target)? else {
+        let Some(target_bodies) = self.db.body_ir.target_bodies(target)? else {
             return Ok(Vec::new());
         };
 
@@ -327,7 +327,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<BodyLocalGroup>> {
-        let Some(target_bodies) = self.analysis.body_ir.target_bodies(target)? else {
+        let Some(target_bodies) = self.db.body_ir.target_bodies(target)? else {
             return Ok(Vec::new());
         };
 
@@ -354,7 +354,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         body_ref: BodyRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let Some(body) = self.analysis.body_ir.body_data(body_ref)? else {
+        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
         let mut declarations = Vec::new();

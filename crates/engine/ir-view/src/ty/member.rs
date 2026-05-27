@@ -229,19 +229,19 @@ pub enum MemberMethodOrigin {
 }
 
 pub struct MemberView<'a, 'db> {
-    analysis: &'a IndexedViewDb<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> MemberView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self { analysis }
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub fn field_candidates_for_ty<'view>(
         &'view self,
         ty: &IndexedTy,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
-        let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
+        let autoderef = BodyAutoderef::new(&self.db.def_map, &self.db.semantic_ir);
         let mut fields = Vec::new();
 
         for candidate in autoderef.candidates(BodyAutoderefMode::FieldLookup, ty) {
@@ -280,14 +280,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         let field_refs: Vec<_> = match owner {
             MemberOwnerRef::Semantic(ty) => self
-                .analysis
+                .db
                 .semantic_ir
                 .fields_for_type(ty)?
                 .into_iter()
                 .map(FieldRef::semantic)
                 .collect(),
             MemberOwnerRef::BodyLocal(item) => self
-                .analysis
+                .db
                 .body_ir
                 .fields_for_local_type(item)?
                 .into_iter()
@@ -309,12 +309,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
     pub fn field(&self, field: FieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
         match field.repr() {
             FieldRefRepr::Semantic(field) => Ok(self
-                .analysis
+                .db
                 .semantic_ir
                 .field_data(field)?
                 .map(|data| MemberField::Semantic { field, data })),
             FieldRefRepr::BodyLocal(field) => Ok(self
-                .analysis
+                .db
                 .body_ir
                 .local_field_data(field)?
                 .map(|data| MemberField::BodyLocal { field, data })),
@@ -324,12 +324,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
     pub fn function(&self, function: FunctionRef) -> anyhow::Result<Option<MemberFunction<'_>>> {
         match function.repr() {
             FunctionRefRepr::Semantic(function) => Ok(self
-                .analysis
+                .db
                 .semantic_ir
                 .function_data(function)?
                 .map(|data| MemberFunction::Semantic { function, data })),
             FunctionRefRepr::BodyLocal(function) => Ok(self
-                .analysis
+                .db
                 .body_ir
                 .local_function_data(function)?
                 .map(|data| MemberFunction::BodyLocal { function, data })),
@@ -344,21 +344,13 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
         match receiver_ty {
             MemberReceiverTy::Semantic(ty) => {
-                for function in self
-                    .analysis
-                    .semantic_ir
-                    .inherent_functions_for_type(ty.def)?
-                {
-                    if !self
-                        .analysis
-                        .body_ir
-                        .semantic_function_applies_to_receiver(
-                            &self.analysis.def_map,
-                            &self.analysis.semantic_ir,
-                            function,
-                            ty,
-                        )?
-                    {
+                for function in self.db.semantic_ir.inherent_functions_for_type(ty.def)? {
+                    if !self.db.body_ir.semantic_function_applies_to_receiver(
+                        &self.db.def_map,
+                        &self.db.semantic_ir,
+                        function,
+                        ty,
+                    )? {
                         continue;
                     }
 
@@ -374,11 +366,11 @@ impl<'a, 'db> MemberView<'a, 'db> {
                 // Trait candidates carry applicability because this project intentionally avoids
                 // full solving, but still wants useful editor suggestions for likely matches.
                 for (function, applicability) in self
-                    .analysis
+                    .db
                     .body_ir
                     .semantic_trait_function_candidates_for_receiver(
-                        &self.analysis.def_map,
-                        &self.analysis.semantic_ir,
+                        &self.db.def_map,
+                        &self.db.semantic_ir,
                         ty,
                     )?
                 {
@@ -392,14 +384,10 @@ impl<'a, 'db> MemberView<'a, 'db> {
                 }
             }
             MemberReceiverTy::BodyLocal(ty) => {
-                for function in self
-                    .analysis
-                    .body_ir
-                    .inherent_functions_for_local_type(ty.item)?
-                {
-                    if !self.analysis.body_ir.local_function_applies_to_receiver(
-                        &self.analysis.def_map,
-                        &self.analysis.semantic_ir,
+                for function in self.db.body_ir.inherent_functions_for_local_type(ty.item)? {
+                    if !self.db.body_ir.local_function_applies_to_receiver(
+                        &self.db.def_map,
+                        &self.db.semantic_ir,
                         function,
                         ty,
                     )? {
@@ -424,7 +412,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         &'view self,
         ty: &IndexedTy,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
-        let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
+        let autoderef = BodyAutoderef::new(&self.db.def_map, &self.db.semantic_ir);
         let mut methods = Vec::new();
 
         for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, ty) {
@@ -443,9 +431,9 @@ impl<'a, 'db> MemberView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Vec<MemberOwnerRef>> {
-        let resolution = self.analysis.body_ir.resolve_type_path_in_scope(
-            &self.analysis.def_map,
-            &self.analysis.semantic_ir,
+        let resolution = self.db.body_ir.resolve_type_path_in_scope(
+            &self.db.def_map,
+            &self.db.semantic_ir,
             body,
             scope,
             path,

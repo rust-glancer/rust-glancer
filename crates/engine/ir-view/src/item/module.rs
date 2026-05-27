@@ -7,16 +7,16 @@ use rg_parse::{FileId, TargetId};
 use crate::IndexedViewDb;
 
 pub struct ModuleView<'a, 'db> {
-    analysis: &'a IndexedViewDb<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> ModuleView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self { analysis }
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub fn root_file(&self, module_ref: ModuleRef) -> anyhow::Result<Option<FileId>> {
-        let Some(module) = self.analysis.def_map.module(module_ref)? else {
+        let Some(module) = self.db.def_map.module(module_ref)? else {
             return Ok(None);
         };
         match module.origin {
@@ -31,7 +31,7 @@ impl<'a, 'db> ModuleView<'a, 'db> {
         file: FileId,
     ) -> anyhow::Result<Vec<TargetRef>> {
         let mut targets = Vec::new();
-        let def_map_package = self.analysis.def_map.package(package)?;
+        let def_map_package = self.db.def_map.package(package)?;
 
         for (target_idx, def_map) in def_map_package.into_ref().targets().iter().enumerate() {
             let target_ref = TargetRef {

@@ -35,12 +35,12 @@ pub struct DeclarationDetails {
 }
 
 pub struct DeclarationDetailsView<'a, 'db> {
-    analysis: &'a IndexedViewDb<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self { analysis }
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub fn details_for_declaration(
@@ -70,7 +70,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     ) -> anyhow::Result<Option<DeclarationDetails>> {
         match declaration {
             BodyDeclarationRef::Binding(_) => {
-                let Some(view) = self.analysis.body_ir.body_declaration_view(declaration)? else {
+                let Some(view) = self.db.body_ir.body_declaration_view(declaration)? else {
                     return Ok(None);
                 };
                 let Some(binding_data) = view.binding_data() else {
@@ -80,41 +80,39 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                     kind: SymbolKind::Variable,
                     path: None,
                     signature: Some(
-                        SignatureRenderer::new(self.analysis).binding_signature(binding_data)?,
+                        SignatureRenderer::new(self.db).binding_signature(binding_data)?,
                     ),
                     docs: None,
                 }))
             }
             BodyDeclarationRef::Item(_) => {
-                let Some(view) = self.analysis.body_ir.body_declaration_view(declaration)? else {
+                let Some(view) = self.db.body_ir.body_declaration_view(declaration)? else {
                     return Ok(None);
                 };
                 let Some(item) = view.item_data() else {
                     return Ok(None);
                 };
-                let Some(declaration_view) = DeclarationView::new(self.analysis)
-                    .declaration(DeclarationRef::body(declaration))?
+                let Some(declaration_view) =
+                    DeclarationView::new(self.db).declaration(DeclarationRef::body(declaration))?
                 else {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {
                     kind: declaration_view.kind(),
                     path: None,
-                    signature: Some(
-                        SignatureRenderer::new(self.analysis).local_item_signature(item),
-                    ),
+                    signature: Some(SignatureRenderer::new(self.db).local_item_signature(item)),
                     docs: item.docs.as_ref().map(Documentation::text),
                 }))
             }
             BodyDeclarationRef::ValueItem(_) => {
-                let Some(view) = self.analysis.body_ir.body_declaration_view(declaration)? else {
+                let Some(view) = self.db.body_ir.body_declaration_view(declaration)? else {
                     return Ok(None);
                 };
                 let Some(item) = view.value_item_data() else {
                     return Ok(None);
                 };
-                let Some(declaration_view) = DeclarationView::new(self.analysis)
-                    .declaration(DeclarationRef::body(declaration))?
+                let Some(declaration_view) =
+                    DeclarationView::new(self.db).declaration(DeclarationRef::body(declaration))?
                 else {
                     return Ok(None);
                 };
@@ -122,7 +120,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                     kind: declaration_view.kind(),
                     path: None,
                     signature: Some(
-                        SignatureRenderer::new(self.analysis).local_value_item_signature(item),
+                        SignatureRenderer::new(self.db).local_value_item_signature(item),
                     ),
                     docs: item.docs.as_ref().map(Documentation::text),
                 }))
@@ -168,11 +166,11 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     }
 
     fn type_def_details(&self, ty: TypeDefRef) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(target_ir) = self.analysis.semantic_ir.target_ir(ty.target)? else {
+        let Some(target_ir) = self.db.semantic_ir.target_ir(ty.target)? else {
             return Ok(None);
         };
-        let renderer = SignatureRenderer::new(self.analysis);
-        let path = PathView::new(self.analysis).type_def_path(ty)?;
+        let renderer = SignatureRenderer::new(self.db);
+        let path = PathView::new(self.db).type_def_path(ty)?;
         match ty.id {
             TypeDefId::Struct(id) => {
                 let Some(data) = target_ir.items().struct_data(id) else {
@@ -211,13 +209,13 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     }
 
     fn trait_details(&self, trait_ref: TraitRef) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(data) = self.analysis.semantic_ir.trait_data(trait_ref)? else {
+        let Some(data) = self.db.semantic_ir.trait_data(trait_ref)? else {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Trait,
-            path: PathView::new(self.analysis).trait_path(trait_ref)?,
-            signature: Some(SignatureRenderer::new(self.analysis).trait_signature(data)),
+            path: PathView::new(self.db).trait_path(trait_ref)?,
+            signature: Some(SignatureRenderer::new(self.db).trait_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
@@ -226,29 +224,27 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         &self,
         function: FunctionRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let members = MemberView::new(self.analysis);
+        let members = MemberView::new(self.db);
         let Some(function) = members.function(function)? else {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
             kind: function.symbol_kind(),
-            path: function.display_path(&PathView::new(self.analysis))?,
-            signature: Some(
-                SignatureRenderer::new(self.analysis).member_function_signature(&function),
-            ),
+            path: function.display_path(&PathView::new(self.db))?,
+            signature: Some(SignatureRenderer::new(self.db).member_function_signature(&function)),
             docs: function.docs_text(),
         }))
     }
 
     fn field_details(&self, field: FieldRef) -> anyhow::Result<Option<DeclarationDetails>> {
-        let members = MemberView::new(self.analysis);
+        let members = MemberView::new(self.db);
         let Some(field) = members.field(field)? else {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Field,
-            path: field.display_path(&PathView::new(self.analysis))?,
-            signature: SignatureRenderer::new(self.analysis).member_field_signature(&field),
+            path: field.display_path(&PathView::new(self.db))?,
+            signature: SignatureRenderer::new(self.db).member_field_signature(&field),
             docs: field.docs_text(),
         }))
     }
@@ -259,27 +255,25 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     ) -> anyhow::Result<Option<DeclarationDetails>> {
         match variant.repr() {
             EnumVariantRefRepr::Semantic(variant_ref) => {
-                let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant_ref)? else {
+                let Some(data) = self.db.semantic_ir.enum_variant_data(variant_ref)? else {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {
                     kind: SymbolKind::EnumVariant,
-                    path: PathView::new(self.analysis).enum_variant_path(variant_ref)?,
-                    signature: Some(
-                        SignatureRenderer::new(self.analysis).enum_variant_signature(data),
-                    ),
+                    path: PathView::new(self.db).enum_variant_path(variant_ref)?,
+                    signature: Some(SignatureRenderer::new(self.db).enum_variant_signature(data)),
                     docs: data.variant.docs.as_ref().map(Documentation::text),
                 }))
             }
             EnumVariantRefRepr::BodyLocal(variant_ref) => {
-                let Some(data) = self.analysis.body_ir.local_enum_variant_data(variant_ref)? else {
+                let Some(data) = self.db.body_ir.local_enum_variant_data(variant_ref)? else {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {
                     kind: SymbolKind::EnumVariant,
                     path: None,
                     signature: Some(
-                        SignatureRenderer::new(self.analysis).local_enum_variant_signature(data),
+                        SignatureRenderer::new(self.db).local_enum_variant_signature(data),
                     ),
                     docs: data.variant.docs.as_ref().map(Documentation::text),
                 }))
@@ -291,37 +285,37 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         &self,
         type_alias_ref: TypeAliasRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(data) = self.analysis.semantic_ir.type_alias_data(type_alias_ref)? else {
+        let Some(data) = self.db.semantic_ir.type_alias_data(type_alias_ref)? else {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::TypeAlias,
-            path: PathView::new(self.analysis).type_alias_path(type_alias_ref)?,
-            signature: Some(SignatureRenderer::new(self.analysis).type_alias_signature(data)),
+            path: PathView::new(self.db).type_alias_path(type_alias_ref)?,
+            signature: Some(SignatureRenderer::new(self.db).type_alias_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
 
     fn const_details(&self, const_ref: ConstRef) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(data) = self.analysis.semantic_ir.const_data(const_ref)? else {
+        let Some(data) = self.db.semantic_ir.const_data(const_ref)? else {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Const,
-            path: PathView::new(self.analysis).const_path(const_ref)?,
-            signature: Some(SignatureRenderer::new(self.analysis).const_signature(data)),
+            path: PathView::new(self.db).const_path(const_ref)?,
+            signature: Some(SignatureRenderer::new(self.db).const_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
 
     fn static_details(&self, static_ref: StaticRef) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(data) = self.analysis.semantic_ir.static_data(static_ref)? else {
+        let Some(data) = self.db.semantic_ir.static_data(static_ref)? else {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Static,
-            path: PathView::new(self.analysis).static_path(static_ref)?,
-            signature: Some(SignatureRenderer::new(self.analysis).static_signature(data)),
+            path: PathView::new(self.db).static_path(static_ref)?,
+            signature: Some(SignatureRenderer::new(self.db).static_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
@@ -331,7 +325,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         module_ref: ModuleRef,
         context: &DeclarationDetailsContext,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(module) = self.analysis.def_map.module(module_ref)? else {
+        let Some(module) = self.db.def_map.module(module_ref)? else {
             return Ok(None);
         };
         let name = context
@@ -341,7 +335,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             .unwrap_or("crate");
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Module,
-            path: PathView::new(self.analysis).module_path(module_ref)?,
+            path: PathView::new(self.db).module_path(module_ref)?,
             signature: Some(format!("mod {name}")),
             docs: module.docs.as_ref().map(Documentation::text),
         }))
@@ -351,10 +345,10 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         &self,
         local_def: LocalDefRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(data) = self.analysis.def_map.local_def(local_def)? else {
+        let Some(data) = self.db.def_map.local_def(local_def)? else {
             return Ok(None);
         };
-        let path = PathView::new(self.analysis)
+        let path = PathView::new(self.db)
             .module_path(ModuleRef {
                 target: local_def.target,
                 module: data.module,

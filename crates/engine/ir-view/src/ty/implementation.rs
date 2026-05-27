@@ -19,12 +19,12 @@ use rg_ty::{IndexedTy, IndexedTyExt};
 use crate::{IndexedViewDb, lookup::resolution::ResolutionView};
 
 pub struct ImplementationView<'a, 'db> {
-    analysis: &'a IndexedViewDb<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> ImplementationView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self { analysis }
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub fn implementations_for_method_call_expr(
@@ -32,7 +32,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         expr: ExprRef,
     ) -> anyhow::Result<Option<Vec<DeclarationRef>>> {
         let body = expr.body_ir();
-        let Some(body_data) = self.analysis.body_ir.body_data(body)? else {
+        let Some(body_data) = self.db.body_ir.body_data(body)? else {
             return Ok(None);
         };
         let Some(expr_data) = body_data.expr(expr.expr_id()) else {
@@ -51,7 +51,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
 
         let receiver_ty = body_data.expr(*receiver).map(|data| &data.ty);
         let mut implementations = Vec::new();
-        for declaration in ResolutionView::new(self.analysis)
+        for declaration in ResolutionView::new(self.db)
             .declarations_for_body_resolution(Some(body), &expr_data.resolution)?
         {
             self.extend_function_implementations(&mut implementations, declaration, receiver_ty)?;
@@ -100,7 +100,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
             }
             DeclarationRefRepr::Binding(binding) => {
                 let binding = binding.body_ir();
-                let Some(body) = self.analysis.body_ir.body_data(binding.body)? else {
+                let Some(body) = self.db.body_ir.body_data(binding.body)? else {
                     return Ok(implementations);
                 };
                 let Some(binding_data) = body.binding(binding.binding) else {
@@ -110,10 +110,8 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
             }
             DeclarationRefRepr::NameDef(name_def) => match name_def.repr() {
                 NameDefRefRepr::DefMapLocal(local_def) => {
-                    let Some(SemanticItemRef::Function(function)) = self
-                        .analysis
-                        .semantic_ir
-                        .semantic_item_for_local_def(local_def)?
+                    let Some(SemanticItemRef::Function(function)) =
+                        self.db.semantic_ir.semantic_item_for_local_def(local_def)?
                     else {
                         return Ok(implementations);
                     };
@@ -162,7 +160,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         implementations: &mut Vec<DeclarationRef>,
         ty: TypeDefRef,
     ) -> anyhow::Result<()> {
-        for impl_ref in self.analysis.semantic_ir.impls_for_type(ty)? {
+        for impl_ref in self.db.semantic_ir.impls_for_type(ty)? {
             Self::push_unique(
                 implementations,
                 DeclarationRef::impl_ref(ImplRef::semantic(impl_ref)),
@@ -176,7 +174,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         implementations: &mut Vec<DeclarationRef>,
         item: BodyItemRef,
     ) -> anyhow::Result<()> {
-        let Some(body) = self.analysis.body_ir.body_data(item.body)? else {
+        let Some(body) = self.db.body_ir.body_data(item.body)? else {
             return Ok(());
         };
 
@@ -200,7 +198,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         implementations: &mut Vec<DeclarationRef>,
         trait_ref: TraitRef,
     ) -> anyhow::Result<()> {
-        for impl_ref in self.analysis.semantic_ir.impls_for_trait(trait_ref)? {
+        for impl_ref in self.db.semantic_ir.impls_for_trait(trait_ref)? {
             Self::push_unique(
                 implementations,
                 DeclarationRef::impl_ref(ImplRef::semantic(impl_ref)),
@@ -219,10 +217,8 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
             DeclarationRefRepr::Module(_) => Ok(()),
             DeclarationRefRepr::NameDef(name_def) => match name_def.repr() {
                 NameDefRefRepr::DefMapLocal(local_def) => {
-                    let Some(SemanticItemRef::Function(function)) = self
-                        .analysis
-                        .semantic_ir
-                        .semantic_item_for_local_def(local_def)?
+                    let Some(SemanticItemRef::Function(function)) =
+                        self.db.semantic_ir.semantic_item_for_local_def(local_def)?
                     else {
                         return Ok(());
                     };
@@ -262,7 +258,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         function: SemanticFunctionRef,
         receiver_ty: Option<&IndexedTy>,
     ) -> anyhow::Result<()> {
-        let Some(data) = self.analysis.semantic_ir.function_data(function)? else {
+        let Some(data) = self.db.semantic_ir.function_data(function)? else {
             return Ok(());
         };
 
@@ -304,27 +300,23 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         method_name: &str,
         receiver_ty: &IndexedTy,
     ) -> anyhow::Result<()> {
-        let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
+        let autoderef = BodyAutoderef::new(&self.db.def_map, &self.db.semantic_ir);
         for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, receiver_ty) {
             let candidate = candidate?;
             for ty in candidate.ty().as_nominals() {
-                for trait_impl in self.analysis.semantic_ir.trait_impls_for_type(ty.def)? {
+                for trait_impl in self.db.semantic_ir.trait_impls_for_type(ty.def)? {
                     if trait_impl.trait_ref != trait_ref {
                         continue;
                     }
                     // The nominal type match can still include generic impls for other concrete
                     // args. Reuse method lookup's applicability check so goto-implementation
                     // follows the receiver the user actually called the method on.
-                    if !self
-                        .analysis
-                        .body_ir
-                        .semantic_trait_impl_applies_to_receiver(
-                            &self.analysis.def_map,
-                            &self.analysis.semantic_ir,
-                            trait_impl,
-                            ty,
-                        )?
-                    {
+                    if !self.db.body_ir.semantic_trait_impl_applies_to_receiver(
+                        &self.db.def_map,
+                        &self.db.semantic_ir,
+                        trait_impl,
+                        ty,
+                    )? {
                         continue;
                     }
                     self.extend_matching_impl_methods(
@@ -344,7 +336,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         trait_ref: TraitRef,
         method_name: &str,
     ) -> anyhow::Result<()> {
-        for impl_ref in self.analysis.semantic_ir.impls_for_trait(trait_ref)? {
+        for impl_ref in self.db.semantic_ir.impls_for_trait(trait_ref)? {
             self.extend_matching_impl_methods(implementations, impl_ref, method_name)?;
         }
         Ok(())
@@ -356,7 +348,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         impl_ref: SemanticImplRef,
         method_name: &str,
     ) -> anyhow::Result<()> {
-        let Some(data) = self.analysis.semantic_ir.impl_data(impl_ref)? else {
+        let Some(data) = self.db.semantic_ir.impl_data(impl_ref)? else {
             return Ok(());
         };
 
@@ -368,7 +360,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
                 target: impl_ref.target,
                 id: *id,
             };
-            let Some(function_data) = self.analysis.semantic_ir.function_data(function)? else {
+            let Some(function_data) = self.db.semantic_ir.function_data(function)? else {
                 continue;
             };
             if function_data.name.as_str() != method_name {

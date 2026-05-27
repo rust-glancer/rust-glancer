@@ -97,17 +97,17 @@ impl IndexedBodyLocalGroup {
 }
 
 pub struct ItemIndexView<'a, 'db> {
-    analysis: &'a IndexedViewDb<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> ItemIndexView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self { analysis }
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub fn included_targets(&self) -> anyhow::Result<Vec<TargetRef>> {
         Ok(self
-            .analysis
+            .db
             .semantic_ir
             .materialize_included_target_irs()?
             .into_iter()
@@ -117,7 +117,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
 
     pub fn module_declarations(&self, target: TargetRef) -> anyhow::Result<Vec<DeclarationRef>> {
         Ok(self
-            .analysis
+            .db
             .def_map
             .modules(target)?
             .into_iter()
@@ -126,7 +126,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     }
 
     pub fn module_container_name(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {
-        let Some(module) = self.analysis.def_map.module(module_ref)? else {
+        let Some(module) = self.db.def_map.module(module_ref)? else {
             return Ok(None);
         };
         let Some(parent) = module.parent else {
@@ -145,7 +145,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         file_id: Option<FileId>,
     ) -> anyhow::Result<Vec<IndexedItem>> {
         let mut items = Vec::new();
-        for item in self.analysis.semantic_ir.semantic_items(target)? {
+        for item in self.db.semantic_ir.semantic_items(target)? {
             if item.module_owner().is_none() {
                 continue;
             }
@@ -164,7 +164,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<IndexedBodyLocalGroup>> {
-        let body_view = BodyView::new(self.analysis);
+        let body_view = BodyView::new(self.db);
         let mut groups = Vec::new();
 
         for group in body_view.local_groups(target, file_id)? {
@@ -246,7 +246,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         ty: TypeDefRef,
     ) -> anyhow::Result<Option<IndexedItem>> {
         let mut children = Vec::new();
-        for field in self.analysis.semantic_ir.fields_for_type(ty)? {
+        for field in self.db.semantic_ir.fields_for_type(ty)? {
             children.push(IndexedItemChild::Declaration(IndexedItem::leaf(
                 DeclarationRef::semantic(field.into()),
             )));
@@ -261,7 +261,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     ) -> anyhow::Result<Option<IndexedItem>> {
         let mut children = Vec::new();
         for variant_ref in self.enum_variant_refs(ty)? {
-            let Some(variant) = self.analysis.semantic_ir.enum_variant_data(variant_ref)? else {
+            let Some(variant) = self.db.semantic_ir.enum_variant_data(variant_ref)? else {
                 continue;
             };
             let fields = variant
@@ -288,7 +288,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     fn body_item(&self, item_ref: BodyItemRef) -> anyhow::Result<Option<IndexedItem>> {
         let declaration = DeclarationRef::body_item(item_ref);
         let mut children = Vec::new();
-        for field_ref in BodyView::new(self.analysis).fields_for_local_type(item_ref)? {
+        for field_ref in BodyView::new(self.db).fields_for_local_type(item_ref)? {
             children.push(IndexedItemChild::Declaration(IndexedItem::leaf(
                 DeclarationRef::body_field(field_ref),
             )));
@@ -297,7 +297,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     }
 
     fn body_impl(&self, impl_ref: BodyImplRef) -> anyhow::Result<Option<IndexedItem>> {
-        let Some(body) = self.analysis.body_ir.body_data(impl_ref.body)? else {
+        let Some(body) = self.db.body_ir.body_data(impl_ref.body)? else {
             return Ok(None);
         };
         let Some(impl_data) = body.local_impl(impl_ref.impl_id) else {
@@ -376,7 +376,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         let TypeDefId::Enum(enum_id) = ty.id else {
             return Ok(Vec::new());
         };
-        let Some(data) = self.analysis.semantic_ir.enum_data_for_type_def(ty)? else {
+        let Some(data) = self.db.semantic_ir.enum_data_for_type_def(ty)? else {
             return Ok(Vec::new());
         };
 
@@ -394,7 +394,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     }
 
     fn module_path(&self, target: TargetRef, module: ModuleId) -> anyhow::Result<String> {
-        let Some(data) = self.analysis.def_map.module(ModuleRef { target, module })? else {
+        let Some(data) = self.db.def_map.module(ModuleRef { target, module })? else {
             return Ok(String::new());
         };
         let Some(name) = &data.name else {

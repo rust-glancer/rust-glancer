@@ -14,8 +14,8 @@ use crate::IndexedViewDb;
 pub struct PathView<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> PathView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self(analysis)
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self(db)
     }
 
     pub fn module_path(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {

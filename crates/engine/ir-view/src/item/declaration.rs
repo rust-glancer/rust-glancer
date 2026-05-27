@@ -73,12 +73,12 @@ impl Declaration {
 
 /// Reads declaration facts for IDs that already identify one source declaration.
 pub struct DeclarationView<'a, 'db> {
-    analysis: &'a IndexedViewDb<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> DeclarationView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self { analysis }
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub fn declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<Declaration>> {
@@ -99,7 +99,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     fn module(&self, module_ref: ModuleRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(module) = self.analysis.def_map.module(module_ref)? else {
+        let Some(module) = self.db.def_map.module(module_ref)? else {
             return Ok(None);
         };
         let Some(name) = module.name.as_ref().map(ToString::to_string) else {
@@ -129,7 +129,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     fn local_def(&self, local_def: LocalDefRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(data) = self.analysis.def_map.local_def(local_def)? else {
+        let Some(data) = self.db.def_map.local_def(local_def)? else {
             return Ok(None);
         };
 
@@ -190,7 +190,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     fn semantic_item(&self, item: SemanticItemRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(view) = self.analysis.semantic_ir.semantic_item_view(item)? else {
+        let Some(view) = self.db.semantic_ir.semantic_item_view(item)? else {
             return Ok(None);
         };
 
@@ -208,7 +208,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 let Some(local_impl_ref) = view.local_impl() else {
                     return Ok(None);
                 };
-                let Some(local_impl) = self.analysis.def_map.local_impl(local_impl_ref)? else {
+                let Some(local_impl) = self.db.def_map.local_impl(local_impl_ref)? else {
                     return Ok(None);
                 };
                 let Some((self_ty, trait_ref)) = view.impl_header() else {
@@ -257,7 +257,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         &self,
         declaration: BodyDeclarationRef,
     ) -> anyhow::Result<Option<Declaration>> {
-        let Some(view) = self.analysis.body_ir.body_declaration_view(declaration)? else {
+        let Some(view) = self.db.body_ir.body_declaration_view(declaration)? else {
             return Ok(None);
         };
 
@@ -373,7 +373,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         &self,
         variant_ref: SemanticEnumVariantRef,
     ) -> anyhow::Result<Option<Declaration>> {
-        let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant_ref)? else {
+        let Some(data) = self.db.semantic_ir.enum_variant_data(variant_ref)? else {
             return Ok(None);
         };
 
@@ -388,7 +388,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     fn semantic_field(&self, field: SemanticFieldRef) -> anyhow::Result<Option<Declaration>> {
-        Ok(MemberView::new(self.analysis)
+        Ok(MemberView::new(self.db)
             .field(FieldRef::semantic(field))?
             .and_then(|field| field.declaration()))
     }
@@ -397,7 +397,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         &self,
         function: SemanticFunctionRef,
     ) -> anyhow::Result<Option<Declaration>> {
-        Ok(MemberView::new(self.analysis)
+        Ok(MemberView::new(self.db)
             .function(FunctionRef::semantic(function))?
             .map(|function| function.declaration()))
     }

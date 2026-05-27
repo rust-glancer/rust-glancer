@@ -13,7 +13,6 @@ use rg_semantic_ir::{
     ParamItem, StaticData, StructData, TraitData, TypeAliasData, TypeBound, TypeRef, UnionData,
     VisibilityLevel, WherePredicate,
 };
-use rg_ty::IndexedTy;
 
 use crate::{
     IndexedViewDb,
@@ -242,10 +241,6 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
             .unwrap_or_else(|| "_".to_string());
 
         Ok(format!("let {name}: {ty}"))
-    }
-
-    pub fn ty_signature(&self, ty: &IndexedTy) -> anyhow::Result<Option<String>> {
-        TypeRenderer::new(self.0).render(ty)
     }
 }
 

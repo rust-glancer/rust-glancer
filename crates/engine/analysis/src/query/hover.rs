@@ -2,7 +2,7 @@
 
 use rg_ir_model::TargetRef;
 use rg_ir_view::{
-    display::signature::SignatureRenderer,
+    display::ty_label::TypeRenderer,
     item::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
 };
 use rg_parse::FileId;
@@ -73,7 +73,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
     }
 
     fn hover_for_ty(&self, ty: &IndexedTy) -> anyhow::Result<Option<HoverBlock>> {
-        let Some(signature) = SignatureRenderer::new(self.0.view_db()).ty_signature(ty)? else {
+        let Some(signature) = TypeRenderer::new(self.0.view_db()).render(ty)? else {
             return Ok(None);
         };
         Ok(Some(HoverBlock {
