@@ -15,16 +15,14 @@ mod ty;
 mod type_path;
 
 use rg_def_map::{DefMapReadTxn, Path};
-use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TraitImplRef};
+use rg_ir_model::{
+    BodyFunctionRef, BodyRef, FieldRef, FunctionRef, ScopeId, TraitApplicability, TraitImplRef,
+};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy};
 
-use crate::{
-    BodyData, BodyResolution,
-    ir::ids::{BodyFunctionRef, BodyRef, ScopeId},
-    ir::resolved::BodyTypePathResolution,
-};
+use crate::{BodyData, BodyResolution, ir::resolved::BodyTypePathResolution};
 
 use self::{
     body::BodyValuePathResolver,

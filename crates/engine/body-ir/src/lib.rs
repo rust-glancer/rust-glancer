@@ -34,12 +34,6 @@ pub use self::{
     store::{BodyIrDb, BodyIrReadTxn},
 };
 
-pub(crate) use self::ir::{
-    BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
-    BodyFunctionId, BodyFunctionRef, BodyId, BodyImplRef, BodyItemId, BodyItemRef, BodyRef,
-    BodyValueItemId, BodyValueItemRef, ExprId, PatId, ScopeId,
-};
-
 // TODO: Shouldn't be exposed normally; remove after analysis owns resolver projection.
 pub use self::ir::{BodyResolution, BodyTypePathResolution};
 

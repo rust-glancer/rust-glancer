@@ -1,9 +1,9 @@
+use rg_ir_model::{BindingId, ExprId, PatId};
 use rg_item_tree::FieldKey;
 
 use super::{
     body::BodySource,
     expr::LiteralKind,
-    ids::{BindingId, ExprId, PatId},
     path::BodyPath,
 };
 

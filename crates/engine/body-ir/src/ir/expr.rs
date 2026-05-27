@@ -1,5 +1,6 @@
 use std::fmt;
 
+use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::Span;
 use rg_text::Name;
@@ -7,7 +8,6 @@ use rg_ty::IndexedTy;
 
 use super::{
     body::BodySource,
-    ids::{BindingId, ExprId, PatId, ScopeId, StmtId},
     path::BodyPath,
     resolved::BodyResolution,
 };

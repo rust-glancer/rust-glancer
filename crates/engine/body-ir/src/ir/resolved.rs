@@ -1,9 +1,8 @@
 use rg_ir_model::{
-    EnumVariantRef, FieldRef, FunctionRef, ResolvedDeclarationRef, TraitRef, TypeDefRef,
+    BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef, BodyItemRef, EnumVariantRef,
+    FieldRef, FunctionRef, ResolvedDeclarationRef, TraitRef, TypeDefRef,
 };
 use rg_semantic_ir::SemanticTypePathResolution;
-
-use super::ids::{BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef, BodyItemRef};
 
 /// Stable field identity across module-level Semantic IR and body-local declarations.
 #[derive(

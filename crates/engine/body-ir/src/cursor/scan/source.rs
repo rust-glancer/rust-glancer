@@ -3,15 +3,14 @@
 //! Source scans collect every body-local declaration and reference-like span
 //! that can participate in navigation, references, and symbol queries.
 
-use rg_ir_model::TargetRef;
+use rg_ir_model::{
+    BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId,
+    BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ExprId, TargetRef,
+};
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
-use crate::{
-    BindingId, BodyData, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId,
-    BodyIrReadTxn, BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ExprId,
-    ExprKind,
-};
+use crate::{BodyData, BodyIrReadTxn, ExprKind};
 
 use super::{
     super::BodyCursorCandidate,

@@ -3,13 +3,13 @@
 use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::TargetRef;
+use rg_ir_model::{BodyId, BodyRef, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
 use rg_semantic_ir::SemanticIrReadTxn;
 
 use crate::{
-    ir::{BodyId, BodyRef, PackageBodies, TargetBodiesStatus},
+    ir::{PackageBodies, TargetBodiesStatus},
     resolution::{BodyResolver, SemanticResolutionIndex},
 };
 

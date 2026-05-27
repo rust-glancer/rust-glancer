@@ -5,13 +5,14 @@ use rg_syntax::{
     ast::{self, HasName as _, RangeItem as _},
 };
 
+use rg_ir_model::{BindingId, ExprId, PatId, ScopeId};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_text::Name;
 use rg_ty::IndexedTy;
 
 use crate::ir::{
-    BindingData, BindingId, BindingKind, BodyPath, ExprId, LiteralKind, PatBindingMode, PatData,
-    PatId, PatKind, PatMutability, PatRangeKind, RecordPatField, ScopeId,
+    BindingData, BindingKind, BodyPath, LiteralKind, PatBindingMode, PatData, PatKind,
+    PatMutability, PatRangeKind, RecordPatField,
     path::{BodyPathSegment, BodyPathSegmentKind},
 };
 

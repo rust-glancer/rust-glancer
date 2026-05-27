@@ -8,14 +8,15 @@ use rg_syntax::{
     },
 };
 
+use rg_ir_model::{ExprId, ScopeId};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::{Span, TextSpan};
 use rg_ty::IndexedTy;
 
 use crate::ir::{
     BindingData, BindingKind, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
-    ExprBinaryOp, ExprId, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LiteralKind,
-    MatchArmData, RecordExprField, RecordExprSpread, ScopeId,
+    ExprBinaryOp, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LiteralKind,
+    MatchArmData, RecordExprField, RecordExprSpread,
 };
 
 use super::function::FunctionBodyLowering;

@@ -1,3 +1,6 @@
+use rg_ir_model::{
+    BodyFunctionId, BodyImplId, BodyItemId, BodyItemRef, BodyValueItemId, ScopeId,
+};
 use rg_item_tree::{
     ConstItem, Documentation, EnumItem, EnumVariantItem, FieldItem, FieldKey, FieldList,
     FunctionItem, GenericParams, ParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem,
@@ -5,10 +8,7 @@ use rg_item_tree::{
 };
 use rg_text::Name;
 
-use super::{
-    body::BodySource,
-    ids::{BodyFunctionId, BodyImplId, BodyItemId, BodyItemRef, BodyValueItemId, ScopeId},
-};
+use super::body::BodySource;
 
 /// One item declared inside a function body.
 #[derive(

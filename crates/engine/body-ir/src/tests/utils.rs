@@ -10,21 +10,16 @@ use crate::{
     BindingData, BodyData, BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyIrBuildPolicy,
     BodyIrDb, BodyIrReadTxn, BodyItemData, BodyResolution, BodySource, BodyValueItemData,
     ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData,
-    PatBindingMode, PatData, PatId, PatKind, StmtKind, TargetBodiesStatus,
-    ir::{
-        ids::{
-            BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
-            BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyImplRef, BodyItemId,
-            BodyItemRef, BodyValueItemId, BodyValueItemRef, ExprId, StmtId,
-        },
-        resolved::{ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef},
-    },
+    PatBindingMode, PatData, PatKind, StmtKind, TargetBodiesStatus,
+    ir::resolved::{ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef},
 };
 use rg_def_map::DefMapDb;
 use rg_ir_model::{
-    DefId, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemId, ItemOwner, LocalDefRef,
-    ModuleRef, ResolvedDeclarationRef, SemanticDeclarationRef, SemanticItemRef, TargetRef,
-    TraitRef, TypeDefId, TypeDefRef,
+    BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
+    BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyImplRef, BodyItemId, BodyItemRef,
+    BodyValueItemId, BodyValueItemRef, DefId, EnumVariantRef, ExprId, FieldRef, FunctionRef,
+    ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleRef, PatId, ResolvedDeclarationRef,
+    SemanticDeclarationRef, SemanticItemRef, StmtId, TargetRef, TraitRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::{ItemTreeDb, PackageNameInterners};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};

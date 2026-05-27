@@ -4,11 +4,11 @@
 //! can host member completions, then return the receiver expression and typed
 //! member prefix.
 
-use rg_ir_model::TargetRef;
+use rg_ir_model::{BodyId, BodyRef, ExprId, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{BodyData, BodyId, BodyIrReadTxn, BodyRef, ExprData, ExprId, ExprKind};
+use crate::{BodyData, BodyIrReadTxn, ExprData, ExprKind};
 
 use super::super::DotCompletionSite;
 

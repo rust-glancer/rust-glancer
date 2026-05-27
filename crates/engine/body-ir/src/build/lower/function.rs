@@ -2,14 +2,12 @@
 
 use rg_syntax::ast;
 
-use rg_ir_model::{FunctionRef, ModuleRef};
+use rg_ir_model::{ExprId, FunctionRef, ModuleRef, ScopeId};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
 use rg_ty::IndexedTy;
 
-use crate::ir::{
-    BodyBuilder, BodyData, BodyResolution, BodySource, ExprData, ExprId, ExprKind, ScopeId,
-};
+use crate::ir::{BodyBuilder, BodyData, BodyResolution, BodySource, ExprData, ExprKind};
 
 use super::syntax::source_for;
 

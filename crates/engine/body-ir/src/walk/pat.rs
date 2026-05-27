@@ -1,4 +1,6 @@
-use crate::{BodyData, PatData, PatId, PatKind, ScopeId};
+use rg_ir_model::{PatId, ScopeId};
+
+use crate::{BodyData, PatData, PatKind};
 
 /// One pattern node reached by structural pattern traversal.
 ///

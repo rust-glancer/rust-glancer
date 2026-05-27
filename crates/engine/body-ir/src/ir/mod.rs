@@ -2,7 +2,6 @@
 
 pub(crate) mod body;
 pub(crate) mod expr;
-pub(crate) mod ids;
 pub(crate) mod item;
 pub(crate) mod pat;
 pub(crate) mod path;
@@ -18,11 +17,6 @@ pub use self::{
         ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind,
         ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LabelData, LiteralKind,
         MatchArmData, RecordExprField, RecordExprSpread,
-    },
-    ids::{
-        BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
-        BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyImplRef, BodyItemId, BodyItemRef,
-        BodyRef, BodyValueItemId, BodyValueItemRef, ExprId, PatId, ScopeId, StmtId,
     },
     item::{
         BodyEnumVariantData, BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyImplData,

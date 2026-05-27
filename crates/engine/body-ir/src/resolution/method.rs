@@ -4,15 +4,12 @@
 //! `impl_match` so receiver-based resolution can share it.
 
 use rg_def_map::DefMapReadTxn;
-use rg_ir_model::{FunctionRef, TraitApplicability};
+use rg_ir_model::{BodyFunctionRef, BodyRef, FunctionRef, TraitApplicability};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy};
 
-use crate::{
-    ir::body::BodyData,
-    ir::ids::{BodyFunctionRef, BodyRef},
-};
+use crate::ir::body::BodyData;
 
 use super::{
     SemanticResolutionIndex,

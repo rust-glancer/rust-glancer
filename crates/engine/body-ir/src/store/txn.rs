@@ -1,16 +1,19 @@
 //! Read transactions over frozen Body IR package data.
 
 use rg_def_map::{DefMapReadTxn, PackageSlot, Path};
-use rg_ir_model::{FieldRef, FunctionRef, TargetRef, TraitApplicability, TraitImplRef};
+use rg_ir_model::{
+    BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef,
+    BodyImplRef, BodyItemRef, BodyRef, BodyValueItemRef, FieldRef, FunctionRef, ScopeId,
+    TargetRef, TraitApplicability, TraitImplRef,
+};
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy};
 
 use crate::{
-    BindingData, BodyBindingRef, BodyData, BodyDeclarationRef, BodyDeclarationView,
-    BodyEnumVariantData, BodyEnumVariantRef, BodyFieldData, BodyFieldRef, BodyFunctionData,
-    BodyFunctionRef, BodyImplRef, BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution,
-    BodyValueItemRef, PackageBodies, ScopeId, TargetBodies, resolution, view::BodyDeclarationData,
+    BindingData, BodyData, BodyDeclarationView, BodyEnumVariantData, BodyFieldData,
+    BodyFunctionData, BodyResolution, BodyTypePathResolution, PackageBodies, TargetBodies,
+    resolution, view::BodyDeclarationData,
 };
 
 /// Read-only Body IR access for one query transaction.

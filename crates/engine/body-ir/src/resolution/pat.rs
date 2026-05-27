@@ -5,7 +5,7 @@
 //! not infer the scrutinee type by themselves.
 
 use rg_def_map::{DefMapReadTxn, Path, PathSegment};
-use rg_ir_model::TypeDefId;
+use rg_ir_model::{BindingId, BodyRef, ExprId, PatId, ScopeId, StmtId, TypeDefId};
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
@@ -15,7 +15,6 @@ use crate::{
     BodyItemKind,
     ir::body::BodyData,
     ir::expr::ExprKind,
-    ir::ids::{BindingId, BodyRef, ExprId, PatId, ScopeId, StmtId},
     ir::pat::{PatKind, RecordPatField},
     ir::path::BodyPath,
     ir::stmt::StmtKind,

@@ -5,6 +5,9 @@ use rg_syntax::{
     ast::{self, HasName as _},
 };
 
+use rg_ir_model::{
+    BindingId, BodyFunctionId, BodyImplId, BodyItemId, BodyValueItemId, ExprId, ScopeId, StmtId,
+};
 use rg_item_tree::{
     ConstItem, Documentation, EnumItem, FunctionItem, ImplItem, StaticItem, StructItem, TraitItem,
     TypeAliasItem, TypeRef, UnionItem,
@@ -12,11 +15,10 @@ use rg_item_tree::{
 use rg_ty::IndexedTy;
 
 use crate::ir::{
-    BindingData, BindingId, BindingKind, BodyFunctionData, BodyFunctionId, BodyFunctionOwner,
-    BodyImplData, BodyImplId, BodyItemData, BodyItemDeclaration, BodyItemId, BodyItemKind,
-    BodyItemOwner, BodySelfParamKind, BodyValueItemData, BodyValueItemDeclaration, BodyValueItemId,
-    BodyValueItemKind, BodyValueItemOwner, ExprBlockKind, ExprId, ExprKind, ScopeId, StmtData,
-    StmtId, StmtKind,
+    BindingData, BindingKind, BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyItemData,
+    BodyItemDeclaration, BodyItemKind, BodyItemOwner, BodySelfParamKind, BodyValueItemData,
+    BodyValueItemDeclaration, BodyValueItemKind, BodyValueItemOwner, ExprBlockKind, ExprKind,
+    StmtData, StmtKind,
 };
 
 use super::function::FunctionBodyLowering;

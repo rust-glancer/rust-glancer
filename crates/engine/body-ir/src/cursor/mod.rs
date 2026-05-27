@@ -9,17 +9,17 @@ mod scan;
 use std::collections::HashSet;
 
 use rg_def_map::Path;
-use rg_ir_model::TargetRef;
+use rg_ir_model::{
+    BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef, BodyItemRef, BodyRef,
+    BodyValueItemRef, ExprId, ScopeId, TargetRef,
+};
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 use rg_ty::IndexedTy;
 
-use crate::{
-    BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef, BodyIrReadTxn, BodyItemKind,
-    BodyItemRef, BodyRef, BodyValueItemKind, BodyValueItemRef, ExprId, ScopeId,
-};
+use crate::{BodyIrReadTxn, BodyItemKind, BodyValueItemKind};
 
 use self::scan::{
     BodyCursorScanner, BodySourceScanner, DotCompletionSiteScanner, PathCompletionSiteScanner,

@@ -4,7 +4,7 @@
 //! resolver checks those scopes first and then falls back to the semantic/def-map context.
 
 use rg_def_map::{DefMapReadTxn, Path, PathSegment};
-use rg_ir_model::{FunctionRef, ModuleRef, TypeDefRef};
+use rg_ir_model::{BodyItemId, BodyItemRef, BodyRef, FunctionRef, ModuleRef, ScopeId, TypeDefRef};
 use rg_item_tree::{GenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
@@ -13,7 +13,6 @@ use rg_ty::{IndexedGenericArg, IndexedLocalNominalTy, IndexedTy, IndexedTyExt, I
 use crate::{
     BodyItemKind,
     ir::body::BodyData,
-    ir::ids::{BodyItemId, BodyItemRef, BodyRef, ScopeId},
     ir::item::BodyItemOwner,
     ir::resolved::BodyTypePathResolution,
 };

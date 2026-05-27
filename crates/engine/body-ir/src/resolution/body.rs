@@ -5,7 +5,10 @@
 
 use rg_def_map::{DefMapReadTxn, Path, PathSegment};
 use rg_ir_model::{
-    DefId, FunctionRef, ResolvedDeclarationRef, SemanticDeclarationRef, SemanticItemRef, TypeDefId,
+    BindingId, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId,
+    BodyFunctionRef, BodyImplId, BodyItemId, BodyItemRef, BodyRef, BodyValueItemId,
+    BodyValueItemRef, DefId, ExprId, FunctionRef, ResolvedDeclarationRef, ScopeId,
+    SemanticDeclarationRef, SemanticItemRef, TypeDefId,
 };
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_package_store::PackageStoreError;
@@ -15,11 +18,6 @@ use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt, In
 use crate::{
     ir::body::BodyData,
     ir::expr::{ExprKind, ExprUnaryOp, ExprWrapperKind},
-    ir::ids::{
-        BindingId, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId,
-        BodyFunctionRef, BodyImplId, BodyItemId, BodyItemRef, BodyRef, BodyValueItemId,
-        BodyValueItemRef, ExprId, ScopeId,
-    },
     ir::item::{BodyFunctionOwner, BodyValueItemOwner},
     ir::resolved::{
         BodyResolution, BodyTypePathResolution, ResolvedEnumVariantRef, ResolvedFieldRef,

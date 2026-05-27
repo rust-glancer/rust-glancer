@@ -1,14 +1,12 @@
 use rg_arena::Arena;
-use rg_ir_model::ModuleRef;
-use rg_ir_model::{FunctionId, FunctionRef};
+use rg_ir_model::{
+    BindingId, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId, BodyItemRef,
+    BodyRef, BodyValueItemId, ExprId, FunctionId, FunctionRef, ModuleRef, PatId, ScopeId, StmtId,
+};
 use rg_parse::{FileId, Span, TargetId};
 
 use super::{
     expr::ExprData,
-    ids::{
-        BindingId, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId, BodyItemRef,
-        BodyRef, BodyValueItemId, ExprId, PatId, ScopeId, StmtId,
-    },
     item::{
         BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyItemData, BodyItemOwner,
         BodyValueItemData, BodyValueItemOwner,

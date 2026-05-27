@@ -5,6 +5,7 @@
 //! This module keeps the structural walk in one place while leaving those query-specific meanings
 //! with the callers.
 
+use rg_ir_model::{PatId, ScopeId};
 use rg_item_tree::{
     FieldItem, FieldList, FunctionItem, GenericParams, TypeBound, TypePath, TypeRef, WherePredicate,
 };
@@ -12,7 +13,7 @@ use rg_parse::{FileId, Span};
 
 use crate::{
     BodyData, BodyFunctionData, BodyFunctionOwner, BodyItemDeclaration, BodyPath,
-    BodyValueItemDeclaration, ExprKind, PatId, ScopeId, StmtKind,
+    BodyValueItemDeclaration, ExprKind, StmtKind,
     walk::{
         PatWalkSite, walk_body_path_type_refs as walk_embedded_body_path_type_refs, walk_pat,
         walk_type_ref_paths,

@@ -1,13 +1,11 @@
+use rg_ir_model::{
+    BindingId, BodyFunctionId, BodyImplId, BodyItemId, BodyValueItemId, ExprId, PatId, ScopeId,
+};
 use rg_item_tree::TypeRef;
 use rg_text::Name;
 use rg_ty::IndexedTy;
 
-use super::{
-    body::BodySource,
-    ids::{
-        BindingId, BodyFunctionId, BodyImplId, BodyItemId, BodyValueItemId, ExprId, PatId, ScopeId,
-    },
-};
+use super::body::BodySource;
 
 /// One local binding introduced by a parameter or `let`.
 #[derive(

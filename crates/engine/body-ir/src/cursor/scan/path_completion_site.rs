@@ -4,12 +4,12 @@
 //! `crate::module::Us` and return the qualifier, replacement span, and expected namespace.
 
 use rg_def_map::Path;
-use rg_ir_model::TargetRef;
+use rg_ir_model::{BodyId, BodyRef, ScopeId, TargetRef};
 use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{BodyData, BodyId, BodyIrReadTxn, BodyPath, BodyRef, ExprKind, PatData, ScopeId};
+use crate::{BodyData, BodyIrReadTxn, BodyPath, ExprKind, PatData};
 
 use super::{
     super::{PathCompletionNamespace, PathCompletionSite},
