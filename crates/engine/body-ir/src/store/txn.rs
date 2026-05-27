@@ -8,10 +8,11 @@ use rg_semantic_ir::SemanticIrReadTxn;
 use crate::{
     BindingData, BodyBindingRef, BodyData, BodyDeclarationRef, BodyDeclarationView,
     BodyEnumVariantData, BodyEnumVariantRef, BodyFieldData, BodyFieldRef, BodyFunctionData,
-    BodyFunctionRef, BodyImplRef, BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyRef,
-    BodyResolution, BodyTy, BodyTypePathResolution, BodyValueItemRef, PackageBodies, ScopeId,
-    TargetBodies, resolution, view::BodyDeclarationData,
+    BodyFunctionRef, BodyImplRef, BodyItemRef, BodyRef, BodyResolution, BodyTypePathResolution,
+    BodyValueItemRef, PackageBodies, ScopeId, TargetBodies, resolution, view::BodyDeclarationData,
 };
+
+use crate::ir::ty::{BodyLocalNominalTy, BodyNominalTy, BodyTy};
 
 /// Read-only Body IR access for one query transaction.
 #[derive(Debug, Clone)]

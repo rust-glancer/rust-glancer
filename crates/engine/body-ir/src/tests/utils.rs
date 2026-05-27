@@ -7,11 +7,10 @@ use std::{
 use expect_test::Expect;
 
 use crate::{
-    BindingData, BodyData, BodyFunctionData, BodyFunctionOwner, BodyGenericArg, BodyImplData,
-    BodyIrBuildPolicy, BodyIrDb, BodyIrReadTxn, BodyItemData, BodyLocalNominalTy, BodyNominalTy,
-    BodyResolution, BodySource, BodyTy, BodyTyRepr, BodyValueItemData, ClosureCapture, ClosureKind,
-    ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode, PatData, PatId,
-    PatKind, StmtKind, TargetBodiesStatus,
+    BindingData, BodyData, BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyIrBuildPolicy,
+    BodyIrDb, BodyIrReadTxn, BodyItemData, BodyResolution, BodySource, BodyValueItemData,
+    ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData,
+    PatBindingMode, PatData, PatId, PatKind, StmtKind, TargetBodiesStatus,
     ir::{
         ids::{
             BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
@@ -19,6 +18,7 @@ use crate::{
             BodyItemRef, BodyValueItemId, BodyValueItemRef, ExprId, StmtId,
         },
         resolved::{ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef},
+        ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyRepr},
     },
 };
 use rg_def_map::DefMapDb;

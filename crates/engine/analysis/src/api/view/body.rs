@@ -5,15 +5,13 @@
 
 use std::collections::HashSet;
 
-use rg_body_ir::{
-    BindingKind, BodyItemKind, BodyItemOwner, BodyTy, BodyTyRepr, BodyValueItemKind,
-    BodyValueItemOwner,
-};
+use rg_body_ir::{BindingKind, BodyItemKind, BodyItemOwner, BodyValueItemKind, BodyValueItemOwner};
 use rg_ir_model::{
     BodyBindingRef, BodyFieldRef, BodyFunctionRef, BodyImplRef, BodyItemRef, BodyRef,
     BodyValueItemRef, ExprId, ModuleRef, ScopeId, TargetRef,
 };
 use rg_parse::{FileId, Span, TextSpan};
+use rg_ty::{IndexedTy, IndexedTyRepr};
 
 use crate::{api::Analysis, model::DeclarationRef};
 
@@ -78,7 +76,7 @@ pub(crate) enum BodyLexicalName {
 pub(crate) struct InferredBindingTy {
     file_id: FileId,
     span: Span,
-    ty: BodyTy,
+    ty: IndexedTy,
 }
 
 impl InferredBindingTy {
@@ -90,7 +88,7 @@ impl InferredBindingTy {
         self.span
     }
 
-    pub(crate) fn ty(&self) -> &BodyTy {
+    pub(crate) fn ty(&self) -> &IndexedTy {
         &self.ty
     }
 }
@@ -132,7 +130,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         &self,
         body_ref: BodyRef,
         expr: ExprId,
-    ) -> anyhow::Result<Option<BodyTy>> {
+    ) -> anyhow::Result<Option<IndexedTy>> {
         Ok(self
             .analysis
             .body_ir
@@ -141,7 +139,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .map(|expr| expr.ty.clone()))
     }
 
-    pub(crate) fn binding_ty(&self, binding: BodyBindingRef) -> anyhow::Result<Option<BodyTy>> {
+    pub(crate) fn binding_ty(&self, binding: BodyBindingRef) -> anyhow::Result<Option<IndexedTy>> {
         Ok(self
             .analysis
             .body_ir
@@ -153,21 +151,21 @@ impl<'a, 'db> BodyView<'a, 'db> {
     pub(crate) fn local_value_item_ty(
         &self,
         item: BodyValueItemRef,
-    ) -> anyhow::Result<Option<BodyTy>> {
+    ) -> anyhow::Result<Option<IndexedTy>> {
         Ok(self
             .analysis
             .body_ir
             .body_data(item.body)?
             .and_then(|body| body.local_value_item(item.item))
             .and_then(|item| item.ty().cloned())
-            .map(BodyTyRepr::syntax))
+            .map(IndexedTyRepr::syntax))
     }
 
     pub(crate) fn receiver_ty(
         &self,
         body_ref: BodyRef,
         receiver: ExprId,
-    ) -> anyhow::Result<Option<BodyTy>> {
+    ) -> anyhow::Result<Option<IndexedTy>> {
         self.expr_ty(body_ref, receiver)
     }
 
@@ -319,7 +317,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 if binding.name.is_none() || binding.annotation.is_some() {
                     continue;
                 }
-                if matches!(binding.ty, BodyTy::Unknown) {
+                if matches!(binding.ty, IndexedTy::Unknown) {
                     continue;
                 }
                 if range.is_some_and(|range| !range.touches(binding.source.span.text.end)) {

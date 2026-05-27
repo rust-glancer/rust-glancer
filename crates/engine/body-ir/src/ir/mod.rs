@@ -34,7 +34,6 @@ pub use self::{
     path::BodyPath,
     resolved::{BodyResolution, BodyTypePathResolution},
     stmt::{BindingData, BindingKind, BodySelfParamKind, StmtData, StmtKind},
-    ty::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt, BodyTyRepr},
 };
 
 pub(crate) use self::body::BodyBuilder;

@@ -1,8 +1,7 @@
 //! Composite member view over semantic and body-local nominal types.
 
 use rg_body_ir::{
-    BodyAutoderef, BodyAutoderefMode, BodyFieldData, BodyFunctionData, BodyLocalNominalTy,
-    BodyNominalTy, BodyTy, BodyTyExt, BodyTypePathResolution,
+    BodyAutoderef, BodyAutoderefMode, BodyFieldData, BodyFunctionData, BodyTypePathResolution,
 };
 use rg_def_map::Path;
 use rg_ir_model::{
@@ -10,6 +9,7 @@ use rg_ir_model::{
     FunctionRef as SemanticFunctionRef, ItemOwner, ScopeId, TraitApplicability, TypeDefRef,
 };
 use rg_semantic_ir::{Documentation, FieldData, FieldKey, FunctionData, ParamItem};
+use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt};
 
 use crate::{
     api::{Analysis, render::path::PathRenderer},
@@ -21,12 +21,12 @@ use super::declaration::Declaration;
 /// A nominal receiver type whose declarations may live in either Semantic IR or Body IR.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum MemberReceiverTy<'a> {
-    Semantic(&'a BodyNominalTy),
-    BodyLocal(&'a BodyLocalNominalTy),
+    Semantic(&'a IndexedNominalTy),
+    BodyLocal(&'a IndexedLocalNominalTy),
 }
 
 impl<'a> MemberReceiverTy<'a> {
-    pub(crate) fn in_body_ty(ty: &'a BodyTy) -> impl Iterator<Item = Self> + 'a {
+    pub(crate) fn in_body_ty(ty: &'a IndexedTy) -> impl Iterator<Item = Self> + 'a {
         ty.as_local_nominals()
             .iter()
             .map(Self::BodyLocal)
@@ -239,7 +239,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
     pub(crate) fn field_candidates_for_ty<'view>(
         &'view self,
-        ty: &BodyTy,
+        ty: &IndexedTy,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
         let mut fields = Vec::new();
@@ -425,7 +425,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
     pub(crate) fn method_candidates_for_ty<'view>(
         &'view self,
-        ty: &BodyTy,
+        ty: &IndexedTy,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
         let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
         let mut methods = Vec::new();

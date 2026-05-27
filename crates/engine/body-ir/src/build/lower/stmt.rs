@@ -13,9 +13,9 @@ use rg_item_tree::{
 use crate::ir::{
     BindingData, BindingId, BindingKind, BodyFunctionData, BodyFunctionId, BodyFunctionOwner,
     BodyImplData, BodyImplId, BodyItemData, BodyItemDeclaration, BodyItemId, BodyItemKind,
-    BodyItemOwner, BodySelfParamKind, BodyTy, BodyValueItemData, BodyValueItemDeclaration,
-    BodyValueItemId, BodyValueItemKind, BodyValueItemOwner, ExprBlockKind, ExprId, ExprKind,
-    ScopeId, StmtData, StmtId, StmtKind,
+    BodyItemOwner, BodySelfParamKind, BodyValueItemData, BodyValueItemDeclaration, BodyValueItemId,
+    BodyValueItemKind, BodyValueItemOwner, ExprBlockKind, ExprId, ExprKind, ScopeId, StmtData,
+    StmtId, StmtKind, ty::BodyTy,
 };
 
 use super::function::FunctionBodyLowering;

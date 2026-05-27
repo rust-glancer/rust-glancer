@@ -4,7 +4,7 @@
 //! The analysis layer already returns stable IDs; inlay hints and future hovers need labels that
 //! are useful while reading code.
 
-use rg_body_ir::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyRepr};
+use rg_ty::{IndexedGenericArg, IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyRepr};
 
 use crate::{
     api::{Analysis, view::declaration::DeclarationView},
@@ -18,16 +18,16 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         Self(analysis)
     }
 
-    pub(crate) fn render(&self, ty: &BodyTy) -> anyhow::Result<Option<String>> {
+    pub(crate) fn render(&self, ty: &IndexedTy) -> anyhow::Result<Option<String>> {
         match ty {
-            BodyTy::Unit => Ok(Some("()".to_string())),
-            BodyTy::Never => Ok(Some("!".to_string())),
-            BodyTy::Primitive(primitive) => Ok(Some(primitive.label().to_string())),
-            BodyTy::Repr(BodyTyRepr::Syntax(ty)) => Ok(Some(ty.to_string())),
-            BodyTy::Reference { mutability, inner } => Ok(self
+            IndexedTy::Unit => Ok(Some("()".to_string())),
+            IndexedTy::Never => Ok(Some("!".to_string())),
+            IndexedTy::Primitive(primitive) => Ok(Some(primitive.label().to_string())),
+            IndexedTy::Repr(IndexedTyRepr::Syntax(ty)) => Ok(Some(ty.to_string())),
+            IndexedTy::Reference { mutability, inner } => Ok(self
                 .render(inner)?
                 .map(|inner| format!("{}{inner}", mutability.render_prefix()))),
-            BodyTy::Repr(BodyTyRepr::LocalNominal(types)) => {
+            IndexedTy::Repr(IndexedTyRepr::LocalNominal(types)) => {
                 let mut labels = Vec::new();
                 for ty in types {
                     if let Some(label) = self.render_local_nominal(ty)? {
@@ -36,7 +36,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 }
                 Ok(Self::render_joined(labels.into_iter()))
             }
-            BodyTy::Repr(BodyTyRepr::Nominal(types) | BodyTyRepr::SelfTy(types)) => {
+            IndexedTy::Repr(IndexedTyRepr::Nominal(types) | IndexedTyRepr::SelfTy(types)) => {
                 let mut labels = Vec::new();
                 for ty in types {
                     if let Some(label) = self.render_nominal(ty)? {
@@ -45,7 +45,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 }
                 Ok(Self::render_joined(labels.into_iter()))
             }
-            BodyTy::Unknown => Ok(None),
+            IndexedTy::Unknown => Ok(None),
         }
     }
 
@@ -55,7 +55,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         (!labels.is_empty()).then(|| labels.join(" | "))
     }
 
-    fn render_local_nominal(&self, ty: &BodyLocalNominalTy) -> anyhow::Result<Option<String>> {
+    fn render_local_nominal(&self, ty: &IndexedLocalNominalTy) -> anyhow::Result<Option<String>> {
         let Some(declaration) =
             DeclarationView::new(self.0).declaration(DeclarationRef::body_item(ty.item))?
         else {
@@ -68,7 +68,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         )))
     }
 
-    fn render_nominal(&self, ty: &BodyNominalTy) -> anyhow::Result<Option<String>> {
+    fn render_nominal(&self, ty: &IndexedNominalTy) -> anyhow::Result<Option<String>> {
         let Some(declaration) =
             DeclarationView::new(self.0).declaration(DeclarationRef::semantic(ty.def.into()))?
         else {
@@ -82,7 +82,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         )))
     }
 
-    fn render_generic_args(&self, args: &[BodyGenericArg]) -> anyhow::Result<String> {
+    fn render_generic_args(&self, args: &[IndexedGenericArg]) -> anyhow::Result<String> {
         if args.is_empty() {
             return Ok(String::new());
         }
@@ -95,19 +95,19 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         Ok(format!("<{}>", rendered.join(", ")))
     }
 
-    fn render_generic_arg(&self, arg: &BodyGenericArg) -> anyhow::Result<String> {
+    fn render_generic_arg(&self, arg: &IndexedGenericArg) -> anyhow::Result<String> {
         match arg {
-            BodyGenericArg::Type(ty) => Ok(self.render(ty)?.unwrap_or_else(|| "_".to_string())),
-            BodyGenericArg::Lifetime(lifetime) => Ok(lifetime.clone()),
-            BodyGenericArg::Const(value) => Ok(value.clone()),
-            BodyGenericArg::AssocType { name, ty } => match ty {
+            IndexedGenericArg::Type(ty) => Ok(self.render(ty)?.unwrap_or_else(|| "_".to_string())),
+            IndexedGenericArg::Lifetime(lifetime) => Ok(lifetime.clone()),
+            IndexedGenericArg::Const(value) => Ok(value.clone()),
+            IndexedGenericArg::AssocType { name, ty } => match ty {
                 Some(ty) => Ok(format!(
                     "{name} = {}",
                     self.render(ty)?.unwrap_or_else(|| "_".to_string())
                 )),
                 None => Ok(name.to_string()),
             },
-            BodyGenericArg::Unsupported(text) => Ok(text.clone()),
+            IndexedGenericArg::Unsupported(text) => Ok(text.clone()),
         }
     }
 }

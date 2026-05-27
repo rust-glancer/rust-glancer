@@ -7,7 +7,8 @@ use rg_parse::LineIndex;
 use rg_text::NameInterner;
 
 use crate::ir::{
-    BodyBuilder, BodyData, BodyResolution, BodySource, BodyTy, ExprData, ExprId, ExprKind, ScopeId,
+    BodyBuilder, BodyData, BodyResolution, BodySource, ExprData, ExprId, ExprKind, ScopeId,
+    ty::BodyTy,
 };
 
 use super::syntax::source_for;

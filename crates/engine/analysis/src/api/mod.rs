@@ -9,11 +9,12 @@ pub use query::{
     references::ReferenceQuery,
 };
 
-use rg_body_ir::{BodyIrReadTxn, BodyTy};
+use rg_body_ir::BodyIrReadTxn;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::TargetRef;
 use rg_parse::FileId;
 use rg_semantic_ir::SemanticIrReadTxn;
+use rg_ty::IndexedTy;
 
 use crate::{
     api::source_symbol::{SourceSymbol, SourceSymbolIndex},
@@ -125,7 +126,7 @@ impl<'a> Analysis<'a> {
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> anyhow::Result<Option<BodyTy>> {
+    ) -> anyhow::Result<Option<IndexedTy>> {
         let Some(symbol) = self.symbol_at_for_query(target, file_id, offset)? else {
             return Ok(None);
         };

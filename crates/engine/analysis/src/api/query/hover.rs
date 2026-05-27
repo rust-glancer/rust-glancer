@@ -1,8 +1,8 @@
 //! Builds hover payloads from resolved analysis declarations.
 
-use rg_body_ir::BodyTy;
 use rg_ir_model::TargetRef;
 use rg_parse::FileId;
+use rg_ty::IndexedTy;
 
 use crate::{
     api::{
@@ -74,7 +74,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         }
     }
 
-    fn hover_for_ty(&self, ty: &BodyTy) -> anyhow::Result<Option<HoverBlock>> {
+    fn hover_for_ty(&self, ty: &IndexedTy) -> anyhow::Result<Option<HoverBlock>> {
         let Some(signature) = SignatureRenderer::new(self.0).ty_signature(ty)? else {
             return Ok(None);
         };

@@ -4,12 +4,13 @@
 //! trait method. This view owns the storage-specific lookup rules so query code can stay focused on
 //! cursor policy and editor projection.
 
-use rg_body_ir::{BodyAutoderef, BodyAutoderefMode, BodyResolution, BodyTy, BodyTyExt, ExprKind};
+use rg_body_ir::{BodyAutoderef, BodyAutoderefMode, BodyResolution, ExprKind};
 use rg_ir_model::{
     AssocItemId, FunctionRef as SemanticFunctionRef, ImplRef as SemanticImplRef, ItemOwner,
     SemanticItemRef, TraitRef, TypeDefRef,
 };
 use rg_ir_model::{BodyImplId, BodyImplRef, BodyItemRef};
+use rg_ty::{IndexedTy, IndexedTyExt};
 
 use crate::{
     api::{Analysis, view::resolution::ResolutionView},
@@ -139,7 +140,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
 
     pub(crate) fn implementations_for_ty(
         &self,
-        ty: &BodyTy,
+        ty: &IndexedTy,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
         let mut implementations = Vec::new();
         self.extend_ty_implementations(&mut implementations, ty)?;
@@ -149,7 +150,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     fn extend_ty_implementations(
         &self,
         implementations: &mut Vec<DeclarationRef>,
-        ty: &BodyTy,
+        ty: &IndexedTy,
     ) -> anyhow::Result<()> {
         for candidate in BodyAutoderef::peel_references(ty) {
             for local_ty in candidate.ty().as_local_nominals() {
@@ -220,7 +221,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         &self,
         implementations: &mut Vec<DeclarationRef>,
         declaration: DeclarationRef,
-        receiver_ty: Option<&BodyTy>,
+        receiver_ty: Option<&IndexedTy>,
     ) -> anyhow::Result<()> {
         match declaration.repr() {
             DeclarationRefRepr::Module(_) => Ok(()),
@@ -267,7 +268,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         &self,
         implementations: &mut Vec<DeclarationRef>,
         function: SemanticFunctionRef,
-        receiver_ty: Option<&BodyTy>,
+        receiver_ty: Option<&IndexedTy>,
     ) -> anyhow::Result<()> {
         let Some(data) = self.analysis.semantic_ir.function_data(function)? else {
             return Ok(());
@@ -309,7 +310,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         implementations: &mut Vec<DeclarationRef>,
         trait_ref: TraitRef,
         method_name: &str,
-        receiver_ty: &BodyTy,
+        receiver_ty: &IndexedTy,
     ) -> anyhow::Result<()> {
         let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
         for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, receiver_ty) {

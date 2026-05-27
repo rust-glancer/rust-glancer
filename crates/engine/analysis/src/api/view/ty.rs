@@ -1,16 +1,14 @@
 //! Composite projection from declarations and paths into Body IR types.
 //!
-//! `BodyTy` is the common type vocabulary analysis exposes today, even when the source fact lives
+//! `IndexedTy` is the common type vocabulary analysis exposes today, even when the source fact lives
 //! in Semantic IR or DefMap. This view keeps the storage-specific projection rules out of query
 //! orchestration.
 
-use rg_body_ir::{
-    BodyAutoderef, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt, BodyTyRepr,
-    BodyTypePathResolution,
-};
+use rg_body_ir::{BodyAutoderef, BodyTypePathResolution};
 use rg_def_map::Path;
 use rg_ir_model::{BodyRef, FieldRef as SemanticFieldRef, ScopeId, SemanticItemRef};
 use rg_semantic_ir::{SemanticTypePathResolution, TypePathContext};
+use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
 
 use crate::{
     api::{
@@ -32,7 +30,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         Self { analysis }
     }
 
-    pub(crate) fn ty_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Option<BodyTy>> {
+    pub(crate) fn ty_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Option<IndexedTy>> {
         let ty = match symbol {
             SymbolAt::Expr { expr } => self.body_view().expr_ty(expr.body_ir(), expr.expr_id())?,
             declaration_symbol @ SymbolAt::Declaration { .. } => {
@@ -64,7 +62,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         Ok(ty)
     }
 
-    pub(crate) fn declarations_for_ty(&self, ty: &BodyTy) -> Vec<DeclarationRef> {
+    pub(crate) fn declarations_for_ty(&self, ty: &IndexedTy) -> Vec<DeclarationRef> {
         // Body-local nominal types shadow module-level types in the same expression type. Preserve
         // that lookup order when turning an inferred type back into navigation declarations.
         let mut local_declarations = Vec::new();
@@ -92,7 +90,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         declarations
     }
 
-    fn ty_for_declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<BodyTy>> {
+    fn ty_for_declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<IndexedTy>> {
         match declaration.repr() {
             DeclarationRefRepr::Module(_) => Ok(None),
             DeclarationRefRepr::NameDef(name_def) => {
@@ -104,12 +102,14 @@ impl<'a, 'db> TyView<'a, 'db> {
                 else {
                     return Ok(None);
                 };
-                Ok(Some(BodyTyRepr::nominal(vec![BodyNominalTy::bare(ty)])))
+                Ok(Some(IndexedTyRepr::nominal(vec![IndexedNominalTy::bare(
+                    ty,
+                )])))
             }
             DeclarationRefRepr::Item(item) => match item.repr() {
-                ItemRefRepr::Semantic(SemanticItemRef::TypeDef(ty)) => {
-                    Ok(Some(BodyTyRepr::nominal(vec![BodyNominalTy::bare(ty)])))
-                }
+                ItemRefRepr::Semantic(SemanticItemRef::TypeDef(ty)) => Ok(Some(
+                    IndexedTyRepr::nominal(vec![IndexedNominalTy::bare(ty)]),
+                )),
                 ItemRefRepr::Semantic(
                     SemanticItemRef::Trait(_)
                     | SemanticItemRef::Impl(_)
@@ -118,8 +118,8 @@ impl<'a, 'db> TyView<'a, 'db> {
                     | SemanticItemRef::Const(_)
                     | SemanticItemRef::Static(_),
                 ) => Ok(None),
-                ItemRefRepr::BodyLocal(item) => Ok(Some(BodyTyRepr::local_nominal(vec![
-                    BodyLocalNominalTy::bare(item),
+                ItemRefRepr::BodyLocal(item) => Ok(Some(IndexedTyRepr::local_nominal(vec![
+                    IndexedLocalNominalTy::bare(item),
                 ]))),
                 ItemRefRepr::BodyLocalValue(item) => self.body_view().local_value_item_ty(item),
             },
@@ -140,7 +140,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         &self,
         context: TypePathContext,
         path: &Path,
-    ) -> anyhow::Result<BodyTy> {
+    ) -> anyhow::Result<IndexedTy> {
         let resolution =
             self.analysis
                 .semantic_ir
@@ -148,7 +148,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         if matches!(resolution, SemanticTypePathResolution::Unknown)
             && let Some(primitive) = path.single_name().and_then(rg_ty::PrimitiveTy::from_name)
         {
-            return Ok(BodyTy::Primitive(primitive));
+            return Ok(IndexedTy::Primitive(primitive));
         }
 
         Ok(Self::semantic_type_path_resolution_to_ty(resolution))
@@ -159,7 +159,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
         path: &Path,
-    ) -> anyhow::Result<BodyTy> {
+    ) -> anyhow::Result<IndexedTy> {
         Ok(Self::body_type_path_resolution_to_ty(
             self.analysis.body_ir.resolve_type_path_in_scope(
                 &self.analysis.def_map,
@@ -176,7 +176,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         body_ref: BodyRef,
         scope: ScopeId,
         path: &Path,
-    ) -> anyhow::Result<BodyTy> {
+    ) -> anyhow::Result<IndexedTy> {
         // Value-path type queries should use the same Body IR resolver as the main body pass, so
         // enum variants and associated functions agree between snapshots and cursor queries.
         let (_, ty) = self.analysis.body_ir.resolve_value_path_in_scope(
@@ -189,7 +189,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         Ok(ty)
     }
 
-    fn ty_for_field(&self, field: SemanticFieldRef) -> anyhow::Result<Option<BodyTy>> {
+    fn ty_for_field(&self, field: SemanticFieldRef) -> anyhow::Result<Option<IndexedTy>> {
         Ok(self.analysis.body_ir.ty_for_field(
             &self.analysis.def_map,
             &self.analysis.semantic_ir,
@@ -197,53 +197,53 @@ impl<'a, 'db> TyView<'a, 'db> {
         )?)
     }
 
-    fn ty_for_enum_variant(&self, variant: EnumVariantRef) -> anyhow::Result<Option<BodyTy>> {
+    fn ty_for_enum_variant(&self, variant: EnumVariantRef) -> anyhow::Result<Option<IndexedTy>> {
         match variant.repr() {
             EnumVariantRefRepr::Semantic(variant) => {
                 let Some(data) = self.analysis.semantic_ir.enum_variant_data(variant)? else {
                     return Ok(None);
                 };
-                Ok(Some(BodyTyRepr::nominal(vec![BodyNominalTy::bare(
+                Ok(Some(IndexedTyRepr::nominal(vec![IndexedNominalTy::bare(
                     data.owner,
                 )])))
             }
-            EnumVariantRefRepr::BodyLocal(variant) => Ok(Some(BodyTyRepr::local_nominal(vec![
-                BodyLocalNominalTy::bare(variant.item),
+            EnumVariantRefRepr::BodyLocal(variant) => Ok(Some(IndexedTyRepr::local_nominal(vec![
+                IndexedLocalNominalTy::bare(variant.item),
             ]))),
         }
     }
 
-    fn semantic_type_path_resolution_to_ty(resolution: SemanticTypePathResolution) -> BodyTy {
+    fn semantic_type_path_resolution_to_ty(resolution: SemanticTypePathResolution) -> IndexedTy {
         match resolution {
             SemanticTypePathResolution::SelfType(types) => {
-                BodyTyRepr::self_ty(types.into_iter().map(BodyNominalTy::bare).collect())
+                IndexedTyRepr::self_ty(types.into_iter().map(IndexedNominalTy::bare).collect())
             }
             SemanticTypePathResolution::TypeDefs(types) => {
-                BodyTyRepr::nominal(types.into_iter().map(BodyNominalTy::bare).collect())
+                IndexedTyRepr::nominal(types.into_iter().map(IndexedNominalTy::bare).collect())
             }
             // Traits are navigable symbols, but they are not value-like receiver types in this
             // small analysis model.
-            SemanticTypePathResolution::Traits(_) => BodyTy::Unknown,
-            SemanticTypePathResolution::Unknown => BodyTy::Unknown,
+            SemanticTypePathResolution::Traits(_) => IndexedTy::Unknown,
+            SemanticTypePathResolution::Unknown => IndexedTy::Unknown,
         }
     }
 
-    fn body_type_path_resolution_to_ty(resolution: BodyTypePathResolution) -> BodyTy {
+    fn body_type_path_resolution_to_ty(resolution: BodyTypePathResolution) -> IndexedTy {
         match resolution {
             BodyTypePathResolution::BodyLocal(item) => {
-                BodyTyRepr::local_nominal(vec![BodyLocalNominalTy::bare(item)])
+                IndexedTyRepr::local_nominal(vec![IndexedLocalNominalTy::bare(item)])
             }
             BodyTypePathResolution::SelfType(types) => {
-                BodyTyRepr::self_ty(types.into_iter().map(BodyNominalTy::bare).collect())
+                IndexedTyRepr::self_ty(types.into_iter().map(IndexedNominalTy::bare).collect())
             }
             BodyTypePathResolution::TypeDefs(types) => {
-                BodyTyRepr::nominal(types.into_iter().map(BodyNominalTy::bare).collect())
+                IndexedTyRepr::nominal(types.into_iter().map(IndexedNominalTy::bare).collect())
             }
-            BodyTypePathResolution::Primitive(primitive) => BodyTy::Primitive(primitive),
+            BodyTypePathResolution::Primitive(primitive) => IndexedTy::Primitive(primitive),
             // Trait paths are useful for goto-definition, but type queries report only nominal
             // values and body-local item types.
-            BodyTypePathResolution::Traits(_) => BodyTy::Unknown,
-            BodyTypePathResolution::Unknown => BodyTy::Unknown,
+            BodyTypePathResolution::Traits(_) => IndexedTy::Unknown,
+            BodyTypePathResolution::Unknown => IndexedTy::Unknown,
         }
     }
 

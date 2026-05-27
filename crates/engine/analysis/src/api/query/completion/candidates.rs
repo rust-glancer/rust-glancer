@@ -4,9 +4,10 @@
 //! storage owns name, member, or type lookup. This adapter accepts completion-domain cursor sites
 //! and projects generic view facts into completion-ready candidates.
 
-use rg_body_ir::{BodyTy, FieldKey};
+use rg_body_ir::FieldKey;
 use rg_def_map::Path;
 use rg_ir_model::ModuleRef;
+use rg_ty::IndexedTy;
 
 use crate::{
     api::{
@@ -280,7 +281,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             let path = Path::unqualified_name(primitive.label());
             if matches!(
                 TyView::new(self.analysis).ty_for_body_type_path(site.body, site.scope, &path)?,
-                BodyTy::Primitive(resolved) if resolved == primitive
+                IndexedTy::Primitive(resolved) if resolved == primitive
             ) {
                 candidates.push(primitive);
             }

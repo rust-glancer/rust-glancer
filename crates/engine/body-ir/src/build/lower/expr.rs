@@ -12,9 +12,9 @@ use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::{Span, TextSpan};
 
 use crate::ir::{
-    BindingData, BindingKind, BodyTy, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
+    BindingData, BindingKind, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
     ExprBinaryOp, ExprId, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LiteralKind,
-    MatchArmData, RecordExprField, RecordExprSpread, ScopeId,
+    MatchArmData, RecordExprField, RecordExprSpread, ScopeId, ty::BodyTy,
 };
 
 use super::function::FunctionBodyLowering;

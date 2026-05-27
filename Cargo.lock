@@ -1724,6 +1724,8 @@ dependencies = [
 name = "rg_ty"
 version = "0.1.0"
 dependencies = [
+ "rg_ir_model",
+ "rg_item_tree",
  "rg_memsize",
  "rg_text",
  "rg_wincode_utils",

@@ -9,9 +9,10 @@ use rg_item_tree::{FieldKey, TypeRef};
 use rg_text::Name;
 
 use crate::ir::{
-    BindingData, BindingId, BindingKind, BodyPath, BodyTy, ExprId, LiteralKind, PatBindingMode,
-    PatData, PatId, PatKind, PatMutability, PatRangeKind, RecordPatField, ScopeId,
+    BindingData, BindingId, BindingKind, BodyPath, ExprId, LiteralKind, PatBindingMode, PatData,
+    PatId, PatKind, PatMutability, PatRangeKind, RecordPatField, ScopeId,
     path::{BodyPathSegment, BodyPathSegmentKind},
+    ty::BodyTy,
 };
 
 use super::function::FunctionBodyLowering;

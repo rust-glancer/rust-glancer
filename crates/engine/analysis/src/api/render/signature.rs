@@ -5,7 +5,7 @@
 
 use rg_body_ir::{
     BindingData, BodyEnumVariantData, BodyFieldData, BodyFunctionData, BodyItemData,
-    BodyItemDeclaration, BodyTy, BodyValueItemData, BodyValueItemDeclaration,
+    BodyItemDeclaration, BodyValueItemData, BodyValueItemDeclaration,
 };
 use rg_semantic_ir::{
     ConstData, EnumData, EnumVariantData, EnumVariantItem, FieldData, FieldItem, FieldKey,
@@ -13,6 +13,7 @@ use rg_semantic_ir::{
     ParamItem, StaticData, StructData, TraitData, TypeAliasData, TypeBound, TypeRef, UnionData,
     VisibilityLevel, WherePredicate,
 };
+use rg_ty::IndexedTy;
 
 use crate::api::{
     Analysis,
@@ -243,7 +244,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         Ok(format!("let {name}: {ty}"))
     }
 
-    pub(crate) fn ty_signature(&self, ty: &BodyTy) -> anyhow::Result<Option<String>> {
+    pub(crate) fn ty_signature(&self, ty: &IndexedTy) -> anyhow::Result<Option<String>> {
         TypeRenderer::new(self.0).render(ty)
     }
 }

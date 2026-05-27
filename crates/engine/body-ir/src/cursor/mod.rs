@@ -17,8 +17,10 @@ use rg_text::Name;
 
 use crate::{
     BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef, BodyIrReadTxn, BodyItemKind,
-    BodyItemRef, BodyRef, BodyTy, BodyValueItemKind, BodyValueItemRef, ExprId, ScopeId,
+    BodyItemRef, BodyRef, BodyValueItemKind, BodyValueItemRef, ExprId, ScopeId,
 };
+
+use crate::ir::ty::BodyTy;
 
 use self::scan::{
     BodyCursorScanner, BodySourceScanner, DotCompletionSiteScanner, PathCompletionSiteScanner,

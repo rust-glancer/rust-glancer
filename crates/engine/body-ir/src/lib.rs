@@ -43,12 +43,9 @@ pub(crate) use self::ir::{
 // TODO: Shouldn't be exposed normally; remove after analysis owns resolver projection.
 pub use self::ir::{BodyResolution, BodyTypePathResolution};
 
-// TODO: Shouldn't be exposed normally; remove after the type model boundary is extracted.
-pub use self::{
-    ir::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt, BodyTyRepr},
-    resolution::{
-        BodyAutoderef, BodyAutoderefCandidate, BodyAutoderefCandidates, BodyAutoderefMode,
-    },
+// TODO: Shouldn't be exposed normally; remove after analysis owns member lookup projection.
+pub use self::resolution::{
+    BodyAutoderef, BodyAutoderefCandidate, BodyAutoderefCandidates, BodyAutoderefMode,
 };
 
 // TODO: Shouldn't be exposed normally; remove after body-local declaration projection moves out.
