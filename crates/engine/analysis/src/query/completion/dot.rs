@@ -4,7 +4,7 @@ use rg_ir_view::member::MemberView;
 
 use crate::{
     Analysis,
-    api::completion_site::DotCompletionSite,
+    completion_site::DotCompletionSite,
     model::{CompletionEdit, CompletionItem, CompletionTarget},
 };
 

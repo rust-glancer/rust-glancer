@@ -9,12 +9,9 @@ use rg_ir_view::reference::{IndexedSourceLocation, ReferenceView};
 use rg_parse::FileId;
 
 use crate::{
-    api::{
-        Analysis,
-        source_symbol::SourceSymbolResolver,
-        source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolRole},
-    },
+    Analysis,
     model::{ReferenceLocation, SymbolAt},
+    source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver, SourceSymbolRole},
 };
 
 /// Options for a source reference lookup.

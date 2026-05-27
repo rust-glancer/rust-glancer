@@ -4,7 +4,7 @@ use rg_ir_model::TargetRef;
 use rg_parse::FileId;
 
 use super::SymbolResolver;
-use crate::{api::Analysis, model::NavigationTarget};
+use crate::{Analysis, model::NavigationTarget};
 
 /// Implements goto-definition as symbol selection followed by symbol resolution.
 ///

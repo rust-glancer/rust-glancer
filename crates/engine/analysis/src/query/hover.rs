@@ -9,8 +9,9 @@ use rg_parse::FileId;
 use rg_ty::IndexedTy;
 
 use crate::{
-    api::{Analysis, source_symbol::SourceSymbolResolver},
-    model::{HoverBlock, HoverInfo, SymbolAt, SymbolKind},
+    Analysis, SymbolKind,
+    model::{HoverBlock, HoverInfo, SymbolAt},
+    source_symbol::SourceSymbolResolver,
 };
 
 pub(crate) struct HoverResolver<'a, 'db>(&'a Analysis<'db>);

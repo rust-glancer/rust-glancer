@@ -6,7 +6,7 @@ use rg_ir_model::SemanticItemKind;
 
 /// Generic indexed declaration category independent from any editor transport model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
-pub enum IndexedSymbolKind {
+pub enum SymbolKind {
     #[display("const")]
     Const,
     #[display("enum")]
@@ -39,7 +39,7 @@ pub enum IndexedSymbolKind {
     Variable,
 }
 
-impl IndexedSymbolKind {
+impl SymbolKind {
     pub fn from_local_def_kind(kind: LocalDefKind) -> Self {
         match kind {
             LocalDefKind::Const => Self::Const,

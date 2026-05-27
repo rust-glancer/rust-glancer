@@ -7,7 +7,7 @@ use rg_ir_model::TargetRef;
 use rg_parse::FileId;
 
 use crate::{
-    api::Analysis,
+    Analysis,
     model::{DocumentSymbol, WorkspaceSymbol},
 };
 

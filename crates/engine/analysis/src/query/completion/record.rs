@@ -3,7 +3,7 @@
 use rg_ir_view::{IndexedViewDb, member::MemberView};
 
 use crate::{
-    api::completion_site::RecordFieldCompletionSite,
+    completion_site::RecordFieldCompletionSite,
     model::{CompletionEdit, CompletionItem},
 };
 

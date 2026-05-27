@@ -12,7 +12,7 @@ use rg_ir_model::{
 use rg_semantic_ir::{Documentation, FieldData, FieldKey, FunctionData, ParamItem};
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt};
 
-use crate::{IndexedSymbolKind, IndexedViewDb, path::PathView};
+use crate::{IndexedViewDb, SymbolKind, path::PathView};
 
 use super::declaration::Declaration;
 
@@ -86,7 +86,7 @@ impl<'a> MemberField<'a> {
         Some(match self {
             Self::Semantic { field, data } => Declaration::new(
                 field.owner.target,
-                IndexedSymbolKind::Field,
+                SymbolKind::Field,
                 key.declaration_label(),
                 data.file_id,
                 data.field.span,
@@ -94,7 +94,7 @@ impl<'a> MemberField<'a> {
             ),
             Self::BodyLocal { field, data } => Declaration::new(
                 field.item.body.target,
-                IndexedSymbolKind::Field,
+                SymbolKind::Field,
                 key.declaration_label(),
                 data.item.source.file_id,
                 data.field.span,
@@ -157,13 +157,13 @@ impl<'a> MemberFunction<'a> {
         }
     }
 
-    pub fn symbol_kind(&self) -> IndexedSymbolKind {
+    pub fn symbol_kind(&self) -> SymbolKind {
         match self {
             Self::Semantic { data, .. } => match data.owner {
-                ItemOwner::Module(_) => IndexedSymbolKind::Function,
-                ItemOwner::Trait(_) | ItemOwner::Impl(_) => IndexedSymbolKind::Method,
+                ItemOwner::Module(_) => SymbolKind::Function,
+                ItemOwner::Trait(_) | ItemOwner::Impl(_) => SymbolKind::Method,
             },
-            Self::BodyLocal { data, .. } => IndexedSymbolKind::from_body_function_owner(data.owner),
+            Self::BodyLocal { data, .. } => SymbolKind::from_body_function_owner(data.owner),
         }
     }
 

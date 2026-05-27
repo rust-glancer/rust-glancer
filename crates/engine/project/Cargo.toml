@@ -22,6 +22,7 @@ rg_body_ir.workspace = true
 rg_cfg_eval.workspace = true
 rg_def_map.workspace = true
 rg_ir_model.workspace = true
+rg_ir_view.workspace = true
 rg_item_tree.workspace = true
 rg_memsize.workspace = true
 rg_package_store.workspace = true

@@ -12,7 +12,6 @@ pub mod details;
 pub mod enum_variant;
 pub mod implementation;
 pub mod item_index;
-pub mod kind;
 pub mod member;
 pub mod module;
 pub mod name_lookup;
@@ -21,8 +20,9 @@ pub mod reference;
 pub mod resolution;
 pub mod signature;
 pub mod source;
+pub mod symbol;
 pub mod ty;
 pub mod ty_label;
 
 pub use db::IndexedViewDb;
-pub use kind::IndexedSymbolKind;
+pub use symbol::SymbolKind;

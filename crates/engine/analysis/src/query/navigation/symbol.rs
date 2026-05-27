@@ -3,10 +3,9 @@
 use rg_ir_view::IndexedViewDb;
 
 use crate::{
-    api::{
-        query::navigation::target::NavigationTargetProjection, source_symbol::SourceSymbolResolver,
-    },
     model::{NavigationTarget, SymbolAt},
+    query::navigation::target::NavigationTargetProjection,
+    source_symbol::SourceSymbolResolver,
 };
 
 /// Resolves an already-selected analysis symbol into navigation destinations.

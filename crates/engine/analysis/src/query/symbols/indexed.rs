@@ -6,13 +6,13 @@ use rg_ir_model::{
     identity::{DeclarationRef, DeclarationRefRepr},
 };
 use rg_ir_view::{
-    IndexedSymbolKind, IndexedViewDb,
+    IndexedViewDb, SymbolKind,
     declaration::{Declaration, DeclarationView},
     item_index::{IndexedItem, IndexedItemChild, ItemIndexView},
 };
 use rg_parse::{FileId, Span};
 
-use crate::model::{DocumentSymbol, SymbolKind, WorkspaceSymbol};
+use crate::model::{DocumentSymbol, WorkspaceSymbol};
 
 /// One outline declaration. Most nodes come from real declarations, but some syntax-only
 /// children, such as tuple variant fields, only exist as document outline entries.
@@ -261,7 +261,7 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
             return Ok(());
         };
         let child_container_name = Self::child_container_name(&declaration);
-        if declaration.kind() != IndexedSymbolKind::Impl {
+        if declaration.kind() != SymbolKind::Impl {
             symbols.push(WorkspaceSymbolEntry::new(declaration, container_name));
         }
 
@@ -277,21 +277,21 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
 
     fn child_container_name(declaration: &Declaration) -> Option<String> {
         match declaration.kind() {
-            IndexedSymbolKind::Trait => Some(format!("trait {}", declaration.name())),
-            IndexedSymbolKind::Struct
-            | IndexedSymbolKind::Union
-            | IndexedSymbolKind::Enum
-            | IndexedSymbolKind::Impl
-            | IndexedSymbolKind::EnumVariant
-            | IndexedSymbolKind::Function
-            | IndexedSymbolKind::Method
-            | IndexedSymbolKind::Module
-            | IndexedSymbolKind::Const
-            | IndexedSymbolKind::Field
-            | IndexedSymbolKind::Macro
-            | IndexedSymbolKind::Static
-            | IndexedSymbolKind::TypeAlias
-            | IndexedSymbolKind::Variable => Some(declaration.name().to_string()),
+            SymbolKind::Trait => Some(format!("trait {}", declaration.name())),
+            SymbolKind::Struct
+            | SymbolKind::Union
+            | SymbolKind::Enum
+            | SymbolKind::Impl
+            | SymbolKind::EnumVariant
+            | SymbolKind::Function
+            | SymbolKind::Method
+            | SymbolKind::Module
+            | SymbolKind::Const
+            | SymbolKind::Field
+            | SymbolKind::Macro
+            | SymbolKind::Static
+            | SymbolKind::TypeAlias
+            | SymbolKind::Variable => Some(declaration.name().to_string()),
         }
     }
 

@@ -6,8 +6,9 @@ use rg_parse::FileId;
 
 use super::target::NavigationTargetProjection;
 use crate::{
-    api::{Analysis, source_symbol::SourceSymbolResolver},
+    Analysis,
     model::{NavigationTarget, SymbolAt},
+    source_symbol::SourceSymbolResolver,
 };
 
 /// Implements goto-implementation with the facts rust-glancer already collects.

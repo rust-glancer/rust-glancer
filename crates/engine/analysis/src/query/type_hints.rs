@@ -4,7 +4,7 @@ use rg_ir_model::TargetRef;
 use rg_ir_view::{body::BodyView, ty_label::TypeRenderer};
 use rg_parse::{FileId, TextSpan};
 
-use crate::{api::Analysis, model::TypeHint};
+use crate::{Analysis, model::TypeHint};
 
 pub(crate) struct TypeHintCollector<'a, 'db>(&'a Analysis<'db>);
 

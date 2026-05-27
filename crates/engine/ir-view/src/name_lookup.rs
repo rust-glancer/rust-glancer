@@ -10,7 +10,7 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::Documentation;
 
-use crate::{IndexedSymbolKind, IndexedViewDb};
+use crate::{IndexedViewDb, SymbolKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NameNamespace {
@@ -52,7 +52,7 @@ pub struct ModuleScopeName {
     namespace: NameNamespace,
     origin: NameOrigin,
     declaration: DeclarationRef,
-    kind: IndexedSymbolKind,
+    kind: SymbolKind,
     documentation: Option<String>,
     function: Option<AnalysisFunctionRef>,
 }
@@ -74,7 +74,7 @@ impl ModuleScopeName {
         self.declaration
     }
 
-    pub fn kind(&self) -> IndexedSymbolKind {
+    pub fn kind(&self) -> SymbolKind {
         self.kind
     }
 
@@ -156,7 +156,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                     return Ok(None);
                 };
                 (
-                    IndexedSymbolKind::Module,
+                    SymbolKind::Module,
                     data.docs.as_ref().map(Documentation::text),
                 )
             }
@@ -171,7 +171,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                 {
                     function = Some(AnalysisFunctionRef::semantic(function_ref));
                 }
-                (IndexedSymbolKind::from_local_def_kind(data.kind), None)
+                (SymbolKind::from_local_def_kind(data.kind), None)
             }
         };
 

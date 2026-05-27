@@ -77,7 +77,7 @@ impl ProjectState {
 
     /// Returns the high-level query API for this frozen project analysis.
     pub(crate) fn analysis<'a>(&self, txn: &ProjectReadTxn<'a>) -> Analysis<'a> {
-        Analysis::new(txn.analysis())
+        Analysis::new(txn.view_db().clone())
     }
 
     /// Iterates over non-sysroot package slots from the current Cargo graph.

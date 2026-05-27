@@ -9,7 +9,7 @@ use rg_ir_view::{
 
 use crate::{
     Analysis,
-    api::completion_site::{UnqualifiedCompletionContext, UnqualifiedCompletionSite},
+    completion_site::{UnqualifiedCompletionContext, UnqualifiedCompletionSite},
     model::{CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem},
 };
 

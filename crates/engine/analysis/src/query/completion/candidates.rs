@@ -10,7 +10,7 @@ use rg_ir_model::{
     identity::{DeclarationRef, EnumVariantRef, FieldRef, FunctionRef},
 };
 use rg_ir_view::{
-    IndexedSymbolKind, IndexedViewDb,
+    IndexedViewDb, SymbolKind,
     body::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
     enum_variant::EnumVariantView,
     member::{MemberMethodCandidate, MemberMethodOrigin, MemberView},
@@ -22,7 +22,7 @@ use rg_semantic_ir::FieldKey;
 use rg_ty::IndexedTy;
 
 use crate::{
-    api::completion_site::{
+    completion_site::{
         DotCompletionSite, PathCompletionSite, RecordFieldCompletionSite, UnqualifiedCompletionSite,
     },
     model::{CompletionApplicability, CompletionKind, CompletionTarget},
@@ -507,23 +507,23 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         Some(candidate)
     }
 
-    fn completion_kind(kind: IndexedSymbolKind) -> Option<CompletionKind> {
+    fn completion_kind(kind: SymbolKind) -> Option<CompletionKind> {
         Some(match kind {
-            IndexedSymbolKind::Const => CompletionKind::Const,
-            IndexedSymbolKind::Enum => CompletionKind::Enum,
-            IndexedSymbolKind::EnumVariant => CompletionKind::EnumVariant,
-            IndexedSymbolKind::Field => CompletionKind::Field,
-            IndexedSymbolKind::Function => CompletionKind::Function,
-            IndexedSymbolKind::Macro => CompletionKind::Macro,
-            IndexedSymbolKind::Method => CompletionKind::Function,
-            IndexedSymbolKind::Module => CompletionKind::Module,
-            IndexedSymbolKind::Static => CompletionKind::Static,
-            IndexedSymbolKind::Struct => CompletionKind::Struct,
-            IndexedSymbolKind::Trait => CompletionKind::Trait,
-            IndexedSymbolKind::TypeAlias => CompletionKind::TypeAlias,
-            IndexedSymbolKind::Union => CompletionKind::Union,
-            IndexedSymbolKind::Variable => CompletionKind::Variable,
-            IndexedSymbolKind::Impl => return None,
+            SymbolKind::Const => CompletionKind::Const,
+            SymbolKind::Enum => CompletionKind::Enum,
+            SymbolKind::EnumVariant => CompletionKind::EnumVariant,
+            SymbolKind::Field => CompletionKind::Field,
+            SymbolKind::Function => CompletionKind::Function,
+            SymbolKind::Macro => CompletionKind::Macro,
+            SymbolKind::Method => CompletionKind::Function,
+            SymbolKind::Module => CompletionKind::Module,
+            SymbolKind::Static => CompletionKind::Static,
+            SymbolKind::Struct => CompletionKind::Struct,
+            SymbolKind::Trait => CompletionKind::Trait,
+            SymbolKind::TypeAlias => CompletionKind::TypeAlias,
+            SymbolKind::Union => CompletionKind::Union,
+            SymbolKind::Variable => CompletionKind::Variable,
+            SymbolKind::Impl => return None,
         })
     }
 

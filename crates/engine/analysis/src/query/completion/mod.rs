@@ -2,7 +2,7 @@
 //!
 //! Examples use `$0` to mark the cursor. Member completion handles shapes like
 //! `user.na$0`; path completion handles body paths such as
-//! `let value = crate::api::bu$0` and imports such as `use crate::api::$0`;
+//! `let value = crate::user::bu$0` and imports such as `use crate::user::$0`;
 //! unqualified completion handles lexical positions such as `let value = inp$0`;
 //! record-field completion handles `User { na$0 }`; import roots use shapes like
 //! `use st$0`. The scanners identify the cursor site, while the resolver turns
@@ -24,7 +24,7 @@ mod unqualified;
 
 use crate::{
     Analysis,
-    api::completion_site::{CompletionSite, CompletionSiteDetector, CompletionSiteSyntax},
+    completion_site::{CompletionSite, CompletionSiteDetector, CompletionSiteSyntax},
     model::{CompletionItem, CompletionKind},
 };
 use rg_ir_model::TargetRef;
@@ -88,7 +88,7 @@ impl<'a> CompletionQuery<'a> {
 ///
 /// For `user.na$0`, Body IR identifies the receiver expression and typed
 /// prefix; the resolver looks up the receiver type and renders member
-/// candidates. For `crate::api::$0` or `inp$0`, scanners provide the relevant
+/// candidates. For `crate::user::$0` or `inp$0`, scanners provide the relevant
 /// source site and replacement span; the resolver renders the matching visible
 /// definitions.
 pub(crate) struct CompletionResolver<'a, 'db, 'source> {

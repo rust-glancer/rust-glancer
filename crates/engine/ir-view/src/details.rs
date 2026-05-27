@@ -14,7 +14,7 @@ use rg_ir_model::{
 };
 use rg_semantic_ir::Documentation;
 
-use crate::{IndexedSymbolKind, IndexedViewDb, path::PathView, signature::SignatureRenderer};
+use crate::{IndexedViewDb, SymbolKind, path::PathView, signature::SignatureRenderer};
 
 use super::{declaration::DeclarationView, member::MemberView};
 
@@ -25,7 +25,7 @@ pub struct DeclarationDetailsContext {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclarationDetails {
-    pub kind: IndexedSymbolKind,
+    pub kind: SymbolKind,
     pub path: Option<String>,
     pub signature: Option<String>,
     pub docs: Option<String>,
@@ -74,7 +74,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {
-                    kind: IndexedSymbolKind::Variable,
+                    kind: SymbolKind::Variable,
                     path: None,
                     signature: Some(
                         SignatureRenderer::new(self.analysis).binding_signature(binding_data)?,
@@ -176,7 +176,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {
-                    kind: IndexedSymbolKind::Struct,
+                    kind: SymbolKind::Struct,
                     path,
                     signature: Some(renderer.struct_signature(data)),
                     docs: data.docs.as_ref().map(Documentation::text),
@@ -187,7 +187,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {
-                    kind: IndexedSymbolKind::Enum,
+                    kind: SymbolKind::Enum,
                     path,
                     signature: Some(renderer.enum_signature(data)),
                     docs: data.docs.as_ref().map(Documentation::text),
@@ -198,7 +198,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {
-                    kind: IndexedSymbolKind::Union,
+                    kind: SymbolKind::Union,
                     path,
                     signature: Some(renderer.union_signature(data)),
                     docs: data.docs.as_ref().map(Documentation::text),
@@ -212,7 +212,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
-            kind: IndexedSymbolKind::Trait,
+            kind: SymbolKind::Trait,
             path: PathView::new(self.analysis).trait_path(trait_ref)?,
             signature: Some(SignatureRenderer::new(self.analysis).trait_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
@@ -243,7 +243,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
-            kind: IndexedSymbolKind::Field,
+            kind: SymbolKind::Field,
             path: field.display_path(&PathView::new(self.analysis))?,
             signature: SignatureRenderer::new(self.analysis).member_field_signature(&field),
             docs: field.docs_text(),
@@ -260,7 +260,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {
-                    kind: IndexedSymbolKind::EnumVariant,
+                    kind: SymbolKind::EnumVariant,
                     path: PathView::new(self.analysis).enum_variant_path(variant_ref)?,
                     signature: Some(
                         SignatureRenderer::new(self.analysis).enum_variant_signature(data),
@@ -273,7 +273,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {
-                    kind: IndexedSymbolKind::EnumVariant,
+                    kind: SymbolKind::EnumVariant,
                     path: None,
                     signature: Some(
                         SignatureRenderer::new(self.analysis).local_enum_variant_signature(data),
@@ -292,7 +292,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
-            kind: IndexedSymbolKind::TypeAlias,
+            kind: SymbolKind::TypeAlias,
             path: PathView::new(self.analysis).type_alias_path(type_alias_ref)?,
             signature: Some(SignatureRenderer::new(self.analysis).type_alias_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
@@ -304,7 +304,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
-            kind: IndexedSymbolKind::Const,
+            kind: SymbolKind::Const,
             path: PathView::new(self.analysis).const_path(const_ref)?,
             signature: Some(SignatureRenderer::new(self.analysis).const_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
@@ -316,7 +316,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
-            kind: IndexedSymbolKind::Static,
+            kind: SymbolKind::Static,
             path: PathView::new(self.analysis).static_path(static_ref)?,
             signature: Some(SignatureRenderer::new(self.analysis).static_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
@@ -337,7 +337,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             .or(module.name.as_deref())
             .unwrap_or("crate");
         Ok(Some(DeclarationDetails {
-            kind: IndexedSymbolKind::Module,
+            kind: SymbolKind::Module,
             path: PathView::new(self.analysis).module_path(module_ref)?,
             signature: Some(format!("mod {name}")),
             docs: module.docs.as_ref().map(Documentation::text),
@@ -358,7 +358,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             })?
             .map(|module| format!("{module}::{}", data.name));
         Ok(Some(DeclarationDetails {
-            kind: IndexedSymbolKind::from_local_def_kind(data.kind),
+            kind: SymbolKind::from_local_def_kind(data.kind),
             path,
             signature: Some(format!("{} {}", data.kind, data.name)),
             docs: None,

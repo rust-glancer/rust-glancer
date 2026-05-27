@@ -4,7 +4,7 @@ use rg_ir_view::enum_variant::{EnumVariant, EnumVariantView};
 
 use crate::{
     Analysis,
-    api::completion_site::{PathCompletionContext, PathCompletionSite},
+    completion_site::{PathCompletionContext, PathCompletionSite},
     model::{
         CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
         CompletionKind, CompletionTarget,
@@ -30,7 +30,7 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
         Self { analysis, query }
     }
 
-    /// Collects qualified path completions, such as `crate::$0` or `use crate::api::$0`.
+    /// Collects qualified path completions, such as `crate::$0` or `use crate::user::$0`.
     pub(super) fn completions(
         &self,
         site: PathCompletionSite,
@@ -141,7 +141,7 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
 /// Type positions like `let value: crate::$0` accept type-namespace candidates.
 /// Value positions like `let value = crate::$0` accept all candidates so modules
 /// and types can still be used as prefixes on the way to a value item such as
-/// `crate::api::build_user()`.
+/// `crate::user::build_user()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PathCompletionFilter {
     Types,

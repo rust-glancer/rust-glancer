@@ -10,7 +10,7 @@ use rg_ir_model::{ModuleRef, TargetRef, TraitApplicability};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::TypePathContext;
 
-use rg_ir_view::IndexedSymbolKind;
+use rg_ir_view::SymbolKind;
 
 /// Scope in which a type path should be resolved.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -154,63 +154,6 @@ pub struct HoverBlock {
     pub docs: Option<String>,
 }
 
-/// LSP-shaped symbol category without depending on LSP transport types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
-pub enum SymbolKind {
-    #[display("const")]
-    Const,
-    #[display("enum")]
-    Enum,
-    #[display("variant")]
-    EnumVariant,
-    #[display("field")]
-    Field,
-    #[display("fn")]
-    Function,
-    #[display("impl")]
-    Impl,
-    #[display("macro")]
-    Macro,
-    #[display("method")]
-    Method,
-    #[display("module")]
-    Module,
-    #[display("static")]
-    Static,
-    #[display("struct")]
-    Struct,
-    #[display("trait")]
-    Trait,
-    #[display("type_alias")]
-    TypeAlias,
-    #[display("union")]
-    Union,
-    #[display("variable")]
-    Variable,
-}
-
-impl From<IndexedSymbolKind> for SymbolKind {
-    fn from(kind: IndexedSymbolKind) -> Self {
-        match kind {
-            IndexedSymbolKind::Const => Self::Const,
-            IndexedSymbolKind::Enum => Self::Enum,
-            IndexedSymbolKind::EnumVariant => Self::EnumVariant,
-            IndexedSymbolKind::Field => Self::Field,
-            IndexedSymbolKind::Function => Self::Function,
-            IndexedSymbolKind::Impl => Self::Impl,
-            IndexedSymbolKind::Macro => Self::Macro,
-            IndexedSymbolKind::Method => Self::Method,
-            IndexedSymbolKind::Module => Self::Module,
-            IndexedSymbolKind::Static => Self::Static,
-            IndexedSymbolKind::Struct => Self::Struct,
-            IndexedSymbolKind::Trait => Self::Trait,
-            IndexedSymbolKind::TypeAlias => Self::TypeAlias,
-            IndexedSymbolKind::Union => Self::Union,
-            IndexedSymbolKind::Variable => Self::Variable,
-        }
-    }
-}
-
 /// Navigation target category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 pub enum NavigationTargetKind {
@@ -262,12 +205,6 @@ impl From<SymbolKind> for NavigationTargetKind {
             SymbolKind::Union => Self::Union,
             SymbolKind::Variable => Self::LocalBinding,
         }
-    }
-}
-
-impl From<IndexedSymbolKind> for NavigationTargetKind {
-    fn from(kind: IndexedSymbolKind) -> Self {
-        Self::from(SymbolKind::from(kind))
     }
 }
 

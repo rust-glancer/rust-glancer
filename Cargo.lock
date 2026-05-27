@@ -1661,6 +1661,7 @@ dependencies = [
  "rg_cfg_eval",
  "rg_def_map",
  "rg_ir_model",
+ "rg_ir_view",
  "rg_item_tree",
  "rg_memsize",
  "rg_package_store",

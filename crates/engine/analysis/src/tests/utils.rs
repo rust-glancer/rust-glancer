@@ -3,16 +3,17 @@ use std::{fmt, fmt::Write as _, marker::PhantomData, sync::Arc};
 use expect_test::Expect;
 
 use crate::{
-    Analysis, AnalysisReadTxn, CompletionApplicability, CompletionClientCapabilities,
-    CompletionInsertText, CompletionItem, CompletionQuery, DocumentSymbol, HoverInfo,
-    NavigationTarget, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, SymbolAt,
-    TypeHint, WorkspaceSymbol,
+    Analysis, CompletionApplicability, CompletionClientCapabilities, CompletionInsertText,
+    CompletionItem, CompletionQuery, DocumentSymbol, HoverInfo, NavigationTarget,
+    ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, SymbolAt, TypeHint,
+    WorkspaceSymbol,
 };
 use rg_body_ir::{BodyIrDb, BodyIrReadTxn, ExprData, ExprKind};
 use rg_def_map::{DefMapDb, PackageSlot};
 use rg_ir_model::{
     BodyItemRef, FunctionRef, ItemOwner, ModuleRef, TargetRef, TraitRef, TypeDefId, TypeDefRef,
 };
+use rg_ir_view::IndexedViewDb;
 use rg_item_tree::{ItemTreeDb, PackageNameInterners};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb, Span};
@@ -327,12 +328,12 @@ impl AnalysisFixtureDb {
     }
 
     fn analysis(&self) -> Analysis<'_> {
-        let txn = AnalysisReadTxn::from_phase_txns(
+        let view_db = IndexedViewDb::new(
             self.def_map.read_txn(unexpected_package_loader()),
             self.semantic_ir.read_txn(unexpected_package_loader()),
             self.body_ir.read_txn(unexpected_package_loader()),
         );
-        Analysis::new(&txn)
+        Analysis::new(view_db)
     }
 
     fn resident_def_map(&self, target: TargetRef) -> Option<&rg_def_map::DefMap> {

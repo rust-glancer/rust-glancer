@@ -5,10 +5,7 @@ use rg_ir_view::ty::TyView;
 use rg_parse::FileId;
 
 use super::target::NavigationTargetProjection;
-use crate::{
-    api::{Analysis, source_symbol::SourceSymbolResolver},
-    model::NavigationTarget,
-};
+use crate::{Analysis, model::NavigationTarget, source_symbol::SourceSymbolResolver};
 
 /// Implements goto-type-definition through the shared type query.
 ///
