@@ -1,16 +1,12 @@
-//! Composite completion candidate views.
+//! Completion candidate assembly from generic indexed views.
 //!
 //! Completion renderers need editor-specific policies, but they should not know which frozen
-//! storage owns candidate lookup. This view accepts completion-domain cursor sites and projects
-//! storage-specific facts into completion-ready candidates.
+//! storage owns name, member, or type lookup. This adapter accepts completion-domain cursor sites
+//! and projects generic view facts into completion-ready candidates.
 
-use rg_body_ir::{
-    BodyAutoderef, BodyAutoderefMode, BodyTypePathResolution, BodyUnqualifiedCompletionCandidate,
-    FieldKey, UnqualifiedCompletionSite as BodyUnqualifiedCompletionSite,
-};
-use rg_def_map::{Path, ScopeNamespace, VisibleScopeOrigin};
-use rg_ir_model::{BodyBindingRef, DefId, ModuleRef};
-use rg_semantic_ir::Documentation;
+use rg_body_ir::{BodyTy, FieldKey};
+use rg_def_map::Path;
+use rg_ir_model::ModuleRef;
 
 use crate::{
     api::{
@@ -20,13 +16,16 @@ use crate::{
             UnqualifiedCompletionSite,
         },
         view::{
+            body::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
             enum_variant::EnumVariantView,
-            member::{MemberMethodOrigin, MemberOwnerRef, MemberReceiverTy, MemberView},
+            member::{MemberMethodOrigin, MemberView},
+            name_lookup::{ModuleScopeName, NameLookupView, NameNamespace, NameOrigin},
+            ty::TyView,
         },
     },
     model::{
         CompletionApplicability, CompletionKind, CompletionTarget, DeclarationRef, EnumVariantRef,
-        FieldRef, FunctionRef,
+        FieldRef, FunctionRef, SymbolKind,
     },
 };
 
@@ -37,12 +36,12 @@ pub(crate) enum CompletionScopeNamespace {
     Macros,
 }
 
-impl From<ScopeNamespace> for CompletionScopeNamespace {
-    fn from(namespace: ScopeNamespace) -> Self {
+impl From<NameNamespace> for CompletionScopeNamespace {
+    fn from(namespace: NameNamespace) -> Self {
         match namespace {
-            ScopeNamespace::Types => Self::Types,
-            ScopeNamespace::Values => Self::Values,
-            ScopeNamespace::Macros => Self::Macros,
+            NameNamespace::Types => Self::Types,
+            NameNamespace::Values => Self::Values,
+            NameNamespace::Macros => Self::Macros,
         }
     }
 }
@@ -54,12 +53,12 @@ pub(crate) enum CompletionScopeOrigin {
     ExternRoot,
 }
 
-impl From<VisibleScopeOrigin> for CompletionScopeOrigin {
-    fn from(origin: VisibleScopeOrigin) -> Self {
+impl From<NameOrigin> for CompletionScopeOrigin {
+    fn from(origin: NameOrigin) -> Self {
         match origin {
-            VisibleScopeOrigin::ModuleScope => Self::ModuleScope,
-            VisibleScopeOrigin::Prelude => Self::Prelude,
-            VisibleScopeOrigin::ExternRoot => Self::ExternRoot,
+            NameOrigin::ModuleScope => Self::ModuleScope,
+            NameOrigin::Prelude => Self::Prelude,
+            NameOrigin::ExternRoot => Self::ExternRoot,
         }
     }
 }
@@ -191,10 +190,10 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             };
             return self.module_path_candidates(site.module, &site.qualifier);
         };
-        let Some(body) = self.analysis.body_ir.body_data(site.body)? else {
+        let Some(module) = BodyView::new(self.analysis).owner_module(site.body)? else {
             return Ok(Vec::new());
         };
-        self.module_path_candidates(body.owner_module(), &site.qualifier)
+        self.module_path_candidates(module, &site.qualifier)
     }
 
     pub(crate) fn enum_variant_candidates_for_path(
@@ -225,10 +224,10 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             };
             return self.unqualified_module_candidates(site.module);
         };
-        let Some(body) = self.analysis.body_ir.body_data(site.body)? else {
+        let Some(module) = BodyView::new(self.analysis).owner_module(site.body)? else {
             return Ok(Vec::new());
         };
-        self.unqualified_module_candidates(body.owner_module())
+        self.unqualified_module_candidates(module)
     }
 
     pub(crate) fn lexical_candidates_for_unqualified(
@@ -238,13 +237,19 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         let Some(body_site) = site.body_site() else {
             return Ok(Vec::new());
         };
+        let namespace = match body_site.namespace {
+            rg_body_ir::UnqualifiedCompletionNamespace::Types => BodyNameNamespace::Types,
+            rg_body_ir::UnqualifiedCompletionNamespace::Values => BodyNameNamespace::Values,
+        };
+        let scope = BodyNameScope::new(
+            body_site.body,
+            body_site.scope,
+            namespace,
+            body_site.visible_bindings,
+        );
         let mut candidates = Vec::new();
-        for candidate in self
-            .analysis
-            .body_ir
-            .unqualified_completion_candidates(body_site)?
-        {
-            if let Some(candidate) = self.lexical_candidate(body_site, candidate)? {
+        for candidate in BodyView::new(self.analysis).lexical_names(scope)? {
+            if let Some(candidate) = self.lexical_candidate(body_site.namespace, candidate) {
                 candidates.push(candidate);
             }
         }
@@ -273,14 +278,10 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             .filter(|primitive| primitive.label().starts_with(&site.member_prefix))
         {
             let path = Path::unqualified_name(primitive.label());
-            let resolution = self.analysis.body_ir.resolve_type_path_in_scope(
-                &self.analysis.def_map,
-                &self.analysis.semantic_ir,
-                site.body,
-                site.scope,
-                &path,
-            )?;
-            if resolution.is_primitive(&primitive) {
+            if matches!(
+                TyView::new(self.analysis).ty_for_body_type_path(site.body, site.scope, &path)?,
+                BodyTy::Primitive(resolved) if resolved == primitive
+            ) {
                 candidates.push(primitive);
             }
         }
@@ -292,21 +293,17 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         site: &DotCompletionSite,
     ) -> anyhow::Result<Vec<FieldRef>> {
-        let Some(receiver_ty) = self.analysis.body_ir.receiver_ty(site.body_site())? else {
+        let body_site = site.body_site();
+        let Some(receiver_ty) =
+            BodyView::new(self.analysis).receiver_ty(body_site.body, body_site.receiver)?
+        else {
             return Ok(Vec::new());
         };
 
-        let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
         let members = MemberView::new(self.analysis);
         let mut fields = Vec::new();
-
-        for candidate in autoderef.candidates(BodyAutoderefMode::FieldLookup, receiver_ty) {
-            let candidate = candidate?;
-            for ty in MemberReceiverTy::in_body_ty(candidate.ty()) {
-                for field in members.field_candidates(ty)? {
-                    fields.push(field.field_ref());
-                }
-            }
+        for field in members.field_candidates_for_ty(&receiver_ty)? {
+            fields.push(field.field_ref());
         }
 
         Ok(fields)
@@ -317,37 +314,20 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         site: &RecordFieldCompletionSite,
     ) -> anyhow::Result<Vec<FieldRef>> {
         let site = site.body_site();
-        let resolution = self.analysis.body_ir.resolve_type_path_in_scope(
-            &self.analysis.def_map,
-            &self.analysis.semantic_ir,
-            site.body,
-            site.scope,
-            &site.owner,
-        )?;
-        let owners: Vec<_> = match resolution {
-            BodyTypePathResolution::BodyLocal(item) => vec![MemberOwnerRef::BodyLocal(item)],
-            BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
-                types.into_iter().map(MemberOwnerRef::Semantic).collect()
-            }
-            BodyTypePathResolution::Primitive(_)
-            | BodyTypePathResolution::Traits(_)
-            | BodyTypePathResolution::Unknown => Vec::new(),
-        };
-
         let members = MemberView::new(self.analysis);
         let mut fields = Vec::new();
-        for owner in owners {
-            for field in members.field_candidates_for_owner(owner)? {
-                let Some(key) = field.key() else {
-                    continue;
-                };
-                if !matches!(key, FieldKey::Named(_))
-                    || site.existing_fields.iter().any(|existing| existing == key)
-                {
-                    continue;
-                }
-                fields.push(field.field_ref());
+        for field in
+            members.field_candidates_for_body_type_path(site.body, site.scope, &site.owner)?
+        {
+            let Some(key) = field.key() else {
+                continue;
+            };
+            if !matches!(key, FieldKey::Named(_))
+                || site.existing_fields.iter().any(|existing| existing == key)
+            {
+                continue;
             }
+            fields.push(field.field_ref());
         }
 
         Ok(fields)
@@ -357,21 +337,17 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         site: &DotCompletionSite,
     ) -> anyhow::Result<Vec<DotMethodCompletionCandidate>> {
-        let Some(receiver_ty) = self.analysis.body_ir.receiver_ty(site.body_site())? else {
+        let body_site = site.body_site();
+        let Some(receiver_ty) =
+            BodyView::new(self.analysis).receiver_ty(body_site.body, body_site.receiver)?
+        else {
             return Ok(Vec::new());
         };
 
-        let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
         let members = MemberView::new(self.analysis);
         let mut methods = Vec::new();
-
-        for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, receiver_ty) {
-            let candidate = candidate?;
-            for ty in MemberReceiverTy::in_body_ty(candidate.ty()) {
-                for method in members.method_candidates(ty)? {
-                    methods.push(Self::dot_method_candidate(method));
-                }
-            }
+        for method in members.method_candidates_for_ty(&receiver_ty)? {
+            methods.push(Self::dot_method_candidate(method));
         }
 
         Ok(methods)
@@ -382,29 +358,14 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         importing_module: ModuleRef,
         qualifier: &rg_def_map::Path,
     ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
-        let resolved = self
-            .analysis
-            .def_map
-            .resolve_path_in_type_namespace(importing_module, qualifier)?;
         let mut candidates = Vec::new();
-
-        // Module path completion needs a module scope to list. Non-module qualifiers such as type
-        // names expose associated items through a different lookup model.
-        for def in resolved.resolved {
-            let DefId::Module(source_module) = def else {
-                continue;
-            };
-            for visible_def in self
-                .analysis
-                .def_map
-                .visible_scope_defs(importing_module, source_module)?
-            {
-                if let Some(candidate) = self.module_candidate(visible_def)? {
-                    candidates.push(candidate);
-                }
+        for name in
+            NameLookupView::new(self.analysis).module_names_for_path(importing_module, qualifier)?
+        {
+            if let Some(candidate) = self.module_candidate(name) {
+                candidates.push(candidate);
             }
         }
-
         Ok(candidates)
     }
 
@@ -413,76 +374,43 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         module: ModuleRef,
     ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
         let mut candidates = Vec::new();
-        for visible_def in self
-            .analysis
-            .def_map
-            .visible_unqualified_scope_defs(module)?
-        {
-            if let Some(candidate) = self.module_candidate(visible_def)? {
+        for name in NameLookupView::new(self.analysis).unqualified_module_names(module)? {
+            if let Some(candidate) = self.module_candidate(name) {
                 candidates.push(candidate);
             }
         }
         Ok(candidates)
     }
 
-    fn module_candidate(
-        &self,
-        visible_def: rg_def_map::VisibleScopeDef,
-    ) -> anyhow::Result<Option<ModuleCompletionCandidate>> {
-        let mut target = CompletionTarget::Declaration(DeclarationRef::from_def(visible_def.def));
-        let mut function = None;
-        let (kind, documentation) = match visible_def.def {
-            DefId::Module(module) => {
-                let Some(data) = self.analysis.def_map.module(module)? else {
-                    return Ok(None);
-                };
-                (
-                    CompletionKind::Module,
-                    data.docs.as_ref().map(Documentation::text),
-                )
-            }
-            DefId::Local(local_def) => {
-                let Some(data) = self.analysis.def_map.local_def(local_def)? else {
-                    return Ok(None);
-                };
-                let kind = CompletionKind::from_local_def_kind(data.kind);
-                if let Some(member_function) =
-                    MemberView::new(self.analysis).function_for_local_def(local_def)?
-                {
-                    let function_ref = member_function.function_ref();
-                    target = CompletionTarget::Function(function_ref);
-                    function = Some(function_ref);
-                }
-                (kind, None)
-            }
-        };
+    fn module_candidate(&self, name: ModuleScopeName) -> Option<ModuleCompletionCandidate> {
+        let kind = Self::completion_kind(name.kind())?;
+        let function = name.function();
+        let target = function
+            .map(CompletionTarget::Function)
+            .unwrap_or_else(|| CompletionTarget::Declaration(name.declaration()));
 
-        Ok(Some(ModuleCompletionCandidate {
-            label: visible_def.label,
-            namespace: visible_def.namespace.into(),
-            origin: visible_def.origin.into(),
+        Some(ModuleCompletionCandidate {
+            label: name.label().to_string(),
+            namespace: name.namespace().into(),
+            origin: name.origin().into(),
             target,
             kind,
-            documentation,
+            documentation: name.documentation().map(ToString::to_string),
             function,
-        }))
+        })
     }
 
     fn lexical_candidate(
         &self,
-        site: &BodyUnqualifiedCompletionSite,
-        candidate: BodyUnqualifiedCompletionCandidate,
-    ) -> anyhow::Result<Option<LexicalCompletionCandidate>> {
+        namespace: rg_body_ir::UnqualifiedCompletionNamespace,
+        candidate: BodyLexicalName,
+    ) -> Option<LexicalCompletionCandidate> {
         let candidate = match candidate {
-            BodyUnqualifiedCompletionCandidate::Binding {
+            BodyLexicalName::Binding {
                 binding,
                 label,
                 scope_distance,
             } => {
-                let binding = BodyBindingRef {
-                    body: site.body,
-                    binding,
-                };
                 let declaration = DeclarationRef::body_binding(binding);
                 LexicalCompletionCandidate {
                     label,
@@ -495,23 +423,18 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                     shadow_namespaces: vec![CompletionScopeNamespace::Values],
                 }
             }
-            BodyUnqualifiedCompletionCandidate::LocalItem {
+            BodyLexicalName::TypeItem {
                 item,
                 kind,
                 label,
                 scope_distance,
+                has_value_constructor,
             } => {
-                let Some(body) = self.analysis.body_ir.body_data(item.body)? else {
-                    return Ok(None);
-                };
-                let Some(data) = body.local_item(item.item) else {
-                    return Ok(None);
-                };
                 let mut shadow_namespaces = vec![CompletionScopeNamespace::Types];
                 if matches!(
-                    site.namespace,
+                    namespace,
                     rg_body_ir::UnqualifiedCompletionNamespace::Values
-                ) && data.has_value_constructor()
+                ) && has_value_constructor
                 {
                     shadow_namespaces.push(CompletionScopeNamespace::Values);
                 }
@@ -527,7 +450,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                     shadow_namespaces,
                 }
             }
-            BodyUnqualifiedCompletionCandidate::LocalValueItem {
+            BodyLexicalName::ValueItem {
                 item,
                 kind,
                 label,
@@ -542,7 +465,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 function: None,
                 shadow_namespaces: vec![CompletionScopeNamespace::Values],
             },
-            BodyUnqualifiedCompletionCandidate::LocalFunction {
+            BodyLexicalName::Function {
                 function,
                 label,
                 scope_distance,
@@ -562,7 +485,27 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             }
         };
 
-        Ok(Some(candidate))
+        Some(candidate)
+    }
+
+    fn completion_kind(kind: SymbolKind) -> Option<CompletionKind> {
+        Some(match kind {
+            SymbolKind::Const => CompletionKind::Const,
+            SymbolKind::Enum => CompletionKind::Enum,
+            SymbolKind::EnumVariant => CompletionKind::EnumVariant,
+            SymbolKind::Field => CompletionKind::Field,
+            SymbolKind::Function => CompletionKind::Function,
+            SymbolKind::Macro => CompletionKind::Macro,
+            SymbolKind::Method => CompletionKind::Function,
+            SymbolKind::Module => CompletionKind::Module,
+            SymbolKind::Static => CompletionKind::Static,
+            SymbolKind::Struct => CompletionKind::Struct,
+            SymbolKind::Trait => CompletionKind::Trait,
+            SymbolKind::TypeAlias => CompletionKind::TypeAlias,
+            SymbolKind::Union => CompletionKind::Union,
+            SymbolKind::Variable => CompletionKind::Variable,
+            SymbolKind::Impl => return None,
+        })
     }
 
     fn dot_method_candidate(

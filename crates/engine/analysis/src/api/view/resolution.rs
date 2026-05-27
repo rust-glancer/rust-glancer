@@ -1,7 +1,8 @@
-//! Resolves analysis cursor symbols into composite declaration identities.
+//! Generic resolution view from indexed symbols and path facts to declarations.
 //!
-//! Navigation and hover need different presentation payloads, but they start from the same core
-//! question: "what declaration does this cursor symbol denote?"
+//! Query modules choose the cursor policy and presentation. This view owns the cross-layer lookup
+//! rules that turn selected source symbols, paths, and body resolutions into canonical declaration
+//! identities.
 
 use rg_body_ir::{BodyResolution, BodyTypePathResolution};
 use rg_def_map::Path;
@@ -16,9 +17,9 @@ use crate::{
     },
 };
 
-pub(crate) struct SymbolDeclarationResolver<'a, 'db>(&'a Analysis<'db>);
+pub(crate) struct ResolutionView<'a, 'db>(&'a Analysis<'db>);
 
-impl<'a, 'db> SymbolDeclarationResolver<'a, 'db> {
+impl<'a, 'db> ResolutionView<'a, 'db> {
     pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
         Self(analysis)
     }

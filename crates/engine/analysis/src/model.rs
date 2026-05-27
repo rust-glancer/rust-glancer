@@ -969,20 +969,6 @@ impl CompletionKind {
         }
     }
 
-    pub(super) fn from_local_def_kind(kind: LocalDefKind) -> Self {
-        match kind {
-            LocalDefKind::Const => Self::Const,
-            LocalDefKind::Enum => Self::Enum,
-            LocalDefKind::Function => Self::Function,
-            LocalDefKind::MacroDefinition => Self::Macro,
-            LocalDefKind::Static => Self::Static,
-            LocalDefKind::Struct => Self::Struct,
-            LocalDefKind::Trait => Self::Trait,
-            LocalDefKind::TypeAlias => Self::TypeAlias,
-            LocalDefKind::Union => Self::Union,
-        }
-    }
-
     pub(super) fn from_body_item_kind(kind: BodyItemKind) -> Self {
         match kind {
             BodyItemKind::Struct => Self::Struct,

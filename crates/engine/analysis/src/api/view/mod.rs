@@ -5,10 +5,16 @@
 //! hover, symbols, and other query modules should build feature-specific behavior on top of these
 //! generic projections.
 
+pub(crate) mod body;
 pub(crate) mod declaration;
 pub(crate) mod details;
 pub(crate) mod enum_variant;
 pub(crate) mod implementation;
+pub(crate) mod item_index;
 pub(crate) mod member;
+pub(crate) mod module;
+pub(crate) mod name_lookup;
+pub(crate) mod path;
 pub(crate) mod reference;
+pub(crate) mod resolution;
 pub(crate) mod ty;

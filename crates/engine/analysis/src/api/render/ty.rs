@@ -5,9 +5,11 @@
 //! are useful while reading code.
 
 use rg_body_ir::{BodyGenericArg, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyRepr};
-use rg_ir_model::TypeDefId;
 
-use crate::api::Analysis;
+use crate::{
+    api::{Analysis, view::declaration::DeclarationView},
+    model::DeclarationRef,
+};
 
 pub(crate) struct TypeRenderer<'a, 'db>(&'a Analysis<'db>);
 
@@ -54,43 +56,25 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
     }
 
     fn render_local_nominal(&self, ty: &BodyLocalNominalTy) -> anyhow::Result<Option<String>> {
-        let Some(body) = self.0.body_ir.body_data(ty.item.body)? else {
+        let Some(declaration) =
+            DeclarationView::new(self.0).declaration(DeclarationRef::body_item(ty.item))?
+        else {
             return Ok(None);
         };
-        let Some(item) = body.local_item(ty.item.item) else {
-            return Ok(None);
-        };
+        let name = declaration.name();
         Ok(Some(format!(
-            "{}{}",
-            item.name,
+            "{name}{}",
             self.render_generic_args(&ty.args)?
         )))
     }
 
     fn render_nominal(&self, ty: &BodyNominalTy) -> anyhow::Result<Option<String>> {
-        let Some(target_ir) = self.0.semantic_ir.target_ir(ty.def.target)? else {
+        let Some(declaration) =
+            DeclarationView::new(self.0).declaration(DeclarationRef::semantic(ty.def.into()))?
+        else {
             return Ok(None);
         };
-        let name = match ty.def.id {
-            TypeDefId::Struct(id) => {
-                let Some(data) = target_ir.items().struct_data(id) else {
-                    return Ok(None);
-                };
-                data.name.as_str()
-            }
-            TypeDefId::Enum(id) => {
-                let Some(data) = target_ir.items().enum_data(id) else {
-                    return Ok(None);
-                };
-                data.name.as_str()
-            }
-            TypeDefId::Union(id) => {
-                let Some(data) = target_ir.items().union_data(id) else {
-                    return Ok(None);
-                };
-                data.name.as_str()
-            }
-        };
+        let name = declaration.name();
 
         Ok(Some(format!(
             "{name}{}",

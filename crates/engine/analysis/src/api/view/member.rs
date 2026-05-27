@@ -1,12 +1,13 @@
 //! Composite member view over semantic and body-local nominal types.
 
 use rg_body_ir::{
-    BodyFieldData, BodyFunctionData, BodyLocalNominalTy, BodyNominalTy, BodyTy, BodyTyExt,
+    BodyAutoderef, BodyAutoderefMode, BodyFieldData, BodyFunctionData, BodyLocalNominalTy,
+    BodyNominalTy, BodyTy, BodyTyExt, BodyTypePathResolution,
 };
+use rg_def_map::Path;
 use rg_ir_model::{
-    BodyFieldRef, BodyFunctionRef, BodyItemRef, FieldRef as SemanticFieldRef,
-    FunctionRef as SemanticFunctionRef, ItemOwner, LocalDefRef, SemanticItemRef,
-    TraitApplicability, TypeDefRef,
+    BodyFieldRef, BodyFunctionRef, BodyItemRef, BodyRef, FieldRef as SemanticFieldRef,
+    FunctionRef as SemanticFunctionRef, ItemOwner, ScopeId, TraitApplicability, TypeDefRef,
 };
 use rg_semantic_ir::{Documentation, FieldData, FieldKey, FunctionData, ParamItem};
 
@@ -236,6 +237,36 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Self { analysis }
     }
 
+    pub(crate) fn field_candidates_for_ty<'view>(
+        &'view self,
+        ty: &BodyTy,
+    ) -> anyhow::Result<Vec<MemberField<'view>>> {
+        let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
+        let mut fields = Vec::new();
+
+        for candidate in autoderef.candidates(BodyAutoderefMode::FieldLookup, ty) {
+            let candidate = candidate?;
+            for receiver_ty in MemberReceiverTy::in_body_ty(candidate.ty()) {
+                fields.extend(self.field_candidates(receiver_ty)?);
+            }
+        }
+
+        Ok(fields)
+    }
+
+    pub(crate) fn field_candidates_for_body_type_path<'view>(
+        &'view self,
+        body: BodyRef,
+        scope: ScopeId,
+        path: &Path,
+    ) -> anyhow::Result<Vec<MemberField<'view>>> {
+        let mut fields = Vec::new();
+        for owner in self.owners_for_body_type_path(body, scope, path)? {
+            fields.extend(self.field_candidates_for_owner(owner)?);
+        }
+        Ok(fields)
+    }
+
     pub(crate) fn field_candidates<'view>(
         &'view self,
         receiver_ty: MemberReceiverTy<'_>,
@@ -306,21 +337,6 @@ impl<'a, 'db> MemberView<'a, 'db> {
                 .local_function_data(function)?
                 .map(|data| MemberFunction::BodyLocal { function, data })),
         }
-    }
-
-    pub(crate) fn function_for_local_def(
-        &self,
-        local_def: LocalDefRef,
-    ) -> anyhow::Result<Option<MemberFunction<'_>>> {
-        let Some(SemanticItemRef::Function(function)) = self
-            .analysis
-            .semantic_ir
-            .semantic_item_for_local_def(local_def)?
-        else {
-            return Ok(None);
-        };
-
-        self.function(FunctionRef::semantic(function))
     }
 
     pub(crate) fn method_candidates<'view>(
@@ -405,5 +421,47 @@ impl<'a, 'db> MemberView<'a, 'db> {
         }
 
         Ok(candidates)
+    }
+
+    pub(crate) fn method_candidates_for_ty<'view>(
+        &'view self,
+        ty: &BodyTy,
+    ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
+        let autoderef = BodyAutoderef::new(&self.analysis.def_map, &self.analysis.semantic_ir);
+        let mut methods = Vec::new();
+
+        for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, ty) {
+            let candidate = candidate?;
+            for receiver_ty in MemberReceiverTy::in_body_ty(candidate.ty()) {
+                methods.extend(self.method_candidates(receiver_ty)?);
+            }
+        }
+
+        Ok(methods)
+    }
+
+    fn owners_for_body_type_path(
+        &self,
+        body: BodyRef,
+        scope: ScopeId,
+        path: &Path,
+    ) -> anyhow::Result<Vec<MemberOwnerRef>> {
+        let resolution = self.analysis.body_ir.resolve_type_path_in_scope(
+            &self.analysis.def_map,
+            &self.analysis.semantic_ir,
+            body,
+            scope,
+            path,
+        )?;
+        let owners = match resolution {
+            BodyTypePathResolution::BodyLocal(item) => vec![MemberOwnerRef::BodyLocal(item)],
+            BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
+                types.into_iter().map(MemberOwnerRef::Semantic).collect()
+            }
+            BodyTypePathResolution::Primitive(_)
+            | BodyTypePathResolution::Traits(_)
+            | BodyTypePathResolution::Unknown => Vec::new(),
+        };
+        Ok(owners)
     }
 }

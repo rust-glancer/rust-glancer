@@ -8,9 +8,9 @@ use crate::{
     api::{
         Analysis,
         render::signature::SignatureRenderer,
-        resolve::declaration::SymbolDeclarationResolver,
         view::{
             details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
+            resolution::ResolutionView,
             ty::TyView,
         },
     },
@@ -36,8 +36,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         };
         let range = Some(source_symbol.span());
         let symbol = source_symbol.symbol().clone();
-        let declarations =
-            SymbolDeclarationResolver::new(self.0).declarations_for_symbol(symbol.clone())?;
+        let declarations = ResolutionView::new(self.0).declarations_for_symbol(symbol.clone())?;
         let context = DeclarationDetailsContext {
             module_display_name: Self::module_display_name_for_symbol(&symbol),
         };

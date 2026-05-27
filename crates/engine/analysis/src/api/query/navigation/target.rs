@@ -1,10 +1,12 @@
 //! Concrete navigation target projection.
 
-use rg_def_map::ModuleOrigin;
 use rg_ir_model::ModuleRef;
 
 use crate::{
-    api::{Analysis, view::declaration::DeclarationView},
+    api::{
+        Analysis,
+        view::{declaration::DeclarationView, module::ModuleView},
+    },
     model::{DeclarationRef, DeclarationRefRepr, NavigationTarget, NavigationTargetKind},
 };
 
@@ -53,10 +55,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
     }
 
     fn target_for_module(&self, module_ref: ModuleRef) -> anyhow::Result<Option<NavigationTarget>> {
-        let Some(module) = self.0.def_map.module(module_ref)? else {
-            return Ok(None);
-        };
-        if let ModuleOrigin::Root { file_id } = module.origin {
+        if let Some(file_id) = ModuleView::new(self.0).root_file(module_ref)? {
             // Root modules have no declaration name to jump to, so they navigate to the owning
             // file. Named modules are ordinary declarations.
             return Ok(Some(NavigationTarget {
@@ -66,7 +65,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
                 file_id,
                 span: None,
             }));
-        };
+        }
 
         Ok(DeclarationView::new(self.0)
             .declaration(DeclarationRef::module(module_ref))?

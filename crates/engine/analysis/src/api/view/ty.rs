@@ -13,7 +13,10 @@ use rg_ir_model::{BodyRef, FieldRef as SemanticFieldRef, ScopeId, SemanticItemRe
 use rg_semantic_ir::{SemanticTypePathResolution, TypePathContext};
 
 use crate::{
-    api::{Analysis, resolve::declaration::SymbolDeclarationResolver},
+    api::{
+        Analysis,
+        view::{body::BodyView, resolution::ResolutionView},
+    },
     model::{
         DeclarationRef, DeclarationRefRepr, EnumVariantRef, EnumVariantRefRepr, FieldRefRepr,
         ItemRefRepr, NameDefRefRepr, SymbolAt, TypePathScopeRepr,
@@ -31,14 +34,9 @@ impl<'a, 'db> TyView<'a, 'db> {
 
     pub(crate) fn ty_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Option<BodyTy>> {
         let ty = match symbol {
-            SymbolAt::Expr { expr } => self
-                .analysis
-                .body_ir
-                .body_data(expr.body_ir())?
-                .and_then(|body_data| body_data.expr(expr.expr_id()))
-                .map(|data| data.ty.clone()),
+            SymbolAt::Expr { expr } => self.body_view().expr_ty(expr.body_ir(), expr.expr_id())?,
             declaration_symbol @ SymbolAt::Declaration { .. } => {
-                let declarations = SymbolDeclarationResolver::new(self.analysis)
+                let declarations = ResolutionView::new(self.analysis)
                     .declarations_for_symbol(declaration_symbol)?;
                 let mut ty = None;
                 for declaration in declarations {
@@ -123,13 +121,7 @@ impl<'a, 'db> TyView<'a, 'db> {
                 ItemRefRepr::BodyLocal(item) => Ok(Some(BodyTyRepr::local_nominal(vec![
                     BodyLocalNominalTy::bare(item),
                 ]))),
-                ItemRefRepr::BodyLocalValue(item) => Ok(self
-                    .analysis
-                    .body_ir
-                    .body_data(item.body)?
-                    .and_then(|body_data| body_data.local_value_item(item.item))
-                    .and_then(|data| data.ty().cloned())
-                    .map(BodyTyRepr::syntax)),
+                ItemRefRepr::BodyLocalValue(item) => self.body_view().local_value_item_ty(item),
             },
             DeclarationRefRepr::Field(field) => match field.repr() {
                 FieldRefRepr::Semantic(field) => self.ty_for_field(field),
@@ -138,18 +130,17 @@ impl<'a, 'db> TyView<'a, 'db> {
             DeclarationRefRepr::EnumVariant(variant) => self.ty_for_enum_variant(variant),
             DeclarationRefRepr::Binding(binding) => {
                 let binding = binding.body_ir();
-                Ok(self
-                    .analysis
-                    .body_ir
-                    .body_data(binding.body)?
-                    .and_then(|body_data| body_data.binding(binding.binding))
-                    .map(|data| data.ty.clone()))
+                self.body_view().binding_ty(binding)
             }
             DeclarationRefRepr::Function(_) | DeclarationRefRepr::Impl(_) => Ok(None),
         }
     }
 
-    fn ty_for_type_path(&self, context: TypePathContext, path: &Path) -> anyhow::Result<BodyTy> {
+    pub(crate) fn ty_for_type_path(
+        &self,
+        context: TypePathContext,
+        path: &Path,
+    ) -> anyhow::Result<BodyTy> {
         let resolution =
             self.analysis
                 .semantic_ir
@@ -163,7 +154,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         Ok(Self::semantic_type_path_resolution_to_ty(resolution))
     }
 
-    fn ty_for_body_type_path(
+    pub(crate) fn ty_for_body_type_path(
         &self,
         body_ref: BodyRef,
         scope: ScopeId,
@@ -180,7 +171,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         ))
     }
 
-    fn ty_for_body_value_path(
+    pub(crate) fn ty_for_body_value_path(
         &self,
         body_ref: BodyRef,
         scope: ScopeId,
@@ -254,5 +245,9 @@ impl<'a, 'db> TyView<'a, 'db> {
             BodyTypePathResolution::Traits(_) => BodyTy::Unknown,
             BodyTypePathResolution::Unknown => BodyTy::Unknown,
         }
+    }
+
+    fn body_view(&self) -> BodyView<'a, 'db> {
+        BodyView::new(self.analysis)
     }
 }

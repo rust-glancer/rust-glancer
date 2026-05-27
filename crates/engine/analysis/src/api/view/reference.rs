@@ -6,8 +6,8 @@
 
 use crate::{
     api::{
-        Analysis, resolve::declaration::SymbolDeclarationResolver,
-        view::declaration::DeclarationView,
+        Analysis,
+        view::{declaration::DeclarationView, resolution::ResolutionView},
     },
     model::{DeclarationRef, ReferenceLocation, SymbolAt},
 };
@@ -25,8 +25,7 @@ impl<'a, 'db> ReferenceView<'a, 'db> {
         &self,
         symbol: SymbolAt,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let declarations =
-            SymbolDeclarationResolver::new(self.analysis).declarations_for_symbol(symbol)?;
+        let declarations = ResolutionView::new(self.analysis).declarations_for_symbol(symbol)?;
         let mut unique = Vec::new();
         for declaration in declarations {
             if !unique.contains(&declaration) {

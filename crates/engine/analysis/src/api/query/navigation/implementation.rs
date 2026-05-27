@@ -7,8 +7,7 @@ use super::target::NavigationTargetProjection;
 use crate::{
     api::{
         Analysis,
-        resolve::declaration::SymbolDeclarationResolver,
-        view::{implementation::ImplementationView, ty::TyView},
+        view::{implementation::ImplementationView, resolution::ResolutionView, ty::TyView},
     },
     model::{DeclarationRef, NavigationTarget},
 };
@@ -41,9 +40,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         }
 
         let mut declarations = Vec::new();
-        for declaration in
-            SymbolDeclarationResolver::new(self.0).declarations_for_symbol(symbol.clone())?
-        {
+        for declaration in ResolutionView::new(self.0).declarations_for_symbol(symbol.clone())? {
             Self::extend_unique_declarations(
                 &mut declarations,
                 implementations.implementations_for_declaration(declaration)?,

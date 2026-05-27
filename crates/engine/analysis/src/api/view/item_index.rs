@@ -1,0 +1,422 @@
+//! Generic declaration enumeration over indexed items.
+//!
+//! This view answers "what declarations exist in this target or body" without committing callers
+//! to DefMap, Semantic IR, or Body IR storage shapes.
+
+use rg_body_ir::BodyImplData;
+use rg_ir_model::{
+    AssocItemId, BodyFunctionRef, BodyImplRef, BodyItemRef, BodyValueItemRef, ConstRef,
+    EnumVariantRef as SemanticEnumVariantRef, FunctionRef as SemanticFunctionRef, ModuleId,
+    ModuleRef, SemanticItemKind, TargetRef, TypeAliasRef, TypeDefId, TypeDefRef,
+};
+use rg_parse::{FileId, Span};
+use rg_semantic_ir::SemanticItemView;
+
+use crate::{
+    api::{Analysis, view::body::BodyView},
+    model::{DeclarationRef, DeclarationRefRepr, ItemRefRepr},
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct IndexedSyntaxChild {
+    name: String,
+    file_id: FileId,
+    span: Span,
+}
+
+impl IndexedSyntaxChild {
+    pub(crate) fn field(file_id: FileId, name: String, span: Span) -> Self {
+        Self {
+            name,
+            file_id,
+            span,
+        }
+    }
+
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub(crate) fn file_id(&self) -> FileId {
+        self.file_id
+    }
+
+    pub(crate) fn span(&self) -> Span {
+        self.span
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum IndexedItemChild {
+    Declaration(IndexedItem),
+    Syntax(IndexedSyntaxChild),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct IndexedItem {
+    declaration: DeclarationRef,
+    children: Vec<IndexedItemChild>,
+}
+
+impl IndexedItem {
+    pub(crate) fn declaration(&self) -> DeclarationRef {
+        self.declaration
+    }
+
+    pub(crate) fn children(&self) -> &[IndexedItemChild] {
+        &self.children
+    }
+
+    fn leaf(declaration: DeclarationRef) -> Self {
+        Self {
+            declaration,
+            children: Vec::new(),
+        }
+    }
+
+    fn with_children(declaration: DeclarationRef, children: Vec<IndexedItemChild>) -> Self {
+        Self {
+            declaration,
+            children,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct IndexedBodyLocalGroup {
+    owner: DeclarationRef,
+    children: Vec<IndexedItem>,
+}
+
+impl IndexedBodyLocalGroup {
+    pub(crate) fn owner(&self) -> DeclarationRef {
+        self.owner
+    }
+
+    pub(crate) fn children(&self) -> &[IndexedItem] {
+        &self.children
+    }
+}
+
+pub(crate) struct ItemIndexView<'a, 'db> {
+    analysis: &'a Analysis<'db>,
+}
+
+impl<'a, 'db> ItemIndexView<'a, 'db> {
+    pub(crate) fn new(analysis: &'a Analysis<'db>) -> Self {
+        Self { analysis }
+    }
+
+    pub(crate) fn included_targets(&self) -> anyhow::Result<Vec<TargetRef>> {
+        Ok(self
+            .analysis
+            .semantic_ir
+            .materialize_included_target_irs()?
+            .into_iter()
+            .map(|(target, _)| target)
+            .collect())
+    }
+
+    pub(crate) fn module_declarations(
+        &self,
+        target: TargetRef,
+    ) -> anyhow::Result<Vec<DeclarationRef>> {
+        Ok(self
+            .analysis
+            .def_map
+            .modules(target)?
+            .into_iter()
+            .map(|(module_ref, _)| DeclarationRef::module(module_ref))
+            .collect())
+    }
+
+    pub(crate) fn module_container_name(
+        &self,
+        module_ref: ModuleRef,
+    ) -> anyhow::Result<Option<String>> {
+        let Some(module) = self.analysis.def_map.module(module_ref)? else {
+            return Ok(None);
+        };
+        let Some(parent) = module.parent else {
+            return Ok(None);
+        };
+        // Workspace-symbol containers are local module paths, not canonical package paths. A
+        // direct child of the root module therefore has no visible container.
+        let path = self.module_path(module_ref.target, parent)?;
+
+        Ok((!path.is_empty()).then_some(path))
+    }
+
+    pub(crate) fn module_owned_items(
+        &self,
+        target: TargetRef,
+        file_id: Option<FileId>,
+    ) -> anyhow::Result<Vec<IndexedItem>> {
+        let mut items = Vec::new();
+        for item in self.analysis.semantic_ir.semantic_items(target)? {
+            if item.module_owner().is_none() {
+                continue;
+            }
+            if file_id.is_some_and(|file_id| item.source().file_id != file_id) {
+                continue;
+            }
+            if let Some(item) = self.semantic_item(item)? {
+                items.push(item);
+            }
+        }
+        Ok(items)
+    }
+
+    pub(crate) fn body_local_groups(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+    ) -> anyhow::Result<Vec<IndexedBodyLocalGroup>> {
+        let body_view = BodyView::new(self.analysis);
+        let mut groups = Vec::new();
+
+        for group in body_view.local_groups(target, file_id)? {
+            let mut children = Vec::new();
+            for declaration in body_view.local_scope_declarations(group.body(), file_id)? {
+                if let Some(item) = self.item_for_declaration(declaration)? {
+                    children.push(item);
+                }
+            }
+            if children.is_empty() {
+                continue;
+            }
+            groups.push(IndexedBodyLocalGroup {
+                owner: group.owner(),
+                children,
+            });
+        }
+
+        Ok(groups)
+    }
+
+    fn semantic_item(&self, item: SemanticItemView<'_>) -> anyhow::Result<Option<IndexedItem>> {
+        let declaration = DeclarationRef::semantic(item.item().into());
+        match item.kind() {
+            SemanticItemKind::Struct | SemanticItemKind::Union => {
+                let Some(ty) = item.type_def() else {
+                    return Ok(None);
+                };
+                self.type_def_item(declaration, ty)
+            }
+            SemanticItemKind::Enum => {
+                let Some(ty) = item.type_def() else {
+                    return Ok(None);
+                };
+                self.enum_item(declaration, ty)
+            }
+            SemanticItemKind::Trait | SemanticItemKind::Impl => {
+                let children = item
+                    .assoc_items()
+                    .map(|items| self.assoc_item_children(item.item().target(), items))
+                    .transpose()?
+                    .unwrap_or_default();
+                Ok(Some(IndexedItem::with_children(declaration, children)))
+            }
+            SemanticItemKind::Function
+            | SemanticItemKind::TypeAlias
+            | SemanticItemKind::Const
+            | SemanticItemKind::Static => Ok(Some(IndexedItem::leaf(declaration))),
+        }
+    }
+
+    fn item_for_declaration(
+        &self,
+        declaration: DeclarationRef,
+    ) -> anyhow::Result<Option<IndexedItem>> {
+        match declaration.repr() {
+            DeclarationRefRepr::Item(item) => match item.repr() {
+                ItemRefRepr::BodyLocal(item) => self.body_item(item),
+                ItemRefRepr::BodyLocalValue(_) | ItemRefRepr::Semantic(_) => {
+                    Ok(Some(IndexedItem::leaf(declaration)))
+                }
+            },
+            DeclarationRefRepr::Impl(impl_ref) => match impl_ref.repr() {
+                crate::model::ImplRefRepr::BodyLocal(impl_ref) => self.body_impl(impl_ref),
+                crate::model::ImplRefRepr::Semantic(_) => Ok(Some(IndexedItem::leaf(declaration))),
+            },
+            DeclarationRefRepr::Function(_)
+            | DeclarationRefRepr::Module(_)
+            | DeclarationRefRepr::NameDef(_)
+            | DeclarationRefRepr::Field(_)
+            | DeclarationRefRepr::EnumVariant(_)
+            | DeclarationRefRepr::Binding(_) => Ok(Some(IndexedItem::leaf(declaration))),
+        }
+    }
+
+    fn type_def_item(
+        &self,
+        declaration: DeclarationRef,
+        ty: TypeDefRef,
+    ) -> anyhow::Result<Option<IndexedItem>> {
+        let mut children = Vec::new();
+        for field in self.analysis.semantic_ir.fields_for_type(ty)? {
+            children.push(IndexedItemChild::Declaration(IndexedItem::leaf(
+                DeclarationRef::semantic(field.into()),
+            )));
+        }
+        Ok(Some(IndexedItem::with_children(declaration, children)))
+    }
+
+    fn enum_item(
+        &self,
+        declaration: DeclarationRef,
+        ty: TypeDefRef,
+    ) -> anyhow::Result<Option<IndexedItem>> {
+        let mut children = Vec::new();
+        for variant_ref in self.enum_variant_refs(ty)? {
+            let Some(variant) = self.analysis.semantic_ir.enum_variant_data(variant_ref)? else {
+                continue;
+            };
+            let fields = variant
+                .variant
+                .fields
+                .fields()
+                .iter()
+                .map(|field| {
+                    IndexedItemChild::Syntax(IndexedSyntaxChild::field(
+                        variant.file_id,
+                        Self::field_label(field.key_declaration_label()),
+                        field.span,
+                    ))
+                })
+                .collect();
+            children.push(IndexedItemChild::Declaration(IndexedItem::with_children(
+                DeclarationRef::semantic(variant_ref.into()),
+                fields,
+            )));
+        }
+        Ok(Some(IndexedItem::with_children(declaration, children)))
+    }
+
+    fn body_item(&self, item_ref: BodyItemRef) -> anyhow::Result<Option<IndexedItem>> {
+        let declaration = DeclarationRef::body_item(item_ref);
+        let mut children = Vec::new();
+        for field_ref in BodyView::new(self.analysis).fields_for_local_type(item_ref)? {
+            children.push(IndexedItemChild::Declaration(IndexedItem::leaf(
+                DeclarationRef::body_field(field_ref),
+            )));
+        }
+        Ok(Some(IndexedItem::with_children(declaration, children)))
+    }
+
+    fn body_impl(&self, impl_ref: BodyImplRef) -> anyhow::Result<Option<IndexedItem>> {
+        let Some(body) = self.analysis.body_ir.body_data(impl_ref.body)? else {
+            return Ok(None);
+        };
+        let Some(impl_data) = body.local_impl(impl_ref.impl_id) else {
+            return Ok(None);
+        };
+        Ok(Some(IndexedItem::with_children(
+            DeclarationRef::body(impl_ref.into()),
+            self.body_impl_children(impl_ref, impl_data)?,
+        )))
+    }
+
+    fn body_impl_children(
+        &self,
+        impl_ref: BodyImplRef,
+        impl_data: &BodyImplData,
+    ) -> anyhow::Result<Vec<IndexedItemChild>> {
+        let mut children = Vec::new();
+
+        for item in &impl_data.types {
+            let item_ref = BodyItemRef {
+                body: impl_ref.body,
+                item: *item,
+            };
+            if let Some(item) = self.body_item(item_ref)? {
+                children.push(IndexedItemChild::Declaration(item));
+            }
+        }
+
+        for item in &impl_data.consts {
+            children.push(IndexedItemChild::Declaration(IndexedItem::leaf(
+                DeclarationRef::body_value_item(BodyValueItemRef {
+                    body: impl_ref.body,
+                    item: *item,
+                }),
+            )));
+        }
+
+        for function in &impl_data.functions {
+            children.push(IndexedItemChild::Declaration(IndexedItem::leaf(
+                DeclarationRef::body_function(BodyFunctionRef {
+                    body: impl_ref.body,
+                    function: *function,
+                }),
+            )));
+        }
+
+        Ok(children)
+    }
+
+    fn assoc_item_children(
+        &self,
+        target: TargetRef,
+        items: &[AssocItemId],
+    ) -> anyhow::Result<Vec<IndexedItemChild>> {
+        Ok(items
+            .iter()
+            .map(|item| {
+                IndexedItemChild::Declaration(IndexedItem::leaf(Self::assoc_item(target, item)))
+            })
+            .collect())
+    }
+
+    fn assoc_item(target: TargetRef, item: &AssocItemId) -> DeclarationRef {
+        match item {
+            AssocItemId::Function(id) => {
+                DeclarationRef::semantic(SemanticFunctionRef { target, id: *id }.into())
+            }
+            AssocItemId::TypeAlias(id) => {
+                DeclarationRef::semantic(TypeAliasRef { target, id: *id }.into())
+            }
+            AssocItemId::Const(id) => DeclarationRef::semantic(ConstRef { target, id: *id }.into()),
+        }
+    }
+
+    fn enum_variant_refs(&self, ty: TypeDefRef) -> anyhow::Result<Vec<SemanticEnumVariantRef>> {
+        let TypeDefId::Enum(enum_id) = ty.id else {
+            return Ok(Vec::new());
+        };
+        let Some(data) = self.analysis.semantic_ir.enum_data_for_type_def(ty)? else {
+            return Ok(Vec::new());
+        };
+
+        Ok((0..data.variants.len())
+            .map(|index| SemanticEnumVariantRef {
+                target: ty.target,
+                enum_id,
+                index,
+            })
+            .collect())
+    }
+
+    fn field_label(name: Option<String>) -> String {
+        name.unwrap_or_else(|| "<unsupported>".to_string())
+    }
+
+    fn module_path(&self, target: TargetRef, module: ModuleId) -> anyhow::Result<String> {
+        let Some(data) = self.analysis.def_map.module(ModuleRef { target, module })? else {
+            return Ok(String::new());
+        };
+        let Some(name) = &data.name else {
+            return Ok(String::new());
+        };
+        let Some(parent) = data.parent else {
+            return Ok(name.to_string());
+        };
+
+        let parent_path = self.module_path(target, parent)?;
+        if parent_path.is_empty() {
+            Ok(name.to_string())
+        } else {
+            Ok(format!("{parent_path}::{name}"))
+        }
+    }
+}

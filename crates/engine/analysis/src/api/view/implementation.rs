@@ -12,7 +12,7 @@ use rg_ir_model::{
 use rg_ir_model::{BodyImplId, BodyImplRef, BodyItemRef};
 
 use crate::{
-    api::{Analysis, resolve::declaration::SymbolDeclarationResolver},
+    api::{Analysis, view::resolution::ResolutionView},
     model::{
         DeclarationRef, DeclarationRefRepr, FunctionRef, FunctionRefRepr, ImplRef, ItemRefRepr,
         NameDefRefRepr, SymbolAt,
@@ -55,7 +55,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
 
         let receiver_ty = body_data.expr(*receiver).map(|data| &data.ty);
         let mut implementations = Vec::new();
-        for declaration in SymbolDeclarationResolver::new(self.analysis)
+        for declaration in ResolutionView::new(self.analysis)
             .declarations_for_body_resolution(Some(body), &expr_data.resolution)?
         {
             self.extend_function_implementations(&mut implementations, declaration, receiver_ty)?;
