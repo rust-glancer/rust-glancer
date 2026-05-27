@@ -161,13 +161,15 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             }
             ItemSourceKind::Generated(item_ref) => self
                 .def_map_txn
-                .generated_item(self.target, item_ref)
+                .def_map(self.target)
                 .with_context(|| {
                     format!(
                         "while attempting to fetch generated item {:?} from generated source {:?}",
                         item_ref.item, item_ref.source
                     )
                 })?
+                .and_then(|def_map| def_map.generated_source(item_ref.source))
+                .and_then(|source| source.item(item_ref.item))
                 .with_context(|| {
                     format!(
                         "while attempting to find generated item {:?} from generated source {:?}",

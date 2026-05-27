@@ -798,8 +798,9 @@ fn nominal_type_names_at(
                 continue;
             };
             let Some(local_def) = def_map
-                .local_def(local_def)
+                .def_map(local_def.target)
                 .expect("fixture def-map should load while rendering nominal types")
+                .and_then(|def_map| def_map.local_def(local_def.local_def))
             else {
                 continue;
             };

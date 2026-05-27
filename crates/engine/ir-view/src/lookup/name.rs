@@ -159,12 +159,19 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                     data.docs.as_ref().map(Documentation::text),
                 )
             }
-            DefId::Local(local_def) => {
-                let Some(data) = self.db.def_map.local_def(local_def)? else {
+            DefId::Local(local_def_ref) => {
+                let Some(data) = self
+                    .db
+                    .def_map
+                    .def_map(local_def_ref.target)?
+                    .and_then(|def_map| def_map.local_def(local_def_ref.local_def))
+                else {
                     return Ok(None);
                 };
-                if let Some(SemanticItemRef::Function(function_ref)) =
-                    self.db.semantic_ir.semantic_item_for_local_def(local_def)?
+                if let Some(SemanticItemRef::Function(function_ref)) = self
+                    .db
+                    .semantic_ir
+                    .semantic_item_for_local_def(local_def_ref)?
                 {
                     function = Some(AnalysisFunctionRef::semantic(function_ref));
                 }

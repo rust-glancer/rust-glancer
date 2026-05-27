@@ -328,7 +328,11 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         }
 
         self.old
-            .map(|old| old.local_def(local_def_ref))
+            .map(|old| {
+                Ok(old
+                    .def_map(local_def_ref.target)?
+                    .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
+            })
             .transpose()
             .map(Option::flatten)
     }

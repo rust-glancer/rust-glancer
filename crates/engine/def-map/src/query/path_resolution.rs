@@ -153,7 +153,9 @@ impl PathResolutionEnv for DefMapReadTxn<'_> {
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&LocalDefData>, PackageStoreError> {
-        self.local_def(local_def_ref)
+        Ok(self
+            .def_map(local_def_ref.target)?
+            .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
     }
 
     fn macro_definition_data(

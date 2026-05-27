@@ -3,8 +3,8 @@
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 
 use crate::{
-    DefMap, GeneratedItemRef, LocalDefData, LocalDefRef, LocalImplData, LocalImplRef, ModuleRef,
-    PackageDefMaps, PackageSlot, Path, ResolvePathResult, TargetRef, query::path_resolution,
+    DefMap, ModuleRef, PackageDefMaps, PackageSlot, Path, ResolvePathResult, TargetRef,
+    query::path_resolution,
 };
 
 /// Read-only def-map access for one query transaction.
@@ -27,38 +27,6 @@ impl<'db> DefMapReadTxn<'db> {
     pub fn def_map(&self, target: TargetRef) -> Result<Option<&DefMap>, PackageStoreError> {
         let package = self.package(target.package)?;
         Ok(package.def_map(target.target))
-    }
-
-    /// Returns one local definition by stable project-wide reference.
-    pub fn local_def(
-        &self,
-        local_def: LocalDefRef,
-    ) -> Result<Option<&LocalDefData>, PackageStoreError> {
-        Ok(self
-            .def_map(local_def.target)?
-            .and_then(|def_map| def_map.local_def(local_def.local_def)))
-    }
-
-    /// Returns one impl block by stable project-wide reference.
-    pub fn local_impl(
-        &self,
-        local_impl: LocalImplRef,
-    ) -> Result<Option<&LocalImplData>, PackageStoreError> {
-        Ok(self
-            .def_map(local_impl.target)?
-            .and_then(|def_map| def_map.local_impl(local_impl.local_impl)))
-    }
-
-    /// Returns one retained generated item by stable target-local reference.
-    pub fn generated_item(
-        &self,
-        target: TargetRef,
-        item: GeneratedItemRef,
-    ) -> Result<Option<&rg_item_tree::ItemNode>, PackageStoreError> {
-        Ok(self
-            .def_map(target)?
-            .and_then(|def_map| def_map.generated_source(item.source))
-            .and_then(|source| source.item(item.item)))
     }
 
     /// Resolves a value-position path from one module against this transaction.

@@ -132,7 +132,12 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     fn local_def(&self, local_def: LocalDefRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(data) = self.db.def_map.local_def(local_def)? else {
+        let Some(data) = self
+            .db
+            .def_map
+            .def_map(local_def.target)?
+            .and_then(|def_map| def_map.local_def(local_def.local_def))
+        else {
             return Ok(None);
         };
 
@@ -211,7 +216,12 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 let Some(local_impl_ref) = view.local_impl() else {
                     return Ok(None);
                 };
-                let Some(local_impl) = self.db.def_map.local_impl(local_impl_ref)? else {
+                let Some(local_impl) = self
+                    .db
+                    .def_map
+                    .def_map(local_impl_ref.target)?
+                    .and_then(|def_map| def_map.local_impl(local_impl_ref.local_impl))
+                else {
                     return Ok(None);
                 };
                 let Some((self_ty, trait_ref)) = view.impl_header() else {

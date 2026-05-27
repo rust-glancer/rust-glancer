@@ -346,14 +346,19 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
 
     fn local_def_details(
         &self,
-        local_def: LocalDefRef,
+        local_def_ref: LocalDefRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(data) = self.db.def_map.local_def(local_def)? else {
+        let Some(data) = self
+            .db
+            .def_map
+            .def_map(local_def_ref.target)?
+            .and_then(|def_map| def_map.local_def(local_def_ref.local_def))
+        else {
             return Ok(None);
         };
         let path = PathView::new(self.db)
             .module_path(ModuleRef {
-                target: local_def.target,
+                target: local_def_ref.target,
                 module: data.module,
             })?
             .map(|module| format!("{module}::{}", data.name));
