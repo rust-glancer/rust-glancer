@@ -17,4 +17,5 @@ pub(crate) mod name_lookup;
 pub(crate) mod path;
 pub(crate) mod reference;
 pub(crate) mod resolution;
+pub(crate) mod source;
 pub(crate) mod ty;

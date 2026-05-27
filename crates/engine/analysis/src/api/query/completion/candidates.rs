@@ -4,9 +4,9 @@
 //! storage owns name, member, or type lookup. This adapter accepts completion-domain cursor sites
 //! and projects generic view facts into completion-ready candidates.
 
-use rg_body_ir::FieldKey;
 use rg_def_map::Path;
 use rg_ir_model::ModuleRef;
+use rg_semantic_ir::FieldKey;
 use rg_ty::IndexedTy;
 
 use crate::{
@@ -21,6 +21,9 @@ use crate::{
             enum_variant::EnumVariantView,
             member::{MemberMethodOrigin, MemberView},
             name_lookup::{ModuleScopeName, NameLookupView, NameNamespace, NameOrigin},
+            source::{
+                IndexedNameNamespace, IndexedQualifiedPathScope, IndexedUnqualifiedNameScope,
+            },
             ty::TyView,
         },
     },
@@ -185,31 +188,37 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         site: &PathCompletionSite,
     ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
-        let Some(site) = site.body_site() else {
-            let Some(site) = site.import_site() else {
-                return Ok(Vec::new());
-            };
-            return self.module_path_candidates(site.module, &site.qualifier);
+        let source = site.source();
+        let importing_module = match source.scope() {
+            IndexedQualifiedPathScope::Body { scope, .. } => {
+                let Some(module) = BodyView::new(self.analysis).owner_module(scope.body_ir())?
+                else {
+                    return Ok(Vec::new());
+                };
+                module
+            }
+            IndexedQualifiedPathScope::Import { module } => module,
         };
-        let Some(module) = BodyView::new(self.analysis).owner_module(site.body)? else {
-            return Ok(Vec::new());
-        };
-        self.module_path_candidates(module, &site.qualifier)
+        self.module_path_candidates(importing_module, source.qualifier())
     }
 
     pub(crate) fn enum_variant_candidates_for_path(
         &self,
         site: &PathCompletionSite,
     ) -> anyhow::Result<Vec<EnumVariantRef>> {
-        let Some(site) = site.body_site() else {
+        let IndexedQualifiedPathScope::Body { scope, namespace } = site.source().scope() else {
             return Ok(Vec::new());
         };
-        if !matches!(site.namespace, rg_body_ir::PathCompletionNamespace::Values) {
+        if !matches!(namespace, IndexedNameNamespace::Values) {
             return Ok(Vec::new());
         }
 
         Ok(EnumVariantView::new(self.analysis)
-            .variants_for_body_type_path(site.body, site.scope, &site.qualifier)?
+            .variants_for_body_type_path(
+                scope.body_ir(),
+                scope.scope_id(),
+                site.source().qualifier(),
+            )?
             .into_iter()
             .map(|variant| variant.variant_ref())
             .collect())
@@ -219,14 +228,15 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         site: &UnqualifiedCompletionSite,
     ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
-        let Some(site) = site.body_site() else {
-            let Some(site) = site.import_site() else {
-                return Ok(Vec::new());
-            };
-            return self.unqualified_module_candidates(site.module);
-        };
-        let Some(module) = BodyView::new(self.analysis).owner_module(site.body)? else {
-            return Ok(Vec::new());
+        let module = match site.source().scope() {
+            IndexedUnqualifiedNameScope::Body { scope, .. } => {
+                let Some(module) = BodyView::new(self.analysis).owner_module(scope.body_ir())?
+                else {
+                    return Ok(Vec::new());
+                };
+                module
+            }
+            IndexedUnqualifiedNameScope::Import { module } => *module,
         };
         self.unqualified_module_candidates(module)
     }
@@ -235,22 +245,28 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         site: &UnqualifiedCompletionSite,
     ) -> anyhow::Result<Vec<LexicalCompletionCandidate>> {
-        let Some(body_site) = site.body_site() else {
+        let IndexedUnqualifiedNameScope::Body {
+            scope,
+            namespace,
+            visible_bindings,
+            ..
+        } = site.source().scope()
+        else {
             return Ok(Vec::new());
         };
-        let namespace = match body_site.namespace {
-            rg_body_ir::UnqualifiedCompletionNamespace::Types => BodyNameNamespace::Types,
-            rg_body_ir::UnqualifiedCompletionNamespace::Values => BodyNameNamespace::Values,
+        let body_namespace = match namespace {
+            IndexedNameNamespace::Types => BodyNameNamespace::Types,
+            IndexedNameNamespace::Values => BodyNameNamespace::Values,
         };
         let scope = BodyNameScope::new(
-            body_site.body,
-            body_site.scope,
-            namespace,
-            body_site.visible_bindings,
+            scope.body_ir(),
+            scope.scope_id(),
+            body_namespace,
+            *visible_bindings,
         );
         let mut candidates = Vec::new();
         for candidate in BodyView::new(self.analysis).lexical_names(scope)? {
-            if let Some(candidate) = self.lexical_candidate(body_site.namespace, candidate) {
+            if let Some(candidate) = self.lexical_candidate(*namespace, candidate) {
                 candidates.push(candidate);
             }
         }
@@ -261,13 +277,16 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         site: &UnqualifiedCompletionSite,
     ) -> anyhow::Result<Vec<rg_ty::PrimitiveTy>> {
-        let Some(site) = site.body_site() else {
+        let IndexedUnqualifiedNameScope::Body {
+            scope,
+            namespace,
+            member_prefix,
+            ..
+        } = site.source().scope()
+        else {
             return Ok(Vec::new());
         };
-        if !matches!(
-            site.namespace,
-            rg_body_ir::UnqualifiedCompletionNamespace::Types
-        ) {
+        if !matches!(namespace, IndexedNameNamespace::Types) {
             return Ok(Vec::new());
         }
 
@@ -276,11 +295,15 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         for primitive in rg_ty::PrimitiveTy::ALL
             .iter()
             .copied()
-            .filter(|primitive| primitive.label().starts_with(&site.member_prefix))
+            .filter(|primitive| primitive.label().starts_with(member_prefix))
         {
             let path = Path::unqualified_name(primitive.label());
             if matches!(
-                TyView::new(self.analysis).ty_for_body_type_path(site.body, site.scope, &path)?,
+                TyView::new(self.analysis).ty_for_body_type_path(
+                    scope.body_ir(),
+                    scope.scope_id(),
+                    &path
+                )?,
                 IndexedTy::Primitive(resolved) if resolved == primitive
             ) {
                 candidates.push(primitive);
@@ -294,9 +317,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         site: &DotCompletionSite,
     ) -> anyhow::Result<Vec<FieldRef>> {
-        let body_site = site.body_site();
+        let receiver = site.source().receiver();
         let Some(receiver_ty) =
-            BodyView::new(self.analysis).receiver_ty(body_site.body, body_site.receiver)?
+            BodyView::new(self.analysis).receiver_ty(receiver.body_ir(), receiver.expr_id())?
         else {
             return Ok(Vec::new());
         };
@@ -314,17 +337,23 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         site: &RecordFieldCompletionSite,
     ) -> anyhow::Result<Vec<FieldRef>> {
-        let site = site.body_site();
+        let site = site.source();
+        let scope = site.scope();
         let members = MemberView::new(self.analysis);
         let mut fields = Vec::new();
-        for field in
-            members.field_candidates_for_body_type_path(site.body, site.scope, &site.owner)?
-        {
+        for field in members.field_candidates_for_body_type_path(
+            scope.body_ir(),
+            scope.scope_id(),
+            site.owner(),
+        )? {
             let Some(key) = field.key() else {
                 continue;
             };
             if !matches!(key, FieldKey::Named(_))
-                || site.existing_fields.iter().any(|existing| existing == key)
+                || site
+                    .existing_fields()
+                    .iter()
+                    .any(|existing| existing == key)
             {
                 continue;
             }
@@ -338,9 +367,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         site: &DotCompletionSite,
     ) -> anyhow::Result<Vec<DotMethodCompletionCandidate>> {
-        let body_site = site.body_site();
+        let receiver = site.source().receiver();
         let Some(receiver_ty) =
-            BodyView::new(self.analysis).receiver_ty(body_site.body, body_site.receiver)?
+            BodyView::new(self.analysis).receiver_ty(receiver.body_ir(), receiver.expr_id())?
         else {
             return Ok(Vec::new());
         };
@@ -403,7 +432,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
 
     fn lexical_candidate(
         &self,
-        namespace: rg_body_ir::UnqualifiedCompletionNamespace,
+        namespace: IndexedNameNamespace,
         candidate: BodyLexicalName,
     ) -> Option<LexicalCompletionCandidate> {
         let candidate = match candidate {
@@ -432,11 +461,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 has_value_constructor,
             } => {
                 let mut shadow_namespaces = vec![CompletionScopeNamespace::Types];
-                if matches!(
-                    namespace,
-                    rg_body_ir::UnqualifiedCompletionNamespace::Values
-                ) && has_value_constructor
-                {
+                if matches!(namespace, IndexedNameNamespace::Values) && has_value_constructor {
                     shadow_namespaces.push(CompletionScopeNamespace::Values);
                 }
                 let declaration = DeclarationRef::body_item(item);

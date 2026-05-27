@@ -1,22 +1,20 @@
 //! Completion-domain cursor sites.
 //!
-//! Body IR and DefMap own source scanning for their syntax shapes. Completion owns the question
-//! "what kind of completion site did the cursor select?", so this module wraps storage-specific
-//! sites behind a small completion vocabulary.
+//! Source facts expose the syntax shapes that exist at a position. Completion owns the question
+//! "which source site should this cursor use?", so this module wraps indexed sites behind a small
+//! completion vocabulary.
 
-use rg_body_ir::{
-    DotCompletionSite as BodyDotCompletionSite,
-    PathCompletionNamespace as BodyPathCompletionNamespace,
-    PathCompletionSite as BodyPathCompletionSite,
-    RecordFieldCompletionSite as BodyRecordFieldCompletionSite,
-    UnqualifiedCompletionNamespace as BodyUnqualifiedCompletionNamespace,
-    UnqualifiedCompletionSite as BodyUnqualifiedCompletionSite,
-};
-use rg_def_map::{DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite};
 use rg_ir_model::TargetRef;
 use rg_parse::{FileId, Span};
 
-use crate::api::Analysis;
+use crate::api::{
+    Analysis,
+    view::source::{
+        IndexedMemberAccessSite, IndexedNameNamespace, IndexedQualifiedPathScope,
+        IndexedQualifiedPathSite, IndexedRecordFieldListSite, IndexedUnqualifiedNameScope,
+        IndexedUnqualifiedNameSite, SourceFactsView,
+    },
+};
 
 pub(crate) enum CompletionSite {
     Dot(DotCompletionSite),
@@ -45,77 +43,50 @@ impl CompletionSiteSyntax {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DotCompletionSite {
-    source: BodyDotCompletionSite,
+    source: IndexedMemberAccessSite,
 }
 
 impl DotCompletionSite {
-    fn new(source: BodyDotCompletionSite) -> Self {
+    fn new(source: IndexedMemberAccessSite) -> Self {
         Self { source }
     }
 
     pub(crate) fn replace_span(&self) -> Span {
-        self.source.member_prefix_span
+        self.source.member_prefix_span()
     }
 
-    pub(crate) fn body_site(&self) -> BodyDotCompletionSite {
+    pub(crate) fn source(&self) -> IndexedMemberAccessSite {
         self.source
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PathCompletionSite {
-    source: PathCompletionSource,
+    source: IndexedQualifiedPathSite,
 }
 
 impl PathCompletionSite {
-    fn body(source: BodyPathCompletionSite) -> Self {
-        Self {
-            source: PathCompletionSource::Body(source),
-        }
-    }
-
-    fn import(source: DefMapPathCompletionSite) -> Self {
-        Self {
-            source: PathCompletionSource::Import(source),
-        }
+    fn new(source: IndexedQualifiedPathSite) -> Self {
+        Self { source }
     }
 
     pub(crate) fn replace_span(&self) -> Span {
-        match &self.source {
-            PathCompletionSource::Body(site) => site.member_prefix_span,
-            PathCompletionSource::Import(site) => site.member_prefix_span,
-        }
+        self.source.member_prefix_span()
     }
 
     pub(crate) fn context(&self) -> PathCompletionContext {
-        match &self.source {
-            PathCompletionSource::Body(site) => match site.namespace {
-                BodyPathCompletionNamespace::Types => PathCompletionContext::Type,
-                BodyPathCompletionNamespace::Values => PathCompletionContext::Value,
+        match self.source.scope() {
+            IndexedQualifiedPathScope::Body { namespace, .. } => match namespace {
+                IndexedNameNamespace::Types => PathCompletionContext::Type,
+                IndexedNameNamespace::Values => PathCompletionContext::Value,
             },
-            PathCompletionSource::Import(_) => PathCompletionContext::Import,
+            IndexedQualifiedPathScope::Import { .. } => PathCompletionContext::Import,
         }
     }
 
-    pub(crate) fn body_site(&self) -> Option<&BodyPathCompletionSite> {
-        match &self.source {
-            PathCompletionSource::Body(site) => Some(site),
-            PathCompletionSource::Import(_) => None,
-        }
+    pub(crate) fn source(&self) -> &IndexedQualifiedPathSite {
+        &self.source
     }
-
-    pub(crate) fn import_site(&self) -> Option<&DefMapPathCompletionSite> {
-        match &self.source {
-            PathCompletionSource::Body(_) => None,
-            PathCompletionSource::Import(site) => Some(site),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PathCompletionSource {
-    Body(BodyPathCompletionSite),
-    Import(DefMapPathCompletionSite),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,36 +98,25 @@ pub(crate) enum PathCompletionContext {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UnqualifiedCompletionSite {
-    source: UnqualifiedCompletionSource,
+    source: IndexedUnqualifiedNameSite,
 }
 
 impl UnqualifiedCompletionSite {
-    fn body(source: BodyUnqualifiedCompletionSite) -> Self {
-        Self {
-            source: UnqualifiedCompletionSource::Body(source),
-        }
-    }
-
-    fn import(source: DefMapUnqualifiedCompletionSite) -> Self {
-        Self {
-            source: UnqualifiedCompletionSource::Import(source),
-        }
+    fn new(source: IndexedUnqualifiedNameSite) -> Self {
+        Self { source }
     }
 
     pub(crate) fn replace_span(&self) -> Span {
-        match &self.source {
-            UnqualifiedCompletionSource::Body(site) => site.member_prefix_span,
-            UnqualifiedCompletionSource::Import(site) => site.member_prefix_span,
-        }
+        self.source.member_prefix_span()
     }
 
     pub(crate) fn context(&self) -> UnqualifiedCompletionContext {
-        match &self.source {
-            UnqualifiedCompletionSource::Body(site) => match site.namespace {
-                BodyUnqualifiedCompletionNamespace::Types => UnqualifiedCompletionContext::Type,
-                BodyUnqualifiedCompletionNamespace::Values => UnqualifiedCompletionContext::Value,
+        match self.source.scope() {
+            IndexedUnqualifiedNameScope::Body { namespace, .. } => match namespace {
+                IndexedNameNamespace::Types => UnqualifiedCompletionContext::Type,
+                IndexedNameNamespace::Values => UnqualifiedCompletionContext::Value,
             },
-            UnqualifiedCompletionSource::Import(_) => UnqualifiedCompletionContext::Import,
+            IndexedUnqualifiedNameScope::Import { .. } => UnqualifiedCompletionContext::Import,
         }
     }
 
@@ -164,25 +124,9 @@ impl UnqualifiedCompletionSite {
         matches!(self.context(), UnqualifiedCompletionContext::Value)
     }
 
-    pub(crate) fn body_site(&self) -> Option<&BodyUnqualifiedCompletionSite> {
-        match &self.source {
-            UnqualifiedCompletionSource::Body(site) => Some(site),
-            UnqualifiedCompletionSource::Import(_) => None,
-        }
+    pub(crate) fn source(&self) -> &IndexedUnqualifiedNameSite {
+        &self.source
     }
-
-    pub(crate) fn import_site(&self) -> Option<&DefMapUnqualifiedCompletionSite> {
-        match &self.source {
-            UnqualifiedCompletionSource::Body(_) => None,
-            UnqualifiedCompletionSource::Import(site) => Some(site),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum UnqualifiedCompletionSource {
-    Body(BodyUnqualifiedCompletionSite),
-    Import(DefMapUnqualifiedCompletionSite),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,19 +138,19 @@ pub(crate) enum UnqualifiedCompletionContext {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RecordFieldCompletionSite {
-    source: BodyRecordFieldCompletionSite,
+    source: IndexedRecordFieldListSite,
 }
 
 impl RecordFieldCompletionSite {
-    fn new(source: BodyRecordFieldCompletionSite) -> Self {
+    fn new(source: IndexedRecordFieldListSite) -> Self {
         Self { source }
     }
 
     pub(crate) fn replace_span(&self) -> Span {
-        self.source.member_prefix_span
+        self.source.member_prefix_span()
     }
 
-    pub(crate) fn body_site(&self) -> &BodyRecordFieldCompletionSite {
+    pub(crate) fn source(&self) -> &IndexedRecordFieldListSite {
         &self.source
     }
 }
@@ -228,37 +172,28 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
         offset: u32,
         syntax: Option<CompletionSiteSyntax>,
     ) -> anyhow::Result<Option<CompletionSite>> {
+        let source = SourceFactsView::new(self.analysis);
         if let Some(syntax) = syntax {
             if syntax.inside_use_item {
-                if let Some(site) = self
-                    .analysis
-                    .def_map
-                    .path_completion_site(target, file_id, offset)?
-                {
-                    return Ok(Some(CompletionSite::Path(PathCompletionSite::import(site))));
+                if let Some(site) = source.import_qualified_path_site_at(target, file_id, offset)? {
+                    return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
                 }
 
-                return Ok(self
-                    .analysis
-                    .def_map
-                    .unqualified_completion_site(target, file_id, offset)?
-                    .map(UnqualifiedCompletionSite::import)
+                return Ok(source
+                    .import_unqualified_name_site_at(target, file_id, offset)?
+                    .map(UnqualifiedCompletionSite::new)
                     .map(CompletionSite::Unqualified));
             }
             if syntax.after_dot {
-                return Ok(self
-                    .analysis
-                    .body_ir
-                    .dot_completion_site(target, file_id, offset)?
+                return Ok(source
+                    .member_access_site_at(target, file_id, offset)?
                     .map(DotCompletionSite::new)
                     .map(CompletionSite::Dot));
             }
             if syntax.after_colon_colon {
-                return Ok(self
-                    .analysis
-                    .body_ir
-                    .path_completion_site(target, file_id, offset)?
-                    .map(PathCompletionSite::body)
+                return Ok(source
+                    .body_qualified_path_site_at(target, file_id, offset)?
+                    .map(PathCompletionSite::new)
                     .map(CompletionSite::Path));
             }
         }
@@ -266,55 +201,33 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
         // Without a decisive syntax hint, ask scanners in the order that preserves the most
         // specific source interpretation: member access, qualified path, record field, lexical
         // body name, then import path fallback.
-        if let Some(site) = self
-            .analysis
-            .body_ir
-            .dot_completion_site(target, file_id, offset)?
-        {
+        if let Some(site) = source.member_access_site_at(target, file_id, offset)? {
             return Ok(Some(CompletionSite::Dot(DotCompletionSite::new(site))));
         }
 
-        if let Some(site) = self
-            .analysis
-            .body_ir
-            .path_completion_site(target, file_id, offset)?
-        {
-            return Ok(Some(CompletionSite::Path(PathCompletionSite::body(site))));
+        if let Some(site) = source.body_qualified_path_site_at(target, file_id, offset)? {
+            return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
         }
 
-        if let Some(site) = self
-            .analysis
-            .body_ir
-            .record_field_completion_site(target, file_id, offset)?
-        {
+        if let Some(site) = source.record_field_list_site_at(target, file_id, offset)? {
             return Ok(Some(CompletionSite::RecordField(
                 RecordFieldCompletionSite::new(site),
             )));
         }
 
-        if let Some(site) = self
-            .analysis
-            .body_ir
-            .unqualified_completion_site(target, file_id, offset)?
-        {
+        if let Some(site) = source.body_unqualified_name_site_at(target, file_id, offset)? {
             return Ok(Some(CompletionSite::Unqualified(
-                UnqualifiedCompletionSite::body(site),
+                UnqualifiedCompletionSite::new(site),
             )));
         }
 
-        if let Some(site) = self
-            .analysis
-            .def_map
-            .path_completion_site(target, file_id, offset)?
-        {
-            return Ok(Some(CompletionSite::Path(PathCompletionSite::import(site))));
+        if let Some(site) = source.import_qualified_path_site_at(target, file_id, offset)? {
+            return Ok(Some(CompletionSite::Path(PathCompletionSite::new(site))));
         }
 
-        Ok(self
-            .analysis
-            .def_map
-            .unqualified_completion_site(target, file_id, offset)?
-            .map(UnqualifiedCompletionSite::import)
+        Ok(source
+            .import_unqualified_name_site_at(target, file_id, offset)?
+            .map(UnqualifiedCompletionSite::new)
             .map(CompletionSite::Unqualified))
     }
 }
