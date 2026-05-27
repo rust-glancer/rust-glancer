@@ -16,7 +16,10 @@ impl<'a, 'db> ModuleView<'a, 'db> {
     }
 
     pub fn root_file(&self, module_ref: ModuleRef) -> anyhow::Result<Option<FileId>> {
-        let Some(module) = self.db.def_map.module(module_ref)? else {
+        let Some(def_map) = self.db.def_map.def_map(module_ref.target)? else {
+            return Ok(None);
+        };
+        let Some(module) = def_map.module(module_ref.module) else {
             return Ok(None);
         };
         match module.origin {
@@ -33,7 +36,7 @@ impl<'a, 'db> ModuleView<'a, 'db> {
         let mut targets = Vec::new();
         let def_map_package = self.db.def_map.package(package)?;
 
-        for (target_idx, def_map) in def_map_package.into_ref().targets().iter().enumerate() {
+        for (target_idx, def_map) in def_map_package.def_maps().iter().enumerate() {
             let target_ref = TargetRef {
                 package,
                 target: TargetId(target_idx),

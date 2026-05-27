@@ -88,12 +88,12 @@ impl ModuleScopeName {
 }
 
 pub struct NameLookupView<'a, 'db> {
-    analysis: &'a IndexedViewDb<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> NameLookupView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self { analysis }
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub fn module_names_for_path(
@@ -102,7 +102,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         qualifier: &Path,
     ) -> anyhow::Result<Vec<ModuleScopeName>> {
         let resolved = self
-            .analysis
+            .db
             .def_map
             .resolve_path_in_type_namespace(importing_module, qualifier)?;
         let mut names = Vec::new();
@@ -114,7 +114,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                 continue;
             };
             for visible_def in self
-                .analysis
+                .db
                 .def_map
                 .visible_scope_defs(importing_module, source_module)?
             {
@@ -132,11 +132,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         module: ModuleRef,
     ) -> anyhow::Result<Vec<ModuleScopeName>> {
         let mut names = Vec::new();
-        for visible_def in self
-            .analysis
-            .def_map
-            .visible_unqualified_scope_defs(module)?
-        {
+        for visible_def in self.db.def_map.visible_unqualified_scope_defs(module)? {
             if let Some(name) = self.module_scope_name(visible_def)? {
                 names.push(name);
             }
@@ -152,7 +148,10 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         let mut function = None;
         let (kind, documentation) = match visible_def.def {
             DefId::Module(module) => {
-                let Some(data) = self.analysis.def_map.module(module)? else {
+                let Some(def_map) = self.db.def_map.def_map(module.target)? else {
+                    return Ok(None);
+                };
+                let Some(data) = def_map.module(module.module) else {
                     return Ok(None);
                 };
                 (
@@ -161,13 +160,11 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                 )
             }
             DefId::Local(local_def) => {
-                let Some(data) = self.analysis.def_map.local_def(local_def)? else {
+                let Some(data) = self.db.def_map.local_def(local_def)? else {
                     return Ok(None);
                 };
-                if let Some(SemanticItemRef::Function(function_ref)) = self
-                    .analysis
-                    .semantic_ir
-                    .semantic_item_for_local_def(local_def)?
+                if let Some(SemanticItemRef::Function(function_ref)) =
+                    self.db.semantic_ir.semantic_item_for_local_def(local_def)?
                 {
                     function = Some(AnalysisFunctionRef::semantic(function_ref));
                 }

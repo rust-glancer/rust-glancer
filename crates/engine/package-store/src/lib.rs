@@ -12,7 +12,7 @@ use std::{path::PathBuf, sync::Arc};
 use rg_memsize::{MemoryRecorder, MemorySize};
 use rg_workspace::PackageSlot;
 
-pub use self::txn::{LoadPackage, PackageLoader, PackageRead, PackageStoreReadTxn};
+pub use self::txn::{LoadPackage, PackageLoader, PackageStoreReadTxn};
 
 /// Failure to read one logical package from package storage.
 #[derive(Debug, thiserror::Error)]
@@ -409,23 +409,6 @@ mod tests {
             vec![(0, "workspace"), (1, "dependency")]
         );
         assert_eq!(changed_residents, vec![(0, "workspace"), (1, "rebuilt")]);
-    }
-
-    #[test]
-    fn read_transactions_return_package_handles() {
-        let store = PackageStore::from_vec(vec!["workspace"]);
-        let loader = Arc::new(TestLoader {
-            loads: AtomicUsize::new(0),
-            packages: vec!["workspace"],
-        });
-        let txn = store.read_txn(PackageLoader::from_arc(loader));
-
-        let package = txn
-            .read(PackageSlot(0))
-            .expect("package should be materialized");
-
-        assert_eq!(*package, "workspace");
-        assert_eq!(package.into_ref(), &"workspace");
     }
 
     #[test]

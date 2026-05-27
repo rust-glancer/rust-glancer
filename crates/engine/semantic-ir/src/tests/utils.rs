@@ -124,7 +124,7 @@ impl SemanticIrFixtureDb {
     fn resident_def_map(&self, target: TargetRef) -> Option<&rg_def_map::DefMap> {
         self.def_map
             .resident_package(target.package)?
-            .target(target.target)
+            .def_map(target.target)
     }
 
     fn semantic_ir_db(&self) -> &SemanticIrDb {

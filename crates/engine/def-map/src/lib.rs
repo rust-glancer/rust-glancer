@@ -7,11 +7,12 @@ pub use rg_workspace::PackageSlot;
 
 pub use self::{
     build::DefMapFinalizationStats,
+    def_map::DefMap,
     model::{
-        DefMap, GeneratedItemRef, GeneratedSourceData, GeneratedSourceId, ImportBinding,
-        ImportData, ImportKind, ImportPath, ImportSourcePath, ItemSource, ItemSourceKind,
-        LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData, MacroDefinitionPayload,
-        ModuleData, ModuleOrigin, ModuleScope, Package, Path, PathSegment, ScopeBinding,
+        GeneratedItemRef, GeneratedSourceData, GeneratedSourceId, ImportBinding, ImportData,
+        ImportKind, ImportPath, ImportSourcePath, ItemSource, ItemSourceKind, LocalDefData,
+        LocalDefKind, LocalImplData, MacroDefinitionData, MacroDefinitionPayload, ModuleData,
+        ModuleOrigin, ModuleScope, PackageDefMaps, Path, PathSegment, ScopeBinding,
         ScopeBindingOrigin, ScopeEntry,
     },
     query::{
@@ -22,9 +23,11 @@ pub use self::{
 };
 
 pub(crate) use self::model::{
-    DefId, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
-    ModuleRef, TargetRef,
+    DefId, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
+    TargetRef,
 };
+
+mod def_map;
 
 #[cfg(test)]
 mod tests;

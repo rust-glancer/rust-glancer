@@ -117,7 +117,9 @@ impl PathResolutionEnv for DefMapReadTxn<'_> {
     }
 
     fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, PackageStoreError> {
-        self.module(module_ref)
+        Ok(self
+            .def_map(module_ref.target)?
+            .and_then(|def_map| def_map.module(module_ref.module)))
     }
 
     fn module_scope_entry<'a>(

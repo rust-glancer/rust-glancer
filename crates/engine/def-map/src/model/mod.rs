@@ -10,15 +10,15 @@ pub(crate) mod source;
 
 pub use self::{
     data::{
-        DefMap, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
-        MacroDefinitionPayload, ModuleData, ModuleOrigin,
+        LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData, MacroDefinitionPayload,
+        ModuleData, ModuleOrigin,
     },
     ids::{
-        DefId, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
-        ModuleRef, TargetRef,
+        DefId, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef,
+        TargetRef,
     },
     import::{ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath},
-    package::Package,
+    package::PackageDefMaps,
     path::{Path, PathSegment},
     scope::{ModuleScope, ScopeBinding, ScopeBindingOrigin, ScopeEntry},
     source::{

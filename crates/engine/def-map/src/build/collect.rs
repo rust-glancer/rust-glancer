@@ -181,7 +181,7 @@ impl<'db> TargetScopeCollector<'db> {
             cfg_options,
             target_kind,
             implicit_roots,
-            def_map: DefMap::default(),
+            def_map: DefMap::empty(target),
             base_scopes: Vec::new(),
             macro_definitions: HashMap::new(),
             textual_macro_scopes: TextualMacroScopes::default(),

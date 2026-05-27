@@ -2,7 +2,7 @@ use std::{fmt::Write as _, fs, path::Path};
 
 use expect_test::Expect;
 use rg_body_ir::{BodyIrBuildPolicy, PackageBodies};
-use rg_def_map::{Package, PackageSlot};
+use rg_def_map::{PackageDefMaps, PackageSlot};
 use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::PackageIr;
 use rg_workspace::WorkspaceMetadata;
@@ -93,7 +93,7 @@ pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
         ),
         PackageCachePayload::new(
             PackageParseSnapshot::empty(),
-            Package::default(),
+            PackageDefMaps::default(),
             PackageIr::default(),
             PackageBodies::default(),
         ),
@@ -982,7 +982,7 @@ fn render_artifact(label: &str, artifact: &PackageCacheArtifact, dump: &mut Stri
         dump,
         "def-map package {} targets {}",
         artifact.payload.def_map.package_name(),
-        artifact.payload.def_map.targets().len(),
+        artifact.payload.def_map.def_maps().len(),
     )
     .expect("string writes should not fail");
     writeln!(

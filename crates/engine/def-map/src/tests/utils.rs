@@ -140,7 +140,7 @@ impl DefMapFixtureDb {
     fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
         self.def_map
             .resident_package(target.package)?
-            .target(target.target)
+            .def_map(target.target)
     }
 
     /// Returns the library target for one package.

@@ -42,7 +42,7 @@ pub(super) fn impl_header_resolutions_for_packages(
     for package in packages {
         let package_ir = semantic_ir.package(*package)?;
 
-        for (target_idx, _) in package_ir.into_ref().targets().iter().enumerate() {
+        for (target_idx, _) in package_ir.targets().iter().enumerate() {
             let target = TargetRef {
                 package: *package,
                 target: TargetId(target_idx),

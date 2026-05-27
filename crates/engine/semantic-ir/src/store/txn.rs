@@ -3,7 +3,7 @@
 use rg_def_map::{DefMapReadTxn, PackageSlot, Path};
 use rg_ir_model::{DefId, LocalDefRef, ModuleRef, TargetRef};
 use rg_item_tree::FieldKey;
-use rg_package_store::{PackageRead, PackageStoreError, PackageStoreReadTxn};
+use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 use rg_parse::TargetId;
 
 use crate::{
@@ -26,16 +26,13 @@ impl<'db> SemanticIrReadTxn<'db> {
         Self { packages }
     }
 
-    pub fn package(
-        &self,
-        package: PackageSlot,
-    ) -> Result<PackageRead<'_, PackageIr>, PackageStoreError> {
+    pub fn package(&self, package: PackageSlot) -> Result<&PackageIr, PackageStoreError> {
         self.packages.read(package)
     }
 
     pub fn target_ir(&self, target: TargetRef) -> Result<Option<&TargetIr>, PackageStoreError> {
         let package = self.package(target.package)?;
-        Ok(package.into_ref().target(target.target))
+        Ok(package.target(target.target))
     }
 
     pub fn materialize_included_target_irs(
@@ -46,7 +43,6 @@ impl<'db> SemanticIrReadTxn<'db> {
             .materialize_included_packages_with_slots()?
             .into_iter()
             .flat_map(|(package_slot, package)| {
-                let package = package.into_ref();
                 package
                     .targets()
                     .iter()

@@ -1,6 +1,6 @@
 //! Body IR package store and transaction entry points.
 
-use rg_def_map::{Package as DefMapPackage, PackageSlot};
+use rg_def_map::{PackageDefMaps as DefMapPackage, PackageSlot};
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_semantic_ir::PackageIr;
 use rg_text::PackageNameInterners;

@@ -18,7 +18,7 @@ use rg_workspace::WorkspaceMetadata;
 
 use crate::{
     DefMap as FrozenDefMap, DefMapReadTxn, LocalDefData, LocalDefRef, MacroDefinitionData,
-    ModuleData, ModuleId, ModuleRef, Package as DefMapPackage, PackageSlot, TargetRef,
+    ModuleData, ModuleId, ModuleRef, PackageDefMaps as DefMapPackage, PackageSlot, TargetRef,
     model::{ModuleScopeBuilder, ScopeEntryRef},
     query::path_resolution::{PathResolutionEnv, resolve_path_to_modules_with_env},
 };

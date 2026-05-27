@@ -2,7 +2,7 @@
 
 use rg_def_map::{DefMapReadTxn, PackageSlot, Path};
 use rg_ir_model::{FieldRef, FunctionRef, TargetRef, TraitApplicability, TraitImplRef};
-use rg_package_store::{PackageRead, PackageStoreError, PackageStoreReadTxn};
+use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy};
 
@@ -24,10 +24,7 @@ impl<'db> BodyIrReadTxn<'db> {
         Self { packages }
     }
 
-    pub fn package(
-        &self,
-        package: PackageSlot,
-    ) -> Result<PackageRead<'_, PackageBodies>, PackageStoreError> {
+    pub fn package(&self, package: PackageSlot) -> Result<&PackageBodies, PackageStoreError> {
         self.packages.read(package)
     }
 
@@ -36,7 +33,7 @@ impl<'db> BodyIrReadTxn<'db> {
         target: TargetRef,
     ) -> Result<Option<&TargetBodies>, PackageStoreError> {
         let package = self.package(target.package)?;
-        Ok(package.into_ref().target(target.target))
+        Ok(package.target(target.target))
     }
 
     /// Returns the body associated with a semantic function, if that function has a body.

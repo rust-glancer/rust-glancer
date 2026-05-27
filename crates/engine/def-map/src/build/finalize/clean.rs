@@ -14,7 +14,7 @@ use super::super::{
     stats::DefMapFinalizationStats,
 };
 use super::{FinalizeTargetStates, finalize_target_states};
-use crate::{DefMapDb, Package as DefMapPackage, PackageSlot};
+use crate::{DefMapDb, PackageDefMaps as DefMapPackage, PackageSlot};
 
 /// Builds the final `DefMapDb` from collected per-target states.
 ///

@@ -325,7 +325,10 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         module_ref: ModuleRef,
         context: &DeclarationDetailsContext,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(module) = self.db.def_map.module(module_ref)? else {
+        let Some(def_map) = self.db.def_map.def_map(module_ref.target)? else {
+            return Ok(None);
+        };
+        let Some(module) = def_map.module(module_ref.module) else {
             return Ok(None);
         };
         let name = context

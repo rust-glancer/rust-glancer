@@ -7,7 +7,7 @@ use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::fixture_crate;
 
-use crate::{DefMapDb, Package, PackageSlot, TargetRef};
+use crate::{DefMapDb, PackageDefMaps, PackageSlot, TargetRef};
 
 #[test]
 fn rebuild_resolves_dirty_imports_through_clean_packages() {
@@ -111,7 +111,7 @@ pub use dep::api::Api as Renamed;
     };
     let app_def_map = rebuilt
         .resident_package(app_target.package)
-        .and_then(|package| package.target(app_target.target))
+        .and_then(|package| package.def_map(app_target.target))
         .expect("rebuilt app def-map should exist");
     let root_module = app_def_map
         .root_module()
@@ -224,7 +224,7 @@ make_dep_item!();
     let app_target = lib_target(&parse, app_slot);
     let app_def_map = rebuilt
         .resident_package(app_target.package)
-        .and_then(|package| package.target(app_target.target))
+        .and_then(|package| package.def_map(app_target.target))
         .expect("rebuilt app def-map should exist");
     let root_module = app_def_map
         .root_module()
@@ -268,11 +268,11 @@ fn lib_target(parse: &ParseDb, package_slot: PackageSlot) -> TargetRef {
 #[derive(Debug)]
 struct ExpectedPackageLoader {
     package: PackageSlot,
-    payload: Arc<Package>,
+    payload: Arc<PackageDefMaps>,
 }
 
-impl LoadPackage<Package> for ExpectedPackageLoader {
-    fn load(&self, package: PackageSlot) -> Result<Arc<Package>, PackageStoreError> {
+impl LoadPackage<PackageDefMaps> for ExpectedPackageLoader {
+    fn load(&self, package: PackageSlot) -> Result<Arc<PackageDefMaps>, PackageStoreError> {
         assert_eq!(
             package, self.package,
             "only the expected clean dependency package should be loaded"

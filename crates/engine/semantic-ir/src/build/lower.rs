@@ -48,10 +48,10 @@ pub(super) fn build_package(
     let item_tree_package = item_tree
         .package(package.0)
         .with_context(|| format!("while attempting to fetch item tree package {}", package.0))?;
-    let mut targets = Vec::with_capacity(def_map_package.targets().len());
+    let mut targets = Vec::with_capacity(def_map_package.def_maps().len());
     let def_map_txn = def_map.read_txn(super::unexpected_package_loader());
 
-    for (target_idx, _) in def_map_package.targets().iter().enumerate() {
+    for (target_idx, _) in def_map_package.def_maps().iter().enumerate() {
         let target_ref = TargetRef {
             package,
             target: TargetId(target_idx),
@@ -71,7 +71,7 @@ pub(super) fn build_package(
 struct TargetLowering<'a, 'db> {
     item_tree: &'a ItemTreePackage,
     target: TargetRef,
-    def_map: &'a DefMapReadTxn<'db>,
+    def_map_txn: &'a DefMapReadTxn<'db>,
     target_ir: TargetIr,
 }
 
@@ -79,22 +79,23 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
     fn new(
         item_tree: &'a ItemTreePackage,
         target: TargetRef,
-        def_map: &'a DefMapReadTxn<'db>,
+        def_map_txn: &'a DefMapReadTxn<'db>,
     ) -> anyhow::Result<Self> {
+        let def_map = def_map_txn.def_map(target).with_context(|| {
+            format!(
+                "while attempting to fetch def-map local definitions for target {:?}",
+                target.target,
+            )
+        })?;
+
         let local_def_count = def_map
-            .local_defs(target)
-            .with_context(|| {
-                format!(
-                    "while attempting to fetch def-map local definitions for target {:?}",
-                    target.target,
-                )
-            })?
-            .len();
+            .map(|def_map| def_map.local_defs().len())
+            .unwrap_or_default();
 
         Ok(Self {
             item_tree,
             target,
-            def_map,
+            def_map_txn,
             target_ir: TargetIr::new(local_def_count),
         })
     }
@@ -102,26 +103,28 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
     fn lower(mut self) -> anyhow::Result<TargetIr> {
         // Local definitions already come from the def-map, so lowering follows def-map identity
         // order and only asks the item tree for declaration payloads.
-        let local_defs = self
-            .def_map
-            .local_defs(self.target)
+        let def_map = self
+            .def_map_txn
+            .def_map(self.target)
             .with_context(|| {
                 format!(
                     "while attempting to fetch def-map local definitions for target {:?}",
                     self.target.target,
                 )
             })?
-            .into_iter()
-            .map(|(local_def_ref, local_def)| (local_def_ref, local_def.source, local_def.module))
-            .collect::<Vec<_>>();
-        for (local_def_ref, source, module) in local_defs {
-            let (source, item) = self.item(source)?;
+            .context("No defmap to lower from")?;
+        for local_def_ref in def_map.local_def_refs() {
+            let local_def = def_map.local_def(local_def_ref.local_def).unwrap();
+
+            let item = self.item(local_def.source)?;
             let owner = ModuleRef {
                 target: self.target,
-                module,
+                module: local_def.module,
             };
 
-            if let Some(item_id) = self.lower_local_item(local_def_ref, source, owner, item) {
+            if let Some(item_id) =
+                self.lower_local_item(local_def_ref, local_def.source, owner, item)
+            {
                 self.target_ir
                     .set_local_item(local_def_ref.local_def, item_id);
             }
@@ -129,29 +132,16 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
 
         // Impl blocks are not namespace bindings, so they travel through a separate def-map table
         // and are lowered after named items have their semantic ids.
-        let local_impls = self
-            .def_map
-            .local_impls(self.target)
-            .with_context(|| {
-                format!(
-                    "while attempting to fetch def-map local impls for target {:?}",
-                    self.target.target,
-                )
-            })?
-            .into_iter()
-            .map(|(local_impl_ref, local_impl)| {
-                (local_impl_ref, local_impl.source, local_impl.module)
-            })
-            .collect::<Vec<_>>();
-        for (local_impl_ref, source, module) in local_impls {
-            let (source, item) = self.item(source)?;
+        for local_impl_ref in def_map.lodal_impl_refs() {
+            let local_impl = def_map.local_impl(local_impl_ref.local_impl).unwrap();
+            let item = self.item(local_impl.source)?;
             let owner = ModuleRef {
                 target: self.target,
-                module,
+                module: local_impl.module,
             };
 
             if let ItemKind::Impl(impl_item) = &item.kind {
-                let impl_id = self.lower_impl(local_impl_ref, source, owner, impl_item);
+                let impl_id = self.lower_impl(local_impl_ref, local_impl.source, owner, impl_item);
                 self.target_ir.push_local_impl(impl_id);
             }
         }
@@ -159,7 +149,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         Ok(self.target_ir)
     }
 
-    fn item(&self, source: ItemSource) -> anyhow::Result<(ItemSource, &'a ItemNode)> {
+    fn item(&self, source: ItemSource) -> anyhow::Result<&'a ItemNode> {
         let item = match source.kind {
             ItemSourceKind::ItemTree(item_ref) => {
                 self.item_tree.item(item_ref).with_context(|| {
@@ -170,7 +160,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
                 })?
             }
             ItemSourceKind::Generated(item_ref) => self
-                .def_map
+                .def_map_txn
                 .generated_item(self.target, item_ref)
                 .with_context(|| {
                     format!(
@@ -185,7 +175,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
                     )
                 })?,
         };
-        Ok((source, item))
+        Ok(item)
     }
 
     fn lower_local_item(
@@ -338,7 +328,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         // local definitions because they are reached through their trait/impl owner.
         for item_id in item_ids {
             let source = parent_source.with_item(*item_id);
-            let Ok((source, item)) = self.item(source) else {
+            let Ok(item) = self.item(source) else {
                 continue;
             };
 

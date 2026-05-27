@@ -116,17 +116,21 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     }
 
     pub fn module_declarations(&self, target: TargetRef) -> anyhow::Result<Vec<DeclarationRef>> {
-        Ok(self
-            .db
-            .def_map
-            .modules(target)?
-            .into_iter()
-            .map(|(module_ref, _)| DeclarationRef::module(module_ref))
+        let Some(def_map) = self.db.def_map.def_map(target)? else {
+            return Ok(Vec::new());
+        };
+
+        Ok(def_map
+            .module_refs()
+            .map(|module_ref| DeclarationRef::module(module_ref))
             .collect())
     }
 
     pub fn module_container_name(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {
-        let Some(module) = self.db.def_map.module(module_ref)? else {
+        let Some(def_map) = self.db.def_map.def_map(module_ref.target)? else {
+            return Ok(None);
+        };
+        let Some(module) = def_map.module(module_ref.module) else {
             return Ok(None);
         };
         let Some(parent) = module.parent else {
@@ -394,7 +398,10 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     }
 
     fn module_path(&self, target: TargetRef, module: ModuleId) -> anyhow::Result<String> {
-        let Some(data) = self.db.def_map.module(ModuleRef { target, module })? else {
+        let Some(def_map) = self.db.def_map.def_map(target)? else {
+            return Ok(String::new());
+        };
+        let Some(data) = def_map.module(module) else {
             return Ok(String::new());
         };
         let Some(name) = &data.name else {

@@ -1,9 +1,6 @@
 //! Read transaction handles for package-store payloads.
 
-use std::{
-    ops::Deref,
-    sync::{Arc, OnceLock},
-};
+use std::sync::{Arc, OnceLock};
 
 use rg_workspace::PackageSlot;
 
@@ -88,17 +85,17 @@ impl<'db, T> PackageStoreReadTxn<'db, T> {
         }
     }
 
-    pub fn read(&self, package: PackageSlot) -> Result<PackageRead<'_, T>, PackageStoreError> {
+    pub fn read(&self, package: PackageSlot) -> Result<&T, PackageStoreError> {
         let Some(entry) = self.packages.get(package.0) else {
             return Err(PackageStoreError::MissingSlot { slot: package });
         };
-        entry.read(package).map(PackageRead)
+        entry.read(package)
     }
 
     /// Materializes every included package together with its original package slot.
     pub fn materialize_included_packages_with_slots(
         &self,
-    ) -> Result<Vec<(PackageSlot, PackageRead<'_, T>)>, PackageStoreError> {
+    ) -> Result<Vec<(PackageSlot, &T)>, PackageStoreError> {
         let mut packages = Vec::new();
 
         for package_idx in 0..self.packages.len() {
@@ -179,31 +176,5 @@ impl<T> PackageReadEntry<'_, T> {
             },
             Self::Excluded => Self::Excluded,
         }
-    }
-}
-
-/// One package payload read through a package-store transaction.
-#[derive(Debug)]
-pub struct PackageRead<'db, T>(&'db T);
-
-impl<'db, T> PackageRead<'db, T> {
-    pub fn into_ref(self) -> &'db T {
-        self.0
-    }
-}
-
-impl<T> Clone for PackageRead<'_, T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<T> Copy for PackageRead<'_, T> {}
-
-impl<T> Deref for PackageRead<'_, T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.0
     }
 }

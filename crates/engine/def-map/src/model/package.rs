@@ -1,7 +1,7 @@
 use rg_arena::Arena;
 use rg_parse::TargetId;
 
-use super::data::DefMap;
+use crate::DefMap;
 
 /// Def maps for all targets inside one parsed package.
 #[derive(
@@ -14,13 +14,13 @@ use super::data::DefMap;
     wincode::SchemaWrite,
     rg_memsize::MemorySize,
 )]
-pub struct Package {
+pub struct PackageDefMaps {
     pub(crate) name: String,
     pub(crate) target_names: Arena<TargetId, String>,
     pub(crate) targets: Arena<TargetId, DefMap>,
 }
 
-impl Package {
+impl PackageDefMaps {
     /// Returns the Cargo package name this def-map package belongs to.
     pub fn package_name(&self) -> &str {
         &self.name
@@ -32,12 +32,12 @@ impl Package {
     }
 
     /// Returns all target def maps in target-id order.
-    pub fn targets(&self) -> &[DefMap] {
+    pub fn def_maps(&self) -> &[DefMap] {
         self.targets.as_slice()
     }
 
     /// Returns one target def map by target id.
-    pub fn target(&self, target_id: TargetId) -> Option<&DefMap> {
+    pub fn def_map(&self, target_id: TargetId) -> Option<&DefMap> {
         self.targets.get(target_id)
     }
 

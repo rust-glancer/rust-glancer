@@ -197,7 +197,7 @@ fn build_package_with_interner(
             package.0,
         )
     })?;
-    let target_count = package_ir.into_ref().targets().len();
+    let target_count = package_ir.targets().len();
     let mut targets = Vec::with_capacity(target_count);
 
     for target_idx in 0..target_count {
