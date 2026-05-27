@@ -1,17 +1,19 @@
 //! Read transactions over frozen Semantic IR package data.
 
 use rg_def_map::{DefMapReadTxn, PackageSlot, Path};
+use rg_ir_model::{
+    AssocItemId, ConstRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner,
+    SemanticItemRef, StaticRef, TraitImplRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
+};
 use rg_ir_model::{DefId, LocalDefRef, ModuleRef, TargetRef};
 use rg_item_tree::FieldKey;
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 use rg_parse::TargetId;
 
 use crate::{
-    AssocItemId, ConstData, ConstRef, EnumData, EnumVariantData, EnumVariantRef, FieldData,
-    FieldRef, FunctionData, FunctionRef, ImplData, ImplRef, ItemOwner, PackageIr, SemanticItemRef,
-    SemanticTypePathResolution, StaticData, StaticRef, StructData, TargetIr, TraitData,
-    TraitImplRef, TraitRef, TypeAliasData, TypeAliasRef, TypeDefId, TypeDefRef, TypePathContext,
-    UnionData, push_unique,
+    ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, PackageIr,
+    SemanticTypePathResolution, StaticData, StructData, TargetIr, TraitData, TypeAliasData,
+    TypePathContext, UnionData, push_unique,
     view::{SemanticItemData, SemanticItemView},
 };
 

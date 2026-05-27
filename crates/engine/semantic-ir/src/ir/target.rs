@@ -1,10 +1,8 @@
 use rg_arena::Arena;
 use rg_ir_model::LocalDefId;
+use rg_ir_model::{ImplId, ItemId};
 
-use super::{
-    ids::{ImplId, ItemId},
-    items::ItemStore,
-};
+use super::items::ItemStore;
 
 /// Semantic IR for one target root.
 ///

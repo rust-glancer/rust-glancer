@@ -19,11 +19,6 @@ pub use self::{
     view::SemanticItemView,
 };
 
-pub(crate) use self::ir::{
-    AssocItemId, ConstRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner,
-    SemanticItemKind, SemanticItemRef, StaticRef, TraitImplRef, TraitRef, TypeAliasRef, TypeDefId,
-    TypeDefRef,
-};
 pub use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,
     FunctionQualifiers, GenericParams, Mutability, ParamItem, TypeBound, TypeRef, VisibilityLevel,

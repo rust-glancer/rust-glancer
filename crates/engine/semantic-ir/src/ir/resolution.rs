@@ -2,7 +2,7 @@
 
 use rg_ir_model::ModuleRef;
 
-use super::ids::{ImplRef, TraitRef, TypeDefRef};
+use rg_ir_model::{ImplRef, TraitRef, TypeDefRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct TypePathContext {

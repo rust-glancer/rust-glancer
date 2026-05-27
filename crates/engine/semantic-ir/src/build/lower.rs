@@ -7,7 +7,10 @@
 use anyhow::Context as _;
 
 use rg_def_map::{DefMapDb, DefMapReadTxn, ItemSource, ItemSourceKind, PackageSlot};
-use rg_ir_model::{LocalDefRef, LocalImplRef, ModuleRef, TargetRef};
+use rg_ir_model::{
+    AssocItemId, ConstId, FunctionId, ImplId, ItemId, ItemOwner, LocalDefRef, LocalImplRef,
+    ModuleRef, StaticId, TargetRef, TraitId, TypeAliasId,
+};
 use rg_item_tree::{
     ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
     Package as ItemTreePackage, StaticItem, TraitItem, TypeAliasItem,
@@ -18,9 +21,6 @@ use rg_text::Name;
 use crate::{
     ConstData, EnumData, FunctionData, ImplData, PackageIr, StaticData, StructData, TargetIr,
     TraitData, TypeAliasData, UnionData,
-    ir::ids::{
-        AssocItemId, ConstId, FunctionId, ImplId, ItemId, ItemOwner, StaticId, TraitId, TypeAliasId,
-    },
     ir::signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
 };
 

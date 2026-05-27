@@ -6,16 +6,14 @@
 
 use rg_def_map::Path;
 use rg_ir_model::TargetRef;
+use rg_ir_model::{EnumVariantRef, FieldRef, FunctionRef, ItemOwner, TypeDefId, TypeDefRef};
 use rg_item_tree::{
     FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypeRef, WherePredicate,
 };
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
-use crate::{
-    EnumVariantRef, FieldRef, FunctionRef, ItemOwner, SemanticIrReadTxn, TypeDefId, TypeDefRef,
-    TypePathContext,
-};
+use crate::{SemanticIrReadTxn, TypePathContext};
 
 /// One semantic signature source node that can participate in cursor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]

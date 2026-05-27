@@ -6,12 +6,9 @@ use std::{
 
 use expect_test::Expect;
 
-use crate::{
-    ItemStore, SemanticIrDb, SemanticIrReadTxn,
-    ir::ids::{FunctionRef, ImplRef, TraitRef, TypeDefId, TypeDefRef},
-};
+use crate::{ItemStore, SemanticIrDb, SemanticIrReadTxn};
 use rg_def_map::{DefMapDb, PackageSlot, Path, PathSegment};
-use rg_ir_model::{ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{ModuleId, ModuleRef, TargetRef, TypeAliasId};
 use rg_item_tree::{
     FieldItem, FieldList, ItemTreeDb, PackageNameInterners, ParamKind, VisibilityLevel,
 };
@@ -20,7 +17,10 @@ use rg_parse::{Package, ParseDb, Target};
 use rg_workspace::{TargetKind, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
-use crate::ir::ids::{AssocItemId, ConstId, FunctionId, ImplId, ItemId, TypeAliasId};
+use rg_ir_model::{
+    AssocItemId, ConstId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, TraitRef, TypeDefId,
+    TypeDefRef,
+};
 
 pub(super) fn check_project_semantic_ir(fixture: &str, expect: Expect) {
     let db = SemanticIrFixtureDb::build(fixture);
@@ -473,15 +473,15 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             .expect("function id should load while rendering query")
             .expect("function id should exist while rendering query");
         let owner = match data.owner {
-            crate::ir::ids::ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
-            crate::ir::ids::ItemOwner::Trait(trait_id) => self.render_trait_ref(
+            rg_ir_model::ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
+            rg_ir_model::ItemOwner::Trait(trait_id) => self.render_trait_ref(
                 semantic_ir,
                 TraitRef {
                     target: function_ref.target,
                     id: trait_id,
                 },
             ),
-            crate::ir::ids::ItemOwner::Impl(impl_id) => self.render_impl_ref(
+            rg_ir_model::ItemOwner::Impl(impl_id) => self.render_impl_ref(
                 semantic_ir,
                 ImplRef {
                     target: function_ref.target,

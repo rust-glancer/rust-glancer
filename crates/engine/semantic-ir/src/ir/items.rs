@@ -1,5 +1,9 @@
 use rg_arena::Arena;
 use rg_def_map::ItemSource;
+use rg_ir_model::{
+    AssocItemId, ConstId, EnumId, FunctionId, ImplId, ItemOwner, StaticId, StructId, TraitId,
+    TraitRef, TypeAliasId, TypeDefRef, UnionId,
+};
 use rg_ir_model::{LocalDefRef, LocalImplRef, ModuleRef};
 use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, Mutability, ParamKind,
@@ -8,13 +12,7 @@ use rg_item_tree::{
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
-use super::{
-    ids::{
-        AssocItemId, ConstId, EnumId, FunctionId, ImplId, ItemOwner, StaticId, StructId, TraitId,
-        TraitRef, TypeAliasId, TypeDefRef, UnionId,
-    },
-    signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
-};
+use super::signature::{ConstSignature, FunctionSignature, TypeAliasSignature};
 
 /// Target-local storage for semantic items.
 ///

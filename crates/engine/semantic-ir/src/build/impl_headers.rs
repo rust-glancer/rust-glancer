@@ -1,16 +1,12 @@
 //! Resolves impl headers after semantic item identities are available.
 
 use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot, Path};
-use rg_ir_model::{ModuleRef, TargetRef};
+use rg_ir_model::{ImplRef, ModuleRef, TargetRef, TraitRef, TypeDefRef};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
 
-use crate::{
-    SemanticIrReadTxn,
-    ir::ids::{ImplRef, TraitRef, TypeDefRef},
-    store::SemanticIrDbMutator,
-};
+use crate::{SemanticIrReadTxn, store::SemanticIrDbMutator};
 
 pub(super) fn resolve_impl_headers(
     db: &mut SemanticIrDbMutator<'_>,

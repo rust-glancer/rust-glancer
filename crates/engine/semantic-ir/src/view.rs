@@ -1,14 +1,17 @@
 //! Borrowed semantic item views shared by read transactions and downstream queries.
 
 use rg_def_map::ItemSource;
-use rg_ir_model::{LocalDefRef, LocalImplRef, ModuleRef};
+use rg_ir_model::{
+    AssocItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, SemanticItemKind,
+    SemanticItemRef, TypeDefRef,
+};
 use rg_item_tree::{Documentation, GenericParams, TypeRef, VisibilityLevel};
 use rg_parse::Span;
 use rg_text::Name;
 
 use crate::{
-    AssocItemId, ConstData, EnumData, FunctionData, ImplData, ItemOwner, SemanticItemKind,
-    SemanticItemRef, StaticData, StructData, TraitData, TypeAliasData, TypeDefRef, UnionData,
+    ConstData, EnumData, FunctionData, ImplData, StaticData, StructData, TraitData, TypeAliasData,
+    UnionData,
 };
 
 /// Borrowed item-shaped facts for one semantic item.
