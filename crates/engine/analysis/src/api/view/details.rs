@@ -7,6 +7,10 @@
 use rg_ir_model::{
     BodyDeclarationRef, ConstRef, LocalDefRef, ModuleRef, SemanticItemRef, StaticRef, TraitRef,
     TypeAliasRef, TypeDefId, TypeDefRef,
+    identity::{
+        DeclarationRef, DeclarationRefRepr, EnumVariantRef, EnumVariantRefRepr, FieldRef,
+        FunctionRef, ItemRef, ItemRefRepr, NameDefRefRepr,
+    },
 };
 use rg_semantic_ir::Documentation;
 
@@ -15,10 +19,7 @@ use crate::{
         Analysis,
         render::{path::PathRenderer, signature::SignatureRenderer},
     },
-    model::{
-        DeclarationRef, DeclarationRefRepr, EnumVariantRef, EnumVariantRefRepr, FieldRef,
-        FunctionRef, ItemRef, ItemRefRepr, NameDefRefRepr, SymbolKind,
-    },
+    model::SymbolKind,
 };
 
 use super::{declaration::DeclarationView, member::MemberView};

@@ -7,13 +7,14 @@ use rg_def_map::Path;
 use rg_ir_model::{
     BodyFieldRef, BodyFunctionRef, BodyItemRef, BodyRef, FieldRef as SemanticFieldRef,
     FunctionRef as SemanticFunctionRef, ItemOwner, ScopeId, TraitApplicability, TypeDefRef,
+    identity::{FieldRef, FieldRefRepr, FunctionRef, FunctionRefRepr},
 };
 use rg_semantic_ir::{Documentation, FieldData, FieldKey, FunctionData, ParamItem};
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt};
 
 use crate::{
     api::{Analysis, render::path::PathRenderer},
-    model::{FieldRef, FieldRefRepr, FunctionRef, FunctionRefRepr, SymbolKind},
+    model::SymbolKind,
 };
 
 use super::declaration::Declaration;

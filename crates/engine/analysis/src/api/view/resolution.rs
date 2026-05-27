@@ -8,12 +8,10 @@ use rg_body_ir::{BodyResolution, BodyTypePathResolution};
 use rg_def_map::Path;
 use rg_ir_model::{
     BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ResolvedDeclarationRef, ScopeId,
+    identity::{DeclarationRef, DeclarationRefRepr, NameDefRef, NameDefRefRepr},
 };
 
-use crate::{
-    api::Analysis,
-    model::{DeclarationRef, DeclarationRefRepr, NameDefRef, NameDefRefRepr},
-};
+use crate::api::Analysis;
 
 pub(crate) struct ResolutionView<'a, 'db>(&'a Analysis<'db>);
 

@@ -8,17 +8,15 @@ use rg_body_ir::{BodyAutoderef, BodyAutoderefMode, BodyResolution, ExprKind};
 use rg_ir_model::{
     AssocItemId, FunctionRef as SemanticFunctionRef, ImplRef as SemanticImplRef, ItemOwner,
     SemanticItemRef, TraitRef, TypeDefRef,
-};
-use rg_ir_model::{BodyImplId, BodyImplRef, BodyItemRef};
-use rg_ty::{IndexedTy, IndexedTyExt};
-
-use crate::{
-    api::{Analysis, view::resolution::ResolutionView},
-    model::{
+    identity::{
         DeclarationRef, DeclarationRefRepr, ExprRef, FunctionRef, FunctionRefRepr, ImplRef,
         ItemRefRepr, NameDefRefRepr,
     },
 };
+use rg_ir_model::{BodyImplId, BodyImplRef, BodyItemRef};
+use rg_ty::{IndexedTy, IndexedTyExt};
+
+use crate::api::{Analysis, view::resolution::ResolutionView};
 
 pub(crate) struct ImplementationView<'a, 'db> {
     analysis: &'a Analysis<'db>,

@@ -4,7 +4,7 @@
 //! The query owns the search surface and declaration-inclusion policy, while `ReferenceView`
 //! projects declaration identities into source locations.
 
-use rg_ir_model::TargetRef;
+use rg_ir_model::{TargetRef, identity::DeclarationRef};
 use rg_parse::FileId;
 
 use crate::{
@@ -13,7 +13,7 @@ use crate::{
         source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolRole},
         view::reference::ReferenceView,
     },
-    model::{DeclarationRef, ReferenceLocation, SymbolAt},
+    model::{ReferenceLocation, SymbolAt},
 };
 
 /// Options for a source reference lookup.

@@ -1,12 +1,12 @@
 //! Goto-implementation query flow.
 
-use rg_ir_model::TargetRef;
+use rg_ir_model::{TargetRef, identity::DeclarationRef};
 use rg_parse::FileId;
 
 use super::target::NavigationTargetProjection;
 use crate::{
     api::{Analysis, view::implementation::ImplementationView},
-    model::{DeclarationRef, NavigationTarget, SymbolAt},
+    model::{NavigationTarget, SymbolAt},
 };
 
 /// Implements goto-implementation with the facts rust-glancer already collects.

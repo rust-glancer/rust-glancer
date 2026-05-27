@@ -9,14 +9,14 @@ use rg_body_ir::{
     UnqualifiedCompletionNamespace as BodyUnqualifiedCompletionNamespace,
 };
 use rg_def_map::{DefMapCursorCandidate, Path};
-use rg_ir_model::{BodyBindingRef, ModuleRef, TargetRef};
+use rg_ir_model::{
+    BodyBindingRef, ModuleRef, TargetRef,
+    identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
+};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{FieldKey, SemanticCursorCandidate, TypePathContext};
 
-use crate::{
-    api::{Analysis, view::declaration::DeclarationView},
-    model::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
-};
+use crate::api::{Analysis, view::declaration::DeclarationView};
 
 /// Why an indexed source occurrence exists in the scanned source surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

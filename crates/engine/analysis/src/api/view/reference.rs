@@ -3,9 +3,11 @@
 //! Source scanning and symbol matching stay in analysis query code. This view projects canonical
 //! declaration identities into source locations for reference results.
 
+use rg_ir_model::identity::DeclarationRef;
+
 use crate::{
     api::{Analysis, view::declaration::DeclarationView},
-    model::{DeclarationRef, ReferenceLocation},
+    model::ReferenceLocation,
 };
 
 pub(crate) struct ReferenceView<'a, 'db> {

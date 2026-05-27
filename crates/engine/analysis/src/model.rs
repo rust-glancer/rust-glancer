@@ -2,10 +2,9 @@ use std::fmt;
 
 use rg_body_ir::{BodyFunctionOwner, BodyItemKind, BodyValueItemKind};
 use rg_def_map::{LocalDefKind, Path};
-pub use rg_ir_model::identity::{
-    BindingRef, DeclarationRef, DeclarationRefRepr, EnumVariantRef, EnumVariantRefRepr, ExprRef,
-    FieldRef, FieldRefRepr, FunctionBodyRef, FunctionRef, FunctionRefRepr, ImplRef, ImplRefRepr,
-    ItemRef, ItemRefRepr, LexicalScopeRef, NameDefRef, NameDefRefRepr,
+use rg_ir_model::identity::{
+    DeclarationRef, EnumVariantRef, ExprRef, FieldRef, FunctionBodyRef, FunctionRef,
+    LexicalScopeRef,
 };
 use rg_ir_model::{ModuleRef, SemanticItemKind, TargetRef, TraitApplicability};
 use rg_parse::{FileId, Span};

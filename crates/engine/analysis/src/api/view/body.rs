@@ -8,12 +8,12 @@ use std::collections::HashSet;
 use rg_body_ir::{BindingKind, BodyItemKind, BodyItemOwner, BodyValueItemKind, BodyValueItemOwner};
 use rg_ir_model::{
     BodyBindingRef, BodyFieldRef, BodyFunctionRef, BodyImplRef, BodyItemRef, BodyRef,
-    BodyValueItemRef, ExprId, ModuleRef, ScopeId, TargetRef,
+    BodyValueItemRef, ExprId, ModuleRef, ScopeId, TargetRef, identity::DeclarationRef,
 };
 use rg_parse::{FileId, Span, TextSpan};
 use rg_ty::{IndexedTy, IndexedTyRepr};
 
-use crate::{api::Analysis, model::DeclarationRef};
+use crate::api::Analysis;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BodyNameNamespace {

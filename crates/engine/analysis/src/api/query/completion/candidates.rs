@@ -5,7 +5,10 @@
 //! and projects generic view facts into completion-ready candidates.
 
 use rg_def_map::Path;
-use rg_ir_model::ModuleRef;
+use rg_ir_model::{
+    ModuleRef,
+    identity::{DeclarationRef, EnumVariantRef, FieldRef, FunctionRef},
+};
 use rg_semantic_ir::FieldKey;
 use rg_ty::IndexedTy;
 
@@ -27,10 +30,7 @@ use crate::{
             ty::TyView,
         },
     },
-    model::{
-        CompletionApplicability, CompletionKind, CompletionTarget, DeclarationRef, EnumVariantRef,
-        FieldRef, FunctionRef, SymbolKind,
-    },
+    model::{CompletionApplicability, CompletionKind, CompletionTarget, SymbolKind},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

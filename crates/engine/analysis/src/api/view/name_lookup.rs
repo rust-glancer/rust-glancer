@@ -4,13 +4,13 @@
 //! concepts: they are names visible from an indexed module or lexical body scope.
 
 use rg_def_map::{Path, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin};
-use rg_ir_model::{DefId, ModuleRef, SemanticItemRef};
+use rg_ir_model::{
+    DefId, ModuleRef, SemanticItemRef,
+    identity::{DeclarationRef, FunctionRef as AnalysisFunctionRef},
+};
 use rg_semantic_ir::Documentation;
 
-use crate::{
-    api::Analysis,
-    model::{DeclarationRef, FunctionRef as AnalysisFunctionRef, SymbolKind},
-};
+use crate::{api::Analysis, model::SymbolKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum NameNamespace {

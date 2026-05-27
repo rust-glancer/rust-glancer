@@ -5,13 +5,11 @@ use rg_def_map::Path;
 use rg_ir_model::{
     BodyEnumVariantRef, BodyItemRef, BodyRef, EnumVariantRef as SemanticEnumVariantRef, ScopeId,
     TypeDefId, TypeDefRef,
+    identity::{EnumVariantRef, EnumVariantRefRepr},
 };
 use rg_semantic_ir::{Documentation, EnumVariantData};
 
-use crate::{
-    api::Analysis,
-    model::{EnumVariantRef, EnumVariantRefRepr},
-};
+use crate::api::Analysis;
 
 /// Borrowed data for one resolved enum variant, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]

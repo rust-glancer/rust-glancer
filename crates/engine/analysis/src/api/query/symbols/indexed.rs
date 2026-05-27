@@ -1,7 +1,10 @@
 //! Symbol enumeration over generic indexed declaration trees.
 
 use anyhow::Result;
-use rg_ir_model::TargetRef;
+use rg_ir_model::{
+    TargetRef,
+    identity::{DeclarationRef, DeclarationRefRepr},
+};
 use rg_parse::{FileId, Span};
 
 use crate::{
@@ -12,7 +15,7 @@ use crate::{
             item_index::{IndexedItem, IndexedItemChild, ItemIndexView},
         },
     },
-    model::{DeclarationRef, DeclarationRefRepr, DocumentSymbol, SymbolKind, WorkspaceSymbol},
+    model::{DocumentSymbol, SymbolKind, WorkspaceSymbol},
 };
 
 /// One outline declaration. Most nodes come from real declarations, but some syntax-only

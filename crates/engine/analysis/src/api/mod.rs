@@ -11,7 +11,7 @@ pub use query::{
 
 use rg_body_ir::BodyIrReadTxn;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::TargetRef;
+use rg_ir_model::{TargetRef, identity::DeclarationRef};
 use rg_parse::FileId;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_ty::IndexedTy;
@@ -19,8 +19,8 @@ use rg_ty::IndexedTy;
 use crate::{
     api::source_symbol::{SourceSymbol, SourceSymbolIndex},
     model::{
-        CompletionItem, DeclarationRef, DocumentSymbol, HoverInfo, NavigationTarget,
-        ReferenceLocation, SymbolAt, TypeHint, TypePathScopeRepr, WorkspaceSymbol,
+        CompletionItem, DocumentSymbol, HoverInfo, NavigationTarget, ReferenceLocation, SymbolAt,
+        TypeHint, TypePathScopeRepr, WorkspaceSymbol,
     },
     txn::AnalysisReadTxn,
 };

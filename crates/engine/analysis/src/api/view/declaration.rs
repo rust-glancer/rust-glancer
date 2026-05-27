@@ -5,17 +5,18 @@ use rg_ir_model::{
     BodyDeclarationRef, EnumVariantRef as SemanticEnumVariantRef, FieldRef as SemanticFieldRef,
     FunctionRef as SemanticFunctionRef, LocalDefRef, ModuleRef, SemanticItemKind, SemanticItemRef,
     TargetRef,
+    identity::{
+        DeclarationRef, DeclarationRefRepr, EnumVariantRef, EnumVariantRefRepr, FieldRef,
+        FieldRefRepr, FunctionRef, FunctionRefRepr, ImplRef, ImplRefRepr, ItemRef, ItemRefRepr,
+        NameDefRefRepr,
+    },
 };
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::TypeRef;
 
 use crate::{
     api::{Analysis, view::member::MemberView},
-    model::{
-        DeclarationRef, DeclarationRefRepr, DocumentSymbol, EnumVariantRefRepr, FieldRefRepr,
-        FunctionRefRepr, ImplRefRepr, ItemRefRepr, NameDefRefRepr, NavigationTarget,
-        NavigationTargetKind, SymbolKind,
-    },
+    model::{DocumentSymbol, NavigationTarget, NavigationTargetKind, SymbolKind},
 };
 
 /// Composite declaration facts shared by editor queries.
@@ -148,7 +149,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }))
     }
 
-    fn item(&self, item: crate::model::ItemRef) -> anyhow::Result<Option<Declaration>> {
+    fn item(&self, item: ItemRef) -> anyhow::Result<Option<Declaration>> {
         match item.repr() {
             ItemRefRepr::Semantic(item) => self.semantic_item(item),
             ItemRefRepr::BodyLocal(item) => self.body_declaration(BodyDeclarationRef::Item(item)),
@@ -158,7 +159,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }
     }
 
-    fn function(&self, function: crate::model::FunctionRef) -> anyhow::Result<Option<Declaration>> {
+    fn function(&self, function: FunctionRef) -> anyhow::Result<Option<Declaration>> {
         match function.repr() {
             FunctionRefRepr::Semantic(function) => self.semantic_function(function),
             FunctionRefRepr::BodyLocal(function) => {
@@ -167,7 +168,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }
     }
 
-    fn field(&self, field: crate::model::FieldRef) -> anyhow::Result<Option<Declaration>> {
+    fn field(&self, field: FieldRef) -> anyhow::Result<Option<Declaration>> {
         match field.repr() {
             FieldRefRepr::Semantic(field) => self.semantic_field(field),
             FieldRefRepr::BodyLocal(field) => {
@@ -176,10 +177,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }
     }
 
-    fn enum_variant(
-        &self,
-        variant: crate::model::EnumVariantRef,
-    ) -> anyhow::Result<Option<Declaration>> {
+    fn enum_variant(&self, variant: EnumVariantRef) -> anyhow::Result<Option<Declaration>> {
         match variant.repr() {
             EnumVariantRefRepr::Semantic(variant) => self.semantic_enum_variant(variant),
             EnumVariantRefRepr::BodyLocal(variant) => {
@@ -188,10 +186,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }
     }
 
-    fn impl_declaration(
-        &self,
-        impl_ref: crate::model::ImplRef,
-    ) -> anyhow::Result<Option<Declaration>> {
+    fn impl_declaration(&self, impl_ref: ImplRef) -> anyhow::Result<Option<Declaration>> {
         match impl_ref.repr() {
             ImplRefRepr::Semantic(impl_ref) => self.semantic_item(impl_ref.into()),
             ImplRefRepr::BodyLocal(impl_ref) => {
@@ -400,7 +395,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
 
     fn semantic_field(&self, field: SemanticFieldRef) -> anyhow::Result<Option<Declaration>> {
         Ok(MemberView::new(self.analysis)
-            .field(crate::model::FieldRef::semantic(field))?
+            .field(FieldRef::semantic(field))?
             .and_then(|field| field.declaration()))
     }
 
@@ -409,7 +404,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         function: SemanticFunctionRef,
     ) -> anyhow::Result<Option<Declaration>> {
         Ok(MemberView::new(self.analysis)
-            .function(crate::model::FunctionRef::semantic(function))?
+            .function(FunctionRef::semantic(function))?
             .map(|function| function.declaration()))
     }
 

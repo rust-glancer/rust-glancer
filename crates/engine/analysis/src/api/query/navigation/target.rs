@@ -1,13 +1,16 @@
 //! Concrete navigation target projection.
 
-use rg_ir_model::ModuleRef;
+use rg_ir_model::{
+    ModuleRef,
+    identity::{DeclarationRef, DeclarationRefRepr},
+};
 
 use crate::{
     api::{
         Analysis,
         view::{declaration::DeclarationView, module::ModuleView},
     },
-    model::{DeclarationRef, DeclarationRefRepr, NavigationTarget, NavigationTargetKind},
+    model::{NavigationTarget, NavigationTargetKind},
 };
 
 /// Converts stable IR identities into concrete editor navigation targets.

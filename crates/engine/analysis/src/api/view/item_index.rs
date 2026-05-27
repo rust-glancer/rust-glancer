@@ -8,14 +8,12 @@ use rg_ir_model::{
     AssocItemId, BodyFunctionRef, BodyImplRef, BodyItemRef, BodyValueItemRef, ConstRef,
     EnumVariantRef as SemanticEnumVariantRef, FunctionRef as SemanticFunctionRef, ModuleId,
     ModuleRef, SemanticItemKind, TargetRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    identity::{DeclarationRef, DeclarationRefRepr, ImplRefRepr, ItemRefRepr},
 };
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::SemanticItemView;
 
-use crate::{
-    api::{Analysis, view::body::BodyView},
-    model::{DeclarationRef, DeclarationRefRepr, ItemRefRepr},
-};
+use crate::api::{Analysis, view::body::BodyView};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IndexedSyntaxChild {
@@ -236,8 +234,8 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
                 }
             },
             DeclarationRefRepr::Impl(impl_ref) => match impl_ref.repr() {
-                crate::model::ImplRefRepr::BodyLocal(impl_ref) => self.body_impl(impl_ref),
-                crate::model::ImplRefRepr::Semantic(_) => Ok(Some(IndexedItem::leaf(declaration))),
+                ImplRefRepr::BodyLocal(impl_ref) => self.body_impl(impl_ref),
+                ImplRefRepr::Semantic(_) => Ok(Some(IndexedItem::leaf(declaration))),
             },
             DeclarationRefRepr::Function(_)
             | DeclarationRefRepr::Module(_)

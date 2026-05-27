@@ -4,12 +4,10 @@
 //! The analysis layer already returns stable IDs; inlay hints and future hovers need labels that
 //! are useful while reading code.
 
+use rg_ir_model::identity::DeclarationRef;
 use rg_ty::{IndexedGenericArg, IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyRepr};
 
-use crate::{
-    api::{Analysis, view::declaration::DeclarationView},
-    model::DeclarationRef,
-};
+use crate::api::{Analysis, view::declaration::DeclarationView};
 
 pub(crate) struct TypeRenderer<'a, 'db>(&'a Analysis<'db>);
 

@@ -7,18 +7,17 @@
 use rg_body_ir::{BodyAutoderef, BodyTypePathResolution};
 use rg_def_map::Path;
 use rg_ir_model::{
-    BodyRef, FieldRef as SemanticFieldRef, ScopeId, SemanticItemRef, identity::ExprRef,
-};
-use rg_semantic_ir::{SemanticTypePathResolution, TypePathContext};
-use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
-
-use crate::{
-    api::{Analysis, view::body::BodyView},
-    model::{
+    BodyRef, FieldRef as SemanticFieldRef, ScopeId, SemanticItemRef,
+    identity::ExprRef,
+    identity::{
         DeclarationRef, DeclarationRefRepr, EnumVariantRef, EnumVariantRefRepr, FieldRefRepr,
         ItemRefRepr, NameDefRefRepr,
     },
 };
+use rg_semantic_ir::{SemanticTypePathResolution, TypePathContext};
+use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
+
+use crate::api::{Analysis, view::body::BodyView};
 
 pub(crate) struct TyView<'a, 'db> {
     analysis: &'a Analysis<'db>,
