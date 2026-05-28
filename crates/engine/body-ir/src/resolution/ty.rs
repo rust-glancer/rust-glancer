@@ -15,17 +15,15 @@ use rg_ty::{
 
 use crate::{ir::body::BodyData, ir::resolved::BodyTypePathResolution};
 
-pub(super) type TypeSubst = IndexedTypeSubst;
-
 /// Converts syntax-level type data into the shared indexed type vocabulary in one module/impl
 /// context, applying direct generic substitutions where they are already known.
-pub(super) fn ty_from_type_ref_in_context(
+pub(crate) fn ty_from_type_ref_in_context(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     ty: &TypeRef,
     context: TypePathContext,
     unresolved_path_fallback: IndexedTy,
-    subst: &TypeSubst,
+    subst: &IndexedTypeSubst,
 ) -> Result<IndexedTy, PackageStoreError> {
     match ty {
         TypeRef::Unit => Ok(IndexedTy::Unit),
@@ -116,7 +114,7 @@ pub(super) fn ty_from_body_resolution(
 pub(super) fn subst_from_generics(
     generics: &GenericParams,
     args: &[IndexedGenericArg],
-) -> TypeSubst {
+) -> IndexedTypeSubst {
     // We only substitute type parameters. Lifetimes, const args, associated type args, and
     // unsupported args are preserved on the type but ignored by the simple substitution map.
     let type_args = args.iter().filter_map(body_generic_arg_ty);
@@ -129,14 +127,14 @@ pub(super) fn subst_from_generics(
         .collect()
 }
 
-pub(super) fn local_type_subst(body: &BodyData, ty: &IndexedLocalNominalTy) -> TypeSubst {
+pub(super) fn local_type_subst(body: &BodyData, ty: &IndexedLocalNominalTy) -> IndexedTypeSubst {
     let Some(item) = body.local_item(ty.item.item) else {
-        return TypeSubst::new();
+        return IndexedTypeSubst::new();
     };
 
     item.generic_params()
         .map(|generics| subst_from_generics(generics, &ty.args))
-        .unwrap_or_else(TypeSubst::new)
+        .unwrap_or_else(IndexedTypeSubst::new)
 }
 
 pub(super) fn body_generic_arg_ty(arg: &IndexedGenericArg) -> Option<IndexedTy> {
@@ -168,7 +166,7 @@ pub(super) fn type_param_name_from_type_ref(ty: &TypeRef) -> Option<Name> {
     })
 }
 
-pub(super) fn substitute_type_param(path: &Path, subst: &TypeSubst) -> Option<IndexedTy> {
+pub(super) fn substitute_type_param(path: &Path, subst: &IndexedTypeSubst) -> Option<IndexedTy> {
     // Only plain identifiers can be generic type parameters. Qualified paths like `module::T`
     // remain ordinary type paths and are resolved through DefMap/Semantic IR.
     let name = path.single_name()?;
@@ -187,7 +185,7 @@ fn generic_args_from_type_path_in_context(
     semantic_ir: &SemanticIrReadTxn<'_>,
     type_path: &rg_item_tree::TypePath,
     context: TypePathContext,
-    subst: &TypeSubst,
+    subst: &IndexedTypeSubst,
 ) -> Result<Vec<IndexedGenericArg>, PackageStoreError> {
     // Rust generic args belong to the final path segment for the cases we model here, e.g.
     // `crate::Wrapper<User>` stores `User` on `Wrapper`.
@@ -195,63 +193,37 @@ fn generic_args_from_type_path_in_context(
         return Ok(Vec::new());
     };
 
-    generic_args_from_item_tree_args_in_context(def_map, semantic_ir, &segment.args, context, subst)
-}
-
-fn generic_args_from_item_tree_args_in_context(
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
-    args: &[GenericArg],
-    context: TypePathContext,
-    subst: &TypeSubst,
-) -> Result<Vec<IndexedGenericArg>, PackageStoreError> {
     let mut generic_args = Vec::new();
-    for arg in args {
-        generic_args.push(generic_arg_from_item_tree_arg_in_context(
-            def_map,
-            semantic_ir,
-            arg,
-            context,
-            subst,
-        )?);
-    }
-    Ok(generic_args)
-}
-
-fn generic_arg_from_item_tree_arg_in_context(
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
-    arg: &GenericArg,
-    context: TypePathContext,
-    subst: &TypeSubst,
-) -> Result<IndexedGenericArg, PackageStoreError> {
-    match arg {
-        GenericArg::Type(ty) => Ok(IndexedGenericArg::Type(Box::new(
-            ty_from_type_ref_in_context(
+    for arg in &segment.args {
+        let indexed_arg = match arg {
+            GenericArg::Type(ty) => IndexedGenericArg::Type(Box::new(ty_from_type_ref_in_context(
                 def_map,
                 semantic_ir,
                 ty,
                 context,
                 IndexedTyRepr::syntax(ty.clone()),
                 subst,
-            )?,
-        ))),
-        GenericArg::Lifetime(lifetime) => Ok(IndexedGenericArg::Lifetime(lifetime.clone())),
-        GenericArg::Const(value) => Ok(IndexedGenericArg::Const(value.clone())),
-        GenericArg::AssocType { name, ty } => Ok(IndexedGenericArg::AssocType {
-            name: name.clone(),
-            ty: match ty {
-                Some(ty) => Some(Box::new(ty_from_type_ref_in_context(
-                    def_map,
-                    semantic_ir,
-                    ty,
-                    context,
-                    IndexedTyRepr::syntax(ty.clone()),
-                    subst,
-                )?)),
-                None => None,
+            )?)),
+            GenericArg::Lifetime(lifetime) => IndexedGenericArg::Lifetime(lifetime.clone()),
+            GenericArg::Const(value) => IndexedGenericArg::Const(value.clone()),
+            GenericArg::AssocType { name, ty } => IndexedGenericArg::AssocType {
+                name: name.clone(),
+                ty: match ty {
+                    Some(ty) => Some(Box::new(ty_from_type_ref_in_context(
+                        def_map,
+                        semantic_ir,
+                        ty,
+                        context,
+                        IndexedTyRepr::syntax(ty.clone()),
+                        subst,
+                    )?)),
+                    None => None,
+                },
             },
-        }),
-        GenericArg::Unsupported(text) => Ok(IndexedGenericArg::Unsupported(text.clone())),
+            GenericArg::Unsupported(text) => IndexedGenericArg::Unsupported(text.clone()),
+        };
+
+        generic_args.push(indexed_arg);
     }
+    Ok(generic_args)
 }

@@ -1,8 +1,8 @@
 use rg_arena::Arena;
 use rg_ir_model::{
     ConstId, ConstRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, LocalDefId,
-    StaticId, StaticRef, StructId, TargetRef, TraitId, TraitRef, TypeAliasId, TypeAliasRef,
-    TypeDefId, TypeDefRef, UnionId,
+    SemanticItemRef, StaticId, StaticRef, StructId, TargetRef, TraitId, TraitRef, TypeAliasId,
+    TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
 };
 
 use crate::{
@@ -143,6 +143,38 @@ impl ItemStore {
 
     pub fn static_data(&self, id: StaticId) -> Option<&StaticData> {
         self.statics.get(id)
+    }
+
+    pub fn semantic_item_view(&self, item: SemanticItemRef) -> Option<SemanticItemView<'_>> {
+        debug_assert_eq!(item.target(), self.target_ref, "Wrong target");
+
+        // This is the semantic item boundary: callers can ask item-shaped questions without
+        // spreading the arena-family match into higher layers.
+        let data = match item {
+            SemanticItemRef::TypeDef(ty) => match ty.id {
+                TypeDefId::Struct(id) => SemanticItemData::Struct(self.struct_data(id)?),
+                TypeDefId::Union(id) => SemanticItemData::Union(self.union_data(id)?),
+                TypeDefId::Enum(id) => SemanticItemData::Enum(self.enum_data(id)?),
+            },
+            SemanticItemRef::Trait(trait_ref) => {
+                SemanticItemData::Trait(self.trait_data(trait_ref.id)?)
+            }
+            SemanticItemRef::Impl(impl_ref) => SemanticItemData::Impl(self.impl_data(impl_ref.id)?),
+            SemanticItemRef::Function(function_ref) => {
+                SemanticItemData::Function(self.function_data(function_ref.id)?)
+            }
+            SemanticItemRef::TypeAlias(type_alias_ref) => {
+                SemanticItemData::TypeAlias(self.type_alias_data(type_alias_ref.id)?)
+            }
+            SemanticItemRef::Const(const_ref) => {
+                SemanticItemData::Const(self.const_data(const_ref.id)?)
+            }
+            SemanticItemRef::Static(static_ref) => {
+                SemanticItemData::Static(self.static_data(static_ref.id)?)
+            }
+        };
+
+        Some(SemanticItemView::new(item, data))
     }
 
     pub(crate) fn shrink_to_fit(&mut self) {

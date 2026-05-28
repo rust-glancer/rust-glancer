@@ -215,11 +215,10 @@ fn build_package_with_interner(
             .functions_with_refs()
             .map(|(function_ref, function)| (function_ref, function.source.file_id, function.span))
             .collect::<Vec<_>>();
-        let function_count = functions.len();
         if !scope.should_lower_package(package, parse_package)
             || !scope.should_lower_target(package, &functions)
         {
-            targets.push(TargetBodies::skipped(function_count));
+            targets.push(TargetBodies::skipped());
             continue;
         }
 
@@ -230,7 +229,7 @@ fn build_package_with_interner(
                 scope,
                 package,
                 functions,
-                target_bodies: TargetBodies::new(function_count),
+                target_bodies: TargetBodies::new(),
                 interner,
             }
             .lower()

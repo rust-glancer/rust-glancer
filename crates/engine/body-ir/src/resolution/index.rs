@@ -12,6 +12,7 @@ use rg_text::Name;
 
 use super::push_unique;
 
+// TODO: Does not belong to body IR
 #[derive(Debug, Default)]
 pub(crate) struct SemanticResolutionIndex {
     // Method lookup starts from a receiver type. These maps let the resolver jump directly to impls

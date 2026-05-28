@@ -8,7 +8,10 @@ use rg_ir_model::{BodyItemId, BodyItemRef, BodyRef, FunctionRef, ModuleRef, Scop
 use rg_item_tree::{GenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
-use rg_ty::{IndexedGenericArg, IndexedLocalNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
+use rg_ty::{
+    IndexedGenericArg, IndexedLocalNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr,
+    IndexedTypeSubst,
+};
 
 use crate::{
     BodyItemKind, ir::body::BodyData, ir::item::BodyItemOwner, ir::resolved::BodyTypePathResolution,
@@ -17,12 +20,12 @@ use crate::{
 use super::{
     impl_match::LocalImplMatcher,
     ty::{
-        TypeSubst, local_type_subst, subst_from_generics, substitute_type_param,
-        ty_from_body_resolution, ty_from_type_ref_in_context, type_ref_is_self,
+        local_type_subst, subst_from_generics, substitute_type_param, ty_from_body_resolution,
+        ty_from_type_ref_in_context, type_ref_is_self,
     },
 };
 
-pub(super) struct BodyTypePathResolver<'query, 'db, 'body> {
+pub(crate) struct BodyTypePathResolver<'query, 'db, 'body> {
     def_map: &'query DefMapReadTxn<'db>,
     semantic_ir: &'query SemanticIrReadTxn<'db>,
     body_ref: BodyRef,
@@ -30,7 +33,7 @@ pub(super) struct BodyTypePathResolver<'query, 'db, 'body> {
 }
 
 impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
-    pub(super) fn new(
+    pub(crate) fn new(
         def_map: &'query DefMapReadTxn<'db>,
         semantic_ir: &'query SemanticIrReadTxn<'db>,
         body_ref: BodyRef,
@@ -48,7 +51,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         LocalImplMatcher::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
-    pub(super) fn resolve_in_scope(
+    pub(crate) fn resolve_in_scope(
         &self,
         scope: ScopeId,
         path: &Path,
@@ -85,14 +88,14 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         ty: &TypeRef,
         scope: ScopeId,
     ) -> Result<IndexedTy, PackageStoreError> {
-        self.ty_from_type_ref_in_scope_with_subst(ty, scope, &TypeSubst::new())
+        self.ty_from_type_ref_in_scope_with_subst(ty, scope, &IndexedTypeSubst::new())
     }
 
     pub(super) fn ty_from_type_ref_in_scope_with_subst(
         &self,
         ty: &TypeRef,
         scope: ScopeId,
-        subst: &TypeSubst,
+        subst: &IndexedTypeSubst,
     ) -> Result<IndexedTy, PackageStoreError> {
         // Path types are the only type syntax we resolve structurally today. Other forms stay as
         // syntax unless they have a cheap built-in representation such as `()` or `!`.
@@ -188,7 +191,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         &self,
         ty: &TypeRef,
         function: FunctionRef,
-        subst: &TypeSubst,
+        subst: &IndexedTypeSubst,
     ) -> Result<IndexedTy, PackageStoreError> {
         self.ty_from_type_ref_in_context_with_subst(
             ty,
@@ -201,7 +204,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         &self,
         ty: &TypeRef,
         context: TypePathContext,
-        subst: &TypeSubst,
+        subst: &IndexedTypeSubst,
     ) -> Result<IndexedTy, PackageStoreError> {
         self.ty_from_type_ref_in_context_with_subst(ty, context, subst)
     }
@@ -210,7 +213,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         &self,
         ty: &TypeRef,
         context: TypePathContext,
-        subst: &TypeSubst,
+        subst: &IndexedTypeSubst,
     ) -> Result<IndexedTy, PackageStoreError> {
         ty_from_type_ref_in_context(
             self.def_map,
@@ -292,7 +295,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         type_path: &TypePath,
         path: &Path,
         scope: ScopeId,
-        subst: &TypeSubst,
+        subst: &IndexedTypeSubst,
         args: &[IndexedGenericArg],
     ) -> Result<Option<IndexedTy>, PackageStoreError> {
         let Some((_, name)) = split_associated_path(path) else {
@@ -370,7 +373,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             return self.ty_from_type_ref_in_scope_with_subst(
                 aliased_ty,
                 item.scope,
-                &TypeSubst::new(),
+                &IndexedTypeSubst::new(),
             );
         };
         let Some(impl_data) = self.body.local_impl(impl_id) else {
@@ -411,7 +414,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         &self,
         type_path: &rg_item_tree::TypePath,
         scope: ScopeId,
-        subst: &TypeSubst,
+        subst: &IndexedTypeSubst,
     ) -> Result<Vec<IndexedGenericArg>, PackageStoreError> {
         let Some(segment) = type_path.segments.last() else {
             return Ok(Vec::new());
@@ -423,7 +426,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         &self,
         args: &[GenericArg],
         scope: ScopeId,
-        subst: &TypeSubst,
+        subst: &IndexedTypeSubst,
     ) -> Result<Vec<IndexedGenericArg>, PackageStoreError> {
         let mut generic_args = Vec::new();
         for arg in args {
@@ -436,7 +439,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         &self,
         arg: &GenericArg,
         scope: ScopeId,
-        subst: &TypeSubst,
+        subst: &IndexedTypeSubst,
     ) -> Result<IndexedGenericArg, PackageStoreError> {
         match arg {
             GenericArg::Type(ty) => Ok(IndexedGenericArg::Type(Box::new(

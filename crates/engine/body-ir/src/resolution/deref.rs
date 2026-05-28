@@ -9,13 +9,11 @@ use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, SemanticTypePathResolution, TypePathContext};
 use rg_text::Name;
-use rg_ty::{IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
+use rg_ty::{IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr, IndexedTypeSubst};
 
 use super::{
-    impl_match::BodyImplMatcher,
-    index::SemanticResolutionIndex,
-    push_unique,
-    ty::{TypeSubst, ty_from_type_ref_in_context},
+    impl_match::BodyImplMatcher, index::SemanticResolutionIndex, push_unique,
+    ty::ty_from_type_ref_in_context,
 };
 
 /// Resolves the associated `Target` type for applicable `core::ops::Deref` impls.
@@ -138,7 +136,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
         &self,
         trait_impl: TraitImplRef,
         impl_data: &rg_semantic_ir::ImplData,
-        subst: &TypeSubst,
+        subst: &IndexedTypeSubst,
     ) -> Result<Option<IndexedTy>, PackageStoreError> {
         for item in &impl_data.items {
             let AssocItemId::TypeAlias(type_alias_id) = item else {
@@ -177,7 +175,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
         trait_impl: TraitImplRef,
         impl_data: &rg_semantic_ir::ImplData,
         target_ty: &TypeRef,
-        subst: &TypeSubst,
+        subst: &IndexedTypeSubst,
     ) -> Result<IndexedTy, PackageStoreError> {
         let context = TypePathContext {
             module: impl_data.owner,

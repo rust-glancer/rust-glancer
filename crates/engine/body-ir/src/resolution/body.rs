@@ -13,7 +13,10 @@ use rg_ir_model::{
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
-use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
+use rg_ty::{
+    IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr,
+    IndexedTypeSubst,
+};
 
 use crate::{
     ir::body::BodyData,
@@ -37,7 +40,7 @@ use super::{
     normalize::IndexedTyNormalizer,
     pat::PatternTypePropagator,
     push_unique,
-    ty::{TypeSubst, local_type_subst, subst_from_generics, type_ref_is_self},
+    ty::{local_type_subst, subst_from_generics, type_ref_is_self},
     type_path::BodyTypePathResolver,
 };
 
@@ -426,7 +429,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 let Some(field_data) = item.field(field_ref.index) else {
                     continue;
                 };
-                let subst = self.local_type_subst(local_ty);
+                let subst = local_type_subst(self.body, local_ty);
                 let field_ty = self
                     .type_path_resolver()
                     .ty_from_type_ref_in_scope_with_subst(&field_data.ty, item.scope, &subst)?;
@@ -644,7 +647,6 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             if local_function_applies_to_receiver(
                 self.def_map,
                 self.semantic_ir,
-                self.body_ref,
                 self.body,
                 function,
                 ty,
@@ -684,16 +686,15 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         Ok(functions)
     }
 
-    fn local_type_subst(&self, ty: &IndexedLocalNominalTy) -> TypeSubst {
-        local_type_subst(self.body, ty)
-    }
-
-    fn semantic_type_subst(&self, ty: &IndexedNominalTy) -> Result<TypeSubst, PackageStoreError> {
+    fn semantic_type_subst(
+        &self,
+        ty: &IndexedNominalTy,
+    ) -> Result<IndexedTypeSubst, PackageStoreError> {
         Ok(self
             .semantic_ir
             .generic_params_for_type_def(ty.def)?
             .map(|generics| subst_from_generics(generics, &ty.args))
-            .unwrap_or_else(TypeSubst::new))
+            .unwrap_or_else(IndexedTypeSubst::new))
     }
 
     fn local_function_return_ty(
@@ -784,7 +785,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             .map(|ty| {
                 // Receiver type args and impl self args both contribute substitutions. For
                 // `impl<U> Wrapper<U>`, this maps `U` to the known receiver argument.
-                let mut subst = self.local_type_subst(ty);
+                let mut subst = local_type_subst(self.body, ty);
                 subst.extend(
                     self.local_impl_matcher()
                         .local_impl_self_subst(function_ref, ty),
@@ -908,7 +909,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 /// The main resolver uses this during the fixed-point pass, and analysis reuses it for cursor
 /// queries over path prefixes. Keeping it read-only avoids cloning bodies just to answer
 /// goto-definition/type-at for `Type::assoc` or `Enum::Variant` segments.
-pub(super) struct BodyValuePathResolver<'query, 'db, 'body> {
+pub(crate) struct BodyValuePathResolver<'query, 'db, 'body> {
     def_map: &'query DefMapReadTxn<'db>,
     semantic_ir: &'query SemanticIrReadTxn<'db>,
     semantic_index: Option<&'query SemanticResolutionIndex>,
@@ -930,7 +931,7 @@ enum BodyLocalValueName {
 }
 
 impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
-    pub(super) fn new(
+    pub(crate) fn new(
         def_map: &'query DefMapReadTxn<'db>,
         semantic_ir: &'query SemanticIrReadTxn<'db>,
         semantic_index: Option<&'query SemanticResolutionIndex>,
@@ -954,7 +955,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         LocalImplMatcher::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
-    pub(super) fn resolve_nonlocal_path_expr(
+    pub(crate) fn resolve_nonlocal_path_expr(
         &self,
         scope: ScopeId,
         path: &Path,
@@ -1351,7 +1352,6 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             if local_function_applies_to_receiver(
                 self.def_map,
                 self.semantic_ir,
-                self.body_ref,
                 self.body,
                 function,
                 ty,

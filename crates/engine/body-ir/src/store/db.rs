@@ -98,11 +98,6 @@ impl BodyIrDb {
         stats
     }
 
-    /// Returns the number of package slots tracked by this snapshot.
-    pub fn package_count(&self) -> usize {
-        self.packages.len()
-    }
-
     /// Returns one resident package by package slot.
     pub fn resident_package(&self, package: PackageSlot) -> Option<&PackageBodies> {
         self.packages

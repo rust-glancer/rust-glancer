@@ -9,7 +9,7 @@ use rg_ir_model::{BindingId, BodyRef, ExprId, PatId, ScopeId, StmtId, TypeDefId}
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
-use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt};
+use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTypeSubst};
 
 use crate::{
     BodyItemKind,
@@ -23,7 +23,7 @@ use crate::{
 use super::{
     autoderef::BodyAutoderef,
     push_unique,
-    ty::{TypeSubst, local_type_subst, subst_from_generics, ty_from_type_ref_in_context},
+    ty::{local_type_subst, subst_from_generics, ty_from_type_ref_in_context},
     type_path::BodyTypePathResolver,
 };
 
@@ -309,7 +309,7 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
             .semantic_ir
             .generic_params_for_type_def(enum_ty.def)?
             .map(|generics| subst_from_generics(generics, &enum_ty.args))
-            .unwrap_or_else(TypeSubst::new);
+            .unwrap_or_else(IndexedTypeSubst::new);
 
         Ok(Some(ty_from_type_ref_in_context(
             self.def_map,

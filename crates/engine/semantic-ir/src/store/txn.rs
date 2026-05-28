@@ -13,7 +13,6 @@ use crate::ItemStore;
 use crate::{
     ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, PackageIr,
     SemanticTypePathResolution, StaticData, TraitData, TypeAliasData, TypePathContext, push_unique,
-    view::{SemanticItemData, SemanticItemView},
 };
 
 /// Read-only semantic IR access for one query transaction.
@@ -43,78 +42,6 @@ impl<'db> SemanticIrReadTxn<'db> {
             target_stores.extend(package?.targets().iter())
         }
         Ok(target_stores)
-    }
-
-    pub fn semantic_item_view(
-        &self,
-        item: SemanticItemRef,
-    ) -> Result<Option<SemanticItemView<'_>>, PackageStoreError> {
-        let Some(items) = self.items(item.target())? else {
-            return Ok(None);
-        };
-
-        // This is the semantic item boundary: callers can ask item-shaped questions without
-        // spreading the arena-family match into higher layers.
-        let data = match item {
-            SemanticItemRef::TypeDef(ty) => match ty.id {
-                TypeDefId::Struct(id) => {
-                    let Some(data) = items.struct_data(id) else {
-                        return Ok(None);
-                    };
-                    SemanticItemData::Struct(data)
-                }
-                TypeDefId::Union(id) => {
-                    let Some(data) = items.union_data(id) else {
-                        return Ok(None);
-                    };
-                    SemanticItemData::Union(data)
-                }
-                TypeDefId::Enum(id) => {
-                    let Some(data) = items.enum_data(id) else {
-                        return Ok(None);
-                    };
-                    SemanticItemData::Enum(data)
-                }
-            },
-            SemanticItemRef::Trait(trait_ref) => {
-                let Some(data) = items.trait_data(trait_ref.id) else {
-                    return Ok(None);
-                };
-                SemanticItemData::Trait(data)
-            }
-            SemanticItemRef::Impl(impl_ref) => {
-                let Some(data) = items.impl_data(impl_ref.id) else {
-                    return Ok(None);
-                };
-                SemanticItemData::Impl(data)
-            }
-            SemanticItemRef::Function(function_ref) => {
-                let Some(data) = items.function_data(function_ref.id) else {
-                    return Ok(None);
-                };
-                SemanticItemData::Function(data)
-            }
-            SemanticItemRef::TypeAlias(type_alias_ref) => {
-                let Some(data) = items.type_alias_data(type_alias_ref.id) else {
-                    return Ok(None);
-                };
-                SemanticItemData::TypeAlias(data)
-            }
-            SemanticItemRef::Const(const_ref) => {
-                let Some(data) = items.const_data(const_ref.id) else {
-                    return Ok(None);
-                };
-                SemanticItemData::Const(data)
-            }
-            SemanticItemRef::Static(static_ref) => {
-                let Some(data) = items.static_data(static_ref.id) else {
-                    return Ok(None);
-                };
-                SemanticItemData::Static(data)
-            }
-        };
-
-        Ok(Some(SemanticItemView::new(item, data)))
     }
 
     pub fn resolve_type_path(
@@ -294,22 +221,6 @@ impl<'db> SemanticIrReadTxn<'db> {
         Ok(Some(item.semantic_ref(def.target)))
     }
 
-    pub fn local_def_for_type_def(
-        &self,
-        ty: TypeDefRef,
-    ) -> Result<Option<LocalDefRef>, PackageStoreError> {
-        self.local_def_for_semantic_item(ty.into())
-    }
-
-    pub fn local_def_for_semantic_item(
-        &self,
-        item: SemanticItemRef,
-    ) -> Result<Option<LocalDefRef>, PackageStoreError> {
-        Ok(self
-            .semantic_item_view(item)?
-            .and_then(|view| view.local_def()))
-    }
-
     pub fn generic_params_for_type_def(
         &self,
         ty: TypeDefRef,
@@ -451,7 +362,15 @@ impl<'db> SemanticIrReadTxn<'db> {
     }
 
     pub fn fields_for_type(&self, ty: TypeDefRef) -> Result<Vec<FieldRef>, PackageStoreError> {
-        let Some(field_count) = self.field_count_for_type(ty)? else {
+        let Some(items) = self.items(ty.target)? else {
+            return Ok(Vec::new());
+        };
+        let maybe_field_count = match ty.id {
+            TypeDefId::Struct(id) => items.struct_data(id).map(|data| data.fields.fields().len()),
+            TypeDefId::Union(id) => items.union_data(id).map(|data| data.fields.len()),
+            TypeDefId::Enum(_) => None,
+        };
+        let Some(field_count) = maybe_field_count else {
             return Ok(Vec::new());
         };
 
@@ -705,18 +624,6 @@ impl<'db> SemanticIrReadTxn<'db> {
         }
 
         Ok(functions)
-    }
-
-    fn field_count_for_type(&self, ty: TypeDefRef) -> Result<Option<usize>, PackageStoreError> {
-        let Some(items) = self.items(ty.target)? else {
-            return Ok(None);
-        };
-        let field_count = match ty.id {
-            TypeDefId::Struct(id) => items.struct_data(id).map(|data| data.fields.fields().len()),
-            TypeDefId::Union(id) => items.union_data(id).map(|data| data.fields.len()),
-            TypeDefId::Enum(_) => None,
-        };
-        Ok(field_count)
     }
 
     fn impl_refs(&self) -> Result<Vec<ImplRef>, PackageStoreError> {

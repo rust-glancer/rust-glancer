@@ -7,13 +7,17 @@ use rg_ir_model::{
     TraitApplicability, TraitImplRef,
 };
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
-use rg_semantic_ir::SemanticIrReadTxn;
-use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy};
+use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
+use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTypeSubst};
 
 use crate::{
     BindingData, BodyData, BodyDeclarationView, BodyEnumVariantData, BodyFieldData,
     BodyFunctionData, BodyResolution, BodyTypePathResolution, PackageBodies, TargetBodies,
-    resolution, view::BodyDeclarationData,
+    resolution::{
+        self, BodyImplMatcher, BodyTypePathResolver, BodyValuePathResolver,
+        ty_from_type_ref_in_context,
+    },
+    view::BodyDeclarationData,
 };
 
 /// Read-only Body IR access for one query transaction.
@@ -37,24 +41,6 @@ impl<'db> BodyIrReadTxn<'db> {
     ) -> Result<Option<&TargetBodies>, PackageStoreError> {
         let package = self.package(target.package)?;
         Ok(package.target(target.target))
-    }
-
-    /// Returns the body associated with a semantic function, if that function has a body.
-    pub fn body_for_function(
-        &self,
-        function: FunctionRef,
-    ) -> Result<Option<BodyRef>, PackageStoreError> {
-        let Some(target_bodies) = self.target_bodies(function.target)? else {
-            return Ok(None);
-        };
-        let Some(body) = target_bodies.body_for_function(function.id) else {
-            return Ok(None);
-        };
-
-        Ok(Some(BodyRef {
-            target: function.target,
-            body,
-        }))
     }
 
     /// Returns one body by project-wide body reference.
@@ -109,7 +95,12 @@ impl<'db> BodyIrReadTxn<'db> {
         path: &Path,
     ) -> Result<BodyTypePathResolution, PackageStoreError> {
         let body = self.body_data(body_ref)?;
-        resolution::resolve_type_path_in_scope(body, def_map, semantic_ir, body_ref, scope, path)
+        let Some(body) = body else {
+            return Ok(BodyTypePathResolution::Unknown);
+        };
+
+        BodyTypePathResolver::new(def_map, semantic_ir, body_ref, body)
+            .resolve_in_scope(scope, path)
     }
 
     /// Resolves a value path from a body-local lexical scope.
@@ -125,7 +116,12 @@ impl<'db> BodyIrReadTxn<'db> {
         path: &Path,
     ) -> Result<(BodyResolution, IndexedTy), PackageStoreError> {
         let body = self.body_data(body_ref)?;
-        resolution::resolve_value_path_in_scope(body, def_map, semantic_ir, body_ref, scope, path)
+        let Some(body) = body else {
+            return Ok((BodyResolution::Unknown, IndexedTy::Unknown));
+        };
+
+        BodyValuePathResolver::new(def_map, semantic_ir, None, body_ref, body)
+            .resolve_nonlocal_path_expr(scope, path)
     }
 
     /// Converts one Semantic IR field declaration type into Body IR's small type vocabulary.
@@ -135,7 +131,19 @@ impl<'db> BodyIrReadTxn<'db> {
         semantic_ir: &SemanticIrReadTxn<'db>,
         field_ref: FieldRef,
     ) -> Result<Option<IndexedTy>, PackageStoreError> {
-        resolution::ty_for_field(def_map, semantic_ir, field_ref)
+        // Field declarations live in Semantic IR, but Analysis expects Body IR's small type
+        // vocabulary. Use the owning module as the type-path context for the field signature.
+        let Some(field_data) = semantic_ir.field_data(field_ref)? else {
+            return Ok(None);
+        };
+        Ok(Some(ty_from_type_ref_in_context(
+            def_map,
+            semantic_ir,
+            &field_data.field.ty,
+            TypePathContext::module(field_data.owner_module),
+            IndexedTy::Unknown,
+            &IndexedTypeSubst::new(),
+        )?))
     }
 
     /// Checks whether a semantic function is a plausible method candidate for a receiver type.
@@ -162,9 +170,11 @@ impl<'db> BodyIrReadTxn<'db> {
         receiver_ty: &IndexedNominalTy,
     ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
         resolution::semantic_trait_function_candidates_for_receiver(
+            None,
             def_map,
             semantic_ir,
             receiver_ty,
+            None,
         )
     }
 
@@ -176,12 +186,9 @@ impl<'db> BodyIrReadTxn<'db> {
         trait_impl: TraitImplRef,
         receiver_ty: &IndexedNominalTy,
     ) -> Result<bool, PackageStoreError> {
-        resolution::semantic_trait_impl_applies_to_receiver(
-            def_map,
-            semantic_ir,
-            trait_impl,
-            receiver_ty,
-        )
+        Ok(BodyImplMatcher::new(def_map, semantic_ir)
+            .semantic_trait_impl_applicability(trait_impl, receiver_ty)?
+            .is_applicable())
     }
 
     /// Checks whether a body-local function is a plausible method candidate for a receiver type.
@@ -192,11 +199,13 @@ impl<'db> BodyIrReadTxn<'db> {
         function_ref: BodyFunctionRef,
         receiver_ty: &IndexedLocalNominalTy,
     ) -> Result<bool, PackageStoreError> {
-        let body = self.body_data(function_ref.body)?;
+        let Some(body) = self.body_data(function_ref.body)? else {
+            return Ok(false);
+        };
         resolution::local_function_applies_to_receiver(
-            body,
             def_map,
             semantic_ir,
+            body,
             function_ref,
             receiver_ty,
         )

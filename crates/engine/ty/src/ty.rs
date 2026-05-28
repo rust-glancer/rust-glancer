@@ -7,6 +7,7 @@ use crate::{PrimitiveTy, RefMutability};
 pub trait TypeRepr: Shrink {}
 
 /// Mapping from a generic type parameter name to the concrete type known at a use site.
+// TODO: Probably deserves more than an alias?
 pub type TypeSubst<R> = Vec<(Name, Ty<R>)>;
 
 /// Small type vocabulary shared by IR layers.

@@ -81,6 +81,7 @@ pub enum PatKind {
 /// Binding mode written on an identifier pattern.
 #[derive(
     Debug,
+    Default,
     Clone,
     Copy,
     PartialEq,
@@ -93,13 +94,6 @@ pub enum PatKind {
 pub struct PatBindingMode {
     pub by_ref: bool,
     pub mutable: bool,
-}
-
-impl PatBindingMode {
-    pub const DEFAULT: Self = Self {
-        by_ref: false,
-        mutable: false,
-    };
 }
 
 /// Mutability written on a reference pattern.

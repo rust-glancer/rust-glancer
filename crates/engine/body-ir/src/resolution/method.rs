@@ -4,7 +4,7 @@
 //! `impl_match` so receiver-based resolution can share it.
 
 use rg_def_map::DefMapReadTxn;
-use rg_ir_model::{BodyFunctionRef, BodyRef, FunctionRef, TraitApplicability};
+use rg_ir_model::{BodyFunctionRef, FunctionRef, TraitApplicability};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy};
@@ -16,7 +16,7 @@ use super::{
     impl_match::{BodyImplMatcher, LocalImplMatcher},
 };
 
-pub(super) fn semantic_function_applies_to_receiver(
+pub(crate) fn semantic_function_applies_to_receiver(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     function_ref: FunctionRef,
@@ -26,7 +26,7 @@ pub(super) fn semantic_function_applies_to_receiver(
         .semantic_function_applies_to_receiver(function_ref, receiver_ty)
 }
 
-pub(super) fn semantic_trait_function_candidates_for_receiver(
+pub(crate) fn semantic_trait_function_candidates_for_receiver(
     index: Option<&SemanticResolutionIndex>,
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
@@ -97,15 +97,14 @@ pub(super) fn semantic_trait_function_candidates_for_receiver(
     Ok(functions)
 }
 
-pub(super) fn local_function_applies_to_receiver(
+pub(crate) fn local_function_applies_to_receiver(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    body_ref: BodyRef,
     body: &BodyData,
     function_ref: BodyFunctionRef,
     receiver_ty: &IndexedLocalNominalTy,
 ) -> Result<bool, PackageStoreError> {
-    LocalImplMatcher::new(def_map, semantic_ir, body_ref, body)
+    LocalImplMatcher::new(def_map, semantic_ir, function_ref.body, body)
         .local_function_applies_to_receiver(function_ref, receiver_ty)
 }
 

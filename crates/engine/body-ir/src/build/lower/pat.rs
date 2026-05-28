@@ -317,7 +317,7 @@ impl FunctionBodyLowering<'_> {
         self.builder.alloc_pat(PatData {
             source: self.source(syntax),
             kind: PatKind::Binding {
-                mode: PatBindingMode::DEFAULT,
+                mode: PatBindingMode::default(),
                 binding,
                 subpat: None,
                 path: None,

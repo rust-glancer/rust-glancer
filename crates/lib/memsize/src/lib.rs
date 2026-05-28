@@ -8,8 +8,11 @@ use std::{any, collections::BTreeMap, mem};
 mod default_impls;
 #[cfg(feature = "ls_types")]
 mod ls_types_impls;
+mod shrink;
 #[cfg(test)]
 mod tests;
+
+pub use self::shrink::Shrink;
 
 #[cfg(feature = "derive")]
 pub use rg_memsize_derive::MemorySize;
@@ -43,15 +46,6 @@ pub trait MemorySize {
         self.record_memory_size(&mut recorder);
         recorder.total_bytes()
     }
-}
-
-/// Releases spare heap capacity retained inside a value.
-///
-/// This is intentionally separate from `MemorySize`: some generic data models need to ask their
-/// embedded storage-specific values to compact themselves without also knowing how those values
-/// report memory usage.
-pub trait Shrink {
-    fn shrink_to_fit(&mut self);
 }
 
 /// Records memory children for named fields under scopes matching their field names.

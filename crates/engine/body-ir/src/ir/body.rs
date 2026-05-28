@@ -1,7 +1,7 @@
 use rg_arena::Arena;
 use rg_ir_model::{
     BindingId, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId, BodyItemRef,
-    BodyRef, BodyValueItemId, ExprId, FunctionId, FunctionRef, ModuleRef, PatId, ScopeId, StmtId,
+    BodyRef, BodyValueItemId, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, StmtId,
 };
 use rg_parse::{FileId, Span, TargetId};
 
@@ -82,41 +82,26 @@ impl PackageBodies {
 )]
 pub struct TargetBodies {
     pub(crate) status: TargetBodiesStatus,
-    pub(crate) function_bodies: Arena<FunctionId, Option<BodyId>>,
     pub(crate) bodies: Arena<BodyId, BodyData>,
 }
 
 impl TargetBodies {
-    pub(crate) fn new(function_count: usize) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             status: TargetBodiesStatus::Built,
-            function_bodies: {
-                let mut function_bodies = Arena::new();
-                function_bodies.resize_with(function_count, || None);
-                function_bodies
-            },
             bodies: Arena::new(),
         }
     }
 
-    pub(crate) fn skipped(function_count: usize) -> Self {
+    pub(crate) fn skipped() -> Self {
         Self {
             status: TargetBodiesStatus::Skipped,
-            function_bodies: {
-                let mut function_bodies = Arena::new();
-                function_bodies.resize_with(function_count, || None);
-                function_bodies
-            },
             bodies: Arena::new(),
         }
     }
 
     pub fn status(&self) -> TargetBodiesStatus {
         self.status
-    }
-
-    pub fn body_for_function(&self, function: FunctionId) -> Option<BodyId> {
-        self.function_bodies.get(function).copied().flatten()
     }
 
     pub fn body(&self, body: BodyId) -> Option<&BodyData> {
@@ -127,8 +112,15 @@ impl TargetBodies {
         self.bodies.as_slice()
     }
 
+    pub(crate) fn alloc_body(&mut self, data: BodyData) {
+        self.bodies.alloc(data);
+    }
+
+    pub(crate) fn bodies_mut(&mut self) -> &mut [BodyData] {
+        self.bodies.as_mut_slice()
+    }
+
     fn shrink_to_fit(&mut self) {
-        self.function_bodies.shrink_to_fit();
         self.bodies.shrink_to_fit();
         for body in self.bodies.iter_mut() {
             body.shrink_to_fit();
@@ -154,24 +146,6 @@ pub enum TargetBodiesStatus {
     Built,
     #[display("skipped")]
     Skipped,
-}
-
-impl TargetBodies {
-    pub(crate) fn alloc_body(&mut self, data: BodyData) -> BodyId {
-        self.bodies.alloc(data)
-    }
-
-    pub(crate) fn set_function_body(&mut self, function: FunctionId, body: BodyId) {
-        let slot = self
-            .function_bodies
-            .get_mut(function)
-            .expect("function body slot should exist while building body IR");
-        *slot = Some(body);
-    }
-
-    pub(crate) fn bodies_mut(&mut self) -> &mut [BodyData] {
-        self.bodies.as_mut_slice()
-    }
 }
 
 /// Lowered body for one function.

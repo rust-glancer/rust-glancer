@@ -35,9 +35,8 @@ impl<'a> TargetLowering<'a> {
 
     /// Lowers the target in file-sized batches so syntax is only live for one source file at a time.
     ///
-    /// Semantic IR already gives us stable function slots, so this temporary work list can be
-    /// reordered freely: lowered bodies are written back through `FunctionRef`, not through the
-    /// iteration order.
+    /// Body IDs are assigned in lowering order, not from Semantic IR function IDs.
+    /// Resolve a body by inspecting `BodyData::owner`; never cast `FunctionId` to `BodyId`.
     fn lower_selected_functions_by_file(&mut self) -> anyhow::Result<()> {
         let mut functions = self
             .functions
@@ -112,9 +111,7 @@ impl<'a> TargetLowering<'a> {
                 self.interner,
             )
             .lower(ast_fn, body_ast);
-            let body_id = self.target_bodies.alloc_body(body);
-            self.target_bodies
-                .set_function_body(function_ref.id, body_id);
+            self.target_bodies.alloc_body(body);
         }
 
         Ok(())

@@ -198,7 +198,10 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     fn semantic_item(&self, item: SemanticItemRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(view) = self.db.semantic_ir.semantic_item_view(item)? else {
+        let Some(items) = self.db.semantic_ir.items(item.target())? else {
+            return Ok(None);
+        };
+        let Some(view) = items.semantic_item_view(item) else {
             return Ok(None);
         };
 
