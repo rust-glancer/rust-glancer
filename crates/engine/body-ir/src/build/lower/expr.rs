@@ -15,8 +15,8 @@ use rg_ty::IndexedTy;
 
 use crate::ir::{
     BindingData, BindingKind, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
-    ExprBinaryOp, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LiteralKind,
-    MatchArmData, RecordExprField, RecordExprSpread,
+    ExprBinaryOp, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LiteralKind, MatchArmData,
+    RecordExprField, RecordExprSpread,
 };
 
 use super::function::FunctionBodyLowering;

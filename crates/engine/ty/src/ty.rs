@@ -29,15 +29,6 @@ where
     Unknown,
 }
 
-impl<R> Default for Ty<R>
-where
-    R: TypeRepr,
-{
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
-
 impl<R> Ty<R>
 where
     R: TypeRepr,

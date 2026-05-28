@@ -109,9 +109,9 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         Ok(self
             .db
             .semantic_ir
-            .materialize_included_target_irs()?
+            .included_stores()?
             .into_iter()
-            .map(|(target, _)| target)
+            .map(|store| store.target_ref()) // TODO: smell -- can't we use item stores down the line?
             .collect())
     }
 
@@ -148,8 +148,12 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         target: TargetRef,
         file_id: Option<FileId>,
     ) -> anyhow::Result<Vec<IndexedItem>> {
+        let Some(store) = self.db.semantic_ir.items(target)? else {
+            return Ok(Vec::new());
+        };
+
         let mut items = Vec::new();
-        for item in self.db.semantic_ir.semantic_items(target)? {
+        for item in store.semantic_items() {
             if item.module_owner().is_none() {
                 continue;
             }

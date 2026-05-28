@@ -3,8 +3,8 @@
 use rg_def_map::{DefMapReadTxn, PackageSlot, Path};
 use rg_ir_model::{
     BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef,
-    BodyImplRef, BodyItemRef, BodyRef, BodyValueItemRef, FieldRef, FunctionRef, ScopeId,
-    TargetRef, TraitApplicability, TraitImplRef,
+    BodyImplRef, BodyItemRef, BodyRef, BodyValueItemRef, FieldRef, FunctionRef, ScopeId, TargetRef,
+    TraitApplicability, TraitImplRef,
 };
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 use rg_semantic_ir::SemanticIrReadTxn;

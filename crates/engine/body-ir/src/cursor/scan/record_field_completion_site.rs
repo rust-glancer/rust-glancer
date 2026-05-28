@@ -9,8 +9,7 @@ use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
 use crate::{
-    BodyData, BodyIrReadTxn, BodyPath, ExprKind, PatData, PatKind, RecordExprField,
-    RecordPatField,
+    BodyData, BodyIrReadTxn, BodyPath, ExprKind, PatData, PatKind, RecordExprField, RecordPatField,
 };
 
 use super::{super::RecordFieldCompletionSite, sites::BodyScanSites};

@@ -114,7 +114,23 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_structs(&mut self) -> Result<(), PackageStoreError> {
-        for (ty, data) in self.semantic_ir.structs(self.target)? {
+        let target = self.target;
+        for (ty, data) in self
+            .semantic_ir
+            .items(target)?
+            .into_iter()
+            .flat_map(move |items| {
+                items.structs.iter_with_ids().map(move |(id, data)| {
+                    (
+                        TypeDefRef {
+                            target,
+                            id: TypeDefId::Struct(id),
+                        },
+                        data,
+                    )
+                })
+            })
+        {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -127,7 +143,23 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_unions(&mut self) -> Result<(), PackageStoreError> {
-        for (ty, data) in self.semantic_ir.unions(self.target)? {
+        let target = self.target;
+        for (ty, data) in self
+            .semantic_ir
+            .items(target)?
+            .into_iter()
+            .flat_map(move |items| {
+                items.unions.iter_with_ids().map(move |(id, data)| {
+                    (
+                        TypeDefRef {
+                            target,
+                            id: TypeDefId::Union(id),
+                        },
+                        data,
+                    )
+                })
+            })
+        {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -149,7 +181,23 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_enums(&mut self) -> Result<(), PackageStoreError> {
-        for (ty, data) in self.semantic_ir.enums(self.target)? {
+        let target = self.target;
+        for (ty, data) in self
+            .semantic_ir
+            .items(target)?
+            .into_iter()
+            .flat_map(move |items| {
+                items.enums.iter_with_ids().map(move |(id, data)| {
+                    (
+                        TypeDefRef {
+                            target,
+                            id: TypeDefId::Enum(id),
+                        },
+                        data,
+                    )
+                })
+            })
+        {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -175,7 +223,11 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_traits(&mut self) -> Result<(), PackageStoreError> {
-        for (_, data) in self.semantic_ir.traits(self.target)? {
+        let Some(items) = self.semantic_ir.items(self.target)? else {
+            return Ok(());
+        };
+
+        for data in &items.traits {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -188,7 +240,11 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_impls(&mut self) -> Result<(), PackageStoreError> {
-        for (impl_ref, data) in self.semantic_ir.impls(self.target)? {
+        let Some(items) = self.semantic_ir.items(self.target)? else {
+            return Ok(());
+        };
+
+        for (impl_ref, data) in items.impls_with_refs() {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -206,7 +262,11 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_functions(&mut self) -> Result<(), PackageStoreError> {
-        for (function_ref, data) in self.semantic_ir.functions(self.target)? {
+        let Some(items) = self.semantic_ir.items(self.target)? else {
+            return Ok(());
+        };
+
+        for (function_ref, data) in items.functions_with_refs() {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -234,7 +294,12 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_type_aliases(&mut self) -> Result<(), PackageStoreError> {
-        for (_, data) in self.semantic_ir.type_aliases(self.target)? {
+        for data in self
+            .semantic_ir
+            .items(self.target)?
+            .into_iter()
+            .flat_map(move |items| items.type_aliases.iter())
+        {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -254,7 +319,12 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_consts(&mut self) -> Result<(), PackageStoreError> {
-        for (_, data) in self.semantic_ir.consts(self.target)? {
+        for data in self
+            .semantic_ir
+            .items(self.target)?
+            .into_iter()
+            .flat_map(move |items| items.consts.iter())
+        {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -270,7 +340,12 @@ impl SignatureCursorScanner<'_, '_> {
     }
 
     fn scan_statics(&mut self) -> Result<(), PackageStoreError> {
-        for (_, data) in self.semantic_ir.statics(self.target)? {
+        for data in self
+            .semantic_ir
+            .items(self.target)?
+            .into_iter()
+            .flat_map(move |items| items.statics.iter())
+        {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }

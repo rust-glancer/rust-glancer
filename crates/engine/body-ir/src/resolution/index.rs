@@ -31,10 +31,10 @@ impl SemanticResolutionIndex {
 
         // The index mirrors Semantic IR's broad lookup helpers, but pays the package-wide scan
         // once up front instead of once per method expression.
-        for (target, _) in semantic_ir.materialize_included_target_irs()? {
+        for store in semantic_ir.included_stores()? {
             // Trait methods are independent of a receiver type, so we can cache them by trait
             // before processing impls that will later point back to these traits.
-            for (trait_ref, trait_data) in semantic_ir.traits(target)? {
+            for (trait_ref, trait_data) in store.traits_with_refs() {
                 let functions = index.trait_functions_by_trait.entry(trait_ref).or_default();
                 index
                     .trait_functions_by_trait_and_name
@@ -65,7 +65,7 @@ impl SemanticResolutionIndex {
             // Semantic IR has already resolved impl headers into possible `Self` types. The index
             // preserves that optimistic shape: ambiguous impls are attached to every resolved self
             // type, and the later applicability check still decides whether each candidate fits.
-            for (impl_ref, impl_data) in semantic_ir.impls(target)? {
+            for (impl_ref, impl_data) in store.impls_with_refs() {
                 if impl_data.trait_ref.is_none() {
                     for self_ty in &impl_data.resolved_self_tys {
                         push_unique(

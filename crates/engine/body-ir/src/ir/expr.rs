@@ -6,11 +6,7 @@ use rg_parse::Span;
 use rg_text::Name;
 use rg_ty::IndexedTy;
 
-use super::{
-    body::BodySource,
-    path::BodyPath,
-    resolved::BodyResolution,
-};
+use super::{body::BodySource, path::BodyPath, resolved::BodyResolution};
 
 /// One lowered expression.
 #[derive(

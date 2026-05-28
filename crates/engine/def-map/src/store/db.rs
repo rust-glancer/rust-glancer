@@ -1,7 +1,7 @@
 //! Def-map package store and transaction entry points.
 
-use rg_item_tree::ItemTreeDb;
 use rg_ir_model::TargetRef;
+use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_parse::{self, TargetId};
 use rg_text::PackageNameInterners;

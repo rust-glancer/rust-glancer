@@ -6,12 +6,12 @@
 
 use anyhow::{Context as _, Result};
 
+use rg_ir_model::{DefId, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_item_tree::{
     Documentation, ExternCrateItem, ImportAlias, ItemKind, ItemTreeId, ItemTreeRef,
     MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleItem,
     ModuleSource, Package as ItemTreePackage, UseImport, UseItem, VisibilityLevel,
 };
-use rg_ir_model::{DefId, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_parse::FileId;
 use rg_text::Name;
 

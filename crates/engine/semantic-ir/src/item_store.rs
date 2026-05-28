@@ -1,12 +1,13 @@
 use rg_arena::Arena;
 use rg_ir_model::{
-    ConstId, EnumId, FunctionId, ImplId, ItemId, LocalDefId, StaticId, StructId, TraitId,
-    TypeAliasId, UnionId,
+    ConstId, ConstRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, LocalDefId,
+    StaticId, StaticRef, StructId, TargetRef, TraitId, TraitRef, TypeAliasId, TypeAliasRef,
+    TypeDefId, TypeDefRef, UnionId,
 };
 
 use crate::{
-    ConstData, EnumData, FunctionData, ImplData, StaticData, StructData, TraitData, TypeAliasData,
-    UnionData,
+    ConstData, EnumData, FunctionData, ImplData, SemanticItemView, StaticData, StructData,
+    TraitData, TypeAliasData, UnionData, view::SemanticItemData,
 };
 
 /// Target-local storage for semantic items.
@@ -17,6 +18,9 @@ use crate::{
     Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
 )]
 pub struct ItemStore {
+    // Target this item store corresponds to
+    target_ref: TargetRef,
+
     // Mapping from local def ID to semantic item ID.
     pub(crate) local_items: Arena<LocalDefId, Option<ItemId>>,
 
@@ -32,8 +36,9 @@ pub struct ItemStore {
 }
 
 impl ItemStore {
-    pub(crate) fn new(local_def_count: usize) -> Self {
+    pub(crate) fn new(target_ref: TargetRef, local_def_count: usize) -> Self {
         Self {
+            target_ref,
             local_items: {
                 let mut local_items = Arena::new();
                 local_items.resize_with(local_def_count, || None);
@@ -51,6 +56,10 @@ impl ItemStore {
         }
     }
 
+    pub fn target_ref(&self) -> TargetRef {
+        self.target_ref
+    }
+
     /// Returns the semantic item lowered from one DefMap local definition.
     pub fn item_for_local_def(&self, local_def: LocalDefId) -> Option<ItemId> {
         self.local_items.get(local_def).copied().flatten()
@@ -62,6 +71,42 @@ impl ItemStore {
             .get_mut(local_def)
             .expect("local item slot should exist while building semantic IR");
         *slot = Some(item);
+    }
+
+    pub fn traits_with_refs(&self) -> impl Iterator<Item = (TraitRef, &TraitData)> {
+        self.traits.iter_with_ids().map(move |(id, data)| {
+            (
+                TraitRef {
+                    target: self.target_ref,
+                    id,
+                },
+                data,
+            )
+        })
+    }
+
+    pub fn impls_with_refs(&self) -> impl Iterator<Item = (ImplRef, &ImplData)> {
+        self.impls.iter_with_ids().map(move |(id, data)| {
+            (
+                ImplRef {
+                    target: self.target_ref,
+                    id,
+                },
+                data,
+            )
+        })
+    }
+
+    pub fn functions_with_refs(&self) -> impl Iterator<Item = (FunctionRef, &FunctionData)> {
+        self.functions.iter_with_ids().map(move |(id, data)| {
+            (
+                FunctionRef {
+                    target: self.target_ref,
+                    id,
+                },
+                data,
+            )
+        })
     }
 
     pub fn struct_data(&self, id: StructId) -> Option<&StructData> {
@@ -140,39 +185,73 @@ impl ItemStore {
         }
     }
 
-    pub(crate) fn alloc_struct(&mut self, data: StructData) -> StructId {
-        self.structs.alloc(data)
-    }
-
-    pub(crate) fn alloc_union(&mut self, data: UnionData) -> UnionId {
-        self.unions.alloc(data)
-    }
-
-    pub(crate) fn alloc_enum(&mut self, data: EnumData) -> EnumId {
-        self.enums.alloc(data)
-    }
-
-    pub(crate) fn alloc_trait(&mut self, data: TraitData) -> TraitId {
-        self.traits.alloc(data)
-    }
-
-    pub(crate) fn alloc_impl(&mut self, data: ImplData) -> ImplId {
-        self.impls.alloc(data)
-    }
-
-    pub(crate) fn alloc_function(&mut self, data: FunctionData) -> FunctionId {
-        self.functions.alloc(data)
-    }
-
-    pub(crate) fn alloc_type_alias(&mut self, data: TypeAliasData) -> TypeAliasId {
-        self.type_aliases.alloc(data)
-    }
-
-    pub(crate) fn alloc_const(&mut self, data: ConstData) -> ConstId {
-        self.consts.alloc(data)
-    }
-
-    pub(crate) fn alloc_static(&mut self, data: StaticData) -> StaticId {
-        self.statics.alloc(data)
+    pub fn semantic_items(&self) -> impl Iterator<Item = SemanticItemView<'_>> {
+        let target = self.target_ref;
+        // TODO: data should contain necessary refs inside
+        self.structs
+            .iter_with_ids()
+            .map(move |(id, data)| {
+                SemanticItemView::new(
+                    TypeDefRef {
+                        target,
+                        id: TypeDefId::Struct(id),
+                    }
+                    .into(),
+                    SemanticItemData::Struct(data),
+                )
+            })
+            .chain(self.unions.iter_with_ids().map(move |(id, data)| {
+                SemanticItemView::new(
+                    TypeDefRef {
+                        target,
+                        id: TypeDefId::Union(id),
+                    }
+                    .into(),
+                    SemanticItemData::Union(data),
+                )
+            }))
+            .chain(self.enums.iter_with_ids().map(move |(id, data)| {
+                SemanticItemView::new(
+                    TypeDefRef {
+                        target,
+                        id: TypeDefId::Enum(id),
+                    }
+                    .into(),
+                    SemanticItemData::Enum(data),
+                )
+            }))
+            .chain(self.traits.iter_with_ids().map(move |(id, data)| {
+                SemanticItemView::new(
+                    TraitRef { target, id }.into(),
+                    SemanticItemData::Trait(data),
+                )
+            }))
+            .chain(self.impls.iter_with_ids().map(move |(id, data)| {
+                SemanticItemView::new(ImplRef { target, id }.into(), SemanticItemData::Impl(data))
+            }))
+            .chain(self.functions.iter_with_ids().map(move |(id, data)| {
+                SemanticItemView::new(
+                    FunctionRef { target, id }.into(),
+                    SemanticItemData::Function(data),
+                )
+            }))
+            .chain(self.type_aliases.iter_with_ids().map(move |(id, data)| {
+                SemanticItemView::new(
+                    TypeAliasRef { target, id }.into(),
+                    SemanticItemData::TypeAlias(data),
+                )
+            }))
+            .chain(self.consts.iter_with_ids().map(move |(id, data)| {
+                SemanticItemView::new(
+                    ConstRef { target, id }.into(),
+                    SemanticItemData::Const(data),
+                )
+            }))
+            .chain(self.statics.iter_with_ids().map(move |(id, data)| {
+                SemanticItemView::new(
+                    StaticRef { target, id }.into(),
+                    SemanticItemData::Static(data),
+                )
+            }))
     }
 }

@@ -9,10 +9,7 @@ use rg_ir_model::{DefId, ModuleRef, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{
-    DefMap, DefMapReadTxn, ImportSourcePath, Path,
-    query::path_resolution,
-};
+use crate::{DefMap, DefMapReadTxn, ImportSourcePath, Path, query::path_resolution};
 
 /// Source site selected for a qualified import-path completion query.
 #[derive(Debug, Clone, PartialEq, Eq)]

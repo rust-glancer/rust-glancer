@@ -205,12 +205,14 @@ fn build_package_with_interner(
             package,
             target: TargetId(target_idx),
         };
-        let functions = semantic_ir
-            .functions(target_ref)
+        let store = semantic_ir
+            .items(target_ref)
             .with_context(|| {
                 format!("while attempting to fetch semantic IR functions for target {target_idx}")
             })?
-            .into_iter()
+            .context("store must be present")?;
+        let functions = store
+            .functions_with_refs()
             .map(|(function_ref, function)| (function_ref, function.source.file_id, function.span))
             .collect::<Vec<_>>();
         let function_count = functions.len();

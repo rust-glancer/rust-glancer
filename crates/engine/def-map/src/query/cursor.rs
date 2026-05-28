@@ -9,9 +9,7 @@ use rg_parse::{FileId, Span};
 
 use rg_package_store::PackageStoreError;
 
-use crate::{
-    DefMap, DefMapReadTxn, ModuleOrigin, Path,
-};
+use crate::{DefMap, DefMapReadTxn, ModuleOrigin, Path};
 
 /// One def-map source node that can participate in cursor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]

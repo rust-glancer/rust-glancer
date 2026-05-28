@@ -8,13 +8,11 @@ use rg_ir_model::{
 use rg_ir_model::{DefId, LocalDefRef, ModuleRef, TargetRef};
 use rg_item_tree::FieldKey;
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
-use rg_parse::TargetId;
 
 use crate::ItemStore;
 use crate::{
     ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, PackageIr,
-    SemanticTypePathResolution, StaticData, StructData, TraitData, TypeAliasData, TypePathContext,
-    UnionData, push_unique,
+    SemanticTypePathResolution, StaticData, TraitData, TypeAliasData, TypePathContext, push_unique,
     view::{SemanticItemData, SemanticItemView},
 };
 
@@ -38,284 +36,13 @@ impl<'db> SemanticIrReadTxn<'db> {
         Ok(package.target(target.target))
     }
 
-    pub fn materialize_included_target_irs(
-        &self,
-    ) -> Result<Vec<(TargetRef, &ItemStore)>, PackageStoreError> {
-        let target_irs = self
-            .packages
-            .materialize_included_packages_with_slots()?
-            .into_iter()
-            .flat_map(|(package_slot, package)| {
-                package
-                    .targets()
-                    .iter()
-                    .enumerate()
-                    .map(move |(target_idx, items)| {
-                        (
-                            TargetRef {
-                                package: package_slot,
-                                target: TargetId(target_idx),
-                            },
-                            items,
-                        )
-                    })
-            })
-            .collect::<Vec<_>>();
+    pub fn included_stores(&self) -> Result<Vec<&ItemStore>, PackageStoreError> {
+        let mut target_stores = Vec::new();
 
-        Ok(target_irs)
-    }
-
-    pub fn structs(
-        &self,
-        target: TargetRef,
-    ) -> Result<Vec<(TypeDefRef, &StructData)>, PackageStoreError> {
-        let structs = self
-            .items(target)?
-            .into_iter()
-            .flat_map(move |items| {
-                items.structs.iter_with_ids().map(move |(id, data)| {
-                    (
-                        TypeDefRef {
-                            target,
-                            id: TypeDefId::Struct(id),
-                        },
-                        data,
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
-
-        Ok(structs)
-    }
-
-    pub fn unions(
-        &self,
-        target: TargetRef,
-    ) -> Result<Vec<(TypeDefRef, &UnionData)>, PackageStoreError> {
-        let unions = self
-            .items(target)?
-            .into_iter()
-            .flat_map(move |items| {
-                items.unions.iter_with_ids().map(move |(id, data)| {
-                    (
-                        TypeDefRef {
-                            target,
-                            id: TypeDefId::Union(id),
-                        },
-                        data,
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
-
-        Ok(unions)
-    }
-
-    pub fn enums(
-        &self,
-        target: TargetRef,
-    ) -> Result<Vec<(TypeDefRef, &EnumData)>, PackageStoreError> {
-        let enums = self
-            .items(target)?
-            .into_iter()
-            .flat_map(move |items| {
-                items.enums.iter_with_ids().map(move |(id, data)| {
-                    (
-                        TypeDefRef {
-                            target,
-                            id: TypeDefId::Enum(id),
-                        },
-                        data,
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
-
-        Ok(enums)
-    }
-
-    pub fn traits(
-        &self,
-        target: TargetRef,
-    ) -> Result<Vec<(TraitRef, &TraitData)>, PackageStoreError> {
-        let traits = self
-            .items(target)?
-            .into_iter()
-            .flat_map(move |items| {
-                items
-                    .traits
-                    .iter_with_ids()
-                    .map(move |(id, data)| (TraitRef { target, id }, data))
-            })
-            .collect::<Vec<_>>();
-
-        Ok(traits)
-    }
-
-    pub fn impls(&self, target: TargetRef) -> Result<Vec<(ImplRef, &ImplData)>, PackageStoreError> {
-        let impls = self
-            .items(target)?
-            .into_iter()
-            .flat_map(move |items| {
-                items
-                    .impls
-                    .iter_with_ids()
-                    .map(move |(id, data)| (ImplRef { target, id }, data))
-            })
-            .collect::<Vec<_>>();
-
-        Ok(impls)
-    }
-
-    pub fn functions(
-        &self,
-        target: TargetRef,
-    ) -> Result<Vec<(FunctionRef, &FunctionData)>, PackageStoreError> {
-        let functions = self
-            .items(target)?
-            .into_iter()
-            .flat_map(move |items| {
-                items
-                    .functions
-                    .iter_with_ids()
-                    .map(move |(id, data)| (FunctionRef { target, id }, data))
-            })
-            .collect::<Vec<_>>();
-
-        Ok(functions)
-    }
-
-    pub fn type_aliases(
-        &self,
-        target: TargetRef,
-    ) -> Result<Vec<(TypeAliasRef, &TypeAliasData)>, PackageStoreError> {
-        let aliases = self
-            .items(target)?
-            .into_iter()
-            .flat_map(move |items| {
-                items
-                    .type_aliases
-                    .iter_with_ids()
-                    .map(move |(id, data)| (TypeAliasRef { target, id }, data))
-            })
-            .collect::<Vec<_>>();
-
-        Ok(aliases)
-    }
-
-    pub fn consts(
-        &self,
-        target: TargetRef,
-    ) -> Result<Vec<(ConstRef, &ConstData)>, PackageStoreError> {
-        let consts = self
-            .items(target)?
-            .into_iter()
-            .flat_map(move |items| {
-                items
-                    .consts
-                    .iter_with_ids()
-                    .map(move |(id, data)| (ConstRef { target, id }, data))
-            })
-            .collect::<Vec<_>>();
-
-        Ok(consts)
-    }
-
-    pub fn statics(
-        &self,
-        target: TargetRef,
-    ) -> Result<Vec<(StaticRef, &StaticData)>, PackageStoreError> {
-        let statics = self
-            .items(target)?
-            .into_iter()
-            .flat_map(move |items| {
-                items
-                    .statics
-                    .iter_with_ids()
-                    .map(move |(id, data)| (StaticRef { target, id }, data))
-            })
-            .collect::<Vec<_>>();
-
-        Ok(statics)
-    }
-
-    pub fn semantic_items(
-        &self,
-        target: TargetRef,
-    ) -> Result<Vec<SemanticItemView<'_>>, PackageStoreError> {
-        let Some(items) = self.items(target)? else {
-            return Ok(Vec::new());
-        };
-        let mut views = Vec::new();
-
-        for (id, data) in items.structs.iter_with_ids() {
-            views.push(SemanticItemView::new(
-                TypeDefRef {
-                    target,
-                    id: TypeDefId::Struct(id),
-                }
-                .into(),
-                SemanticItemData::Struct(data),
-            ));
+        for package in self.packages.included_packages() {
+            target_stores.extend(package?.targets().iter())
         }
-        for (id, data) in items.unions.iter_with_ids() {
-            views.push(SemanticItemView::new(
-                TypeDefRef {
-                    target,
-                    id: TypeDefId::Union(id),
-                }
-                .into(),
-                SemanticItemData::Union(data),
-            ));
-        }
-        for (id, data) in items.enums.iter_with_ids() {
-            views.push(SemanticItemView::new(
-                TypeDefRef {
-                    target,
-                    id: TypeDefId::Enum(id),
-                }
-                .into(),
-                SemanticItemData::Enum(data),
-            ));
-        }
-        for (id, data) in items.traits.iter_with_ids() {
-            views.push(SemanticItemView::new(
-                TraitRef { target, id }.into(),
-                SemanticItemData::Trait(data),
-            ));
-        }
-        for (id, data) in items.impls.iter_with_ids() {
-            views.push(SemanticItemView::new(
-                ImplRef { target, id }.into(),
-                SemanticItemData::Impl(data),
-            ));
-        }
-        for (id, data) in items.functions.iter_with_ids() {
-            views.push(SemanticItemView::new(
-                FunctionRef { target, id }.into(),
-                SemanticItemData::Function(data),
-            ));
-        }
-        for (id, data) in items.type_aliases.iter_with_ids() {
-            views.push(SemanticItemView::new(
-                TypeAliasRef { target, id }.into(),
-                SemanticItemData::TypeAlias(data),
-            ));
-        }
-        for (id, data) in items.consts.iter_with_ids() {
-            views.push(SemanticItemView::new(
-                ConstRef { target, id }.into(),
-                SemanticItemData::Const(data),
-            ));
-        }
-        for (id, data) in items.statics.iter_with_ids() {
-            views.push(SemanticItemView::new(
-                StaticRef { target, id }.into(),
-                SemanticItemData::Static(data),
-            ));
-        }
-
-        Ok(views)
+        Ok(target_stores)
     }
 
     pub fn semantic_item_view(
@@ -995,8 +722,8 @@ impl<'db> SemanticIrReadTxn<'db> {
     fn impl_refs(&self) -> Result<Vec<ImplRef>, PackageStoreError> {
         let mut impl_refs = Vec::new();
 
-        for (target, _) in self.materialize_included_target_irs()? {
-            for (impl_ref, _) in self.impls(target)? {
+        for store in self.included_stores()? {
+            for (impl_ref, _) in store.impls_with_refs() {
                 impl_refs.push(impl_ref);
             }
         }

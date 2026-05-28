@@ -43,7 +43,11 @@ pub(super) fn impl_header_resolutions_for_packages(
                 package: *package,
                 target: TargetId(target_idx),
             };
-            for (impl_ref, _) in semantic_ir.impls(target)? {
+            for (impl_ref, _) in semantic_ir
+                .items(target)?
+                .into_iter()
+                .flat_map(|i| i.impls_with_refs())
+            {
                 let Some(data) = semantic_ir.impl_data(impl_ref)? else {
                     continue;
                 };

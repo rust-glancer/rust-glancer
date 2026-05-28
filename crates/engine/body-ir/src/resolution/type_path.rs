@@ -11,10 +11,7 @@ use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_ty::{IndexedGenericArg, IndexedLocalNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
 
 use crate::{
-    BodyItemKind,
-    ir::body::BodyData,
-    ir::item::BodyItemOwner,
-    ir::resolved::BodyTypePathResolution,
+    BodyItemKind, ir::body::BodyData, ir::item::BodyItemOwner, ir::resolved::BodyTypePathResolution,
 };
 
 use super::{

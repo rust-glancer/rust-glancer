@@ -1,6 +1,4 @@
-use rg_ir_model::{
-    BodyFunctionId, BodyImplId, BodyItemId, BodyItemRef, BodyValueItemId, ScopeId,
-};
+use rg_ir_model::{BodyFunctionId, BodyImplId, BodyItemId, BodyItemRef, BodyValueItemId, ScopeId};
 use rg_item_tree::{
     ConstItem, Documentation, EnumItem, EnumVariantItem, FieldItem, FieldKey, FieldList,
     FunctionItem, GenericParams, ParamKind, StaticItem, StructItem, TraitItem, TypeAliasItem,

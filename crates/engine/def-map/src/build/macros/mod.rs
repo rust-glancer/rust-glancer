@@ -7,8 +7,8 @@
 
 use std::collections::HashMap;
 
-use rg_item_tree::{BuiltinMacroItem, ItemTreeRef, MacroUseSelector};
 use rg_ir_model::{LocalDefId, ModuleId, ModuleRef, TargetRef};
+use rg_item_tree::{BuiltinMacroItem, ItemTreeRef, MacroUseSelector};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 use rg_tt::TopSubtree;

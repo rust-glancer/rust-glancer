@@ -96,7 +96,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             item_tree,
             target,
             def_map_txn,
-            items: ItemStore::new(local_def_count),
+            items: ItemStore::new(target, local_def_count),
         })
     }
 
@@ -196,7 +196,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
                 const_item,
             ))),
             ItemKind::Enum(enum_item) => {
-                let id = self.items.alloc_enum(EnumData {
+                let id = self.items.enums.alloc(EnumData {
                     local_def,
                     source,
                     owner,
@@ -223,7 +223,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
                 static_item,
             ))),
             ItemKind::Struct(struct_item) => {
-                let id = self.items.alloc_struct(StructData {
+                let id = self.items.structs.alloc(StructData {
                     local_def,
                     source,
                     owner,
@@ -246,7 +246,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
                 type_alias,
             ))),
             ItemKind::Union(union_item) => {
-                let id = self.items.alloc_union(UnionData {
+                let id = self.items.unions.alloc(UnionData {
                     local_def,
                     source,
                     owner,
@@ -271,7 +271,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         trait_item: &TraitItem,
     ) -> TraitId {
         // Allocate first so associated items can point back at this trait as their owner.
-        let trait_id = self.items.alloc_trait(TraitData {
+        let trait_id = self.items.traits.alloc(TraitData {
             local_def,
             source,
             owner,
@@ -298,7 +298,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
     ) {
         // Impl header paths are stored as syntax here; semantic resolution fills the resolved
         // self/trait ids once every target's item store exists.
-        let impl_id = self.items.alloc_impl(ImplData {
+        let impl_id = self.items.impls.alloc(ImplData {
             local_impl,
             source,
             owner,
@@ -366,7 +366,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         item: &ItemNode,
         declaration: &FunctionItem,
     ) -> FunctionId {
-        self.items.alloc_function(FunctionData {
+        self.items.functions.alloc(FunctionData {
             local_def,
             source,
             span: item.span,
@@ -387,7 +387,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         item: &ItemNode,
         declaration: &TypeAliasItem,
     ) -> TypeAliasId {
-        self.items.alloc_type_alias(TypeAliasData {
+        self.items.type_aliases.alloc(TypeAliasData {
             local_def,
             source,
             span: item.span,
@@ -408,7 +408,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         item: &ItemNode,
         declaration: &ConstItem,
     ) -> ConstId {
-        self.items.alloc_const(ConstData {
+        self.items.consts.alloc(ConstData {
             local_def,
             source,
             span: item.span,
@@ -429,7 +429,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         item: &ItemNode,
         declaration: &StaticItem,
     ) -> StaticId {
-        self.items.alloc_static(StaticData {
+        self.items.statics.alloc(StaticData {
             local_def,
             source,
             span: item.span,

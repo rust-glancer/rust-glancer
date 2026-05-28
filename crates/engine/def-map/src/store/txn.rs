@@ -3,9 +3,7 @@
 use rg_ir_model::{ModuleRef, TargetRef};
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 
-use crate::{
-    DefMap, PackageDefMaps, PackageSlot, Path, ResolvePathResult, query::path_resolution,
-};
+use crate::{DefMap, PackageDefMaps, PackageSlot, Path, ResolvePathResult, query::path_resolution};
 
 /// Read-only def-map access for one query transaction.
 #[derive(Debug, Clone)]
