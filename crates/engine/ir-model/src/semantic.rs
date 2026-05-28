@@ -1,284 +1,72 @@
+use rg_memsize::MemorySize;
+use wincode::{SchemaRead, SchemaWrite};
+
+use crate::declare_id;
 use crate::{ModuleRef, TargetRef};
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-#[memsize(leaf)]
-pub struct StructId(pub usize);
+declare_id! {
+    pub struct StructId;
+    pub struct UnionId;
+    pub struct EnumId;
+    pub struct TraitId;
+    pub struct ImplId;
+    pub struct FunctionId;
+    pub struct TypeAliasId;
+    pub struct ConstId;
+    pub struct StaticId;
+}
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-#[memsize(leaf)]
-pub struct UnionId(pub usize);
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-#[memsize(leaf)]
-pub struct EnumId(pub usize);
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-#[memsize(leaf)]
-pub struct TraitId(pub usize);
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-#[memsize(leaf)]
-pub struct ImplId(pub usize);
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-#[memsize(leaf)]
-pub struct FunctionId(pub usize);
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-#[memsize(leaf)]
-pub struct TypeAliasId(pub usize);
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-#[memsize(leaf)]
-pub struct ConstId(pub usize);
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-#[memsize(leaf)]
-pub struct StaticId(pub usize);
-
-impl_arena_id!(
-    StructId,
-    UnionId,
-    EnumId,
-    TraitId,
-    ImplId,
-    FunctionId,
-    TypeAliasId,
-    ConstId,
-    StaticId,
-);
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub enum TypeDefId {
     Struct(StructId),
     Enum(EnumId),
     Union(UnionId),
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TypeDefRef {
     pub target: TargetRef,
     pub id: TypeDefId,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TraitRef {
     pub target: TargetRef,
     pub id: TraitId,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ImplRef {
     pub target: TargetRef,
     pub id: ImplId,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct FunctionRef {
     pub target: TargetRef,
     pub id: FunctionId,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TypeAliasRef {
     pub target: TargetRef,
     pub id: TypeAliasId,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ConstRef {
     pub target: TargetRef,
     pub id: ConstId,
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct StaticRef {
     pub target: TargetRef,
     pub id: StaticId,
 }
 
 /// Semantic item family used by read APIs that work with item-shaped facts.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub enum SemanticItemKind {
     Struct,
     Enum,
@@ -293,16 +81,7 @@ pub enum SemanticItemKind {
 
 /// Stable identity for one top-level or associated semantic item.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    derive_more::From,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::From, SchemaRead, SchemaWrite, MemorySize,
 )]
 pub enum SemanticItemRef {
     TypeDef(TypeDefRef),
@@ -328,17 +107,7 @@ impl SemanticItemRef {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct FieldRef {
     pub owner: TypeDefRef,
     pub index: usize,
@@ -349,17 +118,7 @@ pub struct FieldRef {
 /// Variants are stored as children of `EnumData` rather than promoted to top-level semantic items.
 /// The explicit ref gives higher layers enough identity for navigation and type queries without
 /// dictating that storage model.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct EnumVariantRef {
     pub target: TargetRef,
     pub enum_id: EnumId,
@@ -368,16 +127,7 @@ pub struct EnumVariantRef {
 
 /// Stable identity for any declaration contributed by Semantic IR.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    derive_more::From,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::From, SchemaRead, SchemaWrite, MemorySize,
 )]
 pub enum SemanticDeclarationRef {
     #[from(
@@ -407,17 +157,7 @@ impl SemanticDeclarationRef {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TraitImplRef {
     pub impl_ref: ImplRef,
     pub trait_ref: TraitRef,
@@ -428,17 +168,7 @@ pub struct TraitImplRef {
 /// `Maybe` is a first-class result because this project intentionally prefers useful trait-method
 /// candidates over trying to prove generic bounds and where-clauses precisely.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, SchemaRead, SchemaWrite, MemorySize,
 )]
 #[memsize(leaf)]
 pub enum TraitApplicability {
@@ -461,17 +191,7 @@ impl TraitApplicability {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub enum ItemId {
     Struct(StructId),
     Union(UnionId),
@@ -510,34 +230,14 @@ impl ItemId {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub enum AssocItemId {
     Function(FunctionId),
     TypeAlias(TypeAliasId),
     Const(ConstId),
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub enum ItemOwner {
     Module(ModuleRef),
     Trait(TraitId),

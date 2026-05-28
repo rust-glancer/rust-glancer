@@ -4,22 +4,6 @@
 //! DefMap, Semantic IR, and Body IR lets higher layers talk about one declaration or one function
 //! without making any single storage crate own the aggregate identity.
 
-macro_rules! impl_arena_id {
-    ($($id:ty),+ $(,)?) => {
-        $(
-            impl rg_arena::ArenaId for $id {
-                fn from_index(index: usize) -> Self {
-                    Self(index)
-                }
-
-                fn index(self) -> usize {
-                    self.0
-                }
-            }
-        )+
-    };
-}
-
 mod body;
 mod def_map;
 pub mod identity;
@@ -44,3 +28,43 @@ pub use self::{
         TraitRef, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
     },
 };
+
+// We have a lot of arenas, and each has to have a unique ID.
+// This macro takes care of boilerplate.
+macro_rules! declare_id {
+    (
+        $(
+            $(#[$attrs:meta])*
+            $vis:vis struct $id:ident;
+        )+
+    ) => {
+        $(
+            $(#[$attrs])*
+            #[derive(
+                Debug,
+                Clone,
+                Copy,
+                PartialEq,
+                Eq,
+                Hash,
+                wincode::SchemaRead,
+                wincode::SchemaWrite,
+                rg_memsize::MemorySize,
+            )]
+            #[memsize(leaf)]
+            $vis struct $id(pub usize);
+
+            impl rg_arena::ArenaId for $id {
+                fn from_index(index: usize) -> Self {
+                    Self(index)
+                }
+
+                fn index(self) -> usize {
+                    self.0
+                }
+            }
+        )+
+    };
+}
+
+pub(crate) use declare_id;
