@@ -5,9 +5,10 @@ use rg_def_map::Path;
 use rg_ir_model::{
     BodyEnumVariantRef, BodyItemRef, BodyRef, EnumVariantRef as SemanticEnumVariantRef, ScopeId,
     TypeDefId, TypeDefRef,
+    hir::items::EnumVariantData,
     identity::{EnumVariantRef, EnumVariantRefRepr},
 };
-use rg_semantic_ir::{Documentation, EnumVariantData};
+use rg_semantic_ir::Documentation;
 
 use crate::IndexedViewDb;
 

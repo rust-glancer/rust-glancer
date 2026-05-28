@@ -1,6 +1,10 @@
 //! Read transactions over frozen Semantic IR package data.
 
 use rg_def_map::{DefMapReadTxn, PackageSlot, Path};
+use rg_ir_model::hir::items::{
+    ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, StaticData, TraitData,
+    TypeAliasData,
+};
 use rg_ir_model::{
     AssocItemId, ConstRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner,
     SemanticItemRef, StaticRef, TraitImplRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
@@ -9,11 +13,7 @@ use rg_ir_model::{DefId, LocalDefRef, ModuleRef, TargetRef};
 use rg_item_tree::FieldKey;
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 
-use crate::ItemStore;
-use crate::{
-    ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, PackageIr,
-    SemanticTypePathResolution, StaticData, TraitData, TypeAliasData, TypePathContext, push_unique,
-};
+use crate::{ItemStore, PackageIr, SemanticTypePathResolution, TypePathContext, push_unique};
 
 /// Read-only semantic IR access for one query transaction.
 #[derive(Debug, Clone)]

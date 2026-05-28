@@ -4,7 +4,7 @@
 //! nominal receiver and resolves the impl's associated `Target` type with the receiver substitution.
 
 use rg_def_map::{DefMapReadTxn, Path, PathSegment};
-use rg_ir_model::{AssocItemId, TraitImplRef, TypeAliasRef};
+use rg_ir_model::{AssocItemId, TraitImplRef, TypeAliasRef, hir::items::ImplData};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, SemanticTypePathResolution, TypePathContext};
@@ -101,7 +101,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
     fn is_core_ops_deref_impl(
         &self,
         trait_impl: TraitImplRef,
-        impl_data: &rg_semantic_ir::ImplData,
+        impl_data: &ImplData,
     ) -> Result<bool, PackageStoreError> {
         let path = Path {
             absolute: true,
@@ -135,7 +135,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
     fn target_from_impl(
         &self,
         trait_impl: TraitImplRef,
-        impl_data: &rg_semantic_ir::ImplData,
+        impl_data: &ImplData,
         subst: &IndexedTypeSubst,
     ) -> Result<Option<IndexedTy>, PackageStoreError> {
         for item in &impl_data.items {
@@ -173,7 +173,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
     fn ty_from_target_type_ref(
         &self,
         trait_impl: TraitImplRef,
-        impl_data: &rg_semantic_ir::ImplData,
+        impl_data: &ImplData,
         target_ty: &TypeRef,
         subst: &IndexedTypeSubst,
     ) -> Result<IndexedTy, PackageStoreError> {

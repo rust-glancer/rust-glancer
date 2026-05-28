@@ -7,10 +7,13 @@ use rg_body_ir::{
     BindingData, BodyFieldData, BodyFunctionData, BodyItemData, BodyItemDeclaration,
     BodyValueItemData, BodyValueItemDeclaration,
 };
+use rg_ir_model::hir::items::{
+    ConstData, EnumData, FieldData, FunctionData, StaticData, StructData, TraitData, TypeAliasData,
+    UnionData,
+};
 use rg_semantic_ir::{
-    ConstData, EnumData, EnumVariantItem, FieldData, FieldItem, FieldKey, FieldList, FunctionData,
-    FunctionItem, FunctionQualifiers, GenericParams, Mutability, ParamItem, StaticData, StructData,
-    TraitData, TypeAliasData, TypeBound, TypeRef, UnionData, VisibilityLevel, WherePredicate,
+    EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem, FunctionQualifiers,
+    GenericParams, Mutability, ParamItem, TypeBound, TypeRef, VisibilityLevel, WherePredicate,
 };
 
 use crate::{

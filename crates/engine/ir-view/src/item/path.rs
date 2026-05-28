@@ -6,9 +6,8 @@
 
 use rg_ir_model::{
     ConstRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef, TargetRef, TraitRef,
-    TypeAliasRef, TypeDefId, TypeDefRef,
+    TypeAliasRef, TypeDefId, TypeDefRef, hir::items::EnumVariantData,
 };
-use rg_semantic_ir::EnumVariantData;
 
 use crate::IndexedViewDb;
 

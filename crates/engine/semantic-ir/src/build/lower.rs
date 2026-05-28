@@ -11,6 +11,13 @@ use rg_ir_model::{
     AssocItemId, ConstId, FunctionId, ItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef,
     StaticId, TargetRef, TraitId, TypeAliasId,
     hir::source::{ItemSource, ItemSourceKind},
+    hir::{
+        items::{
+            ConstData, EnumData, FunctionData, ImplData, StaticData, StructData, TraitData,
+            TypeAliasData, UnionData,
+        },
+        signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
+    },
 };
 use rg_item_tree::{
     ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
@@ -19,10 +26,7 @@ use rg_item_tree::{
 use rg_parse::TargetId;
 use rg_text::Name;
 
-use crate::{
-    ConstData, ConstSignature, EnumData, FunctionData, FunctionSignature, ImplData, ItemStore,
-    PackageIr, StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature, UnionData,
-};
+use crate::{ItemStore, PackageIr};
 
 pub(super) fn build_packages(
     item_tree: &ItemTreeDb,

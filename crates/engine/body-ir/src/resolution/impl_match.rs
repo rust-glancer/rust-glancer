@@ -7,6 +7,7 @@
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
     BodyFunctionRef, BodyRef, FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef,
+    hir::items::ImplData,
 };
 use rg_item_tree::{GenericArg, GenericParams, TypeRef};
 use rg_package_store::PackageStoreError;
@@ -215,7 +216,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     /// an impl candidate rather than a function reference.
     pub(super) fn semantic_impl_self_subst_for_impl(
         &self,
-        impl_data: &rg_semantic_ir::ImplData,
+        impl_data: &ImplData,
         receiver_ty: &IndexedNominalTy,
     ) -> IndexedTypeSubst {
         Self::impl_self_subst(&impl_data.generics, &impl_data.self_ty, &receiver_ty.args)
@@ -228,7 +229,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     fn impl_self_args_match_receiver(
         &self,
         impl_ref: ImplRef,
-        impl_data: &rg_semantic_ir::ImplData,
+        impl_data: &ImplData,
         receiver_ty: &IndexedNominalTy,
     ) -> Result<bool, PackageStoreError> {
         // Type parameters in the impl self type act as wildcards. Concrete args such as
@@ -286,7 +287,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     fn impl_self_args_applicability(
         &self,
         impl_ref: ImplRef,
-        impl_data: &rg_semantic_ir::ImplData,
+        impl_data: &ImplData,
         receiver_ty: &IndexedNominalTy,
     ) -> Result<TraitApplicability, PackageStoreError> {
         // This mirrors inherent impl matching, but returns `Maybe` instead of rejecting patterns
@@ -352,7 +353,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     fn impl_self_structural_subst(
         &self,
         impl_ref: ImplRef,
-        impl_data: &rg_semantic_ir::ImplData,
+        impl_data: &ImplData,
         receiver_ty: &IndexedNominalTy,
     ) -> Result<Option<IndexedTypeSubst>, PackageStoreError> {
         if !Self::impl_header_has_only_plain_type_params(impl_data) {
@@ -495,7 +496,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     }
 
     /// Returns whether the impl header has no constraints that require solving.
-    fn impl_header_has_only_plain_type_params(impl_data: &rg_semantic_ir::ImplData) -> bool {
+    fn impl_header_has_only_plain_type_params(impl_data: &ImplData) -> bool {
         impl_data.generics.lifetimes.is_empty()
             && impl_data.generics.consts.is_empty()
             && impl_data.generics.where_predicates.is_empty()
@@ -511,7 +512,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     }
 
     /// Returns whether the impl header has no generic or where-clause uncertainty.
-    fn impl_header_is_definitely_direct(impl_data: &rg_semantic_ir::ImplData) -> bool {
+    fn impl_header_is_definitely_direct(impl_data: &ImplData) -> bool {
         impl_data.generics.lifetimes.is_empty()
             && impl_data.generics.types.is_empty()
             && impl_data.generics.consts.is_empty()

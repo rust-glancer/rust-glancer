@@ -3,12 +3,13 @@ use rg_ir_model::{
     ConstId, ConstRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, LocalDefId,
     SemanticItemRef, StaticId, StaticRef, StructId, TargetRef, TraitId, TraitRef, TypeAliasId,
     TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
+    hir::items::{
+        ConstData, EnumData, FunctionData, ImplData, StaticData, StructData, TraitData,
+        TypeAliasData, UnionData,
+    },
 };
 
-use crate::{
-    ConstData, EnumData, FunctionData, ImplData, SemanticItemView, StaticData, StructData,
-    TraitData, TypeAliasData, UnionData, view::SemanticItemData,
-};
+use crate::{SemanticItemView, view::SemanticItemData};
 
 /// Target-local storage for semantic items.
 ///

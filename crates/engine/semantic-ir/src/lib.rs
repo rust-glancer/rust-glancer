@@ -10,12 +10,7 @@ mod tests;
 
 pub use self::{
     cursor::SemanticCursorCandidate,
-    ir::{
-        ConstData, ConstSignature, EnumData, EnumVariantData, FieldData, FunctionData,
-        FunctionSignature, ImplData, PackageIr, SemanticIrStats, SemanticTypePathResolution,
-        StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature, TypePathContext,
-        UnionData,
-    },
+    ir::{PackageIr, SemanticIrStats, SemanticTypePathResolution, TypePathContext},
     item_store::ItemStore,
     store::{SemanticIrDb, SemanticIrReadTxn},
     view::SemanticItemView,

@@ -7,9 +7,10 @@ use rg_def_map::Path;
 use rg_ir_model::{
     BodyFieldRef, BodyFunctionRef, BodyItemRef, BodyRef, FieldRef as SemanticFieldRef,
     FunctionRef as SemanticFunctionRef, ItemOwner, ScopeId, TraitApplicability, TypeDefRef,
+    hir::items::{FieldData, FunctionData},
     identity::{FieldRef, FieldRefRepr, FunctionRef, FunctionRefRepr},
 };
-use rg_semantic_ir::{Documentation, FieldData, FieldKey, FunctionData, ParamItem};
+use rg_semantic_ir::{Documentation, FieldKey, ParamItem};
 use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt};
 
 use crate::{IndexedViewDb, SymbolKind, item::declaration::Declaration, item::path::PathView};
