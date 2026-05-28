@@ -342,7 +342,7 @@ impl AnalysisFixtureDb {
             .def_map(target.target)
     }
 
-    fn resident_target_ir(&self, target: TargetRef) -> Option<&rg_semantic_ir::TargetIr> {
+    fn resident_target_ir(&self, target: TargetRef) -> Option<&rg_semantic_ir::ItemStore> {
         self.semantic_ir
             .resident_package(target.package)?
             .target(target.target)
@@ -1116,15 +1116,14 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     }
 
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
-        let target_ir = self
+        let items = self
             .db
             .resident_target_ir(ty.target)
             .expect("target semantic IR should exist while rendering analysis type");
 
         match ty.id {
             TypeDefId::Struct(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .struct_data(id)
                     .expect("struct id should exist while rendering analysis type");
                 format!(
@@ -1134,15 +1133,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
             }
             TypeDefId::Enum(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .enum_data(id)
                     .expect("enum id should exist while rendering analysis type");
                 format!("enum {}::{}", self.render_module_ref(data.owner), data.name)
             }
             TypeDefId::Union(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .union_data(id)
                     .expect("union id should exist while rendering analysis type");
                 format!(

@@ -131,7 +131,7 @@ impl SemanticIrFixtureDb {
         &self.semantic_ir
     }
 
-    fn resident_target_ir(&self, target: TargetRef) -> Option<&crate::TargetIr> {
+    fn resident_target_ir(&self, target: TargetRef) -> Option<&crate::ItemStore> {
         self.semantic_ir
             .resident_package(target.package)?
             .target(target.target)
@@ -400,15 +400,14 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     }
 
     fn render_type_def_ref(&self, semantic_ir: &SemanticIrReadTxn<'_>, ty: TypeDefRef) -> String {
-        let target_ir = semantic_ir
-            .target_ir(ty.target)
+        let items = semantic_ir
+            .items(ty.target)
             .expect("target semantic IR should load while rendering type ref")
             .expect("target semantic IR should exist while rendering type ref");
 
         match ty.id {
             TypeDefId::Struct(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .struct_data(id)
                     .expect("struct id should exist while rendering query");
                 format!(
@@ -418,15 +417,13 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 )
             }
             TypeDefId::Enum(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .enum_data(id)
                     .expect("enum id should exist while rendering query");
                 format!("enum {}::{}", self.render_module_ref(data.owner), data.name)
             }
             TypeDefId::Union(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .union_data(id)
                     .expect("union id should exist while rendering query");
                 format!(
@@ -551,7 +548,7 @@ impl TargetSemanticIrSnapshot<'_> {
             .project
             .resident_def_map(self.target_ref)
             .expect("target def map should exist while rendering semantic IR");
-        let target_ir = self
+        let items = self
             .project
             .resident_target_ir(self.target_ref)
             .expect("target semantic IR should exist while rendering");
@@ -567,18 +564,20 @@ impl TargetSemanticIrSnapshot<'_> {
                 .expect("module id should exist while rendering semantic IR");
 
             for local_def in &module.local_defs {
-                let Some(item_id) = target_ir.item_for_local_def(*local_def) else {
+                let Some(item_id) = items.item_for_local_def(*local_def) else {
                     continue;
                 };
                 self.render_item(item_id, 0, &mut dump);
             }
 
             for local_impl in &module.impls {
-                let impl_id = target_ir
-                    .impls()
-                    .get(local_impl.0)
-                    .copied()
-                    .expect("local impl id should map to semantic impl id");
+                // There is one impl id per local id in the same order,
+                // so conversion should be stable.
+                let impl_id = ImplId(local_impl.0);
+                assert!(
+                    items.impl_data(impl_id).is_some(),
+                    "No impl id for local impl id"
+                );
                 self.render_impl(impl_id, 0, &mut dump);
             }
         }
@@ -906,7 +905,6 @@ impl TargetSemanticIrSnapshot<'_> {
         self.project
             .resident_target_ir(self.target_ref)
             .expect("target semantic IR should exist while rendering items")
-            .items()
     }
 }
 

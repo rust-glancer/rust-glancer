@@ -1,6 +1,7 @@
 mod build;
 mod cursor;
 mod ir;
+mod item_store;
 mod store;
 mod view;
 
@@ -11,10 +12,11 @@ pub use self::{
     cursor::SemanticCursorCandidate,
     ir::{
         ConstData, ConstSignature, EnumData, EnumVariantData, FieldData, FunctionData,
-        FunctionSignature, ImplData, ItemStore, PackageIr, SemanticIrStats,
-        SemanticTypePathResolution, StaticData, StructData, TargetIr, TraitData, TypeAliasData,
-        TypeAliasSignature, TypePathContext, UnionData,
+        FunctionSignature, ImplData, PackageIr, SemanticIrStats, SemanticTypePathResolution,
+        StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature, TypePathContext,
+        UnionData,
     },
+    item_store::ItemStore,
     store::{SemanticIrDb, SemanticIrReadTxn},
     view::SemanticItemView,
 };

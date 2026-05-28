@@ -151,24 +151,24 @@ impl<'a, 'db> PathView<'a, 'db> {
     }
 
     fn type_def_owner_and_name(&self, ty: TypeDefRef) -> anyhow::Result<Option<(ModuleRef, &str)>> {
-        let Some(target_ir) = self.0.semantic_ir.target_ir(ty.target)? else {
+        let Some(items) = self.0.semantic_ir.items(ty.target)? else {
             return Ok(None);
         };
         match ty.id {
             TypeDefId::Struct(id) => {
-                let Some(data) = target_ir.items().struct_data(id) else {
+                let Some(data) = items.struct_data(id) else {
                     return Ok(None);
                 };
                 Ok(Some((data.owner, data.name.as_str())))
             }
             TypeDefId::Enum(id) => {
-                let Some(data) = target_ir.items().enum_data(id) else {
+                let Some(data) = items.enum_data(id) else {
                     return Ok(None);
                 };
                 Ok(Some((data.owner, data.name.as_str())))
             }
             TypeDefId::Union(id) => {
-                let Some(data) = target_ir.items().union_data(id) else {
+                let Some(data) = items.union_data(id) else {
                     return Ok(None);
                 };
                 Ok(Some((data.owner, data.name.as_str())))

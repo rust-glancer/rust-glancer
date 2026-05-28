@@ -1,7 +1,7 @@
 use rg_arena::Arena;
 use rg_parse::TargetId;
 
-use super::target::TargetIr;
+use crate::ItemStore;
 
 /// Semantic IR for one Cargo package.
 ///
@@ -18,11 +18,11 @@ use super::target::TargetIr;
     rg_memsize::MemorySize,
 )]
 pub struct PackageIr {
-    pub(crate) targets: Arena<TargetId, TargetIr>,
+    pub(crate) targets: Arena<TargetId, ItemStore>,
 }
 
 impl PackageIr {
-    pub(crate) fn new(targets: Vec<TargetIr>) -> Self {
+    pub(crate) fn new(targets: Vec<ItemStore>) -> Self {
         Self {
             targets: Arena::from_vec(targets),
         }
@@ -36,16 +36,16 @@ impl PackageIr {
     }
 
     /// Returns all target IRs for this package in target-id order.
-    pub fn targets(&self) -> &[TargetIr] {
+    pub fn targets(&self) -> &[ItemStore] {
         self.targets.as_slice()
     }
 
     /// Returns one target IR by package-local target id.
-    pub fn target(&self, target: TargetId) -> Option<&TargetIr> {
+    pub fn target(&self, target: TargetId) -> Option<&ItemStore> {
         self.targets.get(target)
     }
 
-    pub(crate) fn target_mut(&mut self, target: TargetId) -> Option<&mut TargetIr> {
+    pub(crate) fn target_mut(&mut self, target: TargetId) -> Option<&mut ItemStore> {
         self.targets.get_mut(target)
     }
 }

@@ -10,10 +10,11 @@ use rg_item_tree::FieldKey;
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 use rg_parse::TargetId;
 
+use crate::ItemStore;
 use crate::{
     ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, PackageIr,
-    SemanticTypePathResolution, StaticData, StructData, TargetIr, TraitData, TypeAliasData,
-    TypePathContext, UnionData, push_unique,
+    SemanticTypePathResolution, StaticData, StructData, TraitData, TypeAliasData, TypePathContext,
+    UnionData, push_unique,
     view::{SemanticItemData, SemanticItemView},
 };
 
@@ -32,14 +33,14 @@ impl<'db> SemanticIrReadTxn<'db> {
         self.packages.read(package)
     }
 
-    pub fn target_ir(&self, target: TargetRef) -> Result<Option<&TargetIr>, PackageStoreError> {
+    pub fn items(&self, target: TargetRef) -> Result<Option<&ItemStore>, PackageStoreError> {
         let package = self.package(target.package)?;
         Ok(package.target(target.target))
     }
 
     pub fn materialize_included_target_irs(
         &self,
-    ) -> Result<Vec<(TargetRef, &TargetIr)>, PackageStoreError> {
+    ) -> Result<Vec<(TargetRef, &ItemStore)>, PackageStoreError> {
         let target_irs = self
             .packages
             .materialize_included_packages_with_slots()?
@@ -49,13 +50,13 @@ impl<'db> SemanticIrReadTxn<'db> {
                     .targets()
                     .iter()
                     .enumerate()
-                    .map(move |(target_idx, target_ir)| {
+                    .map(move |(target_idx, items)| {
                         (
                             TargetRef {
                                 package: package_slot,
                                 target: TargetId(target_idx),
                             },
-                            target_ir,
+                            items,
                         )
                     })
             })
@@ -69,22 +70,18 @@ impl<'db> SemanticIrReadTxn<'db> {
         target: TargetRef,
     ) -> Result<Vec<(TypeDefRef, &StructData)>, PackageStoreError> {
         let structs = self
-            .target_ir(target)?
+            .items(target)?
             .into_iter()
-            .flat_map(move |target_ir| {
-                target_ir
-                    .items()
-                    .structs
-                    .iter_with_ids()
-                    .map(move |(id, data)| {
-                        (
-                            TypeDefRef {
-                                target,
-                                id: TypeDefId::Struct(id),
-                            },
-                            data,
-                        )
-                    })
+            .flat_map(move |items| {
+                items.structs.iter_with_ids().map(move |(id, data)| {
+                    (
+                        TypeDefRef {
+                            target,
+                            id: TypeDefId::Struct(id),
+                        },
+                        data,
+                    )
+                })
             })
             .collect::<Vec<_>>();
 
@@ -96,22 +93,18 @@ impl<'db> SemanticIrReadTxn<'db> {
         target: TargetRef,
     ) -> Result<Vec<(TypeDefRef, &UnionData)>, PackageStoreError> {
         let unions = self
-            .target_ir(target)?
+            .items(target)?
             .into_iter()
-            .flat_map(move |target_ir| {
-                target_ir
-                    .items()
-                    .unions
-                    .iter_with_ids()
-                    .map(move |(id, data)| {
-                        (
-                            TypeDefRef {
-                                target,
-                                id: TypeDefId::Union(id),
-                            },
-                            data,
-                        )
-                    })
+            .flat_map(move |items| {
+                items.unions.iter_with_ids().map(move |(id, data)| {
+                    (
+                        TypeDefRef {
+                            target,
+                            id: TypeDefId::Union(id),
+                        },
+                        data,
+                    )
+                })
             })
             .collect::<Vec<_>>();
 
@@ -123,22 +116,18 @@ impl<'db> SemanticIrReadTxn<'db> {
         target: TargetRef,
     ) -> Result<Vec<(TypeDefRef, &EnumData)>, PackageStoreError> {
         let enums = self
-            .target_ir(target)?
+            .items(target)?
             .into_iter()
-            .flat_map(move |target_ir| {
-                target_ir
-                    .items()
-                    .enums
-                    .iter_with_ids()
-                    .map(move |(id, data)| {
-                        (
-                            TypeDefRef {
-                                target,
-                                id: TypeDefId::Enum(id),
-                            },
-                            data,
-                        )
-                    })
+            .flat_map(move |items| {
+                items.enums.iter_with_ids().map(move |(id, data)| {
+                    (
+                        TypeDefRef {
+                            target,
+                            id: TypeDefId::Enum(id),
+                        },
+                        data,
+                    )
+                })
             })
             .collect::<Vec<_>>();
 
@@ -150,11 +139,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         target: TargetRef,
     ) -> Result<Vec<(TraitRef, &TraitData)>, PackageStoreError> {
         let traits = self
-            .target_ir(target)?
+            .items(target)?
             .into_iter()
-            .flat_map(move |target_ir| {
-                target_ir
-                    .items()
+            .flat_map(move |items| {
+                items
                     .traits
                     .iter_with_ids()
                     .map(move |(id, data)| (TraitRef { target, id }, data))
@@ -166,11 +154,10 @@ impl<'db> SemanticIrReadTxn<'db> {
 
     pub fn impls(&self, target: TargetRef) -> Result<Vec<(ImplRef, &ImplData)>, PackageStoreError> {
         let impls = self
-            .target_ir(target)?
+            .items(target)?
             .into_iter()
-            .flat_map(move |target_ir| {
-                target_ir
-                    .items()
+            .flat_map(move |items| {
+                items
                     .impls
                     .iter_with_ids()
                     .map(move |(id, data)| (ImplRef { target, id }, data))
@@ -185,11 +172,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         target: TargetRef,
     ) -> Result<Vec<(FunctionRef, &FunctionData)>, PackageStoreError> {
         let functions = self
-            .target_ir(target)?
+            .items(target)?
             .into_iter()
-            .flat_map(move |target_ir| {
-                target_ir
-                    .items()
+            .flat_map(move |items| {
+                items
                     .functions
                     .iter_with_ids()
                     .map(move |(id, data)| (FunctionRef { target, id }, data))
@@ -204,11 +190,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         target: TargetRef,
     ) -> Result<Vec<(TypeAliasRef, &TypeAliasData)>, PackageStoreError> {
         let aliases = self
-            .target_ir(target)?
+            .items(target)?
             .into_iter()
-            .flat_map(move |target_ir| {
-                target_ir
-                    .items()
+            .flat_map(move |items| {
+                items
                     .type_aliases
                     .iter_with_ids()
                     .map(move |(id, data)| (TypeAliasRef { target, id }, data))
@@ -223,11 +208,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         target: TargetRef,
     ) -> Result<Vec<(ConstRef, &ConstData)>, PackageStoreError> {
         let consts = self
-            .target_ir(target)?
+            .items(target)?
             .into_iter()
-            .flat_map(move |target_ir| {
-                target_ir
-                    .items()
+            .flat_map(move |items| {
+                items
                     .consts
                     .iter_with_ids()
                     .map(move |(id, data)| (ConstRef { target, id }, data))
@@ -242,11 +226,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         target: TargetRef,
     ) -> Result<Vec<(StaticRef, &StaticData)>, PackageStoreError> {
         let statics = self
-            .target_ir(target)?
+            .items(target)?
             .into_iter()
-            .flat_map(move |target_ir| {
-                target_ir
-                    .items()
+            .flat_map(move |items| {
+                items
                     .statics
                     .iter_with_ids()
                     .map(move |(id, data)| (StaticRef { target, id }, data))
@@ -260,10 +243,9 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         target: TargetRef,
     ) -> Result<Vec<SemanticItemView<'_>>, PackageStoreError> {
-        let Some(target_ir) = self.target_ir(target)? else {
+        let Some(items) = self.items(target)? else {
             return Ok(Vec::new());
         };
-        let items = target_ir.items();
         let mut views = Vec::new();
 
         for (id, data) in items.structs.iter_with_ids() {
@@ -340,7 +322,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         item: SemanticItemRef,
     ) -> Result<Option<SemanticItemView<'_>>, PackageStoreError> {
-        let Some(target_ir) = self.target_ir(item.target())? else {
+        let Some(items) = self.items(item.target())? else {
             return Ok(None);
         };
 
@@ -349,56 +331,56 @@ impl<'db> SemanticIrReadTxn<'db> {
         let data = match item {
             SemanticItemRef::TypeDef(ty) => match ty.id {
                 TypeDefId::Struct(id) => {
-                    let Some(data) = target_ir.items().struct_data(id) else {
+                    let Some(data) = items.struct_data(id) else {
                         return Ok(None);
                     };
                     SemanticItemData::Struct(data)
                 }
                 TypeDefId::Union(id) => {
-                    let Some(data) = target_ir.items().union_data(id) else {
+                    let Some(data) = items.union_data(id) else {
                         return Ok(None);
                     };
                     SemanticItemData::Union(data)
                 }
                 TypeDefId::Enum(id) => {
-                    let Some(data) = target_ir.items().enum_data(id) else {
+                    let Some(data) = items.enum_data(id) else {
                         return Ok(None);
                     };
                     SemanticItemData::Enum(data)
                 }
             },
             SemanticItemRef::Trait(trait_ref) => {
-                let Some(data) = target_ir.items().trait_data(trait_ref.id) else {
+                let Some(data) = items.trait_data(trait_ref.id) else {
                     return Ok(None);
                 };
                 SemanticItemData::Trait(data)
             }
             SemanticItemRef::Impl(impl_ref) => {
-                let Some(data) = target_ir.items().impl_data(impl_ref.id) else {
+                let Some(data) = items.impl_data(impl_ref.id) else {
                     return Ok(None);
                 };
                 SemanticItemData::Impl(data)
             }
             SemanticItemRef::Function(function_ref) => {
-                let Some(data) = target_ir.items().function_data(function_ref.id) else {
+                let Some(data) = items.function_data(function_ref.id) else {
                     return Ok(None);
                 };
                 SemanticItemData::Function(data)
             }
             SemanticItemRef::TypeAlias(type_alias_ref) => {
-                let Some(data) = target_ir.items().type_alias_data(type_alias_ref.id) else {
+                let Some(data) = items.type_alias_data(type_alias_ref.id) else {
                     return Ok(None);
                 };
                 SemanticItemData::TypeAlias(data)
             }
             SemanticItemRef::Const(const_ref) => {
-                let Some(data) = target_ir.items().const_data(const_ref.id) else {
+                let Some(data) = items.const_data(const_ref.id) else {
                     return Ok(None);
                 };
                 SemanticItemData::Const(data)
             }
             SemanticItemRef::Static(static_ref) => {
-                let Some(data) = target_ir.items().static_data(static_ref.id) else {
+                let Some(data) = items.static_data(static_ref.id) else {
                     return Ok(None);
                 };
                 SemanticItemData::Static(data)
@@ -575,10 +557,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         def: LocalDefRef,
     ) -> Result<Option<SemanticItemRef>, PackageStoreError> {
-        let Some(target_ir) = self.target_ir(def.target)? else {
+        let Some(items) = self.items(def.target)? else {
             return Ok(None);
         };
-        let Some(item) = target_ir.item_for_local_def(def.local_def) else {
+        let Some(item) = items.item_for_local_def(def.local_def) else {
             return Ok(None);
         };
 
@@ -605,34 +587,25 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         ty: TypeDefRef,
     ) -> Result<Option<&rg_item_tree::GenericParams>, PackageStoreError> {
-        let Some(target_ir) = self.target_ir(ty.target)? else {
+        let Some(items) = self.items(ty.target)? else {
             return Ok(None);
         };
         let generics = match ty.id {
-            TypeDefId::Struct(id) => target_ir.items().struct_data(id).map(|data| &data.generics),
-            TypeDefId::Enum(id) => target_ir.items().enum_data(id).map(|data| &data.generics),
-            TypeDefId::Union(id) => target_ir.items().union_data(id).map(|data| &data.generics),
+            TypeDefId::Struct(id) => items.struct_data(id).map(|data| &data.generics),
+            TypeDefId::Enum(id) => items.enum_data(id).map(|data| &data.generics),
+            TypeDefId::Union(id) => items.union_data(id).map(|data| &data.generics),
         };
         Ok(generics)
     }
 
     pub fn type_def_name(&self, ty: TypeDefRef) -> Result<Option<&str>, PackageStoreError> {
-        let Some(target_ir) = self.target_ir(ty.target)? else {
+        let Some(items) = self.items(ty.target)? else {
             return Ok(None);
         };
         let name = match ty.id {
-            TypeDefId::Struct(id) => target_ir
-                .items()
-                .struct_data(id)
-                .map(|data| data.name.as_str()),
-            TypeDefId::Enum(id) => target_ir
-                .items()
-                .enum_data(id)
-                .map(|data| data.name.as_str()),
-            TypeDefId::Union(id) => target_ir
-                .items()
-                .union_data(id)
-                .map(|data| data.name.as_str()),
+            TypeDefId::Struct(id) => items.struct_data(id).map(|data| data.name.as_str()),
+            TypeDefId::Enum(id) => items.enum_data(id).map(|data| data.name.as_str()),
+            TypeDefId::Union(id) => items.union_data(id).map(|data| data.name.as_str()),
         };
         Ok(name)
     }
@@ -644,9 +617,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         let TypeDefId::Enum(id) = ty.id else {
             return Ok(None);
         };
-        Ok(self
-            .target_ir(ty.target)?
-            .and_then(|target_ir| target_ir.items().enum_data(id)))
+        Ok(self.items(ty.target)?.and_then(|items| items.enum_data(id)))
     }
 
     pub fn enum_variant_for_type_def(
@@ -686,10 +657,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         variant_ref: EnumVariantRef,
     ) -> Result<Option<EnumVariantData<'_>>, PackageStoreError> {
-        let Some(target_ir) = self.target_ir(variant_ref.target)? else {
+        let Some(items) = self.items(variant_ref.target)? else {
             return Ok(None);
         };
-        let Some(data) = target_ir.items().enum_data(variant_ref.enum_id) else {
+        let Some(data) = items.enum_data(variant_ref.enum_id) else {
             return Ok(None);
         };
         let Some(variant) = data.variants.get(variant_ref.index) else {
@@ -709,14 +680,14 @@ impl<'db> SemanticIrReadTxn<'db> {
 
     pub fn impl_data(&self, impl_ref: ImplRef) -> Result<Option<&ImplData>, PackageStoreError> {
         Ok(self
-            .target_ir(impl_ref.target)?
-            .and_then(|target_ir| target_ir.items().impl_data(impl_ref.id)))
+            .items(impl_ref.target)?
+            .and_then(|items| items.impl_data(impl_ref.id)))
     }
 
     pub fn trait_data(&self, trait_ref: TraitRef) -> Result<Option<&TraitData>, PackageStoreError> {
         Ok(self
-            .target_ir(trait_ref.target)?
-            .and_then(|target_ir| target_ir.items().trait_data(trait_ref.id)))
+            .items(trait_ref.target)?
+            .and_then(|items| items.trait_data(trait_ref.id)))
     }
 
     pub fn function_data(
@@ -724,8 +695,8 @@ impl<'db> SemanticIrReadTxn<'db> {
         function_ref: FunctionRef,
     ) -> Result<Option<&FunctionData>, PackageStoreError> {
         Ok(self
-            .target_ir(function_ref.target)?
-            .and_then(|target_ir| target_ir.items().function_data(function_ref.id)))
+            .items(function_ref.target)?
+            .and_then(|items| items.function_data(function_ref.id)))
     }
 
     pub fn type_alias_data(
@@ -733,14 +704,14 @@ impl<'db> SemanticIrReadTxn<'db> {
         type_alias_ref: TypeAliasRef,
     ) -> Result<Option<&TypeAliasData>, PackageStoreError> {
         Ok(self
-            .target_ir(type_alias_ref.target)?
-            .and_then(|target_ir| target_ir.items().type_alias_data(type_alias_ref.id)))
+            .items(type_alias_ref.target)?
+            .and_then(|items| items.type_alias_data(type_alias_ref.id)))
     }
 
     pub fn const_data(&self, const_ref: ConstRef) -> Result<Option<&ConstData>, PackageStoreError> {
         Ok(self
-            .target_ir(const_ref.target)?
-            .and_then(|target_ir| target_ir.items().const_data(const_ref.id)))
+            .items(const_ref.target)?
+            .and_then(|items| items.const_data(const_ref.id)))
     }
 
     pub fn static_data(
@@ -748,8 +719,8 @@ impl<'db> SemanticIrReadTxn<'db> {
         static_ref: StaticRef,
     ) -> Result<Option<&StaticData>, PackageStoreError> {
         Ok(self
-            .target_ir(static_ref.target)?
-            .and_then(|target_ir| target_ir.items().static_data(static_ref.id)))
+            .items(static_ref.target)?
+            .and_then(|items| items.static_data(static_ref.id)))
     }
 
     pub fn fields_for_type(&self, ty: TypeDefRef) -> Result<Vec<FieldRef>, PackageStoreError> {
@@ -797,12 +768,12 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         field_ref: FieldRef,
     ) -> Result<Option<FieldData<'_>>, PackageStoreError> {
-        let Some(target_ir) = self.target_ir(field_ref.owner.target)? else {
+        let Some(items) = self.items(field_ref.owner.target)? else {
             return Ok(None);
         };
         let field = match field_ref.owner.id {
             TypeDefId::Struct(id) => {
-                let Some(data) = target_ir.items().struct_data(id) else {
+                let Some(data) = items.struct_data(id) else {
                     return Ok(None);
                 };
                 let Some(field) = data.fields.fields().get(field_ref.index) else {
@@ -815,7 +786,7 @@ impl<'db> SemanticIrReadTxn<'db> {
                 }
             }
             TypeDefId::Union(id) => {
-                let Some(data) = target_ir.items().union_data(id) else {
+                let Some(data) = items.union_data(id) else {
                     return Ok(None);
                 };
                 let Some(field) = data.fields.get(field_ref.index) else {
@@ -1010,18 +981,12 @@ impl<'db> SemanticIrReadTxn<'db> {
     }
 
     fn field_count_for_type(&self, ty: TypeDefRef) -> Result<Option<usize>, PackageStoreError> {
-        let Some(target_ir) = self.target_ir(ty.target)? else {
+        let Some(items) = self.items(ty.target)? else {
             return Ok(None);
         };
         let field_count = match ty.id {
-            TypeDefId::Struct(id) => target_ir
-                .items()
-                .struct_data(id)
-                .map(|data| data.fields.fields().len()),
-            TypeDefId::Union(id) => target_ir
-                .items()
-                .union_data(id)
-                .map(|data| data.fields.len()),
+            TypeDefId::Struct(id) => items.struct_data(id).map(|data| data.fields.fields().len()),
+            TypeDefId::Union(id) => items.union_data(id).map(|data| data.fields.len()),
             TypeDefId::Enum(_) => None,
         };
         Ok(field_count)

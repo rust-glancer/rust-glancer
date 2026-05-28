@@ -112,7 +112,7 @@ impl BodyIrFixtureDb {
         &self.semantic_ir
     }
 
-    fn resident_target_ir(&self, target: TargetRef) -> Option<&rg_semantic_ir::TargetIr> {
+    fn resident_target_ir(&self, target: TargetRef) -> Option<&rg_semantic_ir::ItemStore> {
         self.semantic_ir
             .resident_package(target.package)?
             .target(target.target)
@@ -1503,17 +1503,16 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_local_def(&self, local_def: LocalDefRef) -> String {
-        let Some(target_ir) = self.project.resident_target_ir(local_def.target) else {
+        let Some(items) = self.project.resident_target_ir(local_def.target) else {
             return "<missing>".to_string();
         };
-        let Some(item_id) = target_ir.item_for_local_def(local_def.local_def) else {
+        let Some(item_id) = items.item_for_local_def(local_def.local_def) else {
             return "<unsupported>".to_string();
         };
 
         match item_id {
             ItemId::Struct(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .struct_data(id)
                     .expect("struct id should exist while rendering body IR");
                 format!(
@@ -1523,8 +1522,7 @@ impl TargetBodyIrSnapshot<'_> {
                 )
             }
             ItemId::Union(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .union_data(id)
                     .expect("union id should exist while rendering body IR");
                 format!(
@@ -1534,15 +1532,13 @@ impl TargetBodyIrSnapshot<'_> {
                 )
             }
             ItemId::Enum(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .enum_data(id)
                     .expect("enum id should exist while rendering body IR");
                 format!("enum {}::{}", self.render_module_ref(data.owner), data.name)
             }
             ItemId::Trait(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .trait_data(id)
                     .expect("trait id should exist while rendering body IR");
                 format!(
@@ -1556,8 +1552,7 @@ impl TargetBodyIrSnapshot<'_> {
                 id,
             }),
             ItemId::TypeAlias(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .type_alias_data(id)
                     .expect("type alias id should exist while rendering body IR");
                 format!(
@@ -1567,8 +1562,7 @@ impl TargetBodyIrSnapshot<'_> {
                 )
             }
             ItemId::Const(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .const_data(id)
                     .expect("const id should exist while rendering body IR");
                 format!(
@@ -1578,8 +1572,7 @@ impl TargetBodyIrSnapshot<'_> {
                 )
             }
             ItemId::Static(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .static_data(id)
                     .expect("static id should exist while rendering body IR");
                 format!(
@@ -1592,15 +1585,14 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
-        let target_ir = self
+        let items = self
             .project
             .resident_target_ir(ty.target)
             .expect("target semantic IR should exist while rendering body type");
 
         match ty.id {
             TypeDefId::Struct(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .struct_data(id)
                     .expect("struct id should exist while rendering body type");
                 format!(
@@ -1610,15 +1602,13 @@ impl TargetBodyIrSnapshot<'_> {
                 )
             }
             TypeDefId::Enum(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .enum_data(id)
                     .expect("enum id should exist while rendering body type");
                 format!("enum {}::{}", self.render_module_ref(data.owner), data.name)
             }
             TypeDefId::Union(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .union_data(id)
                     .expect("union id should exist while rendering body type");
                 format!(

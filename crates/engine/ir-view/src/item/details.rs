@@ -166,14 +166,14 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     }
 
     fn type_def_details(&self, ty: TypeDefRef) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(target_ir) = self.db.semantic_ir.target_ir(ty.target)? else {
+        let Some(items) = self.db.semantic_ir.items(ty.target)? else {
             return Ok(None);
         };
         let renderer = SignatureRenderer::new(self.db);
         let path = PathView::new(self.db).type_def_path(ty)?;
         match ty.id {
             TypeDefId::Struct(id) => {
-                let Some(data) = target_ir.items().struct_data(id) else {
+                let Some(data) = items.struct_data(id) else {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {
@@ -184,7 +184,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 }))
             }
             TypeDefId::Enum(id) => {
-                let Some(data) = target_ir.items().enum_data(id) else {
+                let Some(data) = items.enum_data(id) else {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {
@@ -195,7 +195,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 }))
             }
             TypeDefId::Union(id) => {
-                let Some(data) = target_ir.items().union_data(id) else {
+                let Some(data) = items.union_data(id) else {
                     return Ok(None);
                 };
                 Ok(Some(DeclarationDetails {

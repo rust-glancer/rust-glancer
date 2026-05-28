@@ -1,9 +1,5 @@
-use rg_arena::Arena;
 use rg_def_map::ItemSource;
-use rg_ir_model::{
-    AssocItemId, ConstId, EnumId, FunctionId, ImplId, ItemOwner, StaticId, StructId, TraitId,
-    TraitRef, TypeAliasId, TypeDefRef, UnionId,
-};
+use rg_ir_model::{AssocItemId, ItemOwner, TraitRef, TypeDefRef};
 use rg_ir_model::{LocalDefRef, LocalImplRef, ModuleRef};
 use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, Mutability, ParamKind,
@@ -13,147 +9,6 @@ use rg_parse::{FileId, Span};
 use rg_text::Name;
 
 use super::signature::{ConstSignature, FunctionSignature, TypeAliasSignature};
-
-/// Target-local storage for semantic items.
-///
-/// Semantic ids are dense indexes into these vectors. Keeping all item families in one store lets
-/// lowering allocate ids cheaply while the public query surface exposes stable typed references.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-pub struct ItemStore {
-    pub(crate) structs: Arena<StructId, StructData>,
-    pub(crate) unions: Arena<UnionId, UnionData>,
-    pub(crate) enums: Arena<EnumId, EnumData>,
-    pub(crate) traits: Arena<TraitId, TraitData>,
-    pub(crate) impls: Arena<ImplId, ImplData>,
-    pub(crate) functions: Arena<FunctionId, FunctionData>,
-    pub(crate) type_aliases: Arena<TypeAliasId, TypeAliasData>,
-    pub(crate) consts: Arena<ConstId, ConstData>,
-    pub(crate) statics: Arena<StaticId, StaticData>,
-}
-
-impl ItemStore {
-    pub fn struct_data(&self, id: StructId) -> Option<&StructData> {
-        self.structs.get(id)
-    }
-
-    pub fn union_data(&self, id: UnionId) -> Option<&UnionData> {
-        self.unions.get(id)
-    }
-
-    pub fn enum_data(&self, id: EnumId) -> Option<&EnumData> {
-        self.enums.get(id)
-    }
-
-    pub fn trait_data(&self, id: TraitId) -> Option<&TraitData> {
-        self.traits.get(id)
-    }
-
-    pub fn impl_data(&self, id: ImplId) -> Option<&ImplData> {
-        self.impls.get(id)
-    }
-
-    pub fn function_data(&self, id: FunctionId) -> Option<&FunctionData> {
-        self.functions.get(id)
-    }
-
-    pub fn type_alias_data(&self, id: TypeAliasId) -> Option<&TypeAliasData> {
-        self.type_aliases.get(id)
-    }
-
-    pub fn const_data(&self, id: ConstId) -> Option<&ConstData> {
-        self.consts.get(id)
-    }
-
-    pub fn static_data(&self, id: StaticId) -> Option<&StaticData> {
-        self.statics.get(id)
-    }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.structs.shrink_to_fit();
-        for data in self.structs.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.unions.shrink_to_fit();
-        for data in self.unions.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.enums.shrink_to_fit();
-        for data in self.enums.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.traits.shrink_to_fit();
-        for data in self.traits.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.impls.shrink_to_fit();
-        for data in self.impls.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.functions.shrink_to_fit();
-        for data in self.functions.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.type_aliases.shrink_to_fit();
-        for data in self.type_aliases.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.consts.shrink_to_fit();
-        for data in self.consts.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.statics.shrink_to_fit();
-        for data in self.statics.iter_mut() {
-            data.shrink_to_fit();
-        }
-    }
-}
-
-impl ItemStore {
-    pub(crate) fn alloc_struct(&mut self, data: StructData) -> StructId {
-        self.structs.alloc(data)
-    }
-
-    pub(crate) fn alloc_union(&mut self, data: UnionData) -> UnionId {
-        self.unions.alloc(data)
-    }
-
-    pub(crate) fn alloc_enum(&mut self, data: EnumData) -> EnumId {
-        self.enums.alloc(data)
-    }
-
-    pub(crate) fn alloc_trait(&mut self, data: TraitData) -> TraitId {
-        self.traits.alloc(data)
-    }
-
-    pub(crate) fn alloc_impl(&mut self, data: ImplData) -> ImplId {
-        self.impls.alloc(data)
-    }
-
-    pub(crate) fn alloc_function(&mut self, data: FunctionData) -> FunctionId {
-        self.functions.alloc(data)
-    }
-
-    pub(crate) fn alloc_type_alias(&mut self, data: TypeAliasData) -> TypeAliasId {
-        self.type_aliases.alloc(data)
-    }
-
-    pub(crate) fn alloc_const(&mut self, data: ConstData) -> ConstId {
-        self.consts.alloc(data)
-    }
-
-    pub(crate) fn alloc_static(&mut self, data: StaticData) -> StaticId {
-        self.statics.alloc(data)
-    }
-}
 
 /// Borrowed view over one field plus the semantic owner facts needed by analysis.
 #[derive(Debug, Clone, Copy)]
@@ -191,7 +46,7 @@ pub struct StructData {
 }
 
 impl StructData {
-    fn shrink_to_fit(&mut self) {
+    pub(crate) fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -217,7 +72,7 @@ pub struct UnionData {
 }
 
 impl UnionData {
-    fn shrink_to_fit(&mut self) {
+    pub(crate) fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -246,7 +101,7 @@ pub struct EnumData {
 }
 
 impl EnumData {
-    fn shrink_to_fit(&mut self) {
+    pub(crate) fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -277,7 +132,7 @@ pub struct TraitData {
 }
 
 impl TraitData {
-    fn shrink_to_fit(&mut self) {
+    pub(crate) fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -312,7 +167,7 @@ pub struct ImplData {
 }
 
 impl ImplData {
-    fn shrink_to_fit(&mut self) {
+    pub(crate) fn shrink_to_fit(&mut self) {
         self.generics.shrink_to_fit();
         if let Some(trait_ref) = &mut self.trait_ref {
             trait_ref.shrink_to_fit();
@@ -348,7 +203,7 @@ impl FunctionData {
             .is_some_and(|param| matches!(param.kind, ParamKind::SelfParam))
     }
 
-    fn shrink_to_fit(&mut self) {
+    pub(crate) fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -374,7 +229,7 @@ pub struct TypeAliasData {
 }
 
 impl TypeAliasData {
-    fn shrink_to_fit(&mut self) {
+    pub(crate) fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -400,7 +255,7 @@ pub struct ConstData {
 }
 
 impl ConstData {
-    fn shrink_to_fit(&mut self) {
+    pub(crate) fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -427,7 +282,7 @@ pub struct StaticData {
 }
 
 impl StaticData {
-    fn shrink_to_fit(&mut self) {
+    pub(crate) fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();

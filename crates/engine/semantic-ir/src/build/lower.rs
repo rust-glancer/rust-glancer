@@ -8,8 +8,8 @@ use anyhow::Context as _;
 
 use rg_def_map::{DefMapDb, DefMapReadTxn, ItemSource, ItemSourceKind, PackageSlot};
 use rg_ir_model::{
-    AssocItemId, ConstId, FunctionId, ImplId, ItemId, ItemOwner, LocalDefRef, LocalImplRef,
-    ModuleRef, StaticId, TargetRef, TraitId, TypeAliasId,
+    AssocItemId, ConstId, FunctionId, ItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef,
+    StaticId, TargetRef, TraitId, TypeAliasId,
 };
 use rg_item_tree::{
     ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
@@ -19,7 +19,7 @@ use rg_parse::TargetId;
 use rg_text::Name;
 
 use crate::{
-    ConstData, EnumData, FunctionData, ImplData, PackageIr, StaticData, StructData, TargetIr,
+    ConstData, EnumData, FunctionData, ImplData, ItemStore, PackageIr, StaticData, StructData,
     TraitData, TypeAliasData, UnionData,
     ir::signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
 };
@@ -72,7 +72,7 @@ struct TargetLowering<'a, 'db> {
     item_tree: &'a ItemTreePackage,
     target: TargetRef,
     def_map_txn: &'a DefMapReadTxn<'db>,
-    target_ir: TargetIr,
+    items: ItemStore,
 }
 
 impl<'a, 'db> TargetLowering<'a, 'db> {
@@ -96,11 +96,11 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             item_tree,
             target,
             def_map_txn,
-            target_ir: TargetIr::new(local_def_count),
+            items: ItemStore::new(local_def_count),
         })
     }
 
-    fn lower(mut self) -> anyhow::Result<TargetIr> {
+    fn lower(mut self) -> anyhow::Result<ItemStore> {
         // Local definitions already come from the def-map, so lowering follows def-map identity
         // order and only asks the item tree for declaration payloads.
         let def_map = self
@@ -125,8 +125,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             if let Some(item_id) =
                 self.lower_local_item(local_def_ref, local_def.source, owner, item)
             {
-                self.target_ir
-                    .set_local_item(local_def_ref.local_def, item_id);
+                self.items.set_local_item(local_def_ref.local_def, item_id);
             }
         }
 
@@ -141,12 +140,11 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             };
 
             if let ItemKind::Impl(impl_item) = &item.kind {
-                let impl_id = self.lower_impl(local_impl_ref, local_impl.source, owner, impl_item);
-                self.target_ir.push_local_impl(impl_id);
+                self.lower_impl(local_impl_ref, local_impl.source, owner, impl_item);
             }
         }
 
-        Ok(self.target_ir)
+        Ok(self.items)
     }
 
     fn item(&self, source: ItemSource) -> anyhow::Result<&'a ItemNode> {
@@ -198,7 +196,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
                 const_item,
             ))),
             ItemKind::Enum(enum_item) => {
-                let id = self.target_ir.items_mut().alloc_enum(EnumData {
+                let id = self.items.alloc_enum(EnumData {
                     local_def,
                     source,
                     owner,
@@ -225,7 +223,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
                 static_item,
             ))),
             ItemKind::Struct(struct_item) => {
-                let id = self.target_ir.items_mut().alloc_struct(StructData {
+                let id = self.items.alloc_struct(StructData {
                     local_def,
                     source,
                     owner,
@@ -248,7 +246,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
                 type_alias,
             ))),
             ItemKind::Union(union_item) => {
-                let id = self.target_ir.items_mut().alloc_union(UnionData {
+                let id = self.items.alloc_union(UnionData {
                     local_def,
                     source,
                     owner,
@@ -273,7 +271,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         trait_item: &TraitItem,
     ) -> TraitId {
         // Allocate first so associated items can point back at this trait as their owner.
-        let trait_id = self.target_ir.items_mut().alloc_trait(TraitData {
+        let trait_id = self.items.alloc_trait(TraitData {
             local_def,
             source,
             owner,
@@ -287,7 +285,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         });
         let assoc_items =
             self.lower_assoc_items(source, &trait_item.items, ItemOwner::Trait(trait_id));
-        self.target_ir.items_mut().traits[trait_id].items = assoc_items;
+        self.items.traits[trait_id].items = assoc_items;
         trait_id
     }
 
@@ -297,10 +295,10 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         source: ItemSource,
         owner: ModuleRef,
         impl_item: &ImplItem,
-    ) -> ImplId {
+    ) {
         // Impl header paths are stored as syntax here; semantic resolution fills the resolved
         // self/trait ids once every target's item store exists.
-        let impl_id = self.target_ir.items_mut().alloc_impl(ImplData {
+        let impl_id = self.items.alloc_impl(ImplData {
             local_impl,
             source,
             owner,
@@ -314,8 +312,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         });
         let assoc_items =
             self.lower_assoc_items(source, &impl_item.items, ItemOwner::Impl(impl_id));
-        self.target_ir.items_mut().impls[impl_id].items = assoc_items;
-        impl_id
+        self.items.impls[impl_id].items = assoc_items;
     }
 
     fn lower_assoc_items(
@@ -369,7 +366,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         item: &ItemNode,
         declaration: &FunctionItem,
     ) -> FunctionId {
-        self.target_ir.items_mut().alloc_function(FunctionData {
+        self.items.alloc_function(FunctionData {
             local_def,
             source,
             span: item.span,
@@ -390,7 +387,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         item: &ItemNode,
         declaration: &TypeAliasItem,
     ) -> TypeAliasId {
-        self.target_ir.items_mut().alloc_type_alias(TypeAliasData {
+        self.items.alloc_type_alias(TypeAliasData {
             local_def,
             source,
             span: item.span,
@@ -411,7 +408,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         item: &ItemNode,
         declaration: &ConstItem,
     ) -> ConstId {
-        self.target_ir.items_mut().alloc_const(ConstData {
+        self.items.alloc_const(ConstData {
             local_def,
             source,
             span: item.span,
@@ -432,7 +429,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
         item: &ItemNode,
         declaration: &StaticItem,
     ) -> StaticId {
-        self.target_ir.items_mut().alloc_static(StaticData {
+        self.items.alloc_static(StaticData {
             local_def,
             source,
             span: item.span,

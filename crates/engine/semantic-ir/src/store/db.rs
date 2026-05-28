@@ -73,8 +73,7 @@ impl SemanticIrDb {
             let Some(package) = entry.as_resident() else {
                 continue;
             };
-            for target in package.targets() {
-                let items = target.items();
+            for items in package.targets() {
                 stats.target_count += 1;
                 stats.struct_count += items.structs.len();
                 stats.union_count += items.unions.len();
@@ -150,7 +149,6 @@ impl SemanticIrDbMutator<'_> {
     pub(crate) fn impl_data_mut(&mut self, impl_ref: ImplRef) -> Option<&mut ImplData> {
         self.package_mut(impl_ref.target.package)?
             .target_mut(impl_ref.target.target)?
-            .items_mut()
             .impls
             .get_mut(impl_ref.id)
     }
