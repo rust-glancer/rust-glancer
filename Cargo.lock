@@ -1480,8 +1480,10 @@ version = "0.1.0"
 dependencies = [
  "derive_more",
  "rg_arena",
+ "rg_item_tree",
  "rg_memsize",
  "rg_parse",
+ "rg_text",
  "rg_workspace",
  "wincode",
 ]

@@ -6,10 +6,11 @@
 
 use anyhow::Context as _;
 
-use rg_def_map::{DefMapDb, DefMapReadTxn, ItemSource, ItemSourceKind, PackageSlot};
+use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
 use rg_ir_model::{
     AssocItemId, ConstId, FunctionId, ItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef,
     StaticId, TargetRef, TraitId, TypeAliasId,
+    hir::source::{ItemSource, ItemSourceKind},
 };
 use rg_item_tree::{
     ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId,
@@ -19,9 +20,8 @@ use rg_parse::TargetId;
 use rg_text::Name;
 
 use crate::{
-    ConstData, EnumData, FunctionData, ImplData, ItemStore, PackageIr, StaticData, StructData,
-    TraitData, TypeAliasData, UnionData,
-    ir::signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
+    ConstData, ConstSignature, EnumData, FunctionData, FunctionSignature, ImplData, ItemStore,
+    PackageIr, StaticData, StructData, TraitData, TypeAliasData, TypeAliasSignature, UnionData,
 };
 
 pub(super) fn build_packages(

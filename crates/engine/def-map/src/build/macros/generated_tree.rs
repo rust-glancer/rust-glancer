@@ -8,6 +8,7 @@
 use anyhow::{Context as _, Result};
 
 use rg_arena::Arena;
+use rg_ir_model::hir::source::GeneratedSourceData;
 use rg_item_tree::{
     CfgExpr, ConstItem, Documentation, EnumItem, ExternCrateItem, FunctionItem, ImplItem, ItemKind,
     ItemNode, ItemTreeId, MacroCallItem, MacroDefinitionItem, ModuleItem, ModuleSource, StaticItem,
@@ -24,8 +25,6 @@ use rg_tt::{
     Span as TtSpan,
     syntax_bridge::{ExpansionSpanMap, SpanFactory},
 };
-
-use crate::GeneratedSourceData;
 
 use super::generated::GeneratedOrigin;
 

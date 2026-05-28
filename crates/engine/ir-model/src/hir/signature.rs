@@ -75,7 +75,7 @@ pub struct FunctionSignature {
 }
 
 impl FunctionSignature {
-    pub(crate) fn from_item(item: &FunctionItem) -> Self {
+    pub fn from_item(item: &FunctionItem) -> Self {
         let mut params = item.params.clone();
         for param in &mut params {
             shrink_param(param);
@@ -141,7 +141,7 @@ pub struct TypeAliasSignature {
 }
 
 impl TypeAliasSignature {
-    pub(crate) fn from_item(item: &TypeAliasItem) -> Self {
+    pub fn from_item(item: &TypeAliasItem) -> Self {
         let mut bounds = item.bounds.clone();
         for bound in &mut bounds {
             bound.shrink_to_fit();
@@ -193,7 +193,7 @@ pub struct ConstSignature {
 }
 
 impl ConstSignature {
-    pub(crate) fn from_item(item: &ConstItem) -> Self {
+    pub fn from_item(item: &ConstItem) -> Self {
         Self {
             ty: item.ty.clone(),
         }
@@ -203,7 +203,7 @@ impl ConstSignature {
         self.ty.as_ref()
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         if let Some(ty) = &mut self.ty {
             ty.shrink_to_fit();
         }

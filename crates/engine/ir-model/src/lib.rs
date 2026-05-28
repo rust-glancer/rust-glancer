@@ -4,6 +4,7 @@
 //! DefMap, Semantic IR, and Body IR lets higher layers talk about one declaration or one function
 //! without making any single storage crate own the aggregate identity.
 
+pub mod hir;
 mod ids;
 
 pub use self::ids::{

@@ -144,7 +144,7 @@ impl GeneratedSourceData {
         self.items.get(item_id)
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.top_level.shrink_to_fit();
         for item in self.items.iter_mut() {
             item.shrink_to_fit();

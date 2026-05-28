@@ -5,7 +5,6 @@ pub(crate) mod import;
 pub(crate) mod package;
 pub(crate) mod path;
 pub(crate) mod scope;
-pub(crate) mod source;
 
 pub use self::{
     data::{
@@ -16,9 +15,6 @@ pub use self::{
     package::PackageDefMaps,
     path::{Path, PathSegment},
     scope::{ModuleScope, ScopeBinding, ScopeBindingOrigin, ScopeEntry},
-    source::{
-        GeneratedItemRef, GeneratedSourceData, GeneratedSourceId, ItemSource, ItemSourceKind,
-    },
 };
 
 pub(crate) use self::scope::{ModuleScopeBuilder, Namespace, ScopeEntryRef};

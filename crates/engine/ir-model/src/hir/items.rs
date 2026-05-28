@@ -1,6 +1,3 @@
-use rg_def_map::ItemSource;
-use rg_ir_model::{AssocItemId, ItemOwner, TraitRef, TypeDefRef};
-use rg_ir_model::{LocalDefRef, LocalImplRef, ModuleRef};
 use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, Mutability, ParamKind,
     TypeBound, TypeRef, VisibilityLevel,
@@ -8,7 +5,12 @@ use rg_item_tree::{
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
-use super::signature::{ConstSignature, FunctionSignature, TypeAliasSignature};
+use crate::{AssocItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, TraitRef, TypeDefRef};
+
+use super::{
+    signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
+    source::ItemSource,
+};
 
 /// Borrowed view over one field plus the semantic owner facts needed by analysis.
 #[derive(Debug, Clone, Copy)]
@@ -46,7 +48,7 @@ pub struct StructData {
 }
 
 impl StructData {
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -72,7 +74,7 @@ pub struct UnionData {
 }
 
 impl UnionData {
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -101,7 +103,7 @@ pub struct EnumData {
 }
 
 impl EnumData {
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -132,7 +134,7 @@ pub struct TraitData {
 }
 
 impl TraitData {
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -167,7 +169,7 @@ pub struct ImplData {
 }
 
 impl ImplData {
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.generics.shrink_to_fit();
         if let Some(trait_ref) = &mut self.trait_ref {
             trait_ref.shrink_to_fit();
@@ -203,7 +205,7 @@ impl FunctionData {
             .is_some_and(|param| matches!(param.kind, ParamKind::SelfParam))
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -229,7 +231,7 @@ pub struct TypeAliasData {
 }
 
 impl TypeAliasData {
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -255,7 +257,7 @@ pub struct ConstData {
 }
 
 impl ConstData {
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();
@@ -282,7 +284,7 @@ pub struct StaticData {
 }
 
 impl StaticData {
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
             docs.shrink_to_fit();

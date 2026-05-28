@@ -6,7 +6,10 @@
 
 use anyhow::{Context as _, Result};
 
-use rg_ir_model::{DefId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{
+    DefId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef,
+    hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource},
+};
 use rg_item_tree::{
     Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ItemTreeRef, MacroCallItem,
     MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource, UseImport, UseItem,
@@ -17,9 +20,9 @@ use rg_parse::{FileId, Span};
 use rg_text::{Name, NameInterner};
 
 use crate::{
-    GeneratedItemRef, GeneratedSourceId, ImportBinding, ImportData, ImportKind, ImportPath,
-    ImportSourcePath, ItemSource, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
-    ModuleData, ModuleOrigin, ModuleScope, PathSegment, ScopeBinding, ScopeBindingOrigin,
+    ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
+    LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope,
+    PathSegment, ScopeBinding, ScopeBindingOrigin,
     build::{collect::TargetState, finalize::ScopeMatrix, stats::DefMapFinalizationStatsSink},
     model::Namespace,
 };

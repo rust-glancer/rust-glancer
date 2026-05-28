@@ -6,7 +6,10 @@ use crate::{
     DefMap, DefMapDb, DefMapFinalizationStats, ImportData, ImportKind, Path, PathSegment,
     ResolvePathResult, ScopeBinding, ScopeEntry,
 };
-use rg_ir_model::{DefId, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{
+    DefId, ModuleId, ModuleRef, TargetRef,
+    hir::source::{ItemSource, ItemSourceKind},
+};
 use rg_item_tree::{ItemTreeDb, PackageNameInterners, VisibilityLevel};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, Package, ParseDb, Target};
@@ -758,10 +761,10 @@ impl<'a> TargetDefMapSnapshot<'a> {
         format!("{file_label}#{}", item_ref.item.0)
     }
 
-    fn render_item_source(&self, source: crate::ItemSource) -> String {
+    fn render_item_source(&self, source: ItemSource) -> String {
         match source.kind {
-            crate::ItemSourceKind::ItemTree(item_ref) => self.render_item_tree_ref(item_ref),
-            crate::ItemSourceKind::Generated(item_ref) => {
+            ItemSourceKind::ItemTree(item_ref) => self.render_item_tree_ref(item_ref),
+            ItemSourceKind::Generated(item_ref) => {
                 format!("generated#{}:{}", item_ref.source.0, item_ref.item.0)
             }
         }
