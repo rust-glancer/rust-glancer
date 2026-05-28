@@ -4,13 +4,9 @@
 //! DefMap, Semantic IR, and Body IR lets higher layers talk about one declaration or one function
 //! without making any single storage crate own the aggregate identity.
 
-mod body;
-mod def_map;
-pub mod identity;
-mod resolution;
-mod semantic;
+mod ids;
 
-pub use self::{
+pub use self::ids::{
     body::{
         BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
         BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyImplRef, BodyItemId, BodyItemRef,
@@ -20,6 +16,7 @@ pub use self::{
         DefId, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
         ModuleRef, TargetRef,
     },
+    identity,
     resolution::ResolvedDeclarationRef,
     semantic::{
         AssocItemId, ConstId, ConstRef, EnumId, EnumVariantRef, FieldRef, FunctionId, FunctionRef,
