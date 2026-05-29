@@ -26,7 +26,7 @@ use rg_item_tree::{
 use rg_parse::TargetId;
 use rg_text::Name;
 
-use crate::{ItemStore, PackageIr};
+use crate::{ItemStore, PackageIr, item_store::ItemStoreBuilder};
 
 pub(super) fn build_packages(
     item_tree: &ItemTreeDb,
@@ -76,7 +76,7 @@ struct TargetLowering<'a, 'db> {
     item_tree: &'a ItemTreePackage,
     target: TargetRef,
     def_map_txn: &'a DefMapReadTxn<'db>,
-    items: ItemStore,
+    items: ItemStoreBuilder,
 }
 
 impl<'a, 'db> TargetLowering<'a, 'db> {
@@ -100,7 +100,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             item_tree,
             target,
             def_map_txn,
-            items: ItemStore::new(target, local_def_count),
+            items: ItemStoreBuilder::new(target, local_def_count),
         })
     }
 
@@ -148,7 +148,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             }
         }
 
-        Ok(self.items)
+        Ok(self.items.build())
     }
 
     fn item(&self, source: ItemSource) -> anyhow::Result<&'a ItemNode> {
@@ -178,6 +178,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
                         item_ref.item, item_ref.source
                     )
                 })?,
+            ItemSourceKind::Body(_) => anyhow::bail!("Body is not supported"),
         };
         Ok(item)
     }

@@ -1,19 +1,13 @@
 use rg_arena::Arena;
 use rg_item_tree::{ItemNode, ItemTreeId, ItemTreeRef};
+use rg_memsize::MemorySize;
 use rg_parse::{FileId, Span};
+use wincode::{SchemaRead, SchemaWrite};
+
+use crate::BodyItemRef;
 
 /// Stable identifier of one retained macro expansion payload.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub struct GeneratedSourceId(pub usize);
 
@@ -28,54 +22,25 @@ impl rg_arena::ArenaId for GeneratedSourceId {
 }
 
 /// Target-local reference to one generated item payload.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct GeneratedItemRef {
     pub source: GeneratedSourceId,
     pub item: ItemTreeId,
 }
 
 /// Durable source identity for definitions collected into DefMap and later IR layers.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ItemSource {
     pub file_id: FileId,
     pub kind: ItemSourceKind,
 }
 
 /// The storage layer that owns a source item payload.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub enum ItemSourceKind {
     ItemTree(ItemTreeRef),
     Generated(GeneratedItemRef),
+    Body(BodyItemRef),
 }
 
 impl ItemSource {
@@ -93,15 +58,24 @@ impl ItemSource {
         }
     }
 
+    pub fn body(file_id: FileId, source: BodyItemRef) -> Self {
+        Self {
+            file_id,
+            kind: ItemSourceKind::Body(source),
+        }
+    }
+
     /// Temporary migration boundary until Semantic IR lowers through an item-source reader.
     pub fn as_item_tree(self) -> Option<ItemTreeRef> {
         match self.kind {
             ItemSourceKind::ItemTree(source) => Some(source),
             ItemSourceKind::Generated(_) => None,
+            ItemSourceKind::Body(_) => None,
         }
     }
 
     /// Returns a source identity for an associated item in the same underlying item arena.
+    // TODO: Do we need a generic item? This seem to exist for a very specific reason
     pub fn with_item(self, item: ItemTreeId) -> Self {
         let kind = match self.kind {
             ItemSourceKind::ItemTree(source) => ItemSourceKind::ItemTree(ItemTreeRef {
@@ -112,6 +86,7 @@ impl ItemSource {
                 source: source.source,
                 item,
             }),
+            ItemSourceKind::Body(_) => unimplemented!("Not meant to be used with body items"),
         };
 
         Self {

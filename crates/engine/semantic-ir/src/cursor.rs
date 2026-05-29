@@ -120,7 +120,7 @@ impl SignatureCursorScanner<'_, '_> {
             .items(target)?
             .into_iter()
             .flat_map(move |items| {
-                items.structs.iter_with_ids().map(move |(id, data)| {
+                items.structs().iter_with_ids().map(move |(id, data)| {
                     (
                         TypeDefRef {
                             target,
@@ -149,7 +149,7 @@ impl SignatureCursorScanner<'_, '_> {
             .items(target)?
             .into_iter()
             .flat_map(move |items| {
-                items.unions.iter_with_ids().map(move |(id, data)| {
+                items.unions().iter_with_ids().map(move |(id, data)| {
                     (
                         TypeDefRef {
                             target,
@@ -187,7 +187,7 @@ impl SignatureCursorScanner<'_, '_> {
             .items(target)?
             .into_iter()
             .flat_map(move |items| {
-                items.enums.iter_with_ids().map(move |(id, data)| {
+                items.enums().iter_with_ids().map(move |(id, data)| {
                     (
                         TypeDefRef {
                             target,
@@ -227,7 +227,7 @@ impl SignatureCursorScanner<'_, '_> {
             return Ok(());
         };
 
-        for data in &items.traits {
+        for data in items.traits() {
             if !self.file_matches(data.source.file_id) {
                 continue;
             }
@@ -298,7 +298,7 @@ impl SignatureCursorScanner<'_, '_> {
             .semantic_ir
             .items(self.target)?
             .into_iter()
-            .flat_map(move |items| items.type_aliases.iter())
+            .flat_map(move |items| items.type_aliases().iter())
         {
             if !self.file_matches(data.source.file_id) {
                 continue;
@@ -323,7 +323,7 @@ impl SignatureCursorScanner<'_, '_> {
             .semantic_ir
             .items(self.target)?
             .into_iter()
-            .flat_map(move |items| items.consts.iter())
+            .flat_map(move |items| items.consts().iter())
         {
             if !self.file_matches(data.source.file_id) {
                 continue;
@@ -344,7 +344,7 @@ impl SignatureCursorScanner<'_, '_> {
             .semantic_ir
             .items(self.target)?
             .into_iter()
-            .flat_map(move |items| items.statics.iter())
+            .flat_map(move |items| items.statics().iter())
         {
             if !self.file_matches(data.source.file_id) {
                 continue;

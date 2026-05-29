@@ -11,32 +11,26 @@ use rg_ir_model::{
 
 use crate::{SemanticItemView, view::SemanticItemData};
 
-/// Target-local storage for semantic items.
-///
-/// Semantic ids are dense indexes into these vectors. Keeping all item families in one store lets
-/// lowering allocate ids cheaply while the public query surface exposes stable typed references.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct ItemStore {
+#[derive(Debug)]
+pub struct ItemStoreBuilder {
     // Target this item store corresponds to
     target_ref: TargetRef,
 
     // Mapping from local def ID to semantic item ID.
-    pub(crate) local_items: Arena<LocalDefId, Option<ItemId>>,
+    pub local_items: Arena<LocalDefId, Option<ItemId>>,
 
-    pub(crate) structs: Arena<StructId, StructData>,
-    pub(crate) unions: Arena<UnionId, UnionData>,
-    pub(crate) enums: Arena<EnumId, EnumData>,
-    pub(crate) traits: Arena<TraitId, TraitData>,
-    pub(crate) impls: Arena<ImplId, ImplData>,
-    pub(crate) functions: Arena<FunctionId, FunctionData>,
-    pub(crate) type_aliases: Arena<TypeAliasId, TypeAliasData>,
-    pub(crate) consts: Arena<ConstId, ConstData>,
-    pub(crate) statics: Arena<StaticId, StaticData>,
+    pub structs: Arena<StructId, StructData>,
+    pub unions: Arena<UnionId, UnionData>,
+    pub enums: Arena<EnumId, EnumData>,
+    pub traits: Arena<TraitId, TraitData>,
+    pub impls: Arena<ImplId, ImplData>,
+    pub functions: Arena<FunctionId, FunctionData>,
+    pub type_aliases: Arena<TypeAliasId, TypeAliasData>,
+    pub consts: Arena<ConstId, ConstData>,
+    pub statics: Arena<StaticId, StaticData>,
 }
 
-impl ItemStore {
+impl ItemStoreBuilder {
     pub(crate) fn new(target_ref: TargetRef, local_def_count: usize) -> Self {
         Self {
             target_ref,
@@ -57,21 +51,106 @@ impl ItemStore {
         }
     }
 
-    pub fn target_ref(&self) -> TargetRef {
-        self.target_ref
-    }
-
-    /// Returns the semantic item lowered from one DefMap local definition.
-    pub fn item_for_local_def(&self, local_def: LocalDefId) -> Option<ItemId> {
-        self.local_items.get(local_def).copied().flatten()
-    }
-
-    pub(crate) fn set_local_item(&mut self, local_def: LocalDefId, item: ItemId) {
+    pub fn set_local_item(&mut self, local_def: LocalDefId, item: ItemId) {
         let slot = self
             .local_items
             .get_mut(local_def)
             .expect("local item slot should exist while building semantic IR");
         *slot = Some(item);
+    }
+
+    pub fn build(self) -> ItemStore {
+        ItemStore {
+            target_ref: self.target_ref,
+            local_items: self.local_items,
+            structs: self.structs,
+            unions: self.unions,
+            enums: self.enums,
+            traits: self.traits,
+            impls: self.impls,
+            functions: self.functions,
+            type_aliases: self.type_aliases,
+            consts: self.consts,
+            statics: self.statics,
+        }
+    }
+}
+
+/// Target-local storage for semantic items.
+///
+/// Semantic ids are dense indexes into these vectors. Keeping all item families in one store lets
+/// lowering allocate ids cheaply while the public query surface exposes stable typed references.
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
+pub struct ItemStore {
+    // Target this item store corresponds to
+    target_ref: TargetRef,
+
+    // Mapping from local def ID to semantic item ID.
+    local_items: Arena<LocalDefId, Option<ItemId>>,
+
+    structs: Arena<StructId, StructData>,
+    unions: Arena<UnionId, UnionData>,
+    enums: Arena<EnumId, EnumData>,
+    traits: Arena<TraitId, TraitData>,
+    impls: Arena<ImplId, ImplData>,
+    functions: Arena<FunctionId, FunctionData>,
+    type_aliases: Arena<TypeAliasId, TypeAliasData>,
+    consts: Arena<ConstId, ConstData>,
+    statics: Arena<StaticId, StaticData>,
+}
+
+impl ItemStore {
+    pub fn target_ref(&self) -> TargetRef {
+        self.target_ref
+    }
+
+    pub fn structs(&self) -> &Arena<StructId, StructData> {
+        &self.structs
+    }
+
+    pub fn unions(&self) -> &Arena<UnionId, UnionData> {
+        &self.unions
+    }
+
+    pub fn enums(&self) -> &Arena<EnumId, EnumData> {
+        &self.enums
+    }
+
+    pub fn traits(&self) -> &Arena<TraitId, TraitData> {
+        &self.traits
+    }
+
+    pub fn impls(&self) -> &Arena<ImplId, ImplData> {
+        &self.impls
+    }
+
+    // TODO: Smell, shouldn't exist. Mutator should convert
+    // to ItemStoreBuilder, mutate, and then convert back, probably.
+    pub fn impls_mut(&mut self) -> &mut Arena<ImplId, ImplData> {
+        &mut self.impls
+    }
+
+    pub fn functions(&self) -> &Arena<FunctionId, FunctionData> {
+        &self.functions
+    }
+
+    pub fn type_aliases(&self) -> &Arena<TypeAliasId, TypeAliasData> {
+        &self.type_aliases
+    }
+
+    pub fn consts(&self) -> &Arena<ConstId, ConstData> {
+        &self.consts
+    }
+
+    pub fn statics(&self) -> &Arena<StaticId, StaticData> {
+        &self.statics
+    }
+
+    /// Returns the semantic item lowered from one DefMap local definition.
+    pub fn item_for_local_def(&self, local_def: LocalDefId) -> Option<ItemId> {
+        self.local_items.get(local_def).copied().flatten()
     }
 
     pub fn traits_with_refs(&self) -> impl Iterator<Item = (TraitRef, &TraitData)> {

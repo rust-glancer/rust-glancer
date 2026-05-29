@@ -33,6 +33,8 @@ mod type_ref;
 mod visibility;
 
 /// Stable file-local identifier for one lowered item-tree node.
+// TODO: now used in other places, so must be renamed / made more generic?
+// Or do we need to convert from item tree ID to some other item id in HIR?
 #[derive(
     Debug,
     Clone,

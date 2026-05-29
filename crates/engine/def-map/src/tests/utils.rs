@@ -767,6 +767,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
             ItemSourceKind::Generated(item_ref) => {
                 format!("generated#{}:{}", item_ref.source.0, item_ref.item.0)
             }
+            ItemSourceKind::Body(_) => panic!("Body is not expected"),
         }
     }
 

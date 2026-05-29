@@ -3,7 +3,7 @@ use rg_parse::TargetId;
 use rg_workspace::PackageSlot;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::declare_id;
+use crate::{BodyRef, declare_id};
 
 declare_id! {
     /// Stable identifier of one module inside a target map.
@@ -24,6 +24,17 @@ declare_id! {
 pub struct TargetRef {
     pub package: PackageSlot,
     pub target: TargetId,
+}
+
+/// Stable reference to one def map item.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, derive_more::From,
+)]
+pub enum DefMapRef {
+    /// Item originates from a target (e.g. semantic scope)
+    Target(TargetRef),
+    /// Item originates from a certain function body (e.g. body scope)
+    Body(BodyRef),
 }
 
 /// Stable reference to one module across the whole project analysis.

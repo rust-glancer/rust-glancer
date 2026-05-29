@@ -1,7 +1,12 @@
 use rg_arena::Arena;
 use rg_ir_model::{
     BindingId, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId, BodyItemRef,
-    BodyRef, BodyValueItemId, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, StmtId,
+    BodyRef, BodyValueItemId, ConstId, EnumId, ExprId, FunctionId, FunctionRef, ImplId, ModuleRef,
+    PatId, ScopeId, StaticId, StmtId, StructId, TraitId, TypeAliasId, UnionId,
+    hir::items::{
+        ConstData, EnumData, FunctionData, ImplData, StaticData, StructData, TraitData,
+        TypeAliasData, UnionData,
+    },
 };
 use rg_parse::{FileId, Span, TargetId};
 
@@ -410,6 +415,16 @@ pub(crate) struct BodyBuilder {
     pub(crate) pats: Arena<PatId, PatData>,
     pub(crate) statements: Arena<StmtId, StmtData>,
     pub(crate) exprs: Arena<ExprId, ExprData>,
+
+    pub(crate) structs: Arena<StructId, StructData>,
+    pub(crate) unions: Arena<UnionId, UnionData>,
+    pub(crate) enums: Arena<EnumId, EnumData>,
+    pub(crate) traits: Arena<TraitId, TraitData>,
+    pub(crate) impls: Arena<ImplId, ImplData>,
+    pub(crate) functions: Arena<FunctionId, FunctionData>,
+    pub(crate) type_aliases: Arena<TypeAliasId, TypeAliasData>,
+    pub(crate) consts: Arena<ConstId, ConstData>,
+    pub(crate) statics: Arena<StaticId, StaticData>,
 }
 
 impl BodyBuilder {
@@ -423,6 +438,10 @@ impl BodyBuilder {
             bindings: Vec::new(),
         })
     }
+
+    // pub(crate) fn alloc_struct(&mut self, data: ConstData) -> BodyItemId {
+
+    // }
 
     pub(crate) fn alloc_local_item(&mut self, data: BodyItemData) -> BodyItemId {
         let owner = data.owner;

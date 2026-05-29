@@ -4,21 +4,20 @@ use wincode::{SchemaRead, SchemaWrite};
 use crate::TargetRef;
 use crate::declare_id;
 
+pub use super::semantic::FunctionId as BodyFunctionId;
+pub use super::semantic::ImplId as BodyImplId;
+
 declare_id! {
     /// Stable identifier for one lowered function body inside a target.
     pub struct BodyId;
 
-    /// Stable identifier for one impl block declared inside a function body.
-    pub struct BodyImplId;
-
-    /// Stable identifier for one item declared inside a function body.
+    /// Stable identifier of a single body item.
+    /// While it's very similar to item tree ID, it does not come from
+    /// item tree and thus is indexed separately.
     pub struct BodyItemId;
 
     /// Stable identifier for one value item declared inside a function body.
     pub struct BodyValueItemId;
-
-    /// Stable identifier for one function-like declaration inside a function body.
-    pub struct BodyFunctionId;
 
     /// Stable identifier for one expression inside a body.
     pub struct ExprId;

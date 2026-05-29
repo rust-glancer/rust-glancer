@@ -76,15 +76,15 @@ impl SemanticIrDb {
             };
             for items in package.targets() {
                 stats.target_count += 1;
-                stats.struct_count += items.structs.len();
-                stats.union_count += items.unions.len();
-                stats.enum_count += items.enums.len();
-                stats.trait_count += items.traits.len();
-                stats.impl_count += items.impls.len();
-                stats.function_count += items.functions.len();
-                stats.type_alias_count += items.type_aliases.len();
-                stats.const_count += items.consts.len();
-                stats.static_count += items.statics.len();
+                stats.struct_count += items.structs().len();
+                stats.union_count += items.unions().len();
+                stats.enum_count += items.enums().len();
+                stats.trait_count += items.traits().len();
+                stats.impl_count += items.impls().len();
+                stats.function_count += items.functions().len();
+                stats.type_alias_count += items.type_aliases().len();
+                stats.const_count += items.consts().len();
+                stats.static_count += items.statics().len();
             }
         }
 
@@ -150,7 +150,7 @@ impl SemanticIrDbMutator<'_> {
     pub(crate) fn impl_data_mut(&mut self, impl_ref: ImplRef) -> Option<&mut ImplData> {
         self.package_mut(impl_ref.target.package)?
             .target_mut(impl_ref.target.target)?
-            .impls
+            .impls_mut()
             .get_mut(impl_ref.id)
     }
 
