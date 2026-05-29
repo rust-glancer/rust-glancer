@@ -5,7 +5,9 @@ use rg_item_tree::{
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
-use crate::{AssocItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, TraitRef, TypeDefRef};
+use crate::{
+    AssocItemId, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, TraitRef, TypeDefRef,
+};
 
 use super::{
     signature::{ConstSignature, FunctionSignature, TypeAliasSignature},
@@ -134,6 +136,19 @@ pub struct TraitData {
 }
 
 impl TraitData {
+    pub fn functions(&self) -> impl Iterator<Item = FunctionRef> {
+        self.items.iter().filter_map(|item| {
+            if let AssocItemId::Function(id) = item {
+                Some(FunctionRef {
+                    origin: self.local_def.origin,
+                    id: *id,
+                })
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
         if let Some(docs) = &mut self.docs {
@@ -169,6 +184,19 @@ pub struct ImplData {
 }
 
 impl ImplData {
+    pub fn functions(&self) -> impl Iterator<Item = FunctionRef> {
+        self.items.iter().filter_map(|item| {
+            if let AssocItemId::Function(id) = item {
+                Some(FunctionRef {
+                    origin: self.local_impl.origin,
+                    id: *id,
+                })
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn shrink_to_fit(&mut self) {
         self.generics.shrink_to_fit();
         if let Some(trait_ref) = &mut self.trait_ref {

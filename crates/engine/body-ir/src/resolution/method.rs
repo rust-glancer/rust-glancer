@@ -64,12 +64,15 @@ pub(crate) fn semantic_trait_function_candidates_for_receiver(
         let trait_functions = if let Some(functions) = indexed_trait_functions {
             functions
         } else {
-            let trait_functions = match index {
-                Some(index) => match index.trait_functions(trait_impl.trait_ref) {
-                    Some(functions) => functions.to_vec(),
-                    None => semantic_ir.trait_functions(trait_impl.trait_ref)?,
-                },
-                None => semantic_ir.trait_functions(trait_impl.trait_ref)?,
+            let trait_functions = if let Some(index) = index
+                && let Some(functions) = index.trait_functions(trait_impl.trait_ref)
+            {
+                functions.to_vec()
+            } else {
+                semantic_ir
+                    .trait_data(trait_impl.trait_ref)?
+                    .map(|t| t.functions().collect())
+                    .unwrap_or_default()
             };
 
             // The direct Semantic IR fallback cannot skip the impl check up front, but it can

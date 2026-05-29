@@ -1,8 +1,8 @@
 use rg_memsize::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::declare_id;
 use crate::ModuleRef;
+use crate::declare_id;
 use crate::ids::def_map::DefMapRef;
 
 declare_id! {
@@ -30,10 +30,39 @@ pub struct TypeDefRef {
     pub id: TypeDefId,
 }
 
+impl TypeDefRef {
+    pub fn new_struct(origin: DefMapRef, id: StructId) -> Self {
+        Self {
+            origin,
+            id: TypeDefId::Struct(id),
+        }
+    }
+
+    pub fn new_union(origin: DefMapRef, id: UnionId) -> Self {
+        Self {
+            origin,
+            id: TypeDefId::Union(id),
+        }
+    }
+
+    pub fn new_enum(origin: DefMapRef, id: EnumId) -> Self {
+        Self {
+            origin,
+            id: TypeDefId::Enum(id),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TraitRef {
     pub origin: DefMapRef,
     pub id: TraitId,
+}
+
+impl TraitRef {
+    pub fn new(origin: DefMapRef, id: TraitId) -> Self {
+        Self { origin, id }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
@@ -42,10 +71,22 @@ pub struct ImplRef {
     pub id: ImplId,
 }
 
+impl ImplRef {
+    pub fn new(origin: DefMapRef, id: ImplId) -> Self {
+        Self { origin, id }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct FunctionRef {
     pub origin: DefMapRef,
     pub id: FunctionId,
+}
+
+impl FunctionRef {
+    pub fn new(origin: DefMapRef, id: FunctionId) -> Self {
+        Self { origin, id }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]

@@ -1,9 +1,8 @@
 use rg_arena::Arena;
 use rg_ir_model::{
-    DefMapRef,
-    ConstId, ConstRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, LocalDefId,
-    SemanticItemRef, StaticId, StaticRef, StructId, TraitId, TraitRef, TypeAliasId, TypeAliasRef,
-    TypeDefId, TypeDefRef, UnionId, TargetRef,
+    ConstId, ConstRef, DefMapRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId,
+    LocalDefId, SemanticItemRef, StaticId, StaticRef, StructId, TargetRef, TraitId, TraitRef,
+    TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
     hir::items::{
         ConstData, EnumData, FunctionData, ImplData, StaticData, StructData, TraitData,
         TypeAliasData, UnionData,
@@ -159,39 +158,21 @@ impl ItemStore {
     }
 
     pub fn traits_with_refs(&self) -> impl Iterator<Item = (TraitRef, &TraitData)> {
-        self.traits.iter_with_ids().map(move |(id, data)| {
-            (
-                TraitRef {
-                    origin: self.origin,
-                    id,
-                },
-                data,
-            )
-        })
+        self.traits
+            .iter_with_ids()
+            .map(move |(id, data)| (TraitRef::new(self.origin, id), data))
     }
 
     pub fn impls_with_refs(&self) -> impl Iterator<Item = (ImplRef, &ImplData)> {
-        self.impls.iter_with_ids().map(move |(id, data)| {
-            (
-                ImplRef {
-                    origin: self.origin,
-                    id,
-                },
-                data,
-            )
-        })
+        self.impls
+            .iter_with_ids()
+            .map(move |(id, data)| (ImplRef::new(self.origin, id), data))
     }
 
     pub fn functions_with_refs(&self) -> impl Iterator<Item = (FunctionRef, &FunctionData)> {
-        self.functions.iter_with_ids().map(move |(id, data)| {
-            (
-                FunctionRef {
-                    origin: self.origin,
-                    id,
-                },
-                data,
-            )
-        })
+        self.functions
+            .iter_with_ids()
+            .map(move |(id, data)| (FunctionRef::new(self.origin, id), data))
     }
 
     pub fn struct_data(&self, id: StructId) -> Option<&StructData> {
@@ -304,36 +285,23 @@ impl ItemStore {
 
     pub fn semantic_items(&self) -> impl Iterator<Item = SemanticItemView<'_>> {
         let origin = self.origin;
-        // TODO: data should contain necessary refs inside
         self.structs
             .iter_with_ids()
             .map(move |(id, data)| {
                 SemanticItemView::new(
-                    TypeDefRef {
-                        origin,
-                        id: TypeDefId::Struct(id),
-                    }
-                    .into(),
+                    TypeDefRef::new_struct(origin, id).into(),
                     SemanticItemData::Struct(data),
                 )
             })
             .chain(self.unions.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    TypeDefRef {
-                        origin,
-                        id: TypeDefId::Union(id),
-                    }
-                    .into(),
+                    TypeDefRef::new_union(origin, id).into(),
                     SemanticItemData::Union(data),
                 )
             }))
             .chain(self.enums.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    TypeDefRef {
-                        origin,
-                        id: TypeDefId::Enum(id),
-                    }
-                    .into(),
+                    TypeDefRef::new_enum(origin, id).into(),
                     SemanticItemData::Enum(data),
                 )
             }))
@@ -344,10 +312,7 @@ impl ItemStore {
                 )
             }))
             .chain(self.impls.iter_with_ids().map(move |(id, data)| {
-                SemanticItemView::new(
-                    ImplRef { origin, id }.into(),
-                    SemanticItemData::Impl(data),
-                )
+                SemanticItemView::new(ImplRef { origin, id }.into(), SemanticItemData::Impl(data))
             }))
             .chain(self.functions.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
@@ -373,5 +338,24 @@ impl ItemStore {
                     SemanticItemData::Static(data),
                 )
             }))
+    }
+
+    pub fn type_def_name(&self, id: TypeDefId) -> Option<&str> {
+        match id {
+            TypeDefId::Struct(id) => self.struct_data(id).map(|data| data.name.as_str()),
+            TypeDefId::Enum(id) => self.enum_data(id).map(|data| data.name.as_str()),
+            TypeDefId::Union(id) => self.union_data(id).map(|data| data.name.as_str()),
+        }
+    }
+
+    pub fn generic_params_for_type_def(
+        &self,
+        id: TypeDefId,
+    ) -> Option<&rg_item_tree::GenericParams> {
+        match id {
+            TypeDefId::Struct(id) => self.struct_data(id).map(|data| &data.generics),
+            TypeDefId::Enum(id) => self.enum_data(id).map(|data| &data.generics),
+            TypeDefId::Union(id) => self.union_data(id).map(|data| &data.generics),
+        }
     }
 }
