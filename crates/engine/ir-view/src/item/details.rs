@@ -166,7 +166,10 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     }
 
     fn type_def_details(&self, ty: TypeDefRef) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(items) = self.db.semantic_ir.items(ty.origin)? else {
+        let Some(target) = ty.origin.as_target_ref() else {
+            return Ok(None);
+        };
+        let Some(items) = self.db.semantic_ir.items(target)? else {
             return Ok(None);
         };
         let renderer = SignatureRenderer::new(self.db);
@@ -327,7 +330,10 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         module_ref: ModuleRef,
         context: &DeclarationDetailsContext,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(def_map) = self.db.def_map.def_map(module_ref.origin)? else {
+        let Some(target) = module_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
+        let Some(def_map) = self.db.def_map.def_map(target)? else {
             return Ok(None);
         };
         let Some(module) = def_map.module(module_ref.module) else {
@@ -350,10 +356,13 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         &self,
         local_def_ref: LocalDefRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
+        let Some(target) = local_def_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
         let Some(data) = self
             .db
             .def_map
-            .def_map(local_def_ref.origin)?
+            .def_map(target)?
             .and_then(|def_map| def_map.local_def(local_def_ref.local_def))
         else {
             return Ok(None);

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 
-use rg_ir_model::TargetRef;
+use rg_ir_model::{DefMapRef, TargetRef};
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
 use rg_macro_expand::{Edition, ExpansionSyntax};
 use rg_parse::{FileId, Span};
@@ -559,7 +559,7 @@ impl MacroExpansionAttempt {
         // module. Imported bindings and `#[macro_export]` root bindings are path-based and have
         // already gone through ordinary scope resolution.
         if resolved.origin == ScopeBindingOrigin::Direct
-            && resolved.def_ref.origin == state.target
+            && resolved.def_ref.origin == DefMapRef::Target(state.target)
             && resolved.local_def.module == call.module
             && let Some(order) = resolved.order
             && order > &call.order

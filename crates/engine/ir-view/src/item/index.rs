@@ -6,8 +6,8 @@
 use rg_body_ir::BodyImplData;
 use rg_ir_model::{
     AssocItemId, BodyFunctionRef, BodyImplRef, BodyItemRef, BodyValueItemRef, ConstRef,
-    EnumVariantRef as SemanticEnumVariantRef, FunctionRef as SemanticFunctionRef, ModuleId,
-    ModuleRef, SemanticItemKind, TargetRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    DefMapRef, EnumVariantRef as SemanticEnumVariantRef, FunctionRef as SemanticFunctionRef,
+    ModuleId, ModuleRef, SemanticItemKind, TargetRef, TypeAliasRef, TypeDefId, TypeDefRef,
     identity::{DeclarationRef, DeclarationRefRepr, ImplRefRepr, ItemRefRepr},
 };
 use rg_parse::{FileId, Span};
@@ -127,7 +127,10 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     }
 
     pub fn module_container_name(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {
-        let Some(def_map) = self.db.def_map.def_map(module_ref.origin)? else {
+        let Some(target) = module_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
+        let Some(def_map) = self.db.def_map.def_map(target)? else {
             return Ok(None);
         };
         let Some(module) = def_map.module(module_ref.module) else {
@@ -357,36 +360,36 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
 
     fn assoc_item_children(
         &self,
-        target: TargetRef,
+        origin: DefMapRef,
         items: &[AssocItemId],
     ) -> anyhow::Result<Vec<IndexedItemChild>> {
         Ok(items
             .iter()
             .map(|item| {
-                IndexedItemChild::Declaration(IndexedItem::leaf(Self::assoc_item(target, item)))
+                IndexedItemChild::Declaration(IndexedItem::leaf(Self::assoc_item(origin, item)))
             })
             .collect())
     }
 
-    fn assoc_item(target: TargetRef, item: &AssocItemId) -> DeclarationRef {
+    fn assoc_item(origin: DefMapRef, item: &AssocItemId) -> DeclarationRef {
         match item {
             AssocItemId::Function(id) => DeclarationRef::semantic(
                 SemanticFunctionRef {
-                    origin: target,
+                    origin,
                     id: *id,
                 }
                 .into(),
             ),
             AssocItemId::TypeAlias(id) => DeclarationRef::semantic(
                 TypeAliasRef {
-                    origin: target,
+                    origin,
                     id: *id,
                 }
                 .into(),
             ),
             AssocItemId::Const(id) => DeclarationRef::semantic(
                 ConstRef {
-                    origin: target,
+                    origin,
                     id: *id,
                 }
                 .into(),
@@ -415,7 +418,10 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         name.unwrap_or_else(|| "<unsupported>".to_string())
     }
 
-    fn module_path(&self, target: TargetRef, module: ModuleId) -> anyhow::Result<String> {
+    fn module_path(&self, origin: DefMapRef, module: ModuleId) -> anyhow::Result<String> {
+        let Some(target) = origin.as_target_ref() else {
+            return Ok(String::new());
+        };
         let Some(def_map) = self.db.def_map.def_map(target)? else {
             return Ok(String::new());
         };
@@ -429,7 +435,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
             return Ok(name.to_string());
         };
 
-        let parent_path = self.module_path(target, parent)?;
+        let parent_path = self.module_path(origin, parent)?;
         if parent_path.is_empty() {
             Ok(name.to_string())
         } else {

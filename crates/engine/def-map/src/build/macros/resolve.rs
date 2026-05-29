@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 
-use rg_ir_model::{DefId, LocalDefRef, ModuleRef, TargetRef};
+use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, TargetRef};
 use rg_text::Name;
 
 use crate::{
@@ -79,7 +79,7 @@ fn resolve_single_name_macro<'a>(
     // namespace bindings in the current resolved scope snapshot.
     let entry = env.module_scope_entry(
         ModuleRef {
-            origin: state.target,
+            origin: DefMapRef::Target(state.target),
             module: call.module,
         },
         name.as_str(),
@@ -125,7 +125,7 @@ fn resolve_textual_macro_rules<'a>(
                 env,
                 states,
                 DefId::Local(LocalDefRef {
-                    origin: state.target,
+                    origin: DefMapRef::Target(state.target),
                     local_def,
                 }),
                 ScopeBindingOrigin::Direct,
@@ -134,7 +134,11 @@ fn resolve_textual_macro_rules<'a>(
 
         // A parent module contributes only declarations that appeared before the child module was
         // declared, matching the textual file view used by `macro_rules!`.
-        let Some(parent) = env.parent_module(state.target, module)? else {
+        let Some(parent) = env.parent_module(ModuleRef {
+            origin: DefMapRef::Target(state.target),
+            module,
+        })?
+        else {
             return Ok(None);
         };
         let Some(parent_boundary) = state.textual_macro_scopes.module_declaration_order(module)
@@ -162,7 +166,7 @@ fn resolve_macro_use_extern_crate_fallback<'a>(
         }
 
         let import_owner = ModuleRef {
-            origin: state.target,
+            origin: DefMapRef::Target(state.target),
             module: macro_use.module,
         };
         for binding in visible_module_macro_bindings_with_env(
@@ -213,8 +217,10 @@ fn macro_record_for_def<'a>(
     let Some(data) = env.macro_definition_data(def_ref)? else {
         return Ok(None);
     };
-    let order = states
-        .target(def_ref.origin)
+    let order = def_ref
+        .origin
+        .as_target_ref()
+        .and_then(|target| states.target(target))
         .and_then(|state| state.macro_definitions.get(&def_ref.local_def))
         .map(|record| &record.order);
 
@@ -285,7 +291,7 @@ fn macro_definition_is_visible_by_order(
         return true;
     }
 
-    !(macro_.def_ref.origin == target
+    !(macro_.def_ref.origin == DefMapRef::Target(target)
         && macro_.local_def.module == call.module
         && macro_.order.is_some_and(|order| order > &call.order))
 }

@@ -7,7 +7,7 @@
 use anyhow::{Context as _, Result};
 
 use rg_ir_model::{
-    DefId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef,
+    DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef,
     hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource},
 };
 use rg_item_tree::{
@@ -197,12 +197,12 @@ impl GeneratedCollector<'_> {
             .push(local_def_id);
         let binding = ScopeBinding {
             def: DefId::Local(LocalDefRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 local_def: local_def_id,
             }),
             visibility,
             owner: ModuleRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: module_id,
             },
             origin: ScopeBindingOrigin::Direct,
@@ -279,12 +279,12 @@ impl GeneratedCollector<'_> {
         };
         let binding = ScopeBinding {
             def: DefId::Local(LocalDefRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 local_def: local_def_id,
             }),
             visibility: VisibilityLevel::Public,
             owner: ModuleRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: root_module,
             },
             origin: ScopeBindingOrigin::MacroExport,
@@ -365,12 +365,12 @@ impl GeneratedCollector<'_> {
             .push((module_name.clone(), child_module));
         let binding = ScopeBinding {
             def: DefId::Module(ModuleRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: child_module,
             }),
             visibility,
             owner: ModuleRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: parent_module,
             },
             origin: ScopeBindingOrigin::Direct,

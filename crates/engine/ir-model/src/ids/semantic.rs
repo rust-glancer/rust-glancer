@@ -2,8 +2,8 @@ use rg_memsize::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::declare_id;
+use crate::ModuleRef;
 use crate::ids::def_map::DefMapRef;
-use crate::{ModuleRef, TargetRef};
 
 declare_id! {
     pub struct StructId;
@@ -205,8 +205,7 @@ pub enum ItemId {
 }
 
 impl ItemId {
-    pub fn semantic_ref(self, target: TargetRef) -> SemanticItemRef {
-        let origin = DefMapRef::Target(target);
+    pub fn semantic_ref(self, origin: DefMapRef) -> SemanticItemRef {
         match self {
             Self::Struct(id) => TypeDefRef {
                 origin,

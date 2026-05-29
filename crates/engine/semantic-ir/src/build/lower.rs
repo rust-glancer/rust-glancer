@@ -8,8 +8,8 @@ use anyhow::Context as _;
 
 use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
 use rg_ir_model::{
-    AssocItemId, ConstId, FunctionId, ItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef,
-    StaticId, TargetRef, TraitId, TypeAliasId,
+    AssocItemId, ConstId, DefMapRef, FunctionId, ItemId, ItemOwner, LocalDefRef, LocalImplRef,
+    ModuleRef, StaticId, TargetRef, TraitId, TypeAliasId,
     hir::source::{ItemSource, ItemSourceKind},
     hir::{
         items::{
@@ -100,7 +100,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             item_tree,
             target,
             def_map_txn,
-            items: ItemStoreBuilder::new(target, local_def_count),
+            items: ItemStoreBuilder::new(DefMapRef::Target(target), local_def_count),
         })
     }
 
@@ -122,7 +122,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
 
             let item = self.item(local_def.source)?;
             let owner = ModuleRef {
-                origin: self.target,
+                origin: DefMapRef::Target(self.target),
                 module: local_def.module,
             };
 
@@ -139,7 +139,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             let local_impl = def_map.local_impl(local_impl_ref.local_impl).unwrap();
             let item = self.item(local_impl.source)?;
             let owner = ModuleRef {
-                origin: self.target,
+                origin: DefMapRef::Target(self.target),
                 module: local_impl.module,
             };
 

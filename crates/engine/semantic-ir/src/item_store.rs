@@ -1,8 +1,9 @@
 use rg_arena::Arena;
 use rg_ir_model::{
+    DefMapRef,
     ConstId, ConstRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, LocalDefId,
-    SemanticItemRef, StaticId, StaticRef, StructId, TargetRef, TraitId, TraitRef, TypeAliasId,
-    TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
+    SemanticItemRef, StaticId, StaticRef, StructId, TraitId, TraitRef, TypeAliasId, TypeAliasRef,
+    TypeDefId, TypeDefRef, UnionId, TargetRef,
     hir::items::{
         ConstData, EnumData, FunctionData, ImplData, StaticData, StructData, TraitData,
         TypeAliasData, UnionData,
@@ -13,8 +14,8 @@ use crate::{SemanticItemView, view::SemanticItemData};
 
 #[derive(Debug)]
 pub struct ItemStoreBuilder {
-    // Target this item store corresponds to
-    target_ref: TargetRef,
+    // DefMap this item store corresponds to.
+    origin: DefMapRef,
 
     // Mapping from local def ID to semantic item ID.
     pub local_items: Arena<LocalDefId, Option<ItemId>>,
@@ -31,9 +32,9 @@ pub struct ItemStoreBuilder {
 }
 
 impl ItemStoreBuilder {
-    pub(crate) fn new(target_ref: TargetRef, local_def_count: usize) -> Self {
+    pub(crate) fn new(origin: DefMapRef, local_def_count: usize) -> Self {
         Self {
-            target_ref,
+            origin,
             local_items: {
                 let mut local_items = Arena::new();
                 local_items.resize_with(local_def_count, || None);
@@ -61,7 +62,7 @@ impl ItemStoreBuilder {
 
     pub fn build(self) -> ItemStore {
         ItemStore {
-            target_ref: self.target_ref,
+            origin: self.origin,
             local_items: self.local_items,
             structs: self.structs,
             unions: self.unions,
@@ -84,8 +85,8 @@ impl ItemStoreBuilder {
     Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
 )]
 pub struct ItemStore {
-    // Target this item store corresponds to
-    target_ref: TargetRef,
+    // DefMap this item store corresponds to.
+    origin: DefMapRef,
 
     // Mapping from local def ID to semantic item ID.
     local_items: Arena<LocalDefId, Option<ItemId>>,
@@ -102,8 +103,12 @@ pub struct ItemStore {
 }
 
 impl ItemStore {
+    pub fn origin(&self) -> DefMapRef {
+        self.origin
+    }
+
     pub fn target_ref(&self) -> TargetRef {
-        self.target_ref
+        self.origin.origin_target()
     }
 
     pub fn structs(&self) -> &Arena<StructId, StructData> {
@@ -157,7 +162,7 @@ impl ItemStore {
         self.traits.iter_with_ids().map(move |(id, data)| {
             (
                 TraitRef {
-                    origin: self.target_ref,
+                    origin: self.origin,
                     id,
                 },
                 data,
@@ -169,7 +174,7 @@ impl ItemStore {
         self.impls.iter_with_ids().map(move |(id, data)| {
             (
                 ImplRef {
-                    origin: self.target_ref,
+                    origin: self.origin,
                     id,
                 },
                 data,
@@ -181,7 +186,7 @@ impl ItemStore {
         self.functions.iter_with_ids().map(move |(id, data)| {
             (
                 FunctionRef {
-                    origin: self.target_ref,
+                    origin: self.origin,
                     id,
                 },
                 data,
@@ -226,7 +231,7 @@ impl ItemStore {
     }
 
     pub fn semantic_item_view(&self, item: SemanticItemRef) -> Option<SemanticItemView<'_>> {
-        debug_assert_eq!(item.origin(), self.target_ref, "Wrong target");
+        debug_assert_eq!(item.origin(), self.origin, "Wrong item store");
 
         // This is the semantic item boundary: callers can ask item-shaped questions without
         // spreading the arena-family match into higher layers.
@@ -298,14 +303,14 @@ impl ItemStore {
     }
 
     pub fn semantic_items(&self) -> impl Iterator<Item = SemanticItemView<'_>> {
-        let target = self.target_ref;
+        let origin = self.origin;
         // TODO: data should contain necessary refs inside
         self.structs
             .iter_with_ids()
             .map(move |(id, data)| {
                 SemanticItemView::new(
                     TypeDefRef {
-                        origin: target,
+                        origin,
                         id: TypeDefId::Struct(id),
                     }
                     .into(),
@@ -315,7 +320,7 @@ impl ItemStore {
             .chain(self.unions.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
                     TypeDefRef {
-                        origin: target,
+                        origin,
                         id: TypeDefId::Union(id),
                     }
                     .into(),
@@ -325,7 +330,7 @@ impl ItemStore {
             .chain(self.enums.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
                     TypeDefRef {
-                        origin: target,
+                        origin,
                         id: TypeDefId::Enum(id),
                     }
                     .into(),
@@ -334,37 +339,37 @@ impl ItemStore {
             }))
             .chain(self.traits.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    TraitRef { origin: target, id }.into(),
+                    TraitRef { origin, id }.into(),
                     SemanticItemData::Trait(data),
                 )
             }))
             .chain(self.impls.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    ImplRef { origin: target, id }.into(),
+                    ImplRef { origin, id }.into(),
                     SemanticItemData::Impl(data),
                 )
             }))
             .chain(self.functions.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    FunctionRef { origin: target, id }.into(),
+                    FunctionRef { origin, id }.into(),
                     SemanticItemData::Function(data),
                 )
             }))
             .chain(self.type_aliases.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    TypeAliasRef { origin: target, id }.into(),
+                    TypeAliasRef { origin, id }.into(),
                     SemanticItemData::TypeAlias(data),
                 )
             }))
             .chain(self.consts.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    ConstRef { origin: target, id }.into(),
+                    ConstRef { origin, id }.into(),
                     SemanticItemData::Const(data),
                 )
             }))
             .chain(self.statics.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    StaticRef { origin: target, id }.into(),
+                    StaticRef { origin, id }.into(),
                     SemanticItemData::Static(data),
                 )
             }))

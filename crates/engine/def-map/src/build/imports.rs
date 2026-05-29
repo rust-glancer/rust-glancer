@@ -5,7 +5,7 @@
 //! the imported bindings into the next scope snapshot, and recording imports that still fail once
 //! the fixed point has stabilized.
 
-use rg_ir_model::{ImportId, ModuleRef, TargetRef};
+use rg_ir_model::{DefMapRef, ImportId, ModuleRef, TargetRef};
 
 use crate::{
     ImportData, ImportKind, ScopeBinding, ScopeBindingOrigin,
@@ -89,7 +89,7 @@ pub(super) fn apply_imports(
 
                 for source_module in source_modules {
                     let import_owner = ModuleRef {
-                        origin: state.target,
+                        origin: DefMapRef::Target(state.target),
                         module: import.module,
                     };
                     let source_scope =
@@ -134,7 +134,7 @@ pub(super) fn apply_imports(
                             def: resolved_def,
                             visibility: import.visibility.clone(),
                             owner: ModuleRef {
-                                origin: state.target,
+                                origin: DefMapRef::Target(state.target),
                                 module: import.module,
                             },
                             origin: ScopeBindingOrigin::Import,

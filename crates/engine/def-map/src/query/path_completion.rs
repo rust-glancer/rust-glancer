@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use rg_ir_model::{DefId, ModuleRef, TargetRef};
+use rg_ir_model::{DefId, DefMapRef, ModuleRef, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
@@ -145,7 +145,7 @@ impl DefMapReadTxn<'_> {
             false,
         );
 
-        if let Some(def_map) = self.def_map(importing_module.origin)? {
+        if let Some(def_map) = self.def_map(importing_module.origin.origin_target())? {
             let mut extern_roots = def_map.extern_prelude().iter().collect::<Vec<_>>();
             extern_roots.sort_by_key(|(name, _)| *name);
             for (name, module_ref) in extern_roots {
@@ -214,7 +214,7 @@ impl PathCompletionSiteScanner<'_, '_> {
                 continue;
             }
             let module = ModuleRef {
-                origin: self.target,
+                origin: DefMapRef::Target(self.target),
                 module: import.module,
             };
             let Some((site, source_len)) =
@@ -244,7 +244,7 @@ impl PathCompletionSiteScanner<'_, '_> {
                 continue;
             }
             let module = ModuleRef {
-                origin: self.target,
+                origin: DefMapRef::Target(self.target),
                 module: import.module,
             };
             let Some((site, source_len)) = self.site_for_import_path(module, &import.source_path)

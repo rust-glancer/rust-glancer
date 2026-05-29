@@ -16,7 +16,10 @@ impl<'a, 'db> ModuleView<'a, 'db> {
     }
 
     pub fn root_file(&self, module_ref: ModuleRef) -> anyhow::Result<Option<FileId>> {
-        let Some(def_map) = self.db.def_map.def_map(module_ref.origin)? else {
+        let Some(target) = module_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
+        let Some(def_map) = self.db.def_map.def_map(target)? else {
             return Ok(None);
         };
         let Some(module) = def_map.module(module_ref.module) else {

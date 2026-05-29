@@ -5,7 +5,7 @@
 //! generic params, field types, enum variants, impl headers, and associated function declarations.
 
 use rg_def_map::Path;
-use rg_ir_model::TargetRef;
+use rg_ir_model::{DefMapRef, TargetRef};
 use rg_ir_model::{EnumVariantRef, FieldRef, FunctionRef, ItemOwner, TypeDefId, TypeDefRef};
 use rg_item_tree::{
     FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypeRef, WherePredicate,
@@ -115,6 +115,7 @@ impl SignatureCursorScanner<'_, '_> {
 
     fn scan_structs(&mut self) -> Result<(), PackageStoreError> {
         let target = self.target;
+        let origin = DefMapRef::Target(target);
         for (ty, data) in self
             .semantic_ir
             .items(target)?
@@ -123,7 +124,7 @@ impl SignatureCursorScanner<'_, '_> {
                 items.structs().iter_with_ids().map(move |(id, data)| {
                     (
                         TypeDefRef {
-                            origin: target,
+                            origin,
                             id: TypeDefId::Struct(id),
                         },
                         data,
@@ -144,6 +145,7 @@ impl SignatureCursorScanner<'_, '_> {
 
     fn scan_unions(&mut self) -> Result<(), PackageStoreError> {
         let target = self.target;
+        let origin = DefMapRef::Target(target);
         for (ty, data) in self
             .semantic_ir
             .items(target)?
@@ -152,7 +154,7 @@ impl SignatureCursorScanner<'_, '_> {
                 items.unions().iter_with_ids().map(move |(id, data)| {
                     (
                         TypeDefRef {
-                            origin: target,
+                            origin,
                             id: TypeDefId::Union(id),
                         },
                         data,
@@ -182,6 +184,7 @@ impl SignatureCursorScanner<'_, '_> {
 
     fn scan_enums(&mut self) -> Result<(), PackageStoreError> {
         let target = self.target;
+        let origin = DefMapRef::Target(target);
         for (ty, data) in self
             .semantic_ir
             .items(target)?
@@ -190,7 +193,7 @@ impl SignatureCursorScanner<'_, '_> {
                 items.enums().iter_with_ids().map(move |(id, data)| {
                     (
                         TypeDefRef {
-                            origin: target,
+                            origin,
                             id: TypeDefId::Enum(id),
                         },
                         data,
@@ -209,7 +212,7 @@ impl SignatureCursorScanner<'_, '_> {
             for (variant_idx, variant) in data.variants.iter().enumerate() {
                 self.push_enum_variant(
                     EnumVariantRef {
-                        origin: self.target,
+                        origin: DefMapRef::Target(self.target),
                         enum_id,
                         index: variant_idx,
                     },
@@ -501,7 +504,7 @@ impl SignatureCursorScanner<'_, '_> {
         owner: ItemOwner,
     ) -> Result<Option<TypePathContext>, PackageStoreError> {
         self.semantic_ir
-            .type_path_context_for_owner(self.target, owner)
+            .type_path_context_for_owner(DefMapRef::Target(self.target), owner)
     }
 
     fn file_matches(&self, file_id: FileId) -> bool {

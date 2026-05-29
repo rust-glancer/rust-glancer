@@ -8,7 +8,7 @@
 //! During def-map construction this module reads from the fixed-point scope snapshot. After
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
-use rg_ir_model::{DefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_item_tree::VisibilityLevel;
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
@@ -70,16 +70,8 @@ pub(crate) trait PathResolutionEnv {
             .map(|local_def| local_def.kind))
     }
 
-    fn parent_module(
-        &self,
-        target: TargetRef,
-        module_id: ModuleId,
-    ) -> Result<Option<ModuleRef>, PackageStoreError> {
-        let Some(module) = self.module_data(ModuleRef {
-            origin: target,
-            module: module_id,
-        })?
-        else {
+    fn parent_module(&self, module_ref: ModuleRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        let Some(module) = self.module_data(module_ref)? else {
             return Ok(None);
         };
 
@@ -88,7 +80,7 @@ pub(crate) trait PathResolutionEnv {
         };
 
         Ok(Some(ModuleRef {
-            origin: target,
+            origin: module_ref.origin,
             module: parent,
         }))
     }
@@ -112,15 +104,18 @@ impl PathResolutionEnv for DefMapReadTxn<'_> {
     fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
         Ok(self.def_map(target)?.and_then(|def_map| {
             Some(ModuleRef {
-                origin: target,
+                origin: DefMapRef::Target(target),
                 module: def_map.root_module()?,
             })
         }))
     }
 
     fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, PackageStoreError> {
+        let Some(target) = module_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
         Ok(self
-            .def_map(module_ref.origin)?
+            .def_map(target)?
             .and_then(|def_map| def_map.module(module_ref.module)))
     }
 
@@ -155,8 +150,11 @@ impl PathResolutionEnv for DefMapReadTxn<'_> {
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&LocalDefData>, PackageStoreError> {
+        let Some(target) = local_def_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
         Ok(self
-            .def_map(local_def_ref.origin)?
+            .def_map(target)?
             .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
     }
 
@@ -164,8 +162,11 @@ impl PathResolutionEnv for DefMapReadTxn<'_> {
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&MacroDefinitionData>, PackageStoreError> {
+        let Some(target) = local_def_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
         Ok(self
-            .def_map(local_def_ref.origin)?
+            .def_map(target)?
             .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))
     }
 }
@@ -249,7 +250,7 @@ fn resolve_path_to_defs_with_filter(
     let result = resolve_path_with_env(
         env,
         ModuleRef {
-            origin: importing_target,
+            origin: DefMapRef::Target(importing_target),
             module: importing_module,
         },
         path.absolute,
@@ -279,7 +280,7 @@ pub(crate) fn resolve_path_to_macro_bindings_with_env(
     };
 
     let importing_module_ref = ModuleRef {
-        origin: importing_target,
+        origin: DefMapRef::Target(importing_target),
         module: importing_module,
     };
     let source_modules = if prefix.is_empty() {
@@ -457,7 +458,7 @@ fn resolve_first_segment(
     if absolute {
         return match segment {
             PathSegment::Name(name) => Ok(env
-                .extern_root(importing_module.origin, name)?
+                .extern_root(importing_module.origin.origin_target(), name)?
                 .map(|module_ref| vec![DefId::Module(module_ref)])
                 .unwrap_or_default()),
             PathSegment::SelfKw
@@ -475,12 +476,12 @@ fn resolve_first_segment(
             .collect()),
         PathSegment::SelfKw => Ok(vec![DefId::Module(importing_module)]),
         PathSegment::SuperKw => Ok(env
-            .parent_module(importing_module.origin, importing_module.module)?
+            .parent_module(importing_module)?
             .map(DefId::Module)
             .into_iter()
             .collect()),
         PathSegment::CrateKw => Ok(env
-            .root_module(importing_module.origin)?
+            .root_module(importing_module.origin.origin_target())?
             .map(DefId::Module)
             .into_iter()
             .collect()),
@@ -493,11 +494,14 @@ fn resolve_first_segment(
                 return Ok(local_defs);
             }
 
-            if let Some(module_ref) = env.extern_root(importing_module.origin, name)? {
+            if let Some(module_ref) = env.extern_root(importing_module.origin.origin_target(), name)?
+            {
                 return Ok(vec![DefId::Module(module_ref)]);
             }
 
-            let Some(prelude_module) = env.prelude_module(importing_module.origin)? else {
+            let Some(prelude_module) =
+                env.prelude_module(importing_module.origin.origin_target())?
+            else {
                 return Ok(Vec::new());
             };
 
@@ -529,12 +533,12 @@ fn resolve_next_segment(
                 push_unique_def(&mut next_defs, DefId::Module(module_ref));
             }
             PathSegment::SuperKw => {
-                if let Some(parent) = env.parent_module(module_ref.origin, module_ref.module)? {
+                if let Some(parent) = env.parent_module(module_ref)? {
                     push_unique_def(&mut next_defs, DefId::Module(parent));
                 }
             }
             PathSegment::CrateKw => {
-                if let Some(root) = env.root_module(module_ref.origin)? {
+                if let Some(root) = env.root_module(module_ref.origin.origin_target())? {
                     push_unique_def(&mut next_defs, DefId::Module(root));
                 }
             }
@@ -635,7 +639,7 @@ fn binding_is_visible(
         }
         VisibilityLevel::Crate => true,
         VisibilityLevel::Super => {
-            match env.parent_module(binding.owner.origin, binding.owner.module)? {
+            match env.parent_module(binding.owner)? {
                 Some(visible_from) => module_is_descendant_of(env, importing_module, visible_from)?,
                 None => false,
             }
@@ -663,14 +667,14 @@ fn restricted_visibility_owner(
     };
     let mut current = match first {
         "crate" => {
-            let Some(root) = env.root_module(owner.origin)? else {
+            let Some(root) = env.root_module(owner.origin.origin_target())? else {
                 return Ok(None);
             };
             root
         }
         "self" => owner,
         "super" => {
-            let Some(parent) = env.parent_module(owner.origin, owner.module)? else {
+            let Some(parent) = env.parent_module(owner)? else {
                 return Ok(None);
             };
             parent

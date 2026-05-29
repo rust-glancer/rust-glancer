@@ -5,7 +5,7 @@
 //! reconstruct import aliases or rustdoc-style canonicalization.
 
 use rg_ir_model::{
-    ConstRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef, TargetRef, TraitRef,
+    ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitRef,
     TypeAliasRef, TypeDefId, TypeDefRef, hir::items::EnumVariantData,
 };
 
@@ -19,8 +19,11 @@ impl<'a, 'db> PathView<'a, 'db> {
     }
 
     pub fn module_path(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {
-        let package = self.0.def_map.package(module_ref.origin.package)?;
-        let Some(def_map) = self.0.def_map.def_map(module_ref.origin)? else {
+        let Some(target) = module_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
+        let package = self.0.def_map.package(target.package)?;
+        let Some(def_map) = self.0.def_map.def_map(target)? else {
             return Ok(None);
         };
         let mut names = Vec::new();
@@ -44,7 +47,7 @@ impl<'a, 'db> PathView<'a, 'db> {
 
         names.push(
             package
-                .target_name(module_ref.origin.target)
+                .target_name(target.target)
                 .unwrap_or_else(|| package.package_name())
                 .to_string(),
         );
@@ -118,22 +121,22 @@ impl<'a, 'db> PathView<'a, 'db> {
 
     fn path_for_owner(
         &self,
-        target: TargetRef,
+        origin: DefMapRef,
         owner: ItemOwner,
     ) -> anyhow::Result<Option<String>> {
         match owner {
             ItemOwner::Module(module_ref) => self.module_path(module_ref),
             ItemOwner::Trait(trait_id) => self.trait_path(TraitRef {
-                origin: target,
+                origin,
                 id: trait_id,
             }),
-            ItemOwner::Impl(impl_id) => self.impl_self_path(target, impl_id),
+            ItemOwner::Impl(impl_id) => self.impl_self_path(origin, impl_id),
         }
     }
 
-    fn impl_self_path(&self, target: TargetRef, impl_id: ImplId) -> anyhow::Result<Option<String>> {
+    fn impl_self_path(&self, origin: DefMapRef, impl_id: ImplId) -> anyhow::Result<Option<String>> {
         let Some(data) = self.0.semantic_ir.impl_data(ImplRef {
-            origin: target,
+            origin,
             id: impl_id,
         })?
         else {
@@ -150,7 +153,10 @@ impl<'a, 'db> PathView<'a, 'db> {
     }
 
     fn type_def_owner_and_name(&self, ty: TypeDefRef) -> anyhow::Result<Option<(ModuleRef, &str)>> {
-        let Some(items) = self.0.semantic_ir.items(ty.origin)? else {
+        let Some(target) = ty.origin.as_target_ref() else {
+            return Ok(None);
+        };
+        let Some(items) = self.0.semantic_ir.items(target)? else {
             return Ok(None);
         };
         match ty.id {

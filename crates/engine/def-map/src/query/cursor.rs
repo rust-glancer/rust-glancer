@@ -4,7 +4,7 @@
 //! Analysis can therefore ask a read transaction for cursor candidates without reaching back into
 //! item-tree storage.
 
-use rg_ir_model::{DefId, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 
 use rg_package_store::PackageStoreError;
@@ -88,7 +88,7 @@ impl NamespaceCursorScanner<'_, '_> {
     ) {
         for (module_idx, module) in def_map.modules().iter().enumerate() {
             let module_ref = ModuleRef {
-                origin: self.target,
+                origin: DefMapRef::Target(self.target),
                 module: ModuleId(module_idx),
             };
             let declaration_file = match module.origin {
@@ -124,7 +124,7 @@ impl NamespaceCursorScanner<'_, '_> {
     ) {
         for (local_def_idx, local_def) in def_map.local_defs().iter().enumerate() {
             let local_def_ref = LocalDefRef {
-                origin: self.target,
+                origin: DefMapRef::Target(self.target),
                 local_def: LocalDefId(local_def_idx),
             };
             if !self.file_matches(local_def.file_id) {
@@ -153,7 +153,7 @@ impl NamespaceCursorScanner<'_, '_> {
             }
 
             let module = ModuleRef {
-                origin: self.target,
+                origin: DefMapRef::Target(self.target),
                 module: import.module,
             };
             for (idx, segment) in import.source_path.segments().iter().enumerate() {

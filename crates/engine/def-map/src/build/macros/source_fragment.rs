@@ -6,7 +6,7 @@
 
 use anyhow::{Context as _, Result};
 
-use rg_ir_model::{DefId, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
+use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
 use rg_item_tree::{
     Documentation, ExternCrateItem, ImportAlias, ItemKind, ItemTreeId, ItemTreeRef,
     MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleItem,
@@ -171,12 +171,12 @@ impl SourceFragmentCollector<'_> {
             .push(local_def_id);
         let binding = ScopeBinding {
             def: DefId::Local(LocalDefRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 local_def: local_def_id,
             }),
             visibility: item.visibility.clone(),
             owner: ModuleRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: module_id,
             },
             origin: ScopeBindingOrigin::Direct,
@@ -243,12 +243,12 @@ impl SourceFragmentCollector<'_> {
         };
         let binding = ScopeBinding {
             def: DefId::Local(LocalDefRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 local_def: local_def_id,
             }),
             visibility: VisibilityLevel::Public,
             owner: ModuleRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: root_module,
             },
             origin: ScopeBindingOrigin::MacroExport,
@@ -473,12 +473,12 @@ impl SourceFragmentCollector<'_> {
             .push((module_name.clone(), child_module));
         let binding = ScopeBinding {
             def: DefId::Module(ModuleRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: child_module,
             }),
             visibility,
             owner: ModuleRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: parent_module,
             },
             origin: ScopeBindingOrigin::Direct,
@@ -546,7 +546,7 @@ impl SourceFragmentCollector<'_> {
         // applying aliases such as `extern crate dep as _`.
         let module_ref = if extern_name == "self" {
             ModuleRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: self.state.def_map.root_module().expect(
                     "root module should exist before source fragment extern crate collection",
                 ),
@@ -578,7 +578,7 @@ impl SourceFragmentCollector<'_> {
             def: DefId::Module(module_ref),
             visibility: item.visibility.clone(),
             owner: ModuleRef {
-                origin: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: module_id,
             },
             origin: ScopeBindingOrigin::Direct,

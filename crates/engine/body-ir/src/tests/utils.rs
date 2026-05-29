@@ -17,8 +17,8 @@ use rg_def_map::DefMapDb;
 use rg_ir_model::{
     BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
     BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyImplRef, BodyItemId, BodyItemRef,
-    BodyValueItemId, BodyValueItemRef, DefId, EnumVariantRef, ExprId, FieldRef, FunctionRef,
-    ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleRef, PatId, ResolvedDeclarationRef,
+    BodyValueItemId, BodyValueItemRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef,
+    FunctionRef, ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleRef, PatId, ResolvedDeclarationRef,
     SemanticDeclarationRef, SemanticItemRef, StmtId, TargetRef, TraitRef, TypeDefId, TypeDefRef,
 };
 use rg_item_tree::{ItemTreeDb, PackageNameInterners};
@@ -1503,7 +1503,7 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_local_def(&self, local_def: LocalDefRef) -> String {
-        let Some(items) = self.project.resident_target_ir(local_def.origin) else {
+        let Some(items) = self.project.resident_target_ir(local_def.origin.origin_target()) else {
             return "<missing>".to_string();
         };
         let Some(item_id) = items.item_for_local_def(local_def.local_def) else {
@@ -1587,7 +1587,7 @@ impl TargetBodyIrSnapshot<'_> {
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
         let items = self
             .project
-            .resident_target_ir(ty.origin)
+            .resident_target_ir(ty.origin.origin_target())
             .expect("target semantic IR should exist while rendering body type");
 
         match ty.id {
@@ -1726,15 +1726,15 @@ impl TargetBodyIrSnapshot<'_> {
         format!("fn {owner}::{}", data.name)
     }
 
-    fn render_owner(&self, owner: ItemOwner, target: TargetRef) -> String {
+    fn render_owner(&self, owner: ItemOwner, origin: DefMapRef) -> String {
         match owner {
             ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
             ItemOwner::Trait(trait_id) => self.render_trait_ref(TraitRef {
-                origin: target,
+                origin,
                 id: trait_id,
             }),
             ItemOwner::Impl(impl_id) => self.render_impl_ref(ImplRef {
-                origin: target,
+                origin,
                 id: impl_id,
             }),
         }
@@ -1780,14 +1780,15 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {
+        let target_ref = module_ref.origin.origin_target();
         let package = self
             .project
             .parse_db()
             .packages()
-            .get(module_ref.origin.package.0)
+            .get(target_ref.package.0)
             .expect("package slot should exist while rendering body IR module");
         let target = package
-            .target(module_ref.origin.target)
+            .target(target_ref.target)
             .expect("target id should exist while rendering body IR module");
 
         format!(
@@ -1801,7 +1802,7 @@ impl TargetBodyIrSnapshot<'_> {
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
             .project
-            .resident_def_map(module_ref.origin)
+            .resident_def_map(module_ref.origin.origin_target())
             .expect("target def map should exist while rendering body IR module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering body IR module path");

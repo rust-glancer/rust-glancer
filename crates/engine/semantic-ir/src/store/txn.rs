@@ -6,7 +6,7 @@ use rg_ir_model::hir::items::{
     TypeAliasData,
 };
 use rg_ir_model::{
-    AssocItemId, ConstRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner,
+    AssocItemId, ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner,
     SemanticItemRef, StaticRef, TraitImplRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
 };
 use rg_ir_model::{DefId, LocalDefRef, ModuleRef, TargetRef};
@@ -189,16 +189,16 @@ impl<'db> SemanticIrReadTxn<'db> {
 
     pub fn type_path_context_for_owner(
         &self,
-        target: TargetRef,
+        origin: DefMapRef,
         owner: ItemOwner,
     ) -> Result<Option<TypePathContext>, PackageStoreError> {
         match owner {
             ItemOwner::Module(module_ref) => Ok(Some(TypePathContext::module(module_ref))),
             ItemOwner::Trait(id) => Ok(self
-                .trait_data(TraitRef { origin: target, id })?
+                .trait_data(TraitRef { origin, id })?
                 .map(|data| TypePathContext::module(data.owner))),
             ItemOwner::Impl(id) => {
-                let impl_ref = ImplRef { origin: target, id };
+                let impl_ref = ImplRef { origin, id };
                 Ok(self.impl_data(impl_ref)?.map(|data| TypePathContext {
                     module: data.owner,
                     impl_ref: Some(impl_ref),
@@ -211,7 +211,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         def: LocalDefRef,
     ) -> Result<Option<SemanticItemRef>, PackageStoreError> {
-        let Some(items) = self.items(def.origin)? else {
+        let Some(target) = def.origin.as_target_ref() else {
+            return Ok(None);
+        };
+        let Some(items) = self.items(target)? else {
             return Ok(None);
         };
         let Some(item) = items.item_for_local_def(def.local_def) else {
@@ -225,7 +228,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         ty: TypeDefRef,
     ) -> Result<Option<&rg_item_tree::GenericParams>, PackageStoreError> {
-        let Some(items) = self.items(ty.origin)? else {
+        let Some(target) = ty.origin.as_target_ref() else {
+            return Ok(None);
+        };
+        let Some(items) = self.items(target)? else {
             return Ok(None);
         };
         let generics = match ty.id {
@@ -237,7 +243,10 @@ impl<'db> SemanticIrReadTxn<'db> {
     }
 
     pub fn type_def_name(&self, ty: TypeDefRef) -> Result<Option<&str>, PackageStoreError> {
-        let Some(items) = self.items(ty.origin)? else {
+        let Some(target) = ty.origin.as_target_ref() else {
+            return Ok(None);
+        };
+        let Some(items) = self.items(target)? else {
             return Ok(None);
         };
         let name = match ty.id {
@@ -255,7 +264,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         let TypeDefId::Enum(id) = ty.id else {
             return Ok(None);
         };
-        Ok(self.items(ty.origin)?.and_then(|items| items.enum_data(id)))
+        let Some(target) = ty.origin.as_target_ref() else {
+            return Ok(None);
+        };
+        Ok(self.items(target)?.and_then(|items| items.enum_data(id)))
     }
 
     pub fn enum_variant_for_type_def(
@@ -295,7 +307,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         variant_ref: EnumVariantRef,
     ) -> Result<Option<EnumVariantData<'_>>, PackageStoreError> {
-        let Some(items) = self.items(variant_ref.origin)? else {
+        let Some(target) = variant_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
+        let Some(items) = self.items(target)? else {
             return Ok(None);
         };
         let Some(data) = items.enum_data(variant_ref.enum_id) else {
@@ -317,14 +332,20 @@ impl<'db> SemanticIrReadTxn<'db> {
     }
 
     pub fn impl_data(&self, impl_ref: ImplRef) -> Result<Option<&ImplData>, PackageStoreError> {
+        let Some(target) = impl_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
         Ok(self
-            .items(impl_ref.origin)?
+            .items(target)?
             .and_then(|items| items.impl_data(impl_ref.id)))
     }
 
     pub fn trait_data(&self, trait_ref: TraitRef) -> Result<Option<&TraitData>, PackageStoreError> {
+        let Some(target) = trait_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
         Ok(self
-            .items(trait_ref.origin)?
+            .items(target)?
             .and_then(|items| items.trait_data(trait_ref.id)))
     }
 
@@ -332,8 +353,11 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         function_ref: FunctionRef,
     ) -> Result<Option<&FunctionData>, PackageStoreError> {
+        let Some(target) = function_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
         Ok(self
-            .items(function_ref.origin)?
+            .items(target)?
             .and_then(|items| items.function_data(function_ref.id)))
     }
 
@@ -341,14 +365,20 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         type_alias_ref: TypeAliasRef,
     ) -> Result<Option<&TypeAliasData>, PackageStoreError> {
+        let Some(target) = type_alias_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
         Ok(self
-            .items(type_alias_ref.origin)?
+            .items(target)?
             .and_then(|items| items.type_alias_data(type_alias_ref.id)))
     }
 
     pub fn const_data(&self, const_ref: ConstRef) -> Result<Option<&ConstData>, PackageStoreError> {
+        let Some(target) = const_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
         Ok(self
-            .items(const_ref.origin)?
+            .items(target)?
             .and_then(|items| items.const_data(const_ref.id)))
     }
 
@@ -356,13 +386,19 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         static_ref: StaticRef,
     ) -> Result<Option<&StaticData>, PackageStoreError> {
+        let Some(target) = static_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
         Ok(self
-            .items(static_ref.origin)?
+            .items(target)?
             .and_then(|items| items.static_data(static_ref.id)))
     }
 
     pub fn fields_for_type(&self, ty: TypeDefRef) -> Result<Vec<FieldRef>, PackageStoreError> {
-        let Some(items) = self.items(ty.origin)? else {
+        let Some(target) = ty.origin.as_target_ref() else {
+            return Ok(Vec::new());
+        };
+        let Some(items) = self.items(target)? else {
             return Ok(Vec::new());
         };
         let maybe_field_count = match ty.id {
@@ -414,7 +450,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         field_ref: FieldRef,
     ) -> Result<Option<FieldData<'_>>, PackageStoreError> {
-        let Some(items) = self.items(field_ref.owner.origin)? else {
+        let Some(target) = field_ref.owner.origin.as_target_ref() else {
+            return Ok(None);
+        };
+        let Some(items) = self.items(target)? else {
             return Ok(None);
         };
         let field = match field_ref.owner.id {

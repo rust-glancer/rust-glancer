@@ -1118,7 +1118,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
         let items = self
             .db
-            .resident_target_ir(ty.origin)
+            .resident_target_ir(ty.origin.origin_target())
             .expect("target semantic IR should exist while rendering analysis type");
 
         match ty.id {
@@ -1188,14 +1188,15 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     }
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {
+        let target_ref = module_ref.origin.origin_target();
         let package = self
             .db
             .parse
             .packages()
-            .get(module_ref.origin.package.0)
+            .get(target_ref.package.0)
             .expect("package slot should exist while rendering analysis module");
         let target = package
-            .target(module_ref.origin.target)
+            .target(target_ref.target)
             .expect("target id should exist while rendering analysis module");
 
         format!(
@@ -1209,7 +1210,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
             .db
-            .resident_def_map(module_ref.origin)
+            .resident_def_map(module_ref.origin.origin_target())
             .expect("target def map should exist while rendering analysis module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering analysis module path");

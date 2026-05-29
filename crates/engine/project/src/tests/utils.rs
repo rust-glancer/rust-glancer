@@ -791,8 +791,11 @@ fn nominal_type_names_at(
     let mut names = Vec::new();
     for candidate in BodyAutoderef::peel_references(&ty) {
         for ty in candidate.ty().as_nominals() {
+            let Some(target_ref) = ty.def.origin.as_target_ref() else {
+                continue;
+            };
             let Some(local_def) = semantic_ir
-                .items(ty.def.origin)
+                .items(target_ref)
                 .expect("fixture semantic IR should load while rendering nominal types")
                 .expect("Item store must exist")
                 .semantic_item_view(ty.def.into())
@@ -800,8 +803,11 @@ fn nominal_type_names_at(
             else {
                 continue;
             };
+            let Some(target_ref) = local_def.origin.as_target_ref() else {
+                continue;
+            };
             let Some(local_def) = def_map
-                .def_map(local_def.origin)
+                .def_map(target_ref)
                 .expect("fixture def-map should load while rendering nominal types")
                 .and_then(|def_map| def_map.local_def(local_def.local_def))
             else {

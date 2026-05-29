@@ -11,7 +11,7 @@ mod rebuild;
 
 use anyhow::Context as _;
 
-use rg_ir_model::{LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_item_tree::ItemTreeDb;
 use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
@@ -158,7 +158,8 @@ impl ScopeMatrix {
     }
 
     fn module_scope(&self, module: ModuleRef) -> Option<&ModuleScopeBuilder> {
-        self.target_scopes(module.origin)?.get(module.module.0)
+        self.target_scopes(module.origin.as_target_ref()?)?
+            .get(module.module.0)
     }
 
     pub(super) fn module_scope_mut(
@@ -260,7 +261,7 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         };
 
         Ok(module.map(|module| ModuleRef {
-            origin: target,
+            origin: DefMapRef::Target(target),
             module,
         }))
     }
@@ -269,13 +270,18 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         &self,
         module_ref: ModuleRef,
     ) -> Result<Option<&ModuleData>, rg_package_store::PackageStoreError> {
-        if let Some(state) = self.states.target(module_ref.origin) {
+        if let Some(target) = module_ref.origin.as_target_ref()
+            && let Some(state) = self.states.target(target)
+        {
             return Ok(state.def_map.module(module_ref.module));
         }
 
+        let Some(target) = module_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
         Ok(self
             .old
-            .map(|old| old.def_map(module_ref.origin))
+            .map(|old| old.def_map(target))
             .transpose()?
             .flatten()
             .and_then(|def_map| def_map.module(module_ref.module)))
@@ -286,7 +292,11 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         module_ref: ModuleRef,
         name: &str,
     ) -> Result<Option<ScopeEntryRef<'a>>, rg_package_store::PackageStoreError> {
-        if self.states.package(module_ref.origin.package).is_some() {
+        if module_ref
+            .origin
+            .as_target_ref()
+            .is_some_and(|target| self.states.package(target.package).is_some())
+        {
             return Ok(self
                 .current_scopes
                 .module_scope(module_ref)
@@ -303,7 +313,11 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         &'a self,
         module_ref: ModuleRef,
     ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, rg_package_store::PackageStoreError> {
-        if self.states.package(module_ref.origin.package).is_some() {
+        if module_ref
+            .origin
+            .as_target_ref()
+            .is_some_and(|target| self.states.package(target.package).is_some())
+        {
             return Ok(self
                 .current_scopes
                 .module_scope(module_ref)
@@ -327,14 +341,19 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&LocalDefData>, rg_package_store::PackageStoreError> {
-        if let Some(state) = self.states.target(local_def_ref.origin) {
+        if let Some(target) = local_def_ref.origin.as_target_ref()
+            && let Some(state) = self.states.target(target)
+        {
             return Ok(state.def_map.local_def(local_def_ref.local_def));
         }
 
+        let Some(target) = local_def_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
         self.old
             .map(|old| {
                 Ok(old
-                    .def_map(local_def_ref.origin)?
+                    .def_map(target)?
                     .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
             })
             .transpose()
@@ -345,13 +364,18 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&MacroDefinitionData>, rg_package_store::PackageStoreError> {
-        if let Some(state) = self.states.target(local_def_ref.origin) {
+        if let Some(target) = local_def_ref.origin.as_target_ref()
+            && let Some(state) = self.states.target(target)
+        {
             return Ok(state.def_map.macro_definition(local_def_ref.local_def));
         }
 
+        let Some(target) = local_def_ref.origin.as_target_ref() else {
+            return Ok(None);
+        };
         Ok(self
             .old
-            .map(|old| old.def_map(local_def_ref.origin))
+            .map(|old| old.def_map(target))
             .transpose()?
             .flatten()
             .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))
