@@ -89,7 +89,7 @@ pub(super) fn apply_imports(
 
                 for source_module in source_modules {
                     let import_owner = ModuleRef {
-                        target: state.target,
+                        origin: state.target,
                         module: import.module,
                     };
                     let source_scope =
@@ -134,7 +134,7 @@ pub(super) fn apply_imports(
                             def: resolved_def,
                             visibility: import.visibility.clone(),
                             owner: ModuleRef {
-                                target: state.target,
+                                origin: state.target,
                                 module: import.module,
                             },
                             origin: ScopeBindingOrigin::Import,

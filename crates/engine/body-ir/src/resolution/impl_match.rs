@@ -94,7 +94,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
             return Ok(true);
         };
         let impl_ref = ImplRef {
-            target: function_ref.target,
+            origin: function_ref.origin,
             id: impl_id,
         };
         let Some(impl_data) = self.semantic_ir.impl_data(impl_ref)? else {
@@ -201,7 +201,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
             return IndexedTypeSubst::new();
         };
         let Ok(Some(impl_data)) = self.semantic_ir.impl_data(ImplRef {
-            target: function_ref.target,
+            origin: function_ref.origin,
             id: impl_id,
         }) else {
             return IndexedTypeSubst::new();

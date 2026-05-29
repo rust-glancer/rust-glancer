@@ -792,7 +792,7 @@ fn nominal_type_names_at(
     for candidate in BodyAutoderef::peel_references(&ty) {
         for ty in candidate.ty().as_nominals() {
             let Some(local_def) = semantic_ir
-                .items(ty.def.target)
+                .items(ty.def.origin)
                 .expect("fixture semantic IR should load while rendering nominal types")
                 .expect("Item store must exist")
                 .semantic_item_view(ty.def.into())
@@ -801,7 +801,7 @@ fn nominal_type_names_at(
                 continue;
             };
             let Some(local_def) = def_map
-                .def_map(local_def.target)
+                .def_map(local_def.origin)
                 .expect("fixture def-map should load while rendering nominal types")
                 .and_then(|def_map| def_map.local_def(local_def.local_def))
             else {

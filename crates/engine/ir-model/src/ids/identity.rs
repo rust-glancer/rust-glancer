@@ -405,7 +405,7 @@ impl fmt::Debug for ImplRef {
         match self.0 {
             ImplRefRepr::Semantic(impl_ref) => f
                 .debug_struct("ImplRef")
-                .field("target", &impl_ref.target)
+                .field("origin", &impl_ref.origin)
                 .field("impl", &impl_ref.id)
                 .finish(),
             ImplRefRepr::BodyLocal(impl_ref) => f
@@ -487,7 +487,7 @@ impl fmt::Debug for FunctionRef {
         match self.0 {
             FunctionRefRepr::Semantic(function) => f
                 .debug_struct("FunctionRef")
-                .field("target", &function.target)
+                .field("origin", &function.origin)
                 .field("function", &function.id)
                 .finish(),
             FunctionRefRepr::BodyLocal(function) => f
@@ -528,7 +528,7 @@ impl fmt::Debug for EnumVariantRef {
         match self.0 {
             EnumVariantRefRepr::Semantic(variant) => f
                 .debug_struct("EnumVariantRef")
-                .field("target", &variant.target)
+                .field("origin", &variant.origin)
                 .field("enum", &variant.enum_id)
                 .field("index", &variant.index)
                 .finish(),

@@ -2,6 +2,7 @@ use rg_memsize::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::declare_id;
+use crate::ids::def_map::DefMapRef;
 use crate::{ModuleRef, TargetRef};
 
 declare_id! {
@@ -25,43 +26,43 @@ pub enum TypeDefId {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TypeDefRef {
-    pub target: TargetRef,
+    pub origin: DefMapRef,
     pub id: TypeDefId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TraitRef {
-    pub target: TargetRef,
+    pub origin: DefMapRef,
     pub id: TraitId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ImplRef {
-    pub target: TargetRef,
+    pub origin: DefMapRef,
     pub id: ImplId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct FunctionRef {
-    pub target: TargetRef,
+    pub origin: DefMapRef,
     pub id: FunctionId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TypeAliasRef {
-    pub target: TargetRef,
+    pub origin: DefMapRef,
     pub id: TypeAliasId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ConstRef {
-    pub target: TargetRef,
+    pub origin: DefMapRef,
     pub id: ConstId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct StaticRef {
-    pub target: TargetRef,
+    pub origin: DefMapRef,
     pub id: StaticId,
 }
 
@@ -94,15 +95,15 @@ pub enum SemanticItemRef {
 }
 
 impl SemanticItemRef {
-    pub fn target(self) -> TargetRef {
+    pub fn origin(self) -> DefMapRef {
         match self {
-            Self::TypeDef(item) => item.target,
-            Self::Trait(item) => item.target,
-            Self::Impl(item) => item.target,
-            Self::Function(item) => item.target,
-            Self::TypeAlias(item) => item.target,
-            Self::Const(item) => item.target,
-            Self::Static(item) => item.target,
+            Self::TypeDef(item) => item.origin,
+            Self::Trait(item) => item.origin,
+            Self::Impl(item) => item.origin,
+            Self::Function(item) => item.origin,
+            Self::TypeAlias(item) => item.origin,
+            Self::Const(item) => item.origin,
+            Self::Static(item) => item.origin,
         }
     }
 }
@@ -120,7 +121,7 @@ pub struct FieldRef {
 /// dictating that storage model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct EnumVariantRef {
-    pub target: TargetRef,
+    pub origin: DefMapRef,
     pub enum_id: EnumId,
     pub index: usize,
 }
@@ -148,11 +149,11 @@ pub enum SemanticDeclarationRef {
 }
 
 impl SemanticDeclarationRef {
-    pub fn target(self) -> TargetRef {
+    pub fn origin(self) -> DefMapRef {
         match self {
-            Self::Item(item) => item.target(),
-            Self::Field(field) => field.owner.target,
-            Self::EnumVariant(variant) => variant.target,
+            Self::Item(item) => item.origin(),
+            Self::Field(field) => field.owner.origin,
+            Self::EnumVariant(variant) => variant.origin,
         }
     }
 }
@@ -205,27 +206,28 @@ pub enum ItemId {
 
 impl ItemId {
     pub fn semantic_ref(self, target: TargetRef) -> SemanticItemRef {
+        let origin = DefMapRef::Target(target);
         match self {
             Self::Struct(id) => TypeDefRef {
-                target,
+                origin,
                 id: TypeDefId::Struct(id),
             }
             .into(),
             Self::Union(id) => TypeDefRef {
-                target,
+                origin,
                 id: TypeDefId::Union(id),
             }
             .into(),
             Self::Enum(id) => TypeDefRef {
-                target,
+                origin,
                 id: TypeDefId::Enum(id),
             }
             .into(),
-            Self::Trait(id) => TraitRef { target, id }.into(),
-            Self::Function(id) => FunctionRef { target, id }.into(),
-            Self::TypeAlias(id) => TypeAliasRef { target, id }.into(),
-            Self::Const(id) => ConstRef { target, id }.into(),
-            Self::Static(id) => StaticRef { target, id }.into(),
+            Self::Trait(id) => TraitRef { origin, id }.into(),
+            Self::Function(id) => FunctionRef { origin, id }.into(),
+            Self::TypeAlias(id) => TypeAliasRef { origin, id }.into(),
+            Self::Const(id) => ConstRef { origin, id }.into(),
+            Self::Static(id) => StaticRef { origin, id }.into(),
         }
     }
 }

@@ -209,7 +209,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             .type_defs_for_path(
                 &def_map_txn,
                 ModuleRef {
-                    target: target_ref,
+                    origin: target_ref,
                     module: module_id,
                 },
                 &path,
@@ -372,7 +372,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             .find_map(|(module_idx, _)| {
                 let module_id = ModuleId(module_idx);
                 (self.module_path(ModuleRef {
-                    target: target_ref,
+                    origin: target_ref,
                     module: module_id,
                 }) == module_path)
                     .then_some(module_id)
@@ -401,7 +401,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
 
     fn render_type_def_ref(&self, semantic_ir: &SemanticIrReadTxn<'_>, ty: TypeDefRef) -> String {
         let items = semantic_ir
-            .items(ty.target)
+            .items(ty.origin)
             .expect("target semantic IR should load while rendering type ref")
             .expect("target semantic IR should exist while rendering type ref");
 
@@ -474,14 +474,14 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             rg_ir_model::ItemOwner::Trait(trait_id) => self.render_trait_ref(
                 semantic_ir,
                 TraitRef {
-                    target: function_ref.target,
+                    origin: function_ref.origin,
                     id: trait_id,
                 },
             ),
             rg_ir_model::ItemOwner::Impl(impl_id) => self.render_impl_ref(
                 semantic_ir,
                 ImplRef {
-                    target: function_ref.target,
+                    origin: function_ref.origin,
                     id: impl_id,
                 },
             ),
@@ -495,10 +495,10 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             .project
             .parse_db()
             .packages()
-            .get(module_ref.target.package.0)
+            .get(module_ref.origin.package.0)
             .expect("package slot should exist while rendering query");
         let target = package
-            .target(module_ref.target.target)
+            .target(module_ref.origin.target)
             .expect("target id should exist while rendering query");
 
         format!(
@@ -512,7 +512,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
             .project
-            .resident_def_map(module_ref.target)
+            .resident_def_map(module_ref.origin)
             .expect("target def map should exist while rendering query module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering query module path");
@@ -520,7 +520,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         match module.parent {
             Some(parent) => {
                 let parent_path = self.module_path(ModuleRef {
-                    target: module_ref.target,
+                    origin: module_ref.origin,
                     module: parent,
                 });
                 let name = module

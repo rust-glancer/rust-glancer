@@ -100,7 +100,7 @@ pub(super) fn build_implicit_roots(
                     target_roots.insert(
                         interner.intern(lib_name),
                         ModuleRef {
-                            target: lib_target,
+                            origin: lib_target,
                             module: ModuleId(0),
                         },
                     );
@@ -119,7 +119,7 @@ pub(super) fn build_implicit_roots(
                 target_roots.insert(
                     interner.intern(dependency.name()),
                     ModuleRef {
-                        target: lib_target,
+                        origin: lib_target,
                         module: ModuleId(0),
                     },
                 );

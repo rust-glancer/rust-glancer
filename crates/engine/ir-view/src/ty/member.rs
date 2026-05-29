@@ -84,7 +84,7 @@ impl<'a> MemberField<'a> {
         let key = self.key()?;
         Some(match self {
             Self::Semantic { field, data } => Declaration::new(
-                field.owner.target,
+                field.owner.origin,
                 SymbolKind::Field,
                 key.declaration_label(),
                 data.file_id,
@@ -169,7 +169,7 @@ impl<'a> MemberFunction<'a> {
     pub fn declaration(&self) -> Declaration {
         match self {
             Self::Semantic { function, data } => Declaration::new(
-                function.target,
+                function.origin,
                 self.symbol_kind(),
                 data.name.to_string(),
                 data.source.file_id,

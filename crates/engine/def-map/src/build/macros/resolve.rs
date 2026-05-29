@@ -79,7 +79,7 @@ fn resolve_single_name_macro<'a>(
     // namespace bindings in the current resolved scope snapshot.
     let entry = env.module_scope_entry(
         ModuleRef {
-            target: state.target,
+            origin: state.target,
             module: call.module,
         },
         name.as_str(),
@@ -125,7 +125,7 @@ fn resolve_textual_macro_rules<'a>(
                 env,
                 states,
                 DefId::Local(LocalDefRef {
-                    target: state.target,
+                    origin: state.target,
                     local_def,
                 }),
                 ScopeBindingOrigin::Direct,
@@ -162,7 +162,7 @@ fn resolve_macro_use_extern_crate_fallback<'a>(
         }
 
         let import_owner = ModuleRef {
-            target: state.target,
+            origin: state.target,
             module: macro_use.module,
         };
         for binding in visible_module_macro_bindings_with_env(
@@ -214,7 +214,7 @@ fn macro_record_for_def<'a>(
         return Ok(None);
     };
     let order = states
-        .target(def_ref.target)
+        .target(def_ref.origin)
         .and_then(|state| state.macro_definitions.get(&def_ref.local_def))
         .map(|record| &record.order);
 
@@ -285,7 +285,7 @@ fn macro_definition_is_visible_by_order(
         return true;
     }
 
-    !(macro_.def_ref.target == target
+    !(macro_.def_ref.origin == target
         && macro_.local_def.module == call.module
         && macro_.order.is_some_and(|order| order > &call.order))
 }

@@ -197,12 +197,12 @@ impl GeneratedCollector<'_> {
             .push(local_def_id);
         let binding = ScopeBinding {
             def: DefId::Local(LocalDefRef {
-                target: self.state.target,
+                origin: self.state.target,
                 local_def: local_def_id,
             }),
             visibility,
             owner: ModuleRef {
-                target: self.state.target,
+                origin: self.state.target,
                 module: module_id,
             },
             origin: ScopeBindingOrigin::Direct,
@@ -279,12 +279,12 @@ impl GeneratedCollector<'_> {
         };
         let binding = ScopeBinding {
             def: DefId::Local(LocalDefRef {
-                target: self.state.target,
+                origin: self.state.target,
                 local_def: local_def_id,
             }),
             visibility: VisibilityLevel::Public,
             owner: ModuleRef {
-                target: self.state.target,
+                origin: self.state.target,
                 module: root_module,
             },
             origin: ScopeBindingOrigin::MacroExport,
@@ -365,12 +365,12 @@ impl GeneratedCollector<'_> {
             .push((module_name.clone(), child_module));
         let binding = ScopeBinding {
             def: DefId::Module(ModuleRef {
-                target: self.state.target,
+                origin: self.state.target,
                 module: child_module,
             }),
             visibility,
             owner: ModuleRef {
-                target: self.state.target,
+                origin: self.state.target,
                 module: parent_module,
             },
             origin: ScopeBindingOrigin::Direct,

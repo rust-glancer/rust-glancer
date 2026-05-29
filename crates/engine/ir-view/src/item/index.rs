@@ -127,7 +127,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     }
 
     pub fn module_container_name(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {
-        let Some(def_map) = self.db.def_map.def_map(module_ref.target)? else {
+        let Some(def_map) = self.db.def_map.def_map(module_ref.origin)? else {
             return Ok(None);
         };
         let Some(module) = def_map.module(module_ref.module) else {
@@ -138,7 +138,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         };
         // Workspace-symbol containers are local module paths, not canonical package paths. A
         // direct child of the root module therefore has no visible container.
-        let path = self.module_path(module_ref.target, parent)?;
+        let path = self.module_path(module_ref.origin, parent)?;
 
         Ok((!path.is_empty()).then_some(path))
     }
@@ -212,7 +212,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
             SemanticItemKind::Trait | SemanticItemKind::Impl => {
                 let children = item
                     .assoc_items()
-                    .map(|items| self.assoc_item_children(item.item().target(), items))
+                    .map(|items| self.assoc_item_children(item.item().origin(), items))
                     .transpose()?
                     .unwrap_or_default();
                 Ok(Some(IndexedItem::with_children(declaration, children)))
@@ -370,13 +370,27 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
 
     fn assoc_item(target: TargetRef, item: &AssocItemId) -> DeclarationRef {
         match item {
-            AssocItemId::Function(id) => {
-                DeclarationRef::semantic(SemanticFunctionRef { target, id: *id }.into())
-            }
-            AssocItemId::TypeAlias(id) => {
-                DeclarationRef::semantic(TypeAliasRef { target, id: *id }.into())
-            }
-            AssocItemId::Const(id) => DeclarationRef::semantic(ConstRef { target, id: *id }.into()),
+            AssocItemId::Function(id) => DeclarationRef::semantic(
+                SemanticFunctionRef {
+                    origin: target,
+                    id: *id,
+                }
+                .into(),
+            ),
+            AssocItemId::TypeAlias(id) => DeclarationRef::semantic(
+                TypeAliasRef {
+                    origin: target,
+                    id: *id,
+                }
+                .into(),
+            ),
+            AssocItemId::Const(id) => DeclarationRef::semantic(
+                ConstRef {
+                    origin: target,
+                    id: *id,
+                }
+                .into(),
+            ),
         }
     }
 
@@ -390,7 +404,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
 
         Ok((0..data.variants.len())
             .map(|index| SemanticEnumVariantRef {
-                target: ty.target,
+                origin: ty.origin,
                 enum_id,
                 index,
             })

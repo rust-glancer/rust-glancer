@@ -143,7 +143,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
                 continue;
             };
             let type_alias_ref = TypeAliasRef {
-                target: trait_impl.impl_ref.target,
+                origin: trait_impl.impl_ref.origin,
                 id: *type_alias_id,
             };
             let Some(type_alias_data) = self.semantic_ir.type_alias_data(type_alias_ref)? else {

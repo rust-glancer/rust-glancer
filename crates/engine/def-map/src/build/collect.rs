@@ -353,12 +353,12 @@ impl<'db> TargetScopeCollector<'db> {
                 namespace,
                 ScopeBinding {
                     def: DefId::Local(LocalDefRef {
-                        target: self.target,
+                        origin: self.target,
                         local_def: local_def_id,
                     }),
                     visibility: item.visibility.clone(),
                     owner: ModuleRef {
-                        target: self.target,
+                        origin: self.target,
                         module: module_id,
                     },
                     origin: ScopeBindingOrigin::Direct,
@@ -418,12 +418,12 @@ impl<'db> TargetScopeCollector<'db> {
                 Namespace::Macros,
                 ScopeBinding {
                     def: DefId::Local(LocalDefRef {
-                        target: self.target,
+                        origin: self.target,
                         local_def: local_def_id,
                     }),
                     visibility: VisibilityLevel::Public,
                     owner: ModuleRef {
-                        target: self.target,
+                        origin: self.target,
                         module: root_module,
                     },
                     origin: ScopeBindingOrigin::MacroExport,
@@ -607,12 +607,12 @@ impl<'db> TargetScopeCollector<'db> {
                 Namespace::Types,
                 ScopeBinding {
                     def: DefId::Module(ModuleRef {
-                        target: self.target,
+                        origin: self.target,
                         module: child_module,
                     }),
                     visibility,
                     owner: ModuleRef {
-                        target: self.target,
+                        origin: self.target,
                         module: parent_module,
                     },
                     origin: ScopeBindingOrigin::Direct,
@@ -679,7 +679,7 @@ impl<'db> TargetScopeCollector<'db> {
 
         let module_ref = if extern_name == "self" {
             ModuleRef {
-                target: self.target,
+                origin: self.target,
                 module: self
                     .def_map
                     .root_module()
@@ -722,7 +722,7 @@ impl<'db> TargetScopeCollector<'db> {
                     def: DefId::Module(module_ref),
                     visibility: item.visibility.clone(),
                     owner: ModuleRef {
-                        target: self.target,
+                        origin: self.target,
                         module: module_id,
                     },
                     origin: ScopeBindingOrigin::Direct,

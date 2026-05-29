@@ -385,10 +385,10 @@ mod tests {
 
     fn owner(module: usize) -> ModuleRef {
         ModuleRef {
-            target: TargetRef {
+            origin: rg_ir_model::DefMapRef::Target(TargetRef {
                 package: PackageSlot(0),
                 target: TargetId(0),
-            },
+            }),
             module: ModuleId(module),
         }
     }

@@ -135,7 +135,7 @@ impl<'a> TargetLowering<'a> {
             ItemOwner::Module(module_ref) => Some(module_ref),
             ItemOwner::Trait(trait_id) => semantic_ir
                 .trait_data(TraitRef {
-                    target: function.target,
+                    origin: function.origin,
                     id: trait_id,
                 })
                 .with_context(|| {
@@ -147,7 +147,7 @@ impl<'a> TargetLowering<'a> {
                 .map(|data| data.owner),
             ItemOwner::Impl(impl_id) => semantic_ir
                 .impl_data(ImplRef {
-                    target: function.target,
+                    origin: function.origin,
                     id: impl_id,
                 })
                 .with_context(|| {

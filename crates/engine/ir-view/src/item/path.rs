@@ -19,8 +19,8 @@ impl<'a, 'db> PathView<'a, 'db> {
     }
 
     pub fn module_path(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {
-        let package = self.0.def_map.package(module_ref.target.package)?;
-        let Some(def_map) = self.0.def_map.def_map(module_ref.target)? else {
+        let package = self.0.def_map.package(module_ref.origin.package)?;
+        let Some(def_map) = self.0.def_map.def_map(module_ref.origin)? else {
             return Ok(None);
         };
         let mut names = Vec::new();
@@ -44,7 +44,7 @@ impl<'a, 'db> PathView<'a, 'db> {
 
         names.push(
             package
-                .target_name(module_ref.target.target)
+                .target_name(module_ref.origin.target)
                 .unwrap_or_else(|| package.package_name())
                 .to_string(),
         );
@@ -71,7 +71,7 @@ impl<'a, 'db> PathView<'a, 'db> {
             return Ok(None);
         };
         Ok(self
-            .path_for_owner(function_ref.target, data.owner)?
+            .path_for_owner(function_ref.origin, data.owner)?
             .map(|owner| format!("{owner}::{}", data.name)))
     }
 
@@ -80,7 +80,7 @@ impl<'a, 'db> PathView<'a, 'db> {
             return Ok(None);
         };
         Ok(self
-            .path_for_owner(type_alias_ref.target, data.owner)?
+            .path_for_owner(type_alias_ref.origin, data.owner)?
             .map(|owner| format!("{owner}::{}", data.name)))
     }
 
@@ -89,7 +89,7 @@ impl<'a, 'db> PathView<'a, 'db> {
             return Ok(None);
         };
         Ok(self
-            .path_for_owner(const_ref.target, data.owner)?
+            .path_for_owner(const_ref.origin, data.owner)?
             .map(|owner| format!("{owner}::{}", data.name)))
     }
 
@@ -124,7 +124,7 @@ impl<'a, 'db> PathView<'a, 'db> {
         match owner {
             ItemOwner::Module(module_ref) => self.module_path(module_ref),
             ItemOwner::Trait(trait_id) => self.trait_path(TraitRef {
-                target,
+                origin: target,
                 id: trait_id,
             }),
             ItemOwner::Impl(impl_id) => self.impl_self_path(target, impl_id),
@@ -133,7 +133,7 @@ impl<'a, 'db> PathView<'a, 'db> {
 
     fn impl_self_path(&self, target: TargetRef, impl_id: ImplId) -> anyhow::Result<Option<String>> {
         let Some(data) = self.0.semantic_ir.impl_data(ImplRef {
-            target,
+            origin: target,
             id: impl_id,
         })?
         else {
@@ -150,7 +150,7 @@ impl<'a, 'db> PathView<'a, 'db> {
     }
 
     fn type_def_owner_and_name(&self, ty: TypeDefRef) -> anyhow::Result<Option<(ModuleRef, &str)>> {
-        let Some(items) = self.0.semantic_ir.items(ty.target)? else {
+        let Some(items) = self.0.semantic_ir.items(ty.origin)? else {
             return Ok(None);
         };
         match ty.id {

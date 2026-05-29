@@ -158,7 +158,7 @@ impl ScopeMatrix {
     }
 
     fn module_scope(&self, module: ModuleRef) -> Option<&ModuleScopeBuilder> {
-        self.target_scopes(module.target)?.get(module.module.0)
+        self.target_scopes(module.origin)?.get(module.module.0)
     }
 
     pub(super) fn module_scope_mut(
@@ -259,20 +259,23 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
                 .and_then(|def_map| def_map.root_module())
         };
 
-        Ok(module.map(|module| ModuleRef { target, module }))
+        Ok(module.map(|module| ModuleRef {
+            origin: target,
+            module,
+        }))
     }
 
     fn module_data(
         &self,
         module_ref: ModuleRef,
     ) -> Result<Option<&ModuleData>, rg_package_store::PackageStoreError> {
-        if let Some(state) = self.states.target(module_ref.target) {
+        if let Some(state) = self.states.target(module_ref.origin) {
             return Ok(state.def_map.module(module_ref.module));
         }
 
         Ok(self
             .old
-            .map(|old| old.def_map(module_ref.target))
+            .map(|old| old.def_map(module_ref.origin))
             .transpose()?
             .flatten()
             .and_then(|def_map| def_map.module(module_ref.module)))
@@ -283,7 +286,7 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         module_ref: ModuleRef,
         name: &str,
     ) -> Result<Option<ScopeEntryRef<'a>>, rg_package_store::PackageStoreError> {
-        if self.states.package(module_ref.target.package).is_some() {
+        if self.states.package(module_ref.origin.package).is_some() {
             return Ok(self
                 .current_scopes
                 .module_scope(module_ref)
@@ -300,7 +303,7 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         &'a self,
         module_ref: ModuleRef,
     ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, rg_package_store::PackageStoreError> {
-        if self.states.package(module_ref.target.package).is_some() {
+        if self.states.package(module_ref.origin.package).is_some() {
             return Ok(self
                 .current_scopes
                 .module_scope(module_ref)
@@ -324,14 +327,14 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&LocalDefData>, rg_package_store::PackageStoreError> {
-        if let Some(state) = self.states.target(local_def_ref.target) {
+        if let Some(state) = self.states.target(local_def_ref.origin) {
             return Ok(state.def_map.local_def(local_def_ref.local_def));
         }
 
         self.old
             .map(|old| {
                 Ok(old
-                    .def_map(local_def_ref.target)?
+                    .def_map(local_def_ref.origin)?
                     .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
             })
             .transpose()
@@ -342,13 +345,13 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&MacroDefinitionData>, rg_package_store::PackageStoreError> {
-        if let Some(state) = self.states.target(local_def_ref.target) {
+        if let Some(state) = self.states.target(local_def_ref.origin) {
             return Ok(state.def_map.macro_definition(local_def_ref.local_def));
         }
 
         Ok(self
             .old
-            .map(|old| old.def_map(local_def_ref.target))
+            .map(|old| old.def_map(local_def_ref.origin))
             .transpose()?
             .flatten()
             .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))

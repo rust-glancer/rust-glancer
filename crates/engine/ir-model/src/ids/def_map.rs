@@ -27,9 +27,10 @@ pub struct TargetRef {
 }
 
 /// Stable reference to one def map item.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, derive_more::From,
-)]
+// Note: we intentionally do not derive or provide `From` here, as it can be very
+// easy to just convert `TargetRef` (which is always present) where `BodyRef` must
+// be used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub enum DefMapRef {
     /// Item originates from a target (e.g. semantic scope)
     Target(TargetRef),
@@ -37,31 +38,53 @@ pub enum DefMapRef {
     Body(BodyRef),
 }
 
+impl DefMapRef {
+    /// If `DefMapRef` originated from a target, returns the corresponding
+    /// target ref.
+    pub fn as_target_ref(&self) -> Option<TargetRef> {
+        match self {
+            Self::Target(target) => Some(*target),
+            Self::Body(_) => None,
+        }
+    }
+
+    /// Returns the target that contains the object identified by this ref,
+    /// regardless whether the object originates in target or in body.
+    ///
+    /// This method must not be confused with `as_target_ref`.
+    pub fn origin_target(&self) -> TargetRef {
+        match self {
+            Self::Target(target) => *target,
+            Self::Body(body) => body.target,
+        }
+    }
+}
+
 /// Stable reference to one module across the whole project analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ModuleRef {
-    pub target: TargetRef,
+    pub origin: DefMapRef,
     pub module: ModuleId,
 }
 
 /// Stable reference to one local definition across the whole project analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct LocalDefRef {
-    pub target: TargetRef,
+    pub origin: DefMapRef,
     pub local_def: LocalDefId,
 }
 
 /// Stable reference to one impl block across the whole project analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct LocalImplRef {
-    pub target: TargetRef,
+    pub origin: DefMapRef,
     pub local_impl: LocalImplId,
 }
 
 /// Stable reference to one import across the whole project analysis.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ImportRef {
-    pub target: TargetRef,
+    pub origin: DefMapRef,
     pub import: ImportId,
 }
 

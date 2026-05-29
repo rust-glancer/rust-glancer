@@ -559,7 +559,7 @@ impl MacroExpansionAttempt {
         // module. Imported bindings and `#[macro_export]` root bindings are path-based and have
         // already gone through ordinary scope resolution.
         if resolved.origin == ScopeBindingOrigin::Direct
-            && resolved.def_ref.target == state.target
+            && resolved.def_ref.origin == state.target
             && resolved.local_def.module == call.module
             && let Some(order) = resolved.order
             && order > &call.order

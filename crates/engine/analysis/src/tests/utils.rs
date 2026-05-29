@@ -1118,7 +1118,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
         let items = self
             .db
-            .resident_target_ir(ty.target)
+            .resident_target_ir(ty.origin)
             .expect("target semantic IR should exist while rendering analysis type");
 
         match ty.id {
@@ -1162,7 +1162,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             ItemOwner::Trait(trait_id) => {
                 let trait_data = semantic_ir
                     .trait_data(TraitRef {
-                        target: function_ref.target,
+                        origin: function_ref.origin,
                         id: trait_id,
                     })
                     .expect("trait owner should load while rendering analysis body item")
@@ -1192,10 +1192,10 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             .db
             .parse
             .packages()
-            .get(module_ref.target.package.0)
+            .get(module_ref.origin.package.0)
             .expect("package slot should exist while rendering analysis module");
         let target = package
-            .target(module_ref.target.target)
+            .target(module_ref.origin.target)
             .expect("target id should exist while rendering analysis module");
 
         format!(
@@ -1209,7 +1209,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
             .db
-            .resident_def_map(module_ref.target)
+            .resident_def_map(module_ref.origin)
             .expect("target def map should exist while rendering analysis module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering analysis module path");
@@ -1217,7 +1217,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         match module.parent {
             Some(parent) => {
                 let parent_path = self.module_path(ModuleRef {
-                    target: module_ref.target,
+                    origin: module_ref.origin,
                     module: parent,
                 });
                 let name = module

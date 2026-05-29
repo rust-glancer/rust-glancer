@@ -99,7 +99,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     fn module(&self, module_ref: ModuleRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(def_map) = self.db.def_map.def_map(module_ref.target)? else {
+        let Some(def_map) = self.db.def_map.def_map(module_ref.origin)? else {
             return Ok(None);
         };
         let Some(module) = def_map.module(module_ref.module) else {
@@ -122,7 +122,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         };
 
         Ok(Some(Declaration {
-            target: module_ref.target,
+            target: module_ref.origin,
             kind: SymbolKind::Module,
             name,
             file_id,
@@ -135,14 +135,14 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         let Some(data) = self
             .db
             .def_map
-            .def_map(local_def.target)?
+            .def_map(local_def.origin)?
             .and_then(|def_map| def_map.local_def(local_def.local_def))
         else {
             return Ok(None);
         };
 
         Ok(Some(Declaration {
-            target: local_def.target,
+            target: local_def.origin,
             kind: SymbolKind::from_local_def_kind(data.kind),
             name: data.name.to_string(),
             file_id: data.file_id,
@@ -198,7 +198,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     fn semantic_item(&self, item: SemanticItemRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(items) = self.db.semantic_ir.items(item.target())? else {
+        let Some(items) = self.db.semantic_ir.items(item.origin())? else {
             return Ok(None);
         };
         let Some(view) = items.semantic_item_view(item) else {
@@ -222,7 +222,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 let Some(local_impl) = self
                     .db
                     .def_map
-                    .def_map(local_impl_ref.target)?
+                    .def_map(local_impl_ref.origin)?
                     .and_then(|def_map| def_map.local_impl(local_impl_ref.local_impl))
                 else {
                     return Ok(None);
@@ -232,7 +232,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 };
 
                 Ok(Some(Declaration {
-                    target: item.target(),
+                    target: item.origin(),
                     kind: SymbolKind::Impl,
                     name: Self::impl_label(self_ty, trait_ref),
                     file_id: local_impl.file_id,
@@ -258,7 +258,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 };
 
                 Ok(Some(Declaration {
-                    target: item.target(),
+                    target: item.origin(),
                     kind: SymbolKind::from_semantic_item_kind(view.kind()),
                     name: name.to_string(),
                     file_id: view.source().file_id,
@@ -394,7 +394,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         };
 
         Ok(Some(Declaration {
-            target: variant_ref.target,
+            target: variant_ref.origin,
             kind: SymbolKind::EnumVariant,
             name: data.variant.name.to_string(),
             file_id: data.file_id,

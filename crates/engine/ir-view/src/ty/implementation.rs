@@ -265,7 +265,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         match data.owner {
             ItemOwner::Trait(trait_id) => {
                 let trait_ref = TraitRef {
-                    target: function.target,
+                    origin: function.origin,
                     id: trait_id,
                 };
                 match receiver_ty {
@@ -357,7 +357,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
                 continue;
             };
             let function = SemanticFunctionRef {
-                target: impl_ref.target,
+                origin: impl_ref.origin,
                 id: *id,
             };
             let Some(function_data) = self.db.semantic_ir.function_data(function)? else {

@@ -184,7 +184,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         let Some(function_data) = self.function_data(function_ref)? else {
             return Ok(None);
         };
-        self.type_path_context_for_owner(function_ref.target, function_data.owner)
+        self.type_path_context_for_owner(function_ref.origin, function_data.owner)
     }
 
     pub fn type_path_context_for_owner(
@@ -195,10 +195,10 @@ impl<'db> SemanticIrReadTxn<'db> {
         match owner {
             ItemOwner::Module(module_ref) => Ok(Some(TypePathContext::module(module_ref))),
             ItemOwner::Trait(id) => Ok(self
-                .trait_data(TraitRef { target, id })?
+                .trait_data(TraitRef { origin: target, id })?
                 .map(|data| TypePathContext::module(data.owner))),
             ItemOwner::Impl(id) => {
-                let impl_ref = ImplRef { target, id };
+                let impl_ref = ImplRef { origin: target, id };
                 Ok(self.impl_data(impl_ref)?.map(|data| TypePathContext {
                     module: data.owner,
                     impl_ref: Some(impl_ref),
@@ -211,21 +211,21 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         def: LocalDefRef,
     ) -> Result<Option<SemanticItemRef>, PackageStoreError> {
-        let Some(items) = self.items(def.target)? else {
+        let Some(items) = self.items(def.origin)? else {
             return Ok(None);
         };
         let Some(item) = items.item_for_local_def(def.local_def) else {
             return Ok(None);
         };
 
-        Ok(Some(item.semantic_ref(def.target)))
+        Ok(Some(item.semantic_ref(def.origin)))
     }
 
     pub fn generic_params_for_type_def(
         &self,
         ty: TypeDefRef,
     ) -> Result<Option<&rg_item_tree::GenericParams>, PackageStoreError> {
-        let Some(items) = self.items(ty.target)? else {
+        let Some(items) = self.items(ty.origin)? else {
             return Ok(None);
         };
         let generics = match ty.id {
@@ -237,7 +237,7 @@ impl<'db> SemanticIrReadTxn<'db> {
     }
 
     pub fn type_def_name(&self, ty: TypeDefRef) -> Result<Option<&str>, PackageStoreError> {
-        let Some(items) = self.items(ty.target)? else {
+        let Some(items) = self.items(ty.origin)? else {
             return Ok(None);
         };
         let name = match ty.id {
@@ -255,7 +255,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         let TypeDefId::Enum(id) = ty.id else {
             return Ok(None);
         };
-        Ok(self.items(ty.target)?.and_then(|items| items.enum_data(id)))
+        Ok(self.items(ty.origin)?.and_then(|items| items.enum_data(id)))
     }
 
     pub fn enum_variant_for_type_def(
@@ -285,7 +285,7 @@ impl<'db> SemanticIrReadTxn<'db> {
             return Ok(None);
         };
         Ok(Some(EnumVariantRef {
-            target: ty.target,
+            origin: ty.origin,
             enum_id,
             index,
         }))
@@ -295,7 +295,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         variant_ref: EnumVariantRef,
     ) -> Result<Option<EnumVariantData<'_>>, PackageStoreError> {
-        let Some(items) = self.items(variant_ref.target)? else {
+        let Some(items) = self.items(variant_ref.origin)? else {
             return Ok(None);
         };
         let Some(data) = items.enum_data(variant_ref.enum_id) else {
@@ -307,7 +307,7 @@ impl<'db> SemanticIrReadTxn<'db> {
 
         Ok(Some(EnumVariantData {
             owner: TypeDefRef {
-                target: variant_ref.target,
+                origin: variant_ref.origin,
                 id: TypeDefId::Enum(variant_ref.enum_id),
             },
             owner_module: data.owner,
@@ -318,13 +318,13 @@ impl<'db> SemanticIrReadTxn<'db> {
 
     pub fn impl_data(&self, impl_ref: ImplRef) -> Result<Option<&ImplData>, PackageStoreError> {
         Ok(self
-            .items(impl_ref.target)?
+            .items(impl_ref.origin)?
             .and_then(|items| items.impl_data(impl_ref.id)))
     }
 
     pub fn trait_data(&self, trait_ref: TraitRef) -> Result<Option<&TraitData>, PackageStoreError> {
         Ok(self
-            .items(trait_ref.target)?
+            .items(trait_ref.origin)?
             .and_then(|items| items.trait_data(trait_ref.id)))
     }
 
@@ -333,7 +333,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         function_ref: FunctionRef,
     ) -> Result<Option<&FunctionData>, PackageStoreError> {
         Ok(self
-            .items(function_ref.target)?
+            .items(function_ref.origin)?
             .and_then(|items| items.function_data(function_ref.id)))
     }
 
@@ -342,13 +342,13 @@ impl<'db> SemanticIrReadTxn<'db> {
         type_alias_ref: TypeAliasRef,
     ) -> Result<Option<&TypeAliasData>, PackageStoreError> {
         Ok(self
-            .items(type_alias_ref.target)?
+            .items(type_alias_ref.origin)?
             .and_then(|items| items.type_alias_data(type_alias_ref.id)))
     }
 
     pub fn const_data(&self, const_ref: ConstRef) -> Result<Option<&ConstData>, PackageStoreError> {
         Ok(self
-            .items(const_ref.target)?
+            .items(const_ref.origin)?
             .and_then(|items| items.const_data(const_ref.id)))
     }
 
@@ -357,12 +357,12 @@ impl<'db> SemanticIrReadTxn<'db> {
         static_ref: StaticRef,
     ) -> Result<Option<&StaticData>, PackageStoreError> {
         Ok(self
-            .items(static_ref.target)?
+            .items(static_ref.origin)?
             .and_then(|items| items.static_data(static_ref.id)))
     }
 
     pub fn fields_for_type(&self, ty: TypeDefRef) -> Result<Vec<FieldRef>, PackageStoreError> {
-        let Some(items) = self.items(ty.target)? else {
+        let Some(items) = self.items(ty.origin)? else {
             return Ok(Vec::new());
         };
         let maybe_field_count = match ty.id {
@@ -414,7 +414,7 @@ impl<'db> SemanticIrReadTxn<'db> {
         &self,
         field_ref: FieldRef,
     ) -> Result<Option<FieldData<'_>>, PackageStoreError> {
-        let Some(items) = self.items(field_ref.owner.target)? else {
+        let Some(items) = self.items(field_ref.owner.origin)? else {
             return Ok(None);
         };
         let field = match field_ref.owner.id {
@@ -547,7 +547,7 @@ impl<'db> SemanticIrReadTxn<'db> {
                 push_unique(
                     &mut functions,
                     FunctionRef {
-                        target: trait_ref.target,
+                        origin: trait_ref.origin,
                         id: *id,
                     },
                 );
@@ -573,7 +573,7 @@ impl<'db> SemanticIrReadTxn<'db> {
                     push_unique(
                         &mut functions,
                         FunctionRef {
-                            target: impl_ref.target,
+                            origin: impl_ref.origin,
                             id: *id,
                         },
                     );
@@ -615,7 +615,7 @@ impl<'db> SemanticIrReadTxn<'db> {
                     push_unique(
                         &mut functions,
                         FunctionRef {
-                            target: trait_impl.impl_ref.target,
+                            origin: trait_impl.impl_ref.origin,
                             id: *id,
                         },
                     );

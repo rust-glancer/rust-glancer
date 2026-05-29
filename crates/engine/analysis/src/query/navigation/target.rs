@@ -61,7 +61,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
             // Root modules have no declaration name to jump to, so they navigate to the owning
             // file. Named modules are ordinary declarations.
             return Ok(Some(NavigationTarget {
-                target: module_ref.target,
+                target: module_ref.origin,
                 kind: NavigationTargetKind::Module,
                 name: "crate".to_string(),
                 file_id,

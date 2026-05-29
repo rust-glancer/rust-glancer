@@ -44,7 +44,7 @@ impl SemanticResolutionIndex {
                 for item in &trait_data.items {
                     if let AssocItemId::Function(id) = item {
                         let function_ref = FunctionRef {
-                            target: trait_ref.target,
+                            origin: trait_ref.origin,
                             id: *id,
                         };
                         push_unique(functions, function_ref);
@@ -76,7 +76,7 @@ impl SemanticResolutionIndex {
                         for item in &impl_data.items {
                             if let AssocItemId::Function(id) = item {
                                 let function_ref = FunctionRef {
-                                    target: impl_ref.target,
+                                    origin: impl_ref.origin,
                                     id: *id,
                                 };
                                 let Some(function_data) =
@@ -138,7 +138,7 @@ impl SemanticResolutionIndex {
                     push_unique(
                         &mut functions,
                         FunctionRef {
-                            target: impl_ref.target,
+                            origin: impl_ref.origin,
                             id: *id,
                         },
                     );

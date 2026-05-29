@@ -157,7 +157,7 @@ impl ItemStore {
         self.traits.iter_with_ids().map(move |(id, data)| {
             (
                 TraitRef {
-                    target: self.target_ref,
+                    origin: self.target_ref,
                     id,
                 },
                 data,
@@ -169,7 +169,7 @@ impl ItemStore {
         self.impls.iter_with_ids().map(move |(id, data)| {
             (
                 ImplRef {
-                    target: self.target_ref,
+                    origin: self.target_ref,
                     id,
                 },
                 data,
@@ -181,7 +181,7 @@ impl ItemStore {
         self.functions.iter_with_ids().map(move |(id, data)| {
             (
                 FunctionRef {
-                    target: self.target_ref,
+                    origin: self.target_ref,
                     id,
                 },
                 data,
@@ -226,7 +226,7 @@ impl ItemStore {
     }
 
     pub fn semantic_item_view(&self, item: SemanticItemRef) -> Option<SemanticItemView<'_>> {
-        debug_assert_eq!(item.target(), self.target_ref, "Wrong target");
+        debug_assert_eq!(item.origin(), self.target_ref, "Wrong target");
 
         // This is the semantic item boundary: callers can ask item-shaped questions without
         // spreading the arena-family match into higher layers.
@@ -305,7 +305,7 @@ impl ItemStore {
             .map(move |(id, data)| {
                 SemanticItemView::new(
                     TypeDefRef {
-                        target,
+                        origin: target,
                         id: TypeDefId::Struct(id),
                     }
                     .into(),
@@ -315,7 +315,7 @@ impl ItemStore {
             .chain(self.unions.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
                     TypeDefRef {
-                        target,
+                        origin: target,
                         id: TypeDefId::Union(id),
                     }
                     .into(),
@@ -325,7 +325,7 @@ impl ItemStore {
             .chain(self.enums.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
                     TypeDefRef {
-                        target,
+                        origin: target,
                         id: TypeDefId::Enum(id),
                     }
                     .into(),
@@ -334,34 +334,37 @@ impl ItemStore {
             }))
             .chain(self.traits.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    TraitRef { target, id }.into(),
+                    TraitRef { origin: target, id }.into(),
                     SemanticItemData::Trait(data),
                 )
             }))
             .chain(self.impls.iter_with_ids().map(move |(id, data)| {
-                SemanticItemView::new(ImplRef { target, id }.into(), SemanticItemData::Impl(data))
+                SemanticItemView::new(
+                    ImplRef { origin: target, id }.into(),
+                    SemanticItemData::Impl(data),
+                )
             }))
             .chain(self.functions.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    FunctionRef { target, id }.into(),
+                    FunctionRef { origin: target, id }.into(),
                     SemanticItemData::Function(data),
                 )
             }))
             .chain(self.type_aliases.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    TypeAliasRef { target, id }.into(),
+                    TypeAliasRef { origin: target, id }.into(),
                     SemanticItemData::TypeAlias(data),
                 )
             }))
             .chain(self.consts.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    ConstRef { target, id }.into(),
+                    ConstRef { origin: target, id }.into(),
                     SemanticItemData::Const(data),
                 )
             }))
             .chain(self.statics.iter_with_ids().map(move |(id, data)| {
                 SemanticItemView::new(
-                    StaticRef { target, id }.into(),
+                    StaticRef { origin: target, id }.into(),
                     SemanticItemData::Static(data),
                 )
             }))

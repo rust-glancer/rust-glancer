@@ -101,7 +101,7 @@ impl<'a, 'db> EnumVariantView<'a, 'db> {
             return Ok(Vec::new());
         };
         let variant_refs = (0..data.variants.len()).map(|index| SemanticEnumVariantRef {
-            target: ty.target,
+            origin: ty.origin,
             enum_id,
             index,
         });

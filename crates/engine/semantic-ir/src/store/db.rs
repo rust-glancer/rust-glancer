@@ -148,8 +148,8 @@ impl SemanticIrDbMutator<'_> {
     }
 
     pub(crate) fn impl_data_mut(&mut self, impl_ref: ImplRef) -> Option<&mut ImplData> {
-        self.package_mut(impl_ref.target.package)?
-            .target_mut(impl_ref.target.target)?
+        self.package_mut(impl_ref.origin.package)?
+            .target_mut(impl_ref.origin.target)?
             .impls_mut()
             .get_mut(impl_ref.id)
     }

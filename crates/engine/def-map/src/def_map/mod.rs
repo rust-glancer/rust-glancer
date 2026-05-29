@@ -1,7 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use rg_ir_model::{
-    ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId, ModuleRef, TargetRef,
+    BodyRef, DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
+    ModuleRef, TargetRef,
     hir::source::{GeneratedSourceData, GeneratedSourceId},
 };
 use rg_text::Name;
@@ -24,6 +25,9 @@ mod target_data;
 pub struct DefMap {
     /// Whether this defmap corresponds to the target root.
     is_root: bool,
+    /// Ref to this defmap, which can be used to emit correct
+    /// refs.
+    own_ref: DefMapRef,
     /// Shared data on the target.
     target_data: Arc<TargetData>,
     /// Actual defmap layout for the corresponding scope.
@@ -55,31 +59,36 @@ impl DefMap {
 
         Self {
             is_root: true,
+            own_ref: DefMapRef::Target(target),
             target_data,
             data: DefMapData::default(),
         }
     }
 
     /// Creates a derived defmap that can be used for the body function scope.
-    pub fn child(&self) -> Self {
+    pub fn child(&self, body_ref: BodyRef) -> Self {
         Self {
             is_root: false,
+            own_ref: DefMapRef::Body(body_ref),
             target_data: self.target_data.clone(),
             data: DefMapData::default(),
         }
     }
 
     /// Returns the root module of this target, if the map has been populated.
+    // TODO: Should probably be moved to target data so that it's not confusing
     pub(crate) fn root_module(&self) -> Option<ModuleId> {
         self.target_data.root_module
     }
 
     /// Returns the external root names visible from this target.
+    // TODO: Should probably be moved to target data so that it's not confusing
     pub(crate) fn extern_prelude(&self) -> &HashMap<Name, ModuleRef> {
         &self.target_data.extern_prelude
     }
 
     /// Returns the standard prelude module visible from this target, if it was discovered.
+    // TODO: Should probably be moved to target data so that it's not confusing
     pub(crate) fn prelude(&self) -> Option<ModuleRef> {
         self.target_data.prelude
     }
@@ -92,7 +101,7 @@ impl DefMap {
     /// Returns refs for all the modules in stable module-id order.
     pub fn module_refs(&self) -> impl Iterator<Item = ModuleRef> {
         (0..self.data.modules.len()).map(|id| ModuleRef {
-            target: self.target_data.target,
+            origin: self.own_ref,
             module: ModuleId(id),
         })
     }
@@ -122,7 +131,7 @@ impl DefMap {
 
     pub fn local_def_refs(&self) -> impl Iterator<Item = LocalDefRef> {
         (0..self.data.local_defs.len()).map(|id| LocalDefRef {
-            target: self.target_data.target,
+            origin: self.own_ref,
             local_def: LocalDefId(id),
         })
     }
@@ -144,7 +153,7 @@ impl DefMap {
 
     pub fn lodal_impl_refs(&self) -> impl Iterator<Item = LocalImplRef> {
         (0..self.data.local_impls.len()).map(|id| LocalImplRef {
-            target: self.target_data.target,
+            origin: self.own_ref,
             local_impl: LocalImplId(id),
         })
     }

@@ -1414,7 +1414,7 @@ impl TargetBodyIrSnapshot<'_> {
                     .expect("type alias ref should exist while rendering body IR");
                 format!(
                     "type {}::{}",
-                    self.render_owner(data.owner, type_alias_ref.target),
+                    self.render_owner(data.owner, type_alias_ref.origin),
                     data.name
                 )
             }
@@ -1426,7 +1426,7 @@ impl TargetBodyIrSnapshot<'_> {
                     .expect("const ref should exist while rendering body IR");
                 format!(
                     "const {}::{}",
-                    self.render_owner(data.owner, const_ref.target),
+                    self.render_owner(data.owner, const_ref.origin),
                     data.name
                 )
             }
@@ -1503,7 +1503,7 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_local_def(&self, local_def: LocalDefRef) -> String {
-        let Some(items) = self.project.resident_target_ir(local_def.target) else {
+        let Some(items) = self.project.resident_target_ir(local_def.origin) else {
             return "<missing>".to_string();
         };
         let Some(item_id) = items.item_for_local_def(local_def.local_def) else {
@@ -1548,7 +1548,7 @@ impl TargetBodyIrSnapshot<'_> {
                 )
             }
             ItemId::Function(id) => self.render_function_ref(FunctionRef {
-                target: local_def.target,
+                origin: local_def.origin,
                 id,
             }),
             ItemId::TypeAlias(id) => {
@@ -1557,7 +1557,7 @@ impl TargetBodyIrSnapshot<'_> {
                     .expect("type alias id should exist while rendering body IR");
                 format!(
                     "type {}::{}",
-                    self.render_owner(data.owner, local_def.target),
+                    self.render_owner(data.owner, local_def.origin),
                     data.name
                 )
             }
@@ -1567,7 +1567,7 @@ impl TargetBodyIrSnapshot<'_> {
                     .expect("const id should exist while rendering body IR");
                 format!(
                     "const {}::{}",
-                    self.render_owner(data.owner, local_def.target),
+                    self.render_owner(data.owner, local_def.origin),
                     data.name
                 )
             }
@@ -1587,7 +1587,7 @@ impl TargetBodyIrSnapshot<'_> {
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
         let items = self
             .project
-            .resident_target_ir(ty.target)
+            .resident_target_ir(ty.origin)
             .expect("target semantic IR should exist while rendering body type");
 
         match ty.id {
@@ -1721,7 +1721,7 @@ impl TargetBodyIrSnapshot<'_> {
             .function_data(function_ref)
             .expect("function id should load while rendering body IR")
             .expect("function id should exist while rendering body IR");
-        let owner = self.render_owner(data.owner, function_ref.target);
+        let owner = self.render_owner(data.owner, function_ref.origin);
 
         format!("fn {owner}::{}", data.name)
     }
@@ -1730,11 +1730,11 @@ impl TargetBodyIrSnapshot<'_> {
         match owner {
             ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
             ItemOwner::Trait(trait_id) => self.render_trait_ref(TraitRef {
-                target,
+                origin: target,
                 id: trait_id,
             }),
             ItemOwner::Impl(impl_id) => self.render_impl_ref(ImplRef {
-                target,
+                origin: target,
                 id: impl_id,
             }),
         }
@@ -1784,10 +1784,10 @@ impl TargetBodyIrSnapshot<'_> {
             .project
             .parse_db()
             .packages()
-            .get(module_ref.target.package.0)
+            .get(module_ref.origin.package.0)
             .expect("package slot should exist while rendering body IR module");
         let target = package
-            .target(module_ref.target.target)
+            .target(module_ref.origin.target)
             .expect("target id should exist while rendering body IR module");
 
         format!(
@@ -1801,7 +1801,7 @@ impl TargetBodyIrSnapshot<'_> {
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
             .project
-            .resident_def_map(module_ref.target)
+            .resident_def_map(module_ref.origin)
             .expect("target def map should exist while rendering body IR module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering body IR module path");
@@ -1809,7 +1809,7 @@ impl TargetBodyIrSnapshot<'_> {
         match module.parent {
             Some(parent) => {
                 let parent_path = self.module_path(ModuleRef {
-                    target: module_ref.target,
+                    origin: module_ref.origin,
                     module: parent,
                 });
                 let name = module

@@ -301,8 +301,8 @@ impl<'a> FixtureEntry<'a> {
 
     fn binding_origin(&self, binding: &'a ScopeBinding) -> Option<FixtureBindingOrigin<'a>> {
         let target_ref = match binding.def {
-            DefId::Module(module_ref) => module_ref.target,
-            DefId::Local(local_def_ref) => local_def_ref.target,
+            DefId::Module(module_ref) => module_ref.origin,
+            DefId::Local(local_def_ref) => local_def_ref.origin,
         };
         self.db.parse_db().packages().get(target_ref.package.0)?;
         self.db.resident_def_map(target_ref)?;
@@ -327,7 +327,7 @@ impl FixtureBindingOrigin<'_> {
         };
 
         self.db
-            .resident_def_map(module_ref.target)?
+            .resident_def_map(module_ref.origin)?
             .module(module_ref.module)
             .and_then(|module| module.name.as_deref())
     }
@@ -338,11 +338,11 @@ impl FixtureBindingOrigin<'_> {
         };
         let local_def = self
             .db
-            .resident_def_map(local_def_ref.target)?
+            .resident_def_map(local_def_ref.origin)?
             .local_def(local_def_ref.local_def)?;
         self.db
             .parse_db()
-            .package(local_def_ref.target.package.0)?
+            .package(local_def_ref.origin.package.0)?
             .file_path(local_def.file_id)?
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
@@ -407,7 +407,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
         let result = def_map
             .resolve_path(
                 ModuleRef {
-                    target: target_ref,
+                    origin: target_ref,
                     module: module_id,
                 },
                 &path,
@@ -727,8 +727,8 @@ impl<'a> TargetDefMapSnapshot<'a> {
 
     fn binding_origin(&self, binding: &'a ScopeBinding) -> Option<BindingOrigin<'a>> {
         let target_ref = match binding.def {
-            DefId::Module(module_ref) => module_ref.target,
-            DefId::Local(local_def_ref) => local_def_ref.target,
+            DefId::Module(module_ref) => module_ref.origin,
+            DefId::Local(local_def_ref) => local_def_ref.origin,
         };
         self.project
             .parse_db()
@@ -836,12 +836,12 @@ impl ResolvedDefOrigin<'_> {
             DefId::Local(local_def_ref) => {
                 let local_def = self
                     .project
-                    .resident_def_map(local_def_ref.target)
+                    .resident_def_map(local_def_ref.origin)
                     .expect("target def map should exist while dumping")
                     .local_def(local_def_ref.local_def)
                     .expect("local def id should exist while dumping");
                 let module_path = self.render_module_path(ModuleRef {
-                    target: local_def_ref.target,
+                    origin: local_def_ref.origin,
                     module: local_def.module,
                 });
 
@@ -855,17 +855,17 @@ impl ResolvedDefOrigin<'_> {
             .project
             .parse_db()
             .packages()
-            .get(module_ref.target.package.0)
+            .get(module_ref.origin.package.0)
             .expect("package slot should exist while dumping");
         let target = package
-            .target(module_ref.target.target)
+            .target(module_ref.origin.target)
             .expect("target id should exist while dumping");
 
         format!(
             "{}[{}]::{}",
             package.package_name(),
             target.kind,
-            self.module_path(module_ref.target, module_ref.module),
+            self.module_path(module_ref.origin, module_ref.module),
         )
     }
 

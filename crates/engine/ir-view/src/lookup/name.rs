@@ -148,7 +148,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         let mut function = None;
         let (kind, documentation) = match visible_def.def {
             DefId::Module(module) => {
-                let Some(def_map) = self.db.def_map.def_map(module.target)? else {
+                let Some(def_map) = self.db.def_map.def_map(module.origin)? else {
                     return Ok(None);
                 };
                 let Some(data) = def_map.module(module.module) else {
@@ -163,7 +163,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                 let Some(data) = self
                     .db
                     .def_map
-                    .def_map(local_def_ref.target)?
+                    .def_map(local_def_ref.origin)?
                     .and_then(|def_map| def_map.local_def(local_def_ref.local_def))
                 else {
                     return Ok(None);

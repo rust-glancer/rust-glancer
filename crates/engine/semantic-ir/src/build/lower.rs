@@ -122,7 +122,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
 
             let item = self.item(local_def.source)?;
             let owner = ModuleRef {
-                target: self.target,
+                origin: self.target,
                 module: local_def.module,
             };
 
@@ -139,7 +139,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
             let local_impl = def_map.local_impl(local_impl_ref.local_impl).unwrap();
             let item = self.item(local_impl.source)?;
             let owner = ModuleRef {
-                target: self.target,
+                origin: self.target,
                 module: local_impl.module,
             };
 

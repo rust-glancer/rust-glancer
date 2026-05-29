@@ -145,7 +145,7 @@ impl DefMapReadTxn<'_> {
             false,
         );
 
-        if let Some(def_map) = self.def_map(importing_module.target)? {
+        if let Some(def_map) = self.def_map(importing_module.origin)? {
             let mut extern_roots = def_map.extern_prelude().iter().collect::<Vec<_>>();
             extern_roots.sort_by_key(|(name, _)| *name);
             for (name, module_ref) in extern_roots {
@@ -214,7 +214,7 @@ impl PathCompletionSiteScanner<'_, '_> {
                 continue;
             }
             let module = ModuleRef {
-                target: self.target,
+                origin: self.target,
                 module: import.module,
             };
             let Some((site, source_len)) =
@@ -244,7 +244,7 @@ impl PathCompletionSiteScanner<'_, '_> {
                 continue;
             }
             let module = ModuleRef {
-                target: self.target,
+                origin: self.target,
                 module: import.module,
             };
             let Some((site, source_len)) = self.site_for_import_path(module, &import.source_path)

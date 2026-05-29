@@ -14,8 +14,8 @@ pub use self::ids::{
         BodyRef, BodyValueItemId, BodyValueItemRef, ExprId, PatId, ScopeId, StmtId,
     },
     def_map::{
-        DefId, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
-        ModuleRef, TargetRef,
+        DefId, DefMapRef, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
+        ModuleId, ModuleRef, TargetRef,
     },
     identity,
     resolution::ResolvedDeclarationRef,

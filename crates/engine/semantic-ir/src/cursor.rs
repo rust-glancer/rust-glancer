@@ -123,7 +123,7 @@ impl SignatureCursorScanner<'_, '_> {
                 items.structs().iter_with_ids().map(move |(id, data)| {
                     (
                         TypeDefRef {
-                            target,
+                            origin: target,
                             id: TypeDefId::Struct(id),
                         },
                         data,
@@ -152,7 +152,7 @@ impl SignatureCursorScanner<'_, '_> {
                 items.unions().iter_with_ids().map(move |(id, data)| {
                     (
                         TypeDefRef {
-                            target,
+                            origin: target,
                             id: TypeDefId::Union(id),
                         },
                         data,
@@ -190,7 +190,7 @@ impl SignatureCursorScanner<'_, '_> {
                 items.enums().iter_with_ids().map(move |(id, data)| {
                     (
                         TypeDefRef {
-                            target,
+                            origin: target,
                             id: TypeDefId::Enum(id),
                         },
                         data,
@@ -209,7 +209,7 @@ impl SignatureCursorScanner<'_, '_> {
             for (variant_idx, variant) in data.variants.iter().enumerate() {
                 self.push_enum_variant(
                     EnumVariantRef {
-                        target: self.target,
+                        origin: self.target,
                         enum_id,
                         index: variant_idx,
                     },
