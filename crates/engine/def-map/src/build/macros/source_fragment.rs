@@ -153,7 +153,7 @@ impl SourceFragmentCollector<'_> {
 
         // Local definitions become immediately visible in both the frozen def-map being built and
         // the mutable scope snapshot used by the macro expansion fixed-point loop.
-        let local_def_id = self.state.def_map.alloc_local_def(LocalDefData {
+        let local_def_id = self.state.def_map_builder.alloc_local_def(LocalDefData {
             module: module_id,
             name: name.clone(),
             kind,
@@ -164,7 +164,7 @@ impl SourceFragmentCollector<'_> {
             span: item.span,
         });
         self.state
-            .def_map
+            .def_map_builder
             .module_mut(module_id)
             .expect("module should exist for source fragment local definition")
             .local_defs
@@ -227,7 +227,7 @@ impl SourceFragmentCollector<'_> {
         {
             self.export_macro_definition_to_root(name, local_def_id);
         }
-        self.state.def_map.insert_macro_definition(
+        self.state.def_map_builder.insert_macro_definition(
             local_def_id,
             crate::MacroDefinitionData::from_item(
                 macro_definition,
@@ -238,7 +238,13 @@ impl SourceFragmentCollector<'_> {
     }
 
     fn export_macro_definition_to_root(&mut self, name: &Name, local_def_id: LocalDefId) {
-        let Some(root_module) = self.state.def_map.root_module() else {
+        let Some(root_module) = self
+            .state
+            .def_map_builder
+            .as_incomplete_def_map()
+            .target_data()
+            .root_module()
+        else {
             return;
         };
         let binding = ScopeBinding {
@@ -310,14 +316,14 @@ impl SourceFragmentCollector<'_> {
         item: &rg_item_tree::ItemNode,
         source: ItemTreeRef,
     ) {
-        let local_impl_id = self.state.def_map.alloc_local_impl(LocalImplData {
+        let local_impl_id = self.state.def_map_builder.alloc_local_impl(LocalImplData {
             module: module_id,
             source: source.into(),
             file_id: item.file_id,
             span: item.span,
         });
         self.state
-            .def_map
+            .def_map_builder
             .module_mut(module_id)
             .expect("module should exist for source fragment impl block")
             .impls
@@ -438,7 +444,7 @@ impl SourceFragmentCollector<'_> {
         docs: Option<Documentation>,
         origin: ModuleOrigin,
     ) -> ModuleId {
-        let module_id = self.state.def_map.alloc_module(ModuleData {
+        let module_id = self.state.def_map_builder.alloc_module(ModuleData {
             name,
             name_span,
             docs,
@@ -466,7 +472,7 @@ impl SourceFragmentCollector<'_> {
         visibility: VisibilityLevel,
     ) {
         self.state
-            .def_map
+            .def_map_builder
             .module_mut(parent_module)
             .expect("parent module should exist for source fragment child link")
             .children
@@ -509,7 +515,7 @@ impl SourceFragmentCollector<'_> {
                 continue;
             }
 
-            let import_id = self.state.def_map.alloc_import(ImportData {
+            let import_id = self.state.def_map_builder.alloc_import(ImportData {
                 module: module_id,
                 visibility: item.visibility.clone(),
                 kind: ImportKind::from_use_kind(import.kind),
@@ -524,7 +530,7 @@ impl SourceFragmentCollector<'_> {
                 import_index,
             });
             self.state
-                .def_map
+                .def_map_builder
                 .module_mut(module_id)
                 .expect("module should exist for source fragment import")
                 .imports
@@ -547,9 +553,15 @@ impl SourceFragmentCollector<'_> {
         let module_ref = if extern_name == "self" {
             ModuleRef {
                 origin: DefMapRef::Target(self.state.target),
-                module: self.state.def_map.root_module().expect(
-                    "root module should exist before source fragment extern crate collection",
-                ),
+                module: self
+                    .state
+                    .def_map_builder
+                    .as_incomplete_def_map()
+                    .target_data()
+                    .root_module()
+                    .expect(
+                        "root module should exist before source fragment extern crate collection",
+                    ),
             }
         } else {
             let Some(module_ref) = self.state.implicit_roots.get(&extern_name).copied() else {

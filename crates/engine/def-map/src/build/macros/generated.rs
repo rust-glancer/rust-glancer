@@ -81,10 +81,14 @@ impl GeneratedCollector<'_> {
             self.state.edition,
         )
         .context("while attempting to lower macro expansion into generated source")?;
-        let generated_source_id = self.state.def_map.alloc_generated_source(generated_source);
+        let generated_source_id = self
+            .state
+            .def_map_builder
+            .alloc_generated_source(generated_source);
         let top_level = self
             .state
-            .def_map
+            .def_map_builder
+            .as_incomplete_def_map()
             .generated_source(generated_source_id)
             .expect("generated source should exist immediately after allocation")
             .top_level
@@ -119,7 +123,8 @@ impl GeneratedCollector<'_> {
     ) {
         let item = self
             .state
-            .def_map
+            .def_map_builder
+            .as_incomplete_def_map()
             .generated_source(generated_source)
             .and_then(|source| source.item(item_id))
             .expect("generated item id should exist while collecting def map")
@@ -179,7 +184,7 @@ impl GeneratedCollector<'_> {
         let namespace = kind.namespace();
         let name = item.name.clone()?;
         let visibility = item.visibility.clone();
-        let local_def_id = self.state.def_map.alloc_local_def(LocalDefData {
+        let local_def_id = self.state.def_map_builder.alloc_local_def(LocalDefData {
             module: module_id,
             name: name.clone(),
             kind,
@@ -190,7 +195,7 @@ impl GeneratedCollector<'_> {
             span: item.span,
         });
         self.state
-            .def_map
+            .def_map_builder
             .module_mut(module_id)
             .expect("module should exist for generated local definition")
             .local_defs
@@ -262,7 +267,7 @@ impl GeneratedCollector<'_> {
         // Generated macro definitions inherit `$crate` from the macro that produced them, not from
         // the module where the generated definition is inserted.
         let dollar_crate_target = self.origin.dollar_crate_target.unwrap_or(self.state.target);
-        self.state.def_map.insert_macro_definition(
+        self.state.def_map_builder.insert_macro_definition(
             local_def_id,
             MacroDefinitionData::from_item(
                 macro_definition,
@@ -274,7 +279,13 @@ impl GeneratedCollector<'_> {
 
     /// Updates both scope snapshots for a generated `#[macro_export]` definition.
     fn export_macro_definition_to_root(&mut self, name: &Name, local_def_id: LocalDefId) {
-        let Some(root_module) = self.state.def_map.root_module() else {
+        let Some(root_module) = self
+            .state
+            .def_map_builder
+            .as_incomplete_def_map()
+            .target_data()
+            .root_module()
+        else {
             return;
         };
         let binding = ScopeBinding {
@@ -332,7 +343,7 @@ impl GeneratedCollector<'_> {
         };
 
         let visibility = item.visibility.clone();
-        let child_module = self.state.def_map.alloc_module(ModuleData {
+        let child_module = self.state.def_map_builder.alloc_module(ModuleData {
             name: Some(module_name.clone()),
             name_span: item.name_span,
             docs: Documentation::concat(item.docs.clone(), module_item.inner_docs.clone()),
@@ -358,7 +369,7 @@ impl GeneratedCollector<'_> {
             .push_module_scope(self.state.target, Default::default())
             .expect("current scopes should have a target slot for generated module");
         self.state
-            .def_map
+            .def_map_builder
             .module_mut(parent_module)
             .expect("parent module should exist for generated child link")
             .children
@@ -426,14 +437,14 @@ impl GeneratedCollector<'_> {
         generated_source: GeneratedSourceId,
         item_id: ItemTreeId,
     ) {
-        let local_impl_id = self.state.def_map.alloc_local_impl(LocalImplData {
+        let local_impl_id = self.state.def_map_builder.alloc_local_impl(LocalImplData {
             module: module_id,
             source: self.item_source(generated_source, item_id),
             file_id: item.file_id,
             span: item.span,
         });
         self.state
-            .def_map
+            .def_map_builder
             .module_mut(module_id)
             .expect("module should exist for generated impl block")
             .impls
@@ -459,7 +470,7 @@ impl GeneratedCollector<'_> {
                 segment.span = self.origin.span;
             }
 
-            let import_id = self.state.def_map.alloc_import(ImportData {
+            let import_id = self.state.def_map_builder.alloc_import(ImportData {
                 module: module_id,
                 visibility: item.visibility.clone(),
                 kind: ImportKind::from_use_kind(import.kind),
@@ -474,7 +485,7 @@ impl GeneratedCollector<'_> {
                 import_index,
             });
             self.state
-                .def_map
+                .def_map_builder
                 .module_mut(module_id)
                 .expect("module should exist for generated import")
                 .imports

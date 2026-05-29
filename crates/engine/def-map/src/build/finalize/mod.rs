@@ -18,7 +18,7 @@ use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    DefMap as FrozenDefMap, DefMapReadTxn, LocalDefData, MacroDefinitionData, ModuleData,
+    DefMap, DefMapReadTxn, LocalDefData, MacroDefinitionData, ModuleData,
     PackageDefMaps as DefMapPackage, PackageSlot,
     model::{ModuleScopeBuilder, ScopeEntryRef},
     query::path_resolution::{PathResolutionEnv, resolve_path_to_modules_with_env},
@@ -227,7 +227,7 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
             .map(|old| old.def_map(target))
             .transpose()?
             .flatten()
-            .and_then(|def_map| def_map.extern_prelude().get(name).copied()))
+            .and_then(|def_map| def_map.target_data().extern_prelude().get(name).copied()))
     }
 
     fn prelude_module(
@@ -243,7 +243,7 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
             .map(|old| old.def_map(target))
             .transpose()?
             .flatten()
-            .and_then(|def_map| def_map.prelude()))
+            .and_then(|def_map| def_map.target_data().prelude()))
     }
 
     fn root_module(
@@ -251,13 +251,17 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         target: TargetRef,
     ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
         let module = if let Some(state) = self.states.target(target) {
-            state.def_map.root_module()
+            state
+                .def_map_builder
+                .as_incomplete_def_map()
+                .target_data()
+                .root_module()
         } else {
             self.old
                 .map(|old| old.def_map(target))
                 .transpose()?
                 .flatten()
-                .and_then(|def_map| def_map.root_module())
+                .and_then(|def_map| def_map.target_data().root_module())
         };
 
         Ok(module.map(|module| ModuleRef {
@@ -273,7 +277,10 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         if let Some(target) = module_ref.origin.as_target_ref()
             && let Some(state) = self.states.target(target)
         {
-            return Ok(state.def_map.module(module_ref.module));
+            return Ok(state
+                .def_map_builder
+                .as_incomplete_def_map()
+                .module(module_ref.module));
         }
 
         let Some(target) = module_ref.origin.as_target_ref() else {
@@ -344,7 +351,10 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         if let Some(target) = local_def_ref.origin.as_target_ref()
             && let Some(state) = self.states.target(target)
         {
-            return Ok(state.def_map.local_def(local_def_ref.local_def));
+            return Ok(state
+                .def_map_builder
+                .as_incomplete_def_map()
+                .local_def(local_def_ref.local_def));
         }
 
         let Some(target) = local_def_ref.origin.as_target_ref() else {
@@ -367,7 +377,10 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
         if let Some(target) = local_def_ref.origin.as_target_ref()
             && let Some(state) = self.states.target(target)
         {
-            return Ok(state.def_map.macro_definition(local_def_ref.local_def));
+            return Ok(state
+                .def_map_builder
+                .as_incomplete_def_map()
+                .macro_definition(local_def_ref.local_def));
         }
 
         let Some(target) = local_def_ref.origin.as_target_ref() else {
@@ -475,7 +488,12 @@ fn select_preludes(
         // Each target resolves its edition prelude from its own crate root. Targets without a root
         // module are malformed enough that later phases will simply see no prelude.
         for (target_slot, state) in package_states.iter().enumerate() {
-            let Some(root_module) = state.def_map.root_module() else {
+            let Some(root_module) = state
+                .def_map_builder
+                .as_incomplete_def_map()
+                .target_data()
+                .root_module()
+            else {
                 continue;
             };
             let Some(prelude_module) =
@@ -711,7 +729,7 @@ fn freeze_target_scopes(
 
     for (module_idx, scope) in final_scopes.iter().enumerate() {
         let module = state
-            .def_map
+            .def_map_builder
             .module_mut(ModuleId(module_idx))
             .expect("module should exist for every final dirty scope");
         module.scope = scope.freeze();
@@ -722,13 +740,13 @@ fn freeze_target_scopes(
     }
 }
 
-fn freeze_target_state(state: &TargetState) -> FrozenDefMap {
-    let mut def_map = state.def_map.clone();
+fn freeze_target_state(state: &TargetState) -> DefMap {
+    let mut def_map = state.def_map_builder.clone();
 
     // The same implicit roots used by import resolution are still needed by later frozen path
     // queries. Keep them as an extern prelude rather than pretending they are child modules of the
     // crate root.
     def_map.set_extern_prelude(state.implicit_roots.clone());
     def_map.set_prelude(state.prelude);
-    def_map
+    def_map.build()
 }

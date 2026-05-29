@@ -77,7 +77,12 @@ pub(super) fn apply_imports(
     env: &impl PathResolutionEnv,
     next_scopes: &mut ScopeMatrix,
 ) -> anyhow::Result<()> {
-    for import in state.def_map.imports().iter() {
+    for import in state
+        .def_map_builder
+        .as_incomplete_def_map()
+        .imports()
+        .iter()
+    {
         match import.kind {
             ImportKind::Glob => {
                 let source_modules = resolve_path_to_modules_with_env(
@@ -152,9 +157,14 @@ fn unresolved_imports_for_target(
     state: &TargetState,
     env: &impl PathResolutionEnv,
 ) -> anyhow::Result<Vec<Vec<ImportId>>> {
-    let mut module_imports = vec![Vec::new(); state.def_map.module_count()];
+    let mut module_imports =
+        vec![Vec::new(); state.def_map_builder.as_incomplete_def_map().module_count()];
 
-    for (import_id, import) in state.def_map.imports_with_ids() {
+    for (import_id, import) in state
+        .def_map_builder
+        .as_incomplete_def_map()
+        .imports_with_ids()
+    {
         if import_is_unresolved(state, env, import)? {
             module_imports
                 .get_mut(import.module.0)

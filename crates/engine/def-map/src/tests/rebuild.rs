@@ -116,6 +116,7 @@ pub use dep::api::Api as Renamed;
         .and_then(|package| package.def_map(app_target.target))
         .expect("rebuilt app def-map should exist");
     let root_module = app_def_map
+        .target_data()
         .root_module()
         .expect("rebuilt app def-map should have a root module");
     let root = app_def_map
@@ -229,6 +230,7 @@ make_dep_item!();
         .and_then(|package| package.def_map(app_target.target))
         .expect("rebuilt app def-map should exist");
     let root_module = app_def_map
+        .target_data()
         .root_module()
         .expect("rebuilt app def-map should have a root module");
     let root = app_def_map

@@ -14,6 +14,90 @@ use self::{def_map_data::DefMapData, target_data::TargetData};
 mod def_map_data;
 mod target_data;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefMapBuilder {
+    def_map: DefMap,
+}
+
+impl DefMapBuilder {
+    pub fn new(target: TargetRef) -> Self {
+        Self {
+            def_map: DefMap::empty(target),
+        }
+    }
+
+    /// DefMap is first build, and then populated.
+    /// This method provides a method to access the defmap directly, but it's the caller's
+    /// responsibility to make sure that the defmap has been populated already.
+    // TODO: Add `collected` flag to forbid adding more things and only allow mutating
+    // existing ones.
+    pub fn as_incomplete_def_map(&self) -> &DefMap {
+        &self.def_map
+    }
+
+    pub fn module_mut(&mut self, module_id: ModuleId) -> Option<&mut ModuleData> {
+        self.def_map.data.modules.get_mut(module_id)
+    }
+
+    pub fn alloc_module(&mut self, module: ModuleData) -> ModuleId {
+        self.def_map.data.modules.alloc(module)
+    }
+
+    pub fn alloc_local_def(&mut self, local_def: LocalDefData) -> LocalDefId {
+        self.def_map.data.local_defs.alloc(local_def)
+    }
+
+    pub fn insert_macro_definition(
+        &mut self,
+        local_def: LocalDefId,
+        macro_definition: MacroDefinitionData,
+    ) {
+        self.def_map
+            .data
+            .macro_definitions
+            .insert(local_def, macro_definition);
+    }
+
+    pub fn alloc_local_impl(&mut self, local_impl: LocalImplData) -> LocalImplId {
+        self.def_map.data.local_impls.alloc(local_impl)
+    }
+
+    pub fn alloc_import(&mut self, import: ImportData) -> ImportId {
+        self.def_map.data.imports.alloc(import)
+    }
+
+    pub fn alloc_generated_source(
+        &mut self,
+        generated_source: GeneratedSourceData,
+    ) -> GeneratedSourceId {
+        self.def_map.data.generated_sources.alloc(generated_source)
+    }
+
+    pub fn set_root_module(&mut self, root_module: ModuleId) {
+        self.target_data_mut().root_module = Some(root_module);
+    }
+
+    pub fn set_extern_prelude(&mut self, extern_prelude: HashMap<Name, ModuleRef>) {
+        self.target_data_mut().extern_prelude = extern_prelude;
+    }
+
+    pub fn set_prelude(&mut self, prelude: Option<ModuleRef>) {
+        self.target_data_mut().prelude = prelude;
+    }
+
+    pub fn build(self) -> DefMap {
+        self.def_map
+    }
+
+    fn target_data_mut(&mut self) -> &mut TargetData {
+        assert!(
+            self.def_map.is_root,
+            "Mutable access to target data is only allowed for root defmap"
+        );
+        self.def_map.target_data_mut()
+    }
+}
+
 /// Frozen namespace map for one analyzed scope.
 ///
 /// There might be several defmaps per target:
@@ -25,10 +109,10 @@ mod target_data;
 pub struct DefMap {
     /// Whether this defmap corresponds to the target root.
     is_root: bool,
-    /// Ref to this defmap, which can be used to emit correct
-    /// refs.
+    /// Ref to this defmap, which can be used to emit correct refs.
     own_ref: DefMapRef,
     /// Shared data on the target.
+    // TODO: Wouldn't that be deserialized for each body defmap?
     target_data: Arc<TargetData>,
     /// Actual defmap layout for the corresponding scope.
     data: DefMapData,
@@ -49,7 +133,7 @@ impl rg_memsize::MemorySize for DefMap {
 }
 
 impl DefMap {
-    pub(crate) fn empty(target: TargetRef) -> Self {
+    fn empty(target: TargetRef) -> Self {
         let target_data = Arc::new(TargetData {
             target,
             root_module: None,
@@ -66,31 +150,20 @@ impl DefMap {
     }
 
     /// Creates a derived defmap that can be used for the body function scope.
-    pub fn child(&self, body_ref: BodyRef) -> Self {
-        Self {
+    pub fn child(&self, body_ref: BodyRef) -> DefMapBuilder {
+        let self_ = Self {
             is_root: false,
             own_ref: DefMapRef::Body(body_ref),
             target_data: self.target_data.clone(),
             data: DefMapData::default(),
-        }
+        };
+
+        DefMapBuilder { def_map: self_ }
     }
 
-    /// Returns the root module of this target, if the map has been populated.
-    // TODO: Should probably be moved to target data so that it's not confusing
-    pub(crate) fn root_module(&self) -> Option<ModuleId> {
-        self.target_data.root_module
-    }
-
-    /// Returns the external root names visible from this target.
-    // TODO: Should probably be moved to target data so that it's not confusing
-    pub(crate) fn extern_prelude(&self) -> &HashMap<Name, ModuleRef> {
-        &self.target_data.extern_prelude
-    }
-
-    /// Returns the standard prelude module visible from this target, if it was discovered.
-    // TODO: Should probably be moved to target data so that it's not confusing
-    pub(crate) fn prelude(&self) -> Option<ModuleRef> {
-        self.target_data.prelude
+    /// Returns the data for the target this defmap is associated with.
+    pub fn target_data(&self) -> &TargetData {
+        &self.target_data
     }
 
     /// Returns all modules in stable module-id order.
@@ -109,10 +182,6 @@ impl DefMap {
     /// Returns module data by id.
     pub fn module(&self, module_id: ModuleId) -> Option<&ModuleData> {
         self.data.modules.get(module_id)
-    }
-
-    pub(crate) fn module_mut(&mut self, module_id: ModuleId) -> Option<&mut ModuleData> {
-        self.data.modules.get_mut(module_id)
     }
 
     pub(crate) fn module_count(&self) -> usize {
@@ -137,7 +206,7 @@ impl DefMap {
     }
 
     /// Returns a declarative macro payload by its local definition id.
-    pub(crate) fn macro_definition(&self, local_def: LocalDefId) -> Option<&MacroDefinitionData> {
+    pub fn macro_definition(&self, local_def: LocalDefId) -> Option<&MacroDefinitionData> {
         self.data.macro_definitions.get(&local_def)
     }
 
@@ -176,56 +245,11 @@ impl DefMap {
         self.data.generated_sources.as_slice()
     }
 
-    pub(crate) fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &ImportData)> {
+    pub fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &ImportData)> {
         self.data.imports.iter_with_ids()
     }
 
-    pub(crate) fn alloc_module(&mut self, module: ModuleData) -> ModuleId {
-        self.data.modules.alloc(module)
-    }
-
-    pub(crate) fn alloc_local_def(&mut self, local_def: LocalDefData) -> LocalDefId {
-        self.data.local_defs.alloc(local_def)
-    }
-
-    pub(crate) fn insert_macro_definition(
-        &mut self,
-        local_def: LocalDefId,
-        macro_definition: MacroDefinitionData,
-    ) {
-        self.data
-            .macro_definitions
-            .insert(local_def, macro_definition);
-    }
-
-    pub(crate) fn alloc_local_impl(&mut self, local_impl: LocalImplData) -> LocalImplId {
-        self.data.local_impls.alloc(local_impl)
-    }
-
-    pub(crate) fn alloc_import(&mut self, import: ImportData) -> ImportId {
-        self.data.imports.alloc(import)
-    }
-
-    pub(crate) fn alloc_generated_source(
-        &mut self,
-        generated_source: GeneratedSourceData,
-    ) -> GeneratedSourceId {
-        self.data.generated_sources.alloc(generated_source)
-    }
-
-    pub(crate) fn set_root_module(&mut self, root_module: ModuleId) {
-        self.target_data_mut().root_module = Some(root_module);
-    }
-
-    pub(crate) fn set_extern_prelude(&mut self, extern_prelude: HashMap<Name, ModuleRef>) {
-        self.target_data_mut().extern_prelude = extern_prelude;
-    }
-
-    pub(crate) fn set_prelude(&mut self, prelude: Option<ModuleRef>) {
-        self.target_data_mut().prelude = prelude;
-    }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.target_data_mut().shrink_to_fit();
         self.data.shrink_to_fit();
     }

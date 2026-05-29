@@ -94,18 +94,20 @@ impl PathResolutionEnv for DefMapReadTxn<'_> {
     ) -> Result<Option<ModuleRef>, PackageStoreError> {
         Ok(self
             .def_map(target)?
-            .and_then(|def_map| def_map.extern_prelude().get(name).copied()))
+            .and_then(|def_map| def_map.target_data().extern_prelude().get(name).copied()))
     }
 
     fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
-        Ok(self.def_map(target)?.and_then(|def_map| def_map.prelude()))
+        Ok(self
+            .def_map(target)?
+            .and_then(|def_map| def_map.target_data().prelude()))
     }
 
     fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
         Ok(self.def_map(target)?.and_then(|def_map| {
             Some(ModuleRef {
                 origin: DefMapRef::Target(target),
-                module: def_map.root_module()?,
+                module: def_map.target_data().root_module()?,
             })
         }))
     }
@@ -494,7 +496,8 @@ fn resolve_first_segment(
                 return Ok(local_defs);
             }
 
-            if let Some(module_ref) = env.extern_root(importing_module.origin.origin_target(), name)?
+            if let Some(module_ref) =
+                env.extern_root(importing_module.origin.origin_target(), name)?
             {
                 return Ok(vec![DefId::Module(module_ref)]);
             }
@@ -638,12 +641,10 @@ fn binding_is_visible(
             module_is_descendant_of(env, importing_module, binding.owner)?
         }
         VisibilityLevel::Crate => true,
-        VisibilityLevel::Super => {
-            match env.parent_module(binding.owner)? {
-                Some(visible_from) => module_is_descendant_of(env, importing_module, visible_from)?,
-                None => false,
-            }
-        }
+        VisibilityLevel::Super => match env.parent_module(binding.owner)? {
+            Some(visible_from) => module_is_descendant_of(env, importing_module, visible_from)?,
+            None => false,
+        },
         VisibilityLevel::Restricted(path) => {
             match restricted_visibility_owner(env, binding.owner, path)? {
                 Some(visible_from) => module_is_descendant_of(env, importing_module, visible_from)?,

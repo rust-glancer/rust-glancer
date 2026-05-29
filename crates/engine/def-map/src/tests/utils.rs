@@ -196,6 +196,7 @@ impl<'a> FixtureTarget<'a> {
     pub(super) fn entry(&self, name: &str) -> FixtureEntry<'a> {
         let entry = self
             .def_map()
+            .target_data()
             .root_module()
             .and_then(|root_module| self.def_map().module(root_module))
             .and_then(|module| module.scope.entry(name));

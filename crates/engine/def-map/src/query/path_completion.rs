@@ -146,7 +146,11 @@ impl DefMapReadTxn<'_> {
         );
 
         if let Some(def_map) = self.def_map(importing_module.origin.origin_target())? {
-            let mut extern_roots = def_map.extern_prelude().iter().collect::<Vec<_>>();
+            let mut extern_roots = def_map
+                .target_data()
+                .extern_prelude()
+                .iter()
+                .collect::<Vec<_>>();
             extern_roots.sort_by_key(|(name, _)| *name);
             for (name, module_ref) in extern_roots {
                 let label = name.to_string();
@@ -161,7 +165,7 @@ impl DefMapReadTxn<'_> {
                 });
             }
 
-            if let Some(prelude) = def_map.prelude() {
+            if let Some(prelude) = def_map.target_data().prelude() {
                 let prelude_scope = path_resolution::visible_module_scope_entry_set_with_env(
                     self,
                     importing_module,
