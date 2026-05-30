@@ -6,6 +6,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::{ItemNode, ItemTreeId};
 use rg_parse::{FileId, Span, TargetId};
+use rg_semantic_ir::ItemStore;
 
 use super::{
     body_map::BodySourceItems,
@@ -161,6 +162,7 @@ pub struct BodyData {
     pub(crate) source: BodySource,
     pub(crate) source_items: BodySourceItems,
     pub(crate) body_def_map: Option<DefMap>,
+    pub(crate) body_item_store: Option<ItemStore>,
     pub(crate) param_scope: ScopeId,
     pub(crate) root_expr: ExprId,
     pub(crate) params: Vec<BindingId>,
@@ -194,6 +196,10 @@ impl BodyData {
 
     pub fn body_def_map(&self) -> Option<&DefMap> {
         self.body_def_map.as_ref()
+    }
+
+    pub fn body_item_store(&self) -> Option<&ItemStore> {
+        self.body_item_store.as_ref()
     }
 
     pub fn param_scope(&self) -> ScopeId {
@@ -316,6 +322,7 @@ impl BodyData {
             source,
             source_items: builder.source_items,
             body_def_map: None,
+            body_item_store: None,
             param_scope,
             root_expr,
             params,
@@ -336,6 +343,9 @@ impl BodyData {
         self.source_items.shrink_to_fit();
         if let Some(def_map) = &mut self.body_def_map {
             def_map.shrink_to_fit();
+        }
+        if let Some(item_store) = &mut self.body_item_store {
+            item_store.shrink_to_fit();
         }
         self.scopes.shrink_to_fit();
         for scope in self.scopes.iter_mut() {

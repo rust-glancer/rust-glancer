@@ -135,7 +135,7 @@ impl<'a, 'db> TargetLowering<'a, 'db> {
 
         // Impl blocks are not namespace bindings, so they travel through a separate def-map table
         // and are lowered after named items have their semantic ids.
-        for local_impl_ref in def_map.lodal_impl_refs() {
+        for local_impl_ref in def_map.local_impl_refs() {
             let local_impl = def_map.local_impl(local_impl_ref.local_impl).unwrap();
             let item = self.item(local_impl.source)?;
             let owner = ModuleRef {

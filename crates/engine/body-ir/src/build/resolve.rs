@@ -9,7 +9,10 @@ use rg_parse::TargetId;
 use rg_semantic_ir::SemanticIrReadTxn;
 
 use crate::{
-    ir::{PackageBodies, TargetBodiesStatus, body_map::BodyDefMapCollector},
+    ir::{
+        PackageBodies, TargetBodiesStatus,
+        body_map::{BodyDefMapCollector, BodyItemStoreCollector},
+    },
     resolution::{BodyResolver, SemanticResolutionIndex},
 };
 
@@ -121,8 +124,13 @@ fn resolve_package(
                 target: target_ref,
                 body: BodyId(body_idx),
             };
+            // First, collect the defmap
             let body_def_map = BodyDefMapCollector::new(target_def_map, body_ref, body).collect();
+            // Then, collect the local items
+            let body_item_store = BodyItemStoreCollector::new(body, &body_def_map).collect();
+            // TODO: Note that there is no resolution for both defmap and local items just yet.
             body.body_def_map = Some(body_def_map);
+            body.body_item_store = Some(body_item_store);
 
             BodyResolver::new(def_map_txn, semantic_ir, semantic_index, body_ref, body)
                 .resolve()?;

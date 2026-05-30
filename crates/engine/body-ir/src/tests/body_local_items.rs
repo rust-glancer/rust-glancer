@@ -1,8 +1,8 @@
 use expect_test::expect;
 use rg_def_map::{ImportBinding, ImportKind, LocalDefKind};
-use rg_ir_model::{DefMapRef, ModuleId, hir::source::ItemSourceKind};
+use rg_ir_model::{DefMapRef, LocalDefId, ModuleId, SemanticItemKind, hir::source::ItemSourceKind};
 
-use super::utils::{check_first_body_def_map, check_project_body_ir};
+use super::utils::{check_first_body_def_map, check_first_body_item_store, check_project_body_ir};
 
 #[test]
 fn resolves_body_local_structs_before_module_structs() {
@@ -144,6 +144,114 @@ pub fn use_it() {
                     .collect::<Vec<_>>(),
                 vec!["crate", "Root"]
             );
+        },
+    );
+}
+
+// TODO: Temporary test until the codebase is migrated to use item stores for body items.
+#[test]
+fn collects_body_local_item_store_items_impls_and_assoc_items() {
+    check_first_body_item_store(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_local_item_store_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    struct User {
+        id: usize,
+    }
+    enum Choice {
+        Start,
+    }
+    type Alias = User;
+    const COUNT: usize = 1;
+    static VALUE: usize = 2;
+    fn helper() {}
+
+    trait LocalTrait {
+        type Assoc;
+        const FLAG: bool;
+        fn run(&self);
+    }
+
+    impl User {
+        type Output = User;
+        const ZERO: usize = 0;
+        fn new() -> Self {
+            User { id: 0 }
+        }
+    }
+}
+"#,
+        |items| {
+            assert!(matches!(items.origin(), DefMapRef::Body(_)));
+            assert_eq!(items.structs().len(), 1);
+            assert_eq!(items.unions().len(), 0);
+            assert_eq!(items.enums().len(), 1);
+            assert_eq!(items.traits().len(), 1);
+            assert_eq!(items.impls().len(), 1);
+            assert_eq!(items.functions().len(), 3);
+            assert_eq!(items.type_aliases().len(), 3);
+            assert_eq!(items.consts().len(), 3);
+            assert_eq!(items.statics().len(), 1);
+
+            for local_def_idx in 0..7 {
+                assert!(
+                    items
+                        .item_for_local_def(LocalDefId(local_def_idx))
+                        .is_some(),
+                    "body local def {local_def_idx} should map to a semantic item",
+                );
+            }
+
+            let kinds = items
+                .semantic_items()
+                .map(|item| item.kind())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                kinds,
+                vec![
+                    SemanticItemKind::Struct,
+                    SemanticItemKind::Enum,
+                    SemanticItemKind::Trait,
+                    SemanticItemKind::Impl,
+                    SemanticItemKind::Function,
+                    SemanticItemKind::Function,
+                    SemanticItemKind::Function,
+                    SemanticItemKind::TypeAlias,
+                    SemanticItemKind::TypeAlias,
+                    SemanticItemKind::TypeAlias,
+                    SemanticItemKind::Const,
+                    SemanticItemKind::Const,
+                    SemanticItemKind::Const,
+                    SemanticItemKind::Static,
+                ]
+            );
+            assert!(
+                items
+                    .semantic_items()
+                    .all(|item| matches!(item.source().kind, ItemSourceKind::Body(_)))
+            );
+
+            let trait_data = items
+                .traits()
+                .iter()
+                .next()
+                .expect("fixture should lower one body-local trait");
+            assert_eq!(trait_data.items.len(), 3);
+
+            let impl_data = items
+                .impls()
+                .iter()
+                .next()
+                .expect("fixture should lower one body-local impl");
+            assert_eq!(impl_data.items.len(), 3);
+            assert!(impl_data.resolved_self_tys.is_empty());
+            assert!(impl_data.resolved_trait_refs.is_empty());
         },
     );
 }

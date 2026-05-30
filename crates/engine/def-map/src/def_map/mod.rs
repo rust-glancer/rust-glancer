@@ -224,7 +224,7 @@ impl DefMap {
         self.data.local_impls.as_slice()
     }
 
-    pub fn lodal_impl_refs(&self) -> impl Iterator<Item = LocalImplRef> {
+    pub fn local_impl_refs(&self) -> impl Iterator<Item = LocalImplRef> {
         (0..self.data.local_impls.len()).map(|id| LocalImplRef {
             origin: self.own_ref,
             local_impl: LocalImplId(id),

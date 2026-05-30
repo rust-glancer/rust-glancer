@@ -45,6 +45,30 @@ pub(super) fn check_project_body_ir_patterns(fixture: &str, expect: Expect) {
 
 // TODO: Temporary helper until codebase is migrated to primarily use defmaps for everything.
 pub(super) fn check_first_body_def_map(fixture: &str, check: impl FnOnce(&rg_def_map::DefMap)) {
+    check_first_body(fixture, |body| {
+        let def_map = body
+            .body_def_map()
+            .expect("body def map should be collected for built fixture body");
+
+        check(def_map);
+    });
+}
+
+// TODO: Temporary helper until codebase is migrated to primarily use item stores for everything.
+pub(super) fn check_first_body_item_store(
+    fixture: &str,
+    check: impl FnOnce(&rg_semantic_ir::ItemStore),
+) {
+    check_first_body(fixture, |body| {
+        let item_store = body
+            .body_item_store()
+            .expect("body item store should be collected for built fixture body");
+
+        check(item_store);
+    });
+}
+
+fn check_first_body(fixture: &str, check: impl FnOnce(&BodyData)) {
     let db = BodyIrFixtureDb::build(fixture);
     let body_ir = db.body_ir_db().read_txn(unexpected_package_loader());
     let (package_slot, package) = sorted_packages(db.parse_db())
@@ -70,11 +94,8 @@ pub(super) fn check_first_body_def_map(fixture: &str, check: impl FnOnce(&rg_def
     let body = target_bodies
         .body(BodyId(0))
         .expect("fixture should contain at least one body");
-    let def_map = body
-        .body_def_map()
-        .expect("body def map should be collected for built fixture body");
 
-    check(def_map);
+    check(body);
 }
 
 pub(super) fn check_project_body_ir_with_policy(
