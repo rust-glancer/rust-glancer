@@ -98,6 +98,19 @@ pub struct ItemNode {
 }
 
 impl ItemNode {
+    /// Creates an item node from source-like syntax that does not have target-specific cfg state.
+    pub fn source(
+        kind: ItemKind,
+        name: Option<Name>,
+        name_span: Option<Span>,
+        visibility: VisibilityLevel,
+        docs: Option<Documentation>,
+        span: Span,
+        file_id: FileId,
+    ) -> Self {
+        Self::new(kind, name, name_span, visibility, docs, span, file_id)
+    }
+
     /// Creates a fully-populated item node from already-lowered parts.
     pub(super) fn new(
         kind: ItemKind,

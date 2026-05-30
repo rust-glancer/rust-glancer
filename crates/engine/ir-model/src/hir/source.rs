@@ -4,7 +4,7 @@ use rg_memsize::MemorySize;
 use rg_parse::{FileId, Span};
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::BodyItemRef;
+use crate::BodyRef;
 
 /// Stable identifier of one retained macro expansion payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
@@ -28,6 +28,13 @@ pub struct GeneratedItemRef {
     pub item: ItemTreeId,
 }
 
+/// Body-local reference to one item-tree-shaped source payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+pub struct BodyItemSourceRef {
+    pub body: BodyRef,
+    pub item: ItemTreeId,
+}
+
 /// Durable source identity for definitions collected into DefMap and later IR layers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ItemSource {
@@ -40,7 +47,7 @@ pub struct ItemSource {
 pub enum ItemSourceKind {
     ItemTree(ItemTreeRef),
     Generated(GeneratedItemRef),
-    Body(BodyItemRef),
+    Body(BodyItemSourceRef),
 }
 
 impl ItemSource {
@@ -58,7 +65,7 @@ impl ItemSource {
         }
     }
 
-    pub fn body(file_id: FileId, source: BodyItemRef) -> Self {
+    pub fn body(file_id: FileId, source: BodyItemSourceRef) -> Self {
         Self {
             file_id,
             kind: ItemSourceKind::Body(source),
@@ -86,7 +93,10 @@ impl ItemSource {
                 source: source.source,
                 item,
             }),
-            ItemSourceKind::Body(_) => unimplemented!("Not meant to be used with body items"),
+            ItemSourceKind::Body(source) => ItemSourceKind::Body(BodyItemSourceRef {
+                body: source.body,
+                item,
+            }),
         };
 
         Self {

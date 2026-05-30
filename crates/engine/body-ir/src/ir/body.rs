@@ -1,16 +1,13 @@
 use rg_arena::Arena;
 use rg_ir_model::{
     BindingId, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId, BodyItemRef,
-    BodyRef, BodyValueItemId, ConstId, EnumId, ExprId, FunctionId, FunctionRef, ImplId, ModuleRef,
-    PatId, ScopeId, StaticId, StmtId, StructId, TraitId, TypeAliasId, UnionId,
-    hir::items::{
-        ConstData, EnumData, FunctionData, ImplData, StaticData, StructData, TraitData,
-        TypeAliasData, UnionData,
-    },
+    BodyRef, BodyValueItemId, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, StmtId,
 };
+use rg_item_tree::{ItemNode, ItemTreeId};
 use rg_parse::{FileId, Span, TargetId};
 
 use super::{
+    body_map::BodySourceItems,
     expr::ExprData,
     item::{
         BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyItemData, BodyItemOwner,
@@ -161,6 +158,7 @@ pub struct BodyData {
     pub(crate) owner: FunctionRef,
     pub(crate) owner_module: ModuleRef,
     pub(crate) source: BodySource,
+    pub(crate) source_items: BodySourceItems,
     pub(crate) param_scope: ScopeId,
     pub(crate) root_expr: ExprId,
     pub(crate) params: Vec<BindingId>,
@@ -186,6 +184,10 @@ impl BodyData {
 
     pub fn source(&self) -> BodySource {
         self.source
+    }
+
+    pub fn source_items(&self) -> &BodySourceItems {
+        &self.source_items
     }
 
     pub fn param_scope(&self) -> ScopeId {
@@ -248,6 +250,10 @@ impl BodyData {
         self.scopes.get(scope)
     }
 
+    pub fn source_item(&self, item: ItemTreeId) -> Option<&ItemNode> {
+        self.source_items.item(item)
+    }
+
     pub(crate) fn walk_scopes<T>(
         &self,
         mut scope: ScopeId,
@@ -302,6 +308,7 @@ impl BodyData {
             owner,
             owner_module,
             source,
+            source_items: builder.source_items,
             param_scope,
             root_expr,
             params,
@@ -319,6 +326,7 @@ impl BodyData {
 
     fn shrink_to_fit(&mut self) {
         self.params.shrink_to_fit();
+        self.source_items.shrink_to_fit();
         self.scopes.shrink_to_fit();
         for scope in self.scopes.iter_mut() {
             scope.shrink_to_fit();
@@ -404,8 +412,9 @@ impl BodyData {
 }
 
 /// Mutable store used while one body is being lowered.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct BodyBuilder {
+    pub(crate) source_items: BodySourceItems,
     pub(crate) scopes: Arena<ScopeId, ScopeData>,
     pub(crate) local_items: Arena<BodyItemId, BodyItemData>,
     pub(crate) local_value_items: Arena<BodyValueItemId, BodyValueItemData>,
@@ -415,16 +424,6 @@ pub(crate) struct BodyBuilder {
     pub(crate) pats: Arena<PatId, PatData>,
     pub(crate) statements: Arena<StmtId, StmtData>,
     pub(crate) exprs: Arena<ExprId, ExprData>,
-
-    pub(crate) structs: Arena<StructId, StructData>,
-    pub(crate) unions: Arena<UnionId, UnionData>,
-    pub(crate) enums: Arena<EnumId, EnumData>,
-    pub(crate) traits: Arena<TraitId, TraitData>,
-    pub(crate) impls: Arena<ImplId, ImplData>,
-    pub(crate) functions: Arena<FunctionId, FunctionData>,
-    pub(crate) type_aliases: Arena<TypeAliasId, TypeAliasData>,
-    pub(crate) consts: Arena<ConstId, ConstData>,
-    pub(crate) statics: Arena<StaticId, StaticData>,
 }
 
 impl BodyBuilder {
@@ -435,13 +434,27 @@ impl BodyBuilder {
             local_value_items: Vec::new(),
             local_functions: Vec::new(),
             local_impls: Vec::new(),
+            source_items: Vec::new(),
             bindings: Vec::new(),
         })
     }
 
-    // pub(crate) fn alloc_struct(&mut self, data: ConstData) -> BodyItemId {
+    /// Some items do not directly belong to a scope, e.g. contents of `impl` block.
+    /// These are only indexed by their item ID, but not recorded as a part of the scope.
+    pub(crate) fn alloc_scopeless_source_item(&mut self, data: ItemNode) -> ItemTreeId {
+        self.source_items.alloc(data)
+    }
 
-    // }
+    /// Items declared within an expression scope are associated with the corresponding scope.
+    pub(crate) fn alloc_scope_source_item(&mut self, scope: ScopeId, data: ItemNode) -> ItemTreeId {
+        let item = self.alloc_scopeless_source_item(data);
+        self.scopes
+            .get_mut(scope)
+            .expect("source item scope should exist while lowering body")
+            .source_items
+            .push(item);
+        item
+    }
 
     pub(crate) fn alloc_local_item(&mut self, data: BodyItemData) -> BodyItemId {
         let owner = data.owner;
@@ -568,6 +581,7 @@ pub struct ScopeData {
     pub local_value_items: Vec<BodyValueItemId>,
     pub local_functions: Vec<BodyFunctionId>,
     pub local_impls: Vec<BodyImplId>,
+    pub source_items: Vec<ItemTreeId>,
     pub bindings: Vec<BindingId>,
 }
 
@@ -577,6 +591,7 @@ impl ScopeData {
         self.local_value_items.shrink_to_fit();
         self.local_functions.shrink_to_fit();
         self.local_impls.shrink_to_fit();
+        self.source_items.shrink_to_fit();
         self.bindings.shrink_to_fit();
     }
 }

@@ -1,6 +1,7 @@
 //! Body IR domain model.
 
 pub(crate) mod body;
+pub(crate) mod body_map;
 pub(crate) mod expr;
 pub(crate) mod item;
 pub(crate) mod pat;
@@ -13,6 +14,7 @@ pub use self::{
         BodyData, BodyIrStats, BodySource, PackageBodies, ScopeData, TargetBodies,
         TargetBodiesStatus,
     },
+    body_map::BodySourceItems,
     expr::{
         ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind,
         ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LabelData, LiteralKind,

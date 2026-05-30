@@ -7,7 +7,7 @@ pub use rg_workspace::PackageSlot;
 
 pub use self::{
     build::DefMapFinalizationStats,
-    def_map::DefMap,
+    def_map::{DefMap, DefMapBuilder},
     model::{
         ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
         LocalDefKind, LocalImplData, MacroDefinitionData, MacroDefinitionPayload, ModuleData,

@@ -2,16 +2,19 @@
 
 use rg_syntax::{
     AstNode as _,
-    ast::{self, HasName as _},
+    ast::{self, HasModuleItem as _, HasName as _, HasVisibility as _},
 };
 
 use rg_ir_model::{
     BindingId, BodyFunctionId, BodyImplId, BodyItemId, BodyValueItemId, ExprId, ScopeId, StmtId,
 };
 use rg_item_tree::{
-    ConstItem, Documentation, EnumItem, FunctionItem, ImplItem, StaticItem, StructItem, TraitItem,
-    TypeAliasItem, TypeRef, UnionItem,
+    ConstItem, Documentation, EnumItem, ExternCrateItem, FunctionItem, ImplItem, ItemKind,
+    ItemNode, ItemTreeId, MacroUseAttr, ModuleItem, ModuleSource, StaticItem, StructItem,
+    TraitItem, TypeAliasItem, TypeRef, UnionItem, UseItem, VisibilityLevel,
 };
+use rg_parse::Span;
+use rg_text::Name;
 use rg_ty::IndexedTy;
 
 use crate::ir::{
@@ -182,6 +185,7 @@ impl FunctionBodyLowering<'_> {
     }
 
     fn lower_item_statement(&mut self, item: ast::Item, scope: ScopeId) -> StmtId {
+        let source_item = item.clone();
         let source = self.source(item.syntax());
         // Body IR only keeps local items that can affect current editor queries. Other item
         // statements remain represented as ignored statements so source layout stays stable.
@@ -225,6 +229,7 @@ impl FunctionBodyLowering<'_> {
             _ => StmtKind::ItemIgnored,
         };
 
+        self.lower_source_item_statement(&source_item, scope);
         self.builder.alloc_statement(StmtData { source, kind })
     }
 
@@ -503,5 +508,336 @@ impl FunctionBodyLowering<'_> {
                 else_branch,
             },
         })
+    }
+}
+
+// TODO: This is a temporary "shadow indexing" impl:
+// We are migrating from the old parallel body indexing to reusing
+// defmap/item store approach. We're keeping the "new indexing primitives"
+// separately, so that the cleanup is easier later.
+impl FunctionBodyLowering<'_> {
+    fn lower_source_item_statement(
+        &mut self,
+        item: &ast::Item,
+        scope: ScopeId,
+    ) -> Option<ItemTreeId> {
+        // This is the additive "item tree inside a body" pass. It deliberately shadows the
+        // existing body-local lowering so later DefMap/Semantic IR experiments can consume a
+        // familiar source shape without changing today's resolver behavior.
+        let node = self.lower_source_item(item)?;
+        Some(self.builder.alloc_scope_source_item(scope, node))
+    }
+
+    fn lower_source_item(&mut self, item: &ast::Item) -> Option<ItemNode> {
+        match item {
+            ast::Item::AsmExpr(item) => Some(self.named_source_item_node(
+                ItemKind::AsmExpr,
+                None,
+                VisibilityLevel::Private,
+                None,
+                item.syntax(),
+            )),
+            ast::Item::Const(item) => {
+                let kind =
+                    ItemKind::Const(ConstItem::from_ast(item, self.line_index, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Enum(item) => {
+                let kind = ItemKind::Enum(EnumItem::from_ast(item, self.line_index, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::ExternBlock(item) => Some(self.named_source_item_node(
+                ItemKind::ExternBlock,
+                None,
+                VisibilityLevel::Private,
+                None,
+                item.syntax(),
+            )),
+            ast::Item::ExternCrate(item) => {
+                let (name, name_span) = self.source_name_ref(item.name_ref());
+                let kind = ItemKind::ExternCrate(ExternCrateItem::from_ast(item, self.interner));
+                Some(Self::source_item_node(
+                    kind,
+                    name,
+                    name_span,
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    self.source(item.syntax()),
+                ))
+            }
+            ast::Item::Fn(item) => {
+                let kind = ItemKind::Function(FunctionItem::from_ast(
+                    item,
+                    self.line_index,
+                    self.interner,
+                ));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Impl(item) => {
+                let items = self.lower_source_assoc_items(item.assoc_item_list());
+                let kind = ItemKind::Impl(ImplItem::from_ast(
+                    item,
+                    items,
+                    self.line_index,
+                    self.interner,
+                ));
+                Some(self.named_source_item_node(
+                    kind,
+                    None,
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Module(item) => {
+                let module_item = self.lower_source_module_item(item);
+                Some(self.named_source_item_node(
+                    ItemKind::Module(module_item),
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Static(item) => {
+                let kind =
+                    ItemKind::Static(StaticItem::from_ast(item, self.line_index, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Struct(item) => {
+                let kind =
+                    ItemKind::Struct(StructItem::from_ast(item, self.line_index, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Trait(item) => {
+                let items = self.lower_source_assoc_items(item.assoc_item_list());
+                let kind = ItemKind::Trait(TraitItem::from_ast(
+                    item,
+                    items,
+                    self.line_index,
+                    self.interner,
+                ));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::TypeAlias(item) => {
+                let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
+                    item,
+                    self.line_index,
+                    self.interner,
+                ));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Union(item) => {
+                let kind =
+                    ItemKind::Union(UnionItem::from_ast(item, self.line_index, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Use(item) => {
+                let kind = ItemKind::Use(UseItem::from_ast(item, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    None,
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::MacroCall(_) | ast::Item::MacroDef(_) | ast::Item::MacroRules(_) => {
+                // TODO: Lower body-local macro items after body source collection has access to
+                // the macro expansion context used by file item-tree lowering.
+                None
+            }
+        }
+    }
+
+    fn lower_source_module_item(&mut self, item: &ast::Module) -> ModuleItem {
+        let source = match item.item_list() {
+            Some(item_list) => ModuleSource::Inline {
+                items: self.lower_source_child_items(item_list.items()),
+            },
+            None => ModuleSource::OutOfLine {
+                // TODO: Resolve out-of-line body-local modules once this lowering pass knows the
+                // module file context that normal item-tree lowering receives.
+                definition_file: None,
+            },
+        };
+
+        ModuleItem {
+            inner_docs: Documentation::inner_from_ast(item),
+            macro_use: MacroUseAttr::from_attrs(item, self.interner),
+            source,
+        }
+    }
+
+    fn lower_source_child_items(
+        &mut self,
+        items: impl IntoIterator<Item = ast::Item>,
+    ) -> Vec<ItemTreeId> {
+        let mut item_ids = Vec::new();
+        for item in items {
+            if let Some(node) = self.lower_source_item(&item) {
+                item_ids.push(self.builder.alloc_scopeless_source_item(node));
+            }
+        }
+        item_ids
+    }
+
+    fn lower_source_assoc_items(
+        &mut self,
+        item_list: Option<ast::AssocItemList>,
+    ) -> Vec<ItemTreeId> {
+        let Some(item_list) = item_list else {
+            return Vec::new();
+        };
+
+        let mut item_ids = Vec::new();
+        for item in item_list.assoc_items() {
+            if let Some(node) = self.lower_source_assoc_item(item) {
+                item_ids.push(self.builder.alloc_scopeless_source_item(node));
+            }
+        }
+        item_ids
+    }
+
+    fn lower_source_assoc_item(&mut self, item: ast::AssocItem) -> Option<ItemNode> {
+        match item {
+            ast::AssocItem::Const(item) => {
+                let kind =
+                    ItemKind::Const(ConstItem::from_ast(&item, self.line_index, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(&item),
+                    item.syntax(),
+                ))
+            }
+            ast::AssocItem::Fn(item) => {
+                let kind = ItemKind::Function(FunctionItem::from_ast(
+                    &item,
+                    self.line_index,
+                    self.interner,
+                ));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(&item),
+                    item.syntax(),
+                ))
+            }
+            ast::AssocItem::TypeAlias(item) => {
+                let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
+                    &item,
+                    self.line_index,
+                    self.interner,
+                ));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(&item),
+                    item.syntax(),
+                ))
+            }
+            ast::AssocItem::MacroCall(_) => None,
+        }
+    }
+
+    fn named_source_item_node(
+        &mut self,
+        kind: ItemKind,
+        name: Option<ast::Name>,
+        visibility: VisibilityLevel,
+        docs: Option<Documentation>,
+        syntax: &rg_syntax::SyntaxNode,
+    ) -> ItemNode {
+        let (name, name_span) = self.source_name(name);
+        Self::source_item_node(kind, name, name_span, visibility, docs, self.source(syntax))
+    }
+
+    fn source_item_node(
+        kind: ItemKind,
+        name: Option<Name>,
+        name_span: Option<Span>,
+        visibility: VisibilityLevel,
+        docs: Option<Documentation>,
+        source: crate::ir::BodySource,
+    ) -> ItemNode {
+        ItemNode::source(
+            kind,
+            name,
+            name_span,
+            visibility,
+            docs,
+            source.span,
+            source.file_id,
+        )
+    }
+
+    fn source_name(&mut self, name: Option<ast::Name>) -> (Option<Name>, Option<Span>) {
+        let Some(name) = name else {
+            return (None, None);
+        };
+
+        let span = self.source(name.syntax()).span;
+        (Some(self.intern_ast_name(name)), Some(span))
+    }
+
+    fn source_name_ref(&mut self, name_ref: Option<ast::NameRef>) -> (Option<Name>, Option<Span>) {
+        let Some(name_ref) = name_ref else {
+            return (None, None);
+        };
+
+        let span = self.source(name_ref.syntax()).span;
+        (Some(self.intern_ast_name_ref(name_ref)), Some(span))
     }
 }
