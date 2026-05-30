@@ -1,7 +1,7 @@
 use std::fmt;
 
-use rg_ir_model::ModuleId;
-use rg_item_tree::{ImportAlias, ItemTreeRef, UseImportKind, UsePath, VisibilityLevel};
+use rg_ir_model::{ModuleId, hir::source::ItemSource};
+use rg_item_tree::{ImportAlias, UseImportKind, UsePath, VisibilityLevel};
 use rg_parse::Span;
 use rg_text::{Name, NameInterner};
 use rg_workspace::RustEdition;
@@ -20,7 +20,7 @@ pub struct ImportData {
     pub source_path: ImportSourcePath,
     pub binding: ImportBinding,
     pub alias_span: Option<Span>,
-    pub source: ItemTreeRef,
+    pub source: ItemSource,
     pub import_index: usize,
 }
 
@@ -64,7 +64,7 @@ pub enum ImportBinding {
 }
 
 impl ImportBinding {
-    pub(crate) fn from_alias(alias: &ImportAlias) -> Self {
+    pub fn from_alias(alias: &ImportAlias) -> Self {
         match alias {
             ImportAlias::Inferred => Self::Inferred,
             ImportAlias::Explicit { name, .. } => Self::Explicit(name.clone()),
@@ -106,7 +106,7 @@ pub enum ImportKind {
 }
 
 impl ImportKind {
-    pub(crate) fn from_use_kind(kind: UseImportKind) -> Self {
+    pub fn from_use_kind(kind: UseImportKind) -> Self {
         match kind {
             UseImportKind::Named => Self::Named,
             UseImportKind::SelfImport => Self::SelfImport,
@@ -125,7 +125,7 @@ pub struct ImportPath {
 }
 
 impl ImportPath {
-    pub(crate) fn from_use_path(path: &UsePath) -> Self {
+    pub fn from_use_path(path: &UsePath) -> Self {
         let path = Path::from_use_path(path);
         Self {
             absolute: path.absolute,
@@ -167,7 +167,7 @@ pub struct ImportSourcePath {
 }
 
 impl ImportSourcePath {
-    pub(crate) fn from_use_path(path: &UsePath) -> Self {
+    pub fn from_use_path(path: &UsePath) -> Self {
         let def_map_path = Path::from_use_path(path);
         let segments = def_map_path
             .segments

@@ -1,4 +1,5 @@
 use rg_arena::Arena;
+use rg_def_map::DefMap;
 use rg_ir_model::{
     BindingId, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId, BodyItemRef,
     BodyRef, BodyValueItemId, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, StmtId,
@@ -159,6 +160,7 @@ pub struct BodyData {
     pub(crate) owner_module: ModuleRef,
     pub(crate) source: BodySource,
     pub(crate) source_items: BodySourceItems,
+    pub(crate) body_def_map: Option<DefMap>,
     pub(crate) param_scope: ScopeId,
     pub(crate) root_expr: ExprId,
     pub(crate) params: Vec<BindingId>,
@@ -188,6 +190,10 @@ impl BodyData {
 
     pub fn source_items(&self) -> &BodySourceItems {
         &self.source_items
+    }
+
+    pub fn body_def_map(&self) -> Option<&DefMap> {
+        self.body_def_map.as_ref()
     }
 
     pub fn param_scope(&self) -> ScopeId {
@@ -309,6 +315,7 @@ impl BodyData {
             owner_module,
             source,
             source_items: builder.source_items,
+            body_def_map: None,
             param_scope,
             root_expr,
             params,
@@ -327,6 +334,9 @@ impl BodyData {
     fn shrink_to_fit(&mut self) {
         self.params.shrink_to_fit();
         self.source_items.shrink_to_fit();
+        if let Some(def_map) = &mut self.body_def_map {
+            def_map.shrink_to_fit();
+        }
         self.scopes.shrink_to_fit();
         for scope in self.scopes.iter_mut() {
             scope.shrink_to_fit();

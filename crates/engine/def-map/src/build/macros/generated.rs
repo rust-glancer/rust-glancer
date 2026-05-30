@@ -481,7 +481,7 @@ impl GeneratedCollector<'_> {
                     ImportAlias::Explicit { .. } => Some(self.origin.span),
                     ImportAlias::Inferred | ImportAlias::Hidden => None,
                 },
-                source: self.origin.source,
+                source: self.origin.source.into(),
                 import_index,
             });
             self.state

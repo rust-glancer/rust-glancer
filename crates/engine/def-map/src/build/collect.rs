@@ -658,7 +658,7 @@ impl<'db> TargetScopeCollector<'db> {
                     rg_item_tree::ImportAlias::Explicit { span, .. } => Some(*span),
                     rg_item_tree::ImportAlias::Inferred | rg_item_tree::ImportAlias::Hidden => None,
                 },
-                source,
+                source: source.into(),
                 import_index,
             });
             self.def_map_builder

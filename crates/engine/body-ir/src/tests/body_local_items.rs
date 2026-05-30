@@ -1,6 +1,8 @@
 use expect_test::expect;
+use rg_def_map::{ImportBinding, ImportKind, LocalDefKind};
+use rg_ir_model::{DefMapRef, ModuleId, hir::source::ItemSourceKind};
 
-use super::utils::check_project_body_ir;
+use super::utils::{check_first_body_def_map, check_project_body_ir};
 
 #[test]
 fn resolves_body_local_structs_before_module_structs() {
@@ -57,6 +59,92 @@ pub fn use_it() {
                 initializer
                   expr e3 path User -> local item struct fn body_local_item_fixture[lib]::crate::use_it::User @ 4:5-4:17 => local nominal struct fn body_local_item_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 10:23-10:27
         "#]],
+    );
+}
+
+// TODO: Temporary test until the codebase is migrated to use defmaps for everything.
+#[test]
+fn collects_body_local_def_map_items_impls_and_imports() {
+    check_first_body_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_local_def_map_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Root;
+
+pub fn use_it() {
+    use crate::Root as Alias;
+    struct User;
+    impl User {}
+    {
+        enum Nested {
+            Value,
+        }
+    }
+}
+"#,
+        |def_map| {
+            assert!(matches!(def_map.own_ref(), DefMapRef::Body(_)));
+
+            let modules = def_map.modules();
+            assert_eq!(modules.len(), 3);
+            assert_eq!(modules[0].parent, None);
+            assert_eq!(modules[1].parent, Some(ModuleId(0)));
+            assert_eq!(modules[2].parent, Some(ModuleId(1)));
+            assert_eq!(modules[1].local_defs.len(), 1);
+            assert_eq!(modules[1].imports.len(), 1);
+            assert_eq!(modules[1].impls.len(), 1);
+            assert_eq!(modules[2].local_defs.len(), 1);
+            assert!(
+                modules
+                    .iter()
+                    .all(|module| module.unresolved_imports.is_empty())
+            );
+
+            let defs = def_map
+                .local_defs()
+                .iter()
+                .map(|def| (def.name.as_str(), def.kind))
+                .collect::<Vec<_>>();
+            assert_eq!(
+                defs,
+                vec![
+                    ("User", LocalDefKind::Struct),
+                    ("Nested", LocalDefKind::Enum)
+                ]
+            );
+            assert!(
+                def_map
+                    .local_defs()
+                    .iter()
+                    .all(|def| { matches!(def.source.kind, ItemSourceKind::Body(_)) })
+            );
+            assert_eq!(def_map.local_impls().len(), 1);
+            assert!(matches!(
+                def_map.local_impls()[0].source.kind,
+                ItemSourceKind::Body(_)
+            ));
+
+            let imports = def_map.imports();
+            assert_eq!(imports.len(), 1);
+            let import = &imports[0];
+            assert_eq!(import.kind, ImportKind::Named);
+            assert!(matches!(&import.binding, ImportBinding::Explicit(name) if name == "Alias"));
+            assert!(matches!(import.source.kind, ItemSourceKind::Body(_)));
+            assert_eq!(
+                import
+                    .path
+                    .segments
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+                vec!["crate", "Root"]
+            );
+        },
     );
 }
 

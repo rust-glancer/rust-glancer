@@ -45,8 +45,8 @@ use super::{
 };
 
 pub(crate) struct BodyResolver<'query, 'db, 'body> {
-    def_map: &'query DefMapReadTxn<'db>,
-    semantic_ir: &'query SemanticIrReadTxn<'db>,
+    def_map_txn: &'query DefMapReadTxn<'db>,
+    semantic_ir_txn: &'query SemanticIrReadTxn<'db>,
     semantic_index: &'query SemanticResolutionIndex,
     body_ref: BodyRef,
     body: &'body mut BodyData,
@@ -54,15 +54,15 @@ pub(crate) struct BodyResolver<'query, 'db, 'body> {
 
 impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
     pub(crate) fn new(
-        def_map: &'query DefMapReadTxn<'db>,
-        semantic_ir: &'query SemanticIrReadTxn<'db>,
+        def_map_txn: &'query DefMapReadTxn<'db>,
+        semantic_ir_txn: &'query SemanticIrReadTxn<'db>,
         semantic_index: &'query SemanticResolutionIndex,
         body_ref: BodyRef,
         body: &'body mut BodyData,
     ) -> Self {
         Self {
-            def_map,
-            semantic_ir,
+            def_map_txn,
+            semantic_ir_txn,
             semantic_index,
             body_ref,
             body,
@@ -70,19 +70,29 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
     }
 
     fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db, '_> {
-        BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+        BodyTypePathResolver::new(
+            self.def_map_txn,
+            self.semantic_ir_txn,
+            self.body_ref,
+            self.body,
+        )
     }
 
     fn autoderef(&self) -> BodyAutoderef<'_, 'db> {
-        BodyAutoderef::with_index(self.def_map, self.semantic_ir, self.semantic_index)
+        BodyAutoderef::with_index(self.def_map_txn, self.semantic_ir_txn, self.semantic_index)
     }
 
     fn semantic_impl_matcher(&self) -> BodyImplMatcher<'_, 'db> {
-        BodyImplMatcher::new(self.def_map, self.semantic_ir)
+        BodyImplMatcher::new(self.def_map_txn, self.semantic_ir_txn)
     }
 
     fn local_impl_matcher(&self) -> LocalImplMatcher<'_, 'db, '_> {
-        LocalImplMatcher::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+        LocalImplMatcher::new(
+            self.def_map_txn,
+            self.semantic_ir_txn,
+            self.body_ref,
+            self.body,
+        )
     }
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
@@ -99,8 +109,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 changed |= self.resolve_expr(ExprId(expr_idx))?;
             }
             changed |= PatternTypePropagator::new(
-                self.def_map,
-                self.semantic_ir,
+                self.def_map_txn,
+                self.semantic_ir_txn,
                 self.body_ref,
                 self.body,
             )
@@ -320,8 +330,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         let scope = self.body.exprs[expr].scope;
         let visible_bindings = self.body.exprs[expr].visible_bindings;
         BodyValuePathResolver::new(
-            self.def_map,
-            self.semantic_ir,
+            self.def_map_txn,
+            self.semantic_ir_txn,
             Some(self.semantic_index),
             self.body_ref,
             self.body,
@@ -335,8 +345,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         path: &Path,
     ) -> Result<(BodyResolution, IndexedTy), PackageStoreError> {
         BodyValuePathResolver::new(
-            self.def_map,
-            self.semantic_ir,
+            self.def_map_txn,
+            self.semantic_ir_txn,
             Some(self.semantic_index),
             self.body_ref,
             self.body,
@@ -437,13 +447,13 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             }
 
             for nominal_ty in candidate.ty().as_nominals() {
-                let Some(field_ref) = self.semantic_ir.field_for_type(nominal_ty.def, field)?
+                let Some(field_ref) = self.semantic_ir_txn.field_for_type(nominal_ty.def, field)?
                 else {
                     continue;
                 };
                 push_unique(&mut fields, ResolvedFieldRef::Semantic(field_ref));
 
-                let Some(field_data) = self.semantic_ir.field_data(field_ref)? else {
+                let Some(field_data) = self.semantic_ir_txn.field_data(field_ref)? else {
                     continue;
                 };
                 let subst = self.semantic_type_subst(nominal_ty)?;
@@ -542,7 +552,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 
             for nominal_ty in candidate.ty().as_nominals() {
                 for function_ref in self.semantic_functions_for_type(nominal_ty, method_name)? {
-                    let Some(function_data) = self.semantic_ir.function_data(function_ref)? else {
+                    let Some(function_data) = self.semantic_ir_txn.function_data(function_ref)?
+                    else {
                         continue;
                     };
                     if function_data.name != method_name || !function_data.has_self_receiver() {
@@ -587,7 +598,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             return (BodyResolution::Unknown, IndexedTy::Unknown);
         };
         let inner_data = &self.body.exprs[inner];
-        let ty = IndexedTyNormalizer::new(self.semantic_ir, self.body)
+        let ty = IndexedTyNormalizer::new(self.semantic_ir_txn, self.body)
             .ty_for_wrapper(kind, inner_data.ty.clone());
         let resolution = if matches!(kind, ExprWrapperKind::Paren) {
             inner_data.resolution.clone()
@@ -645,8 +656,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         let mut retained = Vec::new();
         for function in functions {
             if local_function_applies_to_receiver(
-                self.def_map,
-                self.semantic_ir,
+                self.def_map_txn,
+                self.semantic_ir_txn,
                 self.body,
                 function,
                 ty,
@@ -668,16 +679,20 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             .inherent_functions_for_type_and_name(ty.def, method_name)
             .to_vec()
         {
-            if semantic_function_applies_to_receiver(self.def_map, self.semantic_ir, function, ty)?
-            {
+            if semantic_function_applies_to_receiver(
+                self.def_map_txn,
+                self.semantic_ir_txn,
+                function,
+                ty,
+            )? {
                 functions.push(function);
             }
         }
 
         for (function, _) in semantic_trait_function_candidates_for_receiver(
             Some(self.semantic_index),
-            self.def_map,
-            self.semantic_ir,
+            self.def_map_txn,
+            self.semantic_ir_txn,
             ty,
             Some(method_name),
         )? {
@@ -691,7 +706,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         ty: &IndexedNominalTy,
     ) -> Result<IndexedTypeSubst, PackageStoreError> {
         Ok(self
-            .semantic_ir
+            .semantic_ir_txn
             .generic_params_for_type_def(ty.def)?
             .map(|generics| subst_from_generics(generics, &ty.args))
             .unwrap_or_else(IndexedTypeSubst::new))
@@ -724,7 +739,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         function_ref: FunctionRef,
         receiver_ty: Option<&IndexedNominalTy>,
     ) -> Result<IndexedTy, PackageStoreError> {
-        let Some(function_data) = self.semantic_ir.function_data(function_ref)? else {
+        let Some(function_data) = self.semantic_ir_txn.function_data(function_ref)? else {
             return Ok(IndexedTy::Unknown);
         };
         let Some(ret_ty) = function_data.signature.ret_ty() else {
@@ -896,7 +911,10 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             return Ok(None);
         };
         Ok(
-            match self.semantic_ir.semantic_item_for_local_def(local_def)? {
+            match self
+                .semantic_ir_txn
+                .semantic_item_for_local_def(local_def)?
+            {
                 Some(SemanticItemRef::Function(function)) => Some(function),
                 Some(_) | None => None,
             },

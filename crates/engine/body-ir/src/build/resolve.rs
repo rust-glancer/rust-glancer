@@ -9,7 +9,7 @@ use rg_parse::TargetId;
 use rg_semantic_ir::SemanticIrReadTxn;
 
 use crate::{
-    ir::{PackageBodies, TargetBodiesStatus},
+    ir::{PackageBodies, TargetBodiesStatus, body_map::BodyDefMapCollector},
     resolution::{BodyResolver, SemanticResolutionIndex},
 };
 
@@ -97,7 +97,7 @@ pub(super) fn resolve_selected_packages(
 fn resolve_package(
     package_slot: PackageSlot,
     package: &mut PackageBodies,
-    def_map: &DefMapReadTxn<'_>,
+    def_map_txn: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     semantic_index: &SemanticResolutionIndex,
 ) -> Result<(), PackageStoreError> {
@@ -112,19 +112,20 @@ fn resolve_package(
             package: package_slot,
             target: TargetId(target_idx),
         };
+        let target_def_map = def_map_txn
+            .def_map(target_ref)?
+            .expect("Target DefMap must be present");
 
         for (body_idx, body) in target.bodies_mut().iter_mut().enumerate() {
-            BodyResolver::new(
-                def_map,
-                semantic_ir,
-                semantic_index,
-                BodyRef {
-                    target: target_ref,
-                    body: BodyId(body_idx),
-                },
-                body,
-            )
-            .resolve()?;
+            let body_ref = BodyRef {
+                target: target_ref,
+                body: BodyId(body_idx),
+            };
+            let body_def_map = BodyDefMapCollector::new(target_def_map, body_ref, body).collect();
+            body.body_def_map = Some(body_def_map);
+
+            BodyResolver::new(def_map_txn, semantic_ir, semantic_index, body_ref, body)
+                .resolve()?;
         }
     }
 

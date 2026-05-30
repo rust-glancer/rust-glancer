@@ -5,9 +5,9 @@
 
 use rg_body_ir::BodyImplData;
 use rg_ir_model::{
-    AssocItemId, BodyFunctionRef, BodyImplRef, BodyItemRef, BodyValueItemRef, ConstRef,
-    DefMapRef, EnumVariantRef as SemanticEnumVariantRef, FunctionRef as SemanticFunctionRef,
-    ModuleId, ModuleRef, SemanticItemKind, TargetRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    AssocItemId, BodyFunctionRef, BodyImplRef, BodyItemRef, BodyValueItemRef, ConstRef, DefMapRef,
+    EnumVariantRef as SemanticEnumVariantRef, FunctionRef as SemanticFunctionRef, ModuleId,
+    ModuleRef, SemanticItemKind, TargetRef, TypeAliasRef, TypeDefId, TypeDefRef,
     identity::{DeclarationRef, DeclarationRefRepr, ImplRefRepr, ItemRefRepr},
 };
 use rg_parse::{FileId, Span};
@@ -373,27 +373,13 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
 
     fn assoc_item(origin: DefMapRef, item: &AssocItemId) -> DeclarationRef {
         match item {
-            AssocItemId::Function(id) => DeclarationRef::semantic(
-                SemanticFunctionRef {
-                    origin,
-                    id: *id,
-                }
-                .into(),
-            ),
-            AssocItemId::TypeAlias(id) => DeclarationRef::semantic(
-                TypeAliasRef {
-                    origin,
-                    id: *id,
-                }
-                .into(),
-            ),
-            AssocItemId::Const(id) => DeclarationRef::semantic(
-                ConstRef {
-                    origin,
-                    id: *id,
-                }
-                .into(),
-            ),
+            AssocItemId::Function(id) => {
+                DeclarationRef::semantic(SemanticFunctionRef { origin, id: *id }.into())
+            }
+            AssocItemId::TypeAlias(id) => {
+                DeclarationRef::semantic(TypeAliasRef { origin, id: *id }.into())
+            }
+            AssocItemId::Const(id) => DeclarationRef::semantic(ConstRef { origin, id: *id }.into()),
         }
     }
 

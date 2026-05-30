@@ -43,6 +43,40 @@ pub(super) fn check_project_body_ir_patterns(fixture: &str, expect: Expect) {
     expect.assert_eq(&actual);
 }
 
+// TODO: Temporary helper until codebase is migrated to primarily use defmaps for everything.
+pub(super) fn check_first_body_def_map(fixture: &str, check: impl FnOnce(&rg_def_map::DefMap)) {
+    let db = BodyIrFixtureDb::build(fixture);
+    let body_ir = db.body_ir_db().read_txn(unexpected_package_loader());
+    let (package_slot, package) = sorted_packages(db.parse_db())
+        .into_iter()
+        .next()
+        .expect("fixture should contain a package");
+    let target = sorted_targets(package)
+        .into_iter()
+        .next()
+        .expect("fixture package should contain a target");
+    let target_ref = TargetRef {
+        package: rg_def_map::PackageSlot(package_slot),
+        target: target.id,
+    };
+    let target_bodies = body_ir
+        .target_bodies(target_ref)
+        .expect("fixture target body IR should load")
+        .expect("fixture target body IR should be resident");
+    assert!(
+        matches!(target_bodies.status(), TargetBodiesStatus::Built),
+        "fixture target body IR should be built",
+    );
+    let body = target_bodies
+        .body(BodyId(0))
+        .expect("fixture should contain at least one body");
+    let def_map = body
+        .body_def_map()
+        .expect("body def map should be collected for built fixture body");
+
+    check(def_map);
+}
+
 pub(super) fn check_project_body_ir_with_policy(
     fixture: &str,
     policy: BodyIrBuildPolicy,
@@ -1503,7 +1537,10 @@ impl TargetBodyIrSnapshot<'_> {
     }
 
     fn render_local_def(&self, local_def: LocalDefRef) -> String {
-        let Some(items) = self.project.resident_target_ir(local_def.origin.origin_target()) else {
+        let Some(items) = self
+            .project
+            .resident_target_ir(local_def.origin.origin_target())
+        else {
             return "<missing>".to_string();
         };
         let Some(item_id) = items.item_for_local_def(local_def.local_def) else {

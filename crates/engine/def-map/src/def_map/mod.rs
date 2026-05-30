@@ -166,6 +166,10 @@ impl DefMap {
         &self.target_data
     }
 
+    pub fn own_ref(&self) -> DefMapRef {
+        self.own_ref
+    }
+
     /// Returns all modules in stable module-id order.
     pub fn modules(&self) -> &[ModuleData] {
         self.data.modules.as_slice()

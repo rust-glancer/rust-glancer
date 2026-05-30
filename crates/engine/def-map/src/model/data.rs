@@ -205,7 +205,7 @@ pub enum LocalDefKind {
 }
 
 impl LocalDefKind {
-    pub(crate) fn from_item_tag(tag: ItemTag) -> Option<Self> {
+    pub fn from_item_tag(tag: ItemTag) -> Option<Self> {
         match tag {
             ItemTag::Const => Some(Self::Const),
             ItemTag::Enum => Some(Self::Enum),

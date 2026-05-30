@@ -526,7 +526,7 @@ impl SourceFragmentCollector<'_> {
                     ImportAlias::Explicit { span, .. } => Some(*span),
                     ImportAlias::Inferred | ImportAlias::Hidden => None,
                 },
-                source,
+                source: source.into(),
                 import_index,
             });
             self.state
