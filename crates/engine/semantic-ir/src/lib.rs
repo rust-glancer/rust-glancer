@@ -2,6 +2,7 @@ mod build;
 mod cursor;
 mod ir;
 mod item_store;
+mod item_store_lowering;
 mod store;
 mod view;
 
@@ -12,6 +13,7 @@ pub use self::{
     cursor::SemanticCursorCandidate,
     ir::{PackageIr, SemanticIrStats, SemanticTypePathResolution, TypePathContext},
     item_store::{ItemStore, ItemStoreBuilder},
+    item_store_lowering::{ItemStoreLowerer, ItemStoreSourceReader},
     store::{SemanticIrDb, SemanticIrReadTxn},
     view::SemanticItemView,
 };
