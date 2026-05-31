@@ -53,14 +53,14 @@ pub(crate) struct ScopeNameEntry {
     pub(crate) entry: ScopeEntry,
 }
 
-/// Mutable module scope used while import resolution is finding a fixed point.
+/// Mutable module scope used while collecting direct bindings and applying imports.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub(crate) struct ModuleScopeBuilder {
+pub struct ModuleScopeBuilder {
     names: HashMap<Name, ScopeEntryBuilder>,
 }
 
 impl ModuleScopeBuilder {
-    pub(crate) fn insert_binding(
+    pub fn insert_binding(
         &mut self,
         name: &Name,
         namespace: Namespace,
@@ -127,7 +127,7 @@ impl ModuleScopeBuilder {
             .map(|(name, entry)| (name, entry.as_ref()))
     }
 
-    pub(crate) fn freeze(&self) -> ModuleScope {
+    pub fn freeze(&self) -> ModuleScope {
         let mut entries = self
             .names
             .iter()
@@ -306,7 +306,7 @@ pub enum ScopeBindingOrigin {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Namespace {
+pub enum Namespace {
     Types,
     Values,
     Macros,

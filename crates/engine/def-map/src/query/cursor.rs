@@ -92,7 +92,7 @@ impl NamespaceCursorScanner<'_, '_> {
                 module: ModuleId(module_idx),
             };
             let declaration_file = match module.origin {
-                ModuleOrigin::Root { .. } => continue,
+                ModuleOrigin::Root { .. } | ModuleOrigin::Synthetic { .. } => continue,
                 ModuleOrigin::Inline {
                     declaration_file, ..
                 }

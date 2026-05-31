@@ -14,7 +14,9 @@ pub use self::{
     import::{ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath},
     package::PackageDefMaps,
     path::{Path, PathSegment},
-    scope::{ModuleScope, ScopeBinding, ScopeBindingOrigin, ScopeEntry},
+    scope::{
+        ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin, ScopeEntry,
+    },
 };
 
-pub(crate) use self::scope::{ModuleScopeBuilder, Namespace, ScopeEntryRef};
+pub(crate) use self::scope::ScopeEntryRef;

@@ -1,6 +1,8 @@
 use expect_test::expect;
-use rg_def_map::{ImportBinding, ImportKind, LocalDefKind};
-use rg_ir_model::{DefMapRef, LocalDefId, ModuleId, SemanticItemKind, hir::source::ItemSourceKind};
+use rg_def_map::{ImportBinding, ImportKind, LocalDefKind, ModuleOrigin, ScopeBindingOrigin};
+use rg_ir_model::{
+    DefId, DefMapRef, LocalDefId, ModuleId, SemanticItemKind, hir::source::ItemSourceKind,
+};
 
 use super::utils::{check_first_body_def_map, check_first_body_item_store, check_project_body_ir};
 
@@ -95,6 +97,9 @@ pub fn use_it() {
             assert_eq!(modules[0].parent, None);
             assert_eq!(modules[1].parent, Some(ModuleId(0)));
             assert_eq!(modules[2].parent, Some(ModuleId(1)));
+            assert!(matches!(modules[0].origin, ModuleOrigin::Synthetic { .. }));
+            assert!(matches!(modules[1].origin, ModuleOrigin::Synthetic { .. }));
+            assert!(matches!(modules[2].origin, ModuleOrigin::Synthetic { .. }));
             assert_eq!(modules[1].local_defs.len(), 1);
             assert_eq!(modules[1].imports.len(), 1);
             assert_eq!(modules[1].impls.len(), 1);
@@ -143,6 +148,109 @@ pub fn use_it() {
                     .map(ToString::to_string)
                     .collect::<Vec<_>>(),
                 vec!["crate", "Root"]
+            );
+        },
+    );
+}
+
+// TODO: Temporary test until the codebase is migrated to use defmaps for everything.
+#[test]
+fn body_def_map_scopes_contain_direct_bindings() {
+    check_first_body_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_local_scope_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Root;
+
+pub fn use_it() {
+    use crate::Root as Alias;
+    struct User;
+    fn local_fn() {}
+    const LOCAL: usize = 0;
+    mod nested {
+        pub struct Inside;
+    }
+}
+"#,
+        |def_map| {
+            let body_origin = def_map.own_ref();
+            let modules = def_map.modules();
+            assert_eq!(modules.len(), 3);
+
+            let function_module = &modules[1];
+            let nested_module = &modules[2];
+            assert!(matches!(
+                function_module.origin,
+                ModuleOrigin::Synthetic { .. }
+            ));
+            assert!(matches!(nested_module.origin, ModuleOrigin::Inline { .. }));
+
+            let user_entry = function_module
+                .scope
+                .entry("User")
+                .expect("body-local struct should be visible in module scope");
+            assert_eq!(user_entry.types().len(), 1);
+            assert_eq!(user_entry.types()[0].origin, ScopeBindingOrigin::Direct);
+            let DefId::Local(user_def) = user_entry.types()[0].def else {
+                panic!("body-local struct should resolve to a local definition");
+            };
+            assert_eq!(user_def.origin, body_origin);
+            assert_eq!(
+                def_map
+                    .local_def(user_def.local_def)
+                    .expect("body-local struct def should exist")
+                    .kind,
+                LocalDefKind::Struct
+            );
+
+            let fn_entry = function_module
+                .scope
+                .entry("local_fn")
+                .expect("body-local function should be visible in module scope");
+            assert!(fn_entry.types().is_empty());
+            assert_eq!(fn_entry.values().len(), 1);
+            assert_eq!(fn_entry.values()[0].origin, ScopeBindingOrigin::Direct);
+
+            let const_entry = function_module
+                .scope
+                .entry("LOCAL")
+                .expect("body-local const should be visible in module scope");
+            assert!(const_entry.types().is_empty());
+            assert_eq!(const_entry.values().len(), 1);
+            assert_eq!(const_entry.values()[0].origin, ScopeBindingOrigin::Direct);
+
+            let nested_entry = function_module
+                .scope
+                .entry("nested")
+                .expect("body-local module should be visible in parent module scope");
+            assert_eq!(nested_entry.types().len(), 1);
+            assert_eq!(nested_entry.types()[0].origin, ScopeBindingOrigin::Direct);
+            assert_eq!(
+                nested_entry.types()[0].def,
+                DefId::Module(rg_ir_model::ModuleRef {
+                    origin: body_origin,
+                    module: ModuleId(2),
+                })
+            );
+
+            let inside_entry = nested_module
+                .scope
+                .entry("Inside")
+                .expect("inline body-local module items should be visible in child module scope");
+            assert_eq!(inside_entry.types().len(), 1);
+            let DefId::Local(inside_def) = inside_entry.types()[0].def else {
+                panic!("nested body-local struct should resolve to a local definition");
+            };
+            assert_eq!(inside_def.origin, body_origin);
+
+            assert!(
+                function_module.scope.entry("Alias").is_none(),
+                "body imports are recorded but not resolved into scopes yet"
             );
         },
     );

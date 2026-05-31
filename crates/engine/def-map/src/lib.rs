@@ -11,8 +11,8 @@ pub use self::{
     model::{
         ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
         LocalDefKind, LocalImplData, MacroDefinitionData, MacroDefinitionPayload, ModuleData,
-        ModuleOrigin, ModuleScope, PackageDefMaps, Path, PathSegment, ScopeBinding,
-        ScopeBindingOrigin, ScopeEntry,
+        ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, PackageDefMaps, Path,
+        PathSegment, ScopeBinding, ScopeBindingOrigin, ScopeEntry,
     },
     query::{
         DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite,

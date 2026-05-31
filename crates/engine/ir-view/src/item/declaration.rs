@@ -112,7 +112,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
             return Ok(None);
         };
         let (file_id, span) = match module.origin {
-            ModuleOrigin::Root { .. } => return Ok(None),
+            ModuleOrigin::Root { .. } | ModuleOrigin::Synthetic { .. } => return Ok(None),
             ModuleOrigin::Inline {
                 declaration_file,
                 declaration_span,

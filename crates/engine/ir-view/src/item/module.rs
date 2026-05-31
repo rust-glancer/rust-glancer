@@ -27,7 +27,9 @@ impl<'a, 'db> ModuleView<'a, 'db> {
         };
         match module.origin {
             ModuleOrigin::Root { file_id } => Ok(Some(file_id)),
-            ModuleOrigin::Inline { .. } | ModuleOrigin::OutOfLine { .. } => Ok(None),
+            ModuleOrigin::Synthetic { .. }
+            | ModuleOrigin::Inline { .. }
+            | ModuleOrigin::OutOfLine { .. } => Ok(None),
         }
     }
 

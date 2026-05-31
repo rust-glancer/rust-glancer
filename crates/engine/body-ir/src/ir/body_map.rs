@@ -3,9 +3,10 @@ use rg_arena::Arena;
 use rg_def_map::{
     DefMap, DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
     LocalDefData, LocalDefKind, LocalImplData, ModuleData, ModuleOrigin, ModuleScope,
+    ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin,
 };
 use rg_ir_model::{
-    BodyRef, DefMapRef, ModuleId,
+    BodyRef, DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef,
     hir::source::{BodyItemSourceRef, ItemSource, ItemSourceKind},
 };
 use rg_item_tree::{Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource};
@@ -56,6 +57,7 @@ pub(crate) struct BodyDefMapCollector<'body> {
     /// There might be more modules than scopes, so we need a mapping.
     /// Keys here are scope IDs, values are corresponding modules.
     modules_by_scope: Vec<ModuleId>,
+    base_scopes: Vec<ModuleScopeBuilder>,
 }
 
 impl<'body> BodyDefMapCollector<'body> {
@@ -65,33 +67,24 @@ impl<'body> BodyDefMapCollector<'body> {
             body,
             builder: target_def_map.child(body_ref),
             modules_by_scope: Vec::with_capacity(body.scopes.len()),
+            base_scopes: Vec::with_capacity(body.scopes.len()),
         }
     }
 
     /// Collects the body item tree into a body-local DefMap.
     pub fn collect(mut self) -> DefMap {
         // First, go through all the scopes and allocate synthetic modules.
-        for (scope_id, scope) in self.body.scopes.iter_with_ids() {
-            let origin = if scope_id == self.body.param_scope {
-                // We use param scope as root; it obviously cannot contain
-                // any items, so this module will always be empty. Items are only
-                // expected to be in the synthetic modules that will be children
-                // of this one.
-                ModuleOrigin::Root {
-                    file_id: self.body.source.file_id,
-                }
-            } else {
-                // Body scopes are synthetic modules. They have no source declaration of their own, so the
-                // containing function span acts as the stable source marker until lookup starts using them.
-                ModuleOrigin::Inline {
-                    declaration_file: self.body.source.file_id,
-                    declaration_span: self.body.source.span,
-                }
+        for (_, scope) in self.body.scopes.iter_with_ids() {
+            // Body scopes are synthetic modules. They carry lexical scope data, but they do not
+            // correspond to Rust module declarations and lookup must treat them differently.
+            let origin = ModuleOrigin::Synthetic {
+                file_id: self.body.source.file_id,
+                span: self.body.source.span,
             };
 
             // Note: we're going through scopes in order, so we process all the parents first.
             let parent = scope.parent.map(|parent| self.modules_by_scope[parent.0]);
-            let module = self.builder.alloc_module(ModuleData {
+            let module = self.alloc_module(ModuleData {
                 name: None,
                 name_span: None,
                 docs: None,
@@ -123,7 +116,25 @@ impl<'body> BodyDefMapCollector<'body> {
         // TODO: For now, we do not have any kind of import resolution / fixed loop,
         // as they are much less relevant for bodies. It might be relevant eventually
         // but for now it's omitted for simplicity.
+        self.freeze_scopes();
         self.builder.build()
+    }
+
+    fn alloc_module(&mut self, module: ModuleData) -> ModuleId {
+        // Keep a mutable base scope next to every allocated module. The final def-map stores only
+        // the frozen scope, but collection needs cheap direct-binding insertion.
+        let module = self.builder.alloc_module(module);
+        self.base_scopes.push(ModuleScopeBuilder::default());
+        module
+    }
+
+    fn freeze_scopes(&mut self) {
+        for (module_idx, base_scope) in self.base_scopes.iter().enumerate() {
+            self.builder
+                .module_mut(ModuleId(module_idx))
+                .expect("module should exist for body scope freeze")
+                .scope = base_scope.freeze();
+        }
     }
 
     fn collect_item(&mut self, module: ModuleId, item_id: ItemTreeId) {
@@ -151,10 +162,11 @@ impl<'body> BodyDefMapCollector<'body> {
         let Some(name) = item.name.clone() else {
             return;
         };
+        let namespace = kind.namespace();
 
         let local_def = self.builder.alloc_local_def(LocalDefData {
             module,
-            name,
+            name: name.clone(),
             kind,
             visibility: item.visibility.clone(),
             source: self.item_source(item_id, item),
@@ -167,6 +179,25 @@ impl<'body> BodyDefMapCollector<'body> {
             .expect("module should exist for body local definition")
             .local_defs
             .push(local_def);
+        self.base_scopes
+            .get_mut(module.0)
+            .expect("base scope should exist for body local definition")
+            .insert_binding(
+                &name,
+                namespace,
+                ScopeBinding {
+                    def: DefId::Local(LocalDefRef {
+                        origin: DefMapRef::Body(self.body_ref),
+                        local_def,
+                    }),
+                    visibility: item.visibility.clone(),
+                    owner: ModuleRef {
+                        origin: DefMapRef::Body(self.body_ref),
+                        module,
+                    },
+                    origin: ScopeBindingOrigin::Direct,
+                },
+            );
     }
 
     fn collect_local_impl(&mut self, module: ModuleId, item_id: ItemTreeId, item: &ItemNode) {
@@ -211,7 +242,7 @@ impl<'body> BodyDefMapCollector<'body> {
             ModuleSource::OutOfLine { .. } => item.docs.clone(),
         };
 
-        let child = self.builder.alloc_module(ModuleData {
+        let child = self.alloc_module(ModuleData {
             name: Some(module_name.clone()),
             name_span: item.name_span,
             docs,
@@ -228,7 +259,26 @@ impl<'body> BodyDefMapCollector<'body> {
             .module_mut(parent)
             .expect("parent module should exist for body child module")
             .children
-            .push((module_name, child));
+            .push((module_name.clone(), child));
+        self.base_scopes
+            .get_mut(parent.0)
+            .expect("base scope should exist for body child module")
+            .insert_binding(
+                &module_name,
+                Namespace::Types,
+                ScopeBinding {
+                    def: DefId::Module(ModuleRef {
+                        origin: DefMapRef::Body(self.body_ref),
+                        module: child,
+                    }),
+                    visibility: item.visibility.clone(),
+                    owner: ModuleRef {
+                        origin: DefMapRef::Body(self.body_ref),
+                        module: parent,
+                    },
+                    origin: ScopeBindingOrigin::Direct,
+                },
+            );
 
         // Note: out-of-line modules are not parsed, it's a bizarre pattern and at
         // least for now it's not worth spending time on it.

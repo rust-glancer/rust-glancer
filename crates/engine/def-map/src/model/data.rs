@@ -48,18 +48,24 @@ impl ModuleData {
     }
 }
 
-/// Where a module came from in source code.
+/// Where a module-like scope came from.
 #[derive(
     Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
 )]
 pub enum ModuleOrigin {
-    Root {
-        file_id: FileId,
-    },
+    /// Root module of the crate, it is nameless (corresponds to the `crate::` scope).
+    Root { file_id: FileId },
+    /// Synthetic nameless module, e.g. a scope in the function body.
+    /// This kind of module is used to create def maps for bodies, where we have a
+    /// hierarchical structure, but can't use "real" module semantics, since the rules
+    /// for items in body scopes are different from the normal module rules.
+    Synthetic { file_id: FileId, span: Span },
+    /// Inline module, like `mod foo { ...  }`;
     Inline {
         declaration_file: FileId,
         declaration_span: Span,
     },
+    /// Out-of-line module, like `mod foo;`.
     OutOfLine {
         declaration_file: FileId,
         declaration_span: Span,
@@ -72,6 +78,10 @@ impl ModuleOrigin {
     pub fn contains_file(&self, file_id: FileId) -> bool {
         match self {
             Self::Root { file_id: root_file } => *root_file == file_id,
+            Self::Synthetic {
+                file_id: synthetic_file,
+                ..
+            } => *synthetic_file == file_id,
             Self::Inline {
                 declaration_file, ..
             } => *declaration_file == file_id,
@@ -226,7 +236,7 @@ impl LocalDefKind {
         }
     }
 
-    pub(crate) fn namespace(self) -> Namespace {
+    pub fn namespace(self) -> Namespace {
         match self {
             Self::Const | Self::Function | Self::Static => Namespace::Values,
             Self::Enum | Self::Struct | Self::Trait | Self::TypeAlias | Self::Union => {
