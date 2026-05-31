@@ -1,43 +1,28 @@
-//! Composite enum-variant view over semantic and body-local enum declarations.
+//! Composite enum-variant view over indexed enum declarations.
 
-use rg_body_ir::{BodyEnumVariantData, BodyTypePathResolution};
+use rg_body_ir::BodyTypePathResolution;
 use rg_def_map::Path;
 use rg_ir_model::{
-    BodyEnumVariantRef, BodyItemRef, BodyRef, EnumVariantRef as SemanticEnumVariantRef, ScopeId,
-    TypeDefId, TypeDefRef,
-    hir::items::EnumVariantData,
-    identity::{EnumVariantRef, EnumVariantRefRepr},
+    BodyRef, EnumVariantRef, ScopeId, TypeDefId, TypeDefRef, hir::items::EnumVariantData,
 };
 use rg_semantic_ir::Documentation;
 
-use crate::IndexedViewDb;
+use crate::{IndexedViewDb, item::query::ItemQuery};
 
 /// Borrowed data for one resolved enum variant, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
-pub enum EnumVariant<'a> {
-    Semantic {
-        variant: SemanticEnumVariantRef,
-        data: EnumVariantData<'a>,
-    },
-    BodyLocal {
-        variant: BodyEnumVariantRef,
-        data: BodyEnumVariantData<'a>,
-    },
+pub struct EnumVariant<'a> {
+    variant: EnumVariantRef,
+    data: EnumVariantData<'a>,
 }
 
 impl<'a> EnumVariant<'a> {
     pub fn variant_ref(&self) -> EnumVariantRef {
-        match self {
-            Self::Semantic { variant, .. } => EnumVariantRef::semantic(*variant),
-            Self::BodyLocal { variant, .. } => EnumVariantRef::body_local(*variant),
-        }
+        self.variant
     }
 
     pub fn name(&self) -> &'a str {
-        match self {
-            Self::Semantic { data, .. } => data.variant.name.as_str(),
-            Self::BodyLocal { data, .. } => data.variant.name.as_str(),
-        }
+        self.data.variant.name.as_str()
     }
 
     pub fn docs_text(&self) -> Option<String> {
@@ -45,10 +30,7 @@ impl<'a> EnumVariant<'a> {
     }
 
     fn docs(&self) -> Option<&'a Documentation> {
-        match self {
-            Self::Semantic { data, .. } => data.variant.docs.as_ref(),
-            Self::BodyLocal { data, .. } => data.variant.docs.as_ref(),
-        }
+        self.data.variant.docs.as_ref()
     }
 }
 
@@ -77,15 +59,13 @@ impl<'a, 'db> EnumVariantView<'a, 'db> {
         let mut variants = Vec::new();
 
         match resolution {
-            BodyTypePathResolution::BodyLocal(item) => {
-                variants.extend(self.body_local_variants(item)?);
-            }
             BodyTypePathResolution::TypeDefs(types) | BodyTypePathResolution::SelfType(types) => {
                 for ty in types {
                     variants.extend(self.semantic_variants(ty)?);
                 }
             }
             BodyTypePathResolution::Primitive(_)
+            | BodyTypePathResolution::TypeAliases(_)
             | BodyTypePathResolution::Traits(_)
             | BodyTypePathResolution::Unknown => {}
         }
@@ -97,38 +77,13 @@ impl<'a, 'db> EnumVariantView<'a, 'db> {
         let TypeDefId::Enum(enum_id) = ty.id else {
             return Ok(Vec::new());
         };
-        let Some(data) = self.db.semantic_ir.enum_data_for_type_def(ty)? else {
+        let Some(data) = ItemQuery::new(self.db).enum_data_for_type_def(ty)? else {
             return Ok(Vec::new());
         };
-        let variant_refs = (0..data.variants.len()).map(|index| SemanticEnumVariantRef {
+        let variant_refs = (0..data.variants.len()).map(|index| EnumVariantRef {
             origin: ty.origin,
             enum_id,
             index,
-        });
-
-        let mut variants = Vec::new();
-        for variant_ref in variant_refs {
-            let Some(variant) = self.variant(EnumVariantRef::semantic(variant_ref))? else {
-                continue;
-            };
-            variants.push(variant);
-        }
-
-        Ok(variants)
-    }
-
-    fn body_local_variants(&self, item_ref: BodyItemRef) -> anyhow::Result<Vec<EnumVariant<'_>>> {
-        let Some(body) = self.db.body_ir.body_data(item_ref.body)? else {
-            return Ok(Vec::new());
-        };
-        let Some(item) = body.local_item(item_ref.item) else {
-            return Ok(Vec::new());
-        };
-        let variant_refs = (0..item.enum_variants().len()).map(|index| {
-            EnumVariantRef::body_local(BodyEnumVariantRef {
-                item: item_ref,
-                index,
-            })
         });
 
         let mut variants = Vec::new();
@@ -143,17 +98,8 @@ impl<'a, 'db> EnumVariantView<'a, 'db> {
     }
 
     pub fn variant(&self, variant: EnumVariantRef) -> anyhow::Result<Option<EnumVariant<'_>>> {
-        match variant.repr() {
-            EnumVariantRefRepr::Semantic(variant) => Ok(self
-                .db
-                .semantic_ir
-                .enum_variant_data(variant)?
-                .map(|data| EnumVariant::Semantic { variant, data })),
-            EnumVariantRefRepr::BodyLocal(variant) => Ok(self
-                .db
-                .body_ir
-                .local_enum_variant_data(variant)?
-                .map(|data| EnumVariant::BodyLocal { variant, data })),
-        }
+        Ok(ItemQuery::new(self.db)
+            .enum_variant_data(variant)?
+            .map(|data| EnumVariant { variant, data }))
     }
 }

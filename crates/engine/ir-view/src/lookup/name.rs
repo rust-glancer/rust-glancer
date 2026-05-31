@@ -4,13 +4,10 @@
 //! concepts: they are names visible from an indexed module or lexical body scope.
 
 use rg_def_map::{Path, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin};
-use rg_ir_model::{
-    DefId, ModuleRef, SemanticItemRef,
-    identity::{DeclarationRef, FunctionRef as AnalysisFunctionRef},
-};
+use rg_ir_model::{DefId, FunctionRef, ModuleRef, SemanticItemRef, identity::DeclarationRef};
 use rg_semantic_ir::Documentation;
 
-use crate::{IndexedViewDb, SymbolKind};
+use crate::{IndexedViewDb, SymbolKind, item::query::ItemQuery};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NameNamespace {
@@ -54,7 +51,7 @@ pub struct ModuleScopeName {
     declaration: DeclarationRef,
     kind: SymbolKind,
     documentation: Option<String>,
-    function: Option<AnalysisFunctionRef>,
+    function: Option<FunctionRef>,
 }
 
 impl ModuleScopeName {
@@ -82,7 +79,7 @@ impl ModuleScopeName {
         self.documentation.as_deref()
     }
 
-    pub fn function(&self) -> Option<AnalysisFunctionRef> {
+    pub fn function(&self) -> Option<FunctionRef> {
         self.function
     }
 }
@@ -174,12 +171,10 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                 else {
                     return Ok(None);
                 };
-                if let Some(SemanticItemRef::Function(function_ref)) = self
-                    .db
-                    .semantic_ir
-                    .semantic_item_for_local_def(local_def_ref)?
+                if let Some(SemanticItemRef::Function(function_ref)) =
+                    ItemQuery::new(self.db).semantic_item_for_local_def(local_def_ref)?
                 {
-                    function = Some(AnalysisFunctionRef::semantic(function_ref));
+                    function = Some(function_ref);
                 }
                 (SymbolKind::from_local_def_kind(data.kind), None)
             }

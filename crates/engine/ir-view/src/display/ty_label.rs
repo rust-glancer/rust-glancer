@@ -5,7 +5,7 @@
 //! are useful while reading code.
 
 use rg_ir_model::identity::DeclarationRef;
-use rg_ty::{IndexedGenericArg, IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyRepr};
+use rg_ty::{IndexedGenericArg, IndexedNominalTy, IndexedTy, IndexedTyRepr};
 
 use crate::{IndexedViewDb, item::declaration::DeclarationView};
 
@@ -25,15 +25,6 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             IndexedTy::Reference { mutability, inner } => Ok(self
                 .render(inner)?
                 .map(|inner| format!("{}{inner}", mutability.render_prefix()))),
-            IndexedTy::Repr(IndexedTyRepr::LocalNominal(types)) => {
-                let mut labels = Vec::new();
-                for ty in types {
-                    if let Some(label) = self.render_local_nominal(ty)? {
-                        labels.push(label);
-                    }
-                }
-                Ok(Self::render_joined(labels.into_iter()))
-            }
             IndexedTy::Repr(IndexedTyRepr::Nominal(types) | IndexedTyRepr::SelfTy(types)) => {
                 let mut labels = Vec::new();
                 for ty in types {
@@ -51,19 +42,6 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         let mut labels = labels.collect::<Vec<_>>();
         labels.sort();
         (!labels.is_empty()).then(|| labels.join(" | "))
-    }
-
-    fn render_local_nominal(&self, ty: &IndexedLocalNominalTy) -> anyhow::Result<Option<String>> {
-        let Some(declaration) =
-            DeclarationView::new(self.0).declaration(DeclarationRef::body_item(ty.item))?
-        else {
-            return Ok(None);
-        };
-        let name = declaration.name();
-        Ok(Some(format!(
-            "{name}{}",
-            self.render_generic_args(&ty.args)?
-        )))
     }
 
     fn render_nominal(&self, ty: &IndexedNominalTy) -> anyhow::Result<Option<String>> {

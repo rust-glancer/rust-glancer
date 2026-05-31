@@ -11,17 +11,13 @@ pub mod member;
 use rg_body_ir::{BodyAutoderef, BodyTypePathResolution};
 use rg_def_map::Path;
 use rg_ir_model::{
-    BodyRef, FieldRef as SemanticFieldRef, ScopeId, SemanticItemRef,
-    identity::ExprRef,
-    identity::{
-        DeclarationRef, DeclarationRefRepr, EnumVariantRef, EnumVariantRefRepr, FieldRefRepr,
-        ItemRefRepr, NameDefRefRepr,
-    },
+    BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticDeclarationRef, SemanticItemRef,
+    identity::DeclarationRef, identity::ExprRef,
 };
 use rg_semantic_ir::{SemanticTypePathResolution, TypePathContext};
-use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
+use rg_ty::{IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
 
-use crate::{IndexedViewDb, ty::locals::BodyView};
+use crate::{IndexedViewDb, item::query::ItemQuery, ty::locals::BodyView};
 
 pub struct TyView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
@@ -37,21 +33,6 @@ impl<'a, 'db> TyView<'a, 'db> {
     }
 
     pub fn declarations_for_ty(&self, ty: &IndexedTy) -> Vec<DeclarationRef> {
-        // Body-local nominal types shadow module-level types in the same expression type. Preserve
-        // that lookup order when turning an inferred type back into navigation declarations.
-        let mut local_declarations = Vec::new();
-        for candidate in BodyAutoderef::peel_references(ty) {
-            for ty in candidate.ty().as_local_nominals() {
-                let declaration = DeclarationRef::body_item(ty.item);
-                if !local_declarations.contains(&declaration) {
-                    local_declarations.push(declaration);
-                }
-            }
-        }
-        if !local_declarations.is_empty() {
-            return local_declarations;
-        }
-
         let mut declarations = Vec::new();
         for candidate in BodyAutoderef::peel_references(ty) {
             for ty in candidate.ty().as_nominals() {
@@ -68,12 +49,11 @@ impl<'a, 'db> TyView<'a, 'db> {
         &self,
         declaration: DeclarationRef,
     ) -> anyhow::Result<Option<IndexedTy>> {
-        match declaration.repr() {
-            DeclarationRefRepr::Module(_) => Ok(None),
-            DeclarationRefRepr::NameDef(name_def) => {
-                let NameDefRefRepr::DefMapLocal(local_def) = name_def.repr();
+        match declaration {
+            DeclarationRef::Module(_) => Ok(None),
+            DeclarationRef::LocalDef(local_def) => {
                 let Some(SemanticItemRef::TypeDef(ty)) =
-                    self.db.semantic_ir.semantic_item_for_local_def(local_def)?
+                    ItemQuery::new(self.db).semantic_item_for_local_def(local_def)?
                 else {
                     return Ok(None);
                 };
@@ -81,33 +61,26 @@ impl<'a, 'db> TyView<'a, 'db> {
                     ty,
                 )])))
             }
-            DeclarationRefRepr::Item(item) => match item.repr() {
-                ItemRefRepr::Semantic(SemanticItemRef::TypeDef(ty)) => Ok(Some(
-                    IndexedTyRepr::nominal(vec![IndexedNominalTy::bare(ty)]),
-                )),
-                ItemRefRepr::Semantic(
-                    SemanticItemRef::Trait(_)
-                    | SemanticItemRef::Impl(_)
-                    | SemanticItemRef::Function(_)
-                    | SemanticItemRef::TypeAlias(_)
-                    | SemanticItemRef::Const(_)
-                    | SemanticItemRef::Static(_),
-                ) => Ok(None),
-                ItemRefRepr::BodyLocal(item) => Ok(Some(IndexedTyRepr::local_nominal(vec![
-                    IndexedLocalNominalTy::bare(item),
-                ]))),
-                ItemRefRepr::BodyLocalValue(item) => self.body_view().local_value_item_ty(item),
-            },
-            DeclarationRefRepr::Field(field) => match field.repr() {
-                FieldRefRepr::Semantic(field) => self.ty_for_field(field),
-                FieldRefRepr::BodyLocal(_) => Ok(None),
-            },
-            DeclarationRefRepr::EnumVariant(variant) => self.ty_for_enum_variant(variant),
-            DeclarationRefRepr::Binding(binding) => {
-                let binding = binding.body_ir();
-                self.body_view().binding_ty(binding)
+            DeclarationRef::Semantic(SemanticDeclarationRef::Item(SemanticItemRef::TypeDef(
+                ty,
+            ))) => Ok(Some(IndexedTyRepr::nominal(vec![IndexedNominalTy::bare(
+                ty,
+            )]))),
+            DeclarationRef::Semantic(SemanticDeclarationRef::Item(
+                SemanticItemRef::Trait(_)
+                | SemanticItemRef::Impl(_)
+                | SemanticItemRef::Function(_)
+                | SemanticItemRef::TypeAlias(_)
+                | SemanticItemRef::Const(_)
+                | SemanticItemRef::Static(_),
+            )) => Ok(None),
+            DeclarationRef::Semantic(SemanticDeclarationRef::Field(field)) => {
+                self.ty_for_field(field)
             }
-            DeclarationRefRepr::Function(_) | DeclarationRefRepr::Impl(_) => Ok(None),
+            DeclarationRef::Semantic(SemanticDeclarationRef::EnumVariant(variant)) => {
+                self.ty_for_enum_variant(variant)
+            }
+            DeclarationRef::BodyBinding(binding) => self.body_view().binding_ty(binding),
         }
     }
 
@@ -164,7 +137,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         Ok(ty)
     }
 
-    fn ty_for_field(&self, field: SemanticFieldRef) -> anyhow::Result<Option<IndexedTy>> {
+    fn ty_for_field(&self, field: FieldRef) -> anyhow::Result<Option<IndexedTy>> {
         Ok(self
             .db
             .body_ir
@@ -172,19 +145,12 @@ impl<'a, 'db> TyView<'a, 'db> {
     }
 
     fn ty_for_enum_variant(&self, variant: EnumVariantRef) -> anyhow::Result<Option<IndexedTy>> {
-        match variant.repr() {
-            EnumVariantRefRepr::Semantic(variant) => {
-                let Some(data) = self.db.semantic_ir.enum_variant_data(variant)? else {
-                    return Ok(None);
-                };
-                Ok(Some(IndexedTyRepr::nominal(vec![IndexedNominalTy::bare(
-                    data.owner,
-                )])))
-            }
-            EnumVariantRefRepr::BodyLocal(variant) => Ok(Some(IndexedTyRepr::local_nominal(vec![
-                IndexedLocalNominalTy::bare(variant.item),
-            ]))),
-        }
+        let Some(data) = ItemQuery::new(self.db).enum_variant_data(variant)? else {
+            return Ok(None);
+        };
+        Ok(Some(IndexedTyRepr::nominal(vec![IndexedNominalTy::bare(
+            data.owner,
+        )])))
     }
 
     fn semantic_type_path_resolution_to_ty(resolution: SemanticTypePathResolution) -> IndexedTy {
@@ -204,9 +170,6 @@ impl<'a, 'db> TyView<'a, 'db> {
 
     fn body_type_path_resolution_to_ty(resolution: BodyTypePathResolution) -> IndexedTy {
         match resolution {
-            BodyTypePathResolution::BodyLocal(item) => {
-                IndexedTyRepr::local_nominal(vec![IndexedLocalNominalTy::bare(item)])
-            }
             BodyTypePathResolution::SelfType(types) => {
                 IndexedTyRepr::self_ty(types.into_iter().map(IndexedNominalTy::bare).collect())
             }
@@ -215,8 +178,11 @@ impl<'a, 'db> TyView<'a, 'db> {
             }
             BodyTypePathResolution::Primitive(primitive) => IndexedTy::Primitive(primitive),
             // Trait paths are useful for goto-definition, but type queries report only nominal
-            // values and body-local item types.
-            BodyTypePathResolution::Traits(_) => IndexedTy::Unknown,
+            // values and body-local item types. Type aliases are expanded in Body IR before they
+            // become expression or binding types.
+            BodyTypePathResolution::TypeAliases(_) | BodyTypePathResolution::Traits(_) => {
+                IndexedTy::Unknown
+            }
             BodyTypePathResolution::Unknown => IndexedTy::Unknown,
         }
     }

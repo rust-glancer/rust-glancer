@@ -2,10 +2,8 @@ use rg_memsize::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
-    BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef,
-    BodyImplRef, BodyItemRef, BodyValueItemRef, ConstRef, DefId, EnumVariantRef, FieldRef,
-    FunctionRef, ImplRef, SemanticDeclarationRef, SemanticItemRef, StaticRef, TraitRef,
-    TypeAliasRef, TypeDefRef,
+    ConstRef, DefId, EnumVariantRef, FieldRef, FunctionRef, ImplRef, SemanticDeclarationRef,
+    SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefRef,
 };
 
 /// Storage-level declaration target produced by path and expression resolution.
@@ -33,15 +31,4 @@ pub enum ResolvedDeclarationRef {
         EnumVariantRef
     )]
     Semantic(SemanticDeclarationRef),
-    #[from(
-        BodyDeclarationRef,
-        BodyBindingRef,
-        BodyItemRef,
-        BodyValueItemRef,
-        BodyImplRef,
-        BodyFieldRef,
-        BodyEnumVariantRef,
-        BodyFunctionRef
-    )]
-    Body(BodyDeclarationRef),
 }

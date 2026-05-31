@@ -3,7 +3,6 @@
 pub(crate) mod body;
 pub(crate) mod body_map;
 pub(crate) mod expr;
-pub(crate) mod item;
 pub(crate) mod pat;
 pub(crate) mod path;
 pub(crate) mod resolved;
@@ -19,11 +18,6 @@ pub use self::{
         ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind,
         ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LabelData, LiteralKind,
         MatchArmData, RecordExprField, RecordExprSpread,
-    },
-    item::{
-        BodyEnumVariantData, BodyFieldData, BodyFunctionData, BodyFunctionOwner, BodyImplData,
-        BodyItemData, BodyItemDeclaration, BodyItemKind, BodyItemOwner, BodyValueItemData,
-        BodyValueItemDeclaration, BodyValueItemKind, BodyValueItemOwner,
     },
     pat::{PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordPatField},
     path::BodyPath,

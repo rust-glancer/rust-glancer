@@ -1,10 +1,7 @@
 //! Symbol enumeration over generic indexed declaration trees.
 
 use anyhow::Result;
-use rg_ir_model::{
-    TargetRef,
-    identity::{DeclarationRef, DeclarationRefRepr},
-};
+use rg_ir_model::{TargetRef, identity::DeclarationRef};
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     item::declaration::{Declaration, DeclarationView},
@@ -190,17 +187,13 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
                 let Some(module) = self.declaration(declaration)? else {
                     continue;
                 };
-                let container_name = match declaration.repr() {
-                    DeclarationRefRepr::Module(module_ref) => {
+                let container_name = match declaration {
+                    DeclarationRef::Module(module_ref) => {
                         index.module_container_name(module_ref)?
                     }
-                    DeclarationRefRepr::NameDef(_)
-                    | DeclarationRefRepr::Item(_)
-                    | DeclarationRefRepr::Function(_)
-                    | DeclarationRefRepr::Field(_)
-                    | DeclarationRefRepr::EnumVariant(_)
-                    | DeclarationRefRepr::Binding(_)
-                    | DeclarationRefRepr::Impl(_) => None,
+                    DeclarationRef::LocalDef(_)
+                    | DeclarationRef::Semantic(_)
+                    | DeclarationRef::BodyBinding(_) => None,
                 };
                 symbols.push(WorkspaceSymbolEntry::new(module, container_name));
             }

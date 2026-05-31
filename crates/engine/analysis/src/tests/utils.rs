@@ -11,14 +11,15 @@ use crate::{
 use rg_body_ir::{BodyIrDb, BodyIrReadTxn, ExprData, ExprKind};
 use rg_def_map::{DefMapDb, PackageSlot};
 use rg_ir_model::{
-    BodyItemRef, FunctionRef, ItemOwner, ModuleRef, TargetRef, TraitRef, TypeDefId, TypeDefRef,
+    BodyRef, DefMapRef, FunctionRef, ItemOwner, ModuleRef, TargetRef, TraitRef, TypeDefId,
+    TypeDefRef,
 };
 use rg_ir_view::IndexedViewDb;
 use rg_item_tree::{ItemTreeDb, PackageNameInterners};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb, Span};
 use rg_semantic_ir::{SemanticIrDb, SemanticIrReadTxn};
-use rg_ty::{IndexedGenericArg, IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyRepr};
+use rg_ty::{IndexedGenericArg, IndexedNominalTy, IndexedTy, IndexedTyRepr};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
 use test_fixture::{FixtureMarkers, fixture_crate, fixture_crate_with_markers};
 
@@ -346,6 +347,14 @@ impl AnalysisFixtureDb {
         self.semantic_ir
             .resident_package(target.package)?
             .target(target.target)
+    }
+
+    fn resident_body_item_store(&self, body: BodyRef) -> Option<&rg_semantic_ir::ItemStore> {
+        self.body_ir
+            .resident_package(body.target.package)?
+            .target(body.target.target)?
+            .body(body.body)?
+            .body_item_store()
     }
 
     fn target_and_file_for_path(
@@ -1026,14 +1035,6 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             IndexedTy::Reference { mutability, inner } => {
                 format!("{}{}", mutability.render_prefix(), self.render_ty(inner))
             }
-            IndexedTy::Repr(IndexedTyRepr::LocalNominal(items)) => {
-                let mut items = items
-                    .iter()
-                    .map(|ty| self.render_body_local_nominal_ty(ty))
-                    .collect::<Vec<_>>();
-                items.sort();
-                format!("local nominal {}", items.join(" | "))
-            }
             IndexedTy::Repr(IndexedTyRepr::Nominal(types)) => {
                 let mut types = types
                     .iter()
@@ -1052,14 +1053,6 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             }
             IndexedTy::Unknown => "<unknown>".to_string(),
         }
-    }
-
-    fn render_body_local_nominal_ty(&self, ty: &IndexedLocalNominalTy) -> String {
-        format!(
-            "{}{}",
-            self.render_body_item_ref(ty.item),
-            self.render_generic_args(&ty.args)
-        )
     }
 
     fn render_body_nominal_ty(&self, ty: &IndexedNominalTy) -> String {
@@ -1097,29 +1090,17 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         }
     }
 
-    fn render_body_item_ref(&self, item_ref: BodyItemRef) -> String {
-        let body_ir = self.body_ir_txn();
-        let body = body_ir
-            .body_data(item_ref.body)
-            .expect("body item body should load while rendering analysis type")
-            .expect("body item body should exist while rendering analysis type");
-        let item = body
-            .local_item(item_ref.item)
-            .expect("body item id should exist while rendering analysis type");
-
-        format!(
-            "{} {}::{}",
-            item.kind,
-            self.render_function_ref(body.owner()),
-            item.name
-        )
-    }
-
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
-        let items = self
-            .db
-            .resident_target_ir(ty.origin.origin_target())
-            .expect("target semantic IR should exist while rendering analysis type");
+        let items = match ty.origin {
+            DefMapRef::Target(target) => self
+                .db
+                .resident_target_ir(target)
+                .expect("target semantic IR should exist while rendering analysis type"),
+            DefMapRef::Body(body) => self
+                .db
+                .resident_body_item_store(body)
+                .expect("body item store should exist while rendering analysis type"),
+        };
 
         match ty.id {
             TypeDefId::Struct(id) => {
@@ -1188,6 +1169,15 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     }
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {
+        if let DefMapRef::Body(body_ref) = module_ref.origin {
+            let body_ir = self.body_ir_txn();
+            let body = body_ir
+                .body_data(body_ref)
+                .expect("body module owner should load while rendering analysis module")
+                .expect("body module owner should exist while rendering analysis module");
+            return self.render_function_ref(body.owner());
+        }
+
         let target_ref = module_ref.origin.origin_target();
         let package = self
             .db

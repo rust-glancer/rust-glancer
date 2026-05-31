@@ -3,17 +3,15 @@
 //! This view answers "what declarations exist in this target or body" without committing callers
 //! to DefMap, Semantic IR, or Body IR storage shapes.
 
-use rg_body_ir::BodyImplData;
 use rg_ir_model::{
-    AssocItemId, BodyFunctionRef, BodyImplRef, BodyItemRef, BodyValueItemRef, ConstRef, DefMapRef,
-    EnumVariantRef as SemanticEnumVariantRef, FunctionRef as SemanticFunctionRef, ModuleId,
-    ModuleRef, SemanticItemKind, TargetRef, TypeAliasRef, TypeDefId, TypeDefRef,
-    identity::{DeclarationRef, DeclarationRefRepr, ImplRefRepr, ItemRefRepr},
+    AssocItemId, ConstRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef,
+    FunctionRef as SemanticFunctionRef, ModuleId, ModuleRef, SemanticItemKind, TargetRef,
+    TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::SemanticItemView;
 
-use crate::{IndexedViewDb, ty::locals::BodyView};
+use crate::{IndexedViewDb, item::query::ItemQuery, ty::locals::BodyView};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedSyntaxChild {
@@ -231,23 +229,20 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         &self,
         declaration: DeclarationRef,
     ) -> anyhow::Result<Option<IndexedItem>> {
-        match declaration.repr() {
-            DeclarationRefRepr::Item(item) => match item.repr() {
-                ItemRefRepr::BodyLocal(item) => self.body_item(item),
-                ItemRefRepr::BodyLocalValue(_) | ItemRefRepr::Semantic(_) => {
-                    Ok(Some(IndexedItem::leaf(declaration)))
-                }
-            },
-            DeclarationRefRepr::Impl(impl_ref) => match impl_ref.repr() {
-                ImplRefRepr::BodyLocal(impl_ref) => self.body_impl(impl_ref),
-                ImplRefRepr::Semantic(_) => Ok(Some(IndexedItem::leaf(declaration))),
-            },
-            DeclarationRefRepr::Function(_)
-            | DeclarationRefRepr::Module(_)
-            | DeclarationRefRepr::NameDef(_)
-            | DeclarationRefRepr::Field(_)
-            | DeclarationRefRepr::EnumVariant(_)
-            | DeclarationRefRepr::Binding(_) => Ok(Some(IndexedItem::leaf(declaration))),
+        match declaration {
+            DeclarationRef::Semantic(rg_ir_model::SemanticDeclarationRef::Item(item)) => {
+                let Some(item) = ItemQuery::new(self.db).semantic_item_view(item)? else {
+                    return Ok(None);
+                };
+                self.semantic_item(item)
+            }
+            DeclarationRef::Module(_)
+            | DeclarationRef::LocalDef(_)
+            | DeclarationRef::Semantic(
+                rg_ir_model::SemanticDeclarationRef::Field(_)
+                | rg_ir_model::SemanticDeclarationRef::EnumVariant(_),
+            )
+            | DeclarationRef::BodyBinding(_) => Ok(Some(IndexedItem::leaf(declaration))),
         }
     }
 
@@ -257,7 +252,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         ty: TypeDefRef,
     ) -> anyhow::Result<Option<IndexedItem>> {
         let mut children = Vec::new();
-        for field in self.db.semantic_ir.fields_for_type(ty)? {
+        for field in ItemQuery::new(self.db).fields_for_type(ty)? {
             children.push(IndexedItemChild::Declaration(IndexedItem::leaf(
                 DeclarationRef::semantic(field.into()),
             )));
@@ -272,7 +267,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     ) -> anyhow::Result<Option<IndexedItem>> {
         let mut children = Vec::new();
         for variant_ref in self.enum_variant_refs(ty)? {
-            let Some(variant) = self.db.semantic_ir.enum_variant_data(variant_ref)? else {
+            let Some(variant) = ItemQuery::new(self.db).enum_variant_data(variant_ref)? else {
                 continue;
             };
             let fields = variant
@@ -294,68 +289,6 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
             )));
         }
         Ok(Some(IndexedItem::with_children(declaration, children)))
-    }
-
-    fn body_item(&self, item_ref: BodyItemRef) -> anyhow::Result<Option<IndexedItem>> {
-        let declaration = DeclarationRef::body_item(item_ref);
-        let mut children = Vec::new();
-        for field_ref in BodyView::new(self.db).fields_for_local_type(item_ref)? {
-            children.push(IndexedItemChild::Declaration(IndexedItem::leaf(
-                DeclarationRef::body_field(field_ref),
-            )));
-        }
-        Ok(Some(IndexedItem::with_children(declaration, children)))
-    }
-
-    fn body_impl(&self, impl_ref: BodyImplRef) -> anyhow::Result<Option<IndexedItem>> {
-        let Some(body) = self.db.body_ir.body_data(impl_ref.body)? else {
-            return Ok(None);
-        };
-        let Some(impl_data) = body.local_impl(impl_ref.impl_id) else {
-            return Ok(None);
-        };
-        Ok(Some(IndexedItem::with_children(
-            DeclarationRef::body(impl_ref.into()),
-            self.body_impl_children(impl_ref, impl_data)?,
-        )))
-    }
-
-    fn body_impl_children(
-        &self,
-        impl_ref: BodyImplRef,
-        impl_data: &BodyImplData,
-    ) -> anyhow::Result<Vec<IndexedItemChild>> {
-        let mut children = Vec::new();
-
-        for item in &impl_data.types {
-            let item_ref = BodyItemRef {
-                body: impl_ref.body,
-                item: *item,
-            };
-            if let Some(item) = self.body_item(item_ref)? {
-                children.push(IndexedItemChild::Declaration(item));
-            }
-        }
-
-        for item in &impl_data.consts {
-            children.push(IndexedItemChild::Declaration(IndexedItem::leaf(
-                DeclarationRef::body_value_item(BodyValueItemRef {
-                    body: impl_ref.body,
-                    item: *item,
-                }),
-            )));
-        }
-
-        for function in &impl_data.functions {
-            children.push(IndexedItemChild::Declaration(IndexedItem::leaf(
-                DeclarationRef::body_function(BodyFunctionRef {
-                    body: impl_ref.body,
-                    function: *function,
-                }),
-            )));
-        }
-
-        Ok(children)
     }
 
     fn assoc_item_children(
@@ -387,7 +320,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         let TypeDefId::Enum(enum_id) = ty.id else {
             return Ok(Vec::new());
         };
-        let Some(data) = self.db.semantic_ir.enum_data_for_type_def(ty)? else {
+        let Some(data) = ItemQuery::new(self.db).enum_data_for_type_def(ty)? else {
             return Ok(Vec::new());
         };
 

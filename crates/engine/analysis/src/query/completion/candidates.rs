@@ -5,10 +5,7 @@
 //! and projects generic view facts into completion-ready candidates.
 
 use rg_def_map::Path;
-use rg_ir_model::{
-    ModuleRef,
-    identity::{DeclarationRef, EnumVariantRef, FieldRef, FunctionRef},
-};
+use rg_ir_model::{EnumVariantRef, FieldRef, FunctionRef, ModuleRef, identity::DeclarationRef};
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     item::enum_variant::EnumVariantView,
@@ -312,7 +309,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     ) -> anyhow::Result<Vec<FieldRef>> {
         let receiver = site.source().receiver();
         let Some(receiver_ty) =
-            BodyView::new(self.db).receiver_ty(receiver.body_ir(), receiver.expr_id())?
+            BodyView::new(self.db).expr_ty(receiver.body_ir(), receiver.expr_id())?
         else {
             return Ok(Vec::new());
         };
@@ -362,7 +359,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     ) -> anyhow::Result<Vec<DotMethodCompletionCandidate>> {
         let receiver = site.source().receiver();
         let Some(receiver_ty) =
-            BodyView::new(self.db).receiver_ty(receiver.body_ir(), receiver.expr_id())?
+            BodyView::new(self.db).expr_ty(receiver.body_ir(), receiver.expr_id())?
         else {
             return Ok(Vec::new());
         };
@@ -457,13 +454,13 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 if matches!(namespace, IndexedNameNamespace::Values) && has_value_constructor {
                     shadow_namespaces.push(CompletionScopeNamespace::Values);
                 }
-                let declaration = DeclarationRef::body_item(item);
+                let declaration = DeclarationRef::semantic(item.into());
                 LexicalCompletionCandidate {
                     label,
                     namespace: CompletionScopeNamespace::Types,
                     scope_distance,
                     target: CompletionTarget::Declaration(declaration),
-                    kind: CompletionKind::from_body_item_kind(kind),
+                    kind: CompletionKind::from_semantic_item_kind(kind)?,
                     declaration: Some(declaration),
                     function: None,
                     shadow_namespaces,
@@ -478,9 +475,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 label,
                 namespace: CompletionScopeNamespace::Values,
                 scope_distance,
-                target: CompletionTarget::Declaration(DeclarationRef::body_value_item(item)),
-                kind: CompletionKind::from_body_value_item_kind(kind),
-                declaration: Some(DeclarationRef::body_value_item(item)),
+                target: CompletionTarget::Declaration(DeclarationRef::semantic(item.into())),
+                kind: CompletionKind::from_semantic_item_kind(kind)?,
+                declaration: Some(DeclarationRef::semantic(item.into())),
                 function: None,
                 shadow_namespaces: vec![CompletionScopeNamespace::Values],
             },
@@ -489,16 +486,15 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 label,
                 scope_distance,
             } => {
-                let function_ref = FunctionRef::body_local(function);
-                let declaration = DeclarationRef::body_function(function);
+                let declaration = DeclarationRef::semantic(function.into());
                 LexicalCompletionCandidate {
                     label,
                     namespace: CompletionScopeNamespace::Values,
                     scope_distance,
-                    target: CompletionTarget::Function(function_ref),
+                    target: CompletionTarget::Function(function),
                     kind: CompletionKind::Function,
                     declaration: Some(declaration),
-                    function: Some(function_ref),
+                    function: Some(function),
                     shadow_namespaces: vec![CompletionScopeNamespace::Values],
                 }
             }

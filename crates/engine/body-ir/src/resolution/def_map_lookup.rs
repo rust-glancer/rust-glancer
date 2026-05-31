@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 // This lookup path is collected and tested before production body resolution is migrated to it.
 
 use rg_def_map::{DefMap, ModuleOrigin, Path, PathSegment, ResolvePathResult, ScopeBinding};
@@ -19,16 +18,29 @@ impl<'body> BodyDefMapLookup<'body> {
         Self { def_map }
     }
 
-    pub(crate) fn resolve_path(&self, from: ModuleRef, path: &Path) -> ResolvePathResult {
-        self.resolve_path_with_filter(from, path, NameResolutionFilter::AllNamespaces)
-    }
-
     pub(crate) fn resolve_path_in_type_namespace(
         &self,
         from: ModuleRef,
         path: &Path,
     ) -> ResolvePathResult {
         self.resolve_path_with_filter(from, path, NameResolutionFilter::TypesOnly)
+    }
+
+    pub(crate) fn resolve_path_in_value_namespace(
+        &self,
+        from: ModuleRef,
+        path: &Path,
+    ) -> ResolvePathResult {
+        self.resolve_path_with_filter(from, path, NameResolutionFilter::ValuesOnly)
+    }
+
+    pub(crate) fn resolve_name_in_value_namespace_at_module(
+        &self,
+        from: ModuleRef,
+        module: ModuleRef,
+        name: &str,
+    ) -> Vec<DefId> {
+        self.resolve_name_in_module(from, module, name, NameResolutionFilter::ValuesOnly)
     }
 
     fn resolve_path_with_filter(
@@ -164,9 +176,11 @@ impl<'body> BodyDefMapLookup<'body> {
         };
 
         let mut defs = Vec::new();
-        for binding in scope_entry.types() {
-            if self.binding_is_visible(from, binding) {
-                push_unique(&mut defs, binding.def);
+        if !matches!(filter, NameResolutionFilter::ValuesOnly) {
+            for binding in scope_entry.types() {
+                if self.binding_is_visible(from, binding) {
+                    push_unique(&mut defs, binding.def);
+                }
             }
         }
 
@@ -179,6 +193,10 @@ impl<'body> BodyDefMapLookup<'body> {
                 push_unique(&mut defs, binding.def);
             }
         }
+        if matches!(filter, NameResolutionFilter::ValuesOnly) {
+            return defs;
+        }
+
         for binding in scope_entry.macros() {
             if self.binding_is_visible(from, binding) {
                 push_unique(&mut defs, binding.def);
@@ -239,8 +257,8 @@ impl<'body> BodyDefMapLookup<'body> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NameResolutionFilter {
-    AllNamespaces,
     TypesOnly,
+    ValuesOnly,
 }
 
 impl NameResolutionFilter {

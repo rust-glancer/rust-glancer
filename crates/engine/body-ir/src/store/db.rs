@@ -84,10 +84,6 @@ impl BodyIrDb {
                 stats.body_count += target.bodies().len();
                 for body in target.bodies() {
                     stats.scope_count += body.scopes.len();
-                    stats.local_item_count += body.local_items.len();
-                    stats.local_value_item_count += body.local_value_items.len();
-                    stats.local_impl_count += body.local_impls.len();
-                    stats.local_function_count += body.local_functions.len();
                     stats.binding_count += body.bindings.len();
                     stats.statement_count += body.statements.len();
                     stats.expression_count += body.exprs.len();

@@ -1,9 +1,6 @@
 //! Concrete navigation target projection.
 
-use rg_ir_model::{
-    ModuleRef,
-    identity::{DeclarationRef, DeclarationRefRepr},
-};
+use rg_ir_model::{ModuleRef, identity::DeclarationRef};
 use rg_ir_view::{
     IndexedViewDb,
     item::declaration::{Declaration, DeclarationView},
@@ -42,15 +39,11 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
         &self,
         declaration: DeclarationRef,
     ) -> anyhow::Result<Option<NavigationTarget>> {
-        match declaration.repr() {
-            DeclarationRefRepr::Module(module) => self.target_for_module(module),
-            DeclarationRefRepr::NameDef(_)
-            | DeclarationRefRepr::Item(_)
-            | DeclarationRefRepr::Function(_)
-            | DeclarationRefRepr::Field(_)
-            | DeclarationRefRepr::EnumVariant(_)
-            | DeclarationRefRepr::Binding(_)
-            | DeclarationRefRepr::Impl(_) => Ok(DeclarationView::new(self.0)
+        match declaration {
+            DeclarationRef::Module(module) => self.target_for_module(module),
+            DeclarationRef::LocalDef(_)
+            | DeclarationRef::Semantic(_)
+            | DeclarationRef::BodyBinding(_) => Ok(DeclarationView::new(self.0)
                 .declaration(declaration)?
                 .map(Self::navigation_target)),
         }

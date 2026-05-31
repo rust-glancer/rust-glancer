@@ -1,4 +1,4 @@
-use rg_ir_model::{BodyItemRef, TypeDefRef};
+use rg_ir_model::TypeDefRef;
 use rg_item_tree::TypeRef;
 use rg_memsize::Shrink;
 
@@ -14,10 +14,6 @@ pub type IndexedTypeSubst = TypeSubst<IndexedTyRepr>;
 )]
 pub enum IndexedTyRepr {
     Syntax(TypeRef),
-    LocalNominal(
-        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<IndexedLocalNominalTy>>")]
-        Vec<IndexedLocalNominalTy>,
-    ),
     Nominal(
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<IndexedNominalTy>>")]
         Vec<IndexedNominalTy>,
@@ -29,32 +25,6 @@ pub enum IndexedTyRepr {
 }
 
 impl TypeRepr for IndexedTyRepr {}
-
-/// Body-local nominal type together with the generic arguments visible at use site.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct IndexedLocalNominalTy {
-    pub item: BodyItemRef,
-    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<IndexedGenericArg>>")]
-    pub args: Vec<IndexedGenericArg>,
-}
-
-impl IndexedLocalNominalTy {
-    pub fn bare(item: BodyItemRef) -> Self {
-        Self {
-            item,
-            args: Vec::new(),
-        }
-    }
-
-    fn shrink_to_fit(&mut self) {
-        self.args.shrink_to_fit();
-        for arg in &mut self.args {
-            arg.shrink_to_fit();
-        }
-    }
-}
 
 /// Module-level nominal type together with the generic arguments visible at use site.
 #[derive(
@@ -87,10 +57,6 @@ impl IndexedTyRepr {
         IndexedTy::repr(Self::Syntax(ty))
     }
 
-    pub fn local_nominal(types: Vec<IndexedLocalNominalTy>) -> IndexedTy {
-        IndexedTy::repr(Self::LocalNominal(types))
-    }
-
     pub fn nominal(types: Vec<IndexedNominalTy>) -> IndexedTy {
         IndexedTy::repr(Self::Nominal(types))
     }
@@ -102,12 +68,6 @@ impl IndexedTyRepr {
     fn shrink_to_fit(&mut self) {
         match self {
             Self::Syntax(ty) => ty.shrink_to_fit(),
-            Self::LocalNominal(types) => {
-                types.shrink_to_fit();
-                for ty in types {
-                    ty.shrink_to_fit();
-                }
-            }
             Self::Nominal(types) | Self::SelfTy(types) => {
                 types.shrink_to_fit();
                 for ty in types {
@@ -117,17 +77,10 @@ impl IndexedTyRepr {
         }
     }
 
-    pub fn as_local_nominals(&self) -> &[IndexedLocalNominalTy] {
-        match self {
-            Self::LocalNominal(types) => types,
-            Self::Syntax(_) | Self::Nominal(_) | Self::SelfTy(_) => &[],
-        }
-    }
-
     pub fn as_nominals(&self) -> &[IndexedNominalTy] {
         match self {
             Self::Nominal(types) | Self::SelfTy(types) => types,
-            Self::Syntax(_) | Self::LocalNominal(_) => &[],
+            Self::Syntax(_) => &[],
         }
     }
 }
@@ -140,17 +93,10 @@ impl Shrink for IndexedTyRepr {
 
 /// Helpers for the concrete indexed type vocabulary.
 pub trait IndexedTyExt {
-    fn as_local_nominals(&self) -> &[IndexedLocalNominalTy];
     fn as_nominals(&self) -> &[IndexedNominalTy];
 }
 
 impl IndexedTyExt for IndexedTy {
-    fn as_local_nominals(&self) -> &[IndexedLocalNominalTy] {
-        self.as_repr()
-            .map(IndexedTyRepr::as_local_nominals)
-            .unwrap_or(&[])
-    }
-
     fn as_nominals(&self) -> &[IndexedNominalTy] {
         self.as_repr()
             .map(IndexedTyRepr::as_nominals)

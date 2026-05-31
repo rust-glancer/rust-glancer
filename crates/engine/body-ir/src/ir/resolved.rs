@@ -1,86 +1,5 @@
-use rg_ir_model::{
-    BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef, BodyItemRef, EnumVariantRef,
-    FieldRef, FunctionRef, ResolvedDeclarationRef, TraitRef, TypeDefRef,
-};
+use rg_ir_model::{BindingId, ResolvedDeclarationRef, TraitRef, TypeAliasRef, TypeDefRef};
 use rg_semantic_ir::SemanticTypePathResolution;
-
-/// Stable field identity across module-level Semantic IR and body-local declarations.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-pub(crate) enum ResolvedFieldRef {
-    Semantic(FieldRef),
-    BodyLocal(BodyFieldRef),
-}
-
-/// Stable function identity across module-level Semantic IR and body-local declarations.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-pub(crate) enum ResolvedFunctionRef {
-    Semantic(FunctionRef),
-    BodyLocal(BodyFunctionRef),
-}
-
-/// Stable enum variant identity across module-level Semantic IR and body-local declarations.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-pub(crate) enum ResolvedEnumVariantRef {
-    Semantic(EnumVariantRef),
-    BodyLocal(BodyEnumVariantRef),
-}
-
-impl From<ResolvedFieldRef> for ResolvedDeclarationRef {
-    fn from(field: ResolvedFieldRef) -> Self {
-        match field {
-            ResolvedFieldRef::Semantic(field) => field.into(),
-            ResolvedFieldRef::BodyLocal(field) => field.into(),
-        }
-    }
-}
-
-impl From<ResolvedFunctionRef> for ResolvedDeclarationRef {
-    fn from(function: ResolvedFunctionRef) -> Self {
-        match function {
-            ResolvedFunctionRef::Semantic(function) => function.into(),
-            ResolvedFunctionRef::BodyLocal(function) => function.into(),
-        }
-    }
-}
-
-impl From<ResolvedEnumVariantRef> for ResolvedDeclarationRef {
-    fn from(variant: ResolvedEnumVariantRef) -> Self {
-        match variant {
-            ResolvedEnumVariantRef::Semantic(variant) => variant.into(),
-            ResolvedEnumVariantRef::BodyLocal(variant) => variant.into(),
-        }
-    }
-}
 
 /// Best-effort semantic resolution attached to body expressions.
 #[derive(
@@ -117,11 +36,11 @@ pub enum BodyResolution {
     Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
 )]
 pub enum BodyTypePathResolution {
-    BodyLocal(BodyItemRef),
     #[memsize(skip)]
     Primitive(rg_ty::PrimitiveTy),
     SelfType(Vec<TypeDefRef>),
     TypeDefs(Vec<TypeDefRef>),
+    TypeAliases(Vec<TypeAliasRef>),
     Traits(Vec<TraitRef>),
     Unknown,
 }

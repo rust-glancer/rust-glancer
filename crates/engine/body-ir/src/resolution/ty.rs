@@ -8,12 +8,9 @@ use rg_item_tree::{GenericArg, GenericParams, Mutability, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
-use rg_ty::{
-    IndexedGenericArg, IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyRepr,
-    IndexedTypeSubst,
-};
+use rg_ty::{IndexedGenericArg, IndexedNominalTy, IndexedTy, IndexedTyRepr, IndexedTypeSubst};
 
-use crate::{ir::body::BodyData, ir::resolved::BodyTypePathResolution};
+use crate::ir::resolved::BodyTypePathResolution;
 
 /// Converts syntax-level type data into the shared indexed type vocabulary in one module/impl
 /// context, applying direct generic substitutions where they are already known.
@@ -84,9 +81,6 @@ pub(super) fn ty_from_body_resolution(
     // Attach the generic arguments from the source path to whichever nominal definition the path
     // resolved to. Ambiguous multi-target resolution keeps the same args on every candidate.
     match resolution {
-        BodyTypePathResolution::BodyLocal(item) => {
-            IndexedTyRepr::local_nominal(vec![IndexedLocalNominalTy { item, args }])
-        }
         BodyTypePathResolution::Primitive(primitive) => IndexedTy::Primitive(primitive),
         BodyTypePathResolution::SelfType(types) => IndexedTyRepr::self_ty(
             types
@@ -106,6 +100,7 @@ pub(super) fn ty_from_body_resolution(
                 })
                 .collect(),
         ),
+        BodyTypePathResolution::TypeAliases(_) => fallback,
         BodyTypePathResolution::Traits(_) => fallback,
         BodyTypePathResolution::Unknown => fallback,
     }
@@ -125,16 +120,6 @@ pub(super) fn subst_from_generics(
         .zip(type_args)
         .map(|(param, ty)| (param.name.clone(), ty))
         .collect()
-}
-
-pub(super) fn local_type_subst(body: &BodyData, ty: &IndexedLocalNominalTy) -> IndexedTypeSubst {
-    let Some(item) = body.local_item(ty.item.item) else {
-        return IndexedTypeSubst::new();
-    };
-
-    item.generic_params()
-        .map(|generics| subst_from_generics(generics, &ty.args))
-        .unwrap_or_else(IndexedTypeSubst::new)
 }
 
 pub(super) fn body_generic_arg_ty(arg: &IndexedGenericArg) -> Option<IndexedTy> {

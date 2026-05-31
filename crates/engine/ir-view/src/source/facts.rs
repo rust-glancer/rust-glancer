@@ -552,23 +552,23 @@ impl<'a, 'db> SourceFactsView<'a, 'db> {
                 ))
             }
             BodyCursorCandidate::LocalItem { item, .. } => {
-                let declaration = DeclarationRef::body_item(item);
+                let declaration = DeclarationRef::semantic(item.into());
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
             BodyCursorCandidate::LocalValueItem { item, .. } => {
-                let declaration = DeclarationRef::body_value_item(item);
+                let declaration = DeclarationRef::semantic(item.into());
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
             BodyCursorCandidate::LocalField { field, .. } => {
-                let declaration = DeclarationRef::body_field(field);
+                let declaration = DeclarationRef::semantic(field.into());
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
             BodyCursorCandidate::LocalEnumVariant { variant, .. } => {
-                let declaration = DeclarationRef::body_enum_variant(variant);
+                let declaration = DeclarationRef::semantic(variant.into());
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
             BodyCursorCandidate::LocalFunction { function, .. } => {
-                let declaration = DeclarationRef::body_function(function);
+                let declaration = DeclarationRef::semantic(function.into());
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
             BodyCursorCandidate::TypePath {

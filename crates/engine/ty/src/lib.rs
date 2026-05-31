@@ -12,8 +12,8 @@ mod ty;
 pub use self::{
     generic_arg::GenericArg,
     indexed::{
-        IndexedGenericArg, IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyExt,
-        IndexedTyRepr, IndexedTypeSubst,
+        IndexedGenericArg, IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr,
+        IndexedTypeSubst,
     },
     primitive::{FloatTy, PrimitiveTy, RefMutability, SignedIntTy, UnsignedIntTy},
     ty::{Ty, TypeRepr, TypeSubst},

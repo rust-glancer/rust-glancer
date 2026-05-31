@@ -4,8 +4,8 @@
 //! add any extra path-segment candidates visible at the same offset.
 
 use rg_ir_model::{
-    BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId,
-    BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ExprId, TargetRef,
+    BindingId, BodyId, BodyRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TargetRef,
+    TypeDefId, hir::source::ItemSourceKind,
 };
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
@@ -130,99 +130,136 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             }
         }
 
-        for (item_idx, item) in body.local_items.iter().enumerate() {
-            if item.name_source.file_id == self.file_id
-                && item.name_source.span.touches(self.offset)
-            {
-                let item_ref = BodyItemRef {
-                    body: body_ref,
-                    item: BodyItemId(item_idx),
+        if let Some(item_store) = body.body_item_store() {
+            for item in item_store.semantic_items() {
+                if item.source().file_id != self.file_id {
+                    continue;
+                }
+                let declaration_span = match item.source().kind {
+                    ItemSourceKind::Body(source) if source.body == body_ref => body
+                        .source_item(source.item)
+                        .and_then(|item| item.name_span)
+                        .unwrap_or_else(|| item.span().unwrap_or(body.source.span)),
+                    _ => item.span().unwrap_or(body.source.span),
                 };
-                best.consider(
-                    item.name_source.span,
-                    BodyCursorCandidate::LocalItem {
-                        item: item_ref,
-                        span: item.name_source.span,
-                    },
-                );
-            }
-        }
-
-        for (item_idx, item) in body.local_value_items.iter().enumerate() {
-            if item.name_source.file_id == self.file_id
-                && item.name_source.span.touches(self.offset)
-            {
-                best.consider(
-                    item.name_source.span,
-                    BodyCursorCandidate::LocalValueItem {
-                        item: BodyValueItemRef {
-                            body: body_ref,
-                            item: BodyValueItemId(item_idx),
-                        },
-                        span: item.name_source.span,
-                    },
-                );
-            }
-        }
-
-        for (item_idx, item) in body.local_items.iter().enumerate() {
-            if item.source.file_id != self.file_id {
-                continue;
-            }
-
-            let item_ref = BodyItemRef {
-                body: body_ref,
-                item: BodyItemId(item_idx),
-            };
-            for (field_idx, field) in item.fields().iter().enumerate() {
-                if field.span.touches(self.offset) {
-                    best.consider(
-                        field.span,
-                        BodyCursorCandidate::LocalField {
-                            field: BodyFieldRef {
-                                item: item_ref,
-                                index: field_idx,
+                if declaration_span.touches(self.offset) {
+                    match item.item() {
+                        SemanticItemRef::TypeDef(_)
+                        | SemanticItemRef::Trait(_)
+                        | SemanticItemRef::TypeAlias(_) => best.consider(
+                            declaration_span,
+                            BodyCursorCandidate::LocalItem {
+                                item: item.item(),
+                                span: declaration_span,
                             },
-                            span: field.span,
-                        },
-                    );
-                }
-            }
-
-            for (variant_idx, variant) in item.enum_variants().iter().enumerate() {
-                if variant.name_span.touches(self.offset) {
-                    best.consider(
-                        variant.name_span,
-                        BodyCursorCandidate::LocalEnumVariant {
-                            variant: BodyEnumVariantRef {
-                                item: item_ref,
-                                index: variant_idx,
+                        ),
+                        SemanticItemRef::Const(_) | SemanticItemRef::Static(_) => best.consider(
+                            declaration_span,
+                            BodyCursorCandidate::LocalValueItem {
+                                item: item.item(),
+                                span: declaration_span,
                             },
-                            span: variant.name_span,
-                        },
-                    );
+                        ),
+                        SemanticItemRef::Function(function) => best.consider(
+                            declaration_span,
+                            BodyCursorCandidate::LocalFunction {
+                                function,
+                                span: declaration_span,
+                            },
+                        ),
+                        SemanticItemRef::Impl(_) => {}
+                    }
                 }
-            }
-        }
 
-        for (function_idx, function) in body.local_functions.iter().enumerate() {
-            if function.name_source.file_id == self.file_id
-                && function.name_source.span.touches(self.offset)
-            {
-                best.consider(
-                    function.name_source.span,
-                    BodyCursorCandidate::LocalFunction {
-                        function: BodyFunctionRef {
-                            body: body_ref,
-                            function: BodyFunctionId(function_idx),
-                        },
-                        span: function.name_source.span,
-                    },
-                );
+                if let SemanticItemRef::TypeDef(ty) = item.item() {
+                    self.consider_fields(item_store, ty, &mut best);
+                    self.consider_variants(item_store, ty, &mut best);
+                }
             }
         }
 
         best.finish()
+    }
+
+    fn consider_fields(
+        &self,
+        item_store: &rg_semantic_ir::ItemStore,
+        ty: rg_ir_model::TypeDefRef,
+        best: &mut BestCursorCandidate,
+    ) {
+        match ty.id {
+            TypeDefId::Struct(id) => {
+                let Some(data) = item_store.struct_data(id) else {
+                    return;
+                };
+                if data.source.file_id != self.file_id {
+                    return;
+                }
+                for (index, field) in data.fields.fields().iter().enumerate() {
+                    if field.span.touches(self.offset) {
+                        best.consider(
+                            field.span,
+                            BodyCursorCandidate::LocalField {
+                                field: FieldRef { owner: ty, index },
+                                span: field.span,
+                            },
+                        );
+                    }
+                }
+            }
+            TypeDefId::Union(id) => {
+                let Some(data) = item_store.union_data(id) else {
+                    return;
+                };
+                if data.source.file_id != self.file_id {
+                    return;
+                }
+                for (index, field) in data.fields.iter().enumerate() {
+                    if field.span.touches(self.offset) {
+                        best.consider(
+                            field.span,
+                            BodyCursorCandidate::LocalField {
+                                field: FieldRef { owner: ty, index },
+                                span: field.span,
+                            },
+                        );
+                    }
+                }
+            }
+            TypeDefId::Enum(_) => {}
+        }
+    }
+
+    fn consider_variants(
+        &self,
+        item_store: &rg_semantic_ir::ItemStore,
+        ty: rg_ir_model::TypeDefRef,
+        best: &mut BestCursorCandidate,
+    ) {
+        let TypeDefId::Enum(enum_id) = ty.id else {
+            return;
+        };
+        let Some(data) = item_store.enum_data(enum_id) else {
+            return;
+        };
+        if data.source.file_id != self.file_id {
+            return;
+        }
+        for (index, variant) in data.variants.iter().enumerate() {
+            if variant.name_span.touches(self.offset) {
+                best.consider(
+                    variant.name_span,
+                    BodyCursorCandidate::LocalEnumVariant {
+                        variant: EnumVariantRef {
+                            origin: ty.origin,
+                            enum_id,
+                            index,
+                        },
+                        span: variant.name_span,
+                    },
+                );
+            }
+        }
     }
 }
 

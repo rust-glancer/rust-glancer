@@ -8,11 +8,7 @@ pub mod hir;
 mod ids;
 
 pub use self::ids::{
-    body::{
-        BindingId, BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef,
-        BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyImplRef, BodyItemId, BodyItemRef,
-        BodyRef, BodyValueItemId, BodyValueItemRef, ExprId, PatId, ScopeId, StmtId,
-    },
+    body::{BindingId, BodyBindingRef, BodyId, BodyRef, ExprId, PatId, ScopeId, StmtId},
     def_map::{
         DefId, DefMapRef, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
         ModuleId, ModuleRef, TargetRef,

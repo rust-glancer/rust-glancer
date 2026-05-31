@@ -1,7 +1,5 @@
-use rg_ir_model::{
-    BindingId, BodyFunctionId, BodyImplId, BodyItemId, BodyValueItemId, ExprId, PatId, ScopeId,
-};
-use rg_item_tree::TypeRef;
+use rg_ir_model::{BindingId, ExprId, PatId, ScopeId};
+use rg_item_tree::{ItemTreeId, TypeRef};
 use rg_text::Name;
 use rg_ty::IndexedTy;
 
@@ -96,15 +94,9 @@ pub enum StmtKind {
     },
     /// `<expr>;` or an expression statement without a semicolon.
     Expr { expr: ExprId, has_semicolon: bool },
-    /// A block-local item kept in Body IR, such as `struct Local;`.
-    Item { item: BodyItemId },
-    /// A block-local value item kept in Body IR, such as `const LOCAL: u8 = 1;`.
-    ValueItem { item: BodyValueItemId },
-    /// A block-local function declaration.
-    Function { function: BodyFunctionId },
-    /// A block-local `impl`.
-    Impl { impl_id: BodyImplId },
-    /// An item statement that Body IR intentionally keeps only as source layout.
+    /// A block-local item represented in the body source-item arena.
+    Item { item: ItemTreeId },
+    /// An item statement that Body IR intentionally could not lower into the source-item arena.
     ItemIgnored,
 }
 
@@ -121,12 +113,7 @@ impl StmtKind {
                     annotation.shrink_to_fit();
                 }
             }
-            Self::Expr { .. }
-            | Self::Item { .. }
-            | Self::ValueItem { .. }
-            | Self::Function { .. }
-            | Self::Impl { .. }
-            | Self::ItemIgnored => {}
+            Self::Expr { .. } | Self::Item { .. } | Self::ItemIgnored => {}
         }
     }
 }

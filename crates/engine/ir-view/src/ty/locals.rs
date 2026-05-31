@@ -5,15 +5,15 @@
 
 use std::collections::HashSet;
 
-use rg_body_ir::{BindingKind, BodyItemKind, BodyItemOwner, BodyValueItemKind, BodyValueItemOwner};
+use rg_body_ir::BindingKind;
 use rg_ir_model::{
-    BodyBindingRef, BodyFieldRef, BodyFunctionRef, BodyImplRef, BodyItemRef, BodyRef,
-    BodyValueItemRef, ExprId, ModuleRef, ScopeId, TargetRef, identity::DeclarationRef,
+    BodyBindingRef, BodyRef, ExprId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef,
+    TargetRef, hir::source::ItemSourceKind, identity::DeclarationRef,
 };
 use rg_parse::{FileId, Span, TextSpan};
-use rg_ty::{IndexedTy, IndexedTyRepr};
+use rg_ty::IndexedTy;
 
-use crate::IndexedViewDb;
+use crate::{IndexedViewDb, item::query::ItemQuery};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyNameNamespace {
@@ -53,20 +53,20 @@ pub enum BodyLexicalName {
         scope_distance: usize,
     },
     TypeItem {
-        item: BodyItemRef,
-        kind: BodyItemKind,
+        item: SemanticItemRef,
+        kind: SemanticItemKind,
         label: String,
         scope_distance: usize,
         has_value_constructor: bool,
     },
     ValueItem {
-        item: BodyValueItemRef,
-        kind: BodyValueItemKind,
+        item: SemanticItemRef,
+        kind: SemanticItemKind,
         label: String,
         scope_distance: usize,
     },
     Function {
-        function: BodyFunctionRef,
+        function: rg_ir_model::FunctionRef,
         label: String,
         scope_distance: usize,
     },
@@ -144,28 +144,6 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .map(|binding| binding.ty.clone()))
     }
 
-    pub fn local_value_item_ty(&self, item: BodyValueItemRef) -> anyhow::Result<Option<IndexedTy>> {
-        Ok(self
-            .db
-            .body_ir
-            .body_data(item.body)?
-            .and_then(|body| body.local_value_item(item.item))
-            .and_then(|item| item.ty().cloned())
-            .map(IndexedTyRepr::syntax))
-    }
-
-    pub fn receiver_ty(
-        &self,
-        body_ref: BodyRef,
-        receiver: ExprId,
-    ) -> anyhow::Result<Option<IndexedTy>> {
-        self.expr_ty(body_ref, receiver)
-    }
-
-    pub fn fields_for_local_type(&self, item: BodyItemRef) -> anyhow::Result<Vec<BodyFieldRef>> {
-        Ok(self.db.body_ir.fields_for_local_type(item)?)
-    }
-
     pub fn lexical_names(&self, scope: BodyNameScope) -> anyhow::Result<Vec<BodyLexicalName>> {
         let Some(body) = self.db.body_ir.body_data(scope.body)? else {
             return Ok(Vec::new());
@@ -207,72 +185,106 @@ impl<'a, 'db> BodyView<'a, 'db> {
                     });
                 }
 
-                for function_id in scope_data.local_functions.iter().rev().copied() {
-                    let Some(function) = body.local_function(function_id) else {
+                for item_id in scope_data.source_items.iter().rev().copied() {
+                    let Some(view) = body.body_item_store().and_then(|items| {
+                        items.semantic_items().find(|view| {
+                            matches!(
+                                view.source().kind,
+                                ItemSourceKind::Body(source)
+                                    if source.body == scope.body && source.item == item_id
+                            )
+                        })
+                    }) else {
                         continue;
                     };
-                    if !seen_values.insert(function.name.to_string()) {
+                    let Some(name) = view.name() else {
                         continue;
-                    }
-                    names.push(BodyLexicalName::Function {
-                        function: BodyFunctionRef {
-                            body: scope.body,
-                            function: function_id,
-                        },
-                        label: function.name.to_string(),
-                        scope_distance,
-                    });
-                }
+                    };
 
-                for item_id in scope_data.local_value_items.iter().rev().copied() {
-                    let Some(item) = body.local_value_item(item_id) else {
-                        continue;
-                    };
-                    if !seen_values.insert(item.name.to_string()) {
-                        continue;
+                    match view.item() {
+                        SemanticItemRef::Function(function) => {
+                            if !seen_values.insert(name.to_string()) {
+                                continue;
+                            }
+                            names.push(BodyLexicalName::Function {
+                                function,
+                                label: name.to_string(),
+                                scope_distance,
+                            });
+                        }
+                        SemanticItemRef::Const(_) | SemanticItemRef::Static(_) => {
+                            if !seen_values.insert(name.to_string()) {
+                                continue;
+                            }
+                            names.push(BodyLexicalName::ValueItem {
+                                item: view.item(),
+                                kind: view.kind(),
+                                label: name.to_string(),
+                                scope_distance,
+                            });
+                        }
+                        SemanticItemRef::TypeDef(ty) => {
+                            let has_value_constructor =
+                                ItemQuery::new(self.db).type_def_has_value_constructor(ty)?;
+                            if !has_value_constructor || !seen_values.insert(name.to_string()) {
+                                continue;
+                            }
+                            names.push(BodyLexicalName::TypeItem {
+                                item: view.item(),
+                                kind: view.kind(),
+                                label: name.to_string(),
+                                scope_distance,
+                                has_value_constructor,
+                            });
+                        }
+                        SemanticItemRef::Trait(_)
+                        | SemanticItemRef::Impl(_)
+                        | SemanticItemRef::TypeAlias(_) => {}
                     }
-                    names.push(BodyLexicalName::ValueItem {
-                        item: BodyValueItemRef {
-                            body: scope.body,
-                            item: item_id,
-                        },
-                        kind: item.kind,
-                        label: item.name.to_string(),
-                        scope_distance,
-                    });
                 }
             }
 
-            for item_id in scope_data.local_items.iter().rev().copied() {
-                let Some(item) = body.local_item(item_id) else {
-                    continue;
-                };
-
-                match scope.namespace {
-                    BodyNameNamespace::Values => {
-                        if !item.has_value_constructor()
-                            || !seen_values.insert(item.name.to_string())
-                        {
-                            continue;
-                        }
+            if matches!(scope.namespace, BodyNameNamespace::Types) {
+                for item_id in scope_data.source_items.iter().rev().copied() {
+                    let Some(view) = body.body_item_store().and_then(|items| {
+                        items.semantic_items().find(|view| {
+                            matches!(
+                                view.source().kind,
+                                ItemSourceKind::Body(source)
+                                    if source.body == scope.body && source.item == item_id
+                            )
+                        })
+                    }) else {
+                        continue;
+                    };
+                    if !matches!(
+                        view.item(),
+                        SemanticItemRef::TypeDef(_)
+                            | SemanticItemRef::Trait(_)
+                            | SemanticItemRef::TypeAlias(_)
+                    ) {
+                        continue;
                     }
-                    BodyNameNamespace::Types => {
-                        if !seen_types.insert(item.name.to_string()) {
-                            continue;
-                        }
+                    let Some(name) = view.name() else {
+                        continue;
+                    };
+                    if !seen_types.insert(name.to_string()) {
+                        continue;
                     }
+                    let has_value_constructor = match view.item() {
+                        SemanticItemRef::TypeDef(ty) => {
+                            ItemQuery::new(self.db).type_def_has_value_constructor(ty)?
+                        }
+                        _ => false,
+                    };
+                    names.push(BodyLexicalName::TypeItem {
+                        item: view.item(),
+                        kind: view.kind(),
+                        label: name.to_string(),
+                        scope_distance,
+                        has_value_constructor,
+                    });
                 }
-
-                names.push(BodyLexicalName::TypeItem {
-                    item: BodyItemRef {
-                        body: scope.body,
-                        item: item_id,
-                    },
-                    kind: item.kind,
-                    label: item.name.to_string(),
-                    scope_distance,
-                    has_value_constructor: item.has_value_constructor(),
-                });
             }
 
             scope_id = scope_data.parent;
@@ -359,47 +371,22 @@ impl<'a, 'db> BodyView<'a, 'db> {
         };
         let mut declarations = Vec::new();
 
-        for (item_idx, item) in body.local_items().iter().enumerate() {
-            if item.source.file_id == file_id && matches!(item.owner, BodyItemOwner::LocalScope(_))
-            {
-                declarations.push(DeclarationRef::body_item(BodyItemRef {
-                    body: body_ref,
-                    item: rg_ir_model::BodyItemId(item_idx),
-                }));
-            }
-        }
-
-        for (item_idx, item) in body.local_value_items().iter().enumerate() {
-            if item.source.file_id == file_id
-                && matches!(item.owner, BodyValueItemOwner::LocalScope(_))
-            {
-                declarations.push(DeclarationRef::body_value_item(BodyValueItemRef {
-                    body: body_ref,
-                    item: rg_ir_model::BodyValueItemId(item_idx),
-                }));
-            }
-        }
-
-        for (function_idx, function) in body.local_functions().iter().enumerate() {
-            if function.source.file_id == file_id
-                && matches!(function.owner, rg_body_ir::BodyFunctionOwner::LocalScope(_))
-            {
-                declarations.push(DeclarationRef::body_function(BodyFunctionRef {
-                    body: body_ref,
-                    function: rg_ir_model::BodyFunctionId(function_idx),
-                }));
-            }
-        }
-
-        for (impl_idx, impl_data) in body.local_impls().iter().enumerate() {
-            if impl_data.source.file_id == file_id {
-                declarations.push(DeclarationRef::body(
-                    BodyImplRef {
-                        body: body_ref,
-                        impl_id: rg_ir_model::BodyImplId(impl_idx),
-                    }
-                    .into(),
-                ));
+        for scope in body.scopes() {
+            for item_id in &scope.source_items {
+                let Some(view) = body.body_item_store().and_then(|items| {
+                    items.semantic_items().find(|view| {
+                        matches!(
+                            view.source().kind,
+                            ItemSourceKind::Body(source)
+                                if source.body == body_ref && source.item == *item_id
+                        )
+                    })
+                }) else {
+                    continue;
+                };
+                if view.source().file_id == file_id {
+                    declarations.push(DeclarationRef::semantic(view.item().into()));
+                }
             }
         }
 

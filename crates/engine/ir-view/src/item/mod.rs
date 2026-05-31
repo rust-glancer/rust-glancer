@@ -6,3 +6,4 @@ pub mod enum_variant;
 pub mod index;
 pub mod module;
 pub mod path;
+pub(crate) mod query;

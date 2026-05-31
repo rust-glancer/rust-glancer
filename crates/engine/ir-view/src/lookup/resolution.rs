@@ -8,10 +8,10 @@ use rg_body_ir::{BodyResolution, BodyTypePathResolution};
 use rg_def_map::Path;
 use rg_ir_model::{
     BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ResolvedDeclarationRef, ScopeId,
-    identity::{DeclarationRef, DeclarationRefRepr, ExprRef, NameDefRef, NameDefRefRepr},
+    identity::{DeclarationRef, ExprRef},
 };
 
-use crate::IndexedViewDb;
+use crate::{IndexedViewDb, item::query::ItemQuery};
 
 pub struct ResolutionView<'a, 'db>(&'a IndexedViewDb<'db>);
 
@@ -38,19 +38,12 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         &self,
         declaration: DeclarationRef,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        match declaration.repr() {
-            DeclarationRefRepr::Module(module) => self.declarations_for_def(DefId::Module(module)),
-            DeclarationRefRepr::NameDef(name_def) => match name_def.repr() {
-                NameDefRefRepr::DefMapLocal(local_def) => {
-                    self.declarations_for_def(DefId::Local(local_def))
-                }
-            },
-            DeclarationRefRepr::Item(_)
-            | DeclarationRefRepr::Function(_)
-            | DeclarationRefRepr::Field(_)
-            | DeclarationRefRepr::EnumVariant(_)
-            | DeclarationRefRepr::Binding(_)
-            | DeclarationRefRepr::Impl(_) => Ok(vec![declaration]),
+        match declaration {
+            DeclarationRef::Module(module) => self.declarations_for_def(DefId::Module(module)),
+            DeclarationRef::LocalDef(local_def) => {
+                self.declarations_for_def(DefId::Local(local_def))
+            }
+            DeclarationRef::Semantic(_) | DeclarationRef::BodyBinding(_) => Ok(vec![declaration]),
         }
     }
 
@@ -66,7 +59,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
     }
 
     fn fallback_name_def(&self, local_def: LocalDefRef) -> DeclarationRef {
-        DeclarationRef::name_def(NameDefRef::def_map_local(local_def))
+        DeclarationRef::local_def(local_def)
     }
 
     fn declarations_for_def(&self, def: DefId) -> anyhow::Result<Vec<DeclarationRef>> {
@@ -85,7 +78,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         &self,
         local_def: LocalDefRef,
     ) -> anyhow::Result<Option<DeclarationRef>> {
-        let Some(item) = self.0.semantic_ir.semantic_item_for_local_def(local_def)? else {
+        let Some(item) = ItemQuery::new(self.0).semantic_item_for_local_def(local_def)? else {
             return Ok(None);
         };
 
@@ -183,9 +176,6 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
             ResolvedDeclarationRef::Semantic(declaration) => {
                 Ok(vec![DeclarationRef::semantic(declaration)])
             }
-            ResolvedDeclarationRef::Body(declaration) => {
-                Ok(vec![DeclarationRef::body(declaration)])
-            }
         }
     }
 
@@ -194,13 +184,16 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         resolution: BodyTypePathResolution,
     ) -> Vec<DeclarationRef> {
         match resolution {
-            BodyTypePathResolution::BodyLocal(item) => vec![DeclarationRef::body_item(item)],
             BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
                 types
                     .into_iter()
                     .map(|ty| DeclarationRef::semantic(ty.into()))
                     .collect()
             }
+            BodyTypePathResolution::TypeAliases(aliases) => aliases
+                .into_iter()
+                .map(|alias| DeclarationRef::semantic(alias.into()))
+                .collect(),
             BodyTypePathResolution::Traits(traits) => traits
                 .into_iter()
                 .map(|ty| DeclarationRef::semantic(ty.into()))

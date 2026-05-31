@@ -3,7 +3,6 @@ mod cursor;
 mod ir;
 mod resolution;
 mod store;
-mod view;
 mod walk;
 
 use rg_def_map::PackageSlot;
@@ -16,20 +15,16 @@ mod tests;
 
 pub use self::{
     cursor::{
-        BodyCursorCandidate, BodyUnqualifiedCompletionCandidate, DotCompletionSite,
-        PathCompletionNamespace, PathCompletionSite, RecordFieldCompletionSite,
-        UnqualifiedCompletionNamespace, UnqualifiedCompletionSite,
+        BodyCursorCandidate, DotCompletionSite, PathCompletionNamespace, PathCompletionSite,
+        RecordFieldCompletionSite, UnqualifiedCompletionNamespace, UnqualifiedCompletionSite,
     },
     ir::{
-        BindingData, BindingKind, BodyData, BodyEnumVariantData, BodyFieldData, BodyFunctionData,
-        BodyFunctionOwner, BodyImplData, BodyIrStats, BodyItemData, BodyItemDeclaration,
-        BodyItemKind, BodyItemOwner, BodyPath, BodySelfParamKind, BodySource, BodySourceItems,
-        BodyValueItemData, BodyValueItemDeclaration, BodyValueItemKind, BodyValueItemOwner,
-        ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind,
-        ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, LabelData, LiteralKind, PackageBodies,
-        PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordExprField,
-        RecordExprSpread, RecordPatField, ScopeData, StmtData, StmtKind, TargetBodies,
-        TargetBodiesStatus,
+        BindingData, BindingKind, BodyData, BodyIrStats, BodyPath, BodySelfParamKind, BodySource,
+        BodySourceItems, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp,
+        ExprBlockKind, ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, LabelData, LiteralKind,
+        PackageBodies, PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind,
+        RecordExprField, RecordExprSpread, RecordPatField, ScopeData, StmtData, StmtKind,
+        TargetBodies, TargetBodiesStatus,
     },
     store::{BodyIrDb, BodyIrReadTxn},
 };
@@ -41,9 +36,6 @@ pub use self::ir::{BodyResolution, BodyTypePathResolution};
 pub use self::resolution::{
     BodyAutoderef, BodyAutoderefCandidate, BodyAutoderefCandidates, BodyAutoderefMode,
 };
-
-// TODO: Shouldn't be exposed normally; remove after body-local declaration projection moves out.
-pub use self::view::BodyDeclarationView;
 
 /// One package-local source file whose function bodies should be lowered during a partial rebuild.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

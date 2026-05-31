@@ -6,29 +6,17 @@
 
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
-    BodyFunctionRef, BodyRef, FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef,
-    hir::items::ImplData,
+    FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef, hir::items::ImplData,
 };
 use rg_item_tree::{GenericArg, GenericParams, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
-use rg_ty::{
-    IndexedGenericArg, IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTyRepr,
-    IndexedTypeSubst,
-};
+use rg_ty::{IndexedGenericArg, IndexedNominalTy, IndexedTy, IndexedTyRepr, IndexedTypeSubst};
 
-use crate::{
-    ir::body::BodyData,
-    ir::item::{BodyFunctionOwner, BodyImplData},
-};
-
-use super::{
-    ty::{
-        body_generic_arg_ty, generic_arg_type_ref, ty_from_type_ref_in_context,
-        type_param_name_from_type_ref,
-    },
-    type_path::BodyTypePathResolver,
+use super::ty::{
+    body_generic_arg_ty, generic_arg_type_ref, ty_from_type_ref_in_context,
+    type_param_name_from_type_ref,
 };
 
 /// Result of matching one trait impl header against a receiver type.
@@ -100,6 +88,19 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
         let Some(impl_data) = self.semantic_ir.impl_data(impl_ref)? else {
             return Ok(false);
         };
+        self.impl_applies_to_receiver(impl_ref, impl_data, receiver_ty)
+    }
+
+    /// Checks whether an already-loaded inherent impl applies to a nominal receiver.
+    ///
+    /// Both target Semantic IR and body shadow item stores use `ImplData`, so the low-level
+    /// receiver check should not care which store provided the impl.
+    pub(crate) fn impl_applies_to_receiver(
+        &self,
+        impl_ref: ImplRef,
+        impl_data: &ImplData,
+        receiver_ty: &IndexedNominalTy,
+    ) -> Result<bool, PackageStoreError> {
         if !impl_data.resolved_self_tys.contains(&receiver_ty.def) {
             return Ok(false);
         }
@@ -183,38 +184,18 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
             .unwrap_or(TraitApplicability::No))
     }
 
-    /// Builds impl-header substitutions for a method's owning impl.
-    ///
-    /// For `impl<U> Wrapper<U> { fn get(&self) -> U }` called on `Wrapper<User>`, this returns
-    /// `U -> User` so the method return type can be resolved as `User`.
-    pub(super) fn semantic_impl_self_subst(
-        &self,
-        function_ref: FunctionRef,
-        receiver_ty: &IndexedNominalTy,
-    ) -> IndexedTypeSubst {
-        // Convert the impl header into substitutions for method signatures. For
-        // `impl<U> Wrapper<U>`, a `Wrapper<User>` receiver gives `U -> User`.
-        let Ok(Some(function_data)) = self.semantic_ir.function_data(function_ref) else {
-            return IndexedTypeSubst::new();
-        };
-        let ItemOwner::Impl(impl_id) = function_data.owner else {
-            return IndexedTypeSubst::new();
-        };
-        let Ok(Some(impl_data)) = self.semantic_ir.impl_data(ImplRef {
-            origin: function_ref.origin,
-            id: impl_id,
-        }) else {
-            return IndexedTypeSubst::new();
-        };
-
-        self.semantic_impl_self_subst_for_impl(impl_data, receiver_ty)
-    }
-
     /// Builds impl-header substitutions from already-loaded semantic impl data.
     ///
-    /// This is the associated-item form of `semantic_impl_self_subst`, useful when the caller has
-    /// an impl candidate rather than a function reference.
+    /// This is useful when the caller has an impl candidate rather than a function reference.
     pub(super) fn semantic_impl_self_subst_for_impl(
+        &self,
+        impl_data: &ImplData,
+        receiver_ty: &IndexedNominalTy,
+    ) -> IndexedTypeSubst {
+        self.impl_self_subst_for_impl(impl_data, receiver_ty)
+    }
+
+    pub(super) fn impl_self_subst_for_impl(
         &self,
         impl_data: &ImplData,
         receiver_ty: &IndexedNominalTy,
@@ -531,177 +512,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
             IndexedTy::Unit
             | IndexedTy::Never
             | IndexedTy::Primitive(_)
-            | IndexedTy::Repr(
-                IndexedTyRepr::LocalNominal(_)
-                | IndexedTyRepr::Nominal(_)
-                | IndexedTyRepr::SelfTy(_),
-            ) => false,
+            | IndexedTy::Repr(IndexedTyRepr::Nominal(_) | IndexedTyRepr::SelfTy(_)) => false,
         }
-    }
-}
-
-/// Matcher for impls declared inside a body.
-pub(super) struct LocalImplMatcher<'query, 'db, 'body> {
-    base: BodyImplMatcher<'query, 'db>,
-    body_ref: BodyRef,
-    body: &'body BodyData,
-}
-
-impl<'query, 'db, 'body> LocalImplMatcher<'query, 'db, 'body> {
-    /// Creates a matcher for impls declared inside one body.
-    pub(super) fn new(
-        def_map: &'query DefMapReadTxn<'db>,
-        semantic_ir: &'query SemanticIrReadTxn<'db>,
-        body_ref: BodyRef,
-        body: &'body BodyData,
-    ) -> Self {
-        Self {
-            base: BodyImplMatcher::new(def_map, semantic_ir),
-            body_ref,
-            body,
-        }
-    }
-
-    /// Checks whether a body-local function belongs to an impl that can be called on the receiver.
-    ///
-    /// For a local `impl<T> Wrapper<T>`, a method candidate is accepted for `Wrapper<User>` and
-    /// rejected for unrelated local types.
-    pub(super) fn local_function_applies_to_receiver(
-        &self,
-        function_ref: BodyFunctionRef,
-        receiver_ty: &IndexedLocalNominalTy,
-    ) -> Result<bool, PackageStoreError> {
-        // Body-local inherent impls are selected by exact local item identity, then refined by the
-        // same shallow generic-argument compatibility rule used for module-level impls.
-        if function_ref.body != receiver_ty.item.body {
-            return Ok(false);
-        }
-        let Some(function_data) = self.body.local_function(function_ref.function) else {
-            return Ok(false);
-        };
-        let BodyFunctionOwner::LocalImpl(impl_id) = function_data.owner else {
-            return Ok(false);
-        };
-        let Some(impl_data) = self.body.local_impl(impl_id) else {
-            return Ok(false);
-        };
-
-        self.local_impl_applies_to_receiver(impl_data, receiver_ty)
-    }
-
-    /// Checks whether a body-local inherent impl applies to the receiver type.
-    ///
-    /// Body-local trait impls are skipped here; this matcher only models inherent local impls.
-    pub(super) fn local_impl_applies_to_receiver(
-        &self,
-        impl_data: &BodyImplData,
-        receiver_ty: &IndexedLocalNominalTy,
-    ) -> Result<bool, PackageStoreError> {
-        // Body-local trait impls are an explicit non-goal. They are rare enough that modeling
-        // their lookup would add more complexity than useful LSP signal at this stage.
-        if impl_data.self_item != Some(receiver_ty.item) || impl_data.trait_ref.is_some() {
-            return Ok(false);
-        }
-
-        self.local_impl_self_args_match_receiver(impl_data, receiver_ty)
-    }
-
-    /// Builds impl-header substitutions for a body-local method's owning impl.
-    ///
-    /// For local `impl<U> Wrapper<U> { fn get(&self) -> U }` called on `Wrapper<User>`, this
-    /// returns `U -> User`.
-    pub(super) fn local_impl_self_subst(
-        &self,
-        function_ref: BodyFunctionRef,
-        receiver_ty: &IndexedLocalNominalTy,
-    ) -> IndexedTypeSubst {
-        // Convert body-local impl generics into method-signature substitutions. For
-        // `impl<U> Wrapper<U>`, a `Wrapper<User>` receiver gives `U -> User`.
-        if function_ref.body != receiver_ty.item.body {
-            return IndexedTypeSubst::new();
-        }
-        let Some(function_data) = self.body.local_function(function_ref.function) else {
-            return IndexedTypeSubst::new();
-        };
-        let BodyFunctionOwner::LocalImpl(impl_id) = function_data.owner else {
-            return IndexedTypeSubst::new();
-        };
-        let Some(impl_data) = self.body.local_impl(impl_id) else {
-            return IndexedTypeSubst::new();
-        };
-
-        self.local_impl_self_subst_for_impl(impl_data, receiver_ty)
-    }
-
-    /// Builds substitutions from already-loaded body-local impl data.
-    ///
-    /// This is used by local associated items whose type depends on impl generics, such as
-    /// `impl<T> Wrapper<T> { type Item = T; }`.
-    pub(super) fn local_impl_self_subst_for_impl(
-        &self,
-        impl_data: &BodyImplData,
-        receiver_ty: &IndexedLocalNominalTy,
-    ) -> IndexedTypeSubst {
-        if impl_data.self_item != Some(receiver_ty.item) {
-            return IndexedTypeSubst::new();
-        }
-
-        BodyImplMatcher::impl_self_subst(&impl_data.generics, &impl_data.self_ty, &receiver_ty.args)
-    }
-
-    /// Performs the boolean self-type argument check used by body-local inherent impls.
-    ///
-    /// Type parameters in the impl self type act as wildcards; concrete arguments must equal the
-    /// receiver's known arguments.
-    fn local_impl_self_args_match_receiver(
-        &self,
-        impl_data: &BodyImplData,
-        receiver_ty: &IndexedLocalNominalTy,
-    ) -> Result<bool, PackageStoreError> {
-        // Local impl matching is intentionally shallow. Type parameters act as wildcards, while
-        // concrete args such as `impl Wrapper<User>` must equal the receiver's known args.
-        let TypeRef::Path(self_ty) = &impl_data.self_ty else {
-            return Ok(true);
-        };
-        let Some(segment) = self_ty.segments.last() else {
-            return Ok(true);
-        };
-
-        let Some(impl_type_args) = BodyImplMatcher::item_tree_type_args(&segment.args) else {
-            return Ok(false);
-        };
-        let Some(receiver_type_args) = BodyImplMatcher::indexed_type_args(&receiver_ty.args) else {
-            return Ok(false);
-        };
-        if impl_type_args.len() != receiver_type_args.len() {
-            return Ok(false);
-        }
-
-        let impl_type_params = BodyImplMatcher::impl_type_param_names(&impl_data.generics);
-        let resolver = BodyTypePathResolver::new(
-            self.base.def_map,
-            self.base.semantic_ir,
-            self.body_ref,
-            self.body,
-        );
-        for (impl_arg, receiver_arg) in impl_type_args.into_iter().zip(receiver_type_args) {
-            if type_param_name_from_type_ref(impl_arg)
-                .as_deref()
-                .is_some_and(|name| impl_type_params.contains(&name))
-            {
-                continue;
-            }
-
-            let impl_arg_ty = resolver.ty_from_type_ref_in_scope_with_subst(
-                impl_arg,
-                impl_data.scope,
-                &IndexedTypeSubst::new(),
-            )?;
-            if impl_arg_ty != receiver_arg {
-                return Ok(false);
-            }
-        }
-
-        Ok(true)
     }
 }

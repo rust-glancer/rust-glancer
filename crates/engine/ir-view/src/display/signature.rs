@@ -3,17 +3,14 @@
 //! The renderer deliberately stays syntactic. It formats the declaration facts our IR already
 //! stores instead of trying to reconstruct rustc-perfect signatures.
 
-use rg_body_ir::{
-    BindingData, BodyFieldData, BodyFunctionData, BodyItemData, BodyItemDeclaration,
-    BodyValueItemData, BodyValueItemDeclaration,
-};
+use rg_body_ir::BindingData;
 use rg_ir_model::hir::items::{
     ConstData, EnumData, FieldData, FunctionData, StaticData, StructData, TraitData, TypeAliasData,
     UnionData,
 };
 use rg_semantic_ir::{
-    EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem, FunctionQualifiers,
-    GenericParams, Mutability, ParamItem, TypeBound, TypeRef, VisibilityLevel, WherePredicate,
+    EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionQualifiers, GenericParams, Mutability,
+    ParamItem, TypeBound, TypeRef, VisibilityLevel, WherePredicate,
 };
 
 use crate::{
@@ -140,95 +137,15 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
     }
 
     pub fn member_field_signature(&self, data: &MemberField<'_>) -> Option<String> {
-        match data {
-            MemberField::Semantic { data, .. } => self.field_signature(*data),
-            MemberField::BodyLocal { data, .. } => self.local_field_signature(*data),
-        }
+        self.field_signature(data.data())
     }
 
     pub fn enum_variant_signature(&self, variant: &EnumVariantItem) -> String {
         enum_variant_signature(variant)
     }
 
-    pub fn local_item_signature(&self, data: &BodyItemData) -> String {
-        match &data.declaration {
-            BodyItemDeclaration::Struct(item) => {
-                let header = format!(
-                    "struct {}{}{}",
-                    data.name,
-                    generic_params(&item.generics),
-                    where_clause(&item.generics)
-                );
-                item_with_fields(header, &item.fields)
-            }
-            BodyItemDeclaration::Enum(item) => {
-                let header = format!(
-                    "enum {}{}{}",
-                    data.name,
-                    generic_params(&item.generics),
-                    where_clause(&item.generics)
-                );
-                if item.variants.is_empty() {
-                    format!("{header} {{}}")
-                } else {
-                    format_block(header, item.variants.iter().map(enum_variant_signature))
-                }
-            }
-            BodyItemDeclaration::Union(item) => {
-                let header = format!(
-                    "union {}{}{}",
-                    data.name,
-                    generic_params(&item.generics),
-                    where_clause(&item.generics)
-                );
-                item_with_record_fields(header, &item.fields)
-            }
-            BodyItemDeclaration::TypeAlias(item) => type_alias_signature(
-                &data.name,
-                Some(&item.generics),
-                &item.bounds,
-                item.aliased_ty.as_ref(),
-            ),
-            BodyItemDeclaration::Trait(item) => {
-                let unsafe_prefix = if item.is_unsafe { "unsafe " } else { "" };
-                let super_traits = if item.super_traits.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {}", type_bounds(&item.super_traits))
-                };
-                format!(
-                    "{unsafe_prefix}trait {}{}{}{}",
-                    data.name,
-                    generic_params(&item.generics),
-                    super_traits,
-                    where_clause(&item.generics)
-                )
-            }
-        }
-    }
-
-    pub fn local_value_item_signature(&self, data: &BodyValueItemData) -> String {
-        match &data.declaration {
-            BodyValueItemDeclaration::Const(item) => const_signature(&data.name, item.ty.as_ref()),
-            BodyValueItemDeclaration::Static(item) => {
-                static_signature(&data.name, item.mutability, item.ty.as_ref())
-            }
-        }
-    }
-
-    pub fn local_function_signature(&self, data: &BodyFunctionData) -> String {
-        function_signature(&data.name, &data.declaration)
-    }
-
     pub fn member_function_signature(&self, data: &MemberFunction<'_>) -> String {
-        match data {
-            MemberFunction::Semantic { data, .. } => self.function_signature(data),
-            MemberFunction::BodyLocal { data, .. } => self.local_function_signature(data),
-        }
-    }
-
-    pub fn local_field_signature(&self, data: BodyFieldData<'_>) -> Option<String> {
-        field_signature(data.field)
+        self.function_signature(data.data())
     }
 
     pub fn binding_signature(&self, data: &BindingData) -> anyhow::Result<String> {
@@ -248,16 +165,6 @@ fn visibility_prefix(visibility: &VisibilityLevel) -> String {
     } else {
         format!("{visibility} ")
     }
-}
-
-fn function_signature(name: &str, item: &FunctionItem) -> String {
-    function_signature_from_parts(
-        name,
-        Some(&item.generics),
-        &item.params,
-        item.ret_ty.as_ref(),
-        item.qualifiers,
-    )
 }
 
 fn function_signature_from_parts(

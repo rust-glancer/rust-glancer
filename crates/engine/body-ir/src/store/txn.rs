@@ -2,22 +2,19 @@
 
 use rg_def_map::{DefMapReadTxn, PackageSlot, Path};
 use rg_ir_model::{
-    BodyBindingRef, BodyDeclarationRef, BodyEnumVariantRef, BodyFieldRef, BodyFunctionRef,
-    BodyImplRef, BodyItemRef, BodyRef, BodyValueItemRef, FieldRef, FunctionRef, ScopeId, TargetRef,
-    TraitApplicability, TraitImplRef,
+    BodyRef, FieldRef, FunctionRef, ImplRef, ItemOwner, ScopeId, TargetRef, TraitApplicability,
+    TraitImplRef,
 };
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
-use rg_ty::{IndexedLocalNominalTy, IndexedNominalTy, IndexedTy, IndexedTypeSubst};
+use rg_ty::{IndexedNominalTy, IndexedTy, IndexedTypeSubst};
 
 use crate::{
-    BindingData, BodyData, BodyDeclarationView, BodyEnumVariantData, BodyFieldData,
-    BodyFunctionData, BodyResolution, BodyTypePathResolution, PackageBodies, TargetBodies,
+    BodyData, BodyResolution, BodyTypePathResolution, PackageBodies, TargetBodies,
     resolution::{
         self, BodyImplMatcher, BodyTypePathResolver, BodyValuePathResolver,
         ty_from_type_ref_in_context,
     },
-    view::BodyDeclarationData,
 };
 
 /// Read-only Body IR access for one query transaction.
@@ -48,38 +45,6 @@ impl<'db> BodyIrReadTxn<'db> {
         Ok(self
             .target_bodies(body_ref.target)?
             .and_then(|target_bodies| target_bodies.body(body_ref.body)))
-    }
-
-    /// Returns declaration-shaped data for one body-local declaration.
-    pub fn body_declaration_view(
-        &self,
-        declaration: BodyDeclarationRef,
-    ) -> Result<Option<BodyDeclarationView<'_>>, PackageStoreError> {
-        let data = match declaration {
-            BodyDeclarationRef::Binding(binding_ref) => self
-                .local_binding_data(binding_ref)?
-                .map(BodyDeclarationData::Binding),
-            BodyDeclarationRef::Item(item_ref) => self
-                .local_item_data(item_ref)?
-                .map(BodyDeclarationData::Item),
-            BodyDeclarationRef::ValueItem(item_ref) => self
-                .local_value_item_data(item_ref)?
-                .map(BodyDeclarationData::ValueItem),
-            BodyDeclarationRef::Impl(impl_ref) => self
-                .local_impl_data(impl_ref)?
-                .map(BodyDeclarationData::Impl),
-            BodyDeclarationRef::Field(field_ref) => self
-                .local_field_data(field_ref)?
-                .map(BodyDeclarationData::Field),
-            BodyDeclarationRef::EnumVariant(variant_ref) => self
-                .local_enum_variant_data(variant_ref)?
-                .map(BodyDeclarationData::EnumVariant),
-            BodyDeclarationRef::Function(function_ref) => self
-                .local_function_data(function_ref)?
-                .map(BodyDeclarationData::Function),
-        };
-
-        Ok(data.map(BodyDeclarationView::new))
     }
 
     /// Resolves a type path from a body-local lexical scope.
@@ -154,6 +119,30 @@ impl<'db> BodyIrReadTxn<'db> {
         function_ref: FunctionRef,
         receiver_ty: &IndexedNominalTy,
     ) -> Result<bool, PackageStoreError> {
+        if let rg_ir_model::DefMapRef::Body(body_ref) = function_ref.origin {
+            let Some(body) = self.body_data(body_ref)? else {
+                return Ok(false);
+            };
+            let Some(item_store) = body.body_item_store() else {
+                return Ok(false);
+            };
+            let Some(function_data) = item_store.function_data(function_ref.id) else {
+                return Ok(false);
+            };
+            let ItemOwner::Impl(impl_id) = function_data.owner else {
+                return Ok(true);
+            };
+            let impl_ref = ImplRef {
+                origin: function_ref.origin,
+                id: impl_id,
+            };
+            let Some(impl_data) = item_store.impl_data(impl_id) else {
+                return Ok(false);
+            };
+            return resolution::BodyImplMatcher::new(def_map, semantic_ir)
+                .impl_applies_to_receiver(impl_ref, impl_data, receiver_ty);
+        }
+
         resolution::semantic_function_applies_to_receiver(
             def_map,
             semantic_ir,
@@ -189,144 +178,5 @@ impl<'db> BodyIrReadTxn<'db> {
         Ok(BodyImplMatcher::new(def_map, semantic_ir)
             .semantic_trait_impl_applicability(trait_impl, receiver_ty)?
             .is_applicable())
-    }
-
-    /// Checks whether a body-local function is a plausible method candidate for a receiver type.
-    pub fn local_function_applies_to_receiver(
-        &self,
-        def_map: &DefMapReadTxn<'db>,
-        semantic_ir: &SemanticIrReadTxn<'db>,
-        function_ref: BodyFunctionRef,
-        receiver_ty: &IndexedLocalNominalTy,
-    ) -> Result<bool, PackageStoreError> {
-        let Some(body) = self.body_data(function_ref.body)? else {
-            return Ok(false);
-        };
-        resolution::local_function_applies_to_receiver(
-            def_map,
-            semantic_ir,
-            body,
-            function_ref,
-            receiver_ty,
-        )
-    }
-
-    /// Returns declaration data for one local binding.
-    fn local_binding_data(
-        &self,
-        binding_ref: BodyBindingRef,
-    ) -> Result<Option<&BindingData>, PackageStoreError> {
-        Ok(self
-            .body_data(binding_ref.body)?
-            .and_then(|body| body.binding(binding_ref.binding)))
-    }
-
-    /// Returns declaration data for one body-local type-namespace item.
-    fn local_item_data(
-        &self,
-        item_ref: BodyItemRef,
-    ) -> Result<Option<&crate::BodyItemData>, PackageStoreError> {
-        Ok(self
-            .body_data(item_ref.body)?
-            .and_then(|body| body.local_item(item_ref.item)))
-    }
-
-    /// Returns declaration data for one body-local value-namespace item.
-    fn local_value_item_data(
-        &self,
-        item_ref: BodyValueItemRef,
-    ) -> Result<Option<&crate::BodyValueItemData>, PackageStoreError> {
-        Ok(self
-            .body_data(item_ref.body)?
-            .and_then(|body| body.local_value_item(item_ref.item)))
-    }
-
-    /// Returns declaration data for one body-local impl block.
-    fn local_impl_data(
-        &self,
-        impl_ref: BodyImplRef,
-    ) -> Result<Option<&crate::BodyImplData>, PackageStoreError> {
-        Ok(self
-            .body_data(impl_ref.body)?
-            .and_then(|body| body.local_impl(impl_ref.impl_id)))
-    }
-
-    /// Returns all body-local fields declared for a body-local type item.
-    pub fn fields_for_local_type(
-        &self,
-        item_ref: BodyItemRef,
-    ) -> Result<Vec<BodyFieldRef>, PackageStoreError> {
-        let Some(body) = self.body_data(item_ref.body)? else {
-            return Ok(Vec::new());
-        };
-        let Some(item) = body.local_item(item_ref.item) else {
-            return Ok(Vec::new());
-        };
-
-        let fields = (0..item.fields().len())
-            .map(|index| BodyFieldRef {
-                item: item_ref,
-                index,
-            })
-            .collect();
-        Ok(fields)
-    }
-
-    /// Returns declaration data for one body-local field.
-    pub fn local_field_data(
-        &self,
-        field_ref: BodyFieldRef,
-    ) -> Result<Option<BodyFieldData<'_>>, PackageStoreError> {
-        let Some(body) = self.body_data(field_ref.item.body)? else {
-            return Ok(None);
-        };
-        let Some(item) = body.local_item(field_ref.item.item) else {
-            return Ok(None);
-        };
-        let Some(field) = item.field(field_ref.index) else {
-            return Ok(None);
-        };
-
-        Ok(Some(BodyFieldData { item, field }))
-    }
-
-    /// Returns declaration data for one body-local enum variant.
-    pub fn local_enum_variant_data(
-        &self,
-        variant_ref: BodyEnumVariantRef,
-    ) -> Result<Option<BodyEnumVariantData<'_>>, PackageStoreError> {
-        let Some(body) = self.body_data(variant_ref.item.body)? else {
-            return Ok(None);
-        };
-        let Some(item) = body.local_item(variant_ref.item.item) else {
-            return Ok(None);
-        };
-        let Some(variant) = item.enum_variant(variant_ref.index) else {
-            return Ok(None);
-        };
-
-        Ok(Some(BodyEnumVariantData { item, variant }))
-    }
-
-    /// Returns inherent body-local impl functions declared for a body-local type item.
-    pub fn inherent_functions_for_local_type(
-        &self,
-        item_ref: BodyItemRef,
-    ) -> Result<Vec<BodyFunctionRef>, PackageStoreError> {
-        let Some(body) = self.body_data(item_ref.body)? else {
-            return Ok(Vec::new());
-        };
-
-        Ok(body.inherent_functions_for_local_type(item_ref.body, item_ref))
-    }
-
-    /// Returns declaration data for one body-local function.
-    pub fn local_function_data(
-        &self,
-        function_ref: BodyFunctionRef,
-    ) -> Result<Option<&BodyFunctionData>, PackageStoreError> {
-        Ok(self
-            .body_data(function_ref.body)?
-            .and_then(|body| body.local_function(function_ref.function)))
     }
 }

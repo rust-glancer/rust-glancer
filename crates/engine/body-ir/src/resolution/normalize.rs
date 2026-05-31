@@ -9,16 +9,25 @@ use rg_ty::{IndexedGenericArg, IndexedTy, IndexedTyExt};
 
 use crate::{ir::body::BodyData, ir::expr::ExprWrapperKind};
 
-use super::push_unique;
+use super::{item_query::BodyItemQuery, push_unique};
 
 pub(super) struct IndexedTyNormalizer<'db, 'body> {
     semantic_ir: &'db SemanticIrReadTxn<'db>,
+    body_ref: rg_ir_model::BodyRef,
     body: &'body BodyData,
 }
 
 impl<'db, 'body> IndexedTyNormalizer<'db, 'body> {
-    pub(super) fn new(semantic_ir: &'db SemanticIrReadTxn<'db>, body: &'body BodyData) -> Self {
-        Self { semantic_ir, body }
+    pub(super) fn new(
+        semantic_ir: &'db SemanticIrReadTxn<'db>,
+        body_ref: rg_ir_model::BodyRef,
+        body: &'body BodyData,
+    ) -> Self {
+        Self {
+            semantic_ir,
+            body_ref,
+            body,
+        }
     }
 
     pub(super) fn ty_for_wrapper(&self, kind: ExprWrapperKind, inner_ty: IndexedTy) -> IndexedTy {
@@ -38,24 +47,14 @@ impl<'db, 'body> IndexedTyNormalizer<'db, 'body> {
 
     fn try_output_ty(&self, ty: &IndexedTy) -> IndexedTy {
         let mut outputs = Vec::new();
+        let item_query = BodyItemQuery::new(self.semantic_ir, self.body_ref, self.body);
 
         for nominal in ty.as_nominals() {
-            let Ok(Some(name)) = self.semantic_ir.type_def_name(nominal.def) else {
+            let Ok(Some(name)) = item_query.type_def_name(nominal.def) else {
                 continue;
             };
             if matches!(name, "Result" | "Option") {
                 if let Some(output) = first_type_arg(&nominal.args) {
-                    push_unique(&mut outputs, output);
-                }
-            }
-        }
-
-        for local in ty.as_local_nominals() {
-            let Some(item) = self.body.local_item(local.item.item) else {
-                continue;
-            };
-            if matches!(item.name.as_str(), "Result" | "Option") {
-                if let Some(output) = first_type_arg(&local.args) {
                     push_unique(&mut outputs, output);
                 }
             }

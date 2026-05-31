@@ -6,17 +6,13 @@
 
 use rg_body_ir::{BodyAutoderef, BodyAutoderefMode, BodyResolution, ExprKind};
 use rg_ir_model::{
-    AssocItemId, FunctionRef as SemanticFunctionRef, ImplRef as SemanticImplRef, ItemOwner,
-    SemanticItemRef, TraitRef, TypeDefRef,
-    identity::{
-        DeclarationRef, DeclarationRefRepr, ExprRef, FunctionRef, FunctionRefRepr, ImplRef,
-        ItemRefRepr, NameDefRefRepr,
-    },
+    AssocItemId, FunctionRef, ImplRef, ItemOwner, SemanticDeclarationRef, SemanticItemRef,
+    TraitRef, TypeDefRef,
+    identity::{DeclarationRef, ExprRef},
 };
-use rg_ir_model::{BodyImplId, BodyImplRef, BodyItemRef};
 use rg_ty::{IndexedTy, IndexedTyExt};
 
-use crate::{IndexedViewDb, lookup::resolution::ResolutionView};
+use crate::{IndexedViewDb, item::query::ItemQuery, lookup::resolution::ResolutionView};
 
 pub struct ImplementationView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
@@ -65,41 +61,39 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     ) -> anyhow::Result<Vec<DeclarationRef>> {
         let mut implementations = Vec::new();
 
-        match declaration.repr() {
-            DeclarationRefRepr::Item(item) => match item.repr() {
-                ItemRefRepr::Semantic(item) => match item {
-                    SemanticItemRef::TypeDef(ty) => {
-                        self.extend_type_def_implementations(&mut implementations, ty)?;
-                    }
-                    SemanticItemRef::Trait(trait_ref) => {
-                        self.extend_trait_implementations(&mut implementations, trait_ref)?;
-                    }
-                    SemanticItemRef::Function(function) => {
-                        self.extend_function_implementations(
-                            &mut implementations,
-                            DeclarationRef::function(FunctionRef::semantic(function)),
-                            None,
-                        )?;
-                    }
-                    SemanticItemRef::Impl(_)
-                    | SemanticItemRef::TypeAlias(_)
-                    | SemanticItemRef::Const(_)
-                    | SemanticItemRef::Static(_) => {}
-                },
-                ItemRefRepr::BodyLocal(item) => {
-                    self.extend_local_type_implementations(&mut implementations, item)?;
+        match declaration {
+            DeclarationRef::Semantic(SemanticDeclarationRef::Item(item)) => match item {
+                SemanticItemRef::TypeDef(ty) => {
+                    self.extend_type_def_implementations(&mut implementations, ty)?;
                 }
-                ItemRefRepr::BodyLocalValue(_) => {}
+                SemanticItemRef::Trait(trait_ref) => {
+                    self.extend_trait_implementations(&mut implementations, trait_ref)?;
+                }
+                SemanticItemRef::Function(function) => {
+                    self.extend_function_implementations(
+                        &mut implementations,
+                        DeclarationRef::semantic(function.into()),
+                        None,
+                    )?;
+                }
+                SemanticItemRef::Impl(_)
+                | SemanticItemRef::TypeAlias(_)
+                | SemanticItemRef::Const(_)
+                | SemanticItemRef::Static(_) => {}
             },
-            DeclarationRefRepr::Function(function) => {
+            DeclarationRef::LocalDef(local_def) => {
+                let Some(SemanticItemRef::Function(function)) =
+                    ItemQuery::new(self.db).semantic_item_for_local_def(local_def)?
+                else {
+                    return Ok(implementations);
+                };
                 self.extend_function_implementations(
                     &mut implementations,
-                    DeclarationRef::function(function),
+                    DeclarationRef::semantic(function.into()),
                     None,
                 )?;
             }
-            DeclarationRefRepr::Binding(binding) => {
-                let binding = binding.body_ir();
+            DeclarationRef::BodyBinding(binding) => {
                 let Some(body) = self.db.body_ir.body_data(binding.body)? else {
                     return Ok(implementations);
                 };
@@ -108,24 +102,10 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
                 };
                 self.extend_ty_implementations(&mut implementations, &binding_data.ty)?;
             }
-            DeclarationRefRepr::NameDef(name_def) => match name_def.repr() {
-                NameDefRefRepr::DefMapLocal(local_def) => {
-                    let Some(SemanticItemRef::Function(function)) =
-                        self.db.semantic_ir.semantic_item_for_local_def(local_def)?
-                    else {
-                        return Ok(implementations);
-                    };
-                    self.extend_function_implementations(
-                        &mut implementations,
-                        DeclarationRef::function(FunctionRef::semantic(function)),
-                        None,
-                    )?;
-                }
-            },
-            DeclarationRefRepr::Module(_)
-            | DeclarationRefRepr::Field(_)
-            | DeclarationRefRepr::EnumVariant(_)
-            | DeclarationRefRepr::Impl(_) => {}
+            DeclarationRef::Module(_)
+            | DeclarationRef::Semantic(
+                SemanticDeclarationRef::Field(_) | SemanticDeclarationRef::EnumVariant(_),
+            ) => {}
         }
 
         Ok(implementations)
@@ -143,11 +123,6 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         ty: &IndexedTy,
     ) -> anyhow::Result<()> {
         for candidate in BodyAutoderef::peel_references(ty) {
-            for local_ty in candidate.ty().as_local_nominals() {
-                self.extend_local_type_implementations(implementations, local_ty.item)?;
-            }
-        }
-        for candidate in BodyAutoderef::peel_references(ty) {
             for ty in candidate.ty().as_nominals() {
                 self.extend_type_def_implementations(implementations, ty.def)?;
             }
@@ -160,35 +135,8 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         implementations: &mut Vec<DeclarationRef>,
         ty: TypeDefRef,
     ) -> anyhow::Result<()> {
-        for impl_ref in self.db.semantic_ir.impls_for_type(ty)? {
-            Self::push_unique(
-                implementations,
-                DeclarationRef::impl_ref(ImplRef::semantic(impl_ref)),
-            );
-        }
-        Ok(())
-    }
-
-    fn extend_local_type_implementations(
-        &self,
-        implementations: &mut Vec<DeclarationRef>,
-        item: BodyItemRef,
-    ) -> anyhow::Result<()> {
-        let Some(body) = self.db.body_ir.body_data(item.body)? else {
-            return Ok(());
-        };
-
-        for (impl_idx, data) in body.local_impls().iter().enumerate() {
-            if data.self_item != Some(item) {
-                continue;
-            }
-            Self::push_unique(
-                implementations,
-                DeclarationRef::impl_ref(ImplRef::body_local(BodyImplRef {
-                    body: item.body,
-                    impl_id: BodyImplId(impl_idx),
-                })),
-            );
+        for impl_ref in ItemQuery::new(self.db).impls_for_type(ty)? {
+            Self::push_unique(implementations, DeclarationRef::semantic(impl_ref.into()));
         }
         Ok(())
     }
@@ -198,11 +146,8 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         implementations: &mut Vec<DeclarationRef>,
         trait_ref: TraitRef,
     ) -> anyhow::Result<()> {
-        for impl_ref in self.db.semantic_ir.impls_for_trait(trait_ref)? {
-            Self::push_unique(
-                implementations,
-                DeclarationRef::impl_ref(ImplRef::semantic(impl_ref)),
-            );
+        for impl_ref in ItemQuery::new(self.db).impls_for_trait(trait_ref)? {
+            Self::push_unique(implementations, DeclarationRef::semantic(impl_ref.into()));
         }
         Ok(())
     }
@@ -213,52 +158,38 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         declaration: DeclarationRef,
         receiver_ty: Option<&IndexedTy>,
     ) -> anyhow::Result<()> {
-        match declaration.repr() {
-            DeclarationRefRepr::Module(_) => Ok(()),
-            DeclarationRefRepr::NameDef(name_def) => match name_def.repr() {
-                NameDefRefRepr::DefMapLocal(local_def) => {
-                    let Some(SemanticItemRef::Function(function)) =
-                        self.db.semantic_ir.semantic_item_for_local_def(local_def)?
-                    else {
-                        return Ok(());
-                    };
-                    self.extend_semantic_function_implementations(
-                        implementations,
-                        function,
-                        receiver_ty,
-                    )
-                }
-            },
-            DeclarationRefRepr::Function(function) => match function.repr() {
-                FunctionRefRepr::Semantic(function) => self
-                    .extend_semantic_function_implementations(
-                        implementations,
-                        function,
-                        receiver_ty,
-                    ),
-                FunctionRefRepr::BodyLocal(function) => {
-                    Self::push_unique(
-                        implementations,
-                        DeclarationRef::function(FunctionRef::body_local(function)),
-                    );
-                    Ok(())
-                }
-            },
-            DeclarationRefRepr::Item(_)
-            | DeclarationRefRepr::Field(_)
-            | DeclarationRefRepr::EnumVariant(_)
-            | DeclarationRefRepr::Binding(_)
-            | DeclarationRefRepr::Impl(_) => Ok(()),
+        match declaration {
+            DeclarationRef::Module(_) => Ok(()),
+            DeclarationRef::LocalDef(local_def) => {
+                let Some(SemanticItemRef::Function(function)) =
+                    ItemQuery::new(self.db).semantic_item_for_local_def(local_def)?
+                else {
+                    return Ok(());
+                };
+                self.extend_semantic_function_implementations(
+                    implementations,
+                    function,
+                    receiver_ty,
+                )
+            }
+            DeclarationRef::Semantic(SemanticDeclarationRef::Item(SemanticItemRef::Function(
+                function,
+            ))) => self.extend_semantic_function_implementations(
+                implementations,
+                function,
+                receiver_ty,
+            ),
+            DeclarationRef::Semantic(_) | DeclarationRef::BodyBinding(_) => Ok(()),
         }
     }
 
     fn extend_semantic_function_implementations(
         &self,
         implementations: &mut Vec<DeclarationRef>,
-        function: SemanticFunctionRef,
+        function: FunctionRef,
         receiver_ty: Option<&IndexedTy>,
     ) -> anyhow::Result<()> {
-        let Some(data) = self.db.semantic_ir.function_data(function)? else {
+        let Some(data) = ItemQuery::new(self.db).function_data(function)? else {
             return Ok(());
         };
 
@@ -283,10 +214,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
                 }
             }
             ItemOwner::Impl(_) => {
-                Self::push_unique(
-                    implementations,
-                    DeclarationRef::function(FunctionRef::semantic(function)),
-                );
+                Self::push_unique(implementations, DeclarationRef::semantic(function.into()));
                 Ok(())
             }
             ItemOwner::Module(_) => Ok(()),
@@ -336,7 +264,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         trait_ref: TraitRef,
         method_name: &str,
     ) -> anyhow::Result<()> {
-        for impl_ref in self.db.semantic_ir.impls_for_trait(trait_ref)? {
+        for impl_ref in ItemQuery::new(self.db).impls_for_trait(trait_ref)? {
             self.extend_matching_impl_methods(implementations, impl_ref, method_name)?;
         }
         Ok(())
@@ -345,10 +273,10 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     fn extend_matching_impl_methods(
         &self,
         implementations: &mut Vec<DeclarationRef>,
-        impl_ref: SemanticImplRef,
+        impl_ref: ImplRef,
         method_name: &str,
     ) -> anyhow::Result<()> {
-        let Some(data) = self.db.semantic_ir.impl_data(impl_ref)? else {
+        let Some(data) = ItemQuery::new(self.db).impl_data(impl_ref)? else {
             return Ok(());
         };
 
@@ -356,20 +284,17 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
             let AssocItemId::Function(id) = item else {
                 continue;
             };
-            let function = SemanticFunctionRef {
+            let function = FunctionRef {
                 origin: impl_ref.origin,
                 id: *id,
             };
-            let Some(function_data) = self.db.semantic_ir.function_data(function)? else {
+            let Some(function_data) = ItemQuery::new(self.db).function_data(function)? else {
                 continue;
             };
             if function_data.name.as_str() != method_name {
                 continue;
             }
-            Self::push_unique(
-                implementations,
-                DeclarationRef::function(FunctionRef::semantic(function)),
-            );
+            Self::push_unique(implementations, DeclarationRef::semantic(function.into()));
         }
         Ok(())
     }

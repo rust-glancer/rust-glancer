@@ -1,9 +1,6 @@
 use rg_arena::Arena;
 use rg_def_map::DefMap;
-use rg_ir_model::{
-    BindingId, BodyFunctionId, BodyFunctionRef, BodyId, BodyImplId, BodyItemId, BodyItemRef,
-    BodyRef, BodyValueItemId, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, StmtId,
-};
+use rg_ir_model::{BindingId, BodyId, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, StmtId};
 use rg_item_tree::{ItemNode, ItemTreeId};
 use rg_parse::{FileId, Span, TargetId};
 use rg_semantic_ir::ItemStore;
@@ -11,10 +8,6 @@ use rg_semantic_ir::ItemStore;
 use super::{
     body_map::BodySourceItems,
     expr::ExprData,
-    item::{
-        BodyFunctionData, BodyFunctionOwner, BodyImplData, BodyItemData, BodyItemOwner,
-        BodyValueItemData, BodyValueItemOwner,
-    },
     pat::PatData,
     stmt::{BindingData, StmtData},
 };
@@ -27,10 +20,6 @@ pub struct BodyIrStats {
     pub skipped_target_count: usize,
     pub body_count: usize,
     pub scope_count: usize,
-    pub local_item_count: usize,
-    pub local_value_item_count: usize,
-    pub local_impl_count: usize,
-    pub local_function_count: usize,
     pub binding_count: usize,
     pub statement_count: usize,
     pub expression_count: usize,
@@ -167,10 +156,6 @@ pub struct BodyData {
     pub(crate) root_expr: ExprId,
     pub(crate) params: Vec<BindingId>,
     pub(crate) scopes: Arena<ScopeId, ScopeData>,
-    pub(crate) local_items: Arena<BodyItemId, BodyItemData>,
-    pub(crate) local_value_items: Arena<BodyValueItemId, BodyValueItemData>,
-    pub(crate) local_impls: Arena<BodyImplId, BodyImplData>,
-    pub(crate) local_functions: Arena<BodyFunctionId, BodyFunctionData>,
     pub(crate) bindings: Arena<BindingId, BindingData>,
     pub(crate) pats: Arena<PatId, PatData>,
     pub(crate) statements: Arena<StmtId, StmtData>,
@@ -218,22 +203,6 @@ impl BodyData {
         self.scopes.as_slice()
     }
 
-    pub fn local_items(&self) -> &[BodyItemData] {
-        self.local_items.as_slice()
-    }
-
-    pub fn local_value_items(&self) -> &[BodyValueItemData] {
-        self.local_value_items.as_slice()
-    }
-
-    pub fn local_impls(&self) -> &[BodyImplData] {
-        self.local_impls.as_slice()
-    }
-
-    pub fn local_functions(&self) -> &[BodyFunctionData] {
-        self.local_functions.as_slice()
-    }
-
     pub fn bindings(&self) -> &[BindingData] {
         self.bindings.as_slice()
     }
@@ -266,39 +235,6 @@ impl BodyData {
         self.source_items.item(item)
     }
 
-    pub(crate) fn walk_scopes<T>(
-        &self,
-        mut scope: ScopeId,
-        mut visit: impl FnMut(&ScopeData) -> Option<T>,
-    ) -> Option<T> {
-        // Lexical name lookup walks from the current scope outward, stopping at the first match so
-        // inner declarations shadow outer declarations naturally.
-        loop {
-            let scope_data = self.scope(scope)?;
-            if let Some(value) = visit(scope_data) {
-                return Some(value);
-            }
-
-            scope = scope_data.parent?;
-        }
-    }
-
-    pub fn local_item(&self, item: BodyItemId) -> Option<&BodyItemData> {
-        self.local_items.get(item)
-    }
-
-    pub fn local_value_item(&self, item: BodyValueItemId) -> Option<&BodyValueItemData> {
-        self.local_value_items.get(item)
-    }
-
-    pub fn local_impl(&self, impl_id: BodyImplId) -> Option<&BodyImplData> {
-        self.local_impls.get(impl_id)
-    }
-
-    pub fn local_function(&self, function: BodyFunctionId) -> Option<&BodyFunctionData> {
-        self.local_functions.get(function)
-    }
-
     pub fn statement(&self, statement: StmtId) -> Option<&StmtData> {
         self.statements.get(statement)
     }
@@ -327,10 +263,6 @@ impl BodyData {
             root_expr,
             params,
             scopes: builder.scopes,
-            local_items: builder.local_items,
-            local_value_items: builder.local_value_items,
-            local_impls: builder.local_impls,
-            local_functions: builder.local_functions,
             bindings: builder.bindings,
             pats: builder.pats,
             statements: builder.statements,
@@ -351,22 +283,6 @@ impl BodyData {
         for scope in self.scopes.iter_mut() {
             scope.shrink_to_fit();
         }
-        self.local_items.shrink_to_fit();
-        for item in self.local_items.iter_mut() {
-            item.shrink_to_fit();
-        }
-        self.local_value_items.shrink_to_fit();
-        for item in self.local_value_items.iter_mut() {
-            item.shrink_to_fit();
-        }
-        self.local_impls.shrink_to_fit();
-        for impl_data in self.local_impls.iter_mut() {
-            impl_data.shrink_to_fit();
-        }
-        self.local_functions.shrink_to_fit();
-        for function in self.local_functions.iter_mut() {
-            function.shrink_to_fit();
-        }
         self.bindings.shrink_to_fit();
         for binding in self.bindings.iter_mut() {
             binding.shrink_to_fit();
@@ -384,51 +300,6 @@ impl BodyData {
             expr.shrink_to_fit();
         }
     }
-
-    pub(crate) fn local_impl_mut(&mut self, impl_id: BodyImplId) -> Option<&mut BodyImplData> {
-        self.local_impls.get_mut(impl_id)
-    }
-
-    pub(crate) fn inherent_functions_for_local_type(
-        &self,
-        body_ref: BodyRef,
-        item_ref: BodyItemRef,
-    ) -> Vec<BodyFunctionRef> {
-        let mut functions = Vec::new();
-        for impl_id in self.inherent_impls_for_local_type(body_ref, item_ref) {
-            let Some(impl_data) = self.local_impl(impl_id) else {
-                continue;
-            };
-            for function in &impl_data.functions {
-                functions.push(BodyFunctionRef {
-                    body: body_ref,
-                    function: *function,
-                });
-            }
-        }
-
-        functions
-    }
-
-    pub(crate) fn inherent_impls_for_local_type(
-        &self,
-        body_ref: BodyRef,
-        item_ref: BodyItemRef,
-    ) -> Vec<BodyImplId> {
-        // Associated lookup starts from a resolved local nominal type. Keep this as a broad
-        // identity filter; resolver-specific code can still refine generic argument applicability.
-        if item_ref.body != body_ref {
-            return Vec::new();
-        }
-
-        let mut impls = Vec::new();
-        for (impl_idx, impl_data) in self.local_impls.iter().enumerate() {
-            if impl_data.self_item == Some(item_ref) && impl_data.trait_ref.is_none() {
-                impls.push(BodyImplId(impl_idx));
-            }
-        }
-        impls
-    }
 }
 
 /// Mutable store used while one body is being lowered.
@@ -436,10 +307,6 @@ impl BodyData {
 pub(crate) struct BodyBuilder {
     pub(crate) source_items: BodySourceItems,
     pub(crate) scopes: Arena<ScopeId, ScopeData>,
-    pub(crate) local_items: Arena<BodyItemId, BodyItemData>,
-    pub(crate) local_value_items: Arena<BodyValueItemId, BodyValueItemData>,
-    pub(crate) local_impls: Arena<BodyImplId, BodyImplData>,
-    pub(crate) local_functions: Arena<BodyFunctionId, BodyFunctionData>,
     pub(crate) bindings: Arena<BindingId, BindingData>,
     pub(crate) pats: Arena<PatId, PatData>,
     pub(crate) statements: Arena<StmtId, StmtData>,
@@ -450,10 +317,6 @@ impl BodyBuilder {
     pub(crate) fn alloc_scope(&mut self, parent: Option<ScopeId>) -> ScopeId {
         self.scopes.alloc(ScopeData {
             parent,
-            local_items: Vec::new(),
-            local_value_items: Vec::new(),
-            local_functions: Vec::new(),
-            local_impls: Vec::new(),
             source_items: Vec::new(),
             bindings: Vec::new(),
         })
@@ -474,81 +337,6 @@ impl BodyBuilder {
             .source_items
             .push(item);
         item
-    }
-
-    pub(crate) fn alloc_local_item(&mut self, data: BodyItemData) -> BodyItemId {
-        let owner = data.owner;
-        let item = self.local_items.alloc(data);
-        match owner {
-            BodyItemOwner::LocalScope(scope) => {
-                self.scopes
-                    .get_mut(scope)
-                    .expect("local item scope should exist while lowering body")
-                    .local_items
-                    .push(item);
-            }
-            BodyItemOwner::LocalImpl(_) => {}
-        }
-        item
-    }
-
-    pub(crate) fn alloc_local_value_item(&mut self, data: BodyValueItemData) -> BodyValueItemId {
-        let owner = data.owner;
-        let item = self.local_value_items.alloc(data);
-        match owner {
-            BodyValueItemOwner::LocalScope(scope) => {
-                self.scopes
-                    .get_mut(scope)
-                    .expect("local value item scope should exist while lowering body")
-                    .local_value_items
-                    .push(item);
-            }
-            BodyValueItemOwner::LocalImpl(_) => {}
-        }
-        item
-    }
-
-    pub(crate) fn alloc_local_impl(&mut self, data: BodyImplData) -> BodyImplId {
-        let scope = data.scope;
-        let impl_id = self.local_impls.alloc(data);
-        self.scopes
-            .get_mut(scope)
-            .expect("local impl scope should exist while lowering body")
-            .local_impls
-            .push(impl_id);
-        impl_id
-    }
-
-    pub(crate) fn alloc_local_function(&mut self, data: BodyFunctionData) -> BodyFunctionId {
-        let owner = data.owner;
-        let function = self.local_functions.alloc(data);
-        match owner {
-            BodyFunctionOwner::LocalScope(scope) => {
-                self.scopes
-                    .get_mut(scope)
-                    .expect("local function scope should exist while lowering body")
-                    .local_functions
-                    .push(function);
-            }
-            BodyFunctionOwner::LocalImpl(_) => {}
-        }
-        function
-    }
-
-    pub(crate) fn set_local_impl_items(
-        &mut self,
-        impl_id: BodyImplId,
-        functions: Vec<BodyFunctionId>,
-        consts: Vec<BodyValueItemId>,
-        types: Vec<BodyItemId>,
-    ) {
-        let impl_data = self
-            .local_impls
-            .get_mut(impl_id)
-            .expect("local impl should exist while assigning associated items");
-        impl_data.functions = functions;
-        impl_data.consts = consts;
-        impl_data.types = types;
     }
 
     pub(crate) fn alloc_binding(&mut self, data: BindingData) -> BindingId {
@@ -597,20 +385,12 @@ pub struct BodySource {
 )]
 pub struct ScopeData {
     pub parent: Option<ScopeId>,
-    pub local_items: Vec<BodyItemId>,
-    pub local_value_items: Vec<BodyValueItemId>,
-    pub local_functions: Vec<BodyFunctionId>,
-    pub local_impls: Vec<BodyImplId>,
     pub source_items: Vec<ItemTreeId>,
     pub bindings: Vec<BindingId>,
 }
 
 impl ScopeData {
     fn shrink_to_fit(&mut self) {
-        self.local_items.shrink_to_fit();
-        self.local_value_items.shrink_to_fit();
-        self.local_functions.shrink_to_fit();
-        self.local_impls.shrink_to_fit();
         self.source_items.shrink_to_fit();
         self.bindings.shrink_to_fit();
     }

@@ -1,6 +1,5 @@
 //! View-native declaration categories.
 
-use rg_body_ir::{BodyFunctionOwner, BodyItemKind, BodyValueItemKind};
 use rg_def_map::LocalDefKind;
 use rg_ir_model::SemanticItemKind;
 
@@ -54,23 +53,6 @@ impl SymbolKind {
         }
     }
 
-    pub fn from_body_item_kind(kind: BodyItemKind) -> Self {
-        match kind {
-            BodyItemKind::Struct => Self::Struct,
-            BodyItemKind::Enum => Self::Enum,
-            BodyItemKind::Union => Self::Union,
-            BodyItemKind::TypeAlias => Self::TypeAlias,
-            BodyItemKind::Trait => Self::Trait,
-        }
-    }
-
-    pub fn from_body_value_item_kind(kind: BodyValueItemKind) -> Self {
-        match kind {
-            BodyValueItemKind::Const => Self::Const,
-            BodyValueItemKind::Static => Self::Static,
-        }
-    }
-
     pub fn from_semantic_item_kind(kind: SemanticItemKind) -> Self {
         match kind {
             SemanticItemKind::Struct => Self::Struct,
@@ -82,13 +64,6 @@ impl SymbolKind {
             SemanticItemKind::TypeAlias => Self::TypeAlias,
             SemanticItemKind::Const => Self::Const,
             SemanticItemKind::Static => Self::Static,
-        }
-    }
-
-    pub fn from_body_function_owner(owner: BodyFunctionOwner) -> Self {
-        match owner {
-            BodyFunctionOwner::LocalScope(_) => Self::Function,
-            BodyFunctionOwner::LocalImpl(_) => Self::Method,
         }
     }
 }

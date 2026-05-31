@@ -9,6 +9,7 @@ pub(crate) mod def_map_lookup;
 mod deref;
 mod impl_match;
 mod index;
+mod item_query;
 mod method;
 mod normalize;
 mod pat;
@@ -21,8 +22,7 @@ pub(crate) use self::{
     impl_match::BodyImplMatcher,
     index::SemanticResolutionIndex,
     method::{
-        local_function_applies_to_receiver, semantic_function_applies_to_receiver,
-        semantic_trait_function_candidates_for_receiver,
+        semantic_function_applies_to_receiver, semantic_trait_function_candidates_for_receiver,
     },
     ty::ty_from_type_ref_in_context,
     type_path::BodyTypePathResolver,

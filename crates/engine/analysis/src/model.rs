@@ -1,12 +1,11 @@
 use std::fmt;
 
-use rg_body_ir::{BodyItemKind, BodyValueItemKind};
 use rg_def_map::Path;
-use rg_ir_model::identity::{
-    DeclarationRef, EnumVariantRef, ExprRef, FieldRef, FunctionBodyRef, FunctionRef,
-    LexicalScopeRef,
+use rg_ir_model::{
+    EnumVariantRef, FieldRef, FunctionRef, ModuleRef, SemanticItemKind, TargetRef,
+    TraitApplicability,
+    identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
-use rg_ir_model::{ModuleRef, TargetRef, TraitApplicability};
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::TypePathContext;
 
@@ -351,21 +350,18 @@ impl CompletionKind {
         }
     }
 
-    pub(super) fn from_body_item_kind(kind: BodyItemKind) -> Self {
-        match kind {
-            BodyItemKind::Struct => Self::Struct,
-            BodyItemKind::Enum => Self::Enum,
-            BodyItemKind::Union => Self::Union,
-            BodyItemKind::TypeAlias => Self::TypeAlias,
-            BodyItemKind::Trait => Self::Trait,
-        }
-    }
-
-    pub(super) fn from_body_value_item_kind(kind: BodyValueItemKind) -> Self {
-        match kind {
-            BodyValueItemKind::Const => Self::Const,
-            BodyValueItemKind::Static => Self::Static,
-        }
+    pub(super) fn from_semantic_item_kind(kind: SemanticItemKind) -> Option<Self> {
+        Some(match kind {
+            SemanticItemKind::Struct => Self::Struct,
+            SemanticItemKind::Enum => Self::Enum,
+            SemanticItemKind::Union => Self::Union,
+            SemanticItemKind::Trait => Self::Trait,
+            SemanticItemKind::Function => Self::Function,
+            SemanticItemKind::TypeAlias => Self::TypeAlias,
+            SemanticItemKind::Const => Self::Const,
+            SemanticItemKind::Static => Self::Static,
+            SemanticItemKind::Impl => return None,
+        })
     }
 }
 

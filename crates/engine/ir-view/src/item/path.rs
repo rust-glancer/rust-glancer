@@ -9,7 +9,7 @@ use rg_ir_model::{
     TypeAliasRef, TypeDefId, TypeDefRef, hir::items::EnumVariantData,
 };
 
-use crate::IndexedViewDb;
+use crate::{IndexedViewDb, item::query::ItemQuery};
 
 pub struct PathView<'a, 'db>(&'a IndexedViewDb<'db>);
 
@@ -63,14 +63,14 @@ impl<'a, 'db> PathView<'a, 'db> {
     }
 
     pub fn trait_path(&self, trait_ref: TraitRef) -> anyhow::Result<Option<String>> {
-        let Some(data) = self.0.semantic_ir.trait_data(trait_ref)? else {
+        let Some(data) = ItemQuery::new(self.0).trait_data(trait_ref)? else {
             return Ok(None);
         };
         self.path_in_module(data.owner, &data.name)
     }
 
     pub fn function_path(&self, function_ref: FunctionRef) -> anyhow::Result<Option<String>> {
-        let Some(data) = self.0.semantic_ir.function_data(function_ref)? else {
+        let Some(data) = ItemQuery::new(self.0).function_data(function_ref)? else {
             return Ok(None);
         };
         Ok(self
@@ -79,7 +79,7 @@ impl<'a, 'db> PathView<'a, 'db> {
     }
 
     pub fn type_alias_path(&self, type_alias_ref: TypeAliasRef) -> anyhow::Result<Option<String>> {
-        let Some(data) = self.0.semantic_ir.type_alias_data(type_alias_ref)? else {
+        let Some(data) = ItemQuery::new(self.0).type_alias_data(type_alias_ref)? else {
             return Ok(None);
         };
         Ok(self
@@ -88,7 +88,7 @@ impl<'a, 'db> PathView<'a, 'db> {
     }
 
     pub fn const_path(&self, const_ref: ConstRef) -> anyhow::Result<Option<String>> {
-        let Some(data) = self.0.semantic_ir.const_data(const_ref)? else {
+        let Some(data) = ItemQuery::new(self.0).const_data(const_ref)? else {
             return Ok(None);
         };
         Ok(self
@@ -97,7 +97,7 @@ impl<'a, 'db> PathView<'a, 'db> {
     }
 
     pub fn static_path(&self, static_ref: StaticRef) -> anyhow::Result<Option<String>> {
-        let Some(data) = self.0.semantic_ir.static_data(static_ref)? else {
+        let Some(data) = ItemQuery::new(self.0).static_data(static_ref)? else {
             return Ok(None);
         };
         self.path_in_module(data.owner, &data.name)
@@ -135,7 +135,7 @@ impl<'a, 'db> PathView<'a, 'db> {
     }
 
     fn impl_self_path(&self, origin: DefMapRef, impl_id: ImplId) -> anyhow::Result<Option<String>> {
-        let Some(data) = self.0.semantic_ir.impl_data(ImplRef {
+        let Some(data) = ItemQuery::new(self.0).impl_data(ImplRef {
             origin,
             id: impl_id,
         })?
@@ -153,10 +153,8 @@ impl<'a, 'db> PathView<'a, 'db> {
     }
 
     fn type_def_owner_and_name(&self, ty: TypeDefRef) -> anyhow::Result<Option<(ModuleRef, &str)>> {
-        let Some(target) = ty.origin.as_target_ref() else {
-            return Ok(None);
-        };
-        let Some(items) = self.0.semantic_ir.items(target)? else {
+        let item_query = ItemQuery::new(self.0);
+        let Some(items) = item_query.item_store_for_origin(ty.origin)? else {
             return Ok(None);
         };
         match ty.id {
