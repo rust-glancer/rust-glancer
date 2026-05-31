@@ -1,8 +1,14 @@
 use expect_test::expect;
-use rg_def_map::{ImportBinding, ImportKind, LocalDefKind, ModuleOrigin, ScopeBindingOrigin};
-use rg_ir_model::{
-    DefId, DefMapRef, LocalDefId, ModuleId, SemanticItemKind, hir::source::ItemSourceKind,
+use rg_def_map::{
+    ImportBinding, ImportKind, LocalDefKind, ModuleOrigin, Path, PathSegment, ScopeBindingOrigin,
 };
+use rg_ir_model::{
+    DefId, DefMapRef, LocalDefId, ModuleId, ModuleRef, SemanticItemKind,
+    hir::source::ItemSourceKind,
+};
+use rg_text::Name;
+
+use crate::resolution::def_map_lookup::BodyDefMapLookup;
 
 use super::utils::{check_first_body_def_map, check_first_body_item_store, check_project_body_ir};
 
@@ -254,6 +260,193 @@ pub fn use_it() {
             );
         },
     );
+}
+
+// TODO: Either remove or rework this test after resolution is migrated.
+// If kept, should be snapshot-driven.
+#[test]
+fn body_def_map_lookup_resolves_lexical_scope_names() {
+    check_first_body_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_lookup_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Root;
+
+pub fn use_it() {
+    use crate::Root as Alias;
+    struct ParentOnly;
+    struct Shadow;
+    fn value_name() {}
+    {
+        struct Inner;
+        struct Shadow;
+    }
+}
+"#,
+        |def_map| {
+            let lookup = BodyDefMapLookup::new(def_map);
+            let origin = def_map.own_ref();
+            let outer = ModuleRef {
+                origin,
+                module: ModuleId(1),
+            };
+            let inner = ModuleRef {
+                origin,
+                module: ModuleId(2),
+            };
+
+            let inner_result =
+                lookup.resolve_path_in_type_namespace(inner, &relative_path(&["Inner"]));
+            assert_eq!(inner_result.unresolved_at, None);
+            assert_eq!(
+                local_def_module(def_map, inner_result.resolved[0]),
+                ModuleId(2)
+            );
+
+            let parent_result =
+                lookup.resolve_path_in_type_namespace(inner, &relative_path(&["ParentOnly"]));
+            assert_eq!(parent_result.unresolved_at, None);
+            assert_eq!(
+                local_def_name(def_map, parent_result.resolved[0]),
+                "ParentOnly"
+            );
+            assert_eq!(
+                local_def_module(def_map, parent_result.resolved[0]),
+                ModuleId(1)
+            );
+
+            let shadow_result =
+                lookup.resolve_path_in_type_namespace(inner, &relative_path(&["Shadow"]));
+            assert_eq!(shadow_result.unresolved_at, None);
+            assert_eq!(
+                local_def_module(def_map, shadow_result.resolved[0]),
+                ModuleId(2)
+            );
+
+            let type_value_result =
+                lookup.resolve_path_in_type_namespace(inner, &relative_path(&["value_name"]));
+            assert_eq!(type_value_result.unresolved_at, Some(0));
+            assert!(type_value_result.resolved.is_empty());
+
+            let value_result = lookup.resolve_path(inner, &relative_path(&["value_name"]));
+            assert_eq!(value_result.unresolved_at, None);
+            assert_eq!(
+                local_def_name(def_map, value_result.resolved[0]),
+                "value_name"
+            );
+            assert_eq!(
+                local_def_module(def_map, value_result.resolved[0]),
+                ModuleId(1)
+            );
+
+            let import_result =
+                lookup.resolve_path_in_type_namespace(outer, &relative_path(&["Alias"]));
+            assert_eq!(import_result.unresolved_at, Some(0));
+            assert!(import_result.resolved.is_empty());
+
+            let mut absolute_path = relative_path(&["Root"]);
+            absolute_path.absolute = true;
+            let absolute_result = lookup.resolve_path_in_type_namespace(inner, &absolute_path);
+            assert_eq!(absolute_result.unresolved_at, Some(0));
+            assert!(absolute_result.resolved.is_empty());
+        },
+    );
+}
+
+// TODO: Either remove or rework this test after resolution is migrated.
+// If kept, should be snapshot-driven.
+#[test]
+fn body_def_map_lookup_resolves_named_body_modules() {
+    check_first_body_def_map(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_module_lookup_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    mod nested {
+        pub struct Inside;
+        struct Private;
+    }
+}
+"#,
+        |def_map| {
+            let lookup = BodyDefMapLookup::new(def_map);
+            let origin = def_map.own_ref();
+            let function_module = ModuleRef {
+                origin,
+                module: ModuleId(1),
+            };
+
+            let module_result =
+                lookup.resolve_path_in_type_namespace(function_module, &relative_path(&["nested"]));
+            assert_eq!(module_result.unresolved_at, None);
+            assert_eq!(
+                module_result.resolved,
+                vec![DefId::Module(ModuleRef {
+                    origin,
+                    module: ModuleId(2),
+                })],
+            );
+
+            let inside_result = lookup.resolve_path_in_type_namespace(
+                function_module,
+                &relative_path(&["nested", "Inside"]),
+            );
+            assert_eq!(inside_result.unresolved_at, None);
+            assert_eq!(local_def_name(def_map, inside_result.resolved[0]), "Inside");
+            assert_eq!(
+                local_def_module(def_map, inside_result.resolved[0]),
+                ModuleId(2)
+            );
+
+            let private_result = lookup.resolve_path_in_type_namespace(
+                function_module,
+                &relative_path(&["nested", "Private"]),
+            );
+            assert_eq!(private_result.unresolved_at, Some(1));
+            assert!(private_result.resolved.is_empty());
+        },
+    );
+}
+
+fn relative_path(segments: &[&str]) -> Path {
+    Path {
+        absolute: false,
+        segments: segments
+            .iter()
+            .map(|segment| PathSegment::Name(Name::new(segment)))
+            .collect(),
+    }
+}
+
+fn local_def_name(def_map: &rg_def_map::DefMap, def: DefId) -> &str {
+    let DefId::Local(local_def) = def else {
+        panic!("resolved def should be a local definition");
+    };
+    def_map
+        .local_def(local_def.local_def)
+        .expect("resolved local definition should exist")
+        .name
+        .as_str()
+}
+
+fn local_def_module(def_map: &rg_def_map::DefMap, def: DefId) -> ModuleId {
+    let DefId::Local(local_def) = def else {
+        panic!("resolved def should be a local definition");
+    };
+    def_map
+        .local_def(local_def.local_def)
+        .expect("resolved local definition should exist")
+        .module
 }
 
 // TODO: Temporary test until the codebase is migrated to use item stores for body items.

@@ -5,6 +5,7 @@
 
 mod autoderef;
 mod body;
+pub(crate) mod def_map_lookup;
 mod deref;
 mod impl_match;
 mod index;
