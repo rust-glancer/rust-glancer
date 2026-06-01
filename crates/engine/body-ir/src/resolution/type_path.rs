@@ -16,9 +16,8 @@ use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 use crate::ir::body::BodyData;
 
 use super::{
-    def_map_query::BodyDefMapSource,
+    BodyQuerySource,
     impl_match::BodyImplMatcher,
-    item_query::BodyItemStoreSource,
     push_unique,
     ty::{
         subst_from_generics, substitute_type_param, ty_from_body_resolution,
@@ -48,21 +47,19 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         }
     }
 
-    fn impl_matcher(
-        &self,
-    ) -> BodyImplMatcher<'_, BodyDefMapSource<'_, 'db>, BodyItemStoreSource<'_, 'db>> {
-        BodyImplMatcher::new(ItemPathQuery::new(
-            BodyDefMapSource::new(self.def_map, self.body_ref, self.body),
-            BodyItemStoreSource::new(self.semantic_ir, self.body_ref, self.body),
-        ))
+    fn query_source(&self) -> BodyQuerySource<'_, 'db> {
+        BodyQuerySource::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'_, BodyItemStoreSource<'_, 'db>> {
-        ItemStoreQuery::new(BodyItemStoreSource::new(
-            self.semantic_ir,
-            self.body_ref,
-            self.body,
-        ))
+    fn impl_matcher(
+        &self,
+    ) -> BodyImplMatcher<'_, BodyQuerySource<'_, 'db>, BodyQuerySource<'_, 'db>> {
+        let source = self.query_source();
+        BodyImplMatcher::new(ItemPathQuery::new(source, source))
+    }
+
+    fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, 'db>> {
+        ItemStoreQuery::new(self.query_source())
     }
 
     pub(crate) fn resolve_in_scope(
@@ -262,12 +259,11 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             origin: DefMapRef::Body(self.body_ref),
             module: ModuleId(scope.0),
         };
-        let result = DefMapQuery::new(BodyDefMapSource::new(
-            self.def_map,
-            self.body_ref,
-            self.body,
-        ))
-        .resolve_lexical_path(from, path, NameResolutionFilter::TypesOnly)?;
+        let result = DefMapQuery::new(self.query_source()).resolve_lexical_path(
+            from,
+            path,
+            NameResolutionFilter::TypesOnly,
+        )?;
 
         let mut items = Vec::new();
         for def in result.resolved {

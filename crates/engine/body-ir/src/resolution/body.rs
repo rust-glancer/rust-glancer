@@ -22,11 +22,9 @@ use crate::{
 };
 
 use super::{
-    SemanticResolutionIndex,
+    BodyQuerySource, SemanticResolutionIndex,
     autoderef::{BodyAutoderef, BodyAutoderefMode},
-    def_map_query::BodyDefMapSource,
     impl_match::BodyImplMatcher,
-    item_query::BodyItemStoreSource,
     method::{function_applies_to_receiver, trait_function_candidates_for_receiver},
     normalize::TyNormalizer,
     pat::PatternTypePropagator,
@@ -69,33 +67,29 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         )
     }
 
-    fn autoderef(
-        &self,
-    ) -> BodyAutoderef<'_, BodyDefMapSource<'_, 'db>, BodyItemStoreSource<'_, 'db>> {
-        BodyAutoderef::with_index(
-            ItemPathQuery::new(
-                BodyDefMapSource::new(self.def_map_txn, self.body_ref, self.body),
-                BodyItemStoreSource::new(self.semantic_ir_txn, self.body_ref, self.body),
-            ),
-            self.semantic_index,
+    fn query_source(&self) -> BodyQuerySource<'_, 'db> {
+        BodyQuerySource::new(
+            self.def_map_txn,
+            self.semantic_ir_txn,
+            self.body_ref,
+            self.body,
         )
+    }
+
+    fn autoderef(&self) -> BodyAutoderef<'_, BodyQuerySource<'_, 'db>, BodyQuerySource<'_, 'db>> {
+        let source = self.query_source();
+        BodyAutoderef::with_index(ItemPathQuery::new(source, source), self.semantic_index)
     }
 
     fn impl_matcher(
         &self,
-    ) -> BodyImplMatcher<'_, BodyDefMapSource<'_, 'db>, BodyItemStoreSource<'_, 'db>> {
-        BodyImplMatcher::new(ItemPathQuery::new(
-            BodyDefMapSource::new(self.def_map_txn, self.body_ref, self.body),
-            BodyItemStoreSource::new(self.semantic_ir_txn, self.body_ref, self.body),
-        ))
+    ) -> BodyImplMatcher<'_, BodyQuerySource<'_, 'db>, BodyQuerySource<'_, 'db>> {
+        let source = self.query_source();
+        BodyImplMatcher::new(ItemPathQuery::new(source, source))
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'_, BodyItemStoreSource<'_, 'db>> {
-        ItemStoreQuery::new(BodyItemStoreSource::new(
-            self.semantic_ir_txn,
-            self.body_ref,
-            self.body,
-        ))
+    fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, 'db>> {
+        ItemStoreQuery::new(self.query_source())
     }
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
@@ -572,8 +566,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             return (BodyResolution::Unknown, Ty::Unknown);
         };
         let inner_data = &self.body.exprs[inner];
-        let ty = TyNormalizer::new(self.semantic_ir_txn, self.body_ref, self.body)
-            .ty_for_wrapper(kind, inner_data.ty.clone());
+        let ty = TyNormalizer::new(self.query_source()).ty_for_wrapper(kind, inner_data.ty.clone());
         let resolution = if matches!(kind, ExprWrapperKind::Paren) {
             inner_data.resolution.clone()
         } else {
@@ -627,10 +620,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             return Ok(functions);
         }
 
-        let item_paths = ItemPathQuery::new(
-            BodyDefMapSource::new(self.def_map_txn, self.body_ref, self.body),
-            BodyItemStoreSource::new(self.semantic_ir_txn, self.body_ref, self.body),
-        );
+        let source = self.query_source();
+        let item_paths = ItemPathQuery::new(source, source);
         for function in self
             .semantic_index
             .inherent_functions_for_type_and_name(ty.def, method_name)
@@ -871,29 +862,23 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
+    fn query_source(&self) -> BodyQuerySource<'_, 'db> {
+        BodyQuerySource::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+    }
+
     fn impl_matcher(
         &self,
-    ) -> BodyImplMatcher<'_, BodyDefMapSource<'_, 'db>, BodyItemStoreSource<'_, 'db>> {
-        BodyImplMatcher::new(ItemPathQuery::new(
-            BodyDefMapSource::new(self.def_map, self.body_ref, self.body),
-            BodyItemStoreSource::new(self.semantic_ir, self.body_ref, self.body),
-        ))
+    ) -> BodyImplMatcher<'_, BodyQuerySource<'_, 'db>, BodyQuerySource<'_, 'db>> {
+        let source = self.query_source();
+        BodyImplMatcher::new(ItemPathQuery::new(source, source))
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'_, BodyItemStoreSource<'_, 'db>> {
-        ItemStoreQuery::new(BodyItemStoreSource::new(
-            self.semantic_ir,
-            self.body_ref,
-            self.body,
-        ))
+    fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, 'db>> {
+        ItemStoreQuery::new(self.query_source())
     }
 
-    fn def_map_query(&self) -> DefMapQuery<BodyDefMapSource<'_, 'db>> {
-        DefMapQuery::new(BodyDefMapSource::new(
-            self.def_map,
-            self.body_ref,
-            self.body,
-        ))
+    fn def_map_query(&self) -> DefMapQuery<BodyQuerySource<'_, 'db>> {
+        DefMapQuery::new(self.query_source())
     }
 
     pub(crate) fn resolve_nonlocal_path_expr(
@@ -1265,10 +1250,8 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             return Ok(functions);
         }
 
-        let item_paths = ItemPathQuery::new(
-            BodyDefMapSource::new(self.def_map, self.body_ref, self.body),
-            BodyItemStoreSource::new(self.semantic_ir, self.body_ref, self.body),
-        );
+        let source = self.query_source();
+        let item_paths = ItemPathQuery::new(source, source);
         let inherent_functions = match self.semantic_index {
             Some(index) => index.inherent_functions_for_type(self.semantic_ir, ty.def)?,
             None => item_paths.items().inherent_functions_for_type(ty.def)?,

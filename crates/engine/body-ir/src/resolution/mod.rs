@@ -5,25 +5,23 @@
 
 mod autoderef;
 mod body;
-mod def_map_query;
 mod deref;
 mod impl_match;
 mod index;
-mod item_query;
 mod method;
 mod normalize;
 mod pat;
+mod query_source;
 mod ty;
 mod type_path;
 
 pub(crate) use self::{
     body::BodyResolver,
     body::BodyValuePathResolver,
-    def_map_query::BodyDefMapSource,
     impl_match::BodyImplMatcher,
     index::SemanticResolutionIndex,
-    item_query::BodyItemStoreSource,
     method::{function_applies_to_receiver, trait_function_candidates_for_receiver},
+    query_source::BodyQuerySource,
     ty::ty_from_type_ref_in_context,
     type_path::BodyTypePathResolver,
 };

@@ -12,8 +12,8 @@ use rg_ty::{NominalTy, Ty, TypeSubst};
 use crate::{
     BodyData, BodyResolution, PackageBodies, TargetBodies,
     resolution::{
-        self, BodyDefMapSource, BodyImplMatcher, BodyItemStoreSource, BodyTypePathResolver,
-        BodyValuePathResolver, ty_from_type_ref_in_context,
+        self, BodyImplMatcher, BodyQuerySource, BodyTypePathResolver, BodyValuePathResolver,
+        ty_from_type_ref_in_context,
     },
 };
 
@@ -123,11 +123,9 @@ impl<'db> BodyIrReadTxn<'db> {
             let Some(body) = self.body_data(body_ref)? else {
                 return Ok(false);
             };
+            let source = BodyQuerySource::new(def_map, semantic_ir, body_ref, body);
             return resolution::function_applies_to_receiver(
-                ItemPathQuery::new(
-                    BodyDefMapSource::new(def_map, body_ref, body),
-                    BodyItemStoreSource::new(semantic_ir, body_ref, body),
-                ),
+                ItemPathQuery::new(source, source),
                 function_ref,
                 receiver_ty,
             );
@@ -151,12 +149,10 @@ impl<'db> BodyIrReadTxn<'db> {
             let Some(body) = self.body_data(body_ref)? else {
                 return Ok(Vec::new());
             };
+            let source = BodyQuerySource::new(def_map, semantic_ir, body_ref, body);
             return resolution::trait_function_candidates_for_receiver(
                 None,
-                ItemPathQuery::new(
-                    BodyDefMapSource::new(def_map, body_ref, body),
-                    BodyItemStoreSource::new(semantic_ir, body_ref, body),
-                ),
+                ItemPathQuery::new(source, source),
                 receiver_ty,
                 None,
             );
@@ -182,12 +178,10 @@ impl<'db> BodyIrReadTxn<'db> {
             let Some(body) = self.body_data(body_ref)? else {
                 return Ok(false);
             };
-            return Ok(BodyImplMatcher::new(ItemPathQuery::new(
-                BodyDefMapSource::new(def_map, body_ref, body),
-                BodyItemStoreSource::new(semantic_ir, body_ref, body),
-            ))
-            .semantic_trait_impl_applicability(trait_impl, receiver_ty)?
-            .is_applicable());
+            let source = BodyQuerySource::new(def_map, semantic_ir, body_ref, body);
+            return Ok(BodyImplMatcher::new(ItemPathQuery::new(source, source))
+                .semantic_trait_impl_applicability(trait_impl, receiver_ty)?
+                .is_applicable());
         }
 
         Ok(

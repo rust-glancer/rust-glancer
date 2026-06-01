@@ -20,7 +20,7 @@ use crate::{
 };
 
 use super::{
-    autoderef::BodyReferencePeelingCandidates, item_query::BodyItemStoreSource, push_unique,
+    BodyQuerySource, autoderef::BodyReferencePeelingCandidates, push_unique,
     ty::subst_from_generics, type_path::BodyTypePathResolver,
 };
 
@@ -125,12 +125,16 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         Ok(changed)
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'_, BodyItemStoreSource<'_, 'db>> {
-        ItemStoreQuery::new(BodyItemStoreSource::new(
-            self.semantic_ir,
-            self.body_ref,
-            self.body,
-        ))
+    fn query_source(&self) -> BodyQuerySource<'_, 'db> {
+        BodyQuerySource::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+    }
+
+    fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, 'db>> {
+        ItemStoreQuery::new(self.query_source())
+    }
+
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db, '_> {
+        BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
     fn expected_ty_for_let(
@@ -140,9 +144,9 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         initializer: Option<ExprId>,
     ) -> Result<Ty, PackageStoreError> {
         if let Some(annotation) = annotation {
-            let ty =
-                BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
-                    .ty_from_type_ref_in_scope(annotation, scope)?;
+            let ty = self
+                .type_path_resolver()
+                .ty_from_type_ref_in_scope(annotation, scope)?;
             if !matches!(ty, Ty::Unknown) {
                 return Ok(ty);
             }
@@ -302,7 +306,7 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
             .unwrap_or_else(TypeSubst::new);
 
         Ok(Some(
-            BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+            self.type_path_resolver()
                 .ty_from_type_ref_in_module_with_subst(
                     &field.ty,
                     variant_data.owner_module,
