@@ -152,10 +152,7 @@ pub(super) fn substitute_type_param(path: &Path, subst: &TypeSubst) -> Option<Ty
     // Only plain identifiers can be generic type parameters. Qualified paths like `module::T`
     // remain ordinary type paths and are resolved through DefMap/Semantic IR.
     let name = path.single_name()?;
-    subst
-        .iter()
-        .rev()
-        .find_map(|(param, ty)| (param.as_str() == name).then(|| ty.clone()))
+    subst.get(name).cloned()
 }
 
 pub(super) fn type_ref_is_self(ty: &TypeRef) -> bool {

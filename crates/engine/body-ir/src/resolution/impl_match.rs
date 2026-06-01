@@ -438,14 +438,11 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
 
     /// Records a strict direct-param substitution, rejecting conflicting repeated params.
     fn push_structural_subst(subst: &mut TypeSubst, name: Name, ty: Ty) -> bool {
-        if let Some((_, existing_ty)) = subst
-            .iter()
-            .find(|(existing_name, _)| existing_name == &name)
-        {
+        if let Some(existing_ty) = subst.get(name.as_str()) {
             return existing_ty == &ty;
         }
 
-        subst.push((name, ty));
+        subst.push(name, ty);
         true
     }
 

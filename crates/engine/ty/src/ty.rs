@@ -5,9 +5,46 @@ use rg_text::Name;
 
 use crate::{GenericArg, PrimitiveTy, RefMutability};
 
-/// Mapping from a generic type parameter name to the concrete type known at a use site.
-// TODO: Probably deserves more than an alias?
-pub type TypeSubst = Vec<(Name, Ty)>;
+/// Ordered substitutions for type parameters visible at one use site.
+///
+/// Substitutions are intentionally stack-like: later bindings shadow earlier bindings. Body
+/// resolution extends this set while walking through aliases, impl headers, and function
+/// signatures, so lookup must search from the end instead of treating the data as an unordered map.
+#[derive(Debug, Clone, Default, PartialEq, Eq, rg_memsize::MemorySize)]
+pub struct TypeSubst(Vec<(Name, Ty)>);
+
+impl TypeSubst {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds a binding after existing entries, making it the visible one for later lookups.
+    pub fn push(&mut self, name: Name, ty: Ty) {
+        self.0.push((name, ty));
+    }
+
+    /// Appends another substitution set, preserving its internal shadowing order.
+    pub fn extend(&mut self, subst: Self) {
+        self.0.extend(subst.0);
+    }
+
+    /// Returns the visible binding for `name`, honoring later shadowing earlier entries.
+    pub fn get(&self, name: &str) -> Option<&Ty> {
+        self.0
+            .iter()
+            .rev()
+            .find_map(|(param, ty)| (param.as_str() == name).then_some(ty))
+    }
+}
+
+impl FromIterator<(Name, Ty)> for TypeSubst {
+    fn from_iter<T>(iter: T) -> Self
+    where
+        T: IntoIterator<Item = (Name, Ty)>,
+    {
+        Self(iter.into_iter().collect())
+    }
+}
 
 /// Small type vocabulary shared by IR layers.
 #[derive(
