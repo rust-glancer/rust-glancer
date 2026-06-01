@@ -192,7 +192,9 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
                         index.module_container_name(module_ref)?
                     }
                     DeclarationRef::LocalDef(_)
-                    | DeclarationRef::Semantic(_)
+                    | DeclarationRef::Item(_)
+                    | DeclarationRef::Field(_)
+                    | DeclarationRef::EnumVariant(_)
                     | DeclarationRef::BodyBinding(_) => None,
                 };
                 symbols.push(WorkspaceSymbolEntry::new(module, container_name));

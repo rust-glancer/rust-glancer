@@ -350,7 +350,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             }
 
             groups.push(BodyLocalGroup {
-                owner: DeclarationRef::semantic(body.owner().into()),
+                owner: DeclarationRef::from(body.owner()),
                 body: BodyRef {
                     target,
                     body: rg_ir_model::BodyId(body_idx),
@@ -385,7 +385,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                     continue;
                 };
                 if view.source().file_id == file_id {
-                    declarations.push(DeclarationRef::semantic(view.item().into()));
+                    declarations.push(DeclarationRef::from(view.item()));
                 }
             }
         }

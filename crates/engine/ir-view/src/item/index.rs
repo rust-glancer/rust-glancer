@@ -196,7 +196,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     }
 
     fn semantic_item(&self, item: SemanticItemView<'_>) -> anyhow::Result<Option<IndexedItem>> {
-        let declaration = DeclarationRef::semantic(item.item().into());
+        let declaration = DeclarationRef::from(item.item());
         match item.kind() {
             SemanticItemKind::Struct | SemanticItemKind::Union => {
                 let Some(ty) = item.type_def() else {
@@ -230,7 +230,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         declaration: DeclarationRef,
     ) -> anyhow::Result<Option<IndexedItem>> {
         match declaration {
-            DeclarationRef::Semantic(rg_ir_model::SemanticDeclarationRef::Item(item)) => {
+            DeclarationRef::Item(item) => {
                 let Some(item) = ItemQuery::new(self.db).semantic_item_view(item)? else {
                     return Ok(None);
                 };
@@ -238,10 +238,8 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
             }
             DeclarationRef::Module(_)
             | DeclarationRef::LocalDef(_)
-            | DeclarationRef::Semantic(
-                rg_ir_model::SemanticDeclarationRef::Field(_)
-                | rg_ir_model::SemanticDeclarationRef::EnumVariant(_),
-            )
+            | DeclarationRef::Field(_)
+            | DeclarationRef::EnumVariant(_)
             | DeclarationRef::BodyBinding(_) => Ok(Some(IndexedItem::leaf(declaration))),
         }
     }
@@ -254,7 +252,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         let mut children = Vec::new();
         for field in ItemQuery::new(self.db).fields_for_type(ty)? {
             children.push(IndexedItemChild::Declaration(IndexedItem::leaf(
-                DeclarationRef::semantic(field.into()),
+                DeclarationRef::from(field),
             )));
         }
         Ok(Some(IndexedItem::with_children(declaration, children)))
@@ -284,7 +282,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
                 })
                 .collect();
             children.push(IndexedItemChild::Declaration(IndexedItem::with_children(
-                DeclarationRef::semantic(variant_ref.into()),
+                DeclarationRef::from(variant_ref),
                 fields,
             )));
         }
@@ -307,12 +305,10 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     fn assoc_item(origin: DefMapRef, item: &AssocItemId) -> DeclarationRef {
         match item {
             AssocItemId::Function(id) => {
-                DeclarationRef::semantic(SemanticFunctionRef { origin, id: *id }.into())
+                DeclarationRef::from(SemanticFunctionRef { origin, id: *id })
             }
-            AssocItemId::TypeAlias(id) => {
-                DeclarationRef::semantic(TypeAliasRef { origin, id: *id }.into())
-            }
-            AssocItemId::Const(id) => DeclarationRef::semantic(ConstRef { origin, id: *id }.into()),
+            AssocItemId::TypeAlias(id) => DeclarationRef::from(TypeAliasRef { origin, id: *id }),
+            AssocItemId::Const(id) => DeclarationRef::from(ConstRef { origin, id: *id }),
         }
     }
 

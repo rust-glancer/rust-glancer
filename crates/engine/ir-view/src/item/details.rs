@@ -6,8 +6,8 @@
 
 use rg_ir_model::{
     BodyBindingRef, ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef,
-    ModuleRef, SemanticDeclarationRef, SemanticItemRef, StaticRef, TraitRef, TypeAliasRef,
-    TypeDefId, TypeDefRef, identity::DeclarationRef,
+    ModuleRef, SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    identity::DeclarationRef,
 };
 use rg_semantic_ir::Documentation;
 
@@ -46,7 +46,9 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         match declaration {
             DeclarationRef::Module(module) => self.module_details(module, context),
             DeclarationRef::LocalDef(local_def) => self.local_def_details(local_def),
-            DeclarationRef::Semantic(declaration) => self.semantic_declaration_details(declaration),
+            DeclarationRef::Item(item) => self.semantic_item_details(item),
+            DeclarationRef::Field(field) => self.field_details(field),
+            DeclarationRef::EnumVariant(variant) => self.enum_variant_details(variant),
             DeclarationRef::BodyBinding(binding) => self.body_binding_details(binding),
         }
     }
@@ -68,17 +70,6 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
             signature: Some(SignatureRenderer::new(self.db).binding_signature(binding_data)?),
             docs: None,
         }))
-    }
-
-    fn semantic_declaration_details(
-        &self,
-        declaration: SemanticDeclarationRef,
-    ) -> anyhow::Result<Option<DeclarationDetails>> {
-        match declaration {
-            SemanticDeclarationRef::Item(item) => self.semantic_item_details(item),
-            SemanticDeclarationRef::Field(field) => self.field_details(field),
-            SemanticDeclarationRef::EnumVariant(variant) => self.enum_variant_details(variant),
-        }
     }
 
     fn semantic_item_details(

@@ -11,8 +11,8 @@ pub mod member;
 use rg_body_ir::{BodyAutoderef, BodyTypePathResolution};
 use rg_def_map::Path;
 use rg_ir_model::{
-    BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticDeclarationRef, SemanticItemRef,
-    identity::DeclarationRef, identity::ExprRef,
+    BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticItemRef, identity::DeclarationRef,
+    identity::ExprRef,
 };
 use rg_semantic_ir::{SemanticTypePathResolution, TypePathContext};
 use rg_ty::{IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr};
@@ -36,7 +36,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         let mut declarations = Vec::new();
         for candidate in BodyAutoderef::peel_references(ty) {
             for ty in candidate.ty().as_nominals() {
-                let declaration = DeclarationRef::semantic(ty.def.into());
+                let declaration = DeclarationRef::from(ty.def);
                 if !declarations.contains(&declaration) {
                     declarations.push(declaration);
                 }
@@ -61,25 +61,19 @@ impl<'a, 'db> TyView<'a, 'db> {
                     ty,
                 )])))
             }
-            DeclarationRef::Semantic(SemanticDeclarationRef::Item(SemanticItemRef::TypeDef(
-                ty,
-            ))) => Ok(Some(IndexedTyRepr::nominal(vec![IndexedNominalTy::bare(
-                ty,
-            )]))),
-            DeclarationRef::Semantic(SemanticDeclarationRef::Item(
+            DeclarationRef::Item(SemanticItemRef::TypeDef(ty)) => Ok(Some(IndexedTyRepr::nominal(
+                vec![IndexedNominalTy::bare(ty)],
+            ))),
+            DeclarationRef::Item(
                 SemanticItemRef::Trait(_)
                 | SemanticItemRef::Impl(_)
                 | SemanticItemRef::Function(_)
                 | SemanticItemRef::TypeAlias(_)
                 | SemanticItemRef::Const(_)
                 | SemanticItemRef::Static(_),
-            )) => Ok(None),
-            DeclarationRef::Semantic(SemanticDeclarationRef::Field(field)) => {
-                self.ty_for_field(field)
-            }
-            DeclarationRef::Semantic(SemanticDeclarationRef::EnumVariant(variant)) => {
-                self.ty_for_enum_variant(variant)
-            }
+            ) => Ok(None),
+            DeclarationRef::Field(field) => self.ty_for_field(field),
+            DeclarationRef::EnumVariant(variant) => self.ty_for_enum_variant(variant),
             DeclarationRef::BodyBinding(binding) => self.body_view().binding_ty(binding),
         }
     }

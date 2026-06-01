@@ -467,15 +467,15 @@ impl<'a, 'db> SourceFactsView<'a, 'db> {
     ) -> anyhow::Result<Option<IndexedSourceOccurrence>> {
         let occurrence = match candidate {
             SemanticCursorCandidate::Field { field, span } => {
-                let declaration = DeclarationRef::semantic(field.into());
+                let declaration = DeclarationRef::from(field);
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
             SemanticCursorCandidate::Function { function, span } => {
-                let declaration = DeclarationRef::semantic(function.into());
+                let declaration = DeclarationRef::from(function);
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
             SemanticCursorCandidate::EnumVariant { variant, span } => {
-                let declaration = DeclarationRef::semantic(variant.into());
+                let declaration = DeclarationRef::from(variant);
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
             SemanticCursorCandidate::TypePath {
@@ -552,23 +552,23 @@ impl<'a, 'db> SourceFactsView<'a, 'db> {
                 ))
             }
             BodyCursorCandidate::LocalItem { item, .. } => {
-                let declaration = DeclarationRef::semantic(item.into());
+                let declaration = DeclarationRef::from(item);
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
             BodyCursorCandidate::LocalValueItem { item, .. } => {
-                let declaration = DeclarationRef::semantic(item.into());
+                let declaration = DeclarationRef::from(item);
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
             BodyCursorCandidate::LocalField { field, .. } => {
-                let declaration = DeclarationRef::semantic(field.into());
+                let declaration = DeclarationRef::from(field);
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
             BodyCursorCandidate::LocalEnumVariant { variant, .. } => {
-                let declaration = DeclarationRef::semantic(variant.into());
+                let declaration = DeclarationRef::from(variant);
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
             BodyCursorCandidate::LocalFunction { function, .. } => {
-                let declaration = DeclarationRef::semantic(function.into());
+                let declaration = DeclarationRef::from(function);
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
             BodyCursorCandidate::TypePath {

@@ -7,8 +7,9 @@
 use std::fmt;
 
 use crate::{
-    BodyBindingRef, BodyRef as BodyIrBodyRef, DefId, ExprId, LocalDefRef, ModuleRef, ScopeId,
-    SemanticDeclarationRef, TargetRef,
+    BodyBindingRef, BodyRef as BodyIrBodyRef, ConstRef, DefId, EnumVariantRef, ExprId, FieldRef,
+    FunctionRef, ImplRef, LocalDefRef, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TargetRef,
+    TraitRef, TypeAliasRef, TypeDefRef,
 };
 
 /// Stable identity for one lowered function body.
@@ -99,11 +100,38 @@ impl fmt::Debug for LexicalScopeRef {
 }
 
 /// Stable declaration identity exposed by indexed-data views.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    derive_more::From,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
 pub enum DeclarationRef {
+    #[from]
     Module(ModuleRef),
+    #[from]
     LocalDef(LocalDefRef),
-    Semantic(SemanticDeclarationRef),
+    #[from(
+        SemanticItemRef,
+        TypeDefRef,
+        TraitRef,
+        ImplRef,
+        FunctionRef,
+        TypeAliasRef,
+        ConstRef,
+        StaticRef
+    )]
+    Item(SemanticItemRef),
+    #[from]
+    Field(FieldRef),
+    #[from]
+    EnumVariant(EnumVariantRef),
+    #[from]
     BodyBinding(BodyBindingRef),
 }
 
@@ -116,10 +144,6 @@ impl DeclarationRef {
         Self::LocalDef(local_def)
     }
 
-    pub fn semantic(declaration: SemanticDeclarationRef) -> Self {
-        Self::Semantic(declaration)
-    }
-
     pub fn from_def(def: DefId) -> Self {
         match def {
             DefId::Module(module) => Self::Module(module),
@@ -129,6 +153,12 @@ impl DeclarationRef {
 
     pub fn body_binding(binding: BodyBindingRef) -> Self {
         Self::BodyBinding(binding)
+    }
+}
+
+impl From<DefId> for DeclarationRef {
+    fn from(def: DefId) -> Self {
+        Self::from_def(def)
     }
 }
 
@@ -145,10 +175,20 @@ impl fmt::Debug for DeclarationRef {
                 .field("kind", &"local_def")
                 .field("local_def", &local_def)
                 .finish(),
-            Self::Semantic(declaration) => f
+            Self::Item(item) => f
                 .debug_struct("DeclarationRef")
-                .field("kind", &"semantic")
-                .field("declaration", &declaration)
+                .field("kind", &"item")
+                .field("item", &item)
+                .finish(),
+            Self::Field(field) => f
+                .debug_struct("DeclarationRef")
+                .field("kind", &"field")
+                .field("field", &field)
+                .finish(),
+            Self::EnumVariant(variant) => f
+                .debug_struct("DeclarationRef")
+                .field("kind", &"enum_variant")
+                .field("variant", &variant)
                 .finish(),
             Self::BodyBinding(binding) => f
                 .debug_struct("DeclarationRef")

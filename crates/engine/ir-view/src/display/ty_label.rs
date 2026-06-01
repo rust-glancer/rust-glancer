@@ -46,7 +46,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
 
     fn render_nominal(&self, ty: &IndexedNominalTy) -> anyhow::Result<Option<String>> {
         let Some(declaration) =
-            DeclarationView::new(self.0).declaration(DeclarationRef::semantic(ty.def.into()))?
+            DeclarationView::new(self.0).declaration(DeclarationRef::from(ty.def))?
         else {
             return Ok(None);
         };

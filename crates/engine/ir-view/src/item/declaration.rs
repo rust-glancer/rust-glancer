@@ -3,8 +3,7 @@
 use rg_def_map::ModuleOrigin;
 use rg_ir_model::{
     BodyBindingRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, LocalImplRef,
-    ModuleRef, SemanticDeclarationRef, SemanticItemKind, SemanticItemRef, TargetRef,
-    identity::DeclarationRef,
+    ModuleRef, SemanticItemKind, SemanticItemRef, TargetRef, identity::DeclarationRef,
 };
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::TypeRef;
@@ -80,7 +79,9 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         match declaration {
             DeclarationRef::Module(module_ref) => self.module(module_ref),
             DeclarationRef::LocalDef(local_def) => self.local_def(local_def),
-            DeclarationRef::Semantic(declaration) => self.semantic_declaration(declaration),
+            DeclarationRef::Item(item) => self.semantic_item(item),
+            DeclarationRef::Field(field) => self.semantic_field(field),
+            DeclarationRef::EnumVariant(variant) => self.semantic_enum_variant(variant),
             DeclarationRef::BodyBinding(binding) => self.body_binding(binding),
         }
     }
@@ -134,17 +135,6 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
             span: data.span,
             selection_span: data.name_span.unwrap_or(data.span),
         }))
-    }
-
-    fn semantic_declaration(
-        &self,
-        declaration: SemanticDeclarationRef,
-    ) -> anyhow::Result<Option<Declaration>> {
-        match declaration {
-            SemanticDeclarationRef::Item(item) => self.semantic_item(item),
-            SemanticDeclarationRef::Field(field) => self.semantic_field(field),
-            SemanticDeclarationRef::EnumVariant(variant) => self.semantic_enum_variant(variant),
-        }
     }
 
     fn semantic_item(&self, item: SemanticItemRef) -> anyhow::Result<Option<Declaration>> {

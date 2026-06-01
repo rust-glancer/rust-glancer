@@ -167,38 +167,6 @@ pub struct EnumVariantRef {
     pub index: usize,
 }
 
-/// Stable identity for any declaration contributed by Semantic IR.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::From, SchemaRead, SchemaWrite, MemorySize,
-)]
-pub enum SemanticDeclarationRef {
-    #[from(
-        SemanticItemRef,
-        TypeDefRef,
-        TraitRef,
-        ImplRef,
-        FunctionRef,
-        TypeAliasRef,
-        ConstRef,
-        StaticRef
-    )]
-    Item(SemanticItemRef),
-    #[from]
-    Field(FieldRef),
-    #[from]
-    EnumVariant(EnumVariantRef),
-}
-
-impl SemanticDeclarationRef {
-    pub fn origin(self) -> DefMapRef {
-        match self {
-            Self::Item(item) => item.origin(),
-            Self::Field(field) => field.owner.origin,
-            Self::EnumVariant(variant) => variant.origin,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TraitImplRef {
     pub impl_ref: ImplRef,

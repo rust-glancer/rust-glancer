@@ -14,8 +14,8 @@ use crate::{
 use rg_def_map::{DefMapDb, ModuleOrigin};
 use rg_ir_model::{
     BindingId, BodyId, BodyRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef, FunctionRef,
-    ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef, PatId, ResolvedDeclarationRef,
-    SemanticDeclarationRef, SemanticItemRef, StmtId, TargetRef, TraitRef, TypeDefId, TypeDefRef,
+    ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef, PatId, SemanticItemRef, StmtId,
+    TargetRef, TraitRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_item_tree::{FieldItem, ItemTreeDb, PackageNameInterners};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
@@ -1136,20 +1136,18 @@ impl TargetBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_resolved_declaration_ref(&self, declaration: ResolvedDeclarationRef) -> String {
+    fn render_resolved_declaration_ref(&self, declaration: DeclarationRef) -> String {
         match declaration {
-            ResolvedDeclarationRef::Def(def) => format!("item {}", self.render_def(def)),
-            ResolvedDeclarationRef::Semantic(declaration) => {
-                self.render_semantic_declaration_ref(declaration)
+            DeclarationRef::Module(module) => {
+                format!("item {}", self.render_def(DefId::Module(module)))
             }
-        }
-    }
-
-    fn render_semantic_declaration_ref(&self, declaration: SemanticDeclarationRef) -> String {
-        match declaration {
-            SemanticDeclarationRef::Item(item) => self.render_semantic_item_ref(item),
-            SemanticDeclarationRef::Field(field) => self.render_field_ref(field),
-            SemanticDeclarationRef::EnumVariant(variant) => self.render_enum_variant_ref(variant),
+            DeclarationRef::LocalDef(local_def) => {
+                format!("item {}", self.render_def(DefId::Local(local_def)))
+            }
+            DeclarationRef::Item(item) => self.render_semantic_item_ref(item),
+            DeclarationRef::Field(field) => self.render_field_ref(field),
+            DeclarationRef::EnumVariant(variant) => self.render_enum_variant_ref(variant),
+            DeclarationRef::BodyBinding(_) => "local <binding>".to_string(),
         }
     }
 

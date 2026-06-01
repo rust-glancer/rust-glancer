@@ -7,7 +7,7 @@
 use rg_body_ir::{BodyResolution, BodyTypePathResolution};
 use rg_def_map::Path;
 use rg_ir_model::{
-    BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ResolvedDeclarationRef, ScopeId,
+    BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId,
     identity::{DeclarationRef, ExprRef},
 };
 
@@ -30,7 +30,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
             .semantic_ir
             .semantic_items_for_type_path(&self.0.def_map, context, path)?
             .into_iter()
-            .map(|item| DeclarationRef::semantic(item.into()))
+            .map(DeclarationRef::from)
             .collect())
     }
 
@@ -43,7 +43,10 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
             DeclarationRef::LocalDef(local_def) => {
                 self.declarations_for_def(DefId::Local(local_def))
             }
-            DeclarationRef::Semantic(_) | DeclarationRef::BodyBinding(_) => Ok(vec![declaration]),
+            DeclarationRef::Item(_)
+            | DeclarationRef::Field(_)
+            | DeclarationRef::EnumVariant(_)
+            | DeclarationRef::BodyBinding(_) => Ok(vec![declaration]),
         }
     }
 
@@ -82,7 +85,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
             return Ok(None);
         };
 
-        Ok(Some(DeclarationRef::semantic(item.into())))
+        Ok(Some(DeclarationRef::from(item)))
     }
 
     pub fn declarations_for_use_path(
@@ -159,23 +162,11 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
             | BodyResolution::EnumVariant(resolved) => {
                 let mut declarations = Vec::new();
                 for declaration in resolved {
-                    declarations.extend(self.declarations_for_resolved_declaration(*declaration)?);
+                    declarations.extend(self.declarations_for_declaration(*declaration)?);
                 }
                 Ok(declarations)
             }
             BodyResolution::Unknown => Ok(Vec::new()),
-        }
-    }
-
-    fn declarations_for_resolved_declaration(
-        &self,
-        declaration: ResolvedDeclarationRef,
-    ) -> anyhow::Result<Vec<DeclarationRef>> {
-        match declaration {
-            ResolvedDeclarationRef::Def(def) => self.declarations_for_def(def),
-            ResolvedDeclarationRef::Semantic(declaration) => {
-                Ok(vec![DeclarationRef::semantic(declaration)])
-            }
         }
     }
 
@@ -185,19 +176,14 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
     ) -> Vec<DeclarationRef> {
         match resolution {
             BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
-                types
-                    .into_iter()
-                    .map(|ty| DeclarationRef::semantic(ty.into()))
-                    .collect()
+                types.into_iter().map(DeclarationRef::from).collect()
             }
-            BodyTypePathResolution::TypeAliases(aliases) => aliases
-                .into_iter()
-                .map(|alias| DeclarationRef::semantic(alias.into()))
-                .collect(),
-            BodyTypePathResolution::Traits(traits) => traits
-                .into_iter()
-                .map(|ty| DeclarationRef::semantic(ty.into()))
-                .collect(),
+            BodyTypePathResolution::TypeAliases(aliases) => {
+                aliases.into_iter().map(DeclarationRef::from).collect()
+            }
+            BodyTypePathResolution::Traits(traits) => {
+                traits.into_iter().map(DeclarationRef::from).collect()
+            }
             BodyTypePathResolution::Primitive(_) | BodyTypePathResolution::Unknown => Vec::new(),
         }
     }

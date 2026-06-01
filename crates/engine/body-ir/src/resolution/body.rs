@@ -6,8 +6,8 @@
 use rg_def_map::{DefMapReadTxn, Path, PathSegment};
 use rg_ir_model::{
     AssocItemId, BindingId, BodyRef, ConstRef, DefId, DefMapRef, ExprId, FunctionRef, ImplRef,
-    ItemOwner, ModuleId, ModuleRef, ResolvedDeclarationRef, ScopeId, SemanticDeclarationRef,
-    SemanticItemRef, StaticRef, TypeDefId,
+    ItemOwner, ModuleId, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TypeDefId,
+    identity::DeclarationRef,
 };
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
@@ -387,11 +387,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 if !types.is_empty() {
                     return Ok((
                         BodyResolution::Declaration(
-                            types
-                                .iter()
-                                .copied()
-                                .map(ResolvedDeclarationRef::from)
-                                .collect(),
+                            types.iter().copied().map(DeclarationRef::from).collect(),
                         ),
                         IndexedTyRepr::nominal(
                             types.into_iter().map(IndexedNominalTy::bare).collect(),
@@ -436,12 +432,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                     IndexedTy::Unknown
                 };
                 return Ok((
-                    BodyResolution::Field(
-                        fields
-                            .into_iter()
-                            .map(ResolvedDeclarationRef::from)
-                            .collect(),
-                    ),
+                    BodyResolution::Field(fields.into_iter().map(DeclarationRef::from).collect()),
                     ty,
                 ));
             }
@@ -475,12 +466,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 IndexedTy::Unknown
             };
             return Ok((
-                BodyResolution::Field(
-                    fields
-                        .into_iter()
-                        .map(ResolvedDeclarationRef::from)
-                        .collect(),
-                ),
+                BodyResolution::Field(fields.into_iter().map(DeclarationRef::from).collect()),
                 ty,
             ));
         }
@@ -523,10 +509,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 };
                 return Ok((
                     BodyResolution::Method(
-                        functions
-                            .into_iter()
-                            .map(ResolvedDeclarationRef::from)
-                            .collect(),
+                        functions.into_iter().map(DeclarationRef::from).collect(),
                     ),
                     ty,
                 ));
@@ -558,12 +541,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 IndexedTy::Unknown
             };
             return Ok((
-                BodyResolution::Method(
-                    functions
-                        .into_iter()
-                        .map(ResolvedDeclarationRef::from)
-                        .collect(),
-                ),
+                BodyResolution::Method(functions.into_iter().map(DeclarationRef::from).collect()),
                 ty,
             ));
         }
@@ -797,12 +775,12 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 
     fn push_return_ty_for_declaration(
         &self,
-        declaration: ResolvedDeclarationRef,
+        declaration: DeclarationRef,
         return_tys: &mut Vec<IndexedTy>,
     ) -> Result<(), PackageStoreError> {
         match declaration {
-            ResolvedDeclarationRef::Def(def) => {
-                let Some(function_ref) = self.function_ref_for_def(def)? else {
+            DeclarationRef::LocalDef(local_def) => {
+                let Some(function_ref) = self.function_ref_for_def(DefId::Local(local_def))? else {
                     return Ok(());
                 };
                 push_unique(
@@ -810,26 +788,24 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                     self.semantic_function_return_ty(function_ref, None)?,
                 );
             }
-            ResolvedDeclarationRef::Semantic(SemanticDeclarationRef::Item(
-                SemanticItemRef::Function(function_ref),
-            )) => {
+            DeclarationRef::Item(SemanticItemRef::Function(function_ref)) => {
                 push_unique(
                     return_tys,
                     self.semantic_function_return_ty(function_ref, None)?,
                 );
             }
-            ResolvedDeclarationRef::Semantic(
-                SemanticDeclarationRef::Item(
-                    SemanticItemRef::TypeDef(_)
-                    | SemanticItemRef::Trait(_)
-                    | SemanticItemRef::Impl(_)
-                    | SemanticItemRef::TypeAlias(_)
-                    | SemanticItemRef::Const(_)
-                    | SemanticItemRef::Static(_),
-                )
-                | SemanticDeclarationRef::Field(_)
-                | SemanticDeclarationRef::EnumVariant(_),
-            ) => {}
+            DeclarationRef::Module(_)
+            | DeclarationRef::Item(
+                SemanticItemRef::TypeDef(_)
+                | SemanticItemRef::Trait(_)
+                | SemanticItemRef::Impl(_)
+                | SemanticItemRef::TypeAlias(_)
+                | SemanticItemRef::Const(_)
+                | SemanticItemRef::Static(_),
+            )
+            | DeclarationRef::Field(_)
+            | DeclarationRef::EnumVariant(_)
+            | DeclarationRef::BodyBinding(_) => {}
         }
 
         Ok(())
@@ -953,7 +929,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                             constructors
                                 .iter()
                                 .copied()
-                                .map(ResolvedDeclarationRef::from)
+                                .map(DeclarationRef::from)
                                 .collect(),
                         ),
                         IndexedTyRepr::nominal(
@@ -993,7 +969,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 result
                     .resolved
                     .into_iter()
-                    .map(ResolvedDeclarationRef::from)
+                    .map(DeclarationRef::from)
                     .collect(),
             ),
             ty,
@@ -1117,17 +1093,14 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 for item in items {
                     match item {
                         SemanticItemRef::Function(function) => {
-                            push_unique(&mut functions, ResolvedDeclarationRef::from(function));
+                            push_unique(&mut functions, DeclarationRef::from(function));
                         }
                         SemanticItemRef::Const(const_ref) => {
-                            push_unique(&mut declarations, ResolvedDeclarationRef::from(const_ref));
+                            push_unique(&mut declarations, DeclarationRef::from(const_ref));
                             push_unique(&mut tys, self.semantic_const_ty(const_ref)?);
                         }
                         SemanticItemRef::Static(static_ref) => {
-                            push_unique(
-                                &mut declarations,
-                                ResolvedDeclarationRef::from(static_ref),
-                            );
+                            push_unique(&mut declarations, DeclarationRef::from(static_ref));
                             push_unique(&mut tys, self.semantic_static_ty(static_ref)?);
                         }
                         SemanticItemRef::TypeDef(_)
@@ -1227,10 +1200,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             let ty = unique_ty_or_unknown(variant_tys);
             return Ok(Some((
                 BodyResolution::EnumVariant(
-                    variants
-                        .into_iter()
-                        .map(ResolvedDeclarationRef::from)
-                        .collect(),
+                    variants.into_iter().map(DeclarationRef::from).collect(),
                 ),
                 ty,
             )));
@@ -1267,12 +1237,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         }
 
         Ok((!functions.is_empty()).then_some((
-            BodyResolution::Function(
-                functions
-                    .into_iter()
-                    .map(ResolvedDeclarationRef::from)
-                    .collect(),
-            ),
+            BodyResolution::Function(functions.into_iter().map(DeclarationRef::from).collect()),
             IndexedTy::Unknown,
         )))
     }

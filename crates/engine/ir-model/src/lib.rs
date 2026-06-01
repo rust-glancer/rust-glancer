@@ -14,12 +14,11 @@ pub use self::ids::{
         ModuleId, ModuleRef, TargetRef,
     },
     identity,
-    resolution::ResolvedDeclarationRef,
     semantic::{
         AssocItemId, ConstId, ConstRef, EnumId, EnumVariantRef, FieldRef, FunctionId, FunctionRef,
-        ImplId, ImplRef, ItemId, ItemOwner, SemanticDeclarationRef, SemanticItemKind,
-        SemanticItemRef, StaticId, StaticRef, StructId, TraitApplicability, TraitId, TraitImplRef,
-        TraitRef, TypeAliasId, TypeAliasRef, TypeDefId, TypeDefRef, UnionId,
+        ImplId, ImplRef, ItemId, ItemOwner, SemanticItemKind, SemanticItemRef, StaticId, StaticRef,
+        StructId, TraitApplicability, TraitId, TraitImplRef, TraitRef, TypeAliasId, TypeAliasRef,
+        TypeDefId, TypeDefRef, UnionId,
     },
 };
 

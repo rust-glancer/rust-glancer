@@ -42,7 +42,9 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
         match declaration {
             DeclarationRef::Module(module) => self.target_for_module(module),
             DeclarationRef::LocalDef(_)
-            | DeclarationRef::Semantic(_)
+            | DeclarationRef::Item(_)
+            | DeclarationRef::Field(_)
+            | DeclarationRef::EnumVariant(_)
             | DeclarationRef::BodyBinding(_) => Ok(DeclarationView::new(self.0)
                 .declaration(declaration)?
                 .map(Self::navigation_target)),

@@ -454,7 +454,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 if matches!(namespace, IndexedNameNamespace::Values) && has_value_constructor {
                     shadow_namespaces.push(CompletionScopeNamespace::Values);
                 }
-                let declaration = DeclarationRef::semantic(item.into());
+                let declaration = DeclarationRef::from(item);
                 LexicalCompletionCandidate {
                     label,
                     namespace: CompletionScopeNamespace::Types,
@@ -475,9 +475,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 label,
                 namespace: CompletionScopeNamespace::Values,
                 scope_distance,
-                target: CompletionTarget::Declaration(DeclarationRef::semantic(item.into())),
+                target: CompletionTarget::Declaration(DeclarationRef::from(item)),
                 kind: CompletionKind::from_semantic_item_kind(kind)?,
-                declaration: Some(DeclarationRef::semantic(item.into())),
+                declaration: Some(DeclarationRef::from(item)),
                 function: None,
                 shadow_namespaces: vec![CompletionScopeNamespace::Values],
             },
@@ -486,7 +486,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                 label,
                 scope_distance,
             } => {
-                let declaration = DeclarationRef::semantic(function.into());
+                let declaration = DeclarationRef::from(function);
                 LexicalCompletionCandidate {
                     label,
                     namespace: CompletionScopeNamespace::Values,

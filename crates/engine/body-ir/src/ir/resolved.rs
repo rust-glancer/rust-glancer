@@ -1,4 +1,4 @@
-use rg_ir_model::{BindingId, ResolvedDeclarationRef, TraitRef, TypeAliasRef, TypeDefRef};
+use rg_ir_model::{BindingId, TraitRef, TypeAliasRef, TypeDefRef, identity::DeclarationRef};
 use rg_semantic_ir::SemanticTypePathResolution;
 
 /// Best-effort semantic resolution attached to body expressions.
@@ -14,19 +14,19 @@ use rg_semantic_ir::SemanticTypePathResolution;
 )]
 pub enum BodyResolution {
     Local(BindingId),
-    Declaration(Vec<ResolvedDeclarationRef>),
-    Field(Vec<ResolvedDeclarationRef>),
+    Declaration(Vec<DeclarationRef>),
+    Field(Vec<DeclarationRef>),
     /// Associated or free functions resolved through a qualified value path.
     ///
     /// Method calls use `Method` because they start from a receiver expression; this variant is
     /// for value paths like `Type::new` where the type prefix is resolved first.
-    Function(Vec<ResolvedDeclarationRef>),
+    Function(Vec<DeclarationRef>),
     /// Enum variants are stored inside enum definitions rather than DefMap scopes.
     ///
     /// Keeping them explicit here lets goto/type queries land on the variant declaration while
     /// still reporting the owning enum as the expression type.
-    EnumVariant(Vec<ResolvedDeclarationRef>),
-    Method(Vec<ResolvedDeclarationRef>),
+    EnumVariant(Vec<DeclarationRef>),
+    Method(Vec<DeclarationRef>),
     #[default]
     Unknown,
 }
