@@ -16,7 +16,7 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
 use rg_ir_view::{IndexedViewDb, item::module::ModuleView};
 use rg_parse::FileId;
-use rg_ty::IndexedTy;
+use rg_ty::Ty;
 
 use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
 
@@ -113,13 +113,13 @@ impl<'a> Analysis<'a> {
             .goto_implementation(target, file_id, offset)
     }
 
-    /// Returns the best-effort indexed type under a source offset.
+    /// Returns the best-effort type under a source offset.
     pub fn type_at(
         &self,
         target: TargetRef,
         file_id: FileId,
         offset: u32,
-    ) -> anyhow::Result<Option<IndexedTy>> {
+    ) -> anyhow::Result<Option<Ty>> {
         let Some(symbol) = self.symbol_at_for_query(target, file_id, offset)? else {
             return Ok(None);
         };

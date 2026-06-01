@@ -9,7 +9,7 @@ use rg_ir_model::{
     AssocItemId, FunctionRef, ImplRef, ItemOwner, SemanticItemRef, TraitRef, TypeDefRef,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_ty::{IndexedTy, IndexedTyExt};
+use rg_ty::Ty;
 
 use crate::{IndexedViewDb, item::query::ItemQuery, lookup::resolution::ResolutionView};
 
@@ -109,7 +109,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         Ok(implementations)
     }
 
-    pub fn implementations_for_ty(&self, ty: &IndexedTy) -> anyhow::Result<Vec<DeclarationRef>> {
+    pub fn implementations_for_ty(&self, ty: &Ty) -> anyhow::Result<Vec<DeclarationRef>> {
         let mut implementations = Vec::new();
         self.extend_ty_implementations(&mut implementations, ty)?;
         Ok(implementations)
@@ -118,7 +118,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
     fn extend_ty_implementations(
         &self,
         implementations: &mut Vec<DeclarationRef>,
-        ty: &IndexedTy,
+        ty: &Ty,
     ) -> anyhow::Result<()> {
         for candidate in BodyAutoderef::peel_references(ty) {
             for ty in candidate.ty().as_nominals() {
@@ -154,7 +154,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         &self,
         implementations: &mut Vec<DeclarationRef>,
         declaration: DeclarationRef,
-        receiver_ty: Option<&IndexedTy>,
+        receiver_ty: Option<&Ty>,
     ) -> anyhow::Result<()> {
         match declaration {
             DeclarationRef::Module(_) => Ok(()),
@@ -183,7 +183,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         &self,
         implementations: &mut Vec<DeclarationRef>,
         function: FunctionRef,
-        receiver_ty: Option<&IndexedTy>,
+        receiver_ty: Option<&Ty>,
     ) -> anyhow::Result<()> {
         let Some(data) = ItemQuery::new(self.db).function_data(function)? else {
             return Ok(());
@@ -222,7 +222,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         implementations: &mut Vec<DeclarationRef>,
         trait_ref: TraitRef,
         method_name: &str,
-        receiver_ty: &IndexedTy,
+        receiver_ty: &Ty,
     ) -> anyhow::Result<()> {
         let autoderef = BodyAutoderef::new(&self.db.def_map, &self.db.semantic_ir);
         for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, receiver_ty) {

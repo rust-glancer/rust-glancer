@@ -8,7 +8,7 @@ use rg_syntax::{
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_text::Name;
-use rg_ty::IndexedTy;
+use rg_ty::Ty;
 
 use crate::ir::{
     BindingData, BindingKind, BodyPath, LiteralKind, PatBindingMode, PatData, PatKind,
@@ -288,7 +288,7 @@ impl FunctionBodyLowering<'_> {
             kind,
             name: Some(name),
             annotation,
-            ty: IndexedTy::Unknown,
+            ty: Ty::Unknown,
         });
         bindings.push(binding);
         Some(binding)

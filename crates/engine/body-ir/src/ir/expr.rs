@@ -4,7 +4,7 @@ use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::Span;
 use rg_text::Name;
-use rg_ty::IndexedTy;
+use rg_ty::Ty;
 
 use super::{body::BodySource, path::BodyPath, resolved::BodyResolution};
 
@@ -22,7 +22,7 @@ pub struct ExprData {
     pub visible_bindings: usize,
     pub kind: ExprKind,
     pub resolution: BodyResolution,
-    pub ty: IndexedTy,
+    pub ty: Ty,
 }
 
 impl ExprData {

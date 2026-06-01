@@ -5,7 +5,7 @@
 //! are useful while reading code.
 
 use rg_ir_model::identity::DeclarationRef;
-use rg_ty::{IndexedGenericArg, IndexedNominalTy, IndexedTy, IndexedTyRepr};
+use rg_ty::{GenericArg, NominalTy, Ty};
 
 use crate::{IndexedViewDb, item::declaration::DeclarationView};
 
@@ -16,16 +16,16 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         Self(db)
     }
 
-    pub fn render(&self, ty: &IndexedTy) -> anyhow::Result<Option<String>> {
+    pub fn render(&self, ty: &Ty) -> anyhow::Result<Option<String>> {
         match ty {
-            IndexedTy::Unit => Ok(Some("()".to_string())),
-            IndexedTy::Never => Ok(Some("!".to_string())),
-            IndexedTy::Primitive(primitive) => Ok(Some(primitive.label().to_string())),
-            IndexedTy::Repr(IndexedTyRepr::Syntax(ty)) => Ok(Some(ty.to_string())),
-            IndexedTy::Reference { mutability, inner } => Ok(self
+            Ty::Unit => Ok(Some("()".to_string())),
+            Ty::Never => Ok(Some("!".to_string())),
+            Ty::Primitive(primitive) => Ok(Some(primitive.label().to_string())),
+            Ty::Syntax(ty) => Ok(Some(ty.to_string())),
+            Ty::Reference { mutability, inner } => Ok(self
                 .render(inner)?
                 .map(|inner| format!("{}{inner}", mutability.render_prefix()))),
-            IndexedTy::Repr(IndexedTyRepr::Nominal(types) | IndexedTyRepr::SelfTy(types)) => {
+            Ty::Nominal(types) | Ty::SelfTy(types) => {
                 let mut labels = Vec::new();
                 for ty in types {
                     if let Some(label) = self.render_nominal(ty)? {
@@ -34,7 +34,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                 }
                 Ok(Self::render_joined(labels.into_iter()))
             }
-            IndexedTy::Unknown => Ok(None),
+            Ty::Unknown => Ok(None),
         }
     }
 
@@ -44,7 +44,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         (!labels.is_empty()).then(|| labels.join(" | "))
     }
 
-    fn render_nominal(&self, ty: &IndexedNominalTy) -> anyhow::Result<Option<String>> {
+    fn render_nominal(&self, ty: &NominalTy) -> anyhow::Result<Option<String>> {
         let Some(declaration) =
             DeclarationView::new(self.0).declaration(DeclarationRef::from(ty.def))?
         else {
@@ -58,7 +58,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         )))
     }
 
-    fn render_generic_args(&self, args: &[IndexedGenericArg]) -> anyhow::Result<String> {
+    fn render_generic_args(&self, args: &[GenericArg]) -> anyhow::Result<String> {
         if args.is_empty() {
             return Ok(String::new());
         }
@@ -71,19 +71,19 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         Ok(format!("<{}>", rendered.join(", ")))
     }
 
-    fn render_generic_arg(&self, arg: &IndexedGenericArg) -> anyhow::Result<String> {
+    fn render_generic_arg(&self, arg: &GenericArg) -> anyhow::Result<String> {
         match arg {
-            IndexedGenericArg::Type(ty) => Ok(self.render(ty)?.unwrap_or_else(|| "_".to_string())),
-            IndexedGenericArg::Lifetime(lifetime) => Ok(lifetime.clone()),
-            IndexedGenericArg::Const(value) => Ok(value.clone()),
-            IndexedGenericArg::AssocType { name, ty } => match ty {
+            GenericArg::Type(ty) => Ok(self.render(ty)?.unwrap_or_else(|| "_".to_string())),
+            GenericArg::Lifetime(lifetime) => Ok(lifetime.clone()),
+            GenericArg::Const(value) => Ok(value.clone()),
+            GenericArg::AssocType { name, ty } => match ty {
                 Some(ty) => Ok(format!(
                     "{name} = {}",
                     self.render(ty)?.unwrap_or_else(|| "_".to_string())
                 )),
                 None => Ok(name.to_string()),
             },
-            IndexedGenericArg::Unsupported(text) => Ok(text.clone()),
+            GenericArg::Unsupported(text) => Ok(text.clone()),
         }
     }
 }

@@ -11,7 +11,7 @@ use rg_ir_model::{
     TargetRef, hir::source::ItemSourceKind, identity::DeclarationRef,
 };
 use rg_parse::{FileId, Span, TextSpan};
-use rg_ty::IndexedTy;
+use rg_ty::Ty;
 
 use crate::{IndexedViewDb, item::query::ItemQuery};
 
@@ -76,7 +76,7 @@ pub enum BodyLexicalName {
 pub struct InferredBindingTy {
     file_id: FileId,
     span: Span,
-    ty: IndexedTy,
+    ty: Ty,
 }
 
 impl InferredBindingTy {
@@ -88,7 +88,7 @@ impl InferredBindingTy {
         self.span
     }
 
-    pub fn ty(&self) -> &IndexedTy {
+    pub fn ty(&self) -> &Ty {
         &self.ty
     }
 }
@@ -126,7 +126,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .map(|body| body.owner_module()))
     }
 
-    pub fn expr_ty(&self, body_ref: BodyRef, expr: ExprId) -> anyhow::Result<Option<IndexedTy>> {
+    pub fn expr_ty(&self, body_ref: BodyRef, expr: ExprId) -> anyhow::Result<Option<Ty>> {
         Ok(self
             .db
             .body_ir
@@ -135,7 +135,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .map(|expr| expr.ty.clone()))
     }
 
-    pub fn binding_ty(&self, binding: BodyBindingRef) -> anyhow::Result<Option<IndexedTy>> {
+    pub fn binding_ty(&self, binding: BodyBindingRef) -> anyhow::Result<Option<Ty>> {
         Ok(self
             .db
             .body_ir
@@ -316,7 +316,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 if binding.name.is_none() || binding.annotation.is_some() {
                     continue;
                 }
-                if matches!(binding.ty, IndexedTy::Unknown) {
+                if matches!(binding.ty, Ty::Unknown) {
                     continue;
                 }
                 if range.is_some_and(|range| !range.touches(binding.source.span.text.end)) {

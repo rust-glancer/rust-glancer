@@ -5,7 +5,7 @@ use rg_syntax::ast;
 use rg_ir_model::{ExprId, FunctionRef, ModuleRef, ScopeId};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
-use rg_ty::IndexedTy;
+use rg_ty::Ty;
 
 use crate::ir::{BodyBuilder, BodyData, BodyResolution, BodySource, ExprData, ExprKind};
 
@@ -73,7 +73,7 @@ impl FunctionBodyLowering<'_> {
             visible_bindings,
             kind,
             resolution: BodyResolution::Unknown,
-            ty: IndexedTy::Unknown,
+            ty: Ty::Unknown,
         })
     }
 

@@ -9,13 +9,13 @@ use std::{borrow::Cow, collections::VecDeque};
 use rg_def_map::DefMapReadTxn;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
-use rg_ty::IndexedTy;
+use rg_ty::Ty;
 
 use super::{deref::BodyDerefResolver, index::SemanticResolutionIndex};
 
 const AUTODEREF_LIMIT: usize = 8;
 
-/// Computes adjusted indexed types for contexts that may dereference a receiver.
+/// Computes adjusted types for contexts that may dereference a receiver.
 #[derive(Clone, Copy)]
 pub struct BodyAutoderef<'query, 'db> {
     def_map: &'query DefMapReadTxn<'db>,
@@ -53,7 +53,7 @@ impl<'query, 'db> BodyAutoderef<'query, 'db> {
     pub fn candidates<'ty>(
         self,
         mode: BodyAutoderefMode,
-        ty: &'ty IndexedTy,
+        ty: &'ty Ty,
     ) -> BodyAutoderefCandidates<'query, 'db, 'ty> {
         let kind = match mode {
             BodyAutoderefMode::PeelReferences
@@ -80,9 +80,7 @@ impl<'query, 'db> BodyAutoderef<'query, 'db> {
     }
 
     /// Peels only explicit `&T` / `&mut T` wrappers.
-    pub fn peel_references<'ty>(
-        ty: &'ty IndexedTy,
-    ) -> impl Iterator<Item = BodyAutoderefCandidate<'ty>> {
+    pub fn peel_references<'ty>(ty: &'ty Ty) -> impl Iterator<Item = BodyAutoderefCandidate<'ty>> {
         BodyReferencePeelingCandidates {
             next_ty: Some(ty),
             next_depth: 0,
@@ -90,7 +88,7 @@ impl<'query, 'db> BodyAutoderef<'query, 'db> {
         }
     }
 
-    fn deref_targets(&self, ty: &IndexedTy) -> Result<Vec<IndexedTy>, PackageStoreError> {
+    fn deref_targets(&self, ty: &Ty) -> Result<Vec<Ty>, PackageStoreError> {
         BodyDerefResolver::new(self.def_map, self.semantic_ir, self.semantic_index)
             .targets_for_ty(ty)
     }
@@ -121,14 +119,14 @@ impl BodyAutoderefMode {
 /// One adjusted candidate type produced by `BodyAutoderef`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BodyAutoderefCandidate<'ty> {
-    ty: Cow<'ty, IndexedTy>,
+    ty: Cow<'ty, Ty>,
     depth: usize,
     mutability: Option<rg_ty::RefMutability>,
 }
 
 impl<'ty> BodyAutoderefCandidate<'ty> {
     /// The adjusted type visible at this autoderef depth.
-    pub fn ty(&self) -> &IndexedTy {
+    pub fn ty(&self) -> &Ty {
         self.ty.as_ref()
     }
 
@@ -157,8 +155,8 @@ enum BodyAutoderefCandidatesKind<'ty> {
         pending: VecDeque<PendingAutoderefCandidate<'ty>>,
     },
     ExplicitDeref {
-        source_ty: Option<&'ty IndexedTy>,
-        targets: VecDeque<IndexedTy>,
+        source_ty: Option<&'ty Ty>,
+        targets: VecDeque<Ty>,
     },
 }
 
@@ -171,19 +169,19 @@ struct PendingAutoderefCandidate<'ty> {
 
 #[derive(Debug, Clone)]
 enum PendingAutoderefTy<'ty> {
-    Borrowed(&'ty IndexedTy),
-    Owned(IndexedTy),
+    Borrowed(&'ty Ty),
+    Owned(Ty),
 }
 
 impl<'ty> PendingAutoderefTy<'ty> {
-    fn as_ref(&self) -> &IndexedTy {
+    fn as_ref(&self) -> &Ty {
         match self {
             Self::Borrowed(ty) => ty,
             Self::Owned(ty) => ty,
         }
     }
 
-    fn into_cow(self) -> Cow<'ty, IndexedTy> {
+    fn into_cow(self) -> Cow<'ty, Ty> {
         match self {
             Self::Borrowed(ty) => Cow::Borrowed(ty),
             Self::Owned(ty) => Cow::Owned(ty),
@@ -195,7 +193,7 @@ impl<'ty> PendingAutoderefTy<'ty> {
             Self::Borrowed(ty) => ty
                 .reference_inner()
                 .map(|(inner, mutability)| (Self::Borrowed(inner), mutability)),
-            Self::Owned(IndexedTy::Reference { mutability, inner }) => {
+            Self::Owned(Ty::Reference { mutability, inner }) => {
                 Some((Self::Owned((**inner).clone()), *mutability))
             }
             Self::Owned(_) => None,
@@ -279,7 +277,7 @@ impl<'query, 'db, 'ty> Iterator for BodyAutoderefCandidates<'query, 'db, 'ty> {
 
 #[derive(Debug, Clone)]
 struct BodyReferencePeelingCandidates<'ty> {
-    next_ty: Option<&'ty IndexedTy>,
+    next_ty: Option<&'ty Ty>,
     next_depth: usize,
     next_mutability: Option<rg_ty::RefMutability>,
 }

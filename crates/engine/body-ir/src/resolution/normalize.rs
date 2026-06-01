@@ -5,19 +5,19 @@
 //! `Try` trait, or `Future::Output` projection.
 
 use rg_semantic_ir::SemanticIrReadTxn;
-use rg_ty::{IndexedGenericArg, IndexedTy, IndexedTyExt};
+use rg_ty::{GenericArg, Ty};
 
 use crate::{ir::body::BodyData, ir::expr::ExprWrapperKind};
 
 use super::{item_query::BodyItemQuery, push_unique};
 
-pub(super) struct IndexedTyNormalizer<'db, 'body> {
+pub(super) struct TyNormalizer<'db, 'body> {
     semantic_ir: &'db SemanticIrReadTxn<'db>,
     body_ref: rg_ir_model::BodyRef,
     body: &'body BodyData,
 }
 
-impl<'db, 'body> IndexedTyNormalizer<'db, 'body> {
+impl<'db, 'body> TyNormalizer<'db, 'body> {
     pub(super) fn new(
         semantic_ir: &'db SemanticIrReadTxn<'db>,
         body_ref: rg_ir_model::BodyRef,
@@ -30,10 +30,10 @@ impl<'db, 'body> IndexedTyNormalizer<'db, 'body> {
         }
     }
 
-    pub(super) fn ty_for_wrapper(&self, kind: ExprWrapperKind, inner_ty: IndexedTy) -> IndexedTy {
+    pub(super) fn ty_for_wrapper(&self, kind: ExprWrapperKind, inner_ty: Ty) -> Ty {
         match kind {
             ExprWrapperKind::Paren => inner_ty,
-            ExprWrapperKind::Ref { mutability } => IndexedTy::reference(mutability, inner_ty),
+            ExprWrapperKind::Ref { mutability } => Ty::reference(mutability, inner_ty),
             // We currently model `async fn foo() -> T` as returning `T` directly. Preserving the
             // inner type through `.await` keeps that useful behavior without pretending to model
             // `Future::Output` for arbitrary future types.
@@ -41,11 +41,11 @@ impl<'db, 'body> IndexedTyNormalizer<'db, 'body> {
             ExprWrapperKind::Try => self.try_output_ty(&inner_ty),
             // `return expr` evaluates to `!`; the child expression remains separately lowered and
             // queryable, so callers can still ask about `expr` itself.
-            ExprWrapperKind::Return => IndexedTy::Never,
+            ExprWrapperKind::Return => Ty::Never,
         }
     }
 
-    fn try_output_ty(&self, ty: &IndexedTy) -> IndexedTy {
+    fn try_output_ty(&self, ty: &Ty) -> Ty {
         let mut outputs = Vec::new();
         let item_query = BodyItemQuery::new(self.semantic_ir, self.body_ref, self.body);
 
@@ -60,10 +60,10 @@ impl<'db, 'body> IndexedTyNormalizer<'db, 'body> {
             }
         }
 
-        IndexedTy::one_or_unknown(outputs)
+        Ty::one_or_unknown(outputs)
     }
 }
 
-fn first_type_arg(args: &[IndexedGenericArg]) -> Option<IndexedTy> {
+fn first_type_arg(args: &[GenericArg]) -> Option<Ty> {
     args.iter().find_map(|arg| arg.as_ty().cloned())
 }

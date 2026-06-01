@@ -1,7 +1,7 @@
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId};
 use rg_item_tree::{ItemTreeId, TypeRef};
 use rg_text::Name;
-use rg_ty::IndexedTy;
+use rg_ty::Ty;
 
 use super::body::BodySource;
 
@@ -15,7 +15,7 @@ pub struct BindingData {
     pub kind: BindingKind,
     pub name: Option<Name>,
     pub annotation: Option<TypeRef>,
-    pub ty: IndexedTy,
+    pub ty: Ty,
 }
 
 impl BindingData {

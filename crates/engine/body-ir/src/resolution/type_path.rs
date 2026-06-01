@@ -8,12 +8,10 @@ use rg_ir_model::{
     AssocItemId, BodyRef, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef,
     ScopeId, SemanticItemRef, TypeAliasRef, TypeDefRef,
 };
-use rg_item_tree::{GenericArg, TypePath, TypeRef};
+use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
-use rg_ty::{
-    IndexedGenericArg, IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr, IndexedTypeSubst,
-};
+use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
 use crate::{ir::body::BodyData, ir::resolved::BodyTypePathResolution};
 
@@ -65,8 +63,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
     ) -> Result<BodyTypePathResolution, PackageStoreError> {
         if let Some((prefix, name)) = split_associated_path(path) {
             let prefix_resolution = self.resolve_in_scope(scope, &prefix)?;
-            let prefix_ty =
-                ty_from_body_resolution(prefix_resolution, IndexedTy::Unknown, Vec::new());
+            let prefix_ty = ty_from_body_resolution(prefix_resolution, Ty::Unknown, Vec::new());
             let mut aliases = Vec::new();
             for ty in prefix_ty.as_nominals() {
                 if let Some(alias) = self.associated_type_alias_for_type(ty, name)? {
@@ -125,16 +122,16 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         &self,
         ty: &TypeRef,
         scope: ScopeId,
-    ) -> Result<IndexedTy, PackageStoreError> {
-        self.ty_from_type_ref_in_scope_with_subst(ty, scope, &IndexedTypeSubst::new())
+    ) -> Result<Ty, PackageStoreError> {
+        self.ty_from_type_ref_in_scope_with_subst(ty, scope, &TypeSubst::new())
     }
 
     pub(super) fn ty_from_type_ref_in_scope_with_subst(
         &self,
         ty: &TypeRef,
         scope: ScopeId,
-        subst: &IndexedTypeSubst,
-    ) -> Result<IndexedTy, PackageStoreError> {
+        subst: &TypeSubst,
+    ) -> Result<Ty, PackageStoreError> {
         // Path types are the only type syntax we resolve structurally today. Other forms stay as
         // syntax unless they have a cheap built-in representation such as `()` or `!`.
         match ty {
@@ -157,7 +154,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
                 }
                 Ok(ty_from_body_resolution(
                     resolution,
-                    IndexedTyRepr::syntax(ty.clone()),
+                    Ty::syntax(ty.clone()),
                     args,
                 ))
             }
@@ -173,8 +170,8 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         &self,
         ty: &TypeRef,
         function: FunctionRef,
-        subst: &IndexedTypeSubst,
-    ) -> Result<IndexedTy, PackageStoreError> {
+        subst: &TypeSubst,
+    ) -> Result<Ty, PackageStoreError> {
         let context = self.context_for_function(function, self.body.owner_module)?;
         if context.module.origin == DefMapRef::Body(self.body_ref) {
             return self.ty_from_type_ref_in_module_with_subst(ty, context.module, subst);
@@ -187,8 +184,8 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         &self,
         ty: &TypeRef,
         context: TypePathContext,
-        subst: &IndexedTypeSubst,
-    ) -> Result<IndexedTy, PackageStoreError> {
+        subst: &TypeSubst,
+    ) -> Result<Ty, PackageStoreError> {
         self.ty_from_type_ref_in_context_with_subst(ty, context, subst)
     }
 
@@ -196,14 +193,14 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         &self,
         ty: &TypeRef,
         context: TypePathContext,
-        subst: &IndexedTypeSubst,
-    ) -> Result<IndexedTy, PackageStoreError> {
+        subst: &TypeSubst,
+    ) -> Result<Ty, PackageStoreError> {
         ty_from_type_ref_in_context(
             self.def_map,
             self.semantic_ir,
             ty,
             context,
-            IndexedTyRepr::syntax(ty.clone()),
+            Ty::syntax(ty.clone()),
             subst,
         )
     }
@@ -212,8 +209,8 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         &self,
         ty: &TypeRef,
         module: ModuleRef,
-        subst: &IndexedTypeSubst,
-    ) -> Result<IndexedTy, PackageStoreError> {
+        subst: &TypeSubst,
+    ) -> Result<Ty, PackageStoreError> {
         // Body DefMaps allocate synthetic scope modules first, in ScopeId order. Named inline
         // modules may have ids outside that range, and the legacy body resolver did not model
         // their expression scopes either.
@@ -291,9 +288,9 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         type_path: &TypePath,
         path: &Path,
         scope: ScopeId,
-        subst: &IndexedTypeSubst,
-        args: &[IndexedGenericArg],
-    ) -> Result<Option<IndexedTy>, PackageStoreError> {
+        subst: &TypeSubst,
+        args: &[GenericArg],
+    ) -> Result<Option<Ty>, PackageStoreError> {
         let Some((_, name)) = split_associated_path(path) else {
             return Ok(None);
         };
@@ -317,11 +314,11 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
     fn ty_from_type_aliases(
         &self,
         aliases: &[TypeAliasRef],
-        args: &[IndexedGenericArg],
-        subst: &IndexedTypeSubst,
-    ) -> Result<IndexedTy, PackageStoreError> {
+        args: &[GenericArg],
+        subst: &TypeSubst,
+    ) -> Result<Ty, PackageStoreError> {
         if aliases.len() != 1 {
-            return Ok(IndexedTy::Unknown);
+            return Ok(Ty::Unknown);
         }
 
         self.ty_from_type_alias(
@@ -337,18 +334,18 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
     fn ty_from_type_alias(
         &self,
         alias_ref: TypeAliasRef,
-        args: &[IndexedGenericArg],
-        subst: &IndexedTypeSubst,
-    ) -> Result<IndexedTy, PackageStoreError> {
+        args: &[GenericArg],
+        subst: &TypeSubst,
+    ) -> Result<Ty, PackageStoreError> {
         let item_query = self.item_query();
         let Some(alias_data) = item_query.type_alias_data(alias_ref)? else {
-            return Ok(IndexedTy::Unknown);
+            return Ok(Ty::Unknown);
         };
         let Some(aliased_ty) = alias_data.signature.aliased_ty() else {
-            return Ok(IndexedTy::Unknown);
+            return Ok(Ty::Unknown);
         };
         if type_ref_is_self(aliased_ty) {
-            return Ok(IndexedTy::Unknown);
+            return Ok(Ty::Unknown);
         }
 
         let mut alias_subst = subst.clone();
@@ -368,7 +365,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
 
     fn associated_type_alias_for_type(
         &self,
-        ty: &IndexedNominalTy,
+        ty: &NominalTy,
         name: &str,
     ) -> Result<Option<TypeAliasRef>, PackageStoreError> {
         if ty.def.origin != DefMapRef::Body(self.body_ref) {
@@ -410,18 +407,18 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
     fn ty_from_associated_type_alias(
         &self,
         alias_ref: TypeAliasRef,
-        receiver_ty: &IndexedNominalTy,
-        args: &[IndexedGenericArg],
-    ) -> Result<IndexedTy, PackageStoreError> {
+        receiver_ty: &NominalTy,
+        args: &[GenericArg],
+    ) -> Result<Ty, PackageStoreError> {
         let item_query = self.item_query();
         let Some(alias_data) = item_query.type_alias_data(alias_ref)? else {
-            return Ok(IndexedTy::Unknown);
+            return Ok(Ty::Unknown);
         };
         let Some(aliased_ty) = alias_data.signature.aliased_ty() else {
-            return Ok(IndexedTy::Unknown);
+            return Ok(Ty::Unknown);
         };
         if type_ref_is_self(aliased_ty) {
-            return Ok(IndexedTyRepr::nominal(vec![receiver_ty.clone()]));
+            return Ok(Ty::nominal(vec![receiver_ty.clone()]));
         }
 
         let mut alias_subst = self.semantic_type_subst(receiver_ty)?;
@@ -451,23 +448,20 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         }
     }
 
-    fn semantic_type_subst(
-        &self,
-        ty: &IndexedNominalTy,
-    ) -> Result<IndexedTypeSubst, PackageStoreError> {
+    fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {
         Ok(self
             .item_query()
             .generic_params_for_type_def(ty.def)?
             .map(|generics| subst_from_generics(generics, &ty.args))
-            .unwrap_or_else(IndexedTypeSubst::new))
+            .unwrap_or_else(TypeSubst::new))
     }
 
     fn generic_args_from_type_path_in_scope(
         &self,
         type_path: &rg_item_tree::TypePath,
         scope: ScopeId,
-        subst: &IndexedTypeSubst,
-    ) -> Result<Vec<IndexedGenericArg>, PackageStoreError> {
+        subst: &TypeSubst,
+    ) -> Result<Vec<GenericArg>, PackageStoreError> {
         let Some(segment) = type_path.segments.last() else {
             return Ok(Vec::new());
         };
@@ -476,10 +470,10 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
 
     fn generic_args_from_item_tree_args_in_scope(
         &self,
-        args: &[GenericArg],
+        args: &[ItemGenericArg],
         scope: ScopeId,
-        subst: &IndexedTypeSubst,
-    ) -> Result<Vec<IndexedGenericArg>, PackageStoreError> {
+        subst: &TypeSubst,
+    ) -> Result<Vec<GenericArg>, PackageStoreError> {
         let mut generic_args = Vec::new();
         for arg in args {
             generic_args.push(self.generic_arg_from_item_tree_arg_in_scope(arg, scope, subst)?);
@@ -489,17 +483,17 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
 
     fn generic_arg_from_item_tree_arg_in_scope(
         &self,
-        arg: &GenericArg,
+        arg: &ItemGenericArg,
         scope: ScopeId,
-        subst: &IndexedTypeSubst,
-    ) -> Result<IndexedGenericArg, PackageStoreError> {
+        subst: &TypeSubst,
+    ) -> Result<GenericArg, PackageStoreError> {
         match arg {
-            GenericArg::Type(ty) => Ok(IndexedGenericArg::Type(Box::new(
+            ItemGenericArg::Type(ty) => Ok(GenericArg::Type(Box::new(
                 self.ty_from_type_ref_in_scope_with_subst(ty, scope, subst)?,
             ))),
-            GenericArg::Lifetime(lifetime) => Ok(IndexedGenericArg::Lifetime(lifetime.clone())),
-            GenericArg::Const(value) => Ok(IndexedGenericArg::Const(value.clone())),
-            GenericArg::AssocType { name, ty } => Ok(IndexedGenericArg::AssocType {
+            ItemGenericArg::Lifetime(lifetime) => Ok(GenericArg::Lifetime(lifetime.clone())),
+            ItemGenericArg::Const(value) => Ok(GenericArg::Const(value.clone())),
+            ItemGenericArg::AssocType { name, ty } => Ok(GenericArg::AssocType {
                 name: name.clone(),
                 ty: match ty {
                     Some(ty) => Some(Box::new(
@@ -508,7 +502,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
                     None => None,
                 },
             }),
-            GenericArg::Unsupported(text) => Ok(IndexedGenericArg::Unsupported(text.clone())),
+            ItemGenericArg::Unsupported(text) => Ok(GenericArg::Unsupported(text.clone())),
         }
     }
 }

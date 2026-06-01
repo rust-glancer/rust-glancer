@@ -21,7 +21,7 @@ use rg_item_tree::{FieldItem, ItemTreeDb, PackageNameInterners};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{Package, ParseDb, Target};
 use rg_semantic_ir::SemanticIrDb;
-use rg_ty::{IndexedGenericArg, IndexedNominalTy, IndexedTy, IndexedTyRepr};
+use rg_ty::{GenericArg, NominalTy, Ty};
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, fixture_crate};
 
@@ -1065,16 +1065,16 @@ impl TargetBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_ty(&self, ty: &IndexedTy) -> String {
+    fn render_ty(&self, ty: &Ty) -> String {
         match ty {
-            IndexedTy::Unit => "()".to_string(),
-            IndexedTy::Never => "!".to_string(),
-            IndexedTy::Primitive(primitive) => primitive.label().to_string(),
-            IndexedTy::Repr(IndexedTyRepr::Syntax(ty)) => format!("syntax {ty}"),
-            IndexedTy::Reference { mutability, inner } => {
+            Ty::Unit => "()".to_string(),
+            Ty::Never => "!".to_string(),
+            Ty::Primitive(primitive) => primitive.label().to_string(),
+            Ty::Syntax(ty) => format!("syntax {ty}"),
+            Ty::Reference { mutability, inner } => {
                 format!("{}{}", mutability.render_prefix(), self.render_ty(inner))
             }
-            IndexedTy::Repr(IndexedTyRepr::Nominal(types)) => {
+            Ty::Nominal(types) => {
                 let mut types = types
                     .iter()
                     .map(|ty| self.render_body_nominal_ty(ty))
@@ -1082,7 +1082,7 @@ impl TargetBodyIrSnapshot<'_> {
                 types.sort();
                 format!("nominal {}", types.join(" | "))
             }
-            IndexedTy::Repr(IndexedTyRepr::SelfTy(types)) => {
+            Ty::SelfTy(types) => {
                 let mut types = types
                     .iter()
                     .map(|ty| self.render_body_nominal_ty(ty))
@@ -1090,11 +1090,11 @@ impl TargetBodyIrSnapshot<'_> {
                 types.sort();
                 format!("Self {}", types.join(" | "))
             }
-            IndexedTy::Unknown => "<unknown>".to_string(),
+            Ty::Unknown => "<unknown>".to_string(),
         }
     }
 
-    fn render_body_nominal_ty(&self, ty: &IndexedNominalTy) -> String {
+    fn render_body_nominal_ty(&self, ty: &NominalTy) -> String {
         format!(
             "{}{}",
             self.render_type_def_ref(ty.def),
@@ -1102,7 +1102,7 @@ impl TargetBodyIrSnapshot<'_> {
         )
     }
 
-    fn render_generic_args(&self, args: &[IndexedGenericArg]) -> String {
+    fn render_generic_args(&self, args: &[GenericArg]) -> String {
         if args.is_empty() {
             return String::new();
         }
@@ -1116,16 +1116,16 @@ impl TargetBodyIrSnapshot<'_> {
         )
     }
 
-    fn render_generic_arg(&self, arg: &IndexedGenericArg) -> String {
+    fn render_generic_arg(&self, arg: &GenericArg) -> String {
         match arg {
-            IndexedGenericArg::Type(ty) => self.render_ty(ty),
-            IndexedGenericArg::Lifetime(lifetime) => lifetime.clone(),
-            IndexedGenericArg::Const(value) => value.clone(),
-            IndexedGenericArg::AssocType { name, ty } => match ty {
+            GenericArg::Type(ty) => self.render_ty(ty),
+            GenericArg::Lifetime(lifetime) => lifetime.clone(),
+            GenericArg::Const(value) => value.clone(),
+            GenericArg::AssocType { name, ty } => match ty {
                 Some(ty) => format!("{name} = {}", self.render_ty(ty)),
                 None => name.to_string(),
             },
-            IndexedGenericArg::Unsupported(text) => format!("<unsupported:{text}>"),
+            GenericArg::Unsupported(text) => format!("<unsupported:{text}>"),
         }
     }
 

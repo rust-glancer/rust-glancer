@@ -11,7 +11,7 @@ use rg_syntax::{
 use rg_ir_model::{ExprId, ScopeId};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::{Span, TextSpan};
-use rg_ty::IndexedTy;
+use rg_ty::Ty;
 
 use crate::ir::{
     BindingData, BindingKind, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
@@ -293,7 +293,7 @@ impl FunctionBodyLowering<'_> {
                     kind: BindingKind::Param,
                     name: None,
                     annotation: annotation.clone(),
-                    ty: IndexedTy::Unknown,
+                    ty: Ty::Unknown,
                 });
                 (None, vec![binding])
             }

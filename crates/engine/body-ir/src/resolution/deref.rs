@@ -9,7 +9,7 @@ use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, SemanticTypePathResolution, TypePathContext};
 use rg_text::Name;
-use rg_ty::{IndexedNominalTy, IndexedTy, IndexedTyExt, IndexedTyRepr, IndexedTypeSubst};
+use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use super::{
     impl_match::BodyImplMatcher, index::SemanticResolutionIndex, push_unique,
@@ -37,14 +37,11 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
         }
     }
 
-    /// Returns all one-step `Deref::Target` types for an indexed type.
+    /// Returns all one-step `Deref::Target` types for a known type.
     ///
     /// Only module-level nominal types participate. Body-local trait impls remain outside this
     /// lookup model, matching method resolution's current boundary.
-    pub(super) fn targets_for_ty(
-        &self,
-        ty: &IndexedTy,
-    ) -> Result<Vec<IndexedTy>, PackageStoreError> {
+    pub(super) fn targets_for_ty(&self, ty: &Ty) -> Result<Vec<Ty>, PackageStoreError> {
         // TODO: Add `DerefMut` once receiver contexts carry enough mutability information to
         // distinguish mutable adjustment from shared `Deref`.
         let mut targets = Vec::new();
@@ -60,10 +57,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
     ///
     /// For `impl<T> core::ops::Deref for Wrapper<T> { type Target = T; }` and receiver
     /// `Wrapper<User>`, this resolves the target as `User`.
-    fn targets_for_nominal(
-        &self,
-        receiver_ty: &IndexedNominalTy,
-    ) -> Result<Vec<IndexedTy>, PackageStoreError> {
+    fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<Vec<Ty>, PackageStoreError> {
         let matcher = BodyImplMatcher::new(self.def_map, self.semantic_ir);
         let mut targets = Vec::new();
         let trait_impls = match self.semantic_index {
@@ -136,8 +130,8 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
         &self,
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
-        subst: &IndexedTypeSubst,
-    ) -> Result<Option<IndexedTy>, PackageStoreError> {
+        subst: &TypeSubst,
+    ) -> Result<Option<Ty>, PackageStoreError> {
         for item in &impl_data.items {
             let AssocItemId::TypeAlias(type_alias_id) = item else {
                 continue;
@@ -157,10 +151,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
             };
 
             let resolved = self.ty_from_target_type_ref(trait_impl, impl_data, target_ty, subst)?;
-            if matches!(
-                resolved,
-                IndexedTy::Unknown | IndexedTy::Repr(IndexedTyRepr::Syntax(_))
-            ) {
+            if matches!(resolved, Ty::Unknown | Ty::Syntax(_)) {
                 return Ok(None);
             }
             return Ok(Some(resolved));
@@ -175,8 +166,8 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
         target_ty: &TypeRef,
-        subst: &IndexedTypeSubst,
-    ) -> Result<IndexedTy, PackageStoreError> {
+        subst: &TypeSubst,
+    ) -> Result<Ty, PackageStoreError> {
         let context = TypePathContext {
             module: impl_data.owner,
             impl_ref: Some(trait_impl.impl_ref),
@@ -186,7 +177,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
             self.semantic_ir,
             target_ty,
             context,
-            IndexedTyRepr::syntax(target_ty.clone()),
+            Ty::syntax(target_ty.clone()),
             subst,
         )
     }

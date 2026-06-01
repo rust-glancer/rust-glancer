@@ -2,7 +2,7 @@
 
 use rg_ir_model::{TargetRef, identity::DeclarationRef};
 use rg_parse::{FileId, Span};
-use rg_ty::IndexedTy;
+use rg_ty::Ty;
 
 use rg_ir_view::{
     IndexedViewDb,
@@ -167,7 +167,7 @@ impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
         }
     }
 
-    pub(crate) fn ty_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Option<IndexedTy>> {
+    pub(crate) fn ty_for_symbol(&self, symbol: SymbolAt) -> anyhow::Result<Option<Ty>> {
         let ty_view = TyView::new(self.db);
         let ty = match symbol {
             SymbolAt::Expr { expr } => ty_view.ty_for_expr(expr)?,

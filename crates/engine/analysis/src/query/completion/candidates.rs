@@ -16,7 +16,7 @@ use rg_ir_view::{
     ty::member::{MemberMethodCandidate, MemberMethodOrigin, MemberView},
 };
 use rg_semantic_ir::FieldKey;
-use rg_ty::IndexedTy;
+use rg_ty::Ty;
 
 use crate::{
     completion_site::{
@@ -294,7 +294,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
                     scope.scope_id(),
                     &path
                 )?,
-                IndexedTy::Primitive(resolved) if resolved == primitive
+                Ty::Primitive(resolved) if resolved == primitive
             ) {
                 candidates.push(primitive);
             }

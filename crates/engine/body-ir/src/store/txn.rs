@@ -7,7 +7,7 @@ use rg_ir_model::{
 };
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
-use rg_ty::{IndexedNominalTy, IndexedTy, IndexedTypeSubst};
+use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
     BodyData, BodyResolution, BodyTypePathResolution, PackageBodies, TargetBodies,
@@ -79,10 +79,10 @@ impl<'db> BodyIrReadTxn<'db> {
         body_ref: BodyRef,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<(BodyResolution, IndexedTy), PackageStoreError> {
+    ) -> Result<(BodyResolution, Ty), PackageStoreError> {
         let body = self.body_data(body_ref)?;
         let Some(body) = body else {
-            return Ok((BodyResolution::Unknown, IndexedTy::Unknown));
+            return Ok((BodyResolution::Unknown, Ty::Unknown));
         };
 
         BodyValuePathResolver::new(def_map, semantic_ir, None, body_ref, body)
@@ -95,7 +95,7 @@ impl<'db> BodyIrReadTxn<'db> {
         def_map: &DefMapReadTxn<'db>,
         semantic_ir: &SemanticIrReadTxn<'db>,
         field_ref: FieldRef,
-    ) -> Result<Option<IndexedTy>, PackageStoreError> {
+    ) -> Result<Option<Ty>, PackageStoreError> {
         // Field declarations live in Semantic IR, but Analysis expects Body IR's small type
         // vocabulary. Use the owning module as the type-path context for the field signature.
         let Some(field_data) = semantic_ir.field_data(field_ref)? else {
@@ -106,8 +106,8 @@ impl<'db> BodyIrReadTxn<'db> {
             semantic_ir,
             &field_data.field.ty,
             TypePathContext::module(field_data.owner_module),
-            IndexedTy::Unknown,
-            &IndexedTypeSubst::new(),
+            Ty::Unknown,
+            &TypeSubst::new(),
         )?))
     }
 
@@ -117,7 +117,7 @@ impl<'db> BodyIrReadTxn<'db> {
         def_map: &DefMapReadTxn<'db>,
         semantic_ir: &SemanticIrReadTxn<'db>,
         function_ref: FunctionRef,
-        receiver_ty: &IndexedNominalTy,
+        receiver_ty: &NominalTy,
     ) -> Result<bool, PackageStoreError> {
         if let rg_ir_model::DefMapRef::Body(body_ref) = function_ref.origin {
             let Some(body) = self.body_data(body_ref)? else {
@@ -156,7 +156,7 @@ impl<'db> BodyIrReadTxn<'db> {
         &self,
         def_map: &DefMapReadTxn<'db>,
         semantic_ir: &SemanticIrReadTxn<'db>,
-        receiver_ty: &IndexedNominalTy,
+        receiver_ty: &NominalTy,
     ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
         resolution::semantic_trait_function_candidates_for_receiver(
             None,
@@ -173,7 +173,7 @@ impl<'db> BodyIrReadTxn<'db> {
         def_map: &DefMapReadTxn<'db>,
         semantic_ir: &SemanticIrReadTxn<'db>,
         trait_impl: TraitImplRef,
-        receiver_ty: &IndexedNominalTy,
+        receiver_ty: &NominalTy,
     ) -> Result<bool, PackageStoreError> {
         Ok(BodyImplMatcher::new(def_map, semantic_ir)
             .semantic_trait_impl_applicability(trait_impl, receiver_ty)?

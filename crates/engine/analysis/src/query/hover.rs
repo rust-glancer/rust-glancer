@@ -6,7 +6,7 @@ use rg_ir_view::{
     item::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
 };
 use rg_parse::FileId;
-use rg_ty::IndexedTy;
+use rg_ty::Ty;
 
 use crate::{
     Analysis, SymbolKind,
@@ -72,7 +72,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         }
     }
 
-    fn hover_for_ty(&self, ty: &IndexedTy) -> anyhow::Result<Option<HoverBlock>> {
+    fn hover_for_ty(&self, ty: &Ty) -> anyhow::Result<Option<HoverBlock>> {
         let Some(signature) = TypeRenderer::new(self.0.view_db()).render(ty)? else {
             return Ok(None);
         };

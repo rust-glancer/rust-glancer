@@ -4,27 +4,27 @@
 //! arguments, solve bounds, or inspect expression bodies to discover return types.
 
 use rg_def_map::{DefMapReadTxn, Path};
-use rg_item_tree::{GenericArg, GenericParams, Mutability, TypeRef};
+use rg_item_tree::{GenericArg as ItemGenericArg, GenericParams, Mutability, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
-use rg_ty::{IndexedGenericArg, IndexedNominalTy, IndexedTy, IndexedTyRepr, IndexedTypeSubst};
+use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
 use crate::ir::resolved::BodyTypePathResolution;
 
-/// Converts syntax-level type data into the shared indexed type vocabulary in one module/impl
+/// Converts syntax-level type data into the shared type vocabulary in one module/impl
 /// context, applying direct generic substitutions where they are already known.
 pub(crate) fn ty_from_type_ref_in_context(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
     ty: &TypeRef,
     context: TypePathContext,
-    unresolved_path_fallback: IndexedTy,
-    subst: &IndexedTypeSubst,
-) -> Result<IndexedTy, PackageStoreError> {
+    unresolved_path_fallback: Ty,
+    subst: &TypeSubst,
+) -> Result<Ty, PackageStoreError> {
     match ty {
-        TypeRef::Unit => Ok(IndexedTy::Unit),
-        TypeRef::Never => Ok(IndexedTy::Never),
+        TypeRef::Unit => Ok(Ty::Unit),
+        TypeRef::Never => Ok(Ty::Never),
         TypeRef::Path(type_path) => {
             let path = Path::from_type_path(type_path);
             if let Some(ty) = substitute_type_param(&path, subst) {
@@ -44,7 +44,7 @@ pub(crate) fn ty_from_type_ref_in_context(
             let fallback = if matches!(resolution, BodyTypePathResolution::Unknown) {
                 path.single_name()
                     .and_then(rg_ty::PrimitiveTy::from_name)
-                    .map(IndexedTy::Primitive)
+                    .map(Ty::Primitive)
                     .unwrap_or(unresolved_path_fallback)
             } else {
                 unresolved_path_fallback
@@ -53,7 +53,7 @@ pub(crate) fn ty_from_type_ref_in_context(
         }
         TypeRef::Reference {
             mutability, inner, ..
-        } => Ok(IndexedTy::reference(
+        } => Ok(Ty::reference(
             match mutability {
                 Mutability::Shared => rg_ty::RefMutability::Shared,
                 Mutability::Mutable => rg_ty::RefMutability::Mutable,
@@ -63,38 +63,38 @@ pub(crate) fn ty_from_type_ref_in_context(
                 semantic_ir,
                 inner,
                 context,
-                IndexedTyRepr::syntax((**inner).clone()),
+                Ty::syntax((**inner).clone()),
                 subst,
             )?,
         )),
-        TypeRef::Unknown(_) | TypeRef::Infer => Ok(IndexedTy::Unknown),
-        TypeRef::Tuple(types) if types.is_empty() => Ok(IndexedTy::Unit),
-        _ => Ok(IndexedTyRepr::syntax(ty.clone())),
+        TypeRef::Unknown(_) | TypeRef::Infer => Ok(Ty::Unknown),
+        TypeRef::Tuple(types) if types.is_empty() => Ok(Ty::Unit),
+        _ => Ok(Ty::syntax(ty.clone())),
     }
 }
 
 pub(super) fn ty_from_body_resolution(
     resolution: BodyTypePathResolution,
-    fallback: IndexedTy,
-    args: Vec<IndexedGenericArg>,
-) -> IndexedTy {
+    fallback: Ty,
+    args: Vec<GenericArg>,
+) -> Ty {
     // Attach the generic arguments from the source path to whichever nominal definition the path
     // resolved to. Ambiguous multi-target resolution keeps the same args on every candidate.
     match resolution {
-        BodyTypePathResolution::Primitive(primitive) => IndexedTy::Primitive(primitive),
-        BodyTypePathResolution::SelfType(types) => IndexedTyRepr::self_ty(
+        BodyTypePathResolution::Primitive(primitive) => Ty::Primitive(primitive),
+        BodyTypePathResolution::SelfType(types) => Ty::self_ty(
             types
                 .into_iter()
-                .map(|def| IndexedNominalTy {
+                .map(|def| NominalTy {
                     def,
                     args: args.clone(),
                 })
                 .collect(),
         ),
-        BodyTypePathResolution::TypeDefs(types) => IndexedTyRepr::nominal(
+        BodyTypePathResolution::TypeDefs(types) => Ty::nominal(
             types
                 .into_iter()
-                .map(|def| IndexedNominalTy {
+                .map(|def| NominalTy {
                     def,
                     args: args.clone(),
                 })
@@ -106,10 +106,7 @@ pub(super) fn ty_from_body_resolution(
     }
 }
 
-pub(super) fn subst_from_generics(
-    generics: &GenericParams,
-    args: &[IndexedGenericArg],
-) -> IndexedTypeSubst {
+pub(super) fn subst_from_generics(generics: &GenericParams, args: &[GenericArg]) -> TypeSubst {
     // We only substitute type parameters. Lifetimes, const args, associated type args, and
     // unsupported args are preserved on the type but ignored by the simple substitution map.
     let type_args = args.iter().filter_map(body_generic_arg_ty);
@@ -122,17 +119,17 @@ pub(super) fn subst_from_generics(
         .collect()
 }
 
-pub(super) fn body_generic_arg_ty(arg: &IndexedGenericArg) -> Option<IndexedTy> {
+pub(super) fn body_generic_arg_ty(arg: &GenericArg) -> Option<Ty> {
     arg.as_ty().cloned()
 }
 
-pub(super) fn generic_arg_type_ref(arg: &GenericArg) -> Option<&TypeRef> {
+pub(super) fn generic_arg_type_ref(arg: &ItemGenericArg) -> Option<&TypeRef> {
     match arg {
-        GenericArg::Type(ty) => Some(ty),
-        GenericArg::Lifetime(_)
-        | GenericArg::Const(_)
-        | GenericArg::AssocType { .. }
-        | GenericArg::Unsupported(_) => None,
+        ItemGenericArg::Type(ty) => Some(ty),
+        ItemGenericArg::Lifetime(_)
+        | ItemGenericArg::Const(_)
+        | ItemGenericArg::AssocType { .. }
+        | ItemGenericArg::Unsupported(_) => None,
     }
 }
 
@@ -151,7 +148,7 @@ pub(super) fn type_param_name_from_type_ref(ty: &TypeRef) -> Option<Name> {
     })
 }
 
-pub(super) fn substitute_type_param(path: &Path, subst: &IndexedTypeSubst) -> Option<IndexedTy> {
+pub(super) fn substitute_type_param(path: &Path, subst: &TypeSubst) -> Option<Ty> {
     // Only plain identifiers can be generic type parameters. Qualified paths like `module::T`
     // remain ordinary type paths and are resolved through DefMap/Semantic IR.
     let name = path.single_name()?;
@@ -170,8 +167,8 @@ fn generic_args_from_type_path_in_context(
     semantic_ir: &SemanticIrReadTxn<'_>,
     type_path: &rg_item_tree::TypePath,
     context: TypePathContext,
-    subst: &IndexedTypeSubst,
-) -> Result<Vec<IndexedGenericArg>, PackageStoreError> {
+    subst: &TypeSubst,
+) -> Result<Vec<GenericArg>, PackageStoreError> {
     // Rust generic args belong to the final path segment for the cases we model here, e.g.
     // `crate::Wrapper<User>` stores `User` on `Wrapper`.
     let Some(segment) = type_path.segments.last() else {
@@ -180,18 +177,18 @@ fn generic_args_from_type_path_in_context(
 
     let mut generic_args = Vec::new();
     for arg in &segment.args {
-        let indexed_arg = match arg {
-            GenericArg::Type(ty) => IndexedGenericArg::Type(Box::new(ty_from_type_ref_in_context(
+        let generic_arg = match arg {
+            ItemGenericArg::Type(ty) => GenericArg::Type(Box::new(ty_from_type_ref_in_context(
                 def_map,
                 semantic_ir,
                 ty,
                 context,
-                IndexedTyRepr::syntax(ty.clone()),
+                Ty::syntax(ty.clone()),
                 subst,
             )?)),
-            GenericArg::Lifetime(lifetime) => IndexedGenericArg::Lifetime(lifetime.clone()),
-            GenericArg::Const(value) => IndexedGenericArg::Const(value.clone()),
-            GenericArg::AssocType { name, ty } => IndexedGenericArg::AssocType {
+            ItemGenericArg::Lifetime(lifetime) => GenericArg::Lifetime(lifetime.clone()),
+            ItemGenericArg::Const(value) => GenericArg::Const(value.clone()),
+            ItemGenericArg::AssocType { name, ty } => GenericArg::AssocType {
                 name: name.clone(),
                 ty: match ty {
                     Some(ty) => Some(Box::new(ty_from_type_ref_in_context(
@@ -199,16 +196,16 @@ fn generic_args_from_type_path_in_context(
                         semantic_ir,
                         ty,
                         context,
-                        IndexedTyRepr::syntax(ty.clone()),
+                        Ty::syntax(ty.clone()),
                         subst,
                     )?)),
                     None => None,
                 },
             },
-            GenericArg::Unsupported(text) => IndexedGenericArg::Unsupported(text.clone()),
+            ItemGenericArg::Unsupported(text) => GenericArg::Unsupported(text.clone()),
         };
 
-        generic_args.push(indexed_arg);
+        generic_args.push(generic_arg);
     }
     Ok(generic_args)
 }

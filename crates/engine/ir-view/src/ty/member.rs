@@ -7,7 +7,7 @@ use rg_ir_model::{
     hir::items::{FieldData, FunctionData},
 };
 use rg_semantic_ir::{Documentation, FieldKey, ParamItem};
-use rg_ty::{IndexedNominalTy, IndexedTy, IndexedTyExt};
+use rg_ty::{NominalTy, Ty};
 
 use crate::{
     IndexedViewDb, SymbolKind, item::declaration::Declaration, item::path::PathView,
@@ -17,11 +17,11 @@ use crate::{
 /// A nominal receiver type with the generic arguments visible at the use site.
 #[derive(Debug, Clone, Copy)]
 pub enum MemberReceiverTy<'a> {
-    Nominal(&'a IndexedNominalTy),
+    Nominal(&'a NominalTy),
 }
 
 impl<'a> MemberReceiverTy<'a> {
-    pub fn in_indexed_ty(ty: &'a IndexedTy) -> impl Iterator<Item = Self> + 'a {
+    pub fn in_indexed_ty(ty: &'a Ty) -> impl Iterator<Item = Self> + 'a {
         ty.as_nominals().iter().map(Self::Nominal)
     }
 
@@ -176,7 +176,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
     pub fn field_candidates_for_ty<'view>(
         &'view self,
-        ty: &IndexedTy,
+        ty: &Ty,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         let autoderef = BodyAutoderef::new(&self.db.def_map, &self.db.semantic_ir);
         let mut fields = Vec::new();
@@ -296,7 +296,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
     pub fn method_candidates_for_ty<'view>(
         &'view self,
-        ty: &IndexedTy,
+        ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
         let autoderef = BodyAutoderef::new(&self.db.def_map, &self.db.semantic_ir);
         let mut methods = Vec::new();

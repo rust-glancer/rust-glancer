@@ -13,7 +13,7 @@ use rg_item_tree::{
 };
 use rg_parse::Span;
 use rg_text::Name;
-use rg_ty::IndexedTy;
+use rg_ty::Ty;
 
 use crate::ir::{
     BindingData, BindingKind, BodySelfParamKind, ExprBlockKind, ExprKind, StmtData, StmtKind,
@@ -65,7 +65,7 @@ impl FunctionBodyLowering<'_> {
             kind: BindingKind::SelfParam(self_kind),
             name: Some(self.interner.intern("self")),
             annotation,
-            ty: IndexedTy::Unknown,
+            ty: Ty::Unknown,
         })
     }
 
@@ -81,7 +81,7 @@ impl FunctionBodyLowering<'_> {
                 kind: BindingKind::Param,
                 name: None,
                 annotation,
-                ty: IndexedTy::Unknown,
+                ty: Ty::Unknown,
             })],
         }
     }

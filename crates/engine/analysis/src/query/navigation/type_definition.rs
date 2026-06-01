@@ -9,7 +9,7 @@ use crate::{Analysis, model::NavigationTarget, source_symbol::SourceSymbolResolv
 
 /// Implements goto-type-definition through the shared type query.
 ///
-/// This resolver asks `type_at` for the best-effort indexed type at the cursor and then navigates to
+/// This resolver asks `type_at` for the best-effort type at the cursor and then navigates to
 /// the nominal declarations represented by that type.
 pub(crate) struct TypeDefinitionResolver<'a, 'db>(&'a Analysis<'db>);
 
