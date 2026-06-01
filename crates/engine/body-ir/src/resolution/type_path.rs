@@ -10,7 +10,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
 use crate::ir::body::BodyData;
@@ -110,8 +110,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         }
 
         let context = self.context_for_function(self.body.owner, self.body.owner_module)?;
-        self.semantic_ir
-            .resolve_type_path(self.def_map, context, path)
+        ItemPathQuery::new(self.def_map, self.semantic_ir).resolve_type_path(context, path)
     }
 
     pub(super) fn ty_from_type_ref_in_scope(

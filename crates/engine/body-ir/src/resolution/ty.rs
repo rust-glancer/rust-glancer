@@ -7,7 +7,7 @@ use rg_def_map::{DefMapReadTxn, Path};
 use rg_ir_model::TypePathResolution;
 use rg_item_tree::{GenericArg as ItemGenericArg, GenericParams, Mutability, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemPathQuery, SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
@@ -37,7 +37,8 @@ pub(crate) fn ty_from_type_ref_in_context(
                 context,
                 subst,
             )?;
-            let resolution = semantic_ir.resolve_type_path(def_map, context, &path)?;
+            let resolution =
+                ItemPathQuery::new(def_map, semantic_ir).resolve_type_path(context, &path)?;
             let fallback = if matches!(resolution, TypePathResolution::Unknown) {
                 path.single_name()
                     .and_then(rg_ty::PrimitiveTy::from_name)

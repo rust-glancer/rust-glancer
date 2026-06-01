@@ -13,7 +13,7 @@ use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticItemRef, TypePathResolution,
     identity::DeclarationRef, identity::ExprRef,
 };
-use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
+use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, TypePathContext};
 use rg_ty::{NominalTy, Ty};
 
 use crate::{IndexedViewDb, ty::locals::BodyView};
@@ -73,10 +73,8 @@ impl<'a, 'db> TyView<'a, 'db> {
     }
 
     pub fn ty_for_type_path(&self, context: TypePathContext, path: &Path) -> anyhow::Result<Ty> {
-        let resolution = self
-            .db
-            .semantic_ir
-            .resolve_type_path(&self.db.def_map, context, path)?;
+        let resolution = ItemPathQuery::new(&self.db.def_map, &self.db.semantic_ir)
+            .resolve_type_path(context, path)?;
         if matches!(resolution, TypePathResolution::Unknown)
             && let Some(primitive) = path.single_name().and_then(rg_ty::PrimitiveTy::from_name)
         {

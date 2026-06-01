@@ -9,7 +9,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
@@ -114,9 +114,8 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
         };
 
         Ok(
-            match self
-                .semantic_ir
-                .resolve_type_path(self.def_map, context, &path)?
+            match ItemPathQuery::new(self.def_map, self.semantic_ir)
+                .resolve_type_path(context, &path)?
             {
                 TypePathResolution::Traits(traits) => traits.contains(&trait_impl.trait_ref),
                 TypePathResolution::SelfType(_)

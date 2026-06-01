@@ -4,6 +4,7 @@ mod ir;
 mod item_query;
 mod item_store;
 mod item_store_lowering;
+mod path_query;
 mod store;
 mod view;
 
@@ -16,6 +17,7 @@ pub use self::{
     item_query::{ItemStoreQuery, ItemStoreSource},
     item_store::{ItemStore, ItemStoreBuilder},
     item_store_lowering::{ItemStoreLowerer, ItemStoreSourceReader},
+    path_query::ItemPathQuery,
     store::{SemanticIrDb, SemanticIrReadTxn},
     view::SemanticItemView,
 };

@@ -6,7 +6,7 @@ use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
 
-use crate::{ItemStoreQuery, SemanticIrReadTxn, store::SemanticIrDbMutator};
+use crate::{ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn, store::SemanticIrDbMutator};
 
 pub(super) fn resolve_impl_headers(
     db: &mut SemanticIrDbMutator<'_>,
@@ -97,7 +97,7 @@ fn resolve_type_defs_from_ref(
         return Ok(Vec::new());
     };
 
-    db.type_defs_for_path(def_map, owner, &path)
+    ItemPathQuery::new(def_map, db).type_defs_for_path(owner, &path)
 }
 
 fn resolve_traits_from_ref(
@@ -110,5 +110,5 @@ fn resolve_traits_from_ref(
         return Ok(Vec::new());
     };
 
-    db.traits_for_path(def_map, owner, &path)
+    ItemPathQuery::new(def_map, db).traits_for_path(owner, &path)
 }

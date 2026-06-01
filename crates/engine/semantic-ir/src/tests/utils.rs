@@ -6,7 +6,7 @@ use std::{
 
 use expect_test::Expect;
 
-use crate::{ItemStore, ItemStoreQuery, SemanticIrDb, SemanticIrReadTxn};
+use crate::{ItemPathQuery, ItemStore, ItemStoreQuery, SemanticIrDb, SemanticIrReadTxn};
 use rg_def_map::{DefMapDb, PackageSlot, Path, PathSegment};
 use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef, TypeAliasId};
 use rg_item_tree::{
@@ -206,9 +206,8 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             .semantic_ir_db()
             .read_txn(unexpected_package_loader());
         let item_query = ItemStoreQuery::new(&semantic_ir_txn);
-        let mut type_defs = semantic_ir_txn
+        let mut type_defs = ItemPathQuery::new(&def_map_txn, &semantic_ir_txn)
             .type_defs_for_path(
-                &def_map_txn,
                 ModuleRef {
                     origin: DefMapRef::Target(target_ref),
                     module: module_id,
