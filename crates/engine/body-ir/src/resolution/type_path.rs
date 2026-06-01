@@ -10,7 +10,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
 use crate::ir::body::BodyData;
@@ -18,7 +18,7 @@ use crate::ir::body::BodyData;
 use super::{
     def_map_lookup::BodyDefMapLookup,
     impl_match::BodyImplMatcher,
-    item_query::BodyItemQuery,
+    item_query::BodyItemStoreSource,
     push_unique,
     ty::{
         subst_from_generics, substitute_type_param, ty_from_body_resolution,
@@ -52,8 +52,12 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         BodyImplMatcher::new(self.def_map, self.semantic_ir)
     }
 
-    fn item_query(&self) -> BodyItemQuery<'_, 'db, '_> {
-        BodyItemQuery::new(self.semantic_ir, self.body_ref, self.body)
+    fn item_query(&self) -> ItemStoreQuery<'_, BodyItemStoreSource<'_, 'db>> {
+        ItemStoreQuery::new(BodyItemStoreSource::new(
+            self.semantic_ir,
+            self.body_ref,
+            self.body,
+        ))
     }
 
     pub(crate) fn resolve_in_scope(

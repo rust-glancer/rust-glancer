@@ -5,17 +5,18 @@
 //! and projects generic view facts into completion-ready candidates.
 
 use rg_def_map::Path;
-use rg_ir_model::{EnumVariantRef, FieldRef, FunctionRef, ModuleRef, identity::DeclarationRef};
+use rg_ir_model::{
+    EnumVariantRef, FieldRef, FunctionRef, ModuleRef, TypeDefId, identity::DeclarationRef,
+};
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
-    item::enum_variant::EnumVariantView,
     lookup::name::{ModuleScopeName, NameLookupView, NameNamespace, NameOrigin},
     source::facts::{IndexedNameNamespace, IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
     ty::TyView,
     ty::locals::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
     ty::member::{MemberMethodCandidate, MemberMethodOrigin, MemberView},
 };
-use rg_semantic_ir::FieldKey;
+use rg_semantic_ir::{FieldKey, ItemStoreQuery};
 use rg_ty::Ty;
 
 use crate::{
@@ -204,15 +205,30 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
             return Ok(Vec::new());
         }
 
-        Ok(EnumVariantView::new(self.db)
-            .variants_for_body_type_path(
-                scope.body_ir(),
-                scope.scope_id(),
-                site.source().qualifier(),
-            )?
-            .into_iter()
-            .map(|variant| variant.variant_ref())
-            .collect())
+        let ty = TyView::new(self.db).ty_for_body_type_path(
+            scope.body_ir(),
+            scope.scope_id(),
+            site.source().qualifier(),
+        )?;
+        let item_query = ItemStoreQuery::new(self.db);
+        let mut variants = Vec::new();
+
+        for nominal in ty.as_nominals() {
+            let ty = nominal.def;
+            let TypeDefId::Enum(enum_id) = ty.id else {
+                continue;
+            };
+            let Some(data) = item_query.enum_data_for_type_def(ty)? else {
+                continue;
+            };
+            variants.extend((0..data.variants.len()).map(|index| EnumVariantRef {
+                origin: ty.origin,
+                enum_id,
+                index,
+            }));
+        }
+
+        Ok(variants)
     }
 
     pub(crate) fn module_candidates_for_unqualified(

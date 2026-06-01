@@ -13,10 +13,10 @@ use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticItemRef, TypePathResolution,
     identity::DeclarationRef, identity::ExprRef,
 };
-use rg_semantic_ir::TypePathContext;
+use rg_semantic_ir::{ItemStoreQuery, TypePathContext};
 use rg_ty::{NominalTy, Ty};
 
-use crate::{IndexedViewDb, item::query::ItemQuery, ty::locals::BodyView};
+use crate::{IndexedViewDb, ty::locals::BodyView};
 
 pub struct TyView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
@@ -49,7 +49,7 @@ impl<'a, 'db> TyView<'a, 'db> {
             DeclarationRef::Module(_) => Ok(None),
             DeclarationRef::LocalDef(local_def) => {
                 let Some(SemanticItemRef::TypeDef(ty)) =
-                    ItemQuery::new(self.db).semantic_item_for_local_def(local_def)?
+                    ItemStoreQuery::new(self.db).semantic_item_for_local_def(local_def)?
                 else {
                     return Ok(None);
                 };
@@ -134,7 +134,7 @@ impl<'a, 'db> TyView<'a, 'db> {
     }
 
     fn ty_for_enum_variant(&self, variant: EnumVariantRef) -> anyhow::Result<Option<Ty>> {
-        let Some(data) = ItemQuery::new(self.db).enum_variant_data(variant)? else {
+        let Some(data) = ItemStoreQuery::new(self.db).enum_variant_data(variant)? else {
             return Ok(None);
         };
         Ok(Some(Ty::nominal(vec![NominalTy::bare(data.owner)])))

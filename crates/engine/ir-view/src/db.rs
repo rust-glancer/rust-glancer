@@ -2,7 +2,8 @@
 
 use rg_body_ir::BodyIrReadTxn;
 use rg_def_map::DefMapReadTxn;
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_ir_model::DefMapRef;
+use rg_semantic_ir::{ItemStore, ItemStoreSource, SemanticIrReadTxn};
 
 /// Read-only database handle used by all indexed-data views.
 ///
@@ -27,5 +28,23 @@ impl<'db> IndexedViewDb<'db> {
             semantic_ir,
             body_ir,
         }
+    }
+}
+
+impl<'a, 'db> ItemStoreSource<'a> for &'a IndexedViewDb<'db> {
+    type Error = anyhow::Error;
+
+    fn item_store_for_origin(&self, origin: DefMapRef) -> anyhow::Result<Option<&'a ItemStore>> {
+        match origin {
+            DefMapRef::Target(target) => Ok(self.semantic_ir.items(target)?),
+            DefMapRef::Body(body_ref) => Ok(self
+                .body_ir
+                .body_data(body_ref)?
+                .and_then(|body| body.body_item_store())),
+        }
+    }
+
+    fn visible_stores(&self) -> anyhow::Result<Vec<&'a ItemStore>> {
+        Ok(self.semantic_ir.included_stores()?)
     }
 }

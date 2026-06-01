@@ -4,12 +4,12 @@
 //! parentheses, `.await`, and `?`, but it does not try to implement borrow checking, autoderef, the
 //! `Try` trait, or `Future::Output` projection.
 
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
 use rg_ty::{GenericArg, Ty};
 
 use crate::{ir::body::BodyData, ir::expr::ExprWrapperKind};
 
-use super::{item_query::BodyItemQuery, push_unique};
+use super::{item_query::BodyItemStoreSource, push_unique};
 
 pub(super) struct TyNormalizer<'db, 'body> {
     semantic_ir: &'db SemanticIrReadTxn<'db>,
@@ -47,7 +47,11 @@ impl<'db, 'body> TyNormalizer<'db, 'body> {
 
     fn try_output_ty(&self, ty: &Ty) -> Ty {
         let mut outputs = Vec::new();
-        let item_query = BodyItemQuery::new(self.semantic_ir, self.body_ref, self.body);
+        let item_query = ItemStoreQuery::new(BodyItemStoreSource::new(
+            self.semantic_ir,
+            self.body_ref,
+            self.body,
+        ));
 
         for nominal in ty.as_nominals() {
             let Ok(Some(name)) = item_query.type_def_name(nominal.def) else {

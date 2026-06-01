@@ -5,9 +5,9 @@
 
 use rg_def_map::{Path, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin};
 use rg_ir_model::{DefId, FunctionRef, ModuleRef, SemanticItemRef, identity::DeclarationRef};
-use rg_semantic_ir::Documentation;
+use rg_semantic_ir::{Documentation, ItemStoreQuery};
 
-use crate::{IndexedViewDb, SymbolKind, item::query::ItemQuery};
+use crate::{IndexedViewDb, SymbolKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NameNamespace {
@@ -172,7 +172,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                     return Ok(None);
                 };
                 if let Some(SemanticItemRef::Function(function_ref)) =
-                    ItemQuery::new(self.db).semantic_item_for_local_def(local_def_ref)?
+                    ItemStoreQuery::new(self.db).semantic_item_for_local_def(local_def_ref)?
                 {
                     function = Some(function_ref);
                 }

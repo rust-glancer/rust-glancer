@@ -9,9 +9,10 @@ use rg_ir_model::{
     AssocItemId, FunctionRef, ImplRef, ItemOwner, SemanticItemRef, TraitRef, TypeDefRef,
     identity::{DeclarationRef, ExprRef},
 };
+use rg_semantic_ir::ItemStoreQuery;
 use rg_ty::Ty;
 
-use crate::{IndexedViewDb, item::query::ItemQuery, lookup::resolution::ResolutionView};
+use crate::{IndexedViewDb, lookup::resolution::ResolutionView};
 
 pub struct ImplementationView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
@@ -81,7 +82,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
             },
             DeclarationRef::LocalDef(local_def) => {
                 let Some(SemanticItemRef::Function(function)) =
-                    ItemQuery::new(self.db).semantic_item_for_local_def(local_def)?
+                    ItemStoreQuery::new(self.db).semantic_item_for_local_def(local_def)?
                 else {
                     return Ok(implementations);
                 };
@@ -132,7 +133,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         implementations: &mut Vec<DeclarationRef>,
         ty: TypeDefRef,
     ) -> anyhow::Result<()> {
-        for impl_ref in ItemQuery::new(self.db).impls_for_type(ty)? {
+        for impl_ref in ItemStoreQuery::new(self.db).impls_for_type(ty)? {
             Self::push_unique(implementations, DeclarationRef::from(impl_ref));
         }
         Ok(())
@@ -143,7 +144,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         implementations: &mut Vec<DeclarationRef>,
         trait_ref: TraitRef,
     ) -> anyhow::Result<()> {
-        for impl_ref in ItemQuery::new(self.db).impls_for_trait(trait_ref)? {
+        for impl_ref in ItemStoreQuery::new(self.db).impls_for_trait(trait_ref)? {
             Self::push_unique(implementations, DeclarationRef::from(impl_ref));
         }
         Ok(())
@@ -159,7 +160,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
             DeclarationRef::Module(_) => Ok(()),
             DeclarationRef::LocalDef(local_def) => {
                 let Some(SemanticItemRef::Function(function)) =
-                    ItemQuery::new(self.db).semantic_item_for_local_def(local_def)?
+                    ItemStoreQuery::new(self.db).semantic_item_for_local_def(local_def)?
                 else {
                     return Ok(());
                 };
@@ -184,7 +185,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         function: FunctionRef,
         receiver_ty: Option<&Ty>,
     ) -> anyhow::Result<()> {
-        let Some(data) = ItemQuery::new(self.db).function_data(function)? else {
+        let Some(data) = ItemStoreQuery::new(self.db).function_data(function)? else {
             return Ok(());
         };
 
@@ -259,7 +260,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         trait_ref: TraitRef,
         method_name: &str,
     ) -> anyhow::Result<()> {
-        for impl_ref in ItemQuery::new(self.db).impls_for_trait(trait_ref)? {
+        for impl_ref in ItemStoreQuery::new(self.db).impls_for_trait(trait_ref)? {
             self.extend_matching_impl_methods(implementations, impl_ref, method_name)?;
         }
         Ok(())
@@ -271,7 +272,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         impl_ref: ImplRef,
         method_name: &str,
     ) -> anyhow::Result<()> {
-        let Some(data) = ItemQuery::new(self.db).impl_data(impl_ref)? else {
+        let Some(data) = ItemStoreQuery::new(self.db).impl_data(impl_ref)? else {
             return Ok(());
         };
 
@@ -283,7 +284,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
                 origin: impl_ref.origin,
                 id: *id,
             };
-            let Some(function_data) = ItemQuery::new(self.db).function_data(function)? else {
+            let Some(function_data) = ItemStoreQuery::new(self.db).function_data(function)? else {
                 continue;
             };
             if function_data.name.as_str() != method_name {

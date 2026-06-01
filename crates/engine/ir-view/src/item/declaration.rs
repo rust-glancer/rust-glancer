@@ -6,9 +6,9 @@ use rg_ir_model::{
     ModuleRef, SemanticItemKind, SemanticItemRef, TargetRef, identity::DeclarationRef,
 };
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::TypeRef;
+use rg_semantic_ir::{ItemStoreQuery, TypeRef};
 
-use crate::{IndexedViewDb, SymbolKind, item::query::ItemQuery, ty::member::MemberView};
+use crate::{IndexedViewDb, SymbolKind, ty::member::MemberView};
 
 /// Composite declaration facts shared by editor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,7 +138,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     fn semantic_item(&self, item: SemanticItemRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(view) = ItemQuery::new(self.db).semantic_item_view(item)? else {
+        let Some(view) = ItemStoreQuery::new(self.db).semantic_item_view(item)? else {
             return Ok(None);
         };
 
@@ -227,7 +227,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         &self,
         variant_ref: EnumVariantRef,
     ) -> anyhow::Result<Option<Declaration>> {
-        let Some(data) = ItemQuery::new(self.db).enum_variant_data(variant_ref)? else {
+        let Some(data) = ItemStoreQuery::new(self.db).enum_variant_data(variant_ref)? else {
             return Ok(None);
         };
 

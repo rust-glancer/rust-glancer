@@ -11,9 +11,10 @@ use rg_ir_model::{
     TargetRef, hir::source::ItemSourceKind, identity::DeclarationRef,
 };
 use rg_parse::{FileId, Span, TextSpan};
+use rg_semantic_ir::ItemStoreQuery;
 use rg_ty::Ty;
 
-use crate::{IndexedViewDb, item::query::ItemQuery};
+use crate::IndexedViewDb;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyNameNamespace {
@@ -225,7 +226,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                         }
                         SemanticItemRef::TypeDef(ty) => {
                             let has_value_constructor =
-                                ItemQuery::new(self.db).type_def_has_value_constructor(ty)?;
+                                ItemStoreQuery::new(self.db).type_def_has_value_constructor(ty)?;
                             if !has_value_constructor || !seen_values.insert(name.to_string()) {
                                 continue;
                             }
@@ -273,7 +274,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                     }
                     let has_value_constructor = match view.item() {
                         SemanticItemRef::TypeDef(ty) => {
-                            ItemQuery::new(self.db).type_def_has_value_constructor(ty)?
+                            ItemStoreQuery::new(self.db).type_def_has_value_constructor(ty)?
                         }
                         _ => false,
                     };

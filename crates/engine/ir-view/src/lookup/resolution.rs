@@ -10,8 +10,9 @@ use rg_ir_model::{
     BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
     identity::{DeclarationRef, ExprRef},
 };
+use rg_semantic_ir::ItemStoreQuery;
 
-use crate::{IndexedViewDb, item::query::ItemQuery};
+use crate::IndexedViewDb;
 
 pub struct ResolutionView<'a, 'db>(&'a IndexedViewDb<'db>);
 
@@ -85,7 +86,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         &self,
         local_def: LocalDefRef,
     ) -> anyhow::Result<Option<DeclarationRef>> {
-        let Some(item) = ItemQuery::new(self.0).semantic_item_for_local_def(local_def)? else {
+        let Some(item) = ItemStoreQuery::new(self.0).semantic_item_for_local_def(local_def)? else {
             return Ok(None);
         };
 

@@ -7,13 +7,10 @@ use rg_ir_model::{
     TypePathResolution,
     hir::items::{FieldData, FunctionData},
 };
-use rg_semantic_ir::{Documentation, FieldKey, ParamItem};
+use rg_semantic_ir::{Documentation, FieldKey, ItemStoreQuery, ParamItem};
 use rg_ty::{NominalTy, Ty};
 
-use crate::{
-    IndexedViewDb, SymbolKind, item::declaration::Declaration, item::path::PathView,
-    item::query::ItemQuery,
-};
+use crate::{IndexedViewDb, SymbolKind, item::declaration::Declaration, item::path::PathView};
 
 /// A nominal receiver type with the generic arguments visible at the use site.
 #[derive(Debug, Clone, Copy)]
@@ -205,19 +202,19 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(fields)
     }
 
-    pub fn field_candidates<'view>(
+    fn field_candidates<'view>(
         &'view self,
         receiver_ty: MemberReceiverTy<'_>,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         self.field_candidates_for_owner(receiver_ty.owner())
     }
 
-    pub fn field_candidates_for_owner<'view>(
+    fn field_candidates_for_owner<'view>(
         &'view self,
         owner: MemberOwnerRef,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         let field_refs: Vec<_> = match owner {
-            MemberOwnerRef::Nominal(ty) => ItemQuery::new(self.db).fields_for_type(ty)?,
+            MemberOwnerRef::Nominal(ty) => ItemStoreQuery::new(self.db).fields_for_type(ty)?,
         };
 
         let mut fields = Vec::new();
@@ -232,18 +229,18 @@ impl<'a, 'db> MemberView<'a, 'db> {
     }
 
     pub fn field(&self, field: FieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
-        Ok(ItemQuery::new(self.db)
+        Ok(ItemStoreQuery::new(self.db)
             .field_data(field)?
             .map(|data| MemberField { field, data }))
     }
 
     pub fn function(&self, function: FunctionRef) -> anyhow::Result<Option<MemberFunction<'_>>> {
-        Ok(ItemQuery::new(self.db)
+        Ok(ItemStoreQuery::new(self.db)
             .function_data(function)?
             .map(|data| MemberFunction { function, data }))
     }
 
-    pub fn method_candidates<'view>(
+    fn method_candidates<'view>(
         &'view self,
         receiver_ty: MemberReceiverTy<'_>,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
@@ -251,7 +248,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
         match receiver_ty {
             MemberReceiverTy::Nominal(ty) => {
-                for function in ItemQuery::new(self.db).inherent_functions_for_type(ty.def)? {
+                for function in ItemStoreQuery::new(self.db).inherent_functions_for_type(ty.def)? {
                     if !self.db.body_ir.semantic_function_applies_to_receiver(
                         &self.db.def_map,
                         &self.db.semantic_ir,

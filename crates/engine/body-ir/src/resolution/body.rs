@@ -11,7 +11,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
@@ -26,7 +26,7 @@ use super::{
     autoderef::{BodyAutoderef, BodyAutoderefMode},
     def_map_lookup::BodyDefMapLookup,
     impl_match::BodyImplMatcher,
-    item_query::BodyItemQuery,
+    item_query::BodyItemStoreSource,
     method::{
         semantic_function_applies_to_receiver, semantic_trait_function_candidates_for_receiver,
     },
@@ -79,8 +79,12 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         BodyImplMatcher::new(self.def_map_txn, self.semantic_ir_txn)
     }
 
-    fn item_query(&self) -> BodyItemQuery<'_, 'db, '_> {
-        BodyItemQuery::new(self.semantic_ir_txn, self.body_ref, self.body)
+    fn item_query(&self) -> ItemStoreQuery<'_, BodyItemStoreSource<'_, 'db>> {
+        ItemStoreQuery::new(BodyItemStoreSource::new(
+            self.semantic_ir_txn,
+            self.body_ref,
+            self.body,
+        ))
     }
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
@@ -865,8 +869,12 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         BodyImplMatcher::new(self.def_map, self.semantic_ir)
     }
 
-    fn item_query(&self) -> BodyItemQuery<'_, 'db, '_> {
-        BodyItemQuery::new(self.semantic_ir, self.body_ref, self.body)
+    fn item_query(&self) -> ItemStoreQuery<'_, BodyItemStoreSource<'_, 'db>> {
+        ItemStoreQuery::new(BodyItemStoreSource::new(
+            self.semantic_ir,
+            self.body_ref,
+            self.body,
+        ))
     }
 
     pub(crate) fn resolve_nonlocal_path_expr(

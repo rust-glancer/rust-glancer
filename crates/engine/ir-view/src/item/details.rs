@@ -9,11 +9,11 @@ use rg_ir_model::{
     ModuleRef, SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
     identity::DeclarationRef,
 };
-use rg_semantic_ir::Documentation;
+use rg_semantic_ir::{Documentation, ItemStoreQuery};
 
 use crate::{
     IndexedViewDb, SymbolKind, display::signature::SignatureRenderer, item::path::PathView,
-    item::query::ItemQuery, ty::member::MemberView,
+    ty::member::MemberView,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -88,7 +88,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     }
 
     fn type_def_details(&self, ty: TypeDefRef) -> anyhow::Result<Option<DeclarationDetails>> {
-        let item_query = ItemQuery::new(self.db);
+        let item_query = ItemStoreQuery::new(self.db);
         let Some(items) = item_query.item_store_for_origin(ty.origin)? else {
             return Ok(None);
         };
@@ -132,7 +132,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     }
 
     fn trait_details(&self, trait_ref: TraitRef) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(data) = ItemQuery::new(self.db).trait_data(trait_ref)? else {
+        let Some(data) = ItemStoreQuery::new(self.db).trait_data(trait_ref)? else {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
@@ -176,7 +176,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         &self,
         variant: EnumVariantRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(data) = ItemQuery::new(self.db).enum_variant_data(variant)? else {
+        let Some(data) = ItemStoreQuery::new(self.db).enum_variant_data(variant)? else {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
@@ -191,7 +191,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         &self,
         type_alias_ref: TypeAliasRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(data) = ItemQuery::new(self.db).type_alias_data(type_alias_ref)? else {
+        let Some(data) = ItemStoreQuery::new(self.db).type_alias_data(type_alias_ref)? else {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
@@ -203,7 +203,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     }
 
     fn const_details(&self, const_ref: ConstRef) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(data) = ItemQuery::new(self.db).const_data(const_ref)? else {
+        let Some(data) = ItemStoreQuery::new(self.db).const_data(const_ref)? else {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {
@@ -215,7 +215,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
     }
 
     fn static_details(&self, static_ref: StaticRef) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(data) = ItemQuery::new(self.db).static_data(static_ref)? else {
+        let Some(data) = ItemStoreQuery::new(self.db).static_data(static_ref)? else {
             return Ok(None);
         };
         Ok(Some(DeclarationDetails {

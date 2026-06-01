@@ -9,9 +9,9 @@ use rg_ir_model::{
     TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::SemanticItemView;
+use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
 
-use crate::{IndexedViewDb, item::query::ItemQuery, ty::locals::BodyView};
+use crate::{IndexedViewDb, ty::locals::BodyView};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedSyntaxChild {
@@ -231,7 +231,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     ) -> anyhow::Result<Option<IndexedItem>> {
         match declaration {
             DeclarationRef::Item(item) => {
-                let Some(item) = ItemQuery::new(self.db).semantic_item_view(item)? else {
+                let Some(item) = ItemStoreQuery::new(self.db).semantic_item_view(item)? else {
                     return Ok(None);
                 };
                 self.semantic_item(item)
@@ -250,7 +250,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         ty: TypeDefRef,
     ) -> anyhow::Result<Option<IndexedItem>> {
         let mut children = Vec::new();
-        for field in ItemQuery::new(self.db).fields_for_type(ty)? {
+        for field in ItemStoreQuery::new(self.db).fields_for_type(ty)? {
             children.push(IndexedItemChild::Declaration(IndexedItem::leaf(
                 DeclarationRef::from(field),
             )));
@@ -265,7 +265,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     ) -> anyhow::Result<Option<IndexedItem>> {
         let mut children = Vec::new();
         for variant_ref in self.enum_variant_refs(ty)? {
-            let Some(variant) = ItemQuery::new(self.db).enum_variant_data(variant_ref)? else {
+            let Some(variant) = ItemStoreQuery::new(self.db).enum_variant_data(variant_ref)? else {
                 continue;
             };
             let fields = variant
@@ -316,7 +316,7 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         let TypeDefId::Enum(enum_id) = ty.id else {
             return Ok(Vec::new());
         };
-        let Some(data) = ItemQuery::new(self.db).enum_data_for_type_def(ty)? else {
+        let Some(data) = ItemStoreQuery::new(self.db).enum_data_for_type_def(ty)? else {
             return Ok(Vec::new());
         };
 

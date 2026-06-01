@@ -8,7 +8,7 @@ use rg_def_map::{DefMapReadTxn, Path, PathSegment};
 use rg_ir_model::{BindingId, BodyRef, ExprId, PatId, ScopeId, StmtId, TypeDefId};
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
@@ -20,8 +20,8 @@ use crate::{
 };
 
 use super::{
-    autoderef::BodyAutoderef, item_query::BodyItemQuery, push_unique, ty::subst_from_generics,
-    type_path::BodyTypePathResolver,
+    autoderef::BodyAutoderef, item_query::BodyItemStoreSource, push_unique,
+    ty::subst_from_generics, type_path::BodyTypePathResolver,
 };
 
 pub(super) struct PatternTypePropagator<'query, 'db, 'body> {
@@ -125,8 +125,12 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         Ok(changed)
     }
 
-    fn item_query(&self) -> BodyItemQuery<'_, 'db, '_> {
-        BodyItemQuery::new(self.semantic_ir, self.body_ref, self.body)
+    fn item_query(&self) -> ItemStoreQuery<'_, BodyItemStoreSource<'_, 'db>> {
+        ItemStoreQuery::new(BodyItemStoreSource::new(
+            self.semantic_ir,
+            self.body_ref,
+            self.body,
+        ))
     }
 
     fn expected_ty_for_let(
