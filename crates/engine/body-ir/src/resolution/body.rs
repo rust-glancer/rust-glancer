@@ -71,8 +71,16 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         )
     }
 
-    fn autoderef(&self) -> BodyAutoderef<'_, 'db> {
-        BodyAutoderef::with_index(self.def_map_txn, self.semantic_ir_txn, self.semantic_index)
+    fn autoderef(
+        &self,
+    ) -> BodyAutoderef<'_, BodyDefMapSource<'_, 'db>, BodyItemStoreSource<'_, 'db>> {
+        BodyAutoderef::with_index(
+            ItemPathQuery::new(
+                BodyDefMapSource::new(self.def_map_txn, self.body_ref, self.body),
+                BodyItemStoreSource::new(self.semantic_ir_txn, self.body_ref, self.body),
+            ),
+            self.semantic_index,
+        )
     }
 
     fn impl_matcher(

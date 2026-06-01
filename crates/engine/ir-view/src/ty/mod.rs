@@ -7,7 +7,7 @@ pub mod implementation;
 pub mod locals;
 pub mod member;
 
-use rg_body_ir::BodyAutoderef;
+use rg_body_ir::BodyReferencePeelingCandidates;
 use rg_def_map::Path;
 use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticItemRef, TypePathResolution,
@@ -33,7 +33,7 @@ impl<'a, 'db> TyView<'a, 'db> {
 
     pub fn declarations_for_ty(&self, ty: &Ty) -> Vec<DeclarationRef> {
         let mut declarations = Vec::new();
-        for candidate in BodyAutoderef::peel_references(ty) {
+        for candidate in BodyReferencePeelingCandidates::new(ty) {
             for ty in candidate.ty().as_nominals() {
                 let declaration = DeclarationRef::from(ty.def);
                 if !declarations.contains(&declaration) {

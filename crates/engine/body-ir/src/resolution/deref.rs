@@ -3,13 +3,13 @@
 //! This module deliberately stays narrow: it recognizes `core::ops::Deref` impls for a known
 //! nominal receiver and resolves the impl's associated `Target` type with the receiver substitution.
 
-use rg_def_map::{DefMapReadTxn, Path, PathSegment};
+use rg_def_map::{DefMapSource, Path, PathSegment};
 use rg_ir_model::{
     AssocItemId, TraitImplRef, TypeAliasRef, TypePathResolution, hir::items::ImplData,
 };
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemPathQuery, ItemStoreSource, TypePathContext};
 use rg_text::Name;
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
@@ -19,22 +19,23 @@ use super::{
 };
 
 /// Resolves the associated `Target` type for applicable `core::ops::Deref` impls.
-#[derive(Clone, Copy)]
-pub(super) struct BodyDerefResolver<'query, 'db> {
-    def_map: &'query DefMapReadTxn<'db>,
-    semantic_ir: &'query SemanticIrReadTxn<'db>,
+#[derive(Clone)]
+pub(super) struct BodyDerefResolver<'query, D, I> {
+    item_paths: ItemPathQuery<'query, D, I>,
     semantic_index: Option<&'query SemanticResolutionIndex>,
 }
 
-impl<'query, 'db> BodyDerefResolver<'query, 'db> {
+impl<'query, D, I> BodyDerefResolver<'query, D, I>
+where
+    D: DefMapSource + Clone,
+    I: ItemStoreSource<'query, Error = PackageStoreError> + Clone,
+{
     pub(super) fn new(
-        def_map: &'query DefMapReadTxn<'db>,
-        semantic_ir: &'query SemanticIrReadTxn<'db>,
+        item_paths: ItemPathQuery<'query, D, I>,
         semantic_index: Option<&'query SemanticResolutionIndex>,
     ) -> Self {
         Self {
-            def_map,
-            semantic_ir,
+            item_paths,
             semantic_index,
         }
     }
@@ -60,8 +61,8 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
     /// For `impl<T> core::ops::Deref for Wrapper<T> { type Target = T; }` and receiver
     /// `Wrapper<User>`, this resolves the target as `User`.
     fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<Vec<Ty>, PackageStoreError> {
-        let matcher = BodyImplMatcher::new(ItemPathQuery::new(self.def_map, self.semantic_ir));
-        let item_query = ItemStoreQuery::new(self.semantic_ir);
+        let matcher = BodyImplMatcher::new(self.item_paths.clone());
+        let item_query = self.item_paths.items();
         let mut targets = Vec::new();
         let trait_impls = match self.semantic_index {
             Some(index) => index.trait_impls_for_type(receiver_ty.def).to_vec(),
@@ -113,17 +114,13 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
             impl_ref: Some(trait_impl.impl_ref),
         };
 
-        Ok(
-            match ItemPathQuery::new(self.def_map, self.semantic_ir)
-                .resolve_type_path(context, &path)?
-            {
-                TypePathResolution::Traits(traits) => traits.contains(&trait_impl.trait_ref),
-                TypePathResolution::SelfType(_)
-                | TypePathResolution::TypeDefs(_)
-                | TypePathResolution::TypeAliases(_)
-                | TypePathResolution::Unknown => false,
-            },
-        )
+        Ok(match self.item_paths.resolve_type_path(context, &path)? {
+            TypePathResolution::Traits(traits) => traits.contains(&trait_impl.trait_ref),
+            TypePathResolution::SelfType(_)
+            | TypePathResolution::TypeDefs(_)
+            | TypePathResolution::TypeAliases(_)
+            | TypePathResolution::Unknown => false,
+        })
     }
 
     /// Resolves the `type Target = ...` item declared in a matching `Deref` impl.
@@ -133,7 +130,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
         impl_data: &ImplData,
         subst: &TypeSubst,
     ) -> Result<Option<Ty>, PackageStoreError> {
-        let item_query = ItemStoreQuery::new(self.semantic_ir);
+        let item_query = self.item_paths.items();
         for item in &impl_data.items {
             let AssocItemId::TypeAlias(type_alias_id) = item else {
                 continue;
@@ -174,9 +171,8 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
             module: impl_data.owner,
             impl_ref: Some(trait_impl.impl_ref),
         };
-        let item_paths = ItemPathQuery::new(self.def_map, self.semantic_ir);
         ty_from_type_ref_in_context(
-            &item_paths,
+            &self.item_paths,
             target_ty,
             context,
             Ty::syntax(target_ty.clone()),

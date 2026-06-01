@@ -4,12 +4,12 @@
 //! trait method. This view owns the storage-specific lookup rules so query code can stay focused on
 //! cursor policy and editor projection.
 
-use rg_body_ir::{BodyAutoderef, BodyAutoderefMode, ExprKind};
+use rg_body_ir::{BodyAutoderef, BodyAutoderefMode, BodyReferencePeelingCandidates, ExprKind};
 use rg_ir_model::{
     AssocItemId, FunctionRef, ImplRef, ItemOwner, SemanticItemRef, TraitRef, TypeDefRef,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_semantic_ir::ItemStoreQuery;
+use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery};
 use rg_ty::Ty;
 
 use crate::{IndexedViewDb, lookup::resolution::ResolutionView};
@@ -120,7 +120,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         implementations: &mut Vec<DeclarationRef>,
         ty: &Ty,
     ) -> anyhow::Result<()> {
-        for candidate in BodyAutoderef::peel_references(ty) {
+        for candidate in BodyReferencePeelingCandidates::new(ty) {
             for ty in candidate.ty().as_nominals() {
                 self.extend_type_def_implementations(implementations, ty.def)?;
             }
@@ -224,7 +224,8 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         method_name: &str,
         receiver_ty: &Ty,
     ) -> anyhow::Result<()> {
-        let autoderef = BodyAutoderef::new(&self.db.def_map, &self.db.semantic_ir);
+        let autoderef =
+            BodyAutoderef::new(ItemPathQuery::new(&self.db.def_map, &self.db.semantic_ir));
         for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, receiver_ty) {
             let candidate = candidate?;
             for ty in candidate.ty().as_nominals() {

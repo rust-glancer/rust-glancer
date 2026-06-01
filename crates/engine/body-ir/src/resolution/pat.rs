@@ -20,7 +20,7 @@ use crate::{
 };
 
 use super::{
-    autoderef::BodyAutoderef, item_query::BodyItemStoreSource, push_unique,
+    autoderef::BodyReferencePeelingCandidates, item_query::BodyItemStoreSource, push_unique,
     ty::subst_from_generics, type_path::BodyTypePathResolver,
 };
 
@@ -251,7 +251,7 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
 
         // Pattern propagation peels only reference wrappers so enum payload inference remains
         // useful without opting into receiver autoderef or future trait-backed deref.
-        for deref_candidate in BodyAutoderef::peel_references(expected_ty) {
+        for deref_candidate in BodyReferencePeelingCandidates::new(expected_ty) {
             for enum_ty in deref_candidate
                 .ty()
                 .as_nominals()

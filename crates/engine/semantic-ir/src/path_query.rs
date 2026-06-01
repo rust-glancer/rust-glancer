@@ -11,6 +11,7 @@ use rg_package_store::PackageStoreError;
 use crate::{ItemStoreQuery, ItemStoreSource, TypePathContext, push_unique};
 
 /// Resolves paths into semantic-shaped item refs using independent DefMap and ItemStore sources.
+#[derive(Clone)]
 pub struct ItemPathQuery<'a, D, I> {
     def_maps: DefMapQuery<D>,
     items: ItemStoreQuery<'a, I>,

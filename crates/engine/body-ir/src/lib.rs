@@ -35,6 +35,7 @@ pub use self::ir::BodyResolution;
 // TODO: Shouldn't be exposed normally; remove after analysis owns member lookup projection.
 pub use self::resolution::{
     BodyAutoderef, BodyAutoderefCandidate, BodyAutoderefCandidates, BodyAutoderefMode,
+    BodyReferencePeelingCandidates,
 };
 
 /// One package-local source file whose function bodies should be lowered during a partial rebuild.

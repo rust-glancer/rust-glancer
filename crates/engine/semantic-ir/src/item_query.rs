@@ -38,6 +38,7 @@ pub trait ItemStoreSource<'a> {
 ///
 /// This keeps presentation, type, and body-resolution code from re-implementing the same
 /// "find the right store, then read item data" sequence for every item kind.
+#[derive(Clone)]
 pub struct ItemStoreQuery<'a, S> {
     source: S,
     _marker: std::marker::PhantomData<&'a ()>,

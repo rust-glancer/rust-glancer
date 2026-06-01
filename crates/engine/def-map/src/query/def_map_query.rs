@@ -58,6 +58,7 @@ impl<T: DefMapSource + ?Sized> DefMapSource for &T {
 }
 
 /// Common DefMap lookup API over any source that can route origins to DefMaps.
+#[derive(Clone)]
 pub struct DefMapQuery<S> {
     source: S,
 }

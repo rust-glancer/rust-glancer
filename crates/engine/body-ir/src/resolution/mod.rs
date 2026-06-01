@@ -30,6 +30,7 @@ pub(crate) use self::{
 
 pub use self::autoderef::{
     BodyAutoderef, BodyAutoderefCandidate, BodyAutoderefCandidates, BodyAutoderefMode,
+    BodyReferencePeelingCandidates,
 };
 
 // TODO: Should not be here

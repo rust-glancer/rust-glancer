@@ -2,13 +2,14 @@
 //!
 //! This is the adjustment layer between expression types and the contexts that can look through
 //! references or trait-backed `Deref`. Contexts that only want `&T` transparency use
-//! `peel_references`, keeping trait deref out of pattern and type-definition queries.
+//! `BodyReferencePeelingCandidates`, keeping trait deref out of pattern and type-definition
+//! queries.
 
 use std::{borrow::Cow, collections::VecDeque};
 
-use rg_def_map::DefMapReadTxn;
+use rg_def_map::DefMapSource;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{ItemPathQuery, ItemStoreSource};
 use rg_ty::Ty;
 
 use super::{deref::BodyDerefResolver, index::SemanticResolutionIndex};
@@ -16,35 +17,32 @@ use super::{deref::BodyDerefResolver, index::SemanticResolutionIndex};
 const AUTODEREF_LIMIT: usize = 8;
 
 /// Computes adjusted types for contexts that may dereference a receiver.
-#[derive(Clone, Copy)]
-pub struct BodyAutoderef<'query, 'db> {
-    def_map: &'query DefMapReadTxn<'db>,
-    semantic_ir: &'query SemanticIrReadTxn<'db>,
+#[derive(Clone)]
+pub struct BodyAutoderef<'query, D, I> {
+    item_paths: ItemPathQuery<'query, D, I>,
     semantic_index: Option<&'query SemanticResolutionIndex>,
 }
 
-impl<'query, 'db> BodyAutoderef<'query, 'db> {
+impl<'query, D, I> BodyAutoderef<'query, D, I>
+where
+    D: DefMapSource + Clone,
+    I: ItemStoreSource<'query, Error = PackageStoreError> + Clone,
+{
     /// Creates an autoderef engine without a precomputed Semantic IR lookup index.
-    pub fn new(
-        def_map: &'query DefMapReadTxn<'db>,
-        semantic_ir: &'query SemanticIrReadTxn<'db>,
-    ) -> Self {
+    pub fn new(item_paths: ItemPathQuery<'query, D, I>) -> Self {
         Self {
-            def_map,
-            semantic_ir,
+            item_paths,
             semantic_index: None,
         }
     }
 
     /// Creates an autoderef engine that can reuse the body-resolution method lookup index.
     pub(crate) fn with_index(
-        def_map: &'query DefMapReadTxn<'db>,
-        semantic_ir: &'query SemanticIrReadTxn<'db>,
+        item_paths: ItemPathQuery<'query, D, I>,
         semantic_index: &'query SemanticResolutionIndex,
     ) -> Self {
         Self {
-            def_map,
-            semantic_ir,
+            item_paths,
             semantic_index: Some(semantic_index),
         }
     }
@@ -54,7 +52,7 @@ impl<'query, 'db> BodyAutoderef<'query, 'db> {
         self,
         mode: BodyAutoderefMode,
         ty: &'ty Ty,
-    ) -> BodyAutoderefCandidates<'query, 'db, 'ty> {
+    ) -> BodyAutoderefCandidates<'query, 'ty, D, I> {
         let kind = match mode {
             BodyAutoderefMode::PeelReferences
             | BodyAutoderefMode::FieldLookup
@@ -79,18 +77,8 @@ impl<'query, 'db> BodyAutoderef<'query, 'db> {
         }
     }
 
-    /// Peels only explicit `&T` / `&mut T` wrappers.
-    pub fn peel_references<'ty>(ty: &'ty Ty) -> impl Iterator<Item = BodyAutoderefCandidate<'ty>> {
-        BodyReferencePeelingCandidates {
-            next_ty: Some(ty),
-            next_depth: 0,
-            next_mutability: None,
-        }
-    }
-
     fn deref_targets(&self, ty: &Ty) -> Result<Vec<Ty>, PackageStoreError> {
-        BodyDerefResolver::new(self.def_map, self.semantic_ir, self.semantic_index)
-            .targets_for_ty(ty)
+        BodyDerefResolver::new(self.item_paths.clone(), self.semantic_index).targets_for_ty(ty)
     }
 }
 
@@ -143,8 +131,8 @@ impl<'ty> BodyAutoderefCandidate<'ty> {
 
 /// Lazy stream of adjusted candidate types.
 #[derive(Clone)]
-pub struct BodyAutoderefCandidates<'query, 'db, 'ty> {
-    autoderef: BodyAutoderef<'query, 'db>,
+pub struct BodyAutoderefCandidates<'query, 'ty, D, I> {
+    autoderef: BodyAutoderef<'query, D, I>,
     kind: BodyAutoderefCandidatesKind<'ty>,
 }
 
@@ -201,7 +189,11 @@ impl<'ty> PendingAutoderefTy<'ty> {
     }
 }
 
-impl<'query, 'db, 'ty> Iterator for BodyAutoderefCandidates<'query, 'db, 'ty> {
+impl<'query, 'ty, D, I> Iterator for BodyAutoderefCandidates<'query, 'ty, D, I>
+where
+    D: DefMapSource + Clone,
+    I: ItemStoreSource<'query, Error = PackageStoreError> + Clone,
+{
     type Item = Result<BodyAutoderefCandidate<'ty>, PackageStoreError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -276,10 +268,21 @@ impl<'query, 'db, 'ty> Iterator for BodyAutoderefCandidates<'query, 'db, 'ty> {
 }
 
 #[derive(Debug, Clone)]
-struct BodyReferencePeelingCandidates<'ty> {
+pub struct BodyReferencePeelingCandidates<'ty> {
     next_ty: Option<&'ty Ty>,
     next_depth: usize,
     next_mutability: Option<rg_ty::RefMutability>,
+}
+
+impl<'ty> BodyReferencePeelingCandidates<'ty> {
+    /// Peels only explicit `&T` / `&mut T` wrappers.
+    pub fn new(ty: &'ty Ty) -> Self {
+        Self {
+            next_ty: Some(ty),
+            next_depth: 0,
+            next_mutability: None,
+        }
+    }
 }
 
 impl<'ty> Iterator for BodyReferencePeelingCandidates<'ty> {
