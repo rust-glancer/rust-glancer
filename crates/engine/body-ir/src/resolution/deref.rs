@@ -4,10 +4,12 @@
 //! nominal receiver and resolves the impl's associated `Target` type with the receiver substitution.
 
 use rg_def_map::{DefMapReadTxn, Path, PathSegment};
-use rg_ir_model::{AssocItemId, TraitImplRef, TypeAliasRef, hir::items::ImplData};
+use rg_ir_model::{
+    AssocItemId, TraitImplRef, TypeAliasRef, TypePathResolution, hir::items::ImplData,
+};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{SemanticIrReadTxn, SemanticTypePathResolution, TypePathContext};
+use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
@@ -115,12 +117,11 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
                 .semantic_ir
                 .resolve_type_path(self.def_map, context, &path)?
             {
-                SemanticTypePathResolution::Traits(traits) => {
-                    traits.contains(&trait_impl.trait_ref)
-                }
-                SemanticTypePathResolution::SelfType(_)
-                | SemanticTypePathResolution::TypeDefs(_)
-                | SemanticTypePathResolution::Unknown => false,
+                TypePathResolution::Traits(traits) => traits.contains(&trait_impl.trait_ref),
+                TypePathResolution::SelfType(_)
+                | TypePathResolution::TypeDefs(_)
+                | TypePathResolution::TypeAliases(_)
+                | TypePathResolution::Unknown => false,
             },
         )
     }

@@ -1,9 +1,10 @@
 //! Composite member view over nominal types.
 
-use rg_body_ir::{BodyAutoderef, BodyAutoderefMode, BodyTypePathResolution};
+use rg_body_ir::{BodyAutoderef, BodyAutoderefMode};
 use rg_def_map::Path;
 use rg_ir_model::{
     BodyRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TraitApplicability, TypeDefRef,
+    TypePathResolution,
     hir::items::{FieldData, FunctionData},
 };
 use rg_semantic_ir::{Documentation, FieldKey, ParamItem};
@@ -325,13 +326,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
             path,
         )?;
         let owners = match resolution {
-            BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
+            TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types) => {
                 types.into_iter().map(MemberOwnerRef::Nominal).collect()
             }
-            BodyTypePathResolution::Primitive(_)
-            | BodyTypePathResolution::TypeAliases(_)
-            | BodyTypePathResolution::Traits(_)
-            | BodyTypePathResolution::Unknown => Vec::new(),
+            TypePathResolution::TypeAliases(_)
+            | TypePathResolution::Traits(_)
+            | TypePathResolution::Unknown => Vec::new(),
         };
         Ok(owners)
     }

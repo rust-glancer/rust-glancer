@@ -13,7 +13,9 @@ use rg_ir_model::{DefId, LocalDefRef, ModuleRef, TargetRef};
 use rg_item_tree::FieldKey;
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 
-use crate::{ItemStore, PackageIr, SemanticTypePathResolution, TypePathContext, push_unique};
+use rg_ir_model::TypePathResolution;
+
+use crate::{ItemStore, PackageIr, TypePathContext, push_unique};
 
 /// Read-only semantic IR access for one query transaction.
 #[derive(Debug, Clone)]
@@ -49,19 +51,19 @@ impl<'db> SemanticIrReadTxn<'db> {
         def_map: &DefMapReadTxn<'db>,
         context: TypePathContext,
         path: &Path,
-    ) -> Result<SemanticTypePathResolution, PackageStoreError> {
+    ) -> Result<TypePathResolution, PackageStoreError> {
         if path.is_self_type() {
             let Some(impl_ref) = context.impl_ref else {
-                return Ok(SemanticTypePathResolution::Unknown);
+                return Ok(TypePathResolution::Unknown);
             };
             let types = self
                 .impl_data(impl_ref)?
                 .map(|data| data.resolved_self_tys.clone())
                 .unwrap_or_default();
             return Ok(if types.is_empty() {
-                SemanticTypePathResolution::Unknown
+                TypePathResolution::Unknown
             } else {
-                SemanticTypePathResolution::SelfType(types)
+                TypePathResolution::SelfType(types)
             });
         }
 
@@ -69,12 +71,12 @@ impl<'db> SemanticIrReadTxn<'db> {
         if type_defs.is_empty() {
             let traits = self.traits_for_path(def_map, context.module, path)?;
             Ok(if traits.is_empty() {
-                SemanticTypePathResolution::Unknown
+                TypePathResolution::Unknown
             } else {
-                SemanticTypePathResolution::Traits(traits)
+                TypePathResolution::Traits(traits)
             })
         } else {
-            Ok(SemanticTypePathResolution::TypeDefs(type_defs))
+            Ok(TypePathResolution::TypeDefs(type_defs))
         }
     }
 

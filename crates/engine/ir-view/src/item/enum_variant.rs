@@ -1,9 +1,9 @@
 //! Composite enum-variant view over indexed enum declarations.
 
-use rg_body_ir::BodyTypePathResolution;
 use rg_def_map::Path;
 use rg_ir_model::{
-    BodyRef, EnumVariantRef, ScopeId, TypeDefId, TypeDefRef, hir::items::EnumVariantData,
+    BodyRef, EnumVariantRef, ScopeId, TypeDefId, TypeDefRef, TypePathResolution,
+    hir::items::EnumVariantData,
 };
 use rg_semantic_ir::Documentation;
 
@@ -59,15 +59,14 @@ impl<'a, 'db> EnumVariantView<'a, 'db> {
         let mut variants = Vec::new();
 
         match resolution {
-            BodyTypePathResolution::TypeDefs(types) | BodyTypePathResolution::SelfType(types) => {
+            TypePathResolution::TypeDefs(types) | TypePathResolution::SelfType(types) => {
                 for ty in types {
                     variants.extend(self.semantic_variants(ty)?);
                 }
             }
-            BodyTypePathResolution::Primitive(_)
-            | BodyTypePathResolution::TypeAliases(_)
-            | BodyTypePathResolution::Traits(_)
-            | BodyTypePathResolution::Unknown => {}
+            TypePathResolution::TypeAliases(_)
+            | TypePathResolution::Traits(_)
+            | TypePathResolution::Unknown => {}
         }
 
         Ok(variants)

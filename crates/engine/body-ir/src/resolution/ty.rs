@@ -4,13 +4,12 @@
 //! arguments, solve bounds, or inspect expression bodies to discover return types.
 
 use rg_def_map::{DefMapReadTxn, Path};
+use rg_ir_model::TypePathResolution;
 use rg_item_tree::{GenericArg as ItemGenericArg, GenericParams, Mutability, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
-
-use crate::ir::resolved::BodyTypePathResolution;
 
 /// Converts syntax-level type data into the shared type vocabulary in one module/impl
 /// context, applying direct generic substitutions where they are already known.
@@ -38,10 +37,8 @@ pub(crate) fn ty_from_type_ref_in_context(
                 context,
                 subst,
             )?;
-            let resolution = BodyTypePathResolution::from(
-                semantic_ir.resolve_type_path(def_map, context, &path)?,
-            );
-            let fallback = if matches!(resolution, BodyTypePathResolution::Unknown) {
+            let resolution = semantic_ir.resolve_type_path(def_map, context, &path)?;
+            let fallback = if matches!(resolution, TypePathResolution::Unknown) {
                 path.single_name()
                     .and_then(rg_ty::PrimitiveTy::from_name)
                     .map(Ty::Primitive)
@@ -74,15 +71,14 @@ pub(crate) fn ty_from_type_ref_in_context(
 }
 
 pub(super) fn ty_from_body_resolution(
-    resolution: BodyTypePathResolution,
+    resolution: TypePathResolution,
     fallback: Ty,
     args: Vec<GenericArg>,
 ) -> Ty {
     // Attach the generic arguments from the source path to whichever nominal definition the path
     // resolved to. Ambiguous multi-target resolution keeps the same args on every candidate.
     match resolution {
-        BodyTypePathResolution::Primitive(primitive) => Ty::Primitive(primitive),
-        BodyTypePathResolution::SelfType(types) => Ty::self_ty(
+        TypePathResolution::SelfType(types) => Ty::self_ty(
             types
                 .into_iter()
                 .map(|def| NominalTy {
@@ -91,7 +87,7 @@ pub(super) fn ty_from_body_resolution(
                 })
                 .collect(),
         ),
-        BodyTypePathResolution::TypeDefs(types) => Ty::nominal(
+        TypePathResolution::TypeDefs(types) => Ty::nominal(
             types
                 .into_iter()
                 .map(|def| NominalTy {
@@ -100,9 +96,9 @@ pub(super) fn ty_from_body_resolution(
                 })
                 .collect(),
         ),
-        BodyTypePathResolution::TypeAliases(_) => fallback,
-        BodyTypePathResolution::Traits(_) => fallback,
-        BodyTypePathResolution::Unknown => fallback,
+        TypePathResolution::TypeAliases(_) => fallback,
+        TypePathResolution::Traits(_) => fallback,
+        TypePathResolution::Unknown => fallback,
     }
 }
 

@@ -6,14 +6,14 @@
 use rg_def_map::{DefMapReadTxn, Path, PathSegment};
 use rg_ir_model::{
     AssocItemId, BodyRef, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef,
-    ScopeId, SemanticItemRef, TypeAliasRef, TypeDefRef,
+    ScopeId, SemanticItemRef, TypeAliasRef, TypeDefRef, TypePathResolution,
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
-use crate::{ir::body::BodyData, ir::resolved::BodyTypePathResolution};
+use crate::ir::body::BodyData;
 
 use super::{
     def_map_lookup::BodyDefMapLookup,
@@ -60,7 +60,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         &self,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<BodyTypePathResolution, PackageStoreError> {
+    ) -> Result<TypePathResolution, PackageStoreError> {
         if let Some((prefix, name)) = split_associated_path(path) {
             let prefix_resolution = self.resolve_in_scope(scope, &prefix)?;
             let prefix_ty = ty_from_body_resolution(prefix_resolution, Ty::Unknown, Vec::new());
@@ -71,7 +71,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
                 }
             }
             if !aliases.is_empty() {
-                return Ok(BodyTypePathResolution::TypeAliases(aliases));
+                return Ok(TypePathResolution::TypeAliases(aliases));
             }
         }
 
@@ -95,27 +95,19 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             }
 
             if !type_defs.is_empty() {
-                return Ok(BodyTypePathResolution::TypeDefs(type_defs));
+                return Ok(TypePathResolution::TypeDefs(type_defs));
             }
             if !type_aliases.is_empty() {
-                return Ok(BodyTypePathResolution::TypeAliases(type_aliases));
+                return Ok(TypePathResolution::TypeAliases(type_aliases));
             }
             if !traits.is_empty() {
-                return Ok(BodyTypePathResolution::Traits(traits));
+                return Ok(TypePathResolution::Traits(traits));
             }
         }
 
         let context = self.context_for_function(self.body.owner, self.body.owner_module)?;
-        let resolution = self
-            .semantic_ir
-            .resolve_type_path(self.def_map, context, path)?;
-        let resolution = BodyTypePathResolution::from(resolution);
-        if matches!(resolution, BodyTypePathResolution::Unknown)
-            && let Some(primitive) = path.single_name().and_then(rg_ty::PrimitiveTy::from_name)
-        {
-            return Ok(BodyTypePathResolution::Primitive(primitive));
-        }
-        Ok(resolution)
+        self.semantic_ir
+            .resolve_type_path(self.def_map, context, path)
     }
 
     pub(super) fn ty_from_type_ref_in_scope(
@@ -149,14 +141,18 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
                 }
 
                 let resolution = self.resolve_in_scope(scope, &path)?;
-                if let BodyTypePathResolution::TypeAliases(aliases) = &resolution {
+                if let TypePathResolution::TypeAliases(aliases) = &resolution {
                     return self.ty_from_type_aliases(aliases, &args, subst);
                 }
-                Ok(ty_from_body_resolution(
-                    resolution,
-                    Ty::syntax(ty.clone()),
-                    args,
-                ))
+                let fallback = if matches!(resolution, TypePathResolution::Unknown) {
+                    path.single_name()
+                        .and_then(rg_ty::PrimitiveTy::from_name)
+                        .map(Ty::Primitive)
+                        .unwrap_or_else(|| Ty::syntax(ty.clone()))
+                } else {
+                    Ty::syntax(ty.clone())
+                };
+                Ok(ty_from_body_resolution(resolution, fallback, args))
             }
             _ => self.ty_from_type_ref_in_context(
                 ty,

@@ -1,8 +1,8 @@
-//! Query-facing semantic resolution result types.
+//! Query-facing semantic resolution context.
 
 use rg_ir_model::ModuleRef;
 
-use rg_ir_model::{ImplRef, TraitRef, TypeDefRef};
+use rg_ir_model::ImplRef;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct TypePathContext {
@@ -17,12 +17,4 @@ impl TypePathContext {
             impl_ref: None,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
-pub enum SemanticTypePathResolution {
-    SelfType(Vec<TypeDefRef>),
-    TypeDefs(Vec<TypeDefRef>),
-    Traits(Vec<TraitRef>),
-    Unknown,
 }

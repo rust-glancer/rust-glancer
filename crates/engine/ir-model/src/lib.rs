@@ -6,6 +6,7 @@
 
 pub mod hir;
 mod ids;
+mod resolution;
 
 pub use self::ids::{
     body::{BindingId, BodyBindingRef, BodyId, BodyRef, ExprId, PatId, ScopeId, StmtId},
@@ -21,6 +22,7 @@ pub use self::ids::{
         TypeDefId, TypeDefRef, UnionId,
     },
 };
+pub use self::resolution::TypePathResolution;
 
 // We have a lot of arenas, and each has to have a unique ID.
 // This macro takes care of boilerplate.

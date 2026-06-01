@@ -21,7 +21,7 @@ pub use self::{
     },
     pat::{PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordPatField},
     path::BodyPath,
-    resolved::{BodyResolution, BodyTypePathResolution},
+    resolved::BodyResolution,
     stmt::{BindingData, BindingKind, BodySelfParamKind, StmtData, StmtKind},
 };
 

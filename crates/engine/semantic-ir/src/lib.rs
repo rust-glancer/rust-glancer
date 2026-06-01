@@ -11,7 +11,7 @@ mod tests;
 
 pub use self::{
     cursor::SemanticCursorCandidate,
-    ir::{PackageIr, SemanticIrStats, SemanticTypePathResolution, TypePathContext},
+    ir::{PackageIr, SemanticIrStats, TypePathContext},
     item_store::{ItemStore, ItemStoreBuilder},
     item_store_lowering::{ItemStoreLowerer, ItemStoreSourceReader},
     store::{SemanticIrDb, SemanticIrReadTxn},

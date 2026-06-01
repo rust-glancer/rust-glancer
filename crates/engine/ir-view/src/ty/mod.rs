@@ -7,13 +7,13 @@ pub mod implementation;
 pub mod locals;
 pub mod member;
 
-use rg_body_ir::{BodyAutoderef, BodyTypePathResolution};
+use rg_body_ir::BodyAutoderef;
 use rg_def_map::Path;
 use rg_ir_model::{
-    BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticItemRef, identity::DeclarationRef,
-    identity::ExprRef,
+    BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticItemRef, TypePathResolution,
+    identity::DeclarationRef, identity::ExprRef,
 };
-use rg_semantic_ir::{SemanticTypePathResolution, TypePathContext};
+use rg_semantic_ir::TypePathContext;
 use rg_ty::{NominalTy, Ty};
 
 use crate::{IndexedViewDb, item::query::ItemQuery, ty::locals::BodyView};
@@ -77,13 +77,13 @@ impl<'a, 'db> TyView<'a, 'db> {
             .db
             .semantic_ir
             .resolve_type_path(&self.db.def_map, context, path)?;
-        if matches!(resolution, SemanticTypePathResolution::Unknown)
+        if matches!(resolution, TypePathResolution::Unknown)
             && let Some(primitive) = path.single_name().and_then(rg_ty::PrimitiveTy::from_name)
         {
             return Ok(Ty::Primitive(primitive));
         }
 
-        Ok(Self::semantic_type_path_resolution_to_ty(resolution))
+        Ok(Self::type_path_resolution_to_ty(resolution))
     }
 
     pub fn ty_for_body_type_path(
@@ -92,15 +92,20 @@ impl<'a, 'db> TyView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Ty> {
-        Ok(Self::body_type_path_resolution_to_ty(
-            self.db.body_ir.resolve_type_path_in_scope(
-                &self.db.def_map,
-                &self.db.semantic_ir,
-                body_ref,
-                scope,
-                path,
-            )?,
-        ))
+        let resolution = self.db.body_ir.resolve_type_path_in_scope(
+            &self.db.def_map,
+            &self.db.semantic_ir,
+            body_ref,
+            scope,
+            path,
+        )?;
+        if matches!(resolution, TypePathResolution::Unknown)
+            && let Some(primitive) = path.single_name().and_then(rg_ty::PrimitiveTy::from_name)
+        {
+            return Ok(Ty::Primitive(primitive));
+        }
+
+        Ok(Self::type_path_resolution_to_ty(resolution))
     }
 
     pub fn ty_for_body_value_path(
@@ -135,37 +140,18 @@ impl<'a, 'db> TyView<'a, 'db> {
         Ok(Some(Ty::nominal(vec![NominalTy::bare(data.owner)])))
     }
 
-    fn semantic_type_path_resolution_to_ty(resolution: SemanticTypePathResolution) -> Ty {
+    fn type_path_resolution_to_ty(resolution: TypePathResolution) -> Ty {
         match resolution {
-            SemanticTypePathResolution::SelfType(types) => {
+            TypePathResolution::SelfType(types) => {
                 Ty::self_ty(types.into_iter().map(NominalTy::bare).collect())
             }
-            SemanticTypePathResolution::TypeDefs(types) => {
+            TypePathResolution::TypeDefs(types) => {
                 Ty::nominal(types.into_iter().map(NominalTy::bare).collect())
             }
             // Traits are navigable symbols, but they are not value-like receiver types in this
             // small analysis model.
-            SemanticTypePathResolution::Traits(_) => Ty::Unknown,
-            SemanticTypePathResolution::Unknown => Ty::Unknown,
-        }
-    }
-
-    fn body_type_path_resolution_to_ty(resolution: BodyTypePathResolution) -> Ty {
-        match resolution {
-            BodyTypePathResolution::SelfType(types) => {
-                Ty::self_ty(types.into_iter().map(NominalTy::bare).collect())
-            }
-            BodyTypePathResolution::TypeDefs(types) => {
-                Ty::nominal(types.into_iter().map(NominalTy::bare).collect())
-            }
-            BodyTypePathResolution::Primitive(primitive) => Ty::Primitive(primitive),
-            // Trait paths are useful for goto-definition, but type queries report only nominal
-            // values and body-local item types. Type aliases are expanded in Body IR before they
-            // become expression or binding types.
-            BodyTypePathResolution::TypeAliases(_) | BodyTypePathResolution::Traits(_) => {
-                Ty::Unknown
-            }
-            BodyTypePathResolution::Unknown => Ty::Unknown,
+            TypePathResolution::TypeAliases(_) | TypePathResolution::Traits(_) => Ty::Unknown,
+            TypePathResolution::Unknown => Ty::Unknown,
         }
     }
 

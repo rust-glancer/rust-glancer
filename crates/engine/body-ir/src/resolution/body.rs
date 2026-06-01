@@ -7,7 +7,7 @@ use rg_def_map::{DefMapReadTxn, Path, PathSegment};
 use rg_ir_model::{
     AssocItemId, BindingId, BodyRef, ConstRef, DefId, DefMapRef, ExprId, FunctionRef, ImplRef,
     ItemOwner, ModuleId, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TypeDefId,
-    identity::DeclarationRef,
+    TypePathResolution, identity::DeclarationRef,
 };
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
@@ -17,7 +17,7 @@ use rg_ty::{NominalTy, Ty, TypeSubst};
 use crate::{
     ir::body::BodyData,
     ir::expr::{ExprKind, ExprUnaryOp, ExprWrapperKind},
-    ir::resolved::{BodyResolution, BodyTypePathResolution},
+    ir::resolved::BodyResolution,
     ir::stmt::{BindingKind, BodySelfParamKind},
 };
 
@@ -369,13 +369,13 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         path: &Path,
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
         match self.type_path_resolver().resolve_in_scope(scope, path)? {
-            BodyTypePathResolution::SelfType(types) => {
+            TypePathResolution::SelfType(types) => {
                 return Ok((
                     BodyResolution::Unknown,
                     Ty::self_ty(types.into_iter().map(NominalTy::bare).collect()),
                 ));
             }
-            BodyTypePathResolution::TypeDefs(types) => {
+            TypePathResolution::TypeDefs(types) => {
                 let types = types
                     .into_iter()
                     .filter(|ty| ty.origin == DefMapRef::Body(self.body_ref))
@@ -389,10 +389,9 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                     ));
                 }
             }
-            BodyTypePathResolution::Primitive(_)
-            | BodyTypePathResolution::TypeAliases(_)
-            | BodyTypePathResolution::Traits(_)
-            | BodyTypePathResolution::Unknown => {}
+            TypePathResolution::TypeAliases(_)
+            | TypePathResolution::Traits(_)
+            | TypePathResolution::Unknown => {}
         }
 
         self.resolve_nonlocal_path_expr(scope, path)
@@ -896,13 +895,13 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         // the prefix of associated paths all need type resolution before falling back to ordinary
         // module/DefMap lookup.
         match self.type_path_resolver().resolve_in_scope(scope, path)? {
-            BodyTypePathResolution::SelfType(types) => {
+            TypePathResolution::SelfType(types) => {
                 return Ok((
                     BodyResolution::Unknown,
                     Ty::self_ty(types.into_iter().map(NominalTy::bare).collect()),
                 ));
             }
-            BodyTypePathResolution::TypeDefs(types) => {
+            TypePathResolution::TypeDefs(types) => {
                 let mut constructors = Vec::new();
                 for type_def in types
                     .into_iter()
@@ -926,10 +925,9 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                     ));
                 }
             }
-            BodyTypePathResolution::Primitive(_)
-            | BodyTypePathResolution::TypeAliases(_)
-            | BodyTypePathResolution::Traits(_)
-            | BodyTypePathResolution::Unknown => {}
+            TypePathResolution::TypeAliases(_)
+            | TypePathResolution::Traits(_)
+            | TypePathResolution::Unknown => {}
         }
 
         if let Some((prefix, last_segment)) = split_associated_path(path) {
@@ -1385,18 +1383,17 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             .unwrap_or_else(TypeSubst::new))
     }
 
-    fn type_path_resolution_to_ty(&self, resolution: BodyTypePathResolution) -> Ty {
+    fn type_path_resolution_to_ty(&self, resolution: TypePathResolution) -> Ty {
         match resolution {
-            BodyTypePathResolution::SelfType(types) => {
+            TypePathResolution::SelfType(types) => {
                 Ty::self_ty(types.into_iter().map(NominalTy::bare).collect())
             }
-            BodyTypePathResolution::TypeDefs(types) => {
+            TypePathResolution::TypeDefs(types) => {
                 Ty::nominal(types.into_iter().map(NominalTy::bare).collect())
             }
-            BodyTypePathResolution::Primitive(primitive) => Ty::Primitive(primitive),
-            BodyTypePathResolution::TypeAliases(_)
-            | BodyTypePathResolution::Traits(_)
-            | BodyTypePathResolution::Unknown => Ty::Unknown,
+            TypePathResolution::TypeAliases(_)
+            | TypePathResolution::Traits(_)
+            | TypePathResolution::Unknown => Ty::Unknown,
         }
     }
 

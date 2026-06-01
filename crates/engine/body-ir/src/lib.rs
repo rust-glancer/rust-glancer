@@ -30,7 +30,7 @@ pub use self::{
 };
 
 // TODO: Shouldn't be exposed normally; remove after analysis owns resolver projection.
-pub use self::ir::{BodyResolution, BodyTypePathResolution};
+pub use self::ir::BodyResolution;
 
 // TODO: Shouldn't be exposed normally; remove after analysis owns member lookup projection.
 pub use self::resolution::{

@@ -3,14 +3,14 @@
 use rg_def_map::{DefMapReadTxn, PackageSlot, Path};
 use rg_ir_model::{
     BodyRef, FieldRef, FunctionRef, ImplRef, ItemOwner, ScopeId, TargetRef, TraitApplicability,
-    TraitImplRef,
+    TraitImplRef, TypePathResolution,
 };
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
-    BodyData, BodyResolution, BodyTypePathResolution, PackageBodies, TargetBodies,
+    BodyData, BodyResolution, PackageBodies, TargetBodies,
     resolution::{
         self, BodyImplMatcher, BodyTypePathResolver, BodyValuePathResolver,
         ty_from_type_ref_in_context,
@@ -58,10 +58,10 @@ impl<'db> BodyIrReadTxn<'db> {
         body_ref: BodyRef,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<BodyTypePathResolution, PackageStoreError> {
+    ) -> Result<TypePathResolution, PackageStoreError> {
         let body = self.body_data(body_ref)?;
         let Some(body) = body else {
-            return Ok(BodyTypePathResolution::Unknown);
+            return Ok(TypePathResolution::Unknown);
         };
 
         BodyTypePathResolver::new(def_map, semantic_ir, body_ref, body)

@@ -4,10 +4,10 @@
 //! rules that turn paths, declaration refs, and body resolutions into canonical declaration
 //! identities.
 
-use rg_body_ir::{BodyResolution, BodyTypePathResolution};
+use rg_body_ir::BodyResolution;
 use rg_def_map::Path;
 use rg_ir_model::{
-    BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId,
+    BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
     identity::{DeclarationRef, ExprRef},
 };
 
@@ -172,19 +172,19 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
 
     fn declarations_for_body_type_path_resolution(
         &self,
-        resolution: BodyTypePathResolution,
+        resolution: TypePathResolution,
     ) -> Vec<DeclarationRef> {
         match resolution {
-            BodyTypePathResolution::SelfType(types) | BodyTypePathResolution::TypeDefs(types) => {
+            TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types) => {
                 types.into_iter().map(DeclarationRef::from).collect()
             }
-            BodyTypePathResolution::TypeAliases(aliases) => {
+            TypePathResolution::TypeAliases(aliases) => {
                 aliases.into_iter().map(DeclarationRef::from).collect()
             }
-            BodyTypePathResolution::Traits(traits) => {
+            TypePathResolution::Traits(traits) => {
                 traits.into_iter().map(DeclarationRef::from).collect()
             }
-            BodyTypePathResolution::Primitive(_) | BodyTypePathResolution::Unknown => Vec::new(),
+            TypePathResolution::Unknown => Vec::new(),
         }
     }
 }
