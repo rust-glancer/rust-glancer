@@ -151,7 +151,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         resolution: &BodyResolution,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
         match resolution {
-            BodyResolution::Local(binding) => Ok(body_ref
+            BodyResolution::Binding(binding) => Ok(body_ref
                 .map(|body| BodyBindingRef {
                     body,
                     binding: *binding,
@@ -159,11 +159,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
                 .map(DeclarationRef::body_binding)
                 .into_iter()
                 .collect()),
-            BodyResolution::Declaration(resolved)
-            | BodyResolution::Field(resolved)
-            | BodyResolution::Function(resolved)
-            | BodyResolution::Method(resolved)
-            | BodyResolution::EnumVariant(resolved) => {
+            BodyResolution::Declarations(resolved) => {
                 let mut declarations = Vec::new();
                 for declaration in resolved {
                     declarations.push(self.canonical_declaration(*declaration)?);

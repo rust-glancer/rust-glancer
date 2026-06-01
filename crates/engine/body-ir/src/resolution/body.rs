@@ -382,7 +382,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                     .collect::<Vec<_>>();
                 if !types.is_empty() {
                     return Ok((
-                        BodyResolution::Declaration(
+                        BodyResolution::Declarations(
                             types.iter().copied().map(DeclarationRef::from).collect(),
                         ),
                         Ty::nominal(types.into_iter().map(NominalTy::bare).collect()),
@@ -426,7 +426,9 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                     Ty::Unknown
                 };
                 return Ok((
-                    BodyResolution::Field(fields.into_iter().map(DeclarationRef::from).collect()),
+                    BodyResolution::Declarations(
+                        fields.into_iter().map(DeclarationRef::from).collect(),
+                    ),
                     ty,
                 ));
             }
@@ -460,7 +462,9 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 Ty::Unknown
             };
             return Ok((
-                BodyResolution::Field(fields.into_iter().map(DeclarationRef::from).collect()),
+                BodyResolution::Declarations(
+                    fields.into_iter().map(DeclarationRef::from).collect(),
+                ),
                 ty,
             ));
         }
@@ -502,7 +506,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                     Ty::Unknown
                 };
                 return Ok((
-                    BodyResolution::Method(
+                    BodyResolution::Declarations(
                         functions.into_iter().map(DeclarationRef::from).collect(),
                     ),
                     ty,
@@ -535,7 +539,9 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
                 Ty::Unknown
             };
             return Ok((
-                BodyResolution::Method(functions.into_iter().map(DeclarationRef::from).collect()),
+                BodyResolution::Declarations(
+                    functions.into_iter().map(DeclarationRef::from).collect(),
+                ),
                 ty,
             ));
         }
@@ -742,16 +748,12 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         // outside the current intentionally-small Body IR model.
         let mut return_tys = Vec::new();
         match &callee_data.resolution {
-            BodyResolution::Declaration(declarations) | BodyResolution::Function(declarations) => {
+            BodyResolution::Declarations(declarations) => {
                 for declaration in declarations {
                     self.push_return_ty_for_declaration(*declaration, &mut return_tys)?;
                 }
             }
-            BodyResolution::Local(_)
-            | BodyResolution::Field(_)
-            | BodyResolution::EnumVariant(_)
-            | BodyResolution::Method(_)
-            | BodyResolution::Unknown => {}
+            BodyResolution::Binding(_) | BodyResolution::Unknown => {}
         }
 
         if return_tys.len() == 1 {
@@ -913,7 +915,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
 
                 if !constructors.is_empty() {
                     return Ok((
-                        BodyResolution::Declaration(
+                        BodyResolution::Declarations(
                             constructors
                                 .iter()
                                 .copied()
@@ -948,7 +950,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         let result = self.def_map.resolve_path(self.body.owner_module, path)?;
         let ty = self.nominal_ty_from_defs(&result.resolved)?;
         Ok((
-            BodyResolution::Declaration(
+            BodyResolution::Declarations(
                 result
                     .resolved
                     .into_iter()
@@ -1066,7 +1068,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         match value_name {
             BodyValueName::Binding(binding) => {
                 let ty = self.body.bindings[binding].ty.clone();
-                Ok(Some((BodyResolution::Local(binding), ty)))
+                Ok(Some((BodyResolution::Binding(binding), ty)))
             }
             BodyValueName::SemanticItems(items) => {
                 let mut functions = Vec::new();
@@ -1095,12 +1097,12 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
 
                 if !declarations.is_empty() {
                     return Ok(Some((
-                        BodyResolution::Declaration(declarations),
+                        BodyResolution::Declarations(declarations),
                         unique_ty_or_unknown(tys),
                     )));
                 }
                 if !functions.is_empty() {
-                    return Ok(Some((BodyResolution::Function(functions), Ty::Unknown)));
+                    return Ok(Some((BodyResolution::Declarations(functions), Ty::Unknown)));
                 }
 
                 Ok(None)
@@ -1176,7 +1178,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         if !variants.is_empty() {
             let ty = unique_ty_or_unknown(variant_tys);
             return Ok(Some((
-                BodyResolution::EnumVariant(
+                BodyResolution::Declarations(
                     variants.into_iter().map(DeclarationRef::from).collect(),
                 ),
                 ty,
@@ -1191,7 +1193,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 self.semantic_associated_value_item_for_type(nominal_ty, last_segment)?
             {
                 return Ok(Some((
-                    BodyResolution::Declaration(vec![const_ref.into()]),
+                    BodyResolution::Declarations(vec![const_ref.into()]),
                     ty,
                 )));
             }
@@ -1214,7 +1216,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         }
 
         Ok((!functions.is_empty()).then_some((
-            BodyResolution::Function(functions.into_iter().map(DeclarationRef::from).collect()),
+            BodyResolution::Declarations(functions.into_iter().map(DeclarationRef::from).collect()),
             Ty::Unknown,
         )))
     }

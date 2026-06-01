@@ -13,20 +13,10 @@ use rg_semantic_ir::SemanticTypePathResolution;
     rg_memsize::MemorySize,
 )]
 pub enum BodyResolution {
-    Local(BindingId),
-    Declaration(Vec<DeclarationRef>),
-    Field(Vec<DeclarationRef>),
-    /// Associated or free functions resolved through a qualified value path.
-    ///
-    /// Method calls use `Method` because they start from a receiver expression; this variant is
-    /// for value paths like `Type::new` where the type prefix is resolved first.
-    Function(Vec<DeclarationRef>),
-    /// Enum variants are stored inside enum definitions rather than DefMap scopes.
-    ///
-    /// Keeping them explicit here lets goto/type queries land on the variant declaration while
-    /// still reporting the owning enum as the expression type.
-    EnumVariant(Vec<DeclarationRef>),
-    Method(Vec<DeclarationRef>),
+    /// Lexical value binding introduced by a pattern or parameter.
+    Binding(BindingId),
+    /// Item-like declarations, fields, enum variants, functions, consts, statics, or modules.
+    Declarations(Vec<DeclarationRef>),
     #[default]
     Unknown,
 }
@@ -65,11 +55,8 @@ impl From<SemanticTypePathResolution> for BodyTypePathResolution {
 impl BodyResolution {
     pub(crate) fn shrink_to_fit(&mut self) {
         match self {
-            Self::Declaration(declarations) => declarations.shrink_to_fit(),
-            Self::Field(fields) => fields.shrink_to_fit(),
-            Self::Function(functions) | Self::Method(functions) => functions.shrink_to_fit(),
-            Self::EnumVariant(variants) => variants.shrink_to_fit(),
-            Self::Local(_) | Self::Unknown => {}
+            Self::Declarations(declarations) => declarations.shrink_to_fit(),
+            Self::Binding(_) | Self::Unknown => {}
         }
     }
 }

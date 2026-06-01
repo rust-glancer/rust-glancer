@@ -4,7 +4,7 @@
 //! trait method. This view owns the storage-specific lookup rules so query code can stay focused on
 //! cursor policy and editor projection.
 
-use rg_body_ir::{BodyAutoderef, BodyAutoderefMode, BodyResolution, ExprKind};
+use rg_body_ir::{BodyAutoderef, BodyAutoderefMode, ExprKind};
 use rg_ir_model::{
     AssocItemId, FunctionRef, ImplRef, ItemOwner, SemanticItemRef, TraitRef, TypeDefRef,
     identity::{DeclarationRef, ExprRef},
@@ -40,15 +40,14 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         else {
             return Ok(None);
         };
-        if !matches!(expr_data.resolution, BodyResolution::Method(_)) {
-            return Ok(None);
-        }
-
         let receiver_ty = body_data.expr(*receiver).map(|data| &data.ty);
         let mut implementations = Vec::new();
-        for declaration in ResolutionView::new(self.db)
-            .declarations_for_body_resolution(Some(body), &expr_data.resolution)?
-        {
+        let declarations = ResolutionView::new(self.db)
+            .declarations_for_body_resolution(Some(body), &expr_data.resolution)?;
+        if declarations.is_empty() {
+            return Ok(None);
+        }
+        for declaration in declarations {
             self.extend_function_implementations(&mut implementations, declaration, receiver_ty)?;
         }
         Ok(Some(implementations))

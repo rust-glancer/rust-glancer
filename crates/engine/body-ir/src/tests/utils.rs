@@ -1045,15 +1045,11 @@ impl TargetBodyIrSnapshot<'_> {
 
     fn render_resolution(&self, resolution: &BodyResolution) -> String {
         match resolution {
-            BodyResolution::Local(binding) => format!(" -> local v{}", binding.0),
-            BodyResolution::Declaration(declarations) if declarations.is_empty() => {
+            BodyResolution::Binding(binding) => format!(" -> local v{}", binding.0),
+            BodyResolution::Declarations(declarations) if declarations.is_empty() => {
                 " -> item <unresolved>".to_string()
             }
-            BodyResolution::Declaration(declarations)
-            | BodyResolution::Field(declarations)
-            | BodyResolution::Function(declarations)
-            | BodyResolution::EnumVariant(declarations)
-            | BodyResolution::Method(declarations) => {
+            BodyResolution::Declarations(declarations) => {
                 let mut declarations = declarations
                     .iter()
                     .map(|declaration| self.render_resolved_declaration_ref(*declaration))
