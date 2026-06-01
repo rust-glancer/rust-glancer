@@ -195,9 +195,11 @@ impl<'a> FixtureTarget<'a> {
     /// Looks up one textual name in the root module scope of this target.
     pub(super) fn entry(&self, name: &str) -> FixtureEntry<'a> {
         let entry = self
-            .def_map()
-            .target_data()
-            .root_module()
+            .db
+            .def_map_db()
+            .resident_package(self.target_ref.package)
+            .and_then(|package| package.target_data(self.target_ref.target))
+            .and_then(|target_data| target_data.root_module())
             .and_then(|root_module| self.def_map().module(root_module))
             .and_then(|module| module.scope.entry(name));
         FixtureEntry {

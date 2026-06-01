@@ -45,6 +45,7 @@ use super::macros::{
 pub(super) struct TargetState {
     pub(super) target: TargetRef,
     pub(super) target_name: String,
+    pub(super) root_module: ModuleId,
     pub(super) edition: RustEdition,
     /// Target-specific cfg values used to decide which collected items really exist.
     pub(super) cfg_options: CfgOptions,
@@ -160,6 +161,7 @@ struct TargetScopeCollector<'db> {
     cfg_options: &'db CfgOptions,
     target_kind: TargetKind,
     implicit_roots: &'db HashMap<Name, ModuleRef>,
+    root_module: Option<ModuleId>,
     def_map_builder: DefMapBuilder,
     base_scopes: Vec<ModuleScopeBuilder>,
     macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
@@ -182,6 +184,7 @@ impl<'db> TargetScopeCollector<'db> {
             cfg_options,
             target_kind,
             implicit_roots,
+            root_module: None,
             def_map_builder: DefMapBuilder::new(target),
             base_scopes: Vec::new(),
             macro_definitions: HashMap::new(),
@@ -214,7 +217,7 @@ impl<'db> TargetScopeCollector<'db> {
                 file_id: target.root_file,
             },
         );
-        self.def_map_builder.set_root_module(root_module);
+        self.root_module = Some(root_module);
 
         self.collect_items(item_tree, root_module, root_file, &root_file_tree.top_level)
             .context("while attempting to collect root file items")?;
@@ -222,6 +225,7 @@ impl<'db> TargetScopeCollector<'db> {
         Ok(TargetState {
             target: self.target,
             target_name: target.name.clone(),
+            root_module,
             edition: self.edition,
             cfg_options: self.cfg_options.clone(),
             target_kind: self.target_kind.clone(),
@@ -408,14 +412,9 @@ impl<'db> TargetScopeCollector<'db> {
 
     /// Makes a `#[macro_export]` definition visible through the crate root macro namespace.
     fn export_macro_definition_to_root(&mut self, name: &Name, local_def_id: LocalDefId) {
-        let Some(root_module) = self
-            .def_map_builder
-            .as_incomplete_def_map()
-            .target_data()
-            .root_module()
-        else {
-            return;
-        };
+        let root_module = self
+            .root_module
+            .expect("root module should exist before macro export collection");
         self.base_scopes
             .get_mut(root_module.0)
             .expect("root scope should exist before macro export collection")
@@ -687,10 +686,7 @@ impl<'db> TargetScopeCollector<'db> {
             ModuleRef {
                 origin: DefMapRef::Target(self.target),
                 module: self
-                    .def_map_builder
-                    .as_incomplete_def_map()
-                    .target_data()
-                    .root_module()
+                    .root_module
                     .expect("root module should exist before extern crate collection"),
             }
         } else {

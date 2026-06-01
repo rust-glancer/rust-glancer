@@ -62,23 +62,28 @@ impl TargetResolutionEnv for DefMapReadTxn<'_> {
         name: &str,
     ) -> Result<Option<ModuleRef>, PackageStoreError> {
         Ok(self
-            .def_map(target)?
-            .and_then(|def_map| def_map.target_data().extern_prelude().get(name).copied()))
+            .package(target.package)?
+            .target_data(target.target)
+            .and_then(|data| data.extern_prelude().get(name).copied()))
     }
 
     fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
         Ok(self
-            .def_map(target)?
-            .and_then(|def_map| def_map.target_data().prelude()))
+            .package(target.package)?
+            .target_data(target.target)
+            .and_then(|data| data.prelude()))
     }
 
     fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
-        Ok(self.def_map(target)?.and_then(|def_map| {
-            Some(ModuleRef {
-                origin: DefMapRef::Target(target),
-                module: def_map.target_data().root_module()?,
-            })
-        }))
+        Ok(self
+            .package(target.package)?
+            .target_data(target.target)
+            .and_then(|data| {
+                Some(ModuleRef {
+                    origin: DefMapRef::Target(target),
+                    module: data.root_module()?,
+                })
+            }))
     }
 }
 

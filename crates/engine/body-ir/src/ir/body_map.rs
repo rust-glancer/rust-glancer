@@ -61,11 +61,11 @@ pub(crate) struct BodyDefMapCollector<'body> {
 }
 
 impl<'body> BodyDefMapCollector<'body> {
-    pub fn new(target_def_map: &DefMap, body_ref: BodyRef, body: &'body BodyData) -> Self {
+    pub fn new(body_ref: BodyRef, body: &'body BodyData) -> Self {
         Self {
             body_ref,
             body,
-            builder: target_def_map.child(body_ref),
+            builder: DefMapBuilder::new_body(body_ref),
             modules_by_scope: Vec::with_capacity(body.scopes.len()),
             base_scopes: Vec::with_capacity(body.scopes.len()),
         }

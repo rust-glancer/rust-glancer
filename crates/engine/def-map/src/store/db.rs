@@ -180,7 +180,7 @@ mod tests {
     use rg_arena::Arena;
     use rg_ir_model::TargetRef;
 
-    use crate::def_map::DefMapBuilder;
+    use crate::def_map::{DefMapBuilder, TargetData};
 
     use super::*;
 
@@ -209,6 +209,7 @@ mod tests {
         PackageDefMaps {
             name: name.to_string(),
             target_names: Arena::from_vec(vec![format!("{name}_lib")]),
+            target_data: Arena::from_vec(vec![TargetData::default()]),
             targets: Arena::from_vec(vec![
                 DefMapBuilder::new(TargetRef {
                     package: PackageSlot(0),

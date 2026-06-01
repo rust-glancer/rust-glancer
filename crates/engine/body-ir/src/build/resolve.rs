@@ -115,17 +115,13 @@ fn resolve_package(
             package: package_slot,
             target: TargetId(target_idx),
         };
-        let target_def_map = def_map_txn
-            .def_map(target_ref)?
-            .expect("Target DefMap must be present");
-
         for (body_idx, body) in target.bodies_mut().iter_mut().enumerate() {
             let body_ref = BodyRef {
                 target: target_ref,
                 body: BodyId(body_idx),
             };
             // First, collect the defmap
-            let body_def_map = BodyDefMapCollector::new(target_def_map, body_ref, body).collect();
+            let body_def_map = BodyDefMapCollector::new(body_ref, body).collect();
             // Then, collect the local items
             let body_item_store = BodyItemStoreCollector::new(body, &body_def_map).collect();
             // TODO: Note that there is no resolution for both defmap and local items just yet.

@@ -238,15 +238,7 @@ impl SourceFragmentCollector<'_> {
     }
 
     fn export_macro_definition_to_root(&mut self, name: &Name, local_def_id: LocalDefId) {
-        let Some(root_module) = self
-            .state
-            .def_map_builder
-            .as_incomplete_def_map()
-            .target_data()
-            .root_module()
-        else {
-            return;
-        };
+        let root_module = self.state.root_module;
         let binding = ScopeBinding {
             def: DefId::Local(LocalDefRef {
                 origin: DefMapRef::Target(self.state.target),
@@ -553,15 +545,7 @@ impl SourceFragmentCollector<'_> {
         let module_ref = if extern_name == "self" {
             ModuleRef {
                 origin: DefMapRef::Target(self.state.target),
-                module: self
-                    .state
-                    .def_map_builder
-                    .as_incomplete_def_map()
-                    .target_data()
-                    .root_module()
-                    .expect(
-                        "root module should exist before source fragment extern crate collection",
-                    ),
+                module: self.state.root_module,
             }
         } else {
             let Some(module_ref) = self.state.implicit_roots.get(&extern_name).copied() else {

@@ -1,5 +1,3 @@
-use std::{collections::HashMap, sync::Arc};
-
 use rg_ir_model::{
     BodyRef, DefId, DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
     ModuleId, ModuleRef, TargetRef,
@@ -18,10 +16,12 @@ use crate::{
     },
 };
 
-use self::{def_map_data::DefMapData, target_data::TargetData};
+use self::def_map_data::DefMapData;
 
 mod def_map_data;
-mod target_data;
+pub(crate) mod target_data;
+
+pub(crate) use self::target_data::TargetData;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DefMapBuilder {
@@ -31,7 +31,13 @@ pub struct DefMapBuilder {
 impl DefMapBuilder {
     pub fn new(target: TargetRef) -> Self {
         Self {
-            def_map: DefMap::empty(target),
+            def_map: DefMap::target(target),
+        }
+    }
+
+    pub fn new_body(body_ref: BodyRef) -> Self {
+        Self {
+            def_map: DefMap::body(body_ref),
         }
     }
 
@@ -82,28 +88,8 @@ impl DefMapBuilder {
         self.def_map.data.generated_sources.alloc(generated_source)
     }
 
-    pub fn set_root_module(&mut self, root_module: ModuleId) {
-        self.target_data_mut().root_module = Some(root_module);
-    }
-
-    pub fn set_extern_prelude(&mut self, extern_prelude: HashMap<Name, ModuleRef>) {
-        self.target_data_mut().extern_prelude = extern_prelude;
-    }
-
-    pub fn set_prelude(&mut self, prelude: Option<ModuleRef>) {
-        self.target_data_mut().prelude = prelude;
-    }
-
     pub fn build(self) -> DefMap {
         self.def_map
-    }
-
-    fn target_data_mut(&mut self) -> &mut TargetData {
-        assert!(
-            self.def_map.is_root,
-            "Mutable access to target data is only allowed for root defmap"
-        );
-        self.def_map.target_data_mut()
     }
 }
 
@@ -116,49 +102,25 @@ impl DefMapBuilder {
 /// them as if each scope is a module.
 #[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
 pub struct DefMap {
-    /// Whether this defmap corresponds to the target root.
-    is_root: bool,
     /// Ref to this defmap, which can be used to emit correct refs.
     own_ref: DefMapRef,
-    /// Shared data on the target.
-    // TODO: Wouldn't that be deserialized for each body defmap?
-    target_data: Arc<TargetData>,
     /// Actual defmap layout for the corresponding scope.
     data: DefMapData,
 }
 
 impl DefMap {
-    fn empty(target: TargetRef) -> Self {
-        let target_data = Arc::new(TargetData {
-            target,
-            root_module: None,
-            extern_prelude: HashMap::default(),
-            prelude: None,
-        });
-
+    fn target(target: TargetRef) -> Self {
         Self {
-            is_root: true,
             own_ref: DefMapRef::Target(target),
-            target_data,
             data: DefMapData::default(),
         }
     }
 
-    /// Creates a derived defmap that can be used for the body function scope.
-    pub fn child(&self, body_ref: BodyRef) -> DefMapBuilder {
-        let self_ = Self {
-            is_root: false,
+    fn body(body_ref: BodyRef) -> Self {
+        Self {
             own_ref: DefMapRef::Body(body_ref),
-            target_data: self.target_data.clone(),
             data: DefMapData::default(),
-        };
-
-        DefMapBuilder { def_map: self_ }
-    }
-
-    /// Returns the data for the target this defmap is associated with.
-    pub fn target_data(&self) -> &TargetData {
-        &self.target_data
+        }
     }
 
     pub fn own_ref(&self) -> DefMapRef {
@@ -270,23 +232,12 @@ impl DefMap {
     }
 
     pub fn shrink_to_fit(&mut self) {
-        self.target_data_mut().shrink_to_fit();
         self.data.shrink_to_fit();
-    }
-
-    fn target_data_mut(&mut self) -> &mut TargetData {
-        Arc::make_mut(&mut self.target_data)
     }
 }
 
 impl rg_memsize::MemorySize for DefMap {
     fn record_memory_children(&self, recorder: &mut rg_memsize::MemoryRecorder) {
-        if self.is_root {
-            recorder.scope("target_data", |recorder| {
-                rg_memsize::MemorySize::record_memory_children(&self.target_data, recorder);
-            });
-        }
-
         recorder.scope("data", |recorder| {
             rg_memsize::MemorySize::record_memory_children(&self.data, recorder);
         });

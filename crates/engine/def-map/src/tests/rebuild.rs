@@ -111,13 +111,15 @@ pub use dep::api::Api as Renamed;
         package: app_slot,
         target: app_lib.id,
     };
-    let app_def_map = rebuilt
+    let app_package = rebuilt
         .resident_package(app_target.package)
-        .and_then(|package| package.def_map(app_target.target))
+        .expect("rebuilt app package should exist");
+    let app_def_map = app_package
+        .def_map(app_target.target)
         .expect("rebuilt app def-map should exist");
-    let root_module = app_def_map
-        .target_data()
-        .root_module()
+    let root_module = app_package
+        .target_data(app_target.target)
+        .and_then(|target_data| target_data.root_module())
         .expect("rebuilt app def-map should have a root module");
     let root = app_def_map
         .module(root_module)
@@ -225,13 +227,15 @@ make_dep_item!();
         .expect("fixture def-map package rebuild should succeed");
 
     let app_target = lib_target(&parse, app_slot);
-    let app_def_map = rebuilt
+    let app_package = rebuilt
         .resident_package(app_target.package)
-        .and_then(|package| package.def_map(app_target.target))
+        .expect("rebuilt app package should exist");
+    let app_def_map = app_package
+        .def_map(app_target.target)
         .expect("rebuilt app def-map should exist");
-    let root_module = app_def_map
-        .target_data()
-        .root_module()
+    let root_module = app_package
+        .target_data(app_target.target)
+        .and_then(|target_data| target_data.root_module())
         .expect("rebuilt app def-map should have a root module");
     let root = app_def_map
         .module(root_module)

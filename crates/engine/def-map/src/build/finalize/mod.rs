@@ -20,6 +20,7 @@ use rg_workspace::WorkspaceMetadata;
 use crate::{
     DefMap, DefMapReadTxn, LocalDefData, MacroDefinitionData, ModuleData,
     PackageDefMaps as DefMapPackage, PackageSlot,
+    def_map::TargetData,
     model::{ModuleScopeBuilder, ScopeEntryRef},
     query::{
         path_resolution::PathResolver,
@@ -353,10 +354,13 @@ impl TargetResolutionEnv for FinalizeResolutionEnv<'_> {
 
         Ok(self
             .old
-            .map(|old| old.def_map(target))
+            .map(|old| old.package(target.package))
             .transpose()?
-            .flatten()
-            .and_then(|def_map| def_map.target_data().extern_prelude().get(name).copied()))
+            .and_then(|package| {
+                package
+                    .target_data(target.target)
+                    .and_then(|data| data.extern_prelude().get(name).copied())
+            }))
     }
 
     fn prelude_module(
@@ -369,10 +373,13 @@ impl TargetResolutionEnv for FinalizeResolutionEnv<'_> {
 
         Ok(self
             .old
-            .map(|old| old.def_map(target))
+            .map(|old| old.package(target.package))
             .transpose()?
-            .flatten()
-            .and_then(|def_map| def_map.target_data().prelude()))
+            .and_then(|package| {
+                package
+                    .target_data(target.target)
+                    .and_then(|data| data.prelude())
+            }))
     }
 
     fn root_module(
@@ -380,17 +387,16 @@ impl TargetResolutionEnv for FinalizeResolutionEnv<'_> {
         target: TargetRef,
     ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
         let module = if let Some(state) = self.states.target(target) {
-            state
-                .def_map_builder
-                .as_incomplete_def_map()
-                .target_data()
-                .root_module()
+            Some(state.root_module)
         } else {
             self.old
-                .map(|old| old.def_map(target))
+                .map(|old| old.package(target.package))
                 .transpose()?
-                .flatten()
-                .and_then(|def_map| def_map.target_data().root_module())
+                .and_then(|package| {
+                    package
+                        .target_data(target.target)
+                        .and_then(|data| data.root_module())
+                })
         };
 
         Ok(module.map(|module| ModuleRef {
@@ -435,6 +441,12 @@ impl DefMapPackage {
                     .iter()
                     .map(|state| state.target_name.clone())
                     .collect(),
+            ),
+            target_data: rg_arena::Arena::from_vec(
+                package_states
+                    .iter()
+                    .map(freeze_target_data)
+                    .collect::<Vec<_>>(),
             ),
             targets: rg_arena::Arena::from_vec(
                 package_states
@@ -493,16 +505,8 @@ fn select_preludes(
         // Each target resolves its edition prelude from its own crate root. Targets without a root
         // module are malformed enough that later phases will simply see no prelude.
         for (target_slot, state) in package_states.iter().enumerate() {
-            let Some(root_module) = state
-                .def_map_builder
-                .as_incomplete_def_map()
-                .target_data()
-                .root_module()
-            else {
-                continue;
-            };
             let Some(prelude_module) = PathResolver::new(&env)
-                .import_modules(state.target, root_module, &prelude_path)?
+                .import_modules(state.target, state.root_module, &prelude_path)?
                 .into_iter()
                 .next()
             else {
@@ -745,13 +749,17 @@ fn freeze_target_scopes(
     }
 }
 
-fn freeze_target_state(state: &TargetState) -> DefMap {
-    let mut def_map = state.def_map_builder.clone();
-
+fn freeze_target_data(state: &TargetState) -> TargetData {
     // The same implicit roots used by import resolution are still needed by later frozen path
     // queries. Keep them as an extern prelude rather than pretending they are child modules of the
     // crate root.
-    def_map.set_extern_prelude(state.implicit_roots.clone());
-    def_map.set_prelude(state.prelude);
-    def_map.build()
+    TargetData::new(
+        Some(state.root_module),
+        state.implicit_roots.clone(),
+        state.prelude,
+    )
+}
+
+fn freeze_target_state(state: &TargetState) -> DefMap {
+    state.def_map_builder.clone().build()
 }

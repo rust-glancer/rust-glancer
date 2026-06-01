@@ -279,15 +279,7 @@ impl GeneratedCollector<'_> {
 
     /// Updates both scope snapshots for a generated `#[macro_export]` definition.
     fn export_macro_definition_to_root(&mut self, name: &Name, local_def_id: LocalDefId) {
-        let Some(root_module) = self
-            .state
-            .def_map_builder
-            .as_incomplete_def_map()
-            .target_data()
-            .root_module()
-        else {
-            return;
-        };
+        let root_module = self.state.root_module;
         let binding = ScopeBinding {
             def: DefId::Local(LocalDefRef {
                 origin: DefMapRef::Target(self.state.target),
