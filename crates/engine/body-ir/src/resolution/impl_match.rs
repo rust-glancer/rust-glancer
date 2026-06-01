@@ -4,13 +4,13 @@
 //! items. They compare explicit impl self types against known receiver types and produce the
 //! substitutions that make associated signatures readable in the receiver context.
 
-use rg_def_map::DefMapReadTxn;
+use rg_def_map::DefMapSource;
 use rg_ir_model::{
     FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef, hir::items::ImplData,
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, GenericParams, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemPathQuery, ItemStoreSource, TypePathContext};
 use rg_text::Name;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
@@ -45,23 +45,19 @@ impl TraitImplMatch {
     }
 }
 
-/// Matcher for module-level impls stored in Semantic IR.
-#[derive(Clone, Copy)]
-pub(crate) struct BodyImplMatcher<'query, 'db> {
-    def_map: &'query DefMapReadTxn<'db>,
-    semantic_ir: &'query SemanticIrReadTxn<'db>,
+/// Matcher for impl headers stored in semantic-shaped item stores.
+pub(crate) struct BodyImplMatcher<'query, D, I> {
+    item_paths: ItemPathQuery<'query, D, I>,
 }
 
-impl<'query, 'db> BodyImplMatcher<'query, 'db> {
-    /// Creates a matcher for impl headers stored in Semantic IR.
-    pub(crate) fn new(
-        def_map: &'query DefMapReadTxn<'db>,
-        semantic_ir: &'query SemanticIrReadTxn<'db>,
-    ) -> Self {
-        Self {
-            def_map,
-            semantic_ir,
-        }
+impl<'query, D, I> BodyImplMatcher<'query, D, I>
+where
+    D: DefMapSource,
+    I: ItemStoreSource<'query, Error = PackageStoreError>,
+{
+    /// Creates a matcher over the same path/item routing used by type conversion.
+    pub(crate) fn new(item_paths: ItemPathQuery<'query, D, I>) -> Self {
+        Self { item_paths }
     }
 
     /// Checks whether a function owned by an inherent impl can be called on the receiver type.
@@ -75,7 +71,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     ) -> Result<bool, PackageStoreError> {
         // Trait items are shared by all impl candidates in the best-effort model. Inherent impl
         // items, however, must at least match the receiver's resolved self type.
-        let item_query = ItemStoreQuery::new(self.semantic_ir);
+        let item_query = self.item_paths.items();
         let Some(function_data) = item_query.function_data(function_ref)? else {
             return Ok(false);
         };
@@ -118,7 +114,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
         trait_impl: TraitImplRef,
         receiver_ty: &NominalTy,
     ) -> Result<Option<TraitImplMatch>, PackageStoreError> {
-        let item_query = ItemStoreQuery::new(self.semantic_ir);
+        let item_query = self.item_paths.items();
         let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
         };
@@ -160,7 +156,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
         trait_impl: TraitImplRef,
         receiver_ty: &NominalTy,
     ) -> Result<Option<TypeSubst>, PackageStoreError> {
-        let item_query = ItemStoreQuery::new(self.semantic_ir);
+        let item_query = self.item_paths.items();
         let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
         };
@@ -249,8 +245,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
                 impl_ref: Some(impl_ref),
             };
             let impl_arg_ty = ty_from_type_ref_in_context(
-                self.def_map,
-                self.semantic_ir,
+                &self.item_paths,
                 impl_arg,
                 context,
                 Ty::syntax(impl_arg.clone()),
@@ -307,8 +302,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
                 impl_ref: Some(impl_ref),
             };
             let impl_arg_ty = ty_from_type_ref_in_context(
-                self.def_map,
-                self.semantic_ir,
+                &self.item_paths,
                 impl_arg,
                 context,
                 Ty::syntax(impl_arg.clone()),
@@ -383,8 +377,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
                 impl_ref: Some(impl_ref),
             };
             let impl_arg_ty = ty_from_type_ref_in_context(
-                self.def_map,
-                self.semantic_ir,
+                &self.item_paths,
                 impl_arg,
                 context,
                 Ty::syntax(impl_arg.clone()),

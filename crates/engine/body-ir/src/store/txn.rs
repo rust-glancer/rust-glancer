@@ -6,7 +6,7 @@ use rg_ir_model::{
     TraitImplRef, TypePathResolution,
 };
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
-use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
@@ -101,9 +101,9 @@ impl<'db> BodyIrReadTxn<'db> {
         let Some(field_data) = ItemStoreQuery::new(semantic_ir).field_data(field_ref)? else {
             return Ok(None);
         };
+        let item_paths = ItemPathQuery::new(def_map, semantic_ir);
         Ok(Some(ty_from_type_ref_in_context(
-            def_map,
-            semantic_ir,
+            &item_paths,
             &field_data.field.ty,
             TypePathContext::module(field_data.owner_module),
             Ty::Unknown,
@@ -139,7 +139,7 @@ impl<'db> BodyIrReadTxn<'db> {
             let Some(impl_data) = item_store.impl_data(impl_id) else {
                 return Ok(false);
             };
-            return resolution::BodyImplMatcher::new(def_map, semantic_ir)
+            return resolution::BodyImplMatcher::new(ItemPathQuery::new(def_map, semantic_ir))
                 .impl_applies_to_receiver(impl_ref, impl_data, receiver_ty);
         }
 
@@ -175,8 +175,10 @@ impl<'db> BodyIrReadTxn<'db> {
         trait_impl: TraitImplRef,
         receiver_ty: &NominalTy,
     ) -> Result<bool, PackageStoreError> {
-        Ok(BodyImplMatcher::new(def_map, semantic_ir)
-            .semantic_trait_impl_applicability(trait_impl, receiver_ty)?
-            .is_applicable())
+        Ok(
+            BodyImplMatcher::new(ItemPathQuery::new(def_map, semantic_ir))
+                .semantic_trait_impl_applicability(trait_impl, receiver_ty)?
+                .is_applicable(),
+        )
     }
 }

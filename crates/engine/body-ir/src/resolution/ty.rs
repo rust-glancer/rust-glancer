@@ -3,24 +3,27 @@
 //! These helpers preserve known nominal/generic facts. They do not infer missing generic
 //! arguments, solve bounds, or inspect expression bodies to discover return types.
 
-use rg_def_map::{DefMapReadTxn, Path};
+use rg_def_map::{DefMapSource, Path};
 use rg_ir_model::TypePathResolution;
 use rg_item_tree::{GenericArg as ItemGenericArg, GenericParams, Mutability, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemPathQuery, SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemPathQuery, ItemStoreSource, TypePathContext};
 use rg_text::Name;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
 /// Converts syntax-level type data into the shared type vocabulary in one module/impl
 /// context, applying direct generic substitutions where they are already known.
-pub(crate) fn ty_from_type_ref_in_context(
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
+pub(crate) fn ty_from_type_ref_in_context<'a, D, I>(
+    item_paths: &ItemPathQuery<'a, D, I>,
     ty: &TypeRef,
     context: TypePathContext,
     unresolved_path_fallback: Ty,
     subst: &TypeSubst,
-) -> Result<Ty, PackageStoreError> {
+) -> Result<Ty, PackageStoreError>
+where
+    D: DefMapSource,
+    I: ItemStoreSource<'a, Error = PackageStoreError>,
+{
     match ty {
         TypeRef::Unit => Ok(Ty::Unit),
         TypeRef::Never => Ok(Ty::Never),
@@ -30,15 +33,9 @@ pub(crate) fn ty_from_type_ref_in_context(
                 return Ok(ty);
             }
 
-            let args = generic_args_from_type_path_in_context(
-                def_map,
-                semantic_ir,
-                type_path,
-                context,
-                subst,
-            )?;
-            let resolution =
-                ItemPathQuery::new(def_map, semantic_ir).resolve_type_path(context, &path)?;
+            let args =
+                generic_args_from_type_path_in_context(item_paths, type_path, context, subst)?;
+            let resolution = item_paths.resolve_type_path(context, &path)?;
             let fallback = if matches!(resolution, TypePathResolution::Unknown) {
                 path.single_name()
                     .and_then(rg_ty::PrimitiveTy::from_name)
@@ -57,8 +54,7 @@ pub(crate) fn ty_from_type_ref_in_context(
                 Mutability::Mutable => rg_ty::RefMutability::Mutable,
             },
             ty_from_type_ref_in_context(
-                def_map,
-                semantic_ir,
+                item_paths,
                 inner,
                 context,
                 Ty::syntax((**inner).clone()),
@@ -156,13 +152,16 @@ pub(super) fn type_ref_is_self(ty: &TypeRef) -> bool {
     Path::from_type_ref(ty).is_some_and(|path| path.is_self_type())
 }
 
-fn generic_args_from_type_path_in_context(
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
+fn generic_args_from_type_path_in_context<'a, D, I>(
+    item_paths: &ItemPathQuery<'a, D, I>,
     type_path: &rg_item_tree::TypePath,
     context: TypePathContext,
     subst: &TypeSubst,
-) -> Result<Vec<GenericArg>, PackageStoreError> {
+) -> Result<Vec<GenericArg>, PackageStoreError>
+where
+    D: DefMapSource,
+    I: ItemStoreSource<'a, Error = PackageStoreError>,
+{
     // Rust generic args belong to the final path segment for the cases we model here, e.g.
     // `crate::Wrapper<User>` stores `User` on `Wrapper`.
     let Some(segment) = type_path.segments.last() else {
@@ -173,8 +172,7 @@ fn generic_args_from_type_path_in_context(
     for arg in &segment.args {
         let generic_arg = match arg {
             ItemGenericArg::Type(ty) => GenericArg::Type(Box::new(ty_from_type_ref_in_context(
-                def_map,
-                semantic_ir,
+                item_paths,
                 ty,
                 context,
                 Ty::syntax(ty.clone()),
@@ -186,8 +184,7 @@ fn generic_args_from_type_path_in_context(
                 name: name.clone(),
                 ty: match ty {
                     Some(ty) => Some(Box::new(ty_from_type_ref_in_context(
-                        def_map,
-                        semantic_ir,
+                        item_paths,
                         ty,
                         context,
                         Ty::syntax(ty.clone()),

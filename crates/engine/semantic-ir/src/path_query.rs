@@ -28,6 +28,11 @@ where
         }
     }
 
+    /// Gives algorithms access to item data after path resolution has selected semantic refs.
+    pub fn items(&self) -> &ItemStoreQuery<'a, I> {
+        &self.items
+    }
+
     /// Resolves a type-position path into the type resolution shape used by type projection.
     pub fn resolve_type_path(
         &self,

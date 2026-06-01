@@ -60,7 +60,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
     /// For `impl<T> core::ops::Deref for Wrapper<T> { type Target = T; }` and receiver
     /// `Wrapper<User>`, this resolves the target as `User`.
     fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<Vec<Ty>, PackageStoreError> {
-        let matcher = BodyImplMatcher::new(self.def_map, self.semantic_ir);
+        let matcher = BodyImplMatcher::new(ItemPathQuery::new(self.def_map, self.semantic_ir));
         let item_query = ItemStoreQuery::new(self.semantic_ir);
         let mut targets = Vec::new();
         let trait_impls = match self.semantic_index {
@@ -174,9 +174,9 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
             module: impl_data.owner,
             impl_ref: Some(trait_impl.impl_ref),
         };
+        let item_paths = ItemPathQuery::new(self.def_map, self.semantic_ir);
         ty_from_type_ref_in_context(
-            self.def_map,
-            self.semantic_ir,
+            &item_paths,
             target_ty,
             context,
             Ty::syntax(target_ty.clone()),

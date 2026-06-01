@@ -11,7 +11,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
+use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn};
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
@@ -75,8 +75,13 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         BodyAutoderef::with_index(self.def_map_txn, self.semantic_ir_txn, self.semantic_index)
     }
 
-    fn semantic_impl_matcher(&self) -> BodyImplMatcher<'_, 'db> {
-        BodyImplMatcher::new(self.def_map_txn, self.semantic_ir_txn)
+    fn impl_matcher(
+        &self,
+    ) -> BodyImplMatcher<'_, BodyDefMapSource<'_, 'db>, BodyItemStoreSource<'_, 'db>> {
+        BodyImplMatcher::new(ItemPathQuery::new(
+            BodyDefMapSource::new(self.def_map_txn, self.body_ref, self.body),
+            BodyItemStoreSource::new(self.semantic_ir_txn, self.body_ref, self.body),
+        ))
     }
 
     fn item_query(&self) -> ItemStoreQuery<'_, BodyItemStoreSource<'_, 'db>> {
@@ -664,7 +669,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             return Ok(false);
         }
 
-        self.semantic_impl_matcher()
+        self.impl_matcher()
             .impl_applies_to_receiver(impl_ref, impl_data, receiver_ty)
     }
 
@@ -687,7 +692,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         };
 
         Ok(self
-            .semantic_impl_matcher()
+            .impl_matcher()
             .impl_self_subst_for_impl(impl_data, receiver_ty))
     }
 
@@ -862,8 +867,13 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
     }
 
-    fn semantic_impl_matcher(&self) -> BodyImplMatcher<'_, 'db> {
-        BodyImplMatcher::new(self.def_map, self.semantic_ir)
+    fn impl_matcher(
+        &self,
+    ) -> BodyImplMatcher<'_, BodyDefMapSource<'_, 'db>, BodyItemStoreSource<'_, 'db>> {
+        BodyImplMatcher::new(ItemPathQuery::new(
+            BodyDefMapSource::new(self.def_map, self.body_ref, self.body),
+            BodyItemStoreSource::new(self.semantic_ir, self.body_ref, self.body),
+        ))
     }
 
     fn item_query(&self) -> ItemStoreQuery<'_, BodyItemStoreSource<'_, 'db>> {
@@ -1286,7 +1296,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 continue;
             };
             if !self
-                .semantic_impl_matcher()
+                .impl_matcher()
                 .impl_applies_to_receiver(impl_ref, impl_data, ty)?
             {
                 continue;
@@ -1341,7 +1351,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             };
             if let Some(impl_data) = item_query.impl_data(impl_ref)? {
                 subst.extend(
-                    self.semantic_impl_matcher()
+                    self.impl_matcher()
                         .impl_self_subst_for_impl(impl_data, receiver_ty),
                 );
             }
@@ -1381,7 +1391,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             return Ok(false);
         }
 
-        self.semantic_impl_matcher()
+        self.impl_matcher()
             .impl_applies_to_receiver(impl_ref, impl_data, receiver_ty)
     }
 

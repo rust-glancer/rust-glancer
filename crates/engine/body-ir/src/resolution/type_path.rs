@@ -48,8 +48,13 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         }
     }
 
-    fn semantic_impl_matcher(&self) -> BodyImplMatcher<'_, 'db> {
-        BodyImplMatcher::new(self.def_map, self.semantic_ir)
+    fn impl_matcher(
+        &self,
+    ) -> BodyImplMatcher<'_, BodyDefMapSource<'_, 'db>, BodyItemStoreSource<'_, 'db>> {
+        BodyImplMatcher::new(ItemPathQuery::new(
+            BodyDefMapSource::new(self.def_map, self.body_ref, self.body),
+            BodyItemStoreSource::new(self.semantic_ir, self.body_ref, self.body),
+        ))
     }
 
     fn item_query(&self) -> ItemStoreQuery<'_, BodyItemStoreSource<'_, 'db>> {
@@ -194,14 +199,8 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         context: TypePathContext,
         subst: &TypeSubst,
     ) -> Result<Ty, PackageStoreError> {
-        ty_from_type_ref_in_context(
-            self.def_map,
-            self.semantic_ir,
-            ty,
-            context,
-            Ty::syntax(ty.clone()),
-            subst,
-        )
+        let item_paths = ItemPathQuery::new(self.def_map, self.semantic_ir);
+        ty_from_type_ref_in_context(&item_paths, ty, context, Ty::syntax(ty.clone()), subst)
     }
 
     pub(super) fn ty_from_type_ref_in_module_with_subst(
@@ -378,7 +377,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
                 continue;
             };
             if !self
-                .semantic_impl_matcher()
+                .impl_matcher()
                 .impl_applies_to_receiver(impl_ref, impl_data, ty)?
             {
                 continue;
@@ -429,7 +428,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             };
             if let Some(impl_data) = item_query.impl_data(impl_ref)? {
                 alias_subst.extend(
-                    self.semantic_impl_matcher()
+                    self.impl_matcher()
                         .impl_self_subst_for_impl(impl_data, receiver_ty),
                 );
             }
