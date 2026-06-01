@@ -3,7 +3,7 @@
 //! This module walks lowered bodies and fills resolution/type slots on bindings and expressions.
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
-use rg_def_map::{DefMapReadTxn, NameResolutionFilter, Path, PathSegment};
+use rg_def_map::{DefMapQuery, DefMapReadTxn, NameResolutionFilter, Path, PathSegment};
 use rg_ir_model::{
     AssocItemId, BindingId, BodyRef, ConstRef, DefId, DefMapRef, ExprId, FunctionRef, ImplRef,
     ItemOwner, ModuleId, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TypeDefId,
@@ -24,6 +24,7 @@ use crate::{
 use super::{
     SemanticResolutionIndex,
     autoderef::{BodyAutoderef, BodyAutoderefMode},
+    def_map_query::BodyDefMapSource,
     impl_match::BodyImplMatcher,
     item_query::BodyItemStoreSource,
     method::{
@@ -876,6 +877,14 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         ))
     }
 
+    fn def_map_query(&self) -> DefMapQuery<BodyDefMapSource<'_, 'db>> {
+        DefMapQuery::new(BodyDefMapSource::new(
+            self.def_map,
+            self.body_ref,
+            self.body,
+        ))
+    }
+
     pub(crate) fn resolve_nonlocal_path_expr(
         &self,
         scope: ScopeId,
@@ -1003,11 +1012,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 origin: DefMapRef::Body(self.body_ref),
                 module: ModuleId(scope_id.0),
             };
-            let Some(def_map) = self.body.body_def_map() else {
-                scope = scope_data.parent;
-                continue;
-            };
-            let defs = def_map.resolve_lexical_name_in_module(
+            let defs = self.def_map_query().resolve_lexical_name_in_module(
                 from,
                 module,
                 name,
@@ -1029,15 +1034,12 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         scope: ScopeId,
         path: &Path,
     ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
-        let Some(def_map) = self.body.body_def_map() else {
-            return Ok(None);
-        };
-
         let from = ModuleRef {
             origin: DefMapRef::Body(self.body_ref),
             module: ModuleId(scope.0),
         };
-        let defs = def_map
+        let defs = self
+            .def_map_query()
             .resolve_lexical_path(from, path, NameResolutionFilter::ValuesOnly)?
             .resolved;
         self.value_name_resolution(BodyValueName::SemanticItems(

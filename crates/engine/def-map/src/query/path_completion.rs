@@ -9,7 +9,7 @@ use rg_ir_model::{DefId, DefMapRef, ModuleRef, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{DefMap, DefMapReadTxn, ImportSourcePath, Path, query::path_resolution::PathResolver};
+use crate::{DefMap, DefMapQuery, DefMapReadTxn, ImportSourcePath, Path};
 
 /// Source site selected for a qualified import-path completion query.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,7 +104,7 @@ impl DefMapReadTxn<'_> {
         importing_module: ModuleRef,
         source_module: ModuleRef,
     ) -> Result<Vec<VisibleScopeDef>, PackageStoreError> {
-        let scope = PathResolver::new(self).visible_scope(importing_module, source_module)?;
+        let scope = DefMapQuery::new(self).visible_scope(importing_module, source_module)?;
         let mut defs = Vec::new();
         let mut shadowed = HashSet::new();
         push_visible_scope_defs(
@@ -128,7 +128,7 @@ impl DefMapReadTxn<'_> {
 
         // First-segment resolution checks the current module scope before extern roots and the
         // standard prelude. Completion follows the same namespace-specific shadowing order.
-        let resolver = PathResolver::new(self);
+        let resolver = DefMapQuery::new(self);
         let current_scope = resolver.visible_scope(importing_module, importing_module)?;
         push_visible_scope_defs(
             &mut defs,

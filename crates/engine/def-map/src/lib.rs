@@ -15,9 +15,9 @@ pub use self::{
         PathSegment, ScopeBinding, ScopeBindingOrigin, ScopeEntry,
     },
     query::{
-        DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite,
-        NameResolutionFilter, ResolvePathResult, ScopeNamespace, VisibleScopeDef,
-        VisibleScopeOrigin,
+        DefMapCursorCandidate, DefMapPathCompletionSite, DefMapQuery, DefMapSource,
+        DefMapUnqualifiedCompletionSite, NameResolutionFilter, ResolvePathResult, ScopeNamespace,
+        VisibleScopeDef, VisibleScopeOrigin,
     },
     store::{DefMapDb, DefMapReadTxn, DefMapStats},
 };

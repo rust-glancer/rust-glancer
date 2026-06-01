@@ -5,6 +5,7 @@
 
 mod autoderef;
 mod body;
+mod def_map_query;
 mod deref;
 mod impl_match;
 mod index;
