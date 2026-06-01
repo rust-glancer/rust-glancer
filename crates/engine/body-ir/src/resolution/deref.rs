@@ -9,7 +9,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
@@ -61,14 +61,15 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
     /// `Wrapper<User>`, this resolves the target as `User`.
     fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<Vec<Ty>, PackageStoreError> {
         let matcher = BodyImplMatcher::new(self.def_map, self.semantic_ir);
+        let item_query = ItemStoreQuery::new(self.semantic_ir);
         let mut targets = Vec::new();
         let trait_impls = match self.semantic_index {
             Some(index) => index.trait_impls_for_type(receiver_ty.def).to_vec(),
-            None => self.semantic_ir.trait_impls_for_type(receiver_ty.def)?,
+            None => item_query.trait_impls_for_type(receiver_ty.def)?,
         };
 
         for trait_impl in trait_impls {
-            let Some(impl_data) = self.semantic_ir.impl_data(trait_impl.impl_ref)? else {
+            let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
                 continue;
             };
             if !self.is_core_ops_deref_impl(trait_impl, impl_data)? {
@@ -133,6 +134,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
         impl_data: &ImplData,
         subst: &TypeSubst,
     ) -> Result<Option<Ty>, PackageStoreError> {
+        let item_query = ItemStoreQuery::new(self.semantic_ir);
         for item in &impl_data.items {
             let AssocItemId::TypeAlias(type_alias_id) = item else {
                 continue;
@@ -141,7 +143,7 @@ impl<'query, 'db> BodyDerefResolver<'query, 'db> {
                 origin: trait_impl.impl_ref.origin,
                 id: *type_alias_id,
             };
-            let Some(type_alias_data) = self.semantic_ir.type_alias_data(type_alias_ref)? else {
+            let Some(type_alias_data) = item_query.type_alias_data(type_alias_ref)? else {
                 continue;
             };
             if type_alias_data.name.as_str() != "Target" {

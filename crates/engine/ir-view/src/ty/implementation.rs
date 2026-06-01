@@ -228,7 +228,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, receiver_ty) {
             let candidate = candidate?;
             for ty in candidate.ty().as_nominals() {
-                for trait_impl in self.db.semantic_ir.trait_impls_for_type(ty.def)? {
+                for trait_impl in ItemStoreQuery::new(self.db).trait_impls_for_type(ty.def)? {
                     if trait_impl.trait_ref != trait_ref {
                         continue;
                     }

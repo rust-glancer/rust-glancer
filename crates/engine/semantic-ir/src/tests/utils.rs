@@ -6,7 +6,7 @@ use std::{
 
 use expect_test::Expect;
 
-use crate::{ItemStore, SemanticIrDb, SemanticIrReadTxn};
+use crate::{ItemStore, ItemStoreQuery, SemanticIrDb, SemanticIrReadTxn};
 use rg_def_map::{DefMapDb, PackageSlot, Path, PathSegment};
 use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef, TypeAliasId};
 use rg_item_tree::{
@@ -205,6 +205,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             .project
             .semantic_ir_db()
             .read_txn(unexpected_package_loader());
+        let item_query = ItemStoreQuery::new(&semantic_ir_txn);
         let mut type_defs = semantic_ir_txn
             .type_defs_for_path(
                 &def_map_txn,
@@ -238,7 +239,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "impls",
-                    semantic_ir_txn
+                    item_query
                         .impls_for_type(ty)
                         .expect("fixture semantic query should find impls for type")
                         .into_iter()
@@ -248,7 +249,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "trait impls",
-                    semantic_ir_txn
+                    item_query
                         .trait_impls_for_type(ty)
                         .expect("fixture semantic query should find trait impls for type")
                         .into_iter()
@@ -264,7 +265,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "traits",
-                    semantic_ir_txn
+                    item_query
                         .traits_for_type(ty)
                         .expect("fixture semantic query should find traits for type")
                         .into_iter()
@@ -274,7 +275,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "inherent functions",
-                    semantic_ir_txn
+                    item_query
                         .inherent_functions_for_type(ty)
                         .expect("fixture semantic query should find inherent functions for type")
                         .into_iter()
@@ -286,7 +287,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "trait functions",
-                    semantic_ir_txn
+                    item_query
                         .trait_functions_for_type(ty)
                         .expect("fixture semantic query should find trait functions for type")
                         .into_iter()
@@ -298,7 +299,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 self.render_query_section(
                     &mut dump,
                     "trait impl functions",
-                    semantic_ir_txn
+                    item_query
                         .trait_impl_functions_for_type(ty)
                         .expect("fixture semantic query should find trait impl functions for type")
                         .into_iter()
@@ -440,7 +441,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     }
 
     fn render_trait_ref(&self, semantic_ir: &SemanticIrReadTxn<'_>, trait_ref: TraitRef) -> String {
-        let data = semantic_ir
+        let data = ItemStoreQuery::new(semantic_ir)
             .trait_data(trait_ref)
             .expect("trait id should load while rendering query")
             .expect("trait id should exist while rendering query");
@@ -453,7 +454,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
     }
 
     fn render_impl_ref(&self, semantic_ir: &SemanticIrReadTxn<'_>, impl_ref: ImplRef) -> String {
-        let data = semantic_ir
+        let data = ItemStoreQuery::new(semantic_ir)
             .impl_data(impl_ref)
             .expect("impl id should load while rendering query")
             .expect("impl id should exist while rendering query");
@@ -469,7 +470,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         semantic_ir: &SemanticIrReadTxn<'_>,
         function_ref: FunctionRef,
     ) -> String {
-        let data = semantic_ir
+        let data = ItemStoreQuery::new(semantic_ir)
             .function_data(function_ref)
             .expect("function id should load while rendering query")
             .expect("function id should exist while rendering query");

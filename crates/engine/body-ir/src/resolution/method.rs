@@ -6,7 +6,7 @@
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{FunctionRef, TraitApplicability};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
 use rg_ty::NominalTy;
 
 use super::{SemanticResolutionIndex, impl_match::BodyImplMatcher};
@@ -29,10 +29,11 @@ pub(crate) fn semantic_trait_function_candidates_for_receiver(
     method_name: Option<&str>,
 ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
     let matcher = BodyImplMatcher::new(def_map, semantic_ir);
+    let item_query = ItemStoreQuery::new(semantic_ir);
     let mut functions = Vec::new();
     let trait_impls = match index {
         Some(index) => index.trait_impls_for_type(receiver_ty.def).to_vec(),
-        None => semantic_ir.trait_impls_for_type(receiver_ty.def)?,
+        None => item_query.trait_impls_for_type(receiver_ty.def)?,
     };
 
     for trait_impl in trait_impls {
@@ -64,7 +65,7 @@ pub(crate) fn semantic_trait_function_candidates_for_receiver(
             {
                 functions.to_vec()
             } else {
-                semantic_ir
+                item_query
                     .trait_data(trait_impl.trait_ref)?
                     .map(|t| t.functions().collect())
                     .unwrap_or_default()
@@ -75,7 +76,7 @@ pub(crate) fn semantic_trait_function_candidates_for_receiver(
             if let Some(method_name) = method_name {
                 let mut retained = Vec::new();
                 for function in trait_functions {
-                    let Some(function_data) = semantic_ir.function_data(function)? else {
+                    let Some(function_data) = item_query.function_data(function)? else {
                         continue;
                     };
                     if function_data.name == method_name {

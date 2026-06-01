@@ -10,7 +10,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, GenericParams, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
 use rg_text::Name;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
@@ -75,7 +75,8 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
     ) -> Result<bool, PackageStoreError> {
         // Trait items are shared by all impl candidates in the best-effort model. Inherent impl
         // items, however, must at least match the receiver's resolved self type.
-        let Some(function_data) = self.semantic_ir.function_data(function_ref)? else {
+        let item_query = ItemStoreQuery::new(self.semantic_ir);
+        let Some(function_data) = item_query.function_data(function_ref)? else {
             return Ok(false);
         };
         let ItemOwner::Impl(impl_id) = function_data.owner else {
@@ -85,7 +86,7 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
             origin: function_ref.origin,
             id: impl_id,
         };
-        let Some(impl_data) = self.semantic_ir.impl_data(impl_ref)? else {
+        let Some(impl_data) = item_query.impl_data(impl_ref)? else {
             return Ok(false);
         };
         self.impl_applies_to_receiver(impl_ref, impl_data, receiver_ty)
@@ -117,7 +118,8 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
         trait_impl: TraitImplRef,
         receiver_ty: &NominalTy,
     ) -> Result<Option<TraitImplMatch>, PackageStoreError> {
-        let Some(impl_data) = self.semantic_ir.impl_data(trait_impl.impl_ref)? else {
+        let item_query = ItemStoreQuery::new(self.semantic_ir);
+        let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
         };
         if !impl_data.resolved_self_tys.contains(&receiver_ty.def)
@@ -158,7 +160,8 @@ impl<'query, 'db> BodyImplMatcher<'query, 'db> {
         trait_impl: TraitImplRef,
         receiver_ty: &NominalTy,
     ) -> Result<Option<TypeSubst>, PackageStoreError> {
-        let Some(impl_data) = self.semantic_ir.impl_data(trait_impl.impl_ref)? else {
+        let item_query = ItemStoreQuery::new(self.semantic_ir);
+        let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
         };
         if !impl_data.resolved_self_tys.contains(&receiver_ty.def)

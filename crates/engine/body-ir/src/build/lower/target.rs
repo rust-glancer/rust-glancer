@@ -8,7 +8,7 @@ use rg_syntax::{AstNode as _, ast};
 use rg_def_map::PackageSlot;
 use rg_ir_model::{FunctionRef, ImplRef, ItemOwner, ModuleRef, TraitRef};
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
 use rg_text::NameInterner;
 
 use crate::ir::TargetBodies;
@@ -121,7 +121,8 @@ impl<'a> TargetLowering<'a> {
         semantic_ir: &SemanticIrReadTxn<'_>,
         function: FunctionRef,
     ) -> anyhow::Result<Option<ModuleRef>> {
-        let Some(function_data) = semantic_ir.function_data(function).with_context(|| {
+        let item_query = ItemStoreQuery::new(semantic_ir);
+        let Some(function_data) = item_query.function_data(function).with_context(|| {
             format!(
                 "while attempting to fetch semantic IR function {:?}",
                 function.id
@@ -133,7 +134,7 @@ impl<'a> TargetLowering<'a> {
 
         let module = match function_data.owner {
             ItemOwner::Module(module_ref) => Some(module_ref),
-            ItemOwner::Trait(trait_id) => semantic_ir
+            ItemOwner::Trait(trait_id) => item_query
                 .trait_data(TraitRef {
                     origin: function.origin,
                     id: trait_id,
@@ -145,7 +146,7 @@ impl<'a> TargetLowering<'a> {
                     )
                 })?
                 .map(|data| data.owner),
-            ItemOwner::Impl(impl_id) => semantic_ir
+            ItemOwner::Impl(impl_id) => item_query
                 .impl_data(ImplRef {
                     origin: function.origin,
                     id: impl_id,

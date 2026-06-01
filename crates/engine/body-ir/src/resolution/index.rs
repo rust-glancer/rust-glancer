@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, TraitImplRef, TraitRef, TypeDefRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
 use rg_text::Name;
 
 use super::push_unique;
@@ -29,6 +29,7 @@ pub(crate) struct SemanticResolutionIndex {
 impl SemanticResolutionIndex {
     pub(crate) fn build(semantic_ir: &SemanticIrReadTxn<'_>) -> Result<Self, PackageStoreError> {
         let mut index = Self::default();
+        let item_query = ItemStoreQuery::new(semantic_ir);
 
         // The index mirrors Semantic IR's broad lookup helpers, but pays the package-wide scan
         // once up front instead of once per method expression.
@@ -48,7 +49,7 @@ impl SemanticResolutionIndex {
                             id: *id,
                         };
                         push_unique(functions, function_ref);
-                        if let Some(function_data) = semantic_ir.function_data(function_ref)? {
+                        if let Some(function_data) = item_query.function_data(function_ref)? {
                             push_unique(
                                 index
                                     .trait_functions_by_trait_and_name
@@ -79,8 +80,7 @@ impl SemanticResolutionIndex {
                                     origin: impl_ref.origin,
                                     id: *id,
                                 };
-                                let Some(function_data) =
-                                    semantic_ir.function_data(function_ref)?
+                                let Some(function_data) = item_query.function_data(function_ref)?
                                 else {
                                     continue;
                                 };
@@ -122,6 +122,7 @@ impl SemanticResolutionIndex {
         ty: TypeDefRef,
     ) -> Result<Vec<FunctionRef>, PackageStoreError> {
         let mut functions = Vec::new();
+        let item_query = ItemStoreQuery::new(semantic_ir);
         let Some(impl_refs) = self.inherent_impls_by_type.get(&ty) else {
             return Ok(functions);
         };
@@ -129,7 +130,7 @@ impl SemanticResolutionIndex {
         // Store impl ids, not function ids, because function lists belong to impl item data. This
         // keeps the index compact while still avoiding the expensive global impl search.
         for impl_ref in impl_refs {
-            let Some(data) = semantic_ir.impl_data(*impl_ref)? else {
+            let Some(data) = item_query.impl_data(*impl_ref)? else {
                 continue;
             };
 

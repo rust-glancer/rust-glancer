@@ -18,7 +18,7 @@ use rg_ir_view::IndexedViewDb;
 use rg_item_tree::{ItemTreeDb, PackageNameInterners};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb, Span};
-use rg_semantic_ir::{SemanticIrDb, SemanticIrReadTxn};
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrDb, SemanticIrReadTxn};
 use rg_ty::{GenericArg, NominalTy, Ty};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
 use test_fixture::{FixtureMarkers, fixture_crate, fixture_crate_with_markers};
@@ -1134,14 +1134,15 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
     fn render_function_ref(&self, function_ref: FunctionRef) -> String {
         let semantic_ir = self.semantic_ir_txn();
-        let data = semantic_ir
+        let item_query = ItemStoreQuery::new(&semantic_ir);
+        let data = item_query
             .function_data(function_ref)
             .expect("function ref should load while rendering analysis body item")
             .expect("function ref should exist while rendering analysis body item");
         let owner = match data.owner {
             ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
             ItemOwner::Trait(trait_id) => {
-                let trait_data = semantic_ir
+                let trait_data = item_query
                     .trait_data(TraitRef {
                         origin: function_ref.origin,
                         id: trait_id,

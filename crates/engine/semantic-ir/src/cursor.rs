@@ -13,7 +13,7 @@ use rg_item_tree::{
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
-use crate::{SemanticIrReadTxn, TypePathContext};
+use crate::{ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
 
 /// One semantic signature source node that can participate in cursor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -503,7 +503,7 @@ impl SignatureCursorScanner<'_, '_> {
         &self,
         owner: ItemOwner,
     ) -> Result<Option<TypePathContext>, PackageStoreError> {
-        self.semantic_ir
+        ItemStoreQuery::new(self.semantic_ir)
             .type_path_context_for_owner(DefMapRef::Target(self.target), owner)
     }
 

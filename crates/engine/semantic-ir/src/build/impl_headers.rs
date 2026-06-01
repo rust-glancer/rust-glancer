@@ -6,7 +6,7 @@ use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
 
-use crate::{SemanticIrReadTxn, store::SemanticIrDbMutator};
+use crate::{ItemStoreQuery, SemanticIrReadTxn, store::SemanticIrDbMutator};
 
 pub(super) fn resolve_impl_headers(
     db: &mut SemanticIrDbMutator<'_>,
@@ -34,6 +34,7 @@ pub(super) fn impl_header_resolutions_for_packages(
     packages: &[PackageSlot],
 ) -> Result<Vec<ImplHeaderResolution>, PackageStoreError> {
     let mut resolutions = Vec::new();
+    let item_query = ItemStoreQuery::new(semantic_ir);
 
     for package in packages {
         let package_ir = semantic_ir.package(*package)?;
@@ -48,7 +49,7 @@ pub(super) fn impl_header_resolutions_for_packages(
                 .into_iter()
                 .flat_map(|i| i.impls_with_refs())
             {
-                let Some(data) = semantic_ir.impl_data(impl_ref)? else {
+                let Some(data) = item_query.impl_data(impl_ref)? else {
                     continue;
                 };
 

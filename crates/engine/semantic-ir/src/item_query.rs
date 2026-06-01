@@ -5,7 +5,7 @@
 
 use rg_ir_model::{
     ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner, LocalDefRef,
-    SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    SemanticItemRef, StaticRef, TraitImplRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
     hir::items::{
         ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, StaticData,
         TraitData, TypeAliasData,
@@ -389,6 +389,65 @@ where
         let mut functions = Vec::new();
         for impl_ref in self.inherent_impls_for_type(ty)? {
             let Some(data) = self.impl_data(impl_ref)? else {
+                continue;
+            };
+            functions.extend(data.functions());
+        }
+        Ok(functions)
+    }
+
+    /// Expands matching trait impl blocks into the trait refs they actually implement.
+    pub fn trait_impls_for_type(&self, ty: TypeDefRef) -> Result<Vec<TraitImplRef>, S::Error> {
+        let mut trait_impls = Vec::new();
+        for impl_ref in self.impls_for_type(ty)? {
+            let Some(data) = self.impl_data(impl_ref)? else {
+                continue;
+            };
+
+            for trait_ref in &data.resolved_trait_refs {
+                push_unique(
+                    &mut trait_impls,
+                    TraitImplRef {
+                        impl_ref,
+                        trait_ref: *trait_ref,
+                    },
+                );
+            }
+        }
+        Ok(trait_impls)
+    }
+
+    /// Lists trait declarations implemented by the visible impls for a nominal type.
+    pub fn traits_for_type(&self, ty: TypeDefRef) -> Result<Vec<TraitRef>, S::Error> {
+        let mut traits = Vec::new();
+        for trait_impl in self.trait_impls_for_type(ty)? {
+            push_unique(&mut traits, trait_impl.trait_ref);
+        }
+        Ok(traits)
+    }
+
+    /// Collects trait-declared functions available for a nominal type.
+    pub fn trait_functions_for_type(&self, ty: TypeDefRef) -> Result<Vec<FunctionRef>, S::Error> {
+        let mut functions = Vec::new();
+        for trait_ref in self.traits_for_type(ty)? {
+            let Some(data) = self.trait_data(trait_ref)? else {
+                continue;
+            };
+            for function in data.functions() {
+                push_unique(&mut functions, function);
+            }
+        }
+        Ok(functions)
+    }
+
+    /// Collects concrete trait-impl functions available for a nominal type.
+    pub fn trait_impl_functions_for_type(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<Vec<FunctionRef>, S::Error> {
+        let mut functions = Vec::new();
+        for trait_impl in self.trait_impls_for_type(ty)? {
+            let Some(data) = self.impl_data(trait_impl.impl_ref)? else {
                 continue;
             };
             functions.extend(data.functions());

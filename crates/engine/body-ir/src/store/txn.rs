@@ -6,7 +6,7 @@ use rg_ir_model::{
     TraitImplRef, TypePathResolution,
 };
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
-use rg_semantic_ir::{SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
@@ -98,7 +98,7 @@ impl<'db> BodyIrReadTxn<'db> {
     ) -> Result<Option<Ty>, PackageStoreError> {
         // Field declarations live in Semantic IR, but Analysis expects Body IR's small type
         // vocabulary. Use the owning module as the type-path context for the field signature.
-        let Some(field_data) = semantic_ir.field_data(field_ref)? else {
+        let Some(field_data) = ItemStoreQuery::new(semantic_ir).field_data(field_ref)? else {
             return Ok(None);
         };
         Ok(Some(ty_from_type_ref_in_context(

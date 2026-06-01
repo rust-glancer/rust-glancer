@@ -809,10 +809,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             return Ok(None);
         };
         Ok(
-            match self
-                .semantic_ir_txn
-                .semantic_item_for_local_def(local_def)?
-            {
+            match self.item_query().semantic_item_for_local_def(local_def)? {
                 Some(SemanticItemRef::Function(function)) => Some(function),
                 Some(_) | None => None,
             },
@@ -1256,7 +1253,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
 
         let inherent_functions = match self.semantic_index {
             Some(index) => index.inherent_functions_for_type(self.semantic_ir, ty.def)?,
-            None => self.semantic_ir.inherent_functions_for_type(ty.def)?,
+            None => ItemStoreQuery::new(self.semantic_ir).inherent_functions_for_type(ty.def)?,
         };
 
         for function in inherent_functions {
