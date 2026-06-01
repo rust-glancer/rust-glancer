@@ -34,19 +34,23 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
             .collect())
     }
 
-    pub fn declarations_for_declaration(
+    /// Converts declaration-like refs into the canonical declaration identity exposed to queries.
+    ///
+    /// DefMap local defs are normalized to their semantic item refs when the item store has a
+    /// matching item. Other declaration refs are already canonical and pass through unchanged.
+    pub fn canonical_declaration(
         &self,
         declaration: DeclarationRef,
-    ) -> anyhow::Result<Vec<DeclarationRef>> {
+    ) -> anyhow::Result<DeclarationRef> {
         match declaration {
-            DeclarationRef::Module(module) => self.declarations_for_def(DefId::Module(module)),
-            DeclarationRef::LocalDef(local_def) => {
-                self.declarations_for_def(DefId::Local(local_def))
-            }
+            DeclarationRef::Module(module) => Ok(DeclarationRef::module(module)),
+            DeclarationRef::LocalDef(local_def) => Ok(self
+                .declaration_for_local_def(local_def)?
+                .unwrap_or_else(|| self.fallback_name_def(local_def))),
             DeclarationRef::Item(_)
             | DeclarationRef::Field(_)
             | DeclarationRef::EnumVariant(_)
-            | DeclarationRef::BodyBinding(_) => Ok(vec![declaration]),
+            | DeclarationRef::BodyBinding(_) => Ok(declaration),
         }
     }
 
@@ -162,7 +166,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
             | BodyResolution::EnumVariant(resolved) => {
                 let mut declarations = Vec::new();
                 for declaration in resolved {
-                    declarations.extend(self.declarations_for_declaration(*declaration)?);
+                    declarations.push(self.canonical_declaration(*declaration)?);
                 }
                 Ok(declarations)
             }

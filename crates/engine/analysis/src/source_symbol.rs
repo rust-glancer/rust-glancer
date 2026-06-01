@@ -137,7 +137,7 @@ impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
         match symbol {
             SymbolAt::FunctionBody { .. } => Ok(Vec::new()),
             SymbolAt::Declaration { declaration, .. } => {
-                resolution.declarations_for_declaration(declaration)
+                Ok(vec![resolution.canonical_declaration(declaration)?])
             }
             SymbolAt::Expr { expr } => resolution.declarations_for_expr(expr),
             SymbolAt::TypePath { scope, path, .. } => match scope.repr() {
@@ -172,16 +172,9 @@ impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
         let ty = match symbol {
             SymbolAt::Expr { expr } => ty_view.ty_for_expr(expr)?,
             SymbolAt::Declaration { declaration, .. } => {
-                let mut ty = None;
-                for declaration in
-                    ResolutionView::new(self.db).declarations_for_declaration(declaration)?
-                {
-                    if let Some(declaration_ty) = ty_view.ty_for_declaration(declaration)? {
-                        ty = Some(declaration_ty);
-                        break;
-                    }
-                }
-                ty
+                let declaration =
+                    ResolutionView::new(self.db).canonical_declaration(declaration)?;
+                ty_view.ty_for_declaration(declaration)?
             }
             SymbolAt::TypePath { scope, path, .. } => match scope.repr() {
                 TypePathScopeRepr::Signature(context) => {
