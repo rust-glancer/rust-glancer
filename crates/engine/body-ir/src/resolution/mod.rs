@@ -19,11 +19,11 @@ mod type_path;
 pub(crate) use self::{
     body::BodyResolver,
     body::BodyValuePathResolver,
+    def_map_query::BodyDefMapSource,
     impl_match::BodyImplMatcher,
     index::SemanticResolutionIndex,
-    method::{
-        semantic_function_applies_to_receiver, semantic_trait_function_candidates_for_receiver,
-    },
+    item_query::BodyItemStoreSource,
+    method::{function_applies_to_receiver, trait_function_candidates_for_receiver},
     ty::ty_from_type_ref_in_context,
     type_path::BodyTypePathResolver,
 };

@@ -7,14 +7,14 @@ use rg_semantic_ir::{ItemStore, ItemStoreSource, SemanticIrReadTxn};
 use crate::ir::body::BodyData;
 
 #[derive(Clone, Copy)]
-pub(super) struct BodyItemStoreSource<'a, 'db> {
+pub(crate) struct BodyItemStoreSource<'a, 'db> {
     semantic_ir: &'a SemanticIrReadTxn<'db>,
     body_ref: BodyRef,
     body: &'a BodyData,
 }
 
 impl<'a, 'db> BodyItemStoreSource<'a, 'db> {
-    pub(super) fn new(
+    pub(crate) fn new(
         semantic_ir: &'a SemanticIrReadTxn<'db>,
         body_ref: BodyRef,
         body: &'a BodyData,

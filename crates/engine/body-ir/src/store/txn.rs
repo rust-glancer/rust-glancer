@@ -2,7 +2,7 @@
 
 use rg_def_map::{DefMapReadTxn, PackageSlot, Path};
 use rg_ir_model::{
-    BodyRef, FieldRef, FunctionRef, ImplRef, ItemOwner, ScopeId, TargetRef, TraitApplicability,
+    BodyRef, DefMapRef, FieldRef, FunctionRef, ScopeId, TargetRef, TraitApplicability,
     TraitImplRef, TypePathResolution,
 };
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
@@ -12,8 +12,8 @@ use rg_ty::{NominalTy, Ty, TypeSubst};
 use crate::{
     BodyData, BodyResolution, PackageBodies, TargetBodies,
     resolution::{
-        self, BodyImplMatcher, BodyTypePathResolver, BodyValuePathResolver,
-        ty_from_type_ref_in_context,
+        self, BodyDefMapSource, BodyImplMatcher, BodyItemStoreSource, BodyTypePathResolver,
+        BodyValuePathResolver, ty_from_type_ref_in_context,
     },
 };
 
@@ -119,33 +119,22 @@ impl<'db> BodyIrReadTxn<'db> {
         function_ref: FunctionRef,
         receiver_ty: &NominalTy,
     ) -> Result<bool, PackageStoreError> {
-        if let rg_ir_model::DefMapRef::Body(body_ref) = function_ref.origin {
+        if let DefMapRef::Body(body_ref) = function_ref.origin {
             let Some(body) = self.body_data(body_ref)? else {
                 return Ok(false);
             };
-            let Some(item_store) = body.body_item_store() else {
-                return Ok(false);
-            };
-            let Some(function_data) = item_store.function_data(function_ref.id) else {
-                return Ok(false);
-            };
-            let ItemOwner::Impl(impl_id) = function_data.owner else {
-                return Ok(true);
-            };
-            let impl_ref = ImplRef {
-                origin: function_ref.origin,
-                id: impl_id,
-            };
-            let Some(impl_data) = item_store.impl_data(impl_id) else {
-                return Ok(false);
-            };
-            return resolution::BodyImplMatcher::new(ItemPathQuery::new(def_map, semantic_ir))
-                .impl_applies_to_receiver(impl_ref, impl_data, receiver_ty);
+            return resolution::function_applies_to_receiver(
+                ItemPathQuery::new(
+                    BodyDefMapSource::new(def_map, body_ref, body),
+                    BodyItemStoreSource::new(semantic_ir, body_ref, body),
+                ),
+                function_ref,
+                receiver_ty,
+            );
         }
 
-        resolution::semantic_function_applies_to_receiver(
-            def_map,
-            semantic_ir,
+        resolution::function_applies_to_receiver(
+            ItemPathQuery::new(def_map, semantic_ir),
             function_ref,
             receiver_ty,
         )
@@ -158,10 +147,24 @@ impl<'db> BodyIrReadTxn<'db> {
         semantic_ir: &SemanticIrReadTxn<'db>,
         receiver_ty: &NominalTy,
     ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
-        resolution::semantic_trait_function_candidates_for_receiver(
+        if let DefMapRef::Body(body_ref) = receiver_ty.def.origin {
+            let Some(body) = self.body_data(body_ref)? else {
+                return Ok(Vec::new());
+            };
+            return resolution::trait_function_candidates_for_receiver(
+                None,
+                ItemPathQuery::new(
+                    BodyDefMapSource::new(def_map, body_ref, body),
+                    BodyItemStoreSource::new(semantic_ir, body_ref, body),
+                ),
+                receiver_ty,
+                None,
+            );
+        }
+
+        resolution::trait_function_candidates_for_receiver(
             None,
-            def_map,
-            semantic_ir,
+            ItemPathQuery::new(def_map, semantic_ir),
             receiver_ty,
             None,
         )
@@ -175,6 +178,18 @@ impl<'db> BodyIrReadTxn<'db> {
         trait_impl: TraitImplRef,
         receiver_ty: &NominalTy,
     ) -> Result<bool, PackageStoreError> {
+        if let DefMapRef::Body(body_ref) = trait_impl.impl_ref.origin {
+            let Some(body) = self.body_data(body_ref)? else {
+                return Ok(false);
+            };
+            return Ok(BodyImplMatcher::new(ItemPathQuery::new(
+                BodyDefMapSource::new(def_map, body_ref, body),
+                BodyItemStoreSource::new(semantic_ir, body_ref, body),
+            ))
+            .semantic_trait_impl_applicability(trait_impl, receiver_ty)?
+            .is_applicable());
+        }
+
         Ok(
             BodyImplMatcher::new(ItemPathQuery::new(def_map, semantic_ir))
                 .semantic_trait_impl_applicability(trait_impl, receiver_ty)?

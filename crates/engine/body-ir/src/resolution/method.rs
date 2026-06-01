@@ -3,33 +3,39 @@
 //! This module owns method-specific filtering, while impl header matching lives in
 //! `impl_match` so receiver-based resolution can share it.
 
-use rg_def_map::DefMapReadTxn;
+use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, TraitApplicability};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn};
+use rg_semantic_ir::{ItemPathQuery, ItemStoreSource};
 use rg_ty::NominalTy;
 
 use super::{SemanticResolutionIndex, impl_match::BodyImplMatcher};
 
-pub(crate) fn semantic_function_applies_to_receiver(
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
+pub(crate) fn function_applies_to_receiver<'query, D, I>(
+    item_paths: ItemPathQuery<'query, D, I>,
     function_ref: FunctionRef,
     receiver_ty: &NominalTy,
-) -> Result<bool, PackageStoreError> {
-    BodyImplMatcher::new(ItemPathQuery::new(def_map, semantic_ir))
+) -> Result<bool, PackageStoreError>
+where
+    D: DefMapSource,
+    I: ItemStoreSource<'query, Error = PackageStoreError>,
+{
+    BodyImplMatcher::new(item_paths)
         .semantic_function_applies_to_receiver(function_ref, receiver_ty)
 }
 
-pub(crate) fn semantic_trait_function_candidates_for_receiver(
+pub(crate) fn trait_function_candidates_for_receiver<'query, D, I>(
     index: Option<&SemanticResolutionIndex>,
-    def_map: &DefMapReadTxn<'_>,
-    semantic_ir: &SemanticIrReadTxn<'_>,
+    item_paths: ItemPathQuery<'query, D, I>,
     receiver_ty: &NominalTy,
     method_name: Option<&str>,
-) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
-    let matcher = BodyImplMatcher::new(ItemPathQuery::new(def_map, semantic_ir));
-    let item_query = ItemStoreQuery::new(semantic_ir);
+) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError>
+where
+    D: DefMapSource + Clone,
+    I: ItemStoreSource<'query, Error = PackageStoreError> + Clone,
+{
+    let matcher = BodyImplMatcher::new(item_paths.clone());
+    let item_query = item_paths.items();
     let mut functions = Vec::new();
     let trait_impls = match index {
         Some(index) => index.trait_impls_for_type(receiver_ty.def).to_vec(),

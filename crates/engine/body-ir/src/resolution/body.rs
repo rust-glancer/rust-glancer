@@ -27,9 +27,7 @@ use super::{
     def_map_query::BodyDefMapSource,
     impl_match::BodyImplMatcher,
     item_query::BodyItemStoreSource,
-    method::{
-        semantic_function_applies_to_receiver, semantic_trait_function_candidates_for_receiver,
-    },
+    method::{function_applies_to_receiver, trait_function_candidates_for_receiver},
     normalize::TyNormalizer,
     pat::PatternTypePropagator,
     push_unique,
@@ -629,25 +627,23 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             return Ok(functions);
         }
 
+        let item_paths = ItemPathQuery::new(
+            BodyDefMapSource::new(self.def_map_txn, self.body_ref, self.body),
+            BodyItemStoreSource::new(self.semantic_ir_txn, self.body_ref, self.body),
+        );
         for function in self
             .semantic_index
             .inherent_functions_for_type_and_name(ty.def, method_name)
             .to_vec()
         {
-            if semantic_function_applies_to_receiver(
-                self.def_map_txn,
-                self.semantic_ir_txn,
-                function,
-                ty,
-            )? {
+            if function_applies_to_receiver(item_paths.clone(), function, ty)? {
                 functions.push(function);
             }
         }
 
-        for (function, _) in semantic_trait_function_candidates_for_receiver(
+        for (function, _) in trait_function_candidates_for_receiver(
             Some(self.semantic_index),
-            self.def_map_txn,
-            self.semantic_ir_txn,
+            item_paths,
             ty,
             Some(method_name),
         )? {
@@ -1269,25 +1265,24 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             return Ok(functions);
         }
 
+        let item_paths = ItemPathQuery::new(
+            BodyDefMapSource::new(self.def_map, self.body_ref, self.body),
+            BodyItemStoreSource::new(self.semantic_ir, self.body_ref, self.body),
+        );
         let inherent_functions = match self.semantic_index {
             Some(index) => index.inherent_functions_for_type(self.semantic_ir, ty.def)?,
-            None => ItemStoreQuery::new(self.semantic_ir).inherent_functions_for_type(ty.def)?,
+            None => item_paths.items().inherent_functions_for_type(ty.def)?,
         };
 
         for function in inherent_functions {
-            if semantic_function_applies_to_receiver(self.def_map, self.semantic_ir, function, ty)?
-            {
+            if function_applies_to_receiver(item_paths.clone(), function, ty)? {
                 functions.push(function);
             }
         }
 
-        for (function, _) in semantic_trait_function_candidates_for_receiver(
-            self.semantic_index,
-            self.def_map,
-            self.semantic_ir,
-            ty,
-            None,
-        )? {
+        for (function, _) in
+            trait_function_candidates_for_receiver(self.semantic_index, item_paths, ty, None)?
+        {
             push_unique(&mut functions, function);
         }
         Ok(functions)

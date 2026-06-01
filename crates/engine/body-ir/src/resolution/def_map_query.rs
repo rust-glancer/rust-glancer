@@ -7,14 +7,14 @@ use rg_package_store::PackageStoreError;
 use crate::ir::body::BodyData;
 
 #[derive(Clone, Copy)]
-pub(super) struct BodyDefMapSource<'a, 'db> {
+pub(crate) struct BodyDefMapSource<'a, 'db> {
     target_def_maps: &'a DefMapReadTxn<'db>,
     body_ref: BodyRef,
     body: &'a BodyData,
 }
 
 impl<'a, 'db> BodyDefMapSource<'a, 'db> {
-    pub(super) fn new(
+    pub(crate) fn new(
         target_def_maps: &'a DefMapReadTxn<'db>,
         body_ref: BodyRef,
         body: &'a BodyData,
