@@ -16,7 +16,8 @@ pub use self::{
     },
     query::{
         DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite,
-        ResolvePathResult, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin,
+        NameResolutionFilter, ResolvePathResult, ScopeNamespace, VisibleScopeDef,
+        VisibleScopeOrigin,
     },
     store::{DefMapDb, DefMapReadTxn, DefMapStats},
 };

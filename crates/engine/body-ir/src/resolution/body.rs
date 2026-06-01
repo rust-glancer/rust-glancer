@@ -3,7 +3,7 @@
 //! This module walks lowered bodies and fills resolution/type slots on bindings and expressions.
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
-use rg_def_map::{DefMapReadTxn, Path, PathSegment};
+use rg_def_map::{DefMapReadTxn, NameResolutionFilter, Path, PathSegment};
 use rg_ir_model::{
     AssocItemId, BindingId, BodyRef, ConstRef, DefId, DefMapRef, ExprId, FunctionRef, ImplRef,
     ItemOwner, ModuleId, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TypeDefId,
@@ -24,7 +24,6 @@ use crate::{
 use super::{
     SemanticResolutionIndex,
     autoderef::{BodyAutoderef, BodyAutoderefMode},
-    def_map_lookup::BodyDefMapLookup,
     impl_match::BodyImplMatcher,
     item_query::BodyItemStoreSource,
     method::{
@@ -1008,8 +1007,12 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 scope = scope_data.parent;
                 continue;
             };
-            let defs = BodyDefMapLookup::new(def_map)
-                .resolve_name_in_value_namespace_at_module(from, module, name);
+            let defs = def_map.resolve_lexical_name_in_module(
+                from,
+                module,
+                name,
+                NameResolutionFilter::ValuesOnly,
+            )?;
             let value_name = BodyValueName::SemanticItems(self.semantic_items_for_defs(defs)?);
             if let Some(resolution) = self.value_name_resolution(value_name)? {
                 return Ok(Some(resolution));
@@ -1034,8 +1037,8 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             origin: DefMapRef::Body(self.body_ref),
             module: ModuleId(scope.0),
         };
-        let defs = BodyDefMapLookup::new(def_map)
-            .resolve_path_in_value_namespace(from, path)
+        let defs = def_map
+            .resolve_lexical_path(from, path, NameResolutionFilter::ValuesOnly)?
             .resolved;
         self.value_name_resolution(BodyValueName::SemanticItems(
             self.semantic_items_for_defs(defs)?,

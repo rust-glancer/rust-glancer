@@ -12,10 +12,7 @@ use crate::{
     ImportPath, LocalDefData, LocalDefKind, MacroDefinitionData, PathSegment, ScopeBinding,
     ScopeBindingOrigin,
     build::{collect::TargetState, finalize::FinalizeTargetStates},
-    query::path_resolution::{
-        PathResolutionEnv, resolve_path_to_macro_bindings_with_env,
-        visible_module_macro_bindings_with_env,
-    },
+    query::{path_resolution::PathResolver, resolution_env::TargetResolutionEnv},
 };
 
 use super::{ItemOrder, MacroCallSite};
@@ -31,7 +28,7 @@ pub(super) struct ResolvedMacroDefinition<'a> {
 
 /// Finds the unique declarative macro definition visible at a macro call.
 pub(super) fn resolve_macro_definition<'a>(
-    env: &'a impl PathResolutionEnv,
+    env: &'a impl TargetResolutionEnv,
     states: &'a FinalizeTargetStates,
     state: &TargetState,
     call: &MacroCallSite,
@@ -46,7 +43,7 @@ pub(super) fn resolve_macro_definition<'a>(
     // Qualified calls follow ordinary path resolution for the prefix, then keep the final macro
     // binding so order filtering can distinguish direct definitions from exports/imports.
     let resolved_bindings =
-        resolve_path_to_macro_bindings_with_env(env, state.target, call.module, path)?;
+        PathResolver::new(env).macro_bindings(state.target, call.module, path)?;
     let mut macros = Vec::new();
 
     for binding in resolved_bindings {
@@ -63,7 +60,7 @@ pub(super) fn resolve_macro_definition<'a>(
 
 /// Resolves one-segment macro calls with Rust's `macro_rules!` lookup order.
 fn resolve_single_name_macro<'a>(
-    env: &'a impl PathResolutionEnv,
+    env: &'a impl TargetResolutionEnv,
     states: &'a FinalizeTargetStates,
     state: &TargetState,
     call: &MacroCallSite,
@@ -105,7 +102,7 @@ fn resolve_single_name_macro<'a>(
 
 /// Searches build-only textual `macro_rules!` scopes for the definition visible at this call.
 fn resolve_textual_macro_rules<'a>(
-    env: &'a impl PathResolutionEnv,
+    env: &'a impl TargetResolutionEnv,
     states: &'a FinalizeTargetStates,
     state: &TargetState,
     call: &MacroCallSite,
@@ -153,7 +150,7 @@ fn resolve_textual_macro_rules<'a>(
 
 /// Consults legacy `#[macro_use] extern crate` imports after ordinary unqualified lookup fails.
 fn resolve_macro_use_extern_crate_fallback<'a>(
-    env: &'a impl PathResolutionEnv,
+    env: &'a impl TargetResolutionEnv,
     states: &'a FinalizeTargetStates,
     state: &TargetState,
     name: &Name,
@@ -169,8 +166,7 @@ fn resolve_macro_use_extern_crate_fallback<'a>(
             origin: DefMapRef::Target(state.target),
             module: macro_use.module,
         };
-        for binding in visible_module_macro_bindings_with_env(
-            env,
+        for binding in PathResolver::new(env).visible_macro_bindings(
             import_owner,
             macro_use.source_module,
             name,
@@ -190,7 +186,7 @@ fn resolve_macro_use_extern_crate_fallback<'a>(
 
 /// Converts a resolved macro binding into the payload needed by expansion.
 fn macro_record_for_binding<'a>(
-    env: &'a impl PathResolutionEnv,
+    env: &'a impl TargetResolutionEnv,
     states: &'a FinalizeTargetStates,
     binding: &ScopeBinding,
 ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
@@ -199,7 +195,7 @@ fn macro_record_for_binding<'a>(
 
 /// Converts a resolved definition id into the macro payload needed by expansion.
 fn macro_record_for_def<'a>(
-    env: &'a impl PathResolutionEnv,
+    env: &'a impl TargetResolutionEnv,
     states: &'a FinalizeTargetStates,
     def: DefId,
     origin: ScopeBindingOrigin,

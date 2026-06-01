@@ -1,13 +1,22 @@
 use std::{collections::HashMap, sync::Arc};
 
 use rg_ir_model::{
-    BodyRef, DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
-    ModuleRef, TargetRef,
+    BodyRef, DefId, DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
+    ModuleId, ModuleRef, TargetRef,
     hir::source::{GeneratedSourceData, GeneratedSourceId},
 };
+use rg_package_store::PackageStoreError;
 use rg_text::Name;
 
-use crate::{ImportData, LocalDefData, LocalImplData, MacroDefinitionData, ModuleData};
+use crate::{
+    ImportData, LocalDefData, LocalImplData, MacroDefinitionData, ModuleData, Path,
+    ResolvePathResult,
+    model::ScopeEntryRef,
+    query::{
+        path_resolution::{NameResolutionFilter, PathResolver},
+        resolution_env::ScopeResolutionEnv,
+    },
+};
 
 use self::{def_map_data::DefMapData, target_data::TargetData};
 
@@ -118,20 +127,6 @@ pub struct DefMap {
     data: DefMapData,
 }
 
-impl rg_memsize::MemorySize for DefMap {
-    fn record_memory_children(&self, recorder: &mut rg_memsize::MemoryRecorder) {
-        if self.is_root {
-            recorder.scope("target_data", |recorder| {
-                rg_memsize::MemorySize::record_memory_children(&self.target_data, recorder);
-            });
-        }
-
-        recorder.scope("data", |recorder| {
-            rg_memsize::MemorySize::record_memory_children(&self.data, recorder);
-        });
-    }
-}
-
 impl DefMap {
     fn empty(target: TargetRef) -> Self {
         let target_data = Arc::new(TargetData {
@@ -168,6 +163,27 @@ impl DefMap {
 
     pub fn own_ref(&self) -> DefMapRef {
         self.own_ref
+    }
+
+    /// Resolves a path through lexical scopes represented as synthetic modules.
+    pub fn resolve_lexical_path(
+        &self,
+        from: ModuleRef,
+        path: &Path,
+        filter: NameResolutionFilter,
+    ) -> Result<ResolvePathResult, PackageStoreError> {
+        PathResolver::new(self).resolve_lexical_path(from, path, filter)
+    }
+
+    /// Resolves one name inside a concrete module without walking lexical parents.
+    pub fn resolve_lexical_name_in_module(
+        &self,
+        from: ModuleRef,
+        module: ModuleRef,
+        name: &str,
+        filter: NameResolutionFilter,
+    ) -> Result<Vec<DefId>, PackageStoreError> {
+        PathResolver::new(self).resolve_lexical_name_in_module(from, module, name, filter)
     }
 
     /// Returns all modules in stable module-id order.
@@ -260,5 +276,75 @@ impl DefMap {
 
     fn target_data_mut(&mut self) -> &mut TargetData {
         Arc::make_mut(&mut self.target_data)
+    }
+}
+
+impl rg_memsize::MemorySize for DefMap {
+    fn record_memory_children(&self, recorder: &mut rg_memsize::MemoryRecorder) {
+        if self.is_root {
+            recorder.scope("target_data", |recorder| {
+                rg_memsize::MemorySize::record_memory_children(&self.target_data, recorder);
+            });
+        }
+
+        recorder.scope("data", |recorder| {
+            rg_memsize::MemorySize::record_memory_children(&self.data, recorder);
+        });
+    }
+}
+
+impl ScopeResolutionEnv for DefMap {
+    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, PackageStoreError> {
+        if module_ref.origin != self.own_ref() {
+            return Ok(None);
+        }
+        Ok(self.module(module_ref.module))
+    }
+
+    fn module_scope_entry<'a>(
+        &'a self,
+        module_ref: ModuleRef,
+        name: &str,
+    ) -> Result<Option<ScopeEntryRef<'a>>, PackageStoreError> {
+        Ok(self
+            .module_data(module_ref)?
+            .and_then(|module| module.scope.entry(name))
+            .map(|entry| entry.as_ref()))
+    }
+
+    fn module_scope_entries<'a>(
+        &'a self,
+        module_ref: ModuleRef,
+    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, PackageStoreError> {
+        Ok(self
+            .module_data(module_ref)?
+            .map(|module| {
+                module
+                    .scope
+                    .entries()
+                    .map(|(name, entry)| (name, entry.as_ref()))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    fn local_def_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&LocalDefData>, PackageStoreError> {
+        if local_def_ref.origin != self.own_ref() {
+            return Ok(None);
+        }
+        Ok(self.local_def(local_def_ref.local_def))
+    }
+
+    fn macro_definition_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&MacroDefinitionData>, PackageStoreError> {
+        if local_def_ref.origin != self.own_ref() {
+            return Ok(None);
+        }
+        Ok(self.macro_definition(local_def_ref.local_def))
     }
 }

@@ -3,7 +3,7 @@
 //! Semantic IR can resolve module items, but body-local structs live in lexical scopes. This
 //! resolver checks those scopes first and then falls back to the semantic/def-map context.
 
-use rg_def_map::{DefMapReadTxn, Path, PathSegment};
+use rg_def_map::{DefMapReadTxn, NameResolutionFilter, Path, PathSegment};
 use rg_ir_model::{
     AssocItemId, BodyRef, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef,
     ScopeId, SemanticItemRef, TypeAliasRef, TypeDefRef, TypePathResolution,
@@ -16,7 +16,6 @@ use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 use crate::ir::body::BodyData;
 
 use super::{
-    def_map_lookup::BodyDefMapLookup,
     impl_match::BodyImplMatcher,
     item_query::BodyItemStoreSource,
     push_unique,
@@ -268,7 +267,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             origin: DefMapRef::Body(self.body_ref),
             module: ModuleId(scope.0),
         };
-        let result = BodyDefMapLookup::new(def_map).resolve_path_in_type_namespace(from, path);
+        let result = def_map.resolve_lexical_path(from, path, NameResolutionFilter::TypesOnly)?;
 
         let mut items = Vec::new();
         for def in result.resolved {

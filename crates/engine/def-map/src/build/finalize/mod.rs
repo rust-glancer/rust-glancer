@@ -21,7 +21,10 @@ use crate::{
     DefMap, DefMapReadTxn, LocalDefData, MacroDefinitionData, ModuleData,
     PackageDefMaps as DefMapPackage, PackageSlot,
     model::{ModuleScopeBuilder, ScopeEntryRef},
-    query::path_resolution::{PathResolutionEnv, resolve_path_to_modules_with_env},
+    query::{
+        path_resolution::PathResolver,
+        resolution_env::{ScopeResolutionEnv, TargetResolutionEnv},
+    },
 };
 
 use super::{
@@ -212,64 +215,7 @@ impl<'a> FinalizeResolutionEnv<'a> {
     }
 }
 
-impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
-    fn extern_root(
-        &self,
-        target: TargetRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
-        if let Some(state) = self.states.target(target) {
-            return Ok(state.implicit_roots.get(name).copied());
-        }
-
-        Ok(self
-            .old
-            .map(|old| old.def_map(target))
-            .transpose()?
-            .flatten()
-            .and_then(|def_map| def_map.target_data().extern_prelude().get(name).copied()))
-    }
-
-    fn prelude_module(
-        &self,
-        target: TargetRef,
-    ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
-        if let Some(state) = self.states.target(target) {
-            return Ok(state.prelude);
-        }
-
-        Ok(self
-            .old
-            .map(|old| old.def_map(target))
-            .transpose()?
-            .flatten()
-            .and_then(|def_map| def_map.target_data().prelude()))
-    }
-
-    fn root_module(
-        &self,
-        target: TargetRef,
-    ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
-        let module = if let Some(state) = self.states.target(target) {
-            state
-                .def_map_builder
-                .as_incomplete_def_map()
-                .target_data()
-                .root_module()
-        } else {
-            self.old
-                .map(|old| old.def_map(target))
-                .transpose()?
-                .flatten()
-                .and_then(|def_map| def_map.target_data().root_module())
-        };
-
-        Ok(module.map(|module| ModuleRef {
-            origin: DefMapRef::Target(target),
-            module,
-        }))
-    }
-
+impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
     fn module_data(
         &self,
         module_ref: ModuleRef,
@@ -395,6 +341,65 @@ impl PathResolutionEnv for FinalizeResolutionEnv<'_> {
     }
 }
 
+impl TargetResolutionEnv for FinalizeResolutionEnv<'_> {
+    fn extern_root(
+        &self,
+        target: TargetRef,
+        name: &str,
+    ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
+        if let Some(state) = self.states.target(target) {
+            return Ok(state.implicit_roots.get(name).copied());
+        }
+
+        Ok(self
+            .old
+            .map(|old| old.def_map(target))
+            .transpose()?
+            .flatten()
+            .and_then(|def_map| def_map.target_data().extern_prelude().get(name).copied()))
+    }
+
+    fn prelude_module(
+        &self,
+        target: TargetRef,
+    ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
+        if let Some(state) = self.states.target(target) {
+            return Ok(state.prelude);
+        }
+
+        Ok(self
+            .old
+            .map(|old| old.def_map(target))
+            .transpose()?
+            .flatten()
+            .and_then(|def_map| def_map.target_data().prelude()))
+    }
+
+    fn root_module(
+        &self,
+        target: TargetRef,
+    ) -> Result<Option<ModuleRef>, rg_package_store::PackageStoreError> {
+        let module = if let Some(state) = self.states.target(target) {
+            state
+                .def_map_builder
+                .as_incomplete_def_map()
+                .target_data()
+                .root_module()
+        } else {
+            self.old
+                .map(|old| old.def_map(target))
+                .transpose()?
+                .flatten()
+                .and_then(|def_map| def_map.target_data().root_module())
+        };
+
+        Ok(module.map(|module| ModuleRef {
+            origin: DefMapRef::Target(target),
+            module,
+        }))
+    }
+}
+
 /// Completes mutable target states after collection and before freezing.
 ///
 /// Collection records only local facts. This step attaches the edition prelude for each target,
@@ -496,10 +501,10 @@ fn select_preludes(
             else {
                 continue;
             };
-            let Some(prelude_module) =
-                resolve_path_to_modules_with_env(&env, state.target, root_module, &prelude_path)?
-                    .into_iter()
-                    .next()
+            let Some(prelude_module) = PathResolver::new(&env)
+                .import_modules(state.target, root_module, &prelude_path)?
+                .into_iter()
+                .next()
             else {
                 continue;
             };
@@ -512,7 +517,7 @@ fn select_preludes(
     }
 
     // Apply the selected modules after lookup is done so future import resolution can consult the
-    // prelude through `PathResolutionEnv::prelude_module`.
+    // prelude through `TargetResolutionEnv::prelude_module`.
     for (package_slot, package_states) in states.iter_dirty_mut_enumerated() {
         let package_preludes = selected_preludes[package_slot]
             .as_ref()

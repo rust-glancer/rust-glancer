@@ -3,6 +3,7 @@
 mod cursor;
 mod path_completion;
 pub(crate) mod path_resolution;
+pub(crate) mod resolution_env;
 
 pub use self::{
     cursor::DefMapCursorCandidate,
@@ -10,5 +11,5 @@ pub use self::{
         DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite, ScopeNamespace, VisibleScopeDef,
         VisibleScopeOrigin,
     },
-    path_resolution::ResolvePathResult,
+    path_resolution::{NameResolutionFilter, ResolvePathResult},
 };

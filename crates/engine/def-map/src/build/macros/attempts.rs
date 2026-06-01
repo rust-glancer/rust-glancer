@@ -23,7 +23,7 @@ use crate::{
         finalize::{FinalizeTargetStates, ScopeMatrix},
         stats::DefMapFinalizationStatsSink,
     },
-    query::path_resolution::PathResolutionEnv,
+    query::resolution_env::TargetResolutionEnv,
 };
 
 use super::{
@@ -95,7 +95,7 @@ impl MacroExpansionCursors {
 
 /// Resolves pending macro calls into concrete attempts for the current scope snapshot.
 pub(crate) fn collect_expansion_attempts(
-    env: &impl PathResolutionEnv,
+    env: &impl TargetResolutionEnv,
     states: &FinalizeTargetStates,
     scan: MacroExpansionScan<'_>,
     cache: &mut MacroExpansionCache,
@@ -500,7 +500,7 @@ impl MacroExpansionAttempt {
     }
 
     fn for_call(
-        env: &impl PathResolutionEnv,
+        env: &impl TargetResolutionEnv,
         states: &FinalizeTargetStates,
         cache: &mut MacroExpansionCache,
         state: &TargetState,
