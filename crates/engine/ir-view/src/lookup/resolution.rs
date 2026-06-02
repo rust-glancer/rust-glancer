@@ -9,7 +9,8 @@ use rg_ir_model::{
     BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_ir_storage::{DefMapQuery, ItemPathQuery, ItemStoreQuery, Path, TypePathContext};
+use rg_ir_storage::{DefMapQuery, ItemStoreQuery, Path, TypePathContext};
+use rg_ty::ItemPathQuery;
 
 use crate::IndexedViewDb;
 

@@ -4,7 +4,7 @@
 //! details for display and turn parameter names into LSP snippet placeholders.
 
 use rg_ir_view::{display::signature::SignatureRenderer, ty::member::MemberFunction};
-use rg_semantic_ir::ParamItem;
+use rg_item_tree::ParamItem;
 
 use crate::{
     Analysis,

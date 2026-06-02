@@ -1,5 +1,5 @@
-use rg_ir_model::TypeDefRef;
-use rg_item_tree::TypeRef;
+use rg_ir_model::{TypeDefRef, TypePathResolution};
+use rg_item_tree::{GenericParams, TypeRef};
 use rg_memsize::Shrink;
 use rg_text::Name;
 
@@ -18,6 +18,20 @@ impl TypeSubst {
         Self::default()
     }
 
+    /// Builds direct type-parameter substitutions from declared generics and visible arguments.
+    pub fn from_generics(generics: &GenericParams, args: &[GenericArg]) -> Self {
+        // We only substitute type parameters. Lifetimes, const args, associated type args, and
+        // unsupported args are preserved on the type but ignored by the simple substitution map.
+        let type_args = args.iter().filter_map(|arg| arg.as_ty().cloned());
+
+        generics
+            .types
+            .iter()
+            .zip(type_args)
+            .map(|(param, ty)| (param.name.clone(), ty))
+            .collect()
+    }
+
     /// Adds a binding after existing entries, making it the visible one for later lookups.
     pub fn push(&mut self, name: Name, ty: Ty) {
         self.0.push((name, ty));
@@ -34,6 +48,11 @@ impl TypeSubst {
             .iter()
             .rev()
             .find_map(|(param, ty)| (param.as_str() == name).then_some(ty))
+    }
+
+    /// Returns the visible substitution for a plain type-parameter name.
+    pub fn type_param(&self, name: &str) -> Option<Ty> {
+        self.get(name).cloned()
     }
 }
 
@@ -113,6 +132,42 @@ impl Ty {
 
     pub fn self_ty(types: Vec<NominalTy>) -> Self {
         Self::SelfTy(types)
+    }
+
+    /// Projects a resolved nominal type path into `Ty`, preserving source generic arguments.
+    ///
+    /// Aliases, traits, and unresolved paths need context-specific fallback behavior, so callers
+    /// decide how to handle them.
+    pub fn from_type_path_resolution(
+        resolution: TypePathResolution,
+        args: Vec<GenericArg>,
+    ) -> Option<Self> {
+        // Attach the generic arguments from the source path to whichever nominal definition the
+        // path resolved to. Ambiguous multi-target resolution keeps the same args on every
+        // candidate.
+        match resolution {
+            TypePathResolution::SelfType(types) => Some(Self::self_ty(
+                types
+                    .into_iter()
+                    .map(|def| NominalTy {
+                        def,
+                        args: args.clone(),
+                    })
+                    .collect(),
+            )),
+            TypePathResolution::TypeDefs(types) => Some(Self::nominal(
+                types
+                    .into_iter()
+                    .map(|def| NominalTy {
+                        def,
+                        args: args.clone(),
+                    })
+                    .collect(),
+            )),
+            TypePathResolution::TypeAliases(_)
+            | TypePathResolution::Traits(_)
+            | TypePathResolution::Unknown => None,
+        }
     }
 
     pub fn as_nominals(&self) -> &[NominalTy] {

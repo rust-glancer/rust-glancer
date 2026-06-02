@@ -16,7 +16,7 @@ use rg_ir_view::{
     ty::locals::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
     ty::member::{MemberMethodCandidate, MemberMethodOrigin, MemberView},
 };
-use rg_semantic_ir::FieldKey;
+use rg_item_tree::FieldKey;
 use rg_ty::Ty;
 
 use crate::{

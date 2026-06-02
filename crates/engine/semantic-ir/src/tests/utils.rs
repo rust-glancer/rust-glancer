@@ -9,12 +9,13 @@ use expect_test::Expect;
 use crate::{SemanticIrDb, SemanticIrReadTxn};
 use rg_def_map::{DefMapDb, PackageSlot};
 use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef, TypeAliasId};
-use rg_ir_storage::{DefMap, ItemPathQuery, ItemStore, ItemStoreQuery, Path, PathSegment};
+use rg_ir_storage::{DefMap, ItemStore, ItemStoreQuery, Path, PathSegment};
 use rg_item_tree::{
     FieldItem, FieldList, ItemTreeDb, PackageNameInterners, ParamKind, VisibilityLevel,
 };
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{Package, ParseDb, Target};
+use rg_ty::ItemPathQuery;
 use rg_workspace::{TargetKind, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 

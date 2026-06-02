@@ -10,7 +10,7 @@ use rg_ir_model::{
     identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery};
-use rg_semantic_ir::Documentation;
+use rg_item_tree::Documentation;
 
 use crate::{
     IndexedViewDb, SymbolKind, display::signature::SignatureRenderer, item::path::PathView,

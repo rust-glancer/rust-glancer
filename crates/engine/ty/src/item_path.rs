@@ -1,14 +1,16 @@
-//! Shared path-to-item queries over DefMap and item-store providers.
+//! Type-path queries over DefMap and item-store providers.
 //!
 //! DefMap lookup answers "which definitions does this path name?", while the item store
-//! answers "which semantic item does this local definition lower to?". This query keeps that
-//! composition out of storage transactions.
+//! answers "which semantic item does this local definition lower to?". Type algorithms use this
+//! query to stay independent from the concrete target/body storage that provided those answers.
 
 use rg_ir_model::{DefId, ModuleRef, SemanticItemRef, TraitRef, TypeDefRef, TypePathResolution};
-
-use crate::{
-    DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, Path, TypePathContext, push_unique,
+use rg_ir_storage::{
+    DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, Path, TypePathContext,
 };
+use rg_item_tree::{GenericArg as ItemGenericArg, Mutability, TypePath, TypeRef};
+
+use crate::{GenericArg, PrimitiveTy, RefMutability, Ty, TypeSubst};
 
 /// Resolves paths into semantic-shaped item refs using independent DefMap and ItemStore sources.
 #[derive(Clone)]
@@ -32,6 +34,56 @@ where
     /// Gives algorithms access to item data after path resolution has selected semantic refs.
     pub fn items(&self) -> &ItemStoreQuery<'a, I> {
         &self.items
+    }
+
+    /// Resolves syntax-level type data into the shared type vocabulary for one module/impl site.
+    pub fn resolve_type_ref(
+        &self,
+        ty: &TypeRef,
+        context: TypePathContext,
+        unresolved_path_fallback: Ty,
+        subst: &TypeSubst,
+    ) -> Result<Ty, D::Error> {
+        match ty {
+            TypeRef::Unit => Ok(Ty::Unit),
+            TypeRef::Never => Ok(Ty::Never),
+            TypeRef::Path(type_path) => {
+                let path = Path::from_type_path(type_path);
+                if let Some(name) = path.single_name()
+                    && let Some(ty) = subst.type_param(name)
+                {
+                    return Ok(ty);
+                }
+
+                let args = self.generic_args_from_type_path(type_path, context, subst)?;
+                let resolution = self.resolve_type_path(context, &path)?;
+                let is_unknown = matches!(resolution, TypePathResolution::Unknown);
+                Ok(
+                    Ty::from_type_path_resolution(resolution, args).unwrap_or_else(|| {
+                        if is_unknown {
+                            path.single_name()
+                                .and_then(PrimitiveTy::from_name)
+                                .map(Ty::Primitive)
+                                .unwrap_or(unresolved_path_fallback)
+                        } else {
+                            unresolved_path_fallback
+                        }
+                    }),
+                )
+            }
+            TypeRef::Reference {
+                mutability, inner, ..
+            } => Ok(Ty::reference(
+                match mutability {
+                    Mutability::Shared => RefMutability::Shared,
+                    Mutability::Mutable => RefMutability::Mutable,
+                },
+                self.resolve_type_ref(inner, context, Ty::syntax((**inner).clone()), subst)?,
+            )),
+            TypeRef::Unknown(_) | TypeRef::Infer => Ok(Ty::Unknown),
+            TypeRef::Tuple(types) if types.is_empty() => Ok(Ty::Unit),
+            _ => Ok(Ty::syntax(ty.clone())),
+        }
     }
 
     /// Resolves a type-position path into the type resolution shape used by type projection.
@@ -139,5 +191,54 @@ where
         }
 
         Ok(resolved_items)
+    }
+
+    fn generic_args_from_type_path(
+        &self,
+        type_path: &TypePath,
+        context: TypePathContext,
+        subst: &TypeSubst,
+    ) -> Result<Vec<GenericArg>, D::Error> {
+        // Rust generic args belong to the final path segment for the cases we model here, e.g.
+        // `crate::Wrapper<User>` stores `User` on `Wrapper`.
+        let Some(segment) = type_path.segments.last() else {
+            return Ok(Vec::new());
+        };
+
+        let mut generic_args = Vec::new();
+        for arg in &segment.args {
+            let generic_arg = match arg {
+                ItemGenericArg::Type(ty) => GenericArg::Type(Box::new(self.resolve_type_ref(
+                    ty,
+                    context,
+                    Ty::syntax(ty.clone()),
+                    subst,
+                )?)),
+                ItemGenericArg::Lifetime(lifetime) => GenericArg::Lifetime(lifetime.clone()),
+                ItemGenericArg::Const(value) => GenericArg::Const(value.clone()),
+                ItemGenericArg::AssocType { name, ty } => GenericArg::AssocType {
+                    name: name.clone(),
+                    ty: match ty {
+                        Some(ty) => Some(Box::new(self.resolve_type_ref(
+                            ty,
+                            context,
+                            Ty::syntax(ty.clone()),
+                            subst,
+                        )?)),
+                        None => None,
+                    },
+                },
+                ItemGenericArg::Unsupported(text) => GenericArg::Unsupported(text.clone()),
+            };
+
+            generic_args.push(generic_arg);
+        }
+        Ok(generic_args)
+    }
+}
+
+fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
+    if !items.contains(&item) {
+        items.push(item);
     }
 }

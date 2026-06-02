@@ -8,16 +8,12 @@ use rg_ir_model::{
     SemanticItemRef, TypeAliasRef, TypeDefRef, TypePathResolution,
 };
 use rg_ir_storage::{
-    DefMapQuery, DefMapSource, ItemPathQuery, ItemStoreQuery, ItemStoreSource,
-    NameResolutionFilter, Path, PathSegment, TypePathContext,
+    DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, NameResolutionFilter, Path,
+    PathSegment, TypePathContext,
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{
-    ImplMatcher, subst_from_generics, substitute_type_param, ty_from_type_path_resolution,
-    ty_from_type_ref_in_context, type_ref_is_self,
-};
-use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
+use rg_ty::{GenericArg, ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
 
 use super::{BodyQuerySource, push_unique};
 
@@ -53,7 +49,7 @@ where
         if let Some((prefix, name)) = split_associated_path(path) {
             let prefix_resolution = self.resolve_in_scope(scope, &prefix)?;
             let prefix_ty =
-                ty_from_type_path_resolution(prefix_resolution, Ty::Unknown, Vec::new());
+                Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
             let mut aliases = Vec::new();
             for ty in prefix_ty.as_nominals() {
                 if let Some(alias) = self.associated_type_alias_for_type(ty, name)? {
@@ -101,15 +97,15 @@ where
         ItemPathQuery::new(source, source).resolve_type_path(context, path)
     }
 
-    pub(super) fn ty_from_type_ref_in_scope(
+    pub(super) fn resolve_type_ref_in_scope(
         &self,
         ty: &TypeRef,
         scope: ScopeId,
     ) -> Result<Ty, PackageStoreError> {
-        self.ty_from_type_ref_in_scope_with_subst(ty, scope, &TypeSubst::new())
+        self.resolve_type_ref_in_scope_with_subst(ty, scope, &TypeSubst::new())
     }
 
-    pub(super) fn ty_from_type_ref_in_scope_with_subst(
+    pub(super) fn resolve_type_ref_in_scope_with_subst(
         &self,
         ty: &TypeRef,
         scope: ScopeId,
@@ -120,7 +116,9 @@ where
         match ty {
             TypeRef::Path(type_path) => {
                 let path = Path::from_type_path(type_path);
-                if let Some(ty) = substitute_type_param(&path, subst) {
+                if let Some(name) = path.single_name()
+                    && let Some(ty) = subst.type_param(name)
+                {
                     return Ok(ty);
                 }
 
@@ -135,17 +133,21 @@ where
                 if let TypePathResolution::TypeAliases(aliases) = &resolution {
                     return self.ty_from_type_aliases(aliases, &args, subst);
                 }
-                let fallback = if matches!(resolution, TypePathResolution::Unknown) {
-                    path.single_name()
-                        .and_then(rg_ty::PrimitiveTy::from_name)
-                        .map(Ty::Primitive)
-                        .unwrap_or_else(|| Ty::syntax(ty.clone()))
-                } else {
-                    Ty::syntax(ty.clone())
-                };
-                Ok(ty_from_type_path_resolution(resolution, fallback, args))
+                let is_unknown = matches!(resolution, TypePathResolution::Unknown);
+                Ok(
+                    Ty::from_type_path_resolution(resolution, args).unwrap_or_else(|| {
+                        if is_unknown {
+                            path.single_name()
+                                .and_then(rg_ty::PrimitiveTy::from_name)
+                                .map(Ty::Primitive)
+                                .unwrap_or_else(|| Ty::syntax(ty.clone()))
+                        } else {
+                            Ty::syntax(ty.clone())
+                        }
+                    }),
+                )
             }
-            _ => self.ty_from_type_ref_in_context(
+            _ => self.resolve_type_ref_in_context(
                 ty,
                 self.context_for_function(
                     self.source.body().owner,
@@ -156,7 +158,7 @@ where
         }
     }
 
-    pub(super) fn ty_from_type_ref_for_function_with_subst(
+    pub(super) fn resolve_type_ref_for_function_with_subst(
         &self,
         ty: &TypeRef,
         function: FunctionRef,
@@ -164,22 +166,22 @@ where
     ) -> Result<Ty, PackageStoreError> {
         let context = self.context_for_function(function, self.source.body().owner_module)?;
         if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
-            return self.ty_from_type_ref_in_module_with_subst(ty, context.module, subst);
+            return self.resolve_type_ref_in_module_with_subst(ty, context.module, subst);
         }
 
-        self.ty_from_type_ref_in_context_with_subst(ty, context, subst)
+        self.resolve_type_ref_in_context_with_subst(ty, context, subst)
     }
 
-    fn ty_from_type_ref_in_context(
+    fn resolve_type_ref_in_context(
         &self,
         ty: &TypeRef,
         context: TypePathContext,
         subst: &TypeSubst,
     ) -> Result<Ty, PackageStoreError> {
-        self.ty_from_type_ref_in_context_with_subst(ty, context, subst)
+        self.resolve_type_ref_in_context_with_subst(ty, context, subst)
     }
 
-    pub(super) fn ty_from_type_ref_in_context_with_subst(
+    pub(super) fn resolve_type_ref_in_context_with_subst(
         &self,
         ty: &TypeRef,
         context: TypePathContext,
@@ -187,10 +189,10 @@ where
     ) -> Result<Ty, PackageStoreError> {
         let source = self.source;
         let item_paths = ItemPathQuery::new(source, source);
-        ty_from_type_ref_in_context(&item_paths, ty, context, Ty::syntax(ty.clone()), subst)
+        item_paths.resolve_type_ref(ty, context, Ty::syntax(ty.clone()), subst)
     }
 
-    pub(super) fn ty_from_type_ref_in_module_with_subst(
+    pub(super) fn resolve_type_ref_in_module_with_subst(
         &self,
         ty: &TypeRef,
         module: ModuleRef,
@@ -202,11 +204,11 @@ where
         if module.origin == DefMapRef::Body(self.source.body_ref()) {
             let scope = ScopeId(module.module.0);
             if self.source.body().scope(scope).is_some() {
-                return self.ty_from_type_ref_in_scope_with_subst(ty, scope, subst);
+                return self.resolve_type_ref_in_scope_with_subst(ty, scope, subst);
             }
         }
 
-        self.ty_from_type_ref_in_context_with_subst(ty, TypePathContext::module(module), subst)
+        self.resolve_type_ref_in_context_with_subst(ty, TypePathContext::module(module), subst)
     }
 
     pub(super) fn self_tys_for_function(
@@ -282,7 +284,7 @@ where
         let Some(prefix_ty_ref) = prefix_type_ref(type_path) else {
             return Ok(None);
         };
-        let prefix_ty = self.ty_from_type_ref_in_scope_with_subst(&prefix_ty_ref, scope, subst)?;
+        let prefix_ty = self.resolve_type_ref_in_scope_with_subst(&prefix_ty_ref, scope, subst)?;
 
         for ty in prefix_ty.as_nominals() {
             let Some(alias_ref) = self.associated_type_alias_for_type(ty, name)? else {
@@ -329,22 +331,22 @@ where
         let Some(aliased_ty) = alias_data.signature.aliased_ty() else {
             return Ok(Ty::Unknown);
         };
-        if type_ref_is_self(aliased_ty) {
+        if aliased_ty.is_self_type() {
             return Ok(Ty::Unknown);
         }
 
         let mut alias_subst = subst.clone();
         if let Some(generics) = alias_data.signature.generics() {
-            alias_subst.extend(subst_from_generics(generics, args));
+            alias_subst.extend(TypeSubst::from_generics(generics, args));
         }
 
         let context = item_query
             .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
             .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
         if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
-            self.ty_from_type_ref_in_module_with_subst(aliased_ty, context.module, &alias_subst)
+            self.resolve_type_ref_in_module_with_subst(aliased_ty, context.module, &alias_subst)
         } else {
-            self.ty_from_type_ref_in_context_with_subst(aliased_ty, context, &alias_subst)
+            self.resolve_type_ref_in_context_with_subst(aliased_ty, context, &alias_subst)
         }
     }
 
@@ -402,7 +404,7 @@ where
         let Some(aliased_ty) = alias_data.signature.aliased_ty() else {
             return Ok(Ty::Unknown);
         };
-        if type_ref_is_self(aliased_ty) {
+        if aliased_ty.is_self_type() {
             return Ok(Ty::nominal(vec![receiver_ty.clone()]));
         }
 
@@ -420,16 +422,16 @@ where
             }
         }
         if let Some(generics) = alias_data.signature.generics() {
-            alias_subst.extend(subst_from_generics(generics, args));
+            alias_subst.extend(TypeSubst::from_generics(generics, args));
         }
 
         let context = item_query
             .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
             .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
         if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
-            self.ty_from_type_ref_in_module_with_subst(aliased_ty, context.module, &alias_subst)
+            self.resolve_type_ref_in_module_with_subst(aliased_ty, context.module, &alias_subst)
         } else {
-            self.ty_from_type_ref_in_context_with_subst(aliased_ty, context, &alias_subst)
+            self.resolve_type_ref_in_context_with_subst(aliased_ty, context, &alias_subst)
         }
     }
 
@@ -437,7 +439,7 @@ where
         Ok(self
             .item_query()
             .generic_params_for_type_def(ty.def)?
-            .map(|generics| subst_from_generics(generics, &ty.args))
+            .map(|generics| TypeSubst::from_generics(generics, &ty.args))
             .unwrap_or_else(TypeSubst::new))
     }
 
@@ -474,7 +476,7 @@ where
     ) -> Result<GenericArg, PackageStoreError> {
         match arg {
             ItemGenericArg::Type(ty) => Ok(GenericArg::Type(Box::new(
-                self.ty_from_type_ref_in_scope_with_subst(ty, scope, subst)?,
+                self.resolve_type_ref_in_scope_with_subst(ty, scope, subst)?,
             ))),
             ItemGenericArg::Lifetime(lifetime) => Ok(GenericArg::Lifetime(lifetime.clone())),
             ItemGenericArg::Const(value) => Ok(GenericArg::Const(value.clone())),
@@ -482,7 +484,7 @@ where
                 name: name.clone(),
                 ty: match ty {
                     Some(ty) => Some(Box::new(
-                        self.ty_from_type_ref_in_scope_with_subst(ty, scope, subst)?,
+                        self.resolve_type_ref_in_scope_with_subst(ty, scope, subst)?,
                     )),
                     None => None,
                 },

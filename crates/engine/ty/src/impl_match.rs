@@ -4,27 +4,16 @@
 //! items. They compare explicit impl self types against known receiver types and produce the
 //! substitutions that make associated signatures readable in the receiver context.
 
+use crate::{GenericArg, ItemPathQuery, NominalTy, Ty, TypeSubst};
 use rg_ir_model::{
     FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef, hir::items::ImplData,
 };
-use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemPathQuery, ItemStoreSource, TypePathContext,
-};
+use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TypePathContext};
 use rg_item_tree::{GenericArg as ItemGenericArg, GenericParams, TypeRef};
-use rg_package_store::PackageStoreError;
 use rg_text::Name;
-use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
-
-use crate::{
-    push_unique,
-    type_conversion::{
-        generic_arg_ty, generic_arg_type_ref, ty_from_type_ref_in_context,
-        type_param_name_from_type_ref,
-    },
-};
 
 /// Result of matching one trait impl header against a receiver type.
-pub(crate) struct TraitImplMatch {
+struct TraitImplMatch {
     applicability: TraitApplicability,
     subst: TypeSubst,
 }
@@ -56,8 +45,8 @@ pub struct ImplMatcher<'query, D, I> {
 
 impl<'query, D, I> ImplMatcher<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError>,
-    I: ItemStoreSource<'query, Error = PackageStoreError>,
+    D: DefMapSource,
+    I: ItemStoreSource<'query, Error = D::Error>,
 {
     /// Creates a matcher over the same path/item routing used by type conversion.
     pub fn new(item_paths: ItemPathQuery<'query, D, I>) -> Self {
@@ -72,7 +61,7 @@ where
         &self,
         function_ref: FunctionRef,
         receiver_ty: &NominalTy,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<bool, D::Error> {
         // Trait items are shared by all impl candidates in the best-effort model. Inherent impl
         // items, however, must at least match the receiver's resolved self type.
         let item_query = self.item_paths.items();
@@ -101,7 +90,7 @@ where
         impl_ref: ImplRef,
         impl_data: &ImplData,
         receiver_ty: &NominalTy,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<bool, D::Error> {
         if !impl_data.resolved_self_tys.contains(&receiver_ty.def) {
             return Ok(false);
         }
@@ -117,7 +106,7 @@ where
         &self,
         trait_impl: TraitImplRef,
         receiver_ty: &NominalTy,
-    ) -> Result<Option<TraitImplMatch>, PackageStoreError> {
+    ) -> Result<Option<TraitImplMatch>, D::Error> {
         let item_query = self.item_paths.items();
         let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
@@ -155,11 +144,11 @@ where
     /// This is stricter than method candidate matching: only direct impl type parameters such as
     /// `Wrapper<T>` are bindable. Nested generic patterns like `Wrapper<Option<T>>`, where clauses,
     /// bounded params, lifetimes, and const generics are rejected until a real solver exists.
-    pub(crate) fn trait_impl_structural_match(
+    pub fn trait_impl_structural_match(
         &self,
         trait_impl: TraitImplRef,
         receiver_ty: &NominalTy,
-    ) -> Result<Option<TypeSubst>, PackageStoreError> {
+    ) -> Result<Option<TypeSubst>, D::Error> {
         let item_query = self.item_paths.items();
         let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
@@ -180,7 +169,7 @@ where
         &self,
         trait_impl: TraitImplRef,
         receiver_ty: &NominalTy,
-    ) -> Result<TraitApplicability, PackageStoreError> {
+    ) -> Result<TraitApplicability, D::Error> {
         Ok(self
             .trait_impl_match(trait_impl, receiver_ty)?
             .map(|trait_impl_match| trait_impl_match.applicability())
@@ -205,7 +194,7 @@ where
         index: Option<&ItemLookupIndex>,
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
-    ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
+    ) -> Result<Vec<(FunctionRef, TraitApplicability)>, D::Error> {
         let item_query = self.item_paths.items();
         let mut functions = Vec::new();
         let trait_impls = match index {
@@ -282,7 +271,7 @@ where
         impl_ref: ImplRef,
         impl_data: &ImplData,
         receiver_ty: &NominalTy,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<bool, D::Error> {
         // Type parameters in the impl self type act as wildcards. Concrete args such as
         // `impl Wrapper<User>` must equal the receiver's known args.
         let TypeRef::Path(self_ty) = &impl_data.self_ty else {
@@ -304,7 +293,8 @@ where
 
         let impl_type_params = Self::impl_type_param_names(&impl_data.generics);
         for (impl_arg, receiver_arg) in impl_type_args.into_iter().zip(receiver_type_args) {
-            if type_param_name_from_type_ref(impl_arg)
+            if impl_arg
+                .type_param_name()
                 .as_deref()
                 .is_some_and(|name| impl_type_params.contains(&name))
             {
@@ -315,8 +305,7 @@ where
                 module: impl_data.owner,
                 impl_ref: Some(impl_ref),
             };
-            let impl_arg_ty = ty_from_type_ref_in_context(
-                &self.item_paths,
+            let impl_arg_ty = self.item_paths.resolve_type_ref(
                 impl_arg,
                 context,
                 Ty::syntax(impl_arg.clone()),
@@ -339,7 +328,7 @@ where
         impl_ref: ImplRef,
         impl_data: &ImplData,
         receiver_ty: &NominalTy,
-    ) -> Result<TraitApplicability, PackageStoreError> {
+    ) -> Result<TraitApplicability, D::Error> {
         // This mirrors inherent impl matching, but returns `Maybe` instead of rejecting patterns
         // that contain generic parameters or unsupported pieces we intentionally do not solve.
         let TypeRef::Path(self_ty) = &impl_data.self_ty else {
@@ -372,8 +361,7 @@ where
                 module: impl_data.owner,
                 impl_ref: Some(impl_ref),
             };
-            let impl_arg_ty = ty_from_type_ref_in_context(
-                &self.item_paths,
+            let impl_arg_ty = self.item_paths.resolve_type_ref(
                 impl_arg,
                 context,
                 Ty::syntax(impl_arg.clone()),
@@ -404,7 +392,7 @@ where
         impl_ref: ImplRef,
         impl_data: &ImplData,
         receiver_ty: &NominalTy,
-    ) -> Result<Option<TypeSubst>, PackageStoreError> {
+    ) -> Result<Option<TypeSubst>, D::Error> {
         if !Self::impl_header_has_only_plain_type_params(impl_data) {
             return Ok(None);
         }
@@ -423,14 +411,14 @@ where
         let mut subst = TypeSubst::new();
 
         for (impl_arg, receiver_arg) in segment.args.iter().zip(&receiver_ty.args) {
-            let Some(impl_arg) = generic_arg_type_ref(impl_arg) else {
+            let Some(impl_arg) = impl_arg.type_ref() else {
                 return Ok(None);
             };
-            let Some(receiver_arg) = generic_arg_ty(receiver_arg) else {
+            let Some(receiver_arg) = receiver_arg.as_ty().cloned() else {
                 return Ok(None);
             };
 
-            if let Some(name) = type_param_name_from_type_ref(impl_arg)
+            if let Some(name) = impl_arg.type_param_name()
                 && impl_type_params.contains(&name.as_str())
             {
                 if !Self::push_structural_subst(&mut subst, name, receiver_arg) {
@@ -447,8 +435,7 @@ where
                 module: impl_data.owner,
                 impl_ref: Some(impl_ref),
             };
-            let impl_arg_ty = ty_from_type_ref_in_context(
-                &self.item_paths,
+            let impl_arg_ty = self.item_paths.resolve_type_ref(
                 impl_arg,
                 context,
                 Ty::syntax(impl_arg.clone()),
@@ -486,16 +473,16 @@ where
         let impl_type_params = Self::impl_type_param_names(generics);
         let receiver_type_args = receiver_args
             .iter()
-            .filter_map(generic_arg_ty)
+            .filter_map(|arg| arg.as_ty().cloned())
             .collect::<Vec<_>>();
 
         segment
             .args
             .iter()
-            .filter_map(generic_arg_type_ref)
+            .filter_map(ItemGenericArg::type_ref)
             .zip(receiver_type_args)
             .filter_map(|(impl_arg, receiver_arg)| {
-                let name = type_param_name_from_type_ref(impl_arg)?;
+                let name = impl_arg.type_param_name()?;
                 impl_type_params
                     .contains(&name.as_str())
                     .then_some((name, receiver_arg))
@@ -526,7 +513,7 @@ where
     fn item_tree_type_args(args: &[ItemGenericArg]) -> Option<Vec<&TypeRef>> {
         let mut type_args = Vec::new();
         for arg in args {
-            type_args.push(generic_arg_type_ref(arg)?);
+            type_args.push(arg.type_ref()?);
         }
         Some(type_args)
     }
@@ -535,7 +522,7 @@ where
     fn ty_args(args: &[GenericArg]) -> Option<Vec<Ty>> {
         let mut type_args = Vec::new();
         for arg in args {
-            type_args.push(generic_arg_ty(arg)?);
+            type_args.push(arg.as_ty().cloned()?);
         }
         Some(type_args)
     }
@@ -604,5 +591,11 @@ where
             Ty::Reference { inner, .. } => Self::type_arg_comparison_is_uncertain(inner),
             Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Nominal(_) | Ty::SelfTy(_) => false,
         }
+    }
+}
+
+fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
+    if !items.contains(&item) {
+        items.push(item);
     }
 }

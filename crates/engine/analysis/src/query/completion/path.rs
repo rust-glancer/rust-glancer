@@ -2,7 +2,7 @@
 
 use rg_ir_model::{EnumVariantRef, hir::items::EnumVariantData};
 use rg_ir_storage::ItemStoreQuery;
-use rg_semantic_ir::Documentation;
+use rg_item_tree::Documentation;
 
 use crate::{
     Analysis,

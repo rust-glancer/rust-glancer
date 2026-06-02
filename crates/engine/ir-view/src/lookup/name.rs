@@ -7,7 +7,7 @@ use rg_ir_model::{DefId, FunctionRef, ModuleRef, SemanticItemRef, identity::Decl
 use rg_ir_storage::{
     DefMapQuery, ItemStoreQuery, Path, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin,
 };
-use rg_semantic_ir::Documentation;
+use rg_item_tree::Documentation;
 
 use crate::{IndexedViewDb, SymbolKind};
 

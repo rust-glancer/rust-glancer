@@ -6,9 +6,9 @@ use rg_ir_model::{
     TypePathResolution,
     hir::items::{FieldData, FunctionData},
 };
-use rg_ir_storage::{ItemPathQuery, ItemStoreQuery, Path};
-use rg_semantic_ir::{Autoderef, AutoderefMode, Documentation, FieldKey, ImplMatcher, ParamItem};
-use rg_ty::{NominalTy, Ty};
+use rg_ir_storage::{ItemStoreQuery, Path};
+use rg_item_tree::{Documentation, FieldKey, ParamItem};
+use rg_ty::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, NominalTy, Ty};
 
 use crate::{IndexedViewDb, SymbolKind, item::declaration::Declaration, item::path::PathView};
 

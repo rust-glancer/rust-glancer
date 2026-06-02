@@ -7,15 +7,12 @@ use rg_ir_model::{
     AssocItemId, TraitImplRef, TypeAliasRef, TypePathResolution, hir::items::ImplData,
 };
 use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemPathQuery, ItemStoreSource, Path, PathSegment,
-    TypePathContext,
+    DefMapSource, ItemLookupIndex, ItemStoreSource, Path, PathSegment, TypePathContext,
 };
 use rg_item_tree::TypeRef;
-use rg_package_store::PackageStoreError;
 use rg_text::Name;
-use rg_ty::{NominalTy, Ty, TypeSubst};
 
-use crate::{ImplMatcher, push_unique, ty_from_type_ref_in_context};
+use crate::{ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
 
 /// Resolves the associated `Target` type for applicable `core::ops::Deref` impls.
 #[derive(Clone)]
@@ -26,8 +23,8 @@ pub(crate) struct DerefResolver<'query, D, I> {
 
 impl<'query, D, I> DerefResolver<'query, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError> + Clone,
-    I: ItemStoreSource<'query, Error = PackageStoreError> + Clone,
+    D: DefMapSource + Clone,
+    I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
     pub(crate) fn new(
         item_paths: ItemPathQuery<'query, D, I>,
@@ -40,7 +37,7 @@ where
     }
 
     /// Returns all one-step `Deref::Target` types for a known type.
-    pub(crate) fn targets_for_ty(&self, ty: &Ty) -> Result<Vec<Ty>, PackageStoreError> {
+    pub(crate) fn targets_for_ty(&self, ty: &Ty) -> Result<Vec<Ty>, D::Error> {
         // TODO: Add `DerefMut` once receiver contexts carry enough mutability information to
         // distinguish mutable adjustment from shared `Deref`.
         let mut targets = Vec::new();
@@ -56,7 +53,7 @@ where
     ///
     /// For `impl<T> core::ops::Deref for Wrapper<T> { type Target = T; }` and receiver
     /// `Wrapper<User>`, this resolves the target as `User`.
-    fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<Vec<Ty>, PackageStoreError> {
+    fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<Vec<Ty>, D::Error> {
         let matcher = ImplMatcher::new(self.item_paths.clone());
         let item_query = self.item_paths.items();
         let mut targets = Vec::new();
@@ -94,7 +91,7 @@ where
         &self,
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<bool, D::Error> {
         let path = Path {
             absolute: true,
             segments: vec![
@@ -123,7 +120,7 @@ where
         trait_impl: TraitImplRef,
         impl_data: &ImplData,
         subst: &TypeSubst,
-    ) -> Result<Option<Ty>, PackageStoreError> {
+    ) -> Result<Option<Ty>, D::Error> {
         let item_query = self.item_paths.items();
         for item in &impl_data.items {
             let AssocItemId::TypeAlias(type_alias_id) = item else {
@@ -160,17 +157,18 @@ where
         impl_data: &ImplData,
         target_ty: &TypeRef,
         subst: &TypeSubst,
-    ) -> Result<Ty, PackageStoreError> {
+    ) -> Result<Ty, D::Error> {
         let context = TypePathContext {
             module: impl_data.owner,
             impl_ref: Some(trait_impl.impl_ref),
         };
-        ty_from_type_ref_in_context(
-            &self.item_paths,
-            target_ty,
-            context,
-            Ty::syntax(target_ty.clone()),
-            subst,
-        )
+        self.item_paths
+            .resolve_type_ref(target_ty, context, Ty::syntax(target_ty.clone()), subst)
+    }
+}
+
+fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
+    if !items.contains(&item) {
+        items.push(item);
     }
 }

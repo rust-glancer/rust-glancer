@@ -14,8 +14,9 @@ use rg_ir_model::{
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
 use rg_ir_storage::{Path, TypePathContext};
+use rg_item_tree::FieldKey;
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{FieldKey, SemanticCursorCandidate};
+use rg_semantic_ir::SemanticCursorCandidate;
 
 use crate::{IndexedViewDb, item::declaration::DeclarationView};
 

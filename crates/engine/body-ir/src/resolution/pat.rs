@@ -8,8 +8,7 @@ use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId, TypeDefId};
 use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource, Path, PathSegment};
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ReferencePeelingCandidates, subst_from_generics};
-use rg_ty::{NominalTy, Ty, TypeSubst};
+use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
 use crate::{
     ir::expr::ExprKind,
@@ -129,7 +128,7 @@ where
         if let Some(annotation) = annotation {
             let ty = self
                 .type_path_resolver()
-                .ty_from_type_ref_in_scope(annotation, scope)?;
+                .resolve_type_ref_in_scope(annotation, scope)?;
             if !matches!(ty, Ty::Unknown) {
                 return Ok(ty);
             }
@@ -291,12 +290,12 @@ where
         };
         let subst = item_query
             .generic_params_for_type_def(enum_ty.def)?
-            .map(|generics| subst_from_generics(generics, &enum_ty.args))
+            .map(|generics| TypeSubst::from_generics(generics, &enum_ty.args))
             .unwrap_or_else(TypeSubst::new);
 
         Ok(Some(
             self.type_path_resolver()
-                .ty_from_type_ref_in_module_with_subst(
+                .resolve_type_ref_in_module_with_subst(
                     &field.ty,
                     variant_data.owner_module,
                     &subst,

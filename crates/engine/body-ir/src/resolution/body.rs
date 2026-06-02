@@ -9,15 +9,12 @@ use rg_ir_model::{
     TypePathResolution, identity::DeclarationRef,
 };
 use rg_ir_storage::{
-    DefMapQuery, DefMapSource, ItemLookupIndex, ItemPathQuery, ItemStoreQuery, ItemStoreSource,
+    DefMapQuery, DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource,
     NameResolutionFilter, Path, PathSegment, TypePathContext,
 };
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{
-    Autoderef, AutoderefMode, ImplMatcher, subst_from_generics, type_ref_is_self,
-};
-use rg_ty::{NominalTy, Ty, TypeSubst};
+use rg_ty::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
 
 use crate::{
     ir::body::BodyData,
@@ -138,7 +135,7 @@ where
 
             let ty = self
                 .type_path_resolver()
-                .ty_from_type_ref_in_scope(&self_ty, scope)?;
+                .resolve_type_ref_in_scope(&self_ty, scope)?;
             let mut resolved_self_tys = Vec::new();
             for nominal in ty.as_nominals() {
                 push_unique(&mut resolved_self_tys, nominal.def);
@@ -193,7 +190,7 @@ where
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .type_path_resolver()
-                .ty_from_type_ref_in_scope(annotation, binding_data.scope);
+                .resolve_type_ref_in_scope(annotation, binding_data.scope);
         }
 
         if let BindingKind::SelfParam(kind) = binding_data.kind
@@ -239,7 +236,7 @@ where
             ExprKind::Cast { ty: Some(ty), .. } => {
                 self.body.exprs[expr].ty = self
                     .type_path_resolver()
-                    .ty_from_type_ref_in_scope(&ty, self.body.exprs[expr].scope)?;
+                    .resolve_type_ref_in_scope(&ty, self.body.exprs[expr].scope)?;
             }
             ExprKind::Match { arms, .. } => {
                 let mut arm_tys = Vec::new();
@@ -457,7 +454,7 @@ where
                 let subst = self.semantic_type_subst(nominal_ty)?;
                 let field_ty = self
                     .type_path_resolver()
-                    .ty_from_type_ref_in_module_with_subst(
+                    .resolve_type_ref_in_module_with_subst(
                         &field_data.field.ty,
                         field_data.owner_module,
                         &subst,
@@ -697,7 +694,7 @@ where
         Ok(self
             .item_query()
             .generic_params_for_type_def(ty.def)?
-            .map(|generics| subst_from_generics(generics, &ty.args))
+            .map(|generics| TypeSubst::from_generics(generics, &ty.args))
             .unwrap_or_else(TypeSubst::new))
     }
 
@@ -714,7 +711,7 @@ where
             return Ok(Ty::Unit);
         };
 
-        if receiver_ty.is_some() && type_ref_is_self(ret_ty) {
+        if receiver_ty.is_some() && ret_ty.is_self_type() {
             return Ok(receiver_ty
                 .cloned()
                 .map(|ty| Ty::nominal(vec![ty]))
@@ -736,7 +733,7 @@ where
             .transpose()?
             .unwrap_or_default();
         self.type_path_resolver()
-            .ty_from_type_ref_for_function_with_subst(ret_ty, function_ref, &subst)
+            .resolve_type_ref_for_function_with_subst(ret_ty, function_ref, &subst)
     }
 
     fn call_ty(&self, callee: Option<ExprId>) -> Result<Ty, PackageStoreError> {
@@ -1126,10 +1123,10 @@ where
             .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
         if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
             self.type_path_resolver()
-                .ty_from_type_ref_in_module_with_subst(ty, context.module, &TypeSubst::new())
+                .resolve_type_ref_in_module_with_subst(ty, context.module, &TypeSubst::new())
         } else {
             self.type_path_resolver()
-                .ty_from_type_ref_in_context_with_subst(ty, context, &TypeSubst::new())
+                .resolve_type_ref_in_context_with_subst(ty, context, &TypeSubst::new())
         }
     }
 
@@ -1143,7 +1140,7 @@ where
         };
 
         self.type_path_resolver()
-            .ty_from_type_ref_in_module_with_subst(ty, static_data.owner, &TypeSubst::new())
+            .resolve_type_ref_in_module_with_subst(ty, static_data.owner, &TypeSubst::new())
     }
 
     fn resolve_associated_path(
@@ -1156,7 +1153,8 @@ where
         // `Action::Start` distinct from a module path while also handling `Widget::new` through
         // the same type-substitution rules used by method calls.
         let prefix_resolution = self.type_path_resolver().resolve_in_scope(scope, prefix)?;
-        let prefix_ty = self.type_path_resolution_to_ty(prefix_resolution);
+        let prefix_ty =
+            Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
 
         // First treat the final segment as an enum variant. Variants are not ordinary associated
         // functions in either Semantic IR or Body IR, but value paths use the same syntax for
@@ -1322,7 +1320,7 @@ where
             return Ok(Ty::Unknown);
         };
 
-        if type_ref_is_self(ty) {
+        if ty.is_self_type() {
             return Ok(Ty::nominal(vec![receiver_ty.clone()]));
         }
 
@@ -1346,10 +1344,10 @@ where
             .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
         if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
             self.type_path_resolver()
-                .ty_from_type_ref_in_module_with_subst(ty, context.module, &subst)
+                .resolve_type_ref_in_module_with_subst(ty, context.module, &subst)
         } else {
             self.type_path_resolver()
-                .ty_from_type_ref_in_context_with_subst(ty, context, &subst)
+                .resolve_type_ref_in_context_with_subst(ty, context, &subst)
         }
     }
 
@@ -1382,22 +1380,8 @@ where
         Ok(self
             .item_query()
             .generic_params_for_type_def(ty.def)?
-            .map(|generics| subst_from_generics(generics, &ty.args))
+            .map(|generics| TypeSubst::from_generics(generics, &ty.args))
             .unwrap_or_else(TypeSubst::new))
-    }
-
-    fn type_path_resolution_to_ty(&self, resolution: TypePathResolution) -> Ty {
-        match resolution {
-            TypePathResolution::SelfType(types) => {
-                Ty::self_ty(types.into_iter().map(NominalTy::bare).collect())
-            }
-            TypePathResolution::TypeDefs(types) => {
-                Ty::nominal(types.into_iter().map(NominalTy::bare).collect())
-            }
-            TypePathResolution::TypeAliases(_)
-            | TypePathResolution::Traits(_)
-            | TypePathResolution::Unknown => Ty::Unknown,
-        }
     }
 
     fn nominal_ty_from_defs(&self, defs: &[DefId]) -> Result<Ty, PackageStoreError> {

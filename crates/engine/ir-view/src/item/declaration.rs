@@ -5,8 +5,8 @@ use rg_ir_model::{
     SemanticItemKind, SemanticItemRef, TargetRef, identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery, ModuleOrigin};
+use rg_item_tree::TypeRef;
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::TypeRef;
 
 use crate::{IndexedViewDb, SymbolKind, ty::member::MemberView};
 

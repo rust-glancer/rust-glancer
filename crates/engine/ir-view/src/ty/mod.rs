@@ -12,9 +12,8 @@ use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticItemRef, TypePathResolution,
     identity::DeclarationRef, identity::ExprRef,
 };
-use rg_ir_storage::{ItemPathQuery, ItemStoreQuery, Path, TypePathContext};
-use rg_semantic_ir::{ReferencePeelingCandidates, ty_from_type_ref_in_context};
-use rg_ty::{NominalTy, Ty, TypeSubst};
+use rg_ir_storage::{ItemStoreQuery, Path, TypePathContext};
+use rg_ty::{ItemPathQuery, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
 use crate::{IndexedViewDb, ty::locals::BodyView};
 
@@ -126,8 +125,7 @@ impl<'a, 'db> TyView<'a, 'db> {
             return Ok(None);
         };
         let item_paths = ItemPathQuery::new(self.db, self.db);
-        Ok(Some(ty_from_type_ref_in_context(
-            &item_paths,
+        Ok(Some(item_paths.resolve_type_ref(
             &field_data.field.ty,
             TypePathContext::module(field_data.owner_module),
             Ty::Unknown,
@@ -143,18 +141,7 @@ impl<'a, 'db> TyView<'a, 'db> {
     }
 
     fn type_path_resolution_to_ty(resolution: TypePathResolution) -> Ty {
-        match resolution {
-            TypePathResolution::SelfType(types) => {
-                Ty::self_ty(types.into_iter().map(NominalTy::bare).collect())
-            }
-            TypePathResolution::TypeDefs(types) => {
-                Ty::nominal(types.into_iter().map(NominalTy::bare).collect())
-            }
-            // Traits are navigable symbols, but they are not value-like receiver types in this
-            // small analysis model.
-            TypePathResolution::TypeAliases(_) | TypePathResolution::Traits(_) => Ty::Unknown,
-            TypePathResolution::Unknown => Ty::Unknown,
-        }
+        Ty::from_type_path_resolution(resolution, Vec::new()).unwrap_or(Ty::Unknown)
     }
 
     fn body_view(&self) -> BodyView<'a, 'db> {
