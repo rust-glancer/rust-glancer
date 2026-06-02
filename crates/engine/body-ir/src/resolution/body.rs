@@ -3,9 +3,7 @@
 //! This module walks lowered bodies and fills resolution/type slots on bindings and expressions.
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
-use rg_def_map::{
-    DefMapQuery, DefMapReadTxn, DefMapSource, NameResolutionFilter, Path, PathSegment,
-};
+use rg_def_map::{DefMapQuery, DefMapSource, NameResolutionFilter, Path, PathSegment};
 use rg_ir_model::{
     AssocItemId, BindingId, BodyRef, ConstRef, DefId, DefMapRef, ExprId, FunctionRef, ImplRef,
     ItemOwner, ModuleId, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TypeDefId,
@@ -15,7 +13,7 @@ use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{
     Autoderef, AutoderefMode, ImplMatcher, ItemLookupIndex, ItemPathQuery, ItemStoreQuery,
-    ItemStoreSource, SemanticIrReadTxn, subst_from_generics, type_ref_is_self,
+    ItemStoreSource, subst_from_generics, type_ref_is_self,
 };
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
@@ -31,71 +29,63 @@ use super::{
     type_path::BodyTypePathResolver,
 };
 
-pub(crate) struct BodyResolver<'query, 'db, 'body> {
-    def_map_txn: &'query DefMapReadTxn<'db>,
-    semantic_ir_txn: &'query SemanticIrReadTxn<'db>,
+pub(crate) struct BodyResolver<'query, 'body, D, I> {
+    def_maps: &'query D,
+    item_stores: &'query I,
     semantic_index: &'query ItemLookupIndex,
     body_ref: BodyRef,
     body: &'body mut BodyData,
 }
 
-impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
+impl<'query, 'body, D, I> BodyResolver<'query, 'body, D, I>
+where
+    for<'source> &'source D: DefMapSource,
+    for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
+{
     pub(crate) fn new(
-        def_map_txn: &'query DefMapReadTxn<'db>,
-        semantic_ir_txn: &'query SemanticIrReadTxn<'db>,
+        def_maps: &'query D,
+        item_stores: &'query I,
         semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
         body: &'body mut BodyData,
     ) -> Self {
         Self {
-            def_map_txn,
-            semantic_ir_txn,
+            def_maps,
+            item_stores,
             semantic_index,
             body_ref,
             body,
         }
     }
 
-    fn type_path_resolver(
-        &self,
-    ) -> BodyTypePathResolver<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>> {
+    fn type_path_resolver<'source>(
+        &'source self,
+    ) -> BodyTypePathResolver<'source, &'source D, &'source I> {
         BodyTypePathResolver::new(self.query_source())
     }
 
-    fn query_source(&self) -> BodyQuerySource<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>> {
+    fn query_source<'source>(&'source self) -> BodyQuerySource<'source, &'source D, &'source I> {
         BodyQuerySource::new(
-            self.def_map_txn,
-            self.semantic_ir_txn,
+            &*self.def_maps,
+            &*self.item_stores,
             self.body_ref,
             self.body,
         )
     }
 
-    fn autoderef(
-        &self,
-    ) -> Autoderef<
-        '_,
-        BodyQuerySource<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>>,
-        BodyQuerySource<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>>,
-    > {
+    fn autoderef(&self) -> Autoderef<'_, BodyQuerySource<'_, &D, &I>, BodyQuerySource<'_, &D, &I>> {
         let source = self.query_source();
         Autoderef::with_index(ItemPathQuery::new(source, source), self.semantic_index)
     }
 
     fn impl_matcher(
         &self,
-    ) -> ImplMatcher<
-        '_,
-        BodyQuerySource<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>>,
-        BodyQuerySource<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>>,
-    > {
+    ) -> ImplMatcher<'_, BodyQuerySource<'_, &D, &I>, BodyQuerySource<'_, &D, &I>> {
         let source = self.query_source();
         ImplMatcher::new(ItemPathQuery::new(source, source))
     }
 
-    fn item_query(
-        &self,
-    ) -> ItemStoreQuery<'_, BodyQuerySource<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>>> {
+    fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, &D, &I>> {
         ItemStoreQuery::new(self.query_source())
     }
 
