@@ -4,11 +4,11 @@
 //! answers "which semantic item does this local definition lower to?". This query keeps that
 //! composition out of storage transactions.
 
-use rg_def_map::{DefMapQuery, DefMapSource, Path};
 use rg_ir_model::{DefId, ModuleRef, SemanticItemRef, TraitRef, TypeDefRef, TypePathResolution};
-use rg_package_store::PackageStoreError;
 
-use crate::{ItemStoreQuery, ItemStoreSource, TypePathContext, push_unique};
+use crate::{
+    DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, Path, TypePathContext, push_unique,
+};
 
 /// Resolves paths into semantic-shaped item refs using independent DefMap and ItemStore sources.
 #[derive(Clone)]
@@ -19,8 +19,8 @@ pub struct ItemPathQuery<'a, D, I> {
 
 impl<'a, D, I> ItemPathQuery<'a, D, I>
 where
-    D: DefMapSource<Error = PackageStoreError>,
-    I: ItemStoreSource<'a, Error = PackageStoreError>,
+    D: DefMapSource,
+    I: ItemStoreSource<'a, Error = D::Error>,
 {
     pub fn new(def_maps: D, items: I) -> Self {
         Self {
@@ -39,7 +39,7 @@ where
         &self,
         context: TypePathContext,
         path: &Path,
-    ) -> Result<TypePathResolution, PackageStoreError> {
+    ) -> Result<TypePathResolution, D::Error> {
         if path.is_self_type() {
             let Some(impl_ref) = context.impl_ref else {
                 return Ok(TypePathResolution::Unknown);
@@ -74,7 +74,7 @@ where
         &self,
         context: TypePathContext,
         path: &Path,
-    ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
+    ) -> Result<Vec<SemanticItemRef>, D::Error> {
         if path.is_self_type() {
             if let Some(impl_ref) = context.impl_ref
                 && let Some(data) = self.items.impl_data(impl_ref)?
@@ -99,7 +99,7 @@ where
         &self,
         from: ModuleRef,
         path: &Path,
-    ) -> Result<Vec<TypeDefRef>, PackageStoreError> {
+    ) -> Result<Vec<TypeDefRef>, D::Error> {
         Ok(self
             .semantic_items_for_path(from, path)?
             .into_iter()
@@ -111,11 +111,7 @@ where
     }
 
     /// Filters a type-position path to trait definitions.
-    pub fn traits_for_path(
-        &self,
-        from: ModuleRef,
-        path: &Path,
-    ) -> Result<Vec<TraitRef>, PackageStoreError> {
+    pub fn traits_for_path(&self, from: ModuleRef, path: &Path) -> Result<Vec<TraitRef>, D::Error> {
         Ok(self
             .semantic_items_for_path(from, path)?
             .into_iter()
@@ -131,7 +127,7 @@ where
         &self,
         from: ModuleRef,
         path: &Path,
-    ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
+    ) -> Result<Vec<SemanticItemRef>, D::Error> {
         let result = self.def_maps.resolve_path_in_type_namespace(from, path)?;
         let mut resolved_items = Vec::new();
         for def in result.resolved {

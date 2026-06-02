@@ -5,7 +5,6 @@ mod deref;
 mod impl_match;
 mod ir;
 mod item_store_lowering;
-mod path_query;
 mod store;
 mod type_conversion;
 
@@ -21,7 +20,6 @@ pub use self::{
     impl_match::ImplMatcher,
     ir::{PackageIr, SemanticIrStats},
     item_store_lowering::{ItemStoreLowerer, ItemStoreSourceReader},
-    path_query::ItemPathQuery,
     store::{SemanticIrDb, SemanticIrReadTxn},
     type_conversion::{
         subst_from_generics, substitute_type_param, ty_from_type_path_resolution,
@@ -29,7 +27,7 @@ pub use self::{
     },
 };
 pub use rg_ir_storage::{
-    ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreQuery, ItemStoreSource,
+    ItemLookupIndex, ItemPathQuery, ItemStore, ItemStoreBuilder, ItemStoreQuery, ItemStoreSource,
     SemanticItemView, TypePathContext,
 };
 

@@ -1,5 +1,6 @@
 mod def_map;
 mod item;
+mod query;
 
 pub use self::{
     def_map::{
@@ -15,6 +16,7 @@ pub use self::{
         ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreQuery, ItemStoreSource,
         SemanticItemView, TypePathContext,
     },
+    query::ItemPathQuery,
 };
 
 fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
