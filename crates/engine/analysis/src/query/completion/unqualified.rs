@@ -106,8 +106,8 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
             let Some(function) = members.function(function_ref)? else {
                 return Ok(());
             };
-            let completion = FunctionCompletionRenderer::new(self.analysis, self.query).completion(
-                FunctionCompletionRequest {
+            let completion =
+                FunctionCompletionRenderer::new(self.query).completion(FunctionCompletionRequest {
                     function,
                     label_override: Some(candidate.label()),
                     kind: candidate.kind(),
@@ -118,8 +118,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
                     sort_priority: Some(CompletionSortPriority::body_scope(
                         candidate.scope_distance(),
                     )),
-                },
-            );
+                });
             completions.push(completion.item);
             return Ok(());
         }

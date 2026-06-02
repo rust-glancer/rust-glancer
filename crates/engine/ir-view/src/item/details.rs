@@ -68,7 +68,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Variable,
             path: None,
-            signature: Some(SignatureRenderer::new(self.db).binding_signature(binding_data)?),
+            signature: Some(SignatureRenderer::binding_signature(self.db, binding_data)?),
             docs: None,
         }))
     }
@@ -93,7 +93,6 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         let Some(items) = item_query.item_store_for_origin(ty.origin)? else {
             return Ok(None);
         };
-        let renderer = SignatureRenderer::new(self.db);
         let path = PathView::new(self.db).type_def_path(ty)?;
         match ty.id {
             TypeDefId::Struct(id) => {
@@ -103,7 +102,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 Ok(Some(DeclarationDetails {
                     kind: SymbolKind::Struct,
                     path,
-                    signature: Some(renderer.struct_signature(data)),
+                    signature: Some(SignatureRenderer::struct_signature(data)),
                     docs: data.docs.as_ref().map(Documentation::text),
                 }))
             }
@@ -114,7 +113,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 Ok(Some(DeclarationDetails {
                     kind: SymbolKind::Enum,
                     path,
-                    signature: Some(renderer.enum_signature(data)),
+                    signature: Some(SignatureRenderer::enum_signature(data)),
                     docs: data.docs.as_ref().map(Documentation::text),
                 }))
             }
@@ -125,7 +124,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
                 Ok(Some(DeclarationDetails {
                     kind: SymbolKind::Union,
                     path,
-                    signature: Some(renderer.union_signature(data)),
+                    signature: Some(SignatureRenderer::union_signature(data)),
                     docs: data.docs.as_ref().map(Documentation::text),
                 }))
             }
@@ -139,7 +138,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Trait,
             path: PathView::new(self.db).trait_path(trait_ref)?,
-            signature: Some(SignatureRenderer::new(self.db).trait_signature(data)),
+            signature: Some(SignatureRenderer::trait_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
@@ -155,7 +154,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         Ok(Some(DeclarationDetails {
             kind: function.symbol_kind(),
             path: function.display_path(&PathView::new(self.db))?,
-            signature: Some(SignatureRenderer::new(self.db).member_function_signature(&function)),
+            signature: Some(SignatureRenderer::member_function_signature(&function)),
             docs: function.docs_text(),
         }))
     }
@@ -168,7 +167,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Field,
             path: field.display_path(&PathView::new(self.db))?,
-            signature: SignatureRenderer::new(self.db).member_field_signature(&field),
+            signature: SignatureRenderer::member_field_signature(&field),
             docs: field.docs_text(),
         }))
     }
@@ -183,7 +182,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::EnumVariant,
             path: PathView::new(self.db).enum_variant_path(data)?,
-            signature: Some(SignatureRenderer::new(self.db).enum_variant_signature(data.variant)),
+            signature: Some(SignatureRenderer::enum_variant_signature(data.variant)),
             docs: data.variant.docs.as_ref().map(Documentation::text),
         }))
     }
@@ -198,7 +197,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::TypeAlias,
             path: PathView::new(self.db).type_alias_path(type_alias_ref)?,
-            signature: Some(SignatureRenderer::new(self.db).type_alias_signature(data)),
+            signature: Some(SignatureRenderer::type_alias_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
@@ -210,7 +209,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Const,
             path: PathView::new(self.db).const_path(const_ref)?,
-            signature: Some(SignatureRenderer::new(self.db).const_signature(data)),
+            signature: Some(SignatureRenderer::const_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
         }))
     }
@@ -222,7 +221,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Static,
             path: PathView::new(self.db).static_path(static_ref)?,
-            signature: Some(SignatureRenderer::new(self.db).static_signature(data)),
+            signature: Some(SignatureRenderer::static_signature(data)),
             docs: data.docs.as_ref().map(Documentation::text),
         }))
     }

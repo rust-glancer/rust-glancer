@@ -21,14 +21,10 @@ use crate::{
 
 const MEMBER_PREVIEW_LIMIT: usize = 5;
 
-pub struct SignatureRenderer<'a, 'db>(&'a IndexedViewDb<'db>);
+pub struct SignatureRenderer;
 
-impl<'a, 'db> SignatureRenderer<'a, 'db> {
-    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
-        Self(db)
-    }
-
-    pub fn struct_signature(&self, data: &StructData) -> String {
+impl SignatureRenderer {
+    pub fn struct_signature(data: &StructData) -> String {
         let header = format!(
             "{}struct {}{}{}",
             visibility_prefix(&data.visibility),
@@ -39,7 +35,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         item_with_fields(header, &data.fields)
     }
 
-    pub fn union_signature(&self, data: &UnionData) -> String {
+    pub fn union_signature(data: &UnionData) -> String {
         let header = format!(
             "{}union {}{}{}",
             visibility_prefix(&data.visibility),
@@ -50,7 +46,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         item_with_record_fields(header, &data.fields)
     }
 
-    pub fn enum_signature(&self, data: &EnumData) -> String {
+    pub fn enum_signature(data: &EnumData) -> String {
         let header = format!(
             "{}enum {}{}{}",
             visibility_prefix(&data.visibility),
@@ -62,10 +58,13 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
             return format!("{header} {{}}");
         }
 
-        format_block(header, data.variants.iter().map(enum_variant_signature))
+        format_block(
+            header,
+            data.variants.iter().map(Self::enum_variant_signature),
+        )
     }
 
-    pub fn trait_signature(&self, data: &TraitData) -> String {
+    pub fn trait_signature(data: &TraitData) -> String {
         let unsafe_prefix = if data.is_unsafe { "unsafe " } else { "" };
         let super_traits = if data.super_traits.is_empty() {
             String::new()
@@ -89,7 +88,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         )
     }
 
-    pub fn function_signature(&self, data: &FunctionData) -> String {
+    pub fn function_signature(data: &FunctionData) -> String {
         format!(
             "{}{}",
             visibility_prefix(&data.visibility),
@@ -103,7 +102,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         )
     }
 
-    pub fn type_alias_signature(&self, data: &TypeAliasData) -> String {
+    pub fn type_alias_signature(data: &TypeAliasData) -> String {
         format!(
             "{}{}",
             visibility_prefix(&data.visibility),
@@ -116,7 +115,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         )
     }
 
-    pub fn const_signature(&self, data: &ConstData) -> String {
+    pub fn const_signature(data: &ConstData) -> String {
         format!(
             "{}{}",
             visibility_prefix(&data.visibility),
@@ -124,7 +123,7 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         )
     }
 
-    pub fn static_signature(&self, data: &StaticData) -> String {
+    pub fn static_signature(data: &StaticData) -> String {
         format!(
             "{}{}",
             visibility_prefix(&data.visibility),
@@ -132,25 +131,38 @@ impl<'a, 'db> SignatureRenderer<'a, 'db> {
         )
     }
 
-    pub fn field_signature(&self, data: FieldData<'_>) -> Option<String> {
+    pub fn field_signature(data: FieldData<'_>) -> Option<String> {
         field_signature(data.field)
     }
 
-    pub fn member_field_signature(&self, data: &MemberField<'_>) -> Option<String> {
-        self.field_signature(data.data())
+    pub fn member_field_signature(data: &MemberField<'_>) -> Option<String> {
+        Self::field_signature(data.data())
     }
 
-    pub fn enum_variant_signature(&self, variant: &EnumVariantItem) -> String {
-        enum_variant_signature(variant)
+    pub fn enum_variant_signature(variant: &EnumVariantItem) -> String {
+        match &variant.fields {
+            FieldList::Named(fields) if fields.is_empty() => format!("{} {{}}", variant.name),
+            FieldList::Named(fields) => {
+                let rendered =
+                    capped_inline_rows(fields.iter().map(record_field_signature), fields.len());
+                format!("{} {{ {} }}", variant.name, rendered.join(", "))
+            }
+            FieldList::Tuple(fields) => {
+                let rendered =
+                    capped_inline_rows(fields.iter().map(tuple_field_signature), fields.len());
+                format!("{}({})", variant.name, rendered.join(", "))
+            }
+            FieldList::Unit => variant.name.to_string(),
+        }
     }
 
-    pub fn member_function_signature(&self, data: &MemberFunction<'_>) -> String {
-        self.function_signature(data.data())
+    pub fn member_function_signature(data: &MemberFunction<'_>) -> String {
+        Self::function_signature(data.data())
     }
 
-    pub fn binding_signature(&self, data: &BindingData) -> anyhow::Result<String> {
+    pub fn binding_signature(db: &IndexedViewDb<'_>, data: &BindingData) -> anyhow::Result<String> {
         let name = data.name.as_deref().unwrap_or("<unsupported>");
-        let ty = TypeRenderer::new(self.0)
+        let ty = TypeRenderer::new(db)
             .render(&data.ty)?
             .or_else(|| data.annotation.as_ref().map(ToString::to_string))
             .unwrap_or_else(|| "_".to_string());
@@ -283,23 +295,6 @@ fn item_with_tuple_fields(header: String, fields: &[FieldItem]) -> String {
     }
 
     format!("{header}({});", rendered.join(", "))
-}
-
-fn enum_variant_signature(variant: &EnumVariantItem) -> String {
-    match &variant.fields {
-        FieldList::Named(fields) if fields.is_empty() => format!("{} {{}}", variant.name),
-        FieldList::Named(fields) => {
-            let rendered =
-                capped_inline_rows(fields.iter().map(record_field_signature), fields.len());
-            format!("{} {{ {} }}", variant.name, rendered.join(", "))
-        }
-        FieldList::Tuple(fields) => {
-            let rendered =
-                capped_inline_rows(fields.iter().map(tuple_field_signature), fields.len());
-            format!("{}({})", variant.name, rendered.join(", "))
-        }
-        FieldList::Unit => variant.name.to_string(),
-    }
 }
 
 fn capped_inline_rows(rows: impl Iterator<Item = String>, total_len: usize) -> Vec<String> {

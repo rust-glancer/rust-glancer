@@ -44,7 +44,7 @@ impl<'a, 'db, 'source> ModuleCompletionRenderer<'a, 'db, 'source> {
                 return Ok(None);
             };
             return Ok(Some(
-                FunctionCompletionRenderer::new(self.analysis, self.query)
+                FunctionCompletionRenderer::new(self.query)
                     .completion(FunctionCompletionRequest {
                         function,
                         label_override: Some(request.candidate.label()),

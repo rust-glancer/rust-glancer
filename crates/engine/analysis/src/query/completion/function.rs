@@ -6,12 +6,9 @@
 use rg_ir_view::{display::signature::SignatureRenderer, ty::member::MemberFunction};
 use rg_item_tree::ParamItem;
 
-use crate::{
-    Analysis,
-    model::{
-        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
-        CompletionKind, CompletionTarget,
-    },
+use crate::model::{
+    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
+    CompletionTarget,
 };
 
 use super::{
@@ -54,14 +51,13 @@ pub(super) struct FunctionCompletionRequest<'label, 'member> {
     pub(super) sort_priority: Option<CompletionSortPriority>,
 }
 
-pub(super) struct FunctionCompletionRenderer<'a, 'db, 'source> {
-    analysis: &'a Analysis<'db>,
+pub(super) struct FunctionCompletionRenderer<'source> {
     query: CompletionQuery<'source>,
 }
 
-impl<'a, 'db, 'source> FunctionCompletionRenderer<'a, 'db, 'source> {
-    pub(super) fn new(analysis: &'a Analysis<'db>, query: CompletionQuery<'source>) -> Self {
-        Self { analysis, query }
+impl<'source> FunctionCompletionRenderer<'source> {
+    pub(super) fn new(query: CompletionQuery<'source>) -> Self {
+        Self { query }
     }
 
     /// Builds display and snippet metadata for a resolved function declaration.
@@ -107,14 +103,13 @@ impl<'a, 'db, 'source> FunctionCompletionRenderer<'a, 'db, 'source> {
         call_completion: FunctionCallCompletion,
         edit: CompletionEdit,
     ) -> FunctionCompletionMetadata {
-        let renderer = SignatureRenderer::new(self.analysis.view_db());
         let label = label_override
             .unwrap_or_else(|| function.name())
             .to_string();
 
         FunctionCompletionMetadata {
             label: label.clone(),
-            detail: Some(renderer.member_function_signature(&function)),
+            detail: Some(SignatureRenderer::member_function_signature(&function)),
             documentation: function.docs_text(),
             insert_text: self.insert_text(&label, function.params(), call_completion, edit),
             has_self_receiver: function.has_self_receiver(),

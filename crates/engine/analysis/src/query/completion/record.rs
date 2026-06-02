@@ -26,7 +26,7 @@ impl<'a, 'db> RecordFieldCompletionResolver<'a, 'db> {
         };
         let completion_candidates = CompletionCandidateSource::new(self.0);
         let members = MemberView::new(self.0);
-        let renderer = FieldCompletionRenderer::new(self.0);
+        let renderer = FieldCompletionRenderer::new();
         let mut completions = Vec::new();
 
         for field_ref in completion_candidates.field_candidates_for_record(&site)? {

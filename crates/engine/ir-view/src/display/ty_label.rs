@@ -4,10 +4,10 @@
 //! The analysis layer already returns stable IDs; inlay hints and future hovers need labels that
 //! are useful while reading code.
 
-use rg_ir_model::identity::DeclarationRef;
+use rg_ir_storage::ItemStoreQuery;
 use rg_ty::{GenericArg, NominalTy, Ty};
 
-use crate::{IndexedViewDb, item::declaration::DeclarationView};
+use crate::IndexedViewDb;
 
 pub struct TypeRenderer<'a, 'db>(&'a IndexedViewDb<'db>);
 
@@ -45,12 +45,9 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
     }
 
     fn render_nominal(&self, ty: &NominalTy) -> anyhow::Result<Option<String>> {
-        let Some(declaration) =
-            DeclarationView::new(self.0).declaration(DeclarationRef::from(ty.def))?
-        else {
+        let Some(name) = ItemStoreQuery::new(self.0).type_def_name(ty.def)? else {
             return Ok(None);
         };
-        let name = declaration.name();
 
         Ok(Some(format!(
             "{name}{}",
