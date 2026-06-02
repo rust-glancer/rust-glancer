@@ -4,6 +4,7 @@ mod autoderef;
 mod deref;
 mod generic_arg;
 mod impl_match;
+mod implementation;
 mod item_path;
 mod member;
 mod primitive;
@@ -16,6 +17,7 @@ pub use self::{
     },
     generic_arg::GenericArg,
     impl_match::ImplMatcher,
+    implementation::ImplementationQuery,
     item_path::ItemPathQuery,
     member::{MemberMethodCandidateRef, MemberMethodOrigin, MemberQuery},
     primitive::{FloatTy, PrimitiveTy, RefMutability, SignedIntTy, UnsignedIntTy},

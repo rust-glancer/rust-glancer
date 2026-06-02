@@ -1,16 +1,16 @@
 //! Composite implementation lookup over semantic and body-local declarations.
 //!
 //! Goto-implementation asks for source declarations that implement a selected type, trait, or
-//! trait method. This view owns the storage-specific lookup rules so query code can stay focused on
-//! cursor policy and editor projection.
+//! trait method. This view owns cursor policy and editor projection; reusable impl search lives in
+//! the type query layer.
 
 use rg_body_ir::ExprKind;
 use rg_ir_model::{
-    AssocItemId, FunctionRef, ImplRef, ItemOwner, SemanticItemRef, TraitRef, TypeDefRef,
+    FunctionRef, ImplRef, SemanticItemRef,
     identity::{DeclarationRef, ExprRef},
 };
 use rg_ir_storage::ItemStoreQuery;
-use rg_ty::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, ReferencePeelingCandidates, Ty};
+use rg_ty::{ImplementationQuery, ItemPathQuery, Ty};
 
 use crate::{IndexedViewDb, lookup::resolution::ResolutionView};
 
@@ -48,8 +48,15 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         if declarations.is_empty() {
             return Ok(None);
         }
+        let implementation_query = ImplementationQuery::new(ItemPathQuery::new(self.db, self.db));
         for declaration in declarations {
-            self.extend_function_implementations(&mut implementations, declaration, receiver_ty)?;
+            let Some(function) = self.function_ref_for_declaration(declaration)? else {
+                continue;
+            };
+            Self::extend_function_refs(
+                &mut implementations,
+                implementation_query.function_implementations(function, receiver_ty)?,
+            );
         }
         Ok(Some(implementations))
     }
@@ -59,21 +66,27 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         declaration: DeclarationRef,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
         let mut implementations = Vec::new();
+        let implementation_query = ImplementationQuery::new(ItemPathQuery::new(self.db, self.db));
 
         match declaration {
             DeclarationRef::Item(item) => match item {
                 SemanticItemRef::TypeDef(ty) => {
-                    self.extend_type_def_implementations(&mut implementations, ty)?;
+                    Self::extend_impl_refs(
+                        &mut implementations,
+                        implementation_query.impls_for_type_def(ty)?,
+                    );
                 }
                 SemanticItemRef::Trait(trait_ref) => {
-                    self.extend_trait_implementations(&mut implementations, trait_ref)?;
+                    Self::extend_impl_refs(
+                        &mut implementations,
+                        implementation_query.impls_for_trait(trait_ref)?,
+                    );
                 }
                 SemanticItemRef::Function(function) => {
-                    self.extend_function_implementations(
+                    Self::extend_function_refs(
                         &mut implementations,
-                        DeclarationRef::from(function),
-                        None,
-                    )?;
+                        implementation_query.function_implementations(function, None)?,
+                    );
                 }
                 SemanticItemRef::Impl(_)
                 | SemanticItemRef::TypeAlias(_)
@@ -81,16 +94,15 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
                 | SemanticItemRef::Static(_) => {}
             },
             DeclarationRef::LocalDef(local_def) => {
-                let Some(SemanticItemRef::Function(function)) =
-                    ItemStoreQuery::new(self.db).semantic_item_for_local_def(local_def)?
+                let Some(function) =
+                    self.function_ref_for_declaration(DeclarationRef::local_def(local_def))?
                 else {
                     return Ok(implementations);
                 };
-                self.extend_function_implementations(
+                Self::extend_function_refs(
                     &mut implementations,
-                    DeclarationRef::from(function),
-                    None,
-                )?;
+                    implementation_query.function_implementations(function, None)?,
+                );
             }
             DeclarationRef::BodyBinding(binding) => {
                 let Some(body) = self.db.body_ir.body_data(binding.body)? else {
@@ -99,7 +111,10 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
                 let Some(binding_data) = body.binding(binding.binding) else {
                     return Ok(implementations);
                 };
-                self.extend_ty_implementations(&mut implementations, &binding_data.ty)?;
+                Self::extend_impl_refs(
+                    &mut implementations,
+                    implementation_query.impls_for_ty(&binding_data.ty)?,
+                );
             }
             DeclarationRef::Module(_)
             | DeclarationRef::Field(_)
@@ -111,187 +126,44 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
 
     pub fn implementations_for_ty(&self, ty: &Ty) -> anyhow::Result<Vec<DeclarationRef>> {
         let mut implementations = Vec::new();
-        self.extend_ty_implementations(&mut implementations, ty)?;
+        let implementation_query = ImplementationQuery::new(ItemPathQuery::new(self.db, self.db));
+        Self::extend_impl_refs(&mut implementations, implementation_query.impls_for_ty(ty)?);
         Ok(implementations)
     }
 
-    fn extend_ty_implementations(
+    fn function_ref_for_declaration(
         &self,
-        implementations: &mut Vec<DeclarationRef>,
-        ty: &Ty,
-    ) -> anyhow::Result<()> {
-        for candidate in ReferencePeelingCandidates::new(ty) {
-            for ty in candidate.ty().as_nominals() {
-                self.extend_type_def_implementations(implementations, ty.def)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn extend_type_def_implementations(
-        &self,
-        implementations: &mut Vec<DeclarationRef>,
-        ty: TypeDefRef,
-    ) -> anyhow::Result<()> {
-        for impl_ref in ItemStoreQuery::new(self.db).impls_for_type(ty)? {
-            Self::push_unique(implementations, DeclarationRef::from(impl_ref));
-        }
-        Ok(())
-    }
-
-    fn extend_trait_implementations(
-        &self,
-        implementations: &mut Vec<DeclarationRef>,
-        trait_ref: TraitRef,
-    ) -> anyhow::Result<()> {
-        for impl_ref in ItemStoreQuery::new(self.db).impls_for_trait(trait_ref)? {
-            Self::push_unique(implementations, DeclarationRef::from(impl_ref));
-        }
-        Ok(())
-    }
-
-    fn extend_function_implementations(
-        &self,
-        implementations: &mut Vec<DeclarationRef>,
         declaration: DeclarationRef,
-        receiver_ty: Option<&Ty>,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<Option<FunctionRef>> {
         match declaration {
-            DeclarationRef::Module(_) => Ok(()),
-            DeclarationRef::LocalDef(local_def) => {
-                let Some(SemanticItemRef::Function(function)) =
-                    ItemStoreQuery::new(self.db).semantic_item_for_local_def(local_def)?
-                else {
-                    return Ok(());
-                };
-                self.extend_semantic_function_implementations(
-                    implementations,
-                    function,
-                    receiver_ty,
-                )
-            }
-            DeclarationRef::Item(SemanticItemRef::Function(function)) => self
-                .extend_semantic_function_implementations(implementations, function, receiver_ty),
-            DeclarationRef::Item(_)
+            DeclarationRef::LocalDef(local_def) => Ok(ItemStoreQuery::new(self.db)
+                .semantic_item_for_local_def(local_def)?
+                .and_then(|item| match item {
+                    SemanticItemRef::Function(function) => Some(function),
+                    _ => None,
+                })),
+            DeclarationRef::Item(SemanticItemRef::Function(function)) => Ok(Some(function)),
+            DeclarationRef::Module(_)
+            | DeclarationRef::Item(_)
             | DeclarationRef::Field(_)
             | DeclarationRef::EnumVariant(_)
-            | DeclarationRef::BodyBinding(_) => Ok(()),
+            | DeclarationRef::BodyBinding(_) => Ok(None),
         }
     }
 
-    fn extend_semantic_function_implementations(
-        &self,
-        implementations: &mut Vec<DeclarationRef>,
-        function: FunctionRef,
-        receiver_ty: Option<&Ty>,
-    ) -> anyhow::Result<()> {
-        let Some(data) = ItemStoreQuery::new(self.db).function_data(function)? else {
-            return Ok(());
-        };
-
-        match data.owner {
-            ItemOwner::Trait(trait_id) => {
-                let trait_ref = TraitRef {
-                    origin: function.origin,
-                    id: trait_id,
-                };
-                match receiver_ty {
-                    Some(receiver_ty) => self.extend_trait_method_implementations_for_receiver(
-                        implementations,
-                        trait_ref,
-                        data.name.as_str(),
-                        receiver_ty,
-                    ),
-                    None => self.extend_trait_method_implementations(
-                        implementations,
-                        trait_ref,
-                        data.name.as_str(),
-                    ),
-                }
-            }
-            ItemOwner::Impl(_) => {
-                Self::push_unique(implementations, DeclarationRef::from(function));
-                Ok(())
-            }
-            ItemOwner::Module(_) => Ok(()),
+    fn extend_impl_refs(implementations: &mut Vec<DeclarationRef>, impls: Vec<ImplRef>) {
+        for impl_ref in impls {
+            Self::push_unique(implementations, DeclarationRef::from(impl_ref));
         }
     }
 
-    fn extend_trait_method_implementations_for_receiver(
-        &self,
+    fn extend_function_refs(
         implementations: &mut Vec<DeclarationRef>,
-        trait_ref: TraitRef,
-        method_name: &str,
-        receiver_ty: &Ty,
-    ) -> anyhow::Result<()> {
-        let autoderef = Autoderef::new(ItemPathQuery::new(self.db, self.db));
-        let matcher = ImplMatcher::new(ItemPathQuery::new(self.db, self.db));
-        for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
-            let candidate = candidate?;
-            for ty in candidate.ty().as_nominals() {
-                for trait_impl in ItemStoreQuery::new(self.db).trait_impls_for_type(ty.def)? {
-                    if trait_impl.trait_ref != trait_ref {
-                        continue;
-                    }
-                    // The nominal type match can still include generic impls for other concrete
-                    // args. Reuse method lookup's applicability check so goto-implementation
-                    // follows the receiver the user actually called the method on.
-                    if !matcher
-                        .trait_impl_applicability(trait_impl, ty)?
-                        .is_applicable()
-                    {
-                        continue;
-                    }
-                    self.extend_matching_impl_methods(
-                        implementations,
-                        trait_impl.impl_ref,
-                        method_name,
-                    )?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn extend_trait_method_implementations(
-        &self,
-        implementations: &mut Vec<DeclarationRef>,
-        trait_ref: TraitRef,
-        method_name: &str,
-    ) -> anyhow::Result<()> {
-        for impl_ref in ItemStoreQuery::new(self.db).impls_for_trait(trait_ref)? {
-            self.extend_matching_impl_methods(implementations, impl_ref, method_name)?;
-        }
-        Ok(())
-    }
-
-    fn extend_matching_impl_methods(
-        &self,
-        implementations: &mut Vec<DeclarationRef>,
-        impl_ref: ImplRef,
-        method_name: &str,
-    ) -> anyhow::Result<()> {
-        let Some(data) = ItemStoreQuery::new(self.db).impl_data(impl_ref)? else {
-            return Ok(());
-        };
-
-        for item in &data.items {
-            let &AssocItemId::Function(id) = item else {
-                continue;
-            };
-            let function = FunctionRef {
-                origin: impl_ref.origin,
-                id,
-            };
-            let Some(function_data) = ItemStoreQuery::new(self.db).function_data(function)? else {
-                continue;
-            };
-            if function_data.name.as_str() != method_name {
-                continue;
-            }
+        functions: Vec<FunctionRef>,
+    ) {
+        for function in functions {
             Self::push_unique(implementations, DeclarationRef::from(function));
         }
-        Ok(())
     }
 
     fn push_unique(implementations: &mut Vec<DeclarationRef>, declaration: DeclarationRef) {
