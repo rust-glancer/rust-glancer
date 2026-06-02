@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 
 use rg_ir_model::{DefMapRef, TargetRef};
+use rg_ir_storage::TargetResolutionEnv;
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
 use rg_macro_expand::{Edition, ExpansionSyntax};
 use rg_parse::{FileId, Span};
@@ -23,7 +24,6 @@ use crate::{
         finalize::{FinalizeTargetStates, ScopeMatrix},
         stats::DefMapFinalizationStatsSink,
     },
-    query::resolution_env::TargetResolutionEnv,
 };
 
 use super::{
@@ -95,7 +95,7 @@ impl MacroExpansionCursors {
 
 /// Resolves pending macro calls into concrete attempts for the current scope snapshot.
 pub(crate) fn collect_expansion_attempts(
-    env: &impl TargetResolutionEnv,
+    env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     states: &FinalizeTargetStates,
     scan: MacroExpansionScan<'_>,
     cache: &mut MacroExpansionCache,
@@ -500,7 +500,7 @@ impl MacroExpansionAttempt {
     }
 
     fn for_call(
-        env: &impl TargetResolutionEnv,
+        env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
         states: &FinalizeTargetStates,
         cache: &mut MacroExpansionCache,
         state: &TargetState,

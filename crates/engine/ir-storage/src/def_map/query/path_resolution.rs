@@ -10,10 +10,9 @@
 
 use rg_ir_model::{DefId, DefMapRef, ModuleId, ModuleRef, TargetRef};
 use rg_item_tree::VisibilityLevel;
-use rg_package_store::PackageStoreError;
 use rg_text::Name;
 
-use crate::{
+use super::super::{
     ImportPath, ModuleOrigin, ModuleScopeBuilder, Namespace, Path, PathSegment, ScopeBinding,
 };
 
@@ -48,12 +47,12 @@ impl NameResolutionFilter {
 }
 
 /// Groups path lookup operations around one scope source.
-pub(crate) struct PathResolver<'env, E: ?Sized> {
+pub struct PathResolver<'env, E: ?Sized> {
     env: &'env E,
 }
 
 impl<'env, E: ?Sized> PathResolver<'env, E> {
-    pub(crate) fn new(env: &'env E) -> Self {
+    pub fn new(env: &'env E) -> Self {
         Self { env }
     }
 
@@ -66,10 +65,7 @@ impl<'env, E: ?Sized> PathResolver<'env, E> {
 }
 
 impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
-    pub(crate) fn namespace_for_def(
-        &self,
-        def: DefId,
-    ) -> Result<Option<Namespace>, PackageStoreError> {
+    pub fn namespace_for_def(&self, def: DefId) -> Result<Option<Namespace>, E::Error> {
         match def {
             DefId::Module(_) => Ok(Some(Namespace::Types)),
             DefId::Local(local_def_ref) => Ok(self
@@ -80,12 +76,12 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
     }
 
     /// Walks a path through lexical scopes without module-keyword or target fallback rules.
-    pub(crate) fn resolve_lexical_path(
+    pub fn resolve_lexical_path(
         &self,
         importing_module: ModuleRef,
         path: &Path,
         terminal_filter: NameResolutionFilter,
-    ) -> Result<ResolvePathResult, PackageStoreError> {
+    ) -> Result<ResolvePathResult, E::Error> {
         if path.absolute {
             return Ok(Self::unresolved_at(0));
         }
@@ -131,13 +127,13 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
         })
     }
 
-    pub(crate) fn resolve_lexical_name_in_module(
+    pub fn resolve_lexical_name_in_module(
         &self,
         importing_module: ModuleRef,
         module_ref: ModuleRef,
         name: &str,
         filter: NameResolutionFilter,
-    ) -> Result<Vec<DefId>, PackageStoreError> {
+    ) -> Result<Vec<DefId>, E::Error> {
         let Some(scope_entry) = self.env.module_scope_entry(module_ref, name)? else {
             return Ok(Vec::new());
         };
@@ -180,7 +176,7 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
         current_defs: Vec<DefId>,
         name: &str,
         filter: NameResolutionFilter,
-    ) -> Result<Vec<DefId>, PackageStoreError> {
+    ) -> Result<Vec<DefId>, E::Error> {
         let mut next_defs = Vec::new();
 
         for current_def in current_defs {
@@ -203,7 +199,7 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
         importing_module: ModuleRef,
         name: &str,
         filter: NameResolutionFilter,
-    ) -> Result<Vec<DefId>, PackageStoreError> {
+    ) -> Result<Vec<DefId>, E::Error> {
         let mut current = Some(importing_module);
         while let Some(module_ref) = current {
             let defs =
@@ -228,7 +224,7 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
         &self,
         importing_module: ModuleRef,
         binding: &ScopeBinding,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<bool, E::Error> {
         if matches!(binding.visibility, VisibilityLevel::Public) {
             return Ok(true);
         }
@@ -256,7 +252,7 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
         &self,
         module: ModuleRef,
         ancestor: ModuleRef,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<bool, E::Error> {
         if module.origin != ancestor.origin {
             return Ok(false);
         }
@@ -281,11 +277,11 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
 }
 
 impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
-    pub(crate) fn visible_scope(
+    pub fn visible_scope(
         &self,
         importing_module: ModuleRef,
         source_module: ModuleRef,
-    ) -> Result<ModuleScopeBuilder, PackageStoreError> {
+    ) -> Result<ModuleScopeBuilder, E::Error> {
         let mut visible_scope = ModuleScopeBuilder::default();
         for (name, entry) in self.env.module_scope_entries(source_module)? {
             for binding in entry.types() {
@@ -311,12 +307,12 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
     }
 
     /// Returns visible macro bindings for one name without copying the whole source scope.
-    pub(crate) fn visible_macro_bindings(
+    pub fn visible_macro_bindings(
         &self,
         importing_module: ModuleRef,
         source_module: ModuleRef,
         name: &Name,
-    ) -> Result<Vec<ScopeBinding>, PackageStoreError> {
+    ) -> Result<Vec<ScopeBinding>, E::Error> {
         let Some(entry) = self.env.module_scope_entry(source_module, name.as_str())? else {
             return Ok(Vec::new());
         };
@@ -331,12 +327,12 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         Ok(bindings)
     }
 
-    pub(crate) fn resolve_path(
+    pub fn resolve_path(
         &self,
         importing_module: ModuleRef,
         path: &Path,
         terminal_filter: NameResolutionFilter,
-    ) -> Result<ResolvePathResult, PackageStoreError> {
+    ) -> Result<ResolvePathResult, E::Error> {
         self.resolve_path_segments(
             importing_module,
             path.absolute,
@@ -346,12 +342,12 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
     }
 
     /// Resolves an import path to every definition it denotes in the current scope snapshot.
-    pub(crate) fn import_defs(
+    pub fn import_defs(
         &self,
         importing_target: TargetRef,
         importing_module: ModuleId,
         path: &ImportPath,
-    ) -> Result<Vec<DefId>, PackageStoreError> {
+    ) -> Result<Vec<DefId>, E::Error> {
         self.import_defs_with_filter(
             importing_target,
             importing_module,
@@ -361,12 +357,12 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
     }
 
     /// Resolves a path and keeps only module results.
-    pub(crate) fn import_modules(
+    pub fn import_modules(
         &self,
         importing_target: TargetRef,
         importing_module: ModuleId,
         path: &ImportPath,
-    ) -> Result<Vec<ModuleRef>, PackageStoreError> {
+    ) -> Result<Vec<ModuleRef>, E::Error> {
         let resolved_defs = self.import_defs_with_filter(
             importing_target,
             importing_module,
@@ -387,12 +383,12 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
     }
 
     /// Resolves a path whose terminal segment must be a macro binding.
-    pub(crate) fn macro_bindings(
+    pub fn macro_bindings(
         &self,
         importing_target: TargetRef,
         importing_module: ModuleId,
         path: &ImportPath,
-    ) -> Result<Vec<ScopeBinding>, PackageStoreError> {
+    ) -> Result<Vec<ScopeBinding>, E::Error> {
         let Some((terminal, prefix)) = path.segments.split_last() else {
             return Ok(Vec::new());
         };
@@ -442,7 +438,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         importing_module: ModuleId,
         path: &ImportPath,
         terminal_filter: NameResolutionFilter,
-    ) -> Result<Vec<DefId>, PackageStoreError> {
+    ) -> Result<Vec<DefId>, E::Error> {
         let result = self.resolve_path_segments(
             ModuleRef {
                 origin: DefMapRef::Target(importing_target),
@@ -463,7 +459,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         absolute: bool,
         segments: &[PathSegment],
         terminal_filter: NameResolutionFilter,
-    ) -> Result<ResolvePathResult, PackageStoreError> {
+    ) -> Result<ResolvePathResult, E::Error> {
         let Some((first_segment, remaining_segments)) = segments.split_first() else {
             return Ok(Self::unresolved_at(0));
         };
@@ -508,7 +504,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         absolute: bool,
         segment: &PathSegment,
         filter: NameResolutionFilter,
-    ) -> Result<Vec<DefId>, PackageStoreError> {
+    ) -> Result<Vec<DefId>, E::Error> {
         if absolute {
             return match segment {
                 PathSegment::Name(name) => Ok(self
@@ -578,7 +574,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         current_defs: Vec<DefId>,
         segment: &PathSegment,
         filter: NameResolutionFilter,
-    ) -> Result<Vec<DefId>, PackageStoreError> {
+    ) -> Result<Vec<DefId>, E::Error> {
         let mut next_defs = Vec::new();
 
         for current_def in current_defs {
@@ -621,7 +617,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         module_ref: ModuleRef,
         name: &str,
         filter: NameResolutionFilter,
-    ) -> Result<Vec<DefId>, PackageStoreError> {
+    ) -> Result<Vec<DefId>, E::Error> {
         let Some(scope_entry) = self.env.module_scope_entry(module_ref, name)? else {
             return Ok(Vec::new());
         };
@@ -668,7 +664,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         importing_module: ModuleRef,
         name: &str,
         filter: NameResolutionFilter,
-    ) -> Result<Vec<DefId>, PackageStoreError> {
+    ) -> Result<Vec<DefId>, E::Error> {
         let mut current = Some(importing_module);
         while let Some(module_ref) = current {
             let defs = self.name_in_module(importing_module, module_ref, name, filter)?;
@@ -693,7 +689,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         &self,
         importing_module: ModuleRef,
         binding: &ScopeBinding,
-    ) -> Result<bool, PackageStoreError> {
+    ) -> Result<bool, E::Error> {
         if matches!(binding.visibility, VisibilityLevel::Public) {
             return Ok(true);
         }
@@ -733,7 +729,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         &self,
         owner: ModuleRef,
         path: &str,
-    ) -> Result<Option<ModuleRef>, PackageStoreError> {
+    ) -> Result<Option<ModuleRef>, E::Error> {
         let mut segments = path.split("::");
         let Some(first) = segments.next() else {
             return Ok(None);

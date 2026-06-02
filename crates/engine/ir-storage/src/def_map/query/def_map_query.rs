@@ -3,18 +3,18 @@
 //! DefMaps only know about one scope graph. This query object adds the routing layer that decides
 //! which graph owns a `DefMapRef`, then reuses the private path resolver for the actual lookup.
 
-use rg_ir_model::{DefMapRef, LocalDefRef, LocalImplRef, ModuleRef, TargetRef};
-use rg_package_store::PackageStoreError;
+use rg_ir_model::{DefId, DefMapRef, LocalDefRef, LocalImplRef, ModuleRef, TargetRef};
 use rg_text::Name;
 
-use crate::{
-    DefMap, LocalDefData, LocalImplData, MacroDefinitionData, ModuleData, Path, ResolvePathResult,
-    ScopeEntryRef, ScopeNamespace, VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin,
+use super::{
+    path_resolution::{NameResolutionFilter, PathResolver, ResolvePathResult},
+    resolution_env::{ScopeResolutionEnv, TargetResolutionEnv},
 };
 
-use super::{
-    path_resolution::{NameResolutionFilter, PathResolver},
-    resolution_env::{ScopeResolutionEnv, TargetResolutionEnv},
+use super::super::{
+    DefMap, LocalDefData, LocalImplData, MacroDefinitionData, ModuleData, ModuleScopeBuilder,
+    Namespace, Path, ScopeEntryRef, ScopeNamespace, VisibleScopeDef, VisibleScopeDefs,
+    VisibleScopeOrigin,
 };
 
 /// Routes DefMap-origin refs and target-level facts to concrete storage.
@@ -22,49 +22,39 @@ use super::{
 /// Target-only callers usually delegate to `DefMapReadTxn`; body-aware callers can additionally
 /// route the active body origin to its local DefMap without changing the lookup algorithm.
 pub trait DefMapSource {
-    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError>;
+    type Error;
 
-    fn extern_root(
-        &self,
-        target: TargetRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, PackageStoreError>;
+    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, Self::Error>;
 
-    fn extern_roots(
-        &self,
-        target: TargetRef,
-    ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError>;
+    fn extern_root(&self, target: TargetRef, name: &str) -> Result<Option<ModuleRef>, Self::Error>;
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError>;
+    fn extern_roots(&self, target: TargetRef) -> Result<Vec<(String, ModuleRef)>, Self::Error>;
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError>;
+    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error>;
+
+    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error>;
 }
 
 impl<T: DefMapSource + ?Sized> DefMapSource for &T {
-    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
+    type Error = T::Error;
+
+    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, Self::Error> {
         (**self).def_map_for_origin(origin)
     }
 
-    fn extern_root(
-        &self,
-        target: TargetRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, PackageStoreError> {
+    fn extern_root(&self, target: TargetRef, name: &str) -> Result<Option<ModuleRef>, Self::Error> {
         (**self).extern_root(target, name)
     }
 
-    fn extern_roots(
-        &self,
-        target: TargetRef,
-    ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError> {
+    fn extern_roots(&self, target: TargetRef) -> Result<Vec<(String, ModuleRef)>, Self::Error> {
         (**self).extern_roots(target)
     }
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
         (**self).prelude_module(target)
     }
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
         (**self).root_module(target)
     }
 }
@@ -88,7 +78,7 @@ where
         &self,
         from: ModuleRef,
         path: &Path,
-    ) -> Result<ResolvePathResult, PackageStoreError> {
+    ) -> Result<ResolvePathResult, S::Error> {
         PathResolver::new(self).resolve_path(from, path, NameResolutionFilter::AllNamespaces)
     }
 
@@ -97,7 +87,7 @@ where
         &self,
         from: ModuleRef,
         path: &Path,
-    ) -> Result<ResolvePathResult, PackageStoreError> {
+    ) -> Result<ResolvePathResult, S::Error> {
         PathResolver::new(self).resolve_path(from, path, NameResolutionFilter::TypesOnly)
     }
 
@@ -107,7 +97,7 @@ where
         from: ModuleRef,
         path: &Path,
         filter: NameResolutionFilter,
-    ) -> Result<ResolvePathResult, PackageStoreError> {
+    ) -> Result<ResolvePathResult, S::Error> {
         PathResolver::new(self).resolve_lexical_path(from, path, filter)
     }
 
@@ -118,14 +108,11 @@ where
         module: ModuleRef,
         name: &str,
         filter: NameResolutionFilter,
-    ) -> Result<Vec<rg_ir_model::DefId>, PackageStoreError> {
+    ) -> Result<Vec<rg_ir_model::DefId>, S::Error> {
         PathResolver::new(self).resolve_lexical_name_in_module(from, module, name, filter)
     }
 
-    pub fn module_data(
-        &self,
-        module_ref: ModuleRef,
-    ) -> Result<Option<&ModuleData>, PackageStoreError> {
+    pub fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, S::Error> {
         Ok(self
             .source
             .def_map_for_origin(module_ref.origin)?
@@ -133,7 +120,7 @@ where
     }
 
     /// Lists modules recorded in one target DefMap without exposing the concrete store.
-    pub fn module_refs(&self, target: TargetRef) -> Result<Vec<ModuleRef>, PackageStoreError> {
+    pub fn module_refs(&self, target: TargetRef) -> Result<Vec<ModuleRef>, S::Error> {
         Ok(self
             .source
             .def_map_for_origin(DefMapRef::Target(target))?
@@ -144,7 +131,7 @@ where
     pub fn local_def_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<&LocalDefData>, PackageStoreError> {
+    ) -> Result<Option<&LocalDefData>, S::Error> {
         Ok(self
             .source
             .def_map_for_origin(local_def_ref.origin)?
@@ -154,7 +141,7 @@ where
     pub fn local_impl_data(
         &self,
         local_impl_ref: LocalImplRef,
-    ) -> Result<Option<&LocalImplData>, PackageStoreError> {
+    ) -> Result<Option<&LocalImplData>, S::Error> {
         Ok(self
             .source
             .def_map_for_origin(local_impl_ref.origin)?
@@ -164,11 +151,25 @@ where
     pub fn macro_definition_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<&MacroDefinitionData>, PackageStoreError> {
+    ) -> Result<Option<&MacroDefinitionData>, S::Error> {
         Ok(self
             .source
             .def_map_for_origin(local_def_ref.origin)?
             .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))
+    }
+
+    /// Returns the namespace occupied by one resolved definition.
+    pub fn namespace_for_def(&self, def: DefId) -> Result<Option<Namespace>, S::Error> {
+        PathResolver::new(self).namespace_for_def(def)
+    }
+
+    /// Builds the visibility-filtered scope observed from `importing_module`.
+    pub fn visible_scope(
+        &self,
+        importing_module: ModuleRef,
+        source_module: ModuleRef,
+    ) -> Result<ModuleScopeBuilder, S::Error> {
+        PathResolver::new(self).visible_scope(importing_module, source_module)
     }
 
     /// Returns definitions from `source_module` that are visible from `importing_module`.
@@ -176,8 +177,8 @@ where
         &self,
         importing_module: ModuleRef,
         source_module: ModuleRef,
-    ) -> Result<VisibleScopeDefs, PackageStoreError> {
-        let scope = PathResolver::new(self).visible_scope(importing_module, source_module)?;
+    ) -> Result<VisibleScopeDefs, S::Error> {
+        let scope = self.visible_scope(importing_module, source_module)?;
         let mut defs = VisibleScopeDefs::new(&scope, VisibleScopeOrigin::ModuleScope, false);
         defs.sort();
         Ok(defs)
@@ -187,7 +188,7 @@ where
     pub fn visible_unqualified_scope_defs(
         &self,
         importing_module: ModuleRef,
-    ) -> Result<VisibleScopeDefs, PackageStoreError> {
+    ) -> Result<VisibleScopeDefs, S::Error> {
         let resolver = PathResolver::new(self);
 
         // First-segment resolution checks the current module scope before extern roots and the
@@ -226,7 +227,9 @@ impl<S> ScopeResolutionEnv for DefMapQuery<S>
 where
     S: DefMapSource,
 {
-    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, PackageStoreError> {
+    type Error = S::Error;
+
+    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
         DefMapQuery::module_data(self, module_ref)
     }
 
@@ -234,7 +237,7 @@ where
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Result<Option<ScopeEntryRef<'a>>, PackageStoreError> {
+    ) -> Result<Option<ScopeEntryRef<'a>>, Self::Error> {
         Ok(self
             .module_data(module_ref)?
             .and_then(|module| module.scope.entry(name))
@@ -244,7 +247,7 @@ where
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, PackageStoreError> {
+    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, Self::Error> {
         Ok(self
             .module_data(module_ref)?
             .map(|module| {
@@ -260,14 +263,14 @@ where
     fn local_def_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<&LocalDefData>, PackageStoreError> {
+    ) -> Result<Option<&LocalDefData>, Self::Error> {
         DefMapQuery::local_def_data(self, local_def_ref)
     }
 
     fn macro_definition_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<&MacroDefinitionData>, PackageStoreError> {
+    ) -> Result<Option<&MacroDefinitionData>, Self::Error> {
         DefMapQuery::macro_definition_data(self, local_def_ref)
     }
 }
@@ -276,19 +279,15 @@ impl<S> TargetResolutionEnv for DefMapQuery<S>
 where
     S: DefMapSource,
 {
-    fn extern_root(
-        &self,
-        target: TargetRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, PackageStoreError> {
+    fn extern_root(&self, target: TargetRef, name: &str) -> Result<Option<ModuleRef>, Self::Error> {
         self.source.extern_root(target, name)
     }
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
         self.source.prelude_module(target)
     }
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
         self.source.root_module(target)
     }
 }

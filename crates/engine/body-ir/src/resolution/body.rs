@@ -39,7 +39,7 @@ pub(crate) struct BodyResolver<'query, 'body, D, I> {
 
 impl<'query, 'body, D, I> BodyResolver<'query, 'body, D, I>
 where
-    for<'source> &'source D: DefMapSource,
+    for<'source> &'source D: DefMapSource<Error = PackageStoreError>,
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
 {
     pub(crate) fn new(
@@ -840,7 +840,7 @@ enum BodyValueName {
 
 impl<'query, D, I> BodyValuePathResolver<'query, D, I>
 where
-    D: DefMapSource + Copy,
+    D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
     pub(crate) fn new(

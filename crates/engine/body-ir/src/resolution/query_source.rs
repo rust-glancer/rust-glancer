@@ -40,8 +40,10 @@ impl<'a, D, I> BodyQuerySource<'a, D, I> {
 
 impl<D, I> DefMapSource for BodyQuerySource<'_, D, I>
 where
-    D: DefMapSource,
+    D: DefMapSource<Error = PackageStoreError>,
 {
+    type Error = PackageStoreError;
+
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
         match origin {
             DefMapRef::Target(_) => self.def_maps.def_map_for_origin(origin),

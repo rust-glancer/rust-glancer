@@ -33,7 +33,7 @@ pub struct BodyScopeQuery<'a, D, I> {
 
 impl<'a, D, I> BodyScopeQuery<'a, D, I>
 where
-    D: DefMapSource + Copy,
+    D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
 {
     pub fn new(def_maps: D, item_stores: I, body_ref: BodyRef, body: &'a BodyData) -> Self {

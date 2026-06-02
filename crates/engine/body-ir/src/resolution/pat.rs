@@ -28,7 +28,7 @@ pub(super) struct PatternTypePropagator<'query, D, I> {
 
 impl<'query, D, I> PatternTypePropagator<'query, D, I>
 where
-    D: DefMapSource + Copy,
+    D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
     pub(super) fn new(source: BodyQuerySource<'query, D, I>) -> Self {

@@ -54,7 +54,7 @@ pub struct ImplMatcher<'query, D, I> {
 
 impl<'query, D, I> ImplMatcher<'query, D, I>
 where
-    D: DefMapSource,
+    D: DefMapSource<Error = PackageStoreError>,
     I: ItemStoreSource<'query, Error = PackageStoreError>,
 {
     /// Creates a matcher over the same path/item routing used by type conversion.

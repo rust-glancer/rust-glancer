@@ -20,7 +20,7 @@ pub(super) struct TyNormalizer<'a, D, I> {
 
 impl<'a, D, I> TyNormalizer<'a, D, I>
 where
-    D: DefMapSource + Copy,
+    D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
 {
     pub(super) fn new(source: BodyQuerySource<'a, D, I>) -> Self {

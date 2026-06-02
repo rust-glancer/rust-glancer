@@ -6,11 +6,9 @@
 //! the fixed point has stabilized.
 
 use rg_ir_model::{DefMapRef, ImportId, ModuleRef, TargetRef};
+use rg_ir_storage::{PathResolver, TargetResolutionEnv};
 
-use crate::{
-    ImportKind, ScopeBinding, ScopeBindingOrigin,
-    query::{path_resolution::PathResolver, resolution_env::TargetResolutionEnv},
-};
+use crate::{ImportKind, ScopeBinding, ScopeBindingOrigin};
 
 use super::{
     collect::TargetState,
@@ -37,7 +35,7 @@ pub(super) struct UnresolvedImports {
 impl UnresolvedImports {
     pub(super) fn collect(
         states: &FinalizeTargetStates,
-        env: &impl TargetResolutionEnv,
+        env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     ) -> anyhow::Result<Self> {
         let packages = states
             .iter_packages()
@@ -71,7 +69,7 @@ impl UnresolvedImports {
 /// binding from the source module into the target module.
 pub(super) fn apply_imports(
     state: &TargetState,
-    env: &impl TargetResolutionEnv,
+    env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     next_scopes: &mut ScopeMatrix,
 ) -> anyhow::Result<()> {
     let resolver = PathResolver::new(env);
@@ -148,7 +146,7 @@ pub(super) fn apply_imports(
 
 fn unresolved_imports_for_target(
     state: &TargetState,
-    env: &impl TargetResolutionEnv,
+    env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
 ) -> anyhow::Result<Vec<Vec<ImportId>>> {
     let mut module_imports =
         vec![Vec::new(); state.def_map_builder.as_incomplete_def_map().module_count()];

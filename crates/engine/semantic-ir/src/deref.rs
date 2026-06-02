@@ -26,7 +26,7 @@ pub(crate) struct DerefResolver<'query, D, I> {
 
 impl<'query, D, I> DerefResolver<'query, D, I>
 where
-    D: DefMapSource + Clone,
+    D: DefMapSource<Error = PackageStoreError> + Clone,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Clone,
 {
     pub(crate) fn new(

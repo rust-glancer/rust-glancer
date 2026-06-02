@@ -19,7 +19,7 @@ pub struct ItemPathQuery<'a, D, I> {
 
 impl<'a, D, I> ItemPathQuery<'a, D, I>
 where
-    D: DefMapSource,
+    D: DefMapSource<Error = PackageStoreError>,
     I: ItemStoreSource<'a, Error = PackageStoreError>,
 {
     pub fn new(def_maps: D, items: I) -> Self {

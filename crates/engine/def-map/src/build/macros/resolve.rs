@@ -6,13 +6,13 @@
 use anyhow::Result;
 
 use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, TargetRef};
+use rg_ir_storage::{PathResolver, TargetResolutionEnv};
 use rg_text::Name;
 
 use crate::{
     ImportPath, LocalDefData, LocalDefKind, MacroDefinitionData, PathSegment, ScopeBinding,
     ScopeBindingOrigin,
     build::{collect::TargetState, finalize::FinalizeTargetStates},
-    query::{path_resolution::PathResolver, resolution_env::TargetResolutionEnv},
 };
 
 use super::{ItemOrder, MacroCallSite};
@@ -28,7 +28,7 @@ pub(super) struct ResolvedMacroDefinition<'a> {
 
 /// Finds the unique declarative macro definition visible at a macro call.
 pub(super) fn resolve_macro_definition<'a>(
-    env: &'a impl TargetResolutionEnv,
+    env: &'a impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     states: &'a FinalizeTargetStates,
     state: &TargetState,
     call: &MacroCallSite,
@@ -60,7 +60,7 @@ pub(super) fn resolve_macro_definition<'a>(
 
 /// Resolves one-segment macro calls with Rust's `macro_rules!` lookup order.
 fn resolve_single_name_macro<'a>(
-    env: &'a impl TargetResolutionEnv,
+    env: &'a impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     states: &'a FinalizeTargetStates,
     state: &TargetState,
     call: &MacroCallSite,
@@ -102,7 +102,7 @@ fn resolve_single_name_macro<'a>(
 
 /// Searches build-only textual `macro_rules!` scopes for the definition visible at this call.
 fn resolve_textual_macro_rules<'a>(
-    env: &'a impl TargetResolutionEnv,
+    env: &'a impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     states: &'a FinalizeTargetStates,
     state: &TargetState,
     call: &MacroCallSite,
@@ -150,7 +150,7 @@ fn resolve_textual_macro_rules<'a>(
 
 /// Consults legacy `#[macro_use] extern crate` imports after ordinary unqualified lookup fails.
 fn resolve_macro_use_extern_crate_fallback<'a>(
-    env: &'a impl TargetResolutionEnv,
+    env: &'a impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     states: &'a FinalizeTargetStates,
     state: &TargetState,
     name: &Name,
@@ -186,7 +186,7 @@ fn resolve_macro_use_extern_crate_fallback<'a>(
 
 /// Converts a resolved macro binding into the payload needed by expansion.
 fn macro_record_for_binding<'a>(
-    env: &'a impl TargetResolutionEnv,
+    env: &'a impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     states: &'a FinalizeTargetStates,
     binding: &ScopeBinding,
 ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
@@ -195,7 +195,7 @@ fn macro_record_for_binding<'a>(
 
 /// Converts a resolved definition id into the macro payload needed by expansion.
 fn macro_record_for_def<'a>(
-    env: &'a impl TargetResolutionEnv,
+    env: &'a impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     states: &'a FinalizeTargetStates,
     def: DefId,
     origin: ScopeBindingOrigin,

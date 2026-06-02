@@ -12,6 +12,7 @@ mod rebuild;
 use anyhow::Context as _;
 
 use rg_ir_model::{DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_storage::{PathResolver, ScopeResolutionEnv, TargetResolutionEnv};
 use rg_item_tree::ItemTreeDb;
 use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
@@ -20,10 +21,6 @@ use rg_workspace::WorkspaceMetadata;
 use crate::{
     DefMap, DefMapReadTxn, LocalDefData, MacroDefinitionData, ModuleData, ModuleScopeBuilder,
     PackageDefMaps as DefMapPackage, PackageSlot, ScopeEntryRef, TargetData,
-    query::{
-        path_resolution::PathResolver,
-        resolution_env::{ScopeResolutionEnv, TargetResolutionEnv},
-    },
 };
 
 use super::{
@@ -215,6 +212,8 @@ impl<'a> FinalizeResolutionEnv<'a> {
 }
 
 impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
+    type Error = rg_package_store::PackageStoreError;
+
     fn module_data(
         &self,
         module_ref: ModuleRef,

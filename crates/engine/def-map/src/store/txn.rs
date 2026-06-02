@@ -29,6 +29,8 @@ impl<'db> DefMapReadTxn<'db> {
 }
 
 impl DefMapSource for DefMapReadTxn<'_> {
+    type Error = PackageStoreError;
+
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
         let Some(target) = origin.as_target_ref() else {
             return Ok(None);

@@ -3,11 +3,13 @@ mod item;
 
 pub use self::{
     def_map::{
-        DefMap, DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
-        LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData, MacroDefinitionPayload,
-        ModuleData, ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, PackageDefMaps, Path,
-        PathSegment, ScopeBinding, ScopeBindingOrigin, ScopeEntry, ScopeEntryRef, ScopeNamespace,
-        TargetData, VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin,
+        DefMap, DefMapBuilder, DefMapQuery, DefMapSource, ImportBinding, ImportData, ImportKind,
+        ImportPath, ImportSourcePath, LocalDefData, LocalDefKind, LocalImplData,
+        MacroDefinitionData, MacroDefinitionPayload, ModuleData, ModuleOrigin, ModuleScope,
+        ModuleScopeBuilder, NameResolutionFilter, Namespace, PackageDefMaps, Path, PathResolver,
+        PathSegment, ResolvePathResult, ScopeBinding, ScopeBindingOrigin, ScopeEntry,
+        ScopeEntryRef, ScopeNamespace, ScopeResolutionEnv, TargetData, TargetResolutionEnv,
+        VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin,
     },
     item::{
         ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreQuery, ItemStoreSource,

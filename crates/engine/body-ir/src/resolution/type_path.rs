@@ -25,7 +25,7 @@ pub(crate) struct BodyTypePathResolver<'query, D, I> {
 
 impl<'query, D, I> BodyTypePathResolver<'query, D, I>
 where
-    D: DefMapSource + Copy,
+    D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
     pub(crate) fn new(source: BodyQuerySource<'query, D, I>) -> Self {

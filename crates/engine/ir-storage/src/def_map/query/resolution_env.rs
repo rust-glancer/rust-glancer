@@ -5,46 +5,47 @@
 //! own data access methods.
 
 use rg_ir_model::{LocalDefRef, ModuleRef, TargetRef};
-use rg_package_store::PackageStoreError;
 use rg_text::Name;
 
-use crate::{LocalDefData, LocalDefKind, MacroDefinitionData, ModuleData, ScopeEntryRef};
+use super::super::{LocalDefData, LocalDefKind, MacroDefinitionData, ModuleData, ScopeEntryRef};
 
 /// Minimal scope graph required by path and visibility lookup.
-pub(crate) trait ScopeResolutionEnv {
-    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, PackageStoreError>;
+pub trait ScopeResolutionEnv {
+    type Error;
+
+    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error>;
 
     fn module_scope_entry<'a>(
         &'a self,
         module_ref: ModuleRef,
         name: &str,
-    ) -> Result<Option<ScopeEntryRef<'a>>, PackageStoreError>;
+    ) -> Result<Option<ScopeEntryRef<'a>>, Self::Error>;
 
     fn module_scope_entries<'a>(
         &'a self,
         module_ref: ModuleRef,
-    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, PackageStoreError>;
+    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, Self::Error>;
 
     fn local_def_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<&LocalDefData>, PackageStoreError>;
+    ) -> Result<Option<&LocalDefData>, Self::Error>;
 
     fn macro_definition_data(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<&MacroDefinitionData>, PackageStoreError>;
+    ) -> Result<Option<&MacroDefinitionData>, Self::Error>;
 
     fn local_def_kind(
         &self,
         local_def_ref: LocalDefRef,
-    ) -> Result<Option<LocalDefKind>, PackageStoreError> {
+    ) -> Result<Option<LocalDefKind>, Self::Error> {
         Ok(self
             .local_def_data(local_def_ref)?
             .map(|local_def| local_def.kind))
     }
 
-    fn parent_module(&self, module_ref: ModuleRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+    fn parent_module(&self, module_ref: ModuleRef) -> Result<Option<ModuleRef>, Self::Error> {
         let Some(module) = self.module_data(module_ref)? else {
             return Ok(None);
         };
@@ -61,14 +62,10 @@ pub(crate) trait ScopeResolutionEnv {
 }
 
 /// Target-level graph facts needed by normal Rust module path lookup.
-pub(crate) trait TargetResolutionEnv: ScopeResolutionEnv {
-    fn extern_root(
-        &self,
-        target: TargetRef,
-        name: &str,
-    ) -> Result<Option<ModuleRef>, PackageStoreError>;
+pub trait TargetResolutionEnv: ScopeResolutionEnv {
+    fn extern_root(&self, target: TargetRef, name: &str) -> Result<Option<ModuleRef>, Self::Error>;
 
-    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError>;
+    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error>;
 
-    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError>;
+    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error>;
 }

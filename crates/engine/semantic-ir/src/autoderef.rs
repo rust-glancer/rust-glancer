@@ -23,7 +23,7 @@ pub struct Autoderef<'query, D, I> {
 
 impl<'query, D, I> Autoderef<'query, D, I>
 where
-    D: DefMapSource + Clone,
+    D: DefMapSource<Error = PackageStoreError> + Clone,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Clone,
 {
     /// Creates an autoderef engine without a precomputed lookup index.
@@ -189,7 +189,7 @@ impl<'ty> PendingAutoderefTy<'ty> {
 
 impl<'query, 'ty, D, I> Iterator for AutoderefCandidates<'query, 'ty, D, I>
 where
-    D: DefMapSource + Clone,
+    D: DefMapSource<Error = PackageStoreError> + Clone,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Clone,
 {
     type Item = Result<AutoderefCandidate<'ty>, PackageStoreError>;

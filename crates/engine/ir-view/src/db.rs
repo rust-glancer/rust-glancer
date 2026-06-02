@@ -54,6 +54,8 @@ impl<'a, 'db> ItemStoreSource<'a> for &'a IndexedViewDb<'db> {
 }
 
 impl DefMapSource for &IndexedViewDb<'_> {
+    type Error = PackageStoreError;
+
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
         match origin {
             DefMapRef::Target(target) => self.def_map.def_map(target),

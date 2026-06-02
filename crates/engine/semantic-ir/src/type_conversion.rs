@@ -22,7 +22,7 @@ pub fn ty_from_type_ref_in_context<'a, D, I>(
     subst: &TypeSubst,
 ) -> Result<Ty, PackageStoreError>
 where
-    D: DefMapSource,
+    D: DefMapSource<Error = PackageStoreError>,
     I: ItemStoreSource<'a, Error = PackageStoreError>,
 {
     match ty {
@@ -160,7 +160,7 @@ fn generic_args_from_type_path_in_context<'a, D, I>(
     subst: &TypeSubst,
 ) -> Result<Vec<GenericArg>, PackageStoreError>
 where
-    D: DefMapSource,
+    D: DefMapSource<Error = PackageStoreError>,
     I: ItemStoreSource<'a, Error = PackageStoreError>,
 {
     // Rust generic args belong to the final path segment for the cases we model here, e.g.
