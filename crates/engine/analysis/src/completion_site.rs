@@ -9,10 +9,10 @@ use rg_parse::{FileId, Span};
 
 use rg_ir_view::{
     IndexedViewDb,
-    source::facts::{
+    source::{
         IndexedMemberAccessSite, IndexedNameNamespace, IndexedQualifiedPathScope,
         IndexedQualifiedPathSite, IndexedRecordFieldListSite, IndexedUnqualifiedNameScope,
-        IndexedUnqualifiedNameSite, SourceFactsView,
+        IndexedUnqualifiedNameSite, SourceCompletionView,
     },
 };
 
@@ -172,7 +172,7 @@ impl<'a, 'db> CompletionSiteDetector<'a, 'db> {
         offset: u32,
         syntax: Option<CompletionSiteSyntax>,
     ) -> anyhow::Result<Option<CompletionSite>> {
-        let source = SourceFactsView::new(self.db);
+        let source = SourceCompletionView::new(self.db);
         if let Some(syntax) = syntax {
             if syntax.inside_use_item {
                 if let Some(site) = source.import_qualified_path_site_at(target, file_id, offset)? {

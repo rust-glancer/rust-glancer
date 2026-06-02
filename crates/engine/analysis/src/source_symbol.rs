@@ -7,15 +7,15 @@ use rg_ty::Ty;
 use rg_ir_view::{
     IndexedViewDb,
     lookup::resolution::ResolutionView,
-    source::facts::{
-        IndexedSourceFact, IndexedSourceOccurrence, IndexedTypePathScope, SourceFactsView,
+    source::{
+        IndexedSourceFact, IndexedSourceOccurrence, IndexedTypePathScope, SourceOccurrenceView,
     },
     ty::TyView,
 };
 
 use crate::model::{SymbolAt, TypePathScopeRef, TypePathScopeRepr};
 
-pub(crate) use rg_ir_view::source::facts::IndexedSourceRole as SourceSymbolRole;
+pub(crate) use rg_ir_view::source::IndexedSourceRole as SourceSymbolRole;
 
 /// One source span that can resolve to an analysis symbol.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,7 +100,7 @@ impl<'a, 'db> SourceSymbolIndex<'a, 'db> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<SourceSymbol>> {
-        Ok(SourceFactsView::new(self.db)
+        Ok(SourceOccurrenceView::new(self.db)
             .occurrences_at(target, file_id, offset)?
             .into_iter()
             .map(SourceSymbol::from_occurrence)
@@ -112,7 +112,7 @@ impl<'a, 'db> SourceSymbolIndex<'a, 'db> {
         target: TargetRef,
         file_id: Option<FileId>,
     ) -> anyhow::Result<Vec<SourceSymbol>> {
-        Ok(SourceFactsView::new(self.db)
+        Ok(SourceOccurrenceView::new(self.db)
             .occurrences_in_target(target, file_id)?
             .into_iter()
             .map(SourceSymbol::from_occurrence)

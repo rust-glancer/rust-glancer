@@ -11,7 +11,7 @@ use rg_ir_storage::{ItemStoreQuery, Path};
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     lookup::name::{ModuleScopeName, NameLookupView, NameNamespace, NameOrigin},
-    source::facts::{IndexedNameNamespace, IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
+    source::{IndexedNameNamespace, IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
     ty::TyView,
     ty::locals::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
 };
