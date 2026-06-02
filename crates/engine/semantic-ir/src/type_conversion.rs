@@ -1,4 +1,4 @@
-//! Tiny type conversion helpers used by body resolution.
+//! Small type conversion helpers over item/path query providers.
 //!
 //! These helpers preserve known nominal/generic facts. They do not infer missing generic
 //! arguments, solve bounds, or inspect expression bodies to discover return types.
@@ -7,13 +7,14 @@ use rg_def_map::{DefMapSource, Path};
 use rg_ir_model::TypePathResolution;
 use rg_item_tree::{GenericArg as ItemGenericArg, GenericParams, Mutability, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemPathQuery, ItemStoreSource, TypePathContext};
 use rg_text::Name;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
+use crate::{ItemPathQuery, ItemStoreSource, TypePathContext};
+
 /// Converts syntax-level type data into the shared type vocabulary in one module/impl
 /// context, applying direct generic substitutions where they are already known.
-pub(crate) fn ty_from_type_ref_in_context<'a, D, I>(
+pub fn ty_from_type_ref_in_context<'a, D, I>(
     item_paths: &ItemPathQuery<'a, D, I>,
     ty: &TypeRef,
     context: TypePathContext,
@@ -44,7 +45,7 @@ where
             } else {
                 unresolved_path_fallback
             };
-            Ok(ty_from_body_resolution(resolution, fallback, args))
+            Ok(ty_from_type_path_resolution(resolution, fallback, args))
         }
         TypeRef::Reference {
             mutability, inner, ..
@@ -67,7 +68,7 @@ where
     }
 }
 
-pub(super) fn ty_from_body_resolution(
+pub fn ty_from_type_path_resolution(
     resolution: TypePathResolution,
     fallback: Ty,
     args: Vec<GenericArg>,
@@ -99,10 +100,10 @@ pub(super) fn ty_from_body_resolution(
     }
 }
 
-pub(super) fn subst_from_generics(generics: &GenericParams, args: &[GenericArg]) -> TypeSubst {
+pub fn subst_from_generics(generics: &GenericParams, args: &[GenericArg]) -> TypeSubst {
     // We only substitute type parameters. Lifetimes, const args, associated type args, and
     // unsupported args are preserved on the type but ignored by the simple substitution map.
-    let type_args = args.iter().filter_map(body_generic_arg_ty);
+    let type_args = args.iter().filter_map(generic_arg_ty);
 
     generics
         .types
@@ -112,11 +113,11 @@ pub(super) fn subst_from_generics(generics: &GenericParams, args: &[GenericArg])
         .collect()
 }
 
-pub(super) fn body_generic_arg_ty(arg: &GenericArg) -> Option<Ty> {
+pub(crate) fn generic_arg_ty(arg: &GenericArg) -> Option<Ty> {
     arg.as_ty().cloned()
 }
 
-pub(super) fn generic_arg_type_ref(arg: &ItemGenericArg) -> Option<&TypeRef> {
+pub(crate) fn generic_arg_type_ref(arg: &ItemGenericArg) -> Option<&TypeRef> {
     match arg {
         ItemGenericArg::Type(ty) => Some(ty),
         ItemGenericArg::Lifetime(_)
@@ -126,7 +127,7 @@ pub(super) fn generic_arg_type_ref(arg: &ItemGenericArg) -> Option<&TypeRef> {
     }
 }
 
-pub(super) fn type_param_name_from_type_ref(ty: &TypeRef) -> Option<Name> {
+pub(crate) fn type_param_name_from_type_ref(ty: &TypeRef) -> Option<Name> {
     let TypeRef::Path(path) = ty else {
         return None;
     };
@@ -141,14 +142,14 @@ pub(super) fn type_param_name_from_type_ref(ty: &TypeRef) -> Option<Name> {
     })
 }
 
-pub(super) fn substitute_type_param(path: &Path, subst: &TypeSubst) -> Option<Ty> {
+pub fn substitute_type_param(path: &Path, subst: &TypeSubst) -> Option<Ty> {
     // Only plain identifiers can be generic type parameters. Qualified paths like `module::T`
     // remain ordinary type paths and are resolved through DefMap/Semantic IR.
     let name = path.single_name()?;
     subst.get(name).cloned()
 }
 
-pub(super) fn type_ref_is_self(ty: &TypeRef) -> bool {
+pub fn type_ref_is_self(ty: &TypeRef) -> bool {
     Path::from_type_ref(ty).is_some_and(|path| path.is_self_type())
 }
 

@@ -1,90 +1,88 @@
-//! Body IR autoderef candidate generation.
+//! Autoderef candidate generation over item/path query providers.
 //!
 //! This is the adjustment layer between expression types and the contexts that can look through
 //! references or trait-backed `Deref`. Contexts that only want `&T` transparency use
-//! `BodyReferencePeelingCandidates`, keeping trait deref out of pattern and type-definition
-//! queries.
+//! `ReferencePeelingCandidates`, keeping trait deref out of pattern and type-definition queries.
 
 use std::{borrow::Cow, collections::VecDeque};
 
 use rg_def_map::DefMapSource;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemLookupIndex, ItemPathQuery, ItemStoreSource};
 use rg_ty::Ty;
 
-use super::deref::BodyDerefResolver;
+use crate::{ItemLookupIndex, ItemPathQuery, ItemStoreSource, deref::DerefResolver};
 
 const AUTODEREF_LIMIT: usize = 8;
 
 /// Computes adjusted types for contexts that may dereference a receiver.
 #[derive(Clone)]
-pub struct BodyAutoderef<'query, D, I> {
+pub struct Autoderef<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
-    semantic_index: Option<&'query ItemLookupIndex>,
+    lookup_index: Option<&'query ItemLookupIndex>,
 }
 
-impl<'query, D, I> BodyAutoderef<'query, D, I>
+impl<'query, D, I> Autoderef<'query, D, I>
 where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Clone,
 {
-    /// Creates an autoderef engine without a precomputed Semantic IR lookup index.
+    /// Creates an autoderef engine without a precomputed lookup index.
     pub fn new(item_paths: ItemPathQuery<'query, D, I>) -> Self {
         Self {
             item_paths,
-            semantic_index: None,
+            lookup_index: None,
         }
     }
 
-    /// Creates an autoderef engine that can reuse the body-resolution method lookup index.
-    pub(crate) fn with_index(
+    /// Creates an autoderef engine that can reuse a receiver lookup index.
+    pub fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
-        semantic_index: &'query ItemLookupIndex,
+        lookup_index: &'query ItemLookupIndex,
     ) -> Self {
         Self {
             item_paths,
-            semantic_index: Some(semantic_index),
+            lookup_index: Some(lookup_index),
         }
     }
 
     /// Returns candidate types in lookup order for the requested adjustment context.
     pub fn candidates<'ty>(
         self,
-        mode: BodyAutoderefMode,
+        mode: AutoderefMode,
         ty: &'ty Ty,
-    ) -> BodyAutoderefCandidates<'query, 'ty, D, I> {
+    ) -> AutoderefCandidates<'query, 'ty, D, I> {
         let kind = match mode {
-            BodyAutoderefMode::PeelReferences
-            | BodyAutoderefMode::FieldLookup
-            | BodyAutoderefMode::MethodReceiver => {
+            AutoderefMode::PeelReferences
+            | AutoderefMode::FieldLookup
+            | AutoderefMode::MethodReceiver => {
                 let mut pending = VecDeque::new();
                 pending.push_back(PendingAutoderefCandidate {
                     ty: PendingAutoderefTy::Borrowed(ty),
                     depth: 0,
                     mutability: None,
                 });
-                BodyAutoderefCandidatesKind::Recursive { mode, pending }
+                AutoderefCandidatesKind::Recursive { mode, pending }
             }
-            BodyAutoderefMode::ExplicitDeref => BodyAutoderefCandidatesKind::ExplicitDeref {
+            AutoderefMode::ExplicitDeref => AutoderefCandidatesKind::ExplicitDeref {
                 source_ty: Some(ty),
                 targets: VecDeque::new(),
             },
         };
 
-        BodyAutoderefCandidates {
+        AutoderefCandidates {
             autoderef: self,
             kind,
         }
     }
 
     fn deref_targets(&self, ty: &Ty) -> Result<Vec<Ty>, PackageStoreError> {
-        BodyDerefResolver::new(self.item_paths.clone(), self.semantic_index).targets_for_ty(ty)
+        DerefResolver::new(self.item_paths.clone(), self.lookup_index).targets_for_ty(ty)
     }
 }
 
 /// Describes which adjustment rule the caller wants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BodyAutoderefMode {
+pub enum AutoderefMode {
     /// Peel only explicit `&T` / `&mut T` wrappers.
     ///
     /// This mode is for contexts that want reference transparency without receiver adjustment,
@@ -98,21 +96,21 @@ pub enum BodyAutoderefMode {
     ExplicitDeref,
 }
 
-impl BodyAutoderefMode {
+impl AutoderefMode {
     fn allows_trait_deref(self) -> bool {
         matches!(self, Self::FieldLookup | Self::MethodReceiver)
     }
 }
 
-/// One adjusted candidate type produced by `BodyAutoderef`.
+/// One adjusted candidate type produced by `Autoderef`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BodyAutoderefCandidate<'ty> {
+pub struct AutoderefCandidate<'ty> {
     ty: Cow<'ty, Ty>,
     depth: usize,
     mutability: Option<rg_ty::RefMutability>,
 }
 
-impl<'ty> BodyAutoderefCandidate<'ty> {
+impl<'ty> AutoderefCandidate<'ty> {
     /// The adjusted type visible at this autoderef depth.
     pub fn ty(&self) -> &Ty {
         self.ty.as_ref()
@@ -131,15 +129,15 @@ impl<'ty> BodyAutoderefCandidate<'ty> {
 
 /// Lazy stream of adjusted candidate types.
 #[derive(Clone)]
-pub struct BodyAutoderefCandidates<'query, 'ty, D, I> {
-    autoderef: BodyAutoderef<'query, D, I>,
-    kind: BodyAutoderefCandidatesKind<'ty>,
+pub struct AutoderefCandidates<'query, 'ty, D, I> {
+    autoderef: Autoderef<'query, D, I>,
+    kind: AutoderefCandidatesKind<'ty>,
 }
 
 #[derive(Debug, Clone)]
-enum BodyAutoderefCandidatesKind<'ty> {
+enum AutoderefCandidatesKind<'ty> {
     Recursive {
-        mode: BodyAutoderefMode,
+        mode: AutoderefMode,
         pending: VecDeque<PendingAutoderefCandidate<'ty>>,
     },
     ExplicitDeref {
@@ -189,16 +187,16 @@ impl<'ty> PendingAutoderefTy<'ty> {
     }
 }
 
-impl<'query, 'ty, D, I> Iterator for BodyAutoderefCandidates<'query, 'ty, D, I>
+impl<'query, 'ty, D, I> Iterator for AutoderefCandidates<'query, 'ty, D, I>
 where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Clone,
 {
-    type Item = Result<BodyAutoderefCandidate<'ty>, PackageStoreError>;
+    type Item = Result<AutoderefCandidate<'ty>, PackageStoreError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match &mut self.kind {
-            BodyAutoderefCandidatesKind::Recursive { mode, pending } => {
+            AutoderefCandidatesKind::Recursive { mode, pending } => {
                 let candidate = pending.pop_front()?;
 
                 if candidate.depth < AUTODEREF_LIMIT {
@@ -224,15 +222,15 @@ where
                     }
                 }
 
-                Some(Ok(BodyAutoderefCandidate {
+                Some(Ok(AutoderefCandidate {
                     ty: candidate.ty.into_cow(),
                     depth: candidate.depth,
                     mutability: candidate.mutability,
                 }))
             }
-            BodyAutoderefCandidatesKind::ExplicitDeref { source_ty, targets } => {
+            AutoderefCandidatesKind::ExplicitDeref { source_ty, targets } => {
                 if let Some(target) = targets.pop_front() {
-                    return Some(Ok(BodyAutoderefCandidate {
+                    return Some(Ok(AutoderefCandidate {
                         ty: Cow::Owned(target),
                         depth: 1,
                         mutability: None,
@@ -242,7 +240,7 @@ where
                 let ty = source_ty.take()?;
                 let source = PendingAutoderefTy::Borrowed(ty);
                 if let Some((inner, mutability)) = source.reference_inner() {
-                    return Some(Ok(BodyAutoderefCandidate {
+                    return Some(Ok(AutoderefCandidate {
                         ty: inner.into_cow(),
                         depth: 1,
                         mutability: Some(mutability),
@@ -253,7 +251,7 @@ where
                     Ok(resolved_targets) => {
                         targets.extend(resolved_targets);
                         targets.pop_front().map(|target| {
-                            Ok(BodyAutoderefCandidate {
+                            Ok(AutoderefCandidate {
                                 ty: Cow::Owned(target),
                                 depth: 1,
                                 mutability: None,
@@ -268,13 +266,13 @@ where
 }
 
 #[derive(Debug, Clone)]
-pub struct BodyReferencePeelingCandidates<'ty> {
+pub struct ReferencePeelingCandidates<'ty> {
     next_ty: Option<&'ty Ty>,
     next_depth: usize,
     next_mutability: Option<rg_ty::RefMutability>,
 }
 
-impl<'ty> BodyReferencePeelingCandidates<'ty> {
+impl<'ty> ReferencePeelingCandidates<'ty> {
     /// Peels only explicit `&T` / `&mut T` wrappers.
     pub fn new(ty: &'ty Ty) -> Self {
         Self {
@@ -285,12 +283,12 @@ impl<'ty> BodyReferencePeelingCandidates<'ty> {
     }
 }
 
-impl<'ty> Iterator for BodyReferencePeelingCandidates<'ty> {
-    type Item = BodyAutoderefCandidate<'ty>;
+impl<'ty> Iterator for ReferencePeelingCandidates<'ty> {
+    type Item = AutoderefCandidate<'ty>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let ty = self.next_ty.take()?;
-        let candidate = BodyAutoderefCandidate {
+        let candidate = AutoderefCandidate {
             ty: Cow::Borrowed(ty),
             depth: self.next_depth,
             mutability: self.next_mutability,

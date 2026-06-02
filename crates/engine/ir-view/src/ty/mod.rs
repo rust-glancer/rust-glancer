@@ -7,13 +7,12 @@ pub mod implementation;
 pub mod locals;
 pub mod member;
 
-use rg_body_ir::BodyReferencePeelingCandidates;
 use rg_def_map::Path;
 use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticItemRef, TypePathResolution,
     identity::DeclarationRef, identity::ExprRef,
 };
-use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, TypePathContext};
+use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, ReferencePeelingCandidates, TypePathContext};
 use rg_ty::{NominalTy, Ty};
 
 use crate::{IndexedViewDb, ty::locals::BodyView};
@@ -33,7 +32,7 @@ impl<'a, 'db> TyView<'a, 'db> {
 
     pub fn declarations_for_ty(&self, ty: &Ty) -> Vec<DeclarationRef> {
         let mut declarations = Vec::new();
-        for candidate in BodyReferencePeelingCandidates::new(ty) {
+        for candidate in ReferencePeelingCandidates::new(ty) {
             for ty in candidate.ty().as_nominals() {
                 let declaration = DeclarationRef::from(ty.def);
                 if !declarations.contains(&declaration) {

@@ -1,13 +1,14 @@
 //! Composite member view over nominal types.
 
-use rg_body_ir::{BodyAutoderef, BodyAutoderefMode};
 use rg_def_map::Path;
 use rg_ir_model::{
     BodyRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TraitApplicability, TypeDefRef,
     TypePathResolution,
     hir::items::{FieldData, FunctionData},
 };
-use rg_semantic_ir::{Documentation, FieldKey, ItemPathQuery, ItemStoreQuery, ParamItem};
+use rg_semantic_ir::{
+    Autoderef, AutoderefMode, Documentation, FieldKey, ItemPathQuery, ItemStoreQuery, ParamItem,
+};
 use rg_ty::{NominalTy, Ty};
 
 use crate::{IndexedViewDb, SymbolKind, item::declaration::Declaration, item::path::PathView};
@@ -176,11 +177,10 @@ impl<'a, 'db> MemberView<'a, 'db> {
         &'view self,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
-        let autoderef =
-            BodyAutoderef::new(ItemPathQuery::new(&self.db.def_map, &self.db.semantic_ir));
+        let autoderef = Autoderef::new(ItemPathQuery::new(&self.db.def_map, &self.db.semantic_ir));
         let mut fields = Vec::new();
 
-        for candidate in autoderef.candidates(BodyAutoderefMode::FieldLookup, ty) {
+        for candidate in autoderef.candidates(AutoderefMode::FieldLookup, ty) {
             let candidate = candidate?;
             for receiver_ty in MemberReceiverTy::in_indexed_ty(candidate.ty()) {
                 fields.extend(self.field_candidates(receiver_ty)?);
@@ -297,11 +297,10 @@ impl<'a, 'db> MemberView<'a, 'db> {
         &'view self,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
-        let autoderef =
-            BodyAutoderef::new(ItemPathQuery::new(&self.db.def_map, &self.db.semantic_ir));
+        let autoderef = Autoderef::new(ItemPathQuery::new(&self.db.def_map, &self.db.semantic_ir));
         let mut methods = Vec::new();
 
-        for candidate in autoderef.candidates(BodyAutoderefMode::MethodReceiver, ty) {
+        for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, ty) {
             let candidate = candidate?;
             for receiver_ty in MemberReceiverTy::in_indexed_ty(candidate.ty()) {
                 methods.extend(self.method_candidates(receiver_ty)?);

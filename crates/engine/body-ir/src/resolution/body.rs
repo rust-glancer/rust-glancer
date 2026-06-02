@@ -11,7 +11,10 @@ use rg_ir_model::{
 };
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemLookupIndex, ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn};
+use rg_semantic_ir::{
+    Autoderef, AutoderefMode, ImplMatcher, ItemLookupIndex, ItemPathQuery, ItemStoreQuery,
+    SemanticIrReadTxn, subst_from_generics, type_ref_is_self,
+};
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
@@ -22,14 +25,7 @@ use crate::{
 };
 
 use super::{
-    BodyQuerySource,
-    autoderef::{BodyAutoderef, BodyAutoderefMode},
-    impl_match::BodyImplMatcher,
-    method::{function_applies_to_receiver, trait_function_candidates_for_receiver},
-    normalize::TyNormalizer,
-    pat::PatternTypePropagator,
-    push_unique,
-    ty::{subst_from_generics, type_ref_is_self},
+    BodyQuerySource, normalize::TyNormalizer, pat::PatternTypePropagator, push_unique,
     type_path::BodyTypePathResolver,
 };
 
@@ -71,16 +67,14 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         )
     }
 
-    fn autoderef(&self) -> BodyAutoderef<'_, BodyQuerySource<'_, 'db>, BodyQuerySource<'_, 'db>> {
+    fn autoderef(&self) -> Autoderef<'_, BodyQuerySource<'_, 'db>, BodyQuerySource<'_, 'db>> {
         let source = self.query_source();
-        BodyAutoderef::with_index(ItemPathQuery::new(source, source), self.semantic_index)
+        Autoderef::with_index(ItemPathQuery::new(source, source), self.semantic_index)
     }
 
-    fn impl_matcher(
-        &self,
-    ) -> BodyImplMatcher<'_, BodyQuerySource<'_, 'db>, BodyQuerySource<'_, 'db>> {
+    fn impl_matcher(&self) -> ImplMatcher<'_, BodyQuerySource<'_, 'db>, BodyQuerySource<'_, 'db>> {
         let source = self.query_source();
-        BodyImplMatcher::new(ItemPathQuery::new(source, source))
+        ImplMatcher::new(ItemPathQuery::new(source, source))
     }
 
     fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, 'db>> {
@@ -421,7 +415,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 
         for candidate in self
             .autoderef()
-            .candidates(BodyAutoderefMode::FieldLookup, &self.body.exprs[base].ty)
+            .candidates(AutoderefMode::FieldLookup, &self.body.exprs[base].ty)
         {
             let candidate = candidate?;
             // Autoderef yields candidates by depth. Resolve only after the whole matching depth is
@@ -499,7 +493,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 
         for candidate in self
             .autoderef()
-            .candidates(BodyAutoderefMode::MethodReceiver, receiver_ty)
+            .candidates(AutoderefMode::MethodReceiver, receiver_ty)
         {
             let candidate = candidate?;
             // Autoderef yields candidates by depth. Resolve only after the whole matching depth is
@@ -579,7 +573,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         let mut candidates = Vec::new();
         for candidate in self
             .autoderef()
-            .candidates(BodyAutoderefMode::ExplicitDeref, &self.body.exprs[inner].ty)
+            .candidates(AutoderefMode::ExplicitDeref, &self.body.exprs[inner].ty)
         {
             push_unique(&mut candidates, candidate?.ty().clone());
         }
@@ -626,14 +620,13 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             .inherent_functions_for_type_and_name(ty.def, method_name)
             .to_vec()
         {
-            if function_applies_to_receiver(item_paths.clone(), function, ty)? {
+            if ImplMatcher::new(item_paths.clone()).function_applies_to_receiver(function, ty)? {
                 functions.push(function);
             }
         }
 
-        for (function, _) in trait_function_candidates_for_receiver(
+        for (function, _) in ImplMatcher::new(item_paths).trait_function_candidates_for_receiver(
             Some(self.semantic_index),
-            item_paths,
             ty,
             Some(method_name),
         )? {
@@ -854,9 +847,9 @@ impl<'query, 'db> BodyValuePathResolver<'query, 'db> {
 
     fn impl_matcher(
         &self,
-    ) -> BodyImplMatcher<'query, BodyQuerySource<'query, 'db>, BodyQuerySource<'query, 'db>> {
+    ) -> ImplMatcher<'query, BodyQuerySource<'query, 'db>, BodyQuerySource<'query, 'db>> {
         let source = self.source;
-        BodyImplMatcher::new(ItemPathQuery::new(source, source))
+        ImplMatcher::new(ItemPathQuery::new(source, source))
     }
 
     fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, 'db>> {
@@ -1248,14 +1241,16 @@ impl<'query, 'db> BodyValuePathResolver<'query, 'db> {
         };
 
         for function in inherent_functions {
-            if function_applies_to_receiver(item_paths.clone(), function, ty)? {
+            if ImplMatcher::new(item_paths.clone()).function_applies_to_receiver(function, ty)? {
                 functions.push(function);
             }
         }
 
-        for (function, _) in
-            trait_function_candidates_for_receiver(self.semantic_index, item_paths, ty, None)?
-        {
+        for (function, _) in ImplMatcher::new(item_paths).trait_function_candidates_for_receiver(
+            self.semantic_index,
+            ty,
+            None,
+        )? {
             push_unique(&mut functions, function);
         }
         Ok(functions)

@@ -1,4 +1,4 @@
-//! Trait-backed `Deref` target lookup for Body IR autoderef.
+//! Trait-backed `Deref` target lookup for autoderef.
 //!
 //! This module deliberately stays narrow: it recognizes `core::ops::Deref` impls for a known
 //! nominal receiver and resolves the impl's associated `Target` type with the receiver substitution.
@@ -9,39 +9,38 @@ use rg_ir_model::{
 };
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemLookupIndex, ItemPathQuery, ItemStoreSource, TypePathContext};
 use rg_text::Name;
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
-use super::{impl_match::BodyImplMatcher, push_unique, ty::ty_from_type_ref_in_context};
+use crate::{
+    ImplMatcher, ItemLookupIndex, ItemPathQuery, ItemStoreSource, TypePathContext, push_unique,
+    ty_from_type_ref_in_context,
+};
 
 /// Resolves the associated `Target` type for applicable `core::ops::Deref` impls.
 #[derive(Clone)]
-pub(super) struct BodyDerefResolver<'query, D, I> {
+pub(crate) struct DerefResolver<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
-    semantic_index: Option<&'query ItemLookupIndex>,
+    lookup_index: Option<&'query ItemLookupIndex>,
 }
 
-impl<'query, D, I> BodyDerefResolver<'query, D, I>
+impl<'query, D, I> DerefResolver<'query, D, I>
 where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Clone,
 {
-    pub(super) fn new(
+    pub(crate) fn new(
         item_paths: ItemPathQuery<'query, D, I>,
-        semantic_index: Option<&'query ItemLookupIndex>,
+        lookup_index: Option<&'query ItemLookupIndex>,
     ) -> Self {
         Self {
             item_paths,
-            semantic_index,
+            lookup_index,
         }
     }
 
     /// Returns all one-step `Deref::Target` types for a known type.
-    ///
-    /// Only module-level nominal types participate. Body-local trait impls remain outside this
-    /// lookup model, matching method resolution's current boundary.
-    pub(super) fn targets_for_ty(&self, ty: &Ty) -> Result<Vec<Ty>, PackageStoreError> {
+    pub(crate) fn targets_for_ty(&self, ty: &Ty) -> Result<Vec<Ty>, PackageStoreError> {
         // TODO: Add `DerefMut` once receiver contexts carry enough mutability information to
         // distinguish mutable adjustment from shared `Deref`.
         let mut targets = Vec::new();
@@ -53,15 +52,15 @@ where
         Ok(targets)
     }
 
-    /// Returns one-step `Deref::Target` types for a semantic nominal receiver.
+    /// Returns one-step `Deref::Target` types for a nominal receiver.
     ///
     /// For `impl<T> core::ops::Deref for Wrapper<T> { type Target = T; }` and receiver
     /// `Wrapper<User>`, this resolves the target as `User`.
     fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<Vec<Ty>, PackageStoreError> {
-        let matcher = BodyImplMatcher::new(self.item_paths.clone());
+        let matcher = ImplMatcher::new(self.item_paths.clone());
         let item_query = self.item_paths.items();
         let mut targets = Vec::new();
-        let trait_impls = match self.semantic_index {
+        let trait_impls = match self.lookup_index {
             Some(index) => index.trait_impls_for_type(receiver_ty.def).to_vec(),
             None => item_query.trait_impls_for_type(receiver_ty.def)?,
         };
@@ -77,9 +76,7 @@ where
             // `Deref` is a real type adjustment, not just an optimistic editor candidate.
             // Require a structural impl-self match so uncertain trait impls cannot change
             // field/method lookup receiver types.
-            let Some(subst) =
-                matcher.semantic_trait_impl_structural_match(trait_impl, receiver_ty)?
-            else {
+            let Some(subst) = matcher.trait_impl_structural_match(trait_impl, receiver_ty)? else {
                 continue;
             };
 
@@ -156,7 +153,7 @@ where
         Ok(None)
     }
 
-    /// Converts the associated target type into Body IR after applying impl substitutions.
+    /// Converts the associated target type after applying impl substitutions.
     fn ty_from_target_type_ref(
         &self,
         trait_impl: TraitImplRef,

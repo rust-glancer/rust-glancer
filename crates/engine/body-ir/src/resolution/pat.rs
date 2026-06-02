@@ -8,7 +8,7 @@ use rg_def_map::{Path, PathSegment};
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId, TypeDefId};
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::ItemStoreQuery;
+use rg_semantic_ir::{ItemStoreQuery, ReferencePeelingCandidates, subst_from_generics};
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
@@ -18,10 +18,7 @@ use crate::{
     ir::stmt::StmtKind,
 };
 
-use super::{
-    BodyQuerySource, autoderef::BodyReferencePeelingCandidates, push_unique,
-    ty::subst_from_generics, type_path::BodyTypePathResolver,
-};
+use super::{BodyQuerySource, push_unique, type_path::BodyTypePathResolver};
 
 pub(super) struct PatternTypePropagator<'query, 'db> {
     source: BodyQuerySource<'query, 'db>,
@@ -243,7 +240,7 @@ impl<'query, 'db> PatternTypePropagator<'query, 'db> {
 
         // Pattern propagation peels only reference wrappers so enum payload inference remains
         // useful without opting into receiver autoderef or future trait-backed deref.
-        for deref_candidate in BodyReferencePeelingCandidates::new(expected_ty) {
+        for deref_candidate in ReferencePeelingCandidates::new(expected_ty) {
             for enum_ty in deref_candidate
                 .ty()
                 .as_nominals()

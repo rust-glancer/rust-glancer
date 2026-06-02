@@ -1,4 +1,4 @@
-//! Shallow impl matching for receiver-based Body IR resolution.
+//! Shallow impl matching for receiver-based item queries.
 //!
 //! The matchers own the small amount of generic reasoning used by method lookup and associated
 //! items. They compare explicit impl self types against known receiver types and produce the
@@ -10,17 +10,19 @@ use rg_ir_model::{
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, GenericParams, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemPathQuery, ItemStoreSource, TypePathContext};
 use rg_text::Name;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
-use super::ty::{
-    body_generic_arg_ty, generic_arg_type_ref, ty_from_type_ref_in_context,
-    type_param_name_from_type_ref,
+use crate::{
+    ItemLookupIndex, ItemPathQuery, ItemStoreSource, TypePathContext, push_unique,
+    type_conversion::{
+        generic_arg_ty, generic_arg_type_ref, ty_from_type_ref_in_context,
+        type_param_name_from_type_ref,
+    },
 };
 
 /// Result of matching one trait impl header against a receiver type.
-pub(super) struct TraitImplMatch {
+pub(crate) struct TraitImplMatch {
     applicability: TraitApplicability,
     subst: TypeSubst,
 }
@@ -35,28 +37,28 @@ impl TraitImplMatch {
     }
 
     /// Confidence that the impl header applies to the receiver.
-    pub(super) fn applicability(&self) -> TraitApplicability {
+    fn applicability(&self) -> TraitApplicability {
         self.applicability
     }
 
     /// Splits the result into the match confidence and substitutions for associated signatures.
-    pub(super) fn into_parts(self) -> (TraitApplicability, TypeSubst) {
+    fn into_parts(self) -> (TraitApplicability, TypeSubst) {
         (self.applicability, self.subst)
     }
 }
 
 /// Matcher for impl headers stored in semantic-shaped item stores.
-pub(crate) struct BodyImplMatcher<'query, D, I> {
+pub struct ImplMatcher<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
 }
 
-impl<'query, D, I> BodyImplMatcher<'query, D, I>
+impl<'query, D, I> ImplMatcher<'query, D, I>
 where
     D: DefMapSource,
     I: ItemStoreSource<'query, Error = PackageStoreError>,
 {
     /// Creates a matcher over the same path/item routing used by type conversion.
-    pub(crate) fn new(item_paths: ItemPathQuery<'query, D, I>) -> Self {
+    pub fn new(item_paths: ItemPathQuery<'query, D, I>) -> Self {
         Self { item_paths }
     }
 
@@ -64,7 +66,7 @@ where
     ///
     /// Trait functions are accepted here because the trait impl candidate already carries the
     /// receiver-specific filtering before a trait function reaches this point.
-    pub(crate) fn semantic_function_applies_to_receiver(
+    pub fn function_applies_to_receiver(
         &self,
         function_ref: FunctionRef,
         receiver_ty: &NominalTy,
@@ -92,7 +94,7 @@ where
     ///
     /// Both target Semantic IR and body shadow item stores use `ImplData`, so the low-level
     /// receiver check should not care which store provided the impl.
-    pub(crate) fn impl_applies_to_receiver(
+    pub fn impl_applies_to_receiver(
         &self,
         impl_ref: ImplRef,
         impl_data: &ImplData,
@@ -105,11 +107,11 @@ where
         self.impl_self_args_match_receiver(impl_ref, impl_data, receiver_ty)
     }
 
-    /// Matches one semantic trait impl against a receiver.
+    /// Matches one trait impl against a receiver.
     ///
     /// For `impl<T> Trait for Wrapper<T>` and receiver `Wrapper<User>`, this returns an
     /// `TraitImplMatch` whose substitutions include `T -> User`.
-    pub(super) fn semantic_trait_impl_match(
+    fn trait_impl_match(
         &self,
         trait_impl: TraitImplRef,
         receiver_ty: &NominalTy,
@@ -142,16 +144,16 @@ where
 
         Ok(Some(TraitImplMatch::new(
             applicability,
-            self.semantic_impl_self_subst_for_impl(impl_data, receiver_ty),
+            self.impl_self_subst_for_impl(impl_data, receiver_ty),
         )))
     }
 
-    /// Matches one semantic trait impl for contexts that perform a real type adjustment.
+    /// Matches one trait impl for contexts that perform a real type adjustment.
     ///
     /// This is stricter than method candidate matching: only direct impl type parameters such as
     /// `Wrapper<T>` are bindable. Nested generic patterns like `Wrapper<Option<T>>`, where clauses,
-    /// bounded params, lifetimes, and const generics are rejected until Body IR has a real solver.
-    pub(super) fn semantic_trait_impl_structural_match(
+    /// bounded params, lifetimes, and const generics are rejected until a real solver exists.
+    pub(crate) fn trait_impl_structural_match(
         &self,
         trait_impl: TraitImplRef,
         receiver_ty: &NominalTy,
@@ -171,35 +173,102 @@ where
         self.impl_self_structural_subst(trait_impl.impl_ref, impl_data, receiver_ty)
     }
 
-    /// Returns only the yes/maybe/no part of `semantic_trait_impl_match`.
-    pub(crate) fn semantic_trait_impl_applicability(
+    /// Returns only the yes/maybe/no part of `trait_impl_match`.
+    pub fn trait_impl_applicability(
         &self,
         trait_impl: TraitImplRef,
         receiver_ty: &NominalTy,
     ) -> Result<TraitApplicability, PackageStoreError> {
         Ok(self
-            .semantic_trait_impl_match(trait_impl, receiver_ty)?
+            .trait_impl_match(trait_impl, receiver_ty)?
             .map(|trait_impl_match| trait_impl_match.applicability())
             .unwrap_or(TraitApplicability::No))
     }
 
-    /// Builds impl-header substitutions from already-loaded semantic impl data.
-    ///
-    /// This is useful when the caller has an impl candidate rather than a function reference.
-    pub(super) fn semantic_impl_self_subst_for_impl(
-        &self,
-        impl_data: &ImplData,
-        receiver_ty: &NominalTy,
-    ) -> TypeSubst {
-        self.impl_self_subst_for_impl(impl_data, receiver_ty)
-    }
-
-    pub(super) fn impl_self_subst_for_impl(
+    /// Builds receiver substitutions from already-loaded impl data.
+    pub fn impl_self_subst_for_impl(
         &self,
         impl_data: &ImplData,
         receiver_ty: &NominalTy,
     ) -> TypeSubst {
         Self::impl_self_subst(&impl_data.generics, &impl_data.self_ty, &receiver_ty.args)
+    }
+
+    /// Returns trait-associated function candidates for a nominal receiver.
+    ///
+    /// The optional index lets hot method lookup reuse a precomputed receiver cache. Without it,
+    /// the query falls back to direct item-store scans through the same provider.
+    pub fn trait_function_candidates_for_receiver(
+        &self,
+        index: Option<&ItemLookupIndex>,
+        receiver_ty: &NominalTy,
+        method_name: Option<&str>,
+    ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
+        let item_query = self.item_paths.items();
+        let mut functions = Vec::new();
+        let trait_impls = match index {
+            Some(index) => index.trait_impls_for_type(receiver_ty.def).to_vec(),
+            None => item_query.trait_impls_for_type(receiver_ty.def)?,
+        };
+
+        for trait_impl in trait_impls {
+            // For method calls, the name is known before we do any trait-impl compatibility work.
+            // If the indexed trait has no function with that name, this impl cannot contribute a
+            // candidate regardless of how well the impl header matches the receiver.
+            let mut indexed_trait_functions = None;
+            if let (Some(index), Some(method_name)) = (index, method_name)
+                && let Some(functions) =
+                    index.trait_functions_by_name(trait_impl.trait_ref, method_name)
+            {
+                if functions.is_empty() {
+                    continue;
+                }
+                indexed_trait_functions = Some(functions.to_vec());
+            }
+
+            let Some(trait_impl_match) = self.trait_impl_match(trait_impl, receiver_ty)? else {
+                continue;
+            };
+            let (applicability, _) = trait_impl_match.into_parts();
+
+            let trait_functions = if let Some(functions) = indexed_trait_functions {
+                functions
+            } else {
+                let trait_functions = if let Some(index) = index
+                    && let Some(functions) = index.trait_functions(trait_impl.trait_ref)
+                {
+                    functions.to_vec()
+                } else {
+                    item_query
+                        .trait_data(trait_impl.trait_ref)?
+                        .map(|t| t.functions().collect())
+                        .unwrap_or_default()
+                };
+
+                // The direct item-store fallback cannot skip the impl check up front, but it can
+                // still avoid returning unrelated trait functions to the later method-call filter.
+                if let Some(method_name) = method_name {
+                    let mut retained = Vec::new();
+                    for function in trait_functions {
+                        let Some(function_data) = item_query.function_data(function)? else {
+                            continue;
+                        };
+                        if function_data.name == method_name {
+                            retained.push(function);
+                        }
+                    }
+                    retained
+                } else {
+                    trait_functions
+                }
+            };
+
+            for function in trait_functions {
+                Self::push_function_candidate(&mut functions, function, applicability);
+            }
+        }
+
+        Ok(functions)
     }
 
     /// Performs the boolean self-type argument check used by inherent impl methods.
@@ -262,7 +331,7 @@ where
     /// Performs the trait-impl self-type argument check with uncertainty preserved.
     ///
     /// Generic or syntax-only pieces produce `Maybe` instead of being rejected, because callers can
-    /// still show useful trait-method candidates when a full proof is outside Body IR's model.
+    /// still show useful trait-method candidates when a full proof is outside this small model.
     fn impl_self_args_applicability(
         &self,
         impl_ref: ImplRef,
@@ -355,7 +424,7 @@ where
             let Some(impl_arg) = generic_arg_type_ref(impl_arg) else {
                 return Ok(None);
             };
-            let Some(receiver_arg) = body_generic_arg_ty(receiver_arg) else {
+            let Some(receiver_arg) = generic_arg_ty(receiver_arg) else {
                 return Ok(None);
             };
 
@@ -415,7 +484,7 @@ where
         let impl_type_params = Self::impl_type_param_names(generics);
         let receiver_type_args = receiver_args
             .iter()
-            .filter_map(body_generic_arg_ty)
+            .filter_map(generic_arg_ty)
             .collect::<Vec<_>>();
 
         segment
@@ -464,9 +533,38 @@ where
     fn ty_args(args: &[GenericArg]) -> Option<Vec<Ty>> {
         let mut type_args = Vec::new();
         for arg in args {
-            type_args.push(body_generic_arg_ty(arg)?);
+            type_args.push(generic_arg_ty(arg)?);
         }
         Some(type_args)
+    }
+
+    fn push_function_candidate(
+        functions: &mut Vec<(FunctionRef, TraitApplicability)>,
+        function: FunctionRef,
+        applicability: TraitApplicability,
+    ) {
+        if let Some((_, existing)) = functions
+            .iter_mut()
+            .find(|(existing_function, _)| *existing_function == function)
+        {
+            *existing = Self::best_applicability(*existing, applicability);
+            return;
+        }
+
+        push_unique(functions, (function, applicability));
+    }
+
+    fn best_applicability(
+        left: TraitApplicability,
+        right: TraitApplicability,
+    ) -> TraitApplicability {
+        match (left, right) {
+            (TraitApplicability::Yes, _) | (_, TraitApplicability::Yes) => TraitApplicability::Yes,
+            (TraitApplicability::Maybe, _) | (_, TraitApplicability::Maybe) => {
+                TraitApplicability::Maybe
+            }
+            (TraitApplicability::No, TraitApplicability::No) => TraitApplicability::No,
+        }
     }
 
     /// Returns whether the impl header has no constraints that require solving.

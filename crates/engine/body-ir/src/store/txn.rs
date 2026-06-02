@@ -6,15 +6,15 @@ use rg_ir_model::{
     TraitImplRef, TypePathResolution,
 };
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
-use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{
+    ImplMatcher, ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn, TypePathContext,
+    ty_from_type_ref_in_context,
+};
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
     BodyData, BodyResolution, PackageBodies, TargetBodies,
-    resolution::{
-        self, BodyImplMatcher, BodyQuerySource, BodyTypePathResolver, BodyValuePathResolver,
-        ty_from_type_ref_in_context,
-    },
+    resolution::{BodyQuerySource, BodyTypePathResolver, BodyValuePathResolver},
 };
 
 /// Read-only Body IR access for one query transaction.
@@ -124,18 +124,12 @@ impl<'db> BodyIrReadTxn<'db> {
                 return Ok(false);
             };
             let source = BodyQuerySource::new(def_map, semantic_ir, body_ref, body);
-            return resolution::function_applies_to_receiver(
-                ItemPathQuery::new(source, source),
-                function_ref,
-                receiver_ty,
-            );
+            return ImplMatcher::new(ItemPathQuery::new(source, source))
+                .function_applies_to_receiver(function_ref, receiver_ty);
         }
 
-        resolution::function_applies_to_receiver(
-            ItemPathQuery::new(def_map, semantic_ir),
-            function_ref,
-            receiver_ty,
-        )
+        ImplMatcher::new(ItemPathQuery::new(def_map, semantic_ir))
+            .function_applies_to_receiver(function_ref, receiver_ty)
     }
 
     /// Returns trait-associated function candidates for a semantic receiver type.
@@ -150,20 +144,12 @@ impl<'db> BodyIrReadTxn<'db> {
                 return Ok(Vec::new());
             };
             let source = BodyQuerySource::new(def_map, semantic_ir, body_ref, body);
-            return resolution::trait_function_candidates_for_receiver(
-                None,
-                ItemPathQuery::new(source, source),
-                receiver_ty,
-                None,
-            );
+            return ImplMatcher::new(ItemPathQuery::new(source, source))
+                .trait_function_candidates_for_receiver(None, receiver_ty, None);
         }
 
-        resolution::trait_function_candidates_for_receiver(
-            None,
-            ItemPathQuery::new(def_map, semantic_ir),
-            receiver_ty,
-            None,
-        )
+        ImplMatcher::new(ItemPathQuery::new(def_map, semantic_ir))
+            .trait_function_candidates_for_receiver(None, receiver_ty, None)
     }
 
     /// Checks whether a semantic trait impl is a plausible candidate for a receiver type.
@@ -179,15 +165,13 @@ impl<'db> BodyIrReadTxn<'db> {
                 return Ok(false);
             };
             let source = BodyQuerySource::new(def_map, semantic_ir, body_ref, body);
-            return Ok(BodyImplMatcher::new(ItemPathQuery::new(source, source))
-                .semantic_trait_impl_applicability(trait_impl, receiver_ty)?
+            return Ok(ImplMatcher::new(ItemPathQuery::new(source, source))
+                .trait_impl_applicability(trait_impl, receiver_ty)?
                 .is_applicable());
         }
 
-        Ok(
-            BodyImplMatcher::new(ItemPathQuery::new(def_map, semantic_ir))
-                .semantic_trait_impl_applicability(trait_impl, receiver_ty)?
-                .is_applicable(),
-        )
+        Ok(ImplMatcher::new(ItemPathQuery::new(def_map, semantic_ir))
+            .trait_impl_applicability(trait_impl, receiver_ty)?
+            .is_applicable())
     }
 }

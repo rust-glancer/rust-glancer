@@ -1692,6 +1692,7 @@ dependencies = [
  "rg_package_store",
  "rg_parse",
  "rg_text",
+ "rg_ty",
  "rg_workspace",
  "test_fixture",
  "wincode",

@@ -10,18 +10,14 @@ use rg_ir_model::{
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, TypePathContext};
+use rg_semantic_ir::{
+    ImplMatcher, ItemPathQuery, ItemStoreQuery, TypePathContext, subst_from_generics,
+    substitute_type_param, ty_from_type_path_resolution, ty_from_type_ref_in_context,
+    type_ref_is_self,
+};
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
-use super::{
-    BodyQuerySource,
-    impl_match::BodyImplMatcher,
-    push_unique,
-    ty::{
-        subst_from_generics, substitute_type_param, ty_from_body_resolution,
-        ty_from_type_ref_in_context, type_ref_is_self,
-    },
-};
+use super::{BodyQuerySource, push_unique};
 
 pub(crate) struct BodyTypePathResolver<'query, 'db> {
     source: BodyQuerySource<'query, 'db>,
@@ -34,9 +30,9 @@ impl<'query, 'db> BodyTypePathResolver<'query, 'db> {
 
     fn impl_matcher(
         &self,
-    ) -> BodyImplMatcher<'query, BodyQuerySource<'query, 'db>, BodyQuerySource<'query, 'db>> {
+    ) -> ImplMatcher<'query, BodyQuerySource<'query, 'db>, BodyQuerySource<'query, 'db>> {
         let source = self.source;
-        BodyImplMatcher::new(ItemPathQuery::new(source, source))
+        ImplMatcher::new(ItemPathQuery::new(source, source))
     }
 
     fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, 'db>> {
@@ -50,7 +46,8 @@ impl<'query, 'db> BodyTypePathResolver<'query, 'db> {
     ) -> Result<TypePathResolution, PackageStoreError> {
         if let Some((prefix, name)) = split_associated_path(path) {
             let prefix_resolution = self.resolve_in_scope(scope, &prefix)?;
-            let prefix_ty = ty_from_body_resolution(prefix_resolution, Ty::Unknown, Vec::new());
+            let prefix_ty =
+                ty_from_type_path_resolution(prefix_resolution, Ty::Unknown, Vec::new());
             let mut aliases = Vec::new();
             for ty in prefix_ty.as_nominals() {
                 if let Some(alias) = self.associated_type_alias_for_type(ty, name)? {
@@ -140,7 +137,7 @@ impl<'query, 'db> BodyTypePathResolver<'query, 'db> {
                 } else {
                     Ty::syntax(ty.clone())
                 };
-                Ok(ty_from_body_resolution(resolution, fallback, args))
+                Ok(ty_from_type_path_resolution(resolution, fallback, args))
             }
             _ => self.ty_from_type_ref_in_context(
                 ty,

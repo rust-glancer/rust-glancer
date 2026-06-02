@@ -12,11 +12,11 @@ use rg_analysis::{
     CompletionApplicability, CompletionClientCapabilities, CompletionItem, CompletionQuery,
     WorkspaceSymbol,
 };
-use rg_body_ir::BodyReferencePeelingCandidates;
 use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb};
+use rg_semantic_ir::ReferencePeelingCandidates;
 use rg_workspace::WorkspaceMetadata;
 use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate_with_markers};
 
@@ -788,7 +788,7 @@ fn nominal_type_names_at(
     let semantic_ir = host.state.semantic_ir.read_txn(unexpected_package_loader());
     let def_map = host.state.def_map.read_txn(unexpected_package_loader());
     let mut names = Vec::new();
-    for candidate in BodyReferencePeelingCandidates::new(&ty) {
+    for candidate in ReferencePeelingCandidates::new(&ty) {
         for ty in candidate.ty().as_nominals() {
             let Some(target_ref) = ty.def.origin.as_target_ref() else {
                 continue;
