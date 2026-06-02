@@ -3,6 +3,7 @@
 //! This view answers "what declarations exist in this target or body" without committing callers
 //! to DefMap, Semantic IR, or Body IR storage shapes.
 
+use rg_def_map::DefMapQuery;
 use rg_ir_model::{
     AssocItemId, ConstRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef,
     FunctionRef as SemanticFunctionRef, ModuleId, ModuleRef, SemanticItemKind, TargetRef,
@@ -125,13 +126,8 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     }
 
     pub fn module_container_name(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {
-        let Some(target) = module_ref.origin.as_target_ref() else {
-            return Ok(None);
-        };
-        let Some(def_map) = self.db.def_map.def_map(target)? else {
-            return Ok(None);
-        };
-        let Some(module) = def_map.module(module_ref.module) else {
+        let def_maps = DefMapQuery::new(self.db);
+        let Some(module) = def_maps.module_data(module_ref)? else {
             return Ok(None);
         };
         let Some(parent) = module.parent else {
@@ -334,13 +330,8 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     }
 
     fn module_path(&self, origin: DefMapRef, module: ModuleId) -> anyhow::Result<String> {
-        let Some(target) = origin.as_target_ref() else {
-            return Ok(String::new());
-        };
-        let Some(def_map) = self.db.def_map.def_map(target)? else {
-            return Ok(String::new());
-        };
-        let Some(data) = def_map.module(module) else {
+        let def_maps = DefMapQuery::new(self.db);
+        let Some(data) = def_maps.module_data(ModuleRef { origin, module })? else {
             return Ok(String::new());
         };
         let Some(name) = &data.name else {

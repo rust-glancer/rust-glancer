@@ -137,17 +137,12 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         &self,
         visible_def: VisibleScopeDef,
     ) -> anyhow::Result<Option<ModuleScopeName>> {
+        let def_maps = DefMapQuery::new(self.db);
         let declaration = DeclarationRef::from_def(visible_def.def);
         let mut function = None;
         let (kind, documentation) = match visible_def.def {
             DefId::Module(module) => {
-                let Some(target) = module.origin.as_target_ref() else {
-                    return Ok(None);
-                };
-                let Some(def_map) = self.db.def_map.def_map(target)? else {
-                    return Ok(None);
-                };
-                let Some(data) = def_map.module(module.module) else {
+                let Some(data) = def_maps.module_data(module)? else {
                     return Ok(None);
                 };
                 (
@@ -156,15 +151,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
                 )
             }
             DefId::Local(local_def_ref) => {
-                let Some(target) = local_def_ref.origin.as_target_ref() else {
-                    return Ok(None);
-                };
-                let Some(data) = self
-                    .db
-                    .def_map
-                    .def_map(target)?
-                    .and_then(|def_map| def_map.local_def(local_def_ref.local_def))
-                else {
+                let Some(data) = def_maps.local_def_data(local_def_ref)? else {
                     return Ok(None);
                 };
                 if let Some(SemanticItemRef::Function(function_ref)) =

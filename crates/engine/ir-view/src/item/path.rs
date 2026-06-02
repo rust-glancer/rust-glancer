@@ -4,6 +4,7 @@
 //! paths used by hover, completion details, and symbol containers. It intentionally does not try to
 //! reconstruct import aliases or rustdoc-style canonicalization.
 
+use rg_def_map::DefMapQuery;
 use rg_ir_model::{
     ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitRef,
     TypeAliasRef, TypeDefId, TypeDefRef, hir::items::EnumVariantData,
@@ -24,16 +25,18 @@ impl<'a, 'db> PathView<'a, 'db> {
             return Ok(None);
         };
         let package = self.0.def_map.package(target.package)?;
-        let Some(def_map) = self.0.def_map.def_map(target)? else {
-            return Ok(None);
-        };
+        let def_maps = DefMapQuery::new(self.0);
         let mut names = Vec::new();
         let mut current = module_ref.module;
 
         // Module ids form a parent chain rooted at the target module. Walking it upward and then
         // reversing gives us the same crate::item::module::child shape users see in Rust paths.
         loop {
-            let Some(module) = def_map.module(current) else {
+            let Some(module) = def_maps.module_data(ModuleRef {
+                origin: module_ref.origin,
+                module: current,
+            })?
+            else {
                 return Ok(None);
             };
             if let Some(name) = &module.name {

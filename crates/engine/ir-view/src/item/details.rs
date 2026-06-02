@@ -4,9 +4,10 @@
 //! facts as well: docs, display path, symbol kind, and a compact signature. This view keeps that
 //! storage-specific projection out of feature queries.
 
+use rg_def_map::DefMapQuery;
 use rg_ir_model::{
-    BodyBindingRef, ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef,
-    ModuleRef, SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    BodyBindingRef, ConstRef, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, ModuleRef,
+    SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
     identity::DeclarationRef,
 };
 use rg_semantic_ir::{Documentation, ItemStoreQuery};
@@ -231,13 +232,8 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         module_ref: ModuleRef,
         context: &DeclarationDetailsContext,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(target) = module_ref.origin.as_target_ref() else {
-            return Ok(None);
-        };
-        let Some(def_map) = self.db.def_map.def_map(target)? else {
-            return Ok(None);
-        };
-        let Some(module) = def_map.module(module_ref.module) else {
+        let def_maps = DefMapQuery::new(self.db);
+        let Some(module) = def_maps.module_data(module_ref)? else {
             return Ok(None);
         };
         let name = context
@@ -257,20 +253,8 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         &self,
         local_def_ref: LocalDefRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let data = match local_def_ref.origin {
-            DefMapRef::Target(target) => self
-                .db
-                .def_map
-                .def_map(target)?
-                .and_then(|def_map| def_map.local_def(local_def_ref.local_def)),
-            DefMapRef::Body(body_ref) => self
-                .db
-                .body_ir
-                .body_data(body_ref)?
-                .and_then(|body| body.body_def_map())
-                .and_then(|def_map| def_map.local_def(local_def_ref.local_def)),
-        };
-        let Some(data) = data else {
+        let def_maps = DefMapQuery::new(self.db);
+        let Some(data) = def_maps.local_def_data(local_def_ref)? else {
             return Ok(None);
         };
         let path = PathView::new(self.db)

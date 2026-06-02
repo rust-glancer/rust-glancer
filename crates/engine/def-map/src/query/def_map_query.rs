@@ -3,13 +3,13 @@
 //! DefMaps only know about one scope graph. This query object adds the routing layer that decides
 //! which graph owns a `DefMapRef`, then reuses the private path resolver for the actual lookup.
 
-use rg_ir_model::{DefMapRef, LocalDefRef, ModuleRef, TargetRef};
+use rg_ir_model::{DefMapRef, LocalDefRef, LocalImplRef, ModuleRef, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
 
 use crate::{
-    DefMap, LocalDefData, MacroDefinitionData, ModuleData, Path, ResolvePathResult, ScopeNamespace,
-    VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin, model::ScopeEntryRef,
+    DefMap, LocalDefData, LocalImplData, MacroDefinitionData, ModuleData, Path, ResolvePathResult,
+    ScopeNamespace, VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin, model::ScopeEntryRef,
 };
 
 use super::{
@@ -122,6 +122,46 @@ where
         PathResolver::new(self).resolve_lexical_name_in_module(from, module, name, filter)
     }
 
+    pub fn module_data(
+        &self,
+        module_ref: ModuleRef,
+    ) -> Result<Option<&ModuleData>, PackageStoreError> {
+        Ok(self
+            .source
+            .def_map_for_origin(module_ref.origin)?
+            .and_then(|def_map| def_map.module(module_ref.module)))
+    }
+
+    pub fn local_def_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&LocalDefData>, PackageStoreError> {
+        Ok(self
+            .source
+            .def_map_for_origin(local_def_ref.origin)?
+            .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
+    }
+
+    pub fn local_impl_data(
+        &self,
+        local_impl_ref: LocalImplRef,
+    ) -> Result<Option<&LocalImplData>, PackageStoreError> {
+        Ok(self
+            .source
+            .def_map_for_origin(local_impl_ref.origin)?
+            .and_then(|def_map| def_map.local_impl(local_impl_ref.local_impl)))
+    }
+
+    pub fn macro_definition_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&MacroDefinitionData>, PackageStoreError> {
+        Ok(self
+            .source
+            .def_map_for_origin(local_def_ref.origin)?
+            .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))
+    }
+
     /// Returns definitions from `source_module` that are visible from `importing_module`.
     pub fn visible_scope_defs(
         &self,
@@ -178,10 +218,7 @@ where
     S: DefMapSource,
 {
     fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, PackageStoreError> {
-        Ok(self
-            .source
-            .def_map_for_origin(module_ref.origin)?
-            .and_then(|def_map| def_map.module(module_ref.module)))
+        DefMapQuery::module_data(self, module_ref)
     }
 
     fn module_scope_entry<'a>(
@@ -215,20 +252,14 @@ where
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&LocalDefData>, PackageStoreError> {
-        Ok(self
-            .source
-            .def_map_for_origin(local_def_ref.origin)?
-            .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
+        DefMapQuery::local_def_data(self, local_def_ref)
     }
 
     fn macro_definition_data(
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&MacroDefinitionData>, PackageStoreError> {
-        Ok(self
-            .source
-            .def_map_for_origin(local_def_ref.origin)?
-            .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))
+        DefMapQuery::macro_definition_data(self, local_def_ref)
     }
 }
 

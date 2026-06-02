@@ -1,9 +1,9 @@
 //! Source-level declaration lookup shared by editor queries.
 
-use rg_def_map::ModuleOrigin;
+use rg_def_map::{DefMapQuery, ModuleOrigin};
 use rg_ir_model::{
-    BodyBindingRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, LocalImplRef,
-    ModuleRef, SemanticItemKind, SemanticItemRef, TargetRef, identity::DeclarationRef,
+    BodyBindingRef, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, ModuleRef,
+    SemanticItemKind, SemanticItemRef, TargetRef, identity::DeclarationRef,
 };
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::{ItemStoreQuery, TypeRef};
@@ -87,13 +87,8 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     fn module(&self, module_ref: ModuleRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(target) = module_ref.origin.as_target_ref() else {
-            return Ok(None);
-        };
-        let Some(def_map) = self.db.def_map.def_map(target)? else {
-            return Ok(None);
-        };
-        let Some(module) = def_map.module(module_ref.module) else {
+        let def_maps = DefMapQuery::new(self.db);
+        let Some(module) = def_maps.module_data(module_ref)? else {
             return Ok(None);
         };
         let Some(name) = module.name.as_ref().map(ToString::to_string) else {
@@ -123,7 +118,8 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     fn local_def(&self, local_def: LocalDefRef) -> anyhow::Result<Option<Declaration>> {
-        let Some(data) = self.local_def_data(local_def)? else {
+        let def_maps = DefMapQuery::new(self.db);
+        let Some(data) = def_maps.local_def_data(local_def)? else {
             return Ok(None);
         };
 
@@ -156,7 +152,8 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 let Some(local_impl_ref) = view.local_impl() else {
                     return Ok(None);
                 };
-                let Some(local_impl) = self.local_impl_data(local_impl_ref)? else {
+                let def_maps = DefMapQuery::new(self.db);
+                let Some(local_impl) = def_maps.local_impl_data(local_impl_ref)? else {
                     return Ok(None);
                 };
                 let Some((self_ty, trait_ref)) = view.impl_header() else {
@@ -251,44 +248,6 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         Ok(MemberView::new(self.db)
             .function(function)?
             .map(|function| function.declaration()))
-    }
-
-    fn local_def_data(
-        &self,
-        local_def: LocalDefRef,
-    ) -> anyhow::Result<Option<&rg_def_map::LocalDefData>> {
-        match local_def.origin {
-            DefMapRef::Target(target) => Ok(self
-                .db
-                .def_map
-                .def_map(target)?
-                .and_then(|def_map| def_map.local_def(local_def.local_def))),
-            DefMapRef::Body(body_ref) => Ok(self
-                .db
-                .body_ir
-                .body_data(body_ref)?
-                .and_then(|body| body.body_def_map())
-                .and_then(|def_map| def_map.local_def(local_def.local_def))),
-        }
-    }
-
-    fn local_impl_data(
-        &self,
-        local_impl: LocalImplRef,
-    ) -> anyhow::Result<Option<&rg_def_map::LocalImplData>> {
-        match local_impl.origin {
-            DefMapRef::Target(target) => Ok(self
-                .db
-                .def_map
-                .def_map(target)?
-                .and_then(|def_map| def_map.local_impl(local_impl.local_impl))),
-            DefMapRef::Body(body_ref) => Ok(self
-                .db
-                .body_ir
-                .body_data(body_ref)?
-                .and_then(|body| body.body_def_map())
-                .and_then(|def_map| def_map.local_impl(local_impl.local_impl))),
-        }
     }
 
     fn impl_label(self_ty: &TypeRef, trait_ref: Option<&TypeRef>) -> String {

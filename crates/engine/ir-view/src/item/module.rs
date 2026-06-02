@@ -1,6 +1,6 @@
 //! Generic module facts from the indexed module tree.
 
-use rg_def_map::{ModuleOrigin, PackageSlot};
+use rg_def_map::{DefMapQuery, ModuleOrigin, PackageSlot};
 use rg_ir_model::{ModuleRef, TargetRef};
 use rg_parse::{FileId, TargetId};
 
@@ -16,13 +16,8 @@ impl<'a, 'db> ModuleView<'a, 'db> {
     }
 
     pub fn root_file(&self, module_ref: ModuleRef) -> anyhow::Result<Option<FileId>> {
-        let Some(target) = module_ref.origin.as_target_ref() else {
-            return Ok(None);
-        };
-        let Some(def_map) = self.db.def_map.def_map(target)? else {
-            return Ok(None);
-        };
-        let Some(module) = def_map.module(module_ref.module) else {
+        let def_maps = DefMapQuery::new(self.db);
+        let Some(module) = def_maps.module_data(module_ref)? else {
             return Ok(None);
         };
         match module.origin {
