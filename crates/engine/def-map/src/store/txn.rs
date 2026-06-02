@@ -47,6 +47,22 @@ impl DefMapSource for DefMapReadTxn<'_> {
             .and_then(|data| data.extern_prelude().get(name).copied()))
     }
 
+    fn extern_roots(
+        &self,
+        target: TargetRef,
+    ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError> {
+        Ok(self
+            .package(target.package)?
+            .target_data(target.target)
+            .map(|data| {
+                data.extern_prelude()
+                    .iter()
+                    .map(|(name, module)| (name.to_string(), *module))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
     fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
         Ok(self
             .package(target.package)?

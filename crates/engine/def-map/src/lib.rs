@@ -12,12 +12,12 @@ pub use self::{
         ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
         LocalDefKind, LocalImplData, MacroDefinitionData, MacroDefinitionPayload, ModuleData,
         ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, PackageDefMaps, Path,
-        PathSegment, ScopeBinding, ScopeBindingOrigin, ScopeEntry,
+        PathSegment, ScopeBinding, ScopeBindingOrigin, ScopeEntry, ScopeNamespace, VisibleScopeDef,
+        VisibleScopeDefs, VisibleScopeOrigin,
     },
     query::{
         DefMapCursorCandidate, DefMapPathCompletionSite, DefMapQuery, DefMapSource,
-        DefMapUnqualifiedCompletionSite, NameResolutionFilter, ResolvePathResult, ScopeNamespace,
-        VisibleScopeDef, VisibleScopeOrigin,
+        DefMapUnqualifiedCompletionSite, NameResolutionFilter, ResolvePathResult,
     },
     store::{DefMapDb, DefMapReadTxn, DefMapStats},
 };

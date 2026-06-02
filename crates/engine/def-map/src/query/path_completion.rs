@@ -1,15 +1,13 @@
-//! Path completion queries over module scopes.
+//! Path completion source-site scanners.
 //!
-//! Completion uses the same path resolution and visibility checks as imports. This module keeps
-//! those rules inside DefMap and exposes only the visible definitions that analysis can render.
+//! Completion still uses DefMap queries for lookup. This module only finds the source location
+//! that should be completed.
 
-use std::collections::HashSet;
-
-use rg_ir_model::{DefId, DefMapRef, ModuleRef, TargetRef};
+use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{DefMap, DefMapQuery, DefMapReadTxn, ImportSourcePath, Path};
+use crate::{DefMap, DefMapReadTxn, ImportSourcePath, Path};
 
 /// Source site selected for a qualified import-path completion query.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,42 +25,6 @@ pub struct DefMapUnqualifiedCompletionSite {
     pub module: ModuleRef,
     /// Name prefix already typed in the import path.
     pub member_prefix_span: Span,
-}
-
-/// Where a visible definition came from during unqualified lookup.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum VisibleScopeOrigin {
-    ModuleScope,
-    Prelude,
-    ExternRoot,
-}
-
-/// Namespace slot occupied by a visible module-scope definition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ScopeNamespace {
-    Types,
-    Values,
-    Macros,
-}
-
-impl ScopeNamespace {
-    fn sort_rank(self) -> u8 {
-        match self {
-            Self::Types => 0,
-            Self::Values => 1,
-            Self::Macros => 2,
-        }
-    }
-}
-
-/// One definition visible from a module through another module's scope.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VisibleScopeDef {
-    pub label: String,
-    pub namespace: ScopeNamespace,
-    pub def: DefId,
-    /// Lookup source used by unqualified completions to rank familiar names first.
-    pub origin: VisibleScopeOrigin,
 }
 
 impl DefMapReadTxn<'_> {
@@ -96,79 +58,6 @@ impl DefMapReadTxn<'_> {
             offset,
         }
         .scan_unqualified()
-    }
-
-    /// Returns definitions from `source_module` that are visible from `importing_module`.
-    pub fn visible_scope_defs(
-        &self,
-        importing_module: ModuleRef,
-        source_module: ModuleRef,
-    ) -> Result<Vec<VisibleScopeDef>, PackageStoreError> {
-        let scope = DefMapQuery::new(self).visible_scope(importing_module, source_module)?;
-        let mut defs = Vec::new();
-        let mut shadowed = HashSet::new();
-        push_visible_scope_defs(
-            &mut defs,
-            &mut shadowed,
-            &scope,
-            VisibleScopeOrigin::ModuleScope,
-            false,
-        );
-        sort_visible_scope_defs(&mut defs);
-        Ok(defs)
-    }
-
-    /// Returns names visible from `importing_module` without a qualifier.
-    pub fn visible_unqualified_scope_defs(
-        &self,
-        importing_module: ModuleRef,
-    ) -> Result<Vec<VisibleScopeDef>, PackageStoreError> {
-        let mut defs = Vec::new();
-        let mut shadowed = HashSet::new();
-
-        // First-segment resolution checks the current module scope before extern roots and the
-        // standard prelude. Completion follows the same namespace-specific shadowing order.
-        let resolver = DefMapQuery::new(self);
-        let current_scope = resolver.visible_scope(importing_module, importing_module)?;
-        push_visible_scope_defs(
-            &mut defs,
-            &mut shadowed,
-            &current_scope,
-            VisibleScopeOrigin::ModuleScope,
-            false,
-        );
-
-        let target = importing_module.origin.origin_target();
-        if let Some(target_data) = self.package(target.package)?.target_data(target.target) {
-            let mut extern_roots = target_data.extern_prelude().iter().collect::<Vec<_>>();
-            extern_roots.sort_by_key(|(name, _)| *name);
-            for (name, module_ref) in extern_roots {
-                let label = name.to_string();
-                if !shadowed.insert((label.clone(), ScopeNamespace::Types)) {
-                    continue;
-                }
-                defs.push(VisibleScopeDef {
-                    label,
-                    namespace: ScopeNamespace::Types,
-                    def: DefId::Module(*module_ref),
-                    origin: VisibleScopeOrigin::ExternRoot,
-                });
-            }
-
-            if let Some(prelude) = target_data.prelude() {
-                let prelude_scope = resolver.visible_scope(importing_module, prelude)?;
-                push_visible_scope_defs(
-                    &mut defs,
-                    &mut shadowed,
-                    &prelude_scope,
-                    VisibleScopeOrigin::Prelude,
-                    true,
-                );
-            }
-        }
-
-        sort_visible_scope_defs(&mut defs);
-        Ok(defs)
     }
 }
 
@@ -332,80 +221,4 @@ impl PathCompletionSiteScanner<'_, '_> {
             path.source_span.unwrap_or(segment.span).len(),
         ))
     }
-}
-
-fn push_visible_scope_defs(
-    defs: &mut Vec<VisibleScopeDef>,
-    shadowed: &mut HashSet<(String, ScopeNamespace)>,
-    scope: &crate::model::ModuleScopeBuilder,
-    origin: VisibleScopeOrigin,
-    skip_shadowed: bool,
-) {
-    // The visibility-aware builder keeps namespace buckets separate. Analysis filters those
-    // buckets according to the syntactic context where completion was requested.
-    for (name, entry) in scope.entries() {
-        for binding in entry.types() {
-            push_visible_scope_def(
-                defs,
-                shadowed,
-                name.to_string(),
-                ScopeNamespace::Types,
-                binding.def,
-                origin,
-                skip_shadowed,
-            );
-        }
-        for binding in entry.values() {
-            push_visible_scope_def(
-                defs,
-                shadowed,
-                name.to_string(),
-                ScopeNamespace::Values,
-                binding.def,
-                origin,
-                skip_shadowed,
-            );
-        }
-        for binding in entry.macros() {
-            push_visible_scope_def(
-                defs,
-                shadowed,
-                name.to_string(),
-                ScopeNamespace::Macros,
-                binding.def,
-                origin,
-                skip_shadowed,
-            );
-        }
-    }
-}
-
-fn push_visible_scope_def(
-    defs: &mut Vec<VisibleScopeDef>,
-    shadowed: &mut HashSet<(String, ScopeNamespace)>,
-    label: String,
-    namespace: ScopeNamespace,
-    def: DefId,
-    origin: VisibleScopeOrigin,
-    skip_shadowed: bool,
-) {
-    if skip_shadowed && shadowed.contains(&(label.clone(), namespace)) {
-        return;
-    }
-    shadowed.insert((label.clone(), namespace));
-    defs.push(VisibleScopeDef {
-        label,
-        namespace,
-        def,
-        origin,
-    });
-}
-
-fn sort_visible_scope_defs(defs: &mut [VisibleScopeDef]) {
-    defs.sort_by(|left, right| {
-        left.label
-            .cmp(&right.label)
-            .then(left.namespace.sort_rank().cmp(&right.namespace.sort_rank()))
-            .then(format!("{:?}", left.def).cmp(&format!("{:?}", right.def)))
-    });
 }

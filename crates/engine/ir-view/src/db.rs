@@ -72,6 +72,13 @@ impl DefMapSource for &IndexedViewDb<'_> {
         self.def_map.extern_root(target, name)
     }
 
+    fn extern_roots(
+        &self,
+        target: TargetRef,
+    ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError> {
+        self.def_map.extern_roots(target)
+    }
+
     fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
         self.def_map.prelude_module(target)
     }

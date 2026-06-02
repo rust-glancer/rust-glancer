@@ -8,8 +8,8 @@ use rg_package_store::PackageStoreError;
 use rg_text::Name;
 
 use crate::{
-    DefMap, LocalDefData, MacroDefinitionData, ModuleData, Path, ResolvePathResult,
-    model::{ModuleScopeBuilder, ScopeEntryRef},
+    DefMap, LocalDefData, MacroDefinitionData, ModuleData, Path, ResolvePathResult, ScopeNamespace,
+    VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin, model::ScopeEntryRef,
 };
 
 use super::{
@@ -30,6 +30,11 @@ pub trait DefMapSource {
         name: &str,
     ) -> Result<Option<ModuleRef>, PackageStoreError>;
 
+    fn extern_roots(
+        &self,
+        target: TargetRef,
+    ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError>;
+
     fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError>;
 
     fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError>;
@@ -46,6 +51,13 @@ impl<T: DefMapSource + ?Sized> DefMapSource for &T {
         name: &str,
     ) -> Result<Option<ModuleRef>, PackageStoreError> {
         (**self).extern_root(target, name)
+    }
+
+    fn extern_roots(
+        &self,
+        target: TargetRef,
+    ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError> {
+        (**self).extern_roots(target)
     }
 
     fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
@@ -110,12 +122,54 @@ where
         PathResolver::new(self).resolve_lexical_name_in_module(from, module, name, filter)
     }
 
-    pub(crate) fn visible_scope(
+    /// Returns definitions from `source_module` that are visible from `importing_module`.
+    pub fn visible_scope_defs(
         &self,
         importing_module: ModuleRef,
         source_module: ModuleRef,
-    ) -> Result<ModuleScopeBuilder, PackageStoreError> {
-        PathResolver::new(self).visible_scope(importing_module, source_module)
+    ) -> Result<VisibleScopeDefs, PackageStoreError> {
+        let scope = PathResolver::new(self).visible_scope(importing_module, source_module)?;
+        let mut defs = VisibleScopeDefs::new(&scope, VisibleScopeOrigin::ModuleScope, false);
+        defs.sort();
+        Ok(defs)
+    }
+
+    /// Returns names visible from `importing_module` without a qualifier.
+    pub fn visible_unqualified_scope_defs(
+        &self,
+        importing_module: ModuleRef,
+    ) -> Result<VisibleScopeDefs, PackageStoreError> {
+        let resolver = PathResolver::new(self);
+
+        // First-segment resolution checks the current module scope before extern roots and the
+        // standard prelude. Completion follows the same namespace-specific shadowing order.
+        let current_scope = resolver.visible_scope(importing_module, importing_module)?;
+        let mut defs =
+            VisibleScopeDefs::new(&current_scope, VisibleScopeOrigin::ModuleScope, false);
+
+        let target = importing_module.origin.origin_target();
+        let mut extern_roots = self.source.extern_roots(target)?;
+        extern_roots.sort_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
+        for (name, module_ref) in extern_roots {
+            let label = name;
+            defs.push(
+                VisibleScopeDef {
+                    label,
+                    namespace: ScopeNamespace::Types,
+                    def: rg_ir_model::DefId::Module(module_ref),
+                    origin: VisibleScopeOrigin::ExternRoot,
+                },
+                false,
+            );
+        }
+
+        if let Some(prelude) = self.source.prelude_module(target)? {
+            let prelude_scope = resolver.visible_scope(importing_module, prelude)?;
+            defs.extend(&prelude_scope, VisibleScopeOrigin::Prelude, true);
+        }
+
+        defs.sort();
+        Ok(defs)
     }
 }
 

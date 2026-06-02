@@ -9,9 +9,6 @@ pub(crate) mod resolution_env;
 pub use self::{
     cursor::DefMapCursorCandidate,
     def_map_query::{DefMapQuery, DefMapSource},
-    path_completion::{
-        DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite, ScopeNamespace, VisibleScopeDef,
-        VisibleScopeOrigin,
-    },
+    path_completion::{DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite},
     path_resolution::{NameResolutionFilter, ResolvePathResult},
 };

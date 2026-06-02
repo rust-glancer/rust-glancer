@@ -58,6 +58,13 @@ where
         self.def_maps.extern_root(target, name)
     }
 
+    fn extern_roots(
+        &self,
+        target: TargetRef,
+    ) -> Result<Vec<(String, ModuleRef)>, PackageStoreError> {
+        self.def_maps.extern_roots(target)
+    }
+
     fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
         self.def_maps.prelude_module(target)
     }

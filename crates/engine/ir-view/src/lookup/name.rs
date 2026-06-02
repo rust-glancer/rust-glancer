@@ -108,10 +108,8 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
             let DefId::Module(source_module) = def else {
                 continue;
             };
-            for visible_def in self
-                .db
-                .def_map
-                .visible_scope_defs(importing_module, source_module)?
+            for visible_def in
+                DefMapQuery::new(self.db).visible_scope_defs(importing_module, source_module)?
             {
                 if let Some(name) = self.module_scope_name(visible_def)? {
                     names.push(name);
@@ -127,7 +125,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         module: ModuleRef,
     ) -> anyhow::Result<Vec<ModuleScopeName>> {
         let mut names = Vec::new();
-        for visible_def in self.db.def_map.visible_unqualified_scope_defs(module)? {
+        for visible_def in DefMapQuery::new(self.db).visible_unqualified_scope_defs(module)? {
             if let Some(name) = self.module_scope_name(visible_def)? {
                 names.push(name);
             }
