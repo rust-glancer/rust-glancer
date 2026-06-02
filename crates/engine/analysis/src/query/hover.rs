@@ -1,16 +1,16 @@
 //! Builds hover payloads from resolved analysis declarations.
 
 use rg_ir_model::TargetRef;
-use rg_ir_view::{
-    display::ty_label::TypeRenderer,
-    item::details::{DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsView},
-};
+use rg_ir_view::display::ty_label::TypeRenderer;
 use rg_parse::FileId;
 use rg_ty::Ty;
 
 use crate::{
     Analysis, SymbolKind,
     model::{HoverBlock, HoverInfo, SymbolAt},
+    query::declaration_details::{
+        DeclarationDetails, DeclarationDetailsContext, DeclarationDetailsResolver,
+    },
     source_symbol::SourceSymbolResolver,
 };
 
@@ -38,7 +38,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
         let context = DeclarationDetailsContext {
             module_display_name: Self::module_display_name_for_symbol(&symbol),
         };
-        let details = DeclarationDetailsView::new(self.0.view_db());
+        let details = DeclarationDetailsResolver::new(self.0.view_db());
         let mut blocks = Vec::new();
 
         for declaration in declarations {

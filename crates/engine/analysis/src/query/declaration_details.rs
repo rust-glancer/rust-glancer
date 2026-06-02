@@ -1,8 +1,7 @@
 //! Composite declaration details used by editor features.
 //!
-//! Declarations identify source facts, but UI features usually need the surrounding presentation
-//! facts as well: docs, display path, symbol kind, and a compact signature. This view keeps that
-//! storage-specific projection out of feature queries.
+//! Declarations identify source facts, but UI features usually need surrounding presentation
+//! facts as well: docs, display path, symbol kind, and a compact signature.
 
 use rg_ir_model::{
     BodyBindingRef, ConstRef, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, ModuleRef,
@@ -10,36 +9,37 @@ use rg_ir_model::{
     identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery};
-use rg_item_tree::Documentation;
-
-use crate::{
-    IndexedViewDb, SymbolKind, display::signature::SignatureRenderer, item::path::PathView,
+use rg_ir_view::{
+    IndexedViewDb, display::signature::SignatureRenderer, item::path::PathView,
     ty::member::MemberView,
 };
+use rg_item_tree::Documentation;
+
+use crate::SymbolKind;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DeclarationDetailsContext {
-    pub module_display_name: Option<String>,
+pub(crate) struct DeclarationDetailsContext {
+    pub(crate) module_display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeclarationDetails {
-    pub kind: SymbolKind,
-    pub path: Option<String>,
-    pub signature: Option<String>,
-    pub docs: Option<String>,
+pub(crate) struct DeclarationDetails {
+    pub(crate) kind: SymbolKind,
+    pub(crate) path: Option<String>,
+    pub(crate) signature: Option<String>,
+    pub(crate) docs: Option<String>,
 }
 
-pub struct DeclarationDetailsView<'a, 'db> {
+pub(crate) struct DeclarationDetailsResolver<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
 
-impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
-    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+impl<'a, 'db> DeclarationDetailsResolver<'a, 'db> {
+    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
         Self { db }
     }
 
-    pub fn details_for_declaration(
+    pub(crate) fn details_for_declaration(
         &self,
         declaration: DeclarationRef,
         context: &DeclarationDetailsContext,
@@ -58,7 +58,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         &self,
         binding_ref: BodyBindingRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(body) = self.db.body_ir.body_data(binding_ref.body)? else {
+        let Some(body) = self.db.body_data(binding_ref.body)? else {
             return Ok(None);
         };
         let Some(binding_data) = body.binding(binding_ref.binding) else {

@@ -6,6 +6,7 @@
 //! modules.
 
 pub(crate) mod completion;
+pub(crate) mod declaration_details;
 pub(crate) mod hover;
 pub(crate) mod navigation;
 pub(crate) mod references;

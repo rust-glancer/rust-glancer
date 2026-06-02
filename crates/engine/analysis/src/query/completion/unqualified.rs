@@ -2,15 +2,13 @@
 
 use std::collections::HashSet;
 
-use rg_ir_view::{
-    item::details::{DeclarationDetailsContext, DeclarationDetailsView},
-    ty::member::MemberView,
-};
+use rg_ir_view::ty::member::MemberView;
 
 use crate::{
     Analysis,
     completion_site::{UnqualifiedCompletionContext, UnqualifiedCompletionSite},
     model::{CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem},
+    query::declaration_details::{DeclarationDetailsContext, DeclarationDetailsResolver},
 };
 
 use super::{
@@ -126,7 +124,7 @@ impl<'a, 'db, 'source> UnqualifiedCompletionResolver<'a, 'db, 'source> {
         let Some(declaration_ref) = candidate.declaration_ref() else {
             return Ok(());
         };
-        let Some(details) = DeclarationDetailsView::new(self.analysis.view_db())
+        let Some(details) = DeclarationDetailsResolver::new(self.analysis.view_db())
             .details_for_declaration(declaration_ref, &DeclarationDetailsContext::default())?
         else {
             return Ok(());
