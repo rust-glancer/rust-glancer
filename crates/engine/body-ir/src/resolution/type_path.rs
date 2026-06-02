@@ -3,7 +3,7 @@
 //! Semantic IR can resolve module items, but body-local structs live in lexical scopes. This
 //! resolver checks those scopes first and then falls back to the semantic/def-map context.
 
-use rg_def_map::{DefMapQuery, NameResolutionFilter, Path, PathSegment};
+use rg_def_map::{DefMapQuery, DefMapSource, NameResolutionFilter, Path, PathSegment};
 use rg_ir_model::{
     AssocItemId, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef, ScopeId,
     SemanticItemRef, TypeAliasRef, TypeDefRef, TypePathResolution,
@@ -11,31 +11,35 @@ use rg_ir_model::{
 use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{
-    ImplMatcher, ItemPathQuery, ItemStoreQuery, TypePathContext, subst_from_generics,
-    substitute_type_param, ty_from_type_path_resolution, ty_from_type_ref_in_context,
-    type_ref_is_self,
+    ImplMatcher, ItemPathQuery, ItemStoreQuery, ItemStoreSource, TypePathContext,
+    subst_from_generics, substitute_type_param, ty_from_type_path_resolution,
+    ty_from_type_ref_in_context, type_ref_is_self,
 };
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
 use super::{BodyQuerySource, push_unique};
 
-pub(crate) struct BodyTypePathResolver<'query, 'db> {
-    source: BodyQuerySource<'query, 'db>,
+pub(crate) struct BodyTypePathResolver<'query, D, I> {
+    source: BodyQuerySource<'query, D, I>,
 }
 
-impl<'query, 'db> BodyTypePathResolver<'query, 'db> {
-    pub(crate) fn new(source: BodyQuerySource<'query, 'db>) -> Self {
+impl<'query, D, I> BodyTypePathResolver<'query, D, I>
+where
+    D: DefMapSource + Copy,
+    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+{
+    pub(crate) fn new(source: BodyQuerySource<'query, D, I>) -> Self {
         Self { source }
     }
 
     fn impl_matcher(
         &self,
-    ) -> ImplMatcher<'query, BodyQuerySource<'query, 'db>, BodyQuerySource<'query, 'db>> {
+    ) -> ImplMatcher<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>> {
         let source = self.source;
         ImplMatcher::new(ItemPathQuery::new(source, source))
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, 'db>> {
+    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
         ItemStoreQuery::new(self.source)
     }
 

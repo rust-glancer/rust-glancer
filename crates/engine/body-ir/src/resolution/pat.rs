@@ -4,11 +4,13 @@
 //! bindings. Enum variants are matched against a known enum scrutinee/annotation type; patterns do
 //! not infer the scrutinee type by themselves.
 
-use rg_def_map::{Path, PathSegment};
+use rg_def_map::{DefMapSource, Path, PathSegment};
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId, TypeDefId};
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreQuery, ReferencePeelingCandidates, subst_from_generics};
+use rg_semantic_ir::{
+    ItemStoreQuery, ItemStoreSource, ReferencePeelingCandidates, subst_from_generics,
+};
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
@@ -20,12 +22,16 @@ use crate::{
 
 use super::{BodyQuerySource, push_unique, type_path::BodyTypePathResolver};
 
-pub(super) struct PatternTypePropagator<'query, 'db> {
-    source: BodyQuerySource<'query, 'db>,
+pub(super) struct PatternTypePropagator<'query, D, I> {
+    source: BodyQuerySource<'query, D, I>,
 }
 
-impl<'query, 'db> PatternTypePropagator<'query, 'db> {
-    pub(super) fn new(source: BodyQuerySource<'query, 'db>) -> Self {
+impl<'query, D, I> PatternTypePropagator<'query, D, I>
+where
+    D: DefMapSource + Copy,
+    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+{
+    pub(super) fn new(source: BodyQuerySource<'query, D, I>) -> Self {
         Self { source }
     }
 
@@ -108,11 +114,11 @@ impl<'query, 'db> PatternTypePropagator<'query, 'db> {
         Ok(updates)
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, 'db>> {
+    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
         ItemStoreQuery::new(self.source)
     }
 
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'query, 'db> {
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'query, D, I> {
         BodyTypePathResolver::new(self.source)
     }
 

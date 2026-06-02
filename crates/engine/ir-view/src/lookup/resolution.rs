@@ -4,7 +4,7 @@
 //! rules that turn paths, declaration refs, and body resolutions into canonical declaration
 //! identities.
 
-use rg_body_ir::BodyResolution;
+use rg_body_ir::{BodyResolution, BodyScopeQuery};
 use rg_def_map::Path;
 use rg_ir_model::{
     BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
@@ -109,22 +109,17 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let resolution = self.0.body_ir.resolve_type_path_in_scope(
-            &self.0.def_map,
-            &self.0.semantic_ir,
-            body_ref,
-            scope,
-            path,
-        )?;
+        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
+            return Ok(Vec::new());
+        };
+        let resolution = BodyScopeQuery::new(self.0, self.0, body_ref, body)
+            .resolve_type_path_in_scope(scope, path)?;
 
         let declarations = self.declarations_for_body_type_path_resolution(resolution);
         if !declarations.is_empty() {
             return Ok(declarations);
         }
 
-        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
-            return Ok(Vec::new());
-        };
         self.declarations_for_use_path(body.owner_module(), path)
     }
 
@@ -134,13 +129,11 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let (resolution, _) = self.0.body_ir.resolve_value_path_in_scope(
-            &self.0.def_map,
-            &self.0.semantic_ir,
-            body_ref,
-            scope,
-            path,
-        )?;
+        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
+            return Ok(Vec::new());
+        };
+        let (resolution, _) = BodyScopeQuery::new(self.0, self.0, body_ref, body)
+            .resolve_value_path_in_scope(scope, path)?;
         self.declarations_for_body_resolution(Some(body_ref), &resolution)
     }
 

@@ -4,19 +4,26 @@
 //! parentheses, `.await`, and `?`, but it does not try to implement borrow checking, autoderef, the
 //! `Try` trait, or `Future::Output` projection.
 
-use rg_semantic_ir::ItemStoreQuery;
+use rg_semantic_ir::{ItemStoreQuery, ItemStoreSource};
 use rg_ty::{GenericArg, Ty};
 
 use crate::ir::expr::ExprWrapperKind;
 
+use rg_def_map::DefMapSource;
+use rg_package_store::PackageStoreError;
+
 use super::{BodyQuerySource, push_unique};
 
-pub(super) struct TyNormalizer<'a, 'db> {
-    source: BodyQuerySource<'a, 'db>,
+pub(super) struct TyNormalizer<'a, D, I> {
+    source: BodyQuerySource<'a, D, I>,
 }
 
-impl<'a, 'db> TyNormalizer<'a, 'db> {
-    pub(super) fn new(source: BodyQuerySource<'a, 'db>) -> Self {
+impl<'a, D, I> TyNormalizer<'a, D, I>
+where
+    D: DefMapSource + Copy,
+    I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
+{
+    pub(super) fn new(source: BodyQuerySource<'a, D, I>) -> Self {
         Self { source }
     }
 

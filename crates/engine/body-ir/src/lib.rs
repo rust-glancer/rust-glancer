@@ -26,6 +26,7 @@ pub use self::{
         RecordExprField, RecordExprSpread, RecordPatField, ScopeData, StmtData, StmtKind,
         TargetBodies, TargetBodiesStatus,
     },
+    resolution::BodyScopeQuery,
     store::{BodyIrDb, BodyIrReadTxn},
 };
 

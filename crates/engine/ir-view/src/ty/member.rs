@@ -1,5 +1,6 @@
 //! Composite member view over nominal types.
 
+use rg_body_ir::BodyScopeQuery;
 use rg_def_map::Path;
 use rg_ir_model::{
     BodyRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TraitApplicability, TypeDefRef,
@@ -309,13 +310,11 @@ impl<'a, 'db> MemberView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Vec<MemberOwnerRef>> {
-        let resolution = self.db.body_ir.resolve_type_path_in_scope(
-            &self.db.def_map,
-            &self.db.semantic_ir,
-            body,
-            scope,
-            path,
-        )?;
+        let Some(body_data) = self.db.body_ir.body_data(body)? else {
+            return Ok(Vec::new());
+        };
+        let resolution = BodyScopeQuery::new(self.db, self.db, body, body_data)
+            .resolve_type_path_in_scope(scope, path)?;
         let owners = match resolution {
             TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types) => {
                 types.into_iter().map(MemberOwnerRef::Nominal).collect()

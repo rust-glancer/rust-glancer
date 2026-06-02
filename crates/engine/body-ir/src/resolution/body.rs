@@ -3,7 +3,9 @@
 //! This module walks lowered bodies and fills resolution/type slots on bindings and expressions.
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
-use rg_def_map::{DefMapQuery, DefMapReadTxn, NameResolutionFilter, Path, PathSegment};
+use rg_def_map::{
+    DefMapQuery, DefMapReadTxn, DefMapSource, NameResolutionFilter, Path, PathSegment,
+};
 use rg_ir_model::{
     AssocItemId, BindingId, BodyRef, ConstRef, DefId, DefMapRef, ExprId, FunctionRef, ImplRef,
     ItemOwner, ModuleId, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TypeDefId,
@@ -13,7 +15,7 @@ use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{
     Autoderef, AutoderefMode, ImplMatcher, ItemLookupIndex, ItemPathQuery, ItemStoreQuery,
-    SemanticIrReadTxn, subst_from_generics, type_ref_is_self,
+    ItemStoreSource, SemanticIrReadTxn, subst_from_generics, type_ref_is_self,
 };
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
@@ -54,11 +56,13 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         }
     }
 
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db> {
+    fn type_path_resolver(
+        &self,
+    ) -> BodyTypePathResolver<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>> {
         BodyTypePathResolver::new(self.query_source())
     }
 
-    fn query_source(&self) -> BodyQuerySource<'_, 'db> {
+    fn query_source(&self) -> BodyQuerySource<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>> {
         BodyQuerySource::new(
             self.def_map_txn,
             self.semantic_ir_txn,
@@ -67,17 +71,31 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         )
     }
 
-    fn autoderef(&self) -> Autoderef<'_, BodyQuerySource<'_, 'db>, BodyQuerySource<'_, 'db>> {
+    fn autoderef(
+        &self,
+    ) -> Autoderef<
+        '_,
+        BodyQuerySource<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>>,
+        BodyQuerySource<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>>,
+    > {
         let source = self.query_source();
         Autoderef::with_index(ItemPathQuery::new(source, source), self.semantic_index)
     }
 
-    fn impl_matcher(&self) -> ImplMatcher<'_, BodyQuerySource<'_, 'db>, BodyQuerySource<'_, 'db>> {
+    fn impl_matcher(
+        &self,
+    ) -> ImplMatcher<
+        '_,
+        BodyQuerySource<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>>,
+        BodyQuerySource<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>>,
+    > {
         let source = self.query_source();
         ImplMatcher::new(ItemPathQuery::new(source, source))
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, 'db>> {
+    fn item_query(
+        &self,
+    ) -> ItemStoreQuery<'_, BodyQuerySource<'_, &DefMapReadTxn<'db>, &SemanticIrReadTxn<'db>>> {
         ItemStoreQuery::new(self.query_source())
     }
 
@@ -814,8 +832,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 /// The main resolver uses this during the fixed-point pass, and analysis reuses it for cursor
 /// queries over path prefixes. Keeping it read-only avoids cloning bodies just to answer
 /// goto-definition/type-at for `Type::assoc` or `Enum::Variant` segments.
-pub(crate) struct BodyValuePathResolver<'query, 'db> {
-    source: BodyQuerySource<'query, 'db>,
+pub(crate) struct BodyValuePathResolver<'query, D, I> {
+    source: BodyQuerySource<'query, D, I>,
     semantic_index: Option<&'query ItemLookupIndex>,
 }
 
@@ -830,9 +848,13 @@ enum BodyValueName {
     SemanticItems(Vec<SemanticItemRef>),
 }
 
-impl<'query, 'db> BodyValuePathResolver<'query, 'db> {
+impl<'query, D, I> BodyValuePathResolver<'query, D, I>
+where
+    D: DefMapSource + Copy,
+    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+{
     pub(crate) fn new(
-        source: BodyQuerySource<'query, 'db>,
+        source: BodyQuerySource<'query, D, I>,
         semantic_index: Option<&'query ItemLookupIndex>,
     ) -> Self {
         Self {
@@ -841,22 +863,22 @@ impl<'query, 'db> BodyValuePathResolver<'query, 'db> {
         }
     }
 
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'query, 'db> {
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'query, D, I> {
         BodyTypePathResolver::new(self.source)
     }
 
     fn impl_matcher(
         &self,
-    ) -> ImplMatcher<'query, BodyQuerySource<'query, 'db>, BodyQuerySource<'query, 'db>> {
+    ) -> ImplMatcher<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>> {
         let source = self.source;
         ImplMatcher::new(ItemPathQuery::new(source, source))
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, 'db>> {
+    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
         ItemStoreQuery::new(self.source)
     }
 
-    fn def_map_query(&self) -> DefMapQuery<BodyQuerySource<'query, 'db>> {
+    fn def_map_query(&self) -> DefMapQuery<BodyQuerySource<'query, D, I>> {
         DefMapQuery::new(self.source)
     }
 

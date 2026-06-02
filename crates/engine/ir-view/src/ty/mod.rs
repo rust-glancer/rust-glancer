@@ -7,13 +7,17 @@ pub mod implementation;
 pub mod locals;
 pub mod member;
 
+use rg_body_ir::BodyScopeQuery;
 use rg_def_map::Path;
 use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticItemRef, TypePathResolution,
     identity::DeclarationRef, identity::ExprRef,
 };
-use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, ReferencePeelingCandidates, TypePathContext};
-use rg_ty::{NominalTy, Ty};
+use rg_semantic_ir::{
+    ItemPathQuery, ItemStoreQuery, ReferencePeelingCandidates, TypePathContext,
+    ty_from_type_ref_in_context,
+};
+use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{IndexedViewDb, ty::locals::BodyView};
 
@@ -88,13 +92,11 @@ impl<'a, 'db> TyView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Ty> {
-        let resolution = self.db.body_ir.resolve_type_path_in_scope(
-            &self.db.def_map,
-            &self.db.semantic_ir,
-            body_ref,
-            scope,
-            path,
-        )?;
+        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
+            return Ok(Ty::Unknown);
+        };
+        let resolution = BodyScopeQuery::new(self.db, self.db, body_ref, body)
+            .resolve_type_path_in_scope(scope, path)?;
         if matches!(resolution, TypePathResolution::Unknown)
             && let Some(primitive) = path.single_name().and_then(rg_ty::PrimitiveTy::from_name)
         {
@@ -112,21 +114,28 @@ impl<'a, 'db> TyView<'a, 'db> {
     ) -> anyhow::Result<Ty> {
         // Value-path type queries should use the same Body IR resolver as the main body pass, so
         // enum variants and associated functions agree between snapshots and cursor queries.
-        let (_, ty) = self.db.body_ir.resolve_value_path_in_scope(
-            &self.db.def_map,
-            &self.db.semantic_ir,
-            body_ref,
-            scope,
-            path,
-        )?;
+        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
+            return Ok(Ty::Unknown);
+        };
+        let (_, ty) = BodyScopeQuery::new(self.db, self.db, body_ref, body)
+            .resolve_value_path_in_scope(scope, path)?;
         Ok(ty)
     }
 
     fn ty_for_field(&self, field: FieldRef) -> anyhow::Result<Option<Ty>> {
-        Ok(self
-            .db
-            .body_ir
-            .ty_for_field(&self.db.def_map, &self.db.semantic_ir, field)?)
+        // Field declarations live in the shared item store, but view callers expect the small
+        // `Ty` vocabulary used by body/member analysis.
+        let Some(field_data) = ItemStoreQuery::new(self.db).field_data(field)? else {
+            return Ok(None);
+        };
+        let item_paths = ItemPathQuery::new(self.db, self.db);
+        Ok(Some(ty_from_type_ref_in_context(
+            &item_paths,
+            &field_data.field.ty,
+            TypePathContext::module(field_data.owner_module),
+            Ty::Unknown,
+            &TypeSubst::new(),
+        )?))
     }
 
     fn ty_for_enum_variant(&self, variant: EnumVariantRef) -> anyhow::Result<Option<Ty>> {
