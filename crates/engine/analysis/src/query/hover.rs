@@ -87,7 +87,7 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
 
     fn hover_block(details: DeclarationDetails) -> HoverBlock {
         HoverBlock {
-            kind: details.kind.into(),
+            kind: details.kind,
             path: details.path,
             signature: details.signature,
             ty: None,

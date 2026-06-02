@@ -64,12 +64,7 @@ where
     }
 
     fn query_source<'source>(&'source self) -> BodyQuerySource<'source, &'source D, &'source I> {
-        BodyQuerySource::new(
-            &*self.def_maps,
-            &*self.item_stores,
-            self.body_ref,
-            self.body,
-        )
+        BodyQuerySource::new(self.def_maps, self.item_stores, self.body_ref, self.body)
     }
 
     fn autoderef(&self) -> Autoderef<'_, BodyQuerySource<'_, &D, &I>, BodyQuerySource<'_, &D, &I>> {

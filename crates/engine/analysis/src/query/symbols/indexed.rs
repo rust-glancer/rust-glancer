@@ -43,7 +43,7 @@ impl From<Declaration> for DocumentSymbolDeclaration {
     fn from(declaration: Declaration) -> Self {
         Self {
             name: declaration.name().to_string(),
-            kind: declaration.kind().into(),
+            kind: declaration.kind(),
             file_id: declaration.file_id(),
             span: declaration.span(),
             selection_span: declaration.selection_span(),
@@ -122,7 +122,7 @@ impl From<WorkspaceSymbolEntry> for WorkspaceSymbol {
         Self {
             target: entry.declaration.target(),
             name: entry.declaration.name().to_string(),
-            kind: entry.declaration.kind().into(),
+            kind: entry.declaration.kind(),
             file_id: entry.declaration.file_id(),
             span: Some(entry.declaration.selection_span()),
             container_name: entry.container_name,
