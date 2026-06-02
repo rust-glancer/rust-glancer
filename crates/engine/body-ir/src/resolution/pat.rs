@@ -133,8 +133,8 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         ItemStoreQuery::new(self.query_source())
     }
 
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db, '_> {
-        BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db> {
+        BodyTypePathResolver::new(self.query_source())
     }
 
     fn expected_ty_for_let(

@@ -3,17 +3,15 @@
 //! Semantic IR can resolve module items, but body-local structs live in lexical scopes. This
 //! resolver checks those scopes first and then falls back to the semantic/def-map context.
 
-use rg_def_map::{DefMapQuery, DefMapReadTxn, NameResolutionFilter, Path, PathSegment};
+use rg_def_map::{DefMapQuery, NameResolutionFilter, Path, PathSegment};
 use rg_ir_model::{
-    AssocItemId, BodyRef, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef,
-    ScopeId, SemanticItemRef, TypeAliasRef, TypeDefRef, TypePathResolution,
+    AssocItemId, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef, ScopeId,
+    SemanticItemRef, TypeAliasRef, TypeDefRef, TypePathResolution,
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
+use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, TypePathContext};
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
-
-use crate::ir::body::BodyData;
 
 use super::{
     BodyQuerySource,
@@ -25,41 +23,24 @@ use super::{
     },
 };
 
-pub(crate) struct BodyTypePathResolver<'query, 'db, 'body> {
-    def_map: &'query DefMapReadTxn<'db>,
-    semantic_ir: &'query SemanticIrReadTxn<'db>,
-    body_ref: BodyRef,
-    body: &'body BodyData,
+pub(crate) struct BodyTypePathResolver<'query, 'db> {
+    source: BodyQuerySource<'query, 'db>,
 }
 
-impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
-    pub(crate) fn new(
-        def_map: &'query DefMapReadTxn<'db>,
-        semantic_ir: &'query SemanticIrReadTxn<'db>,
-        body_ref: BodyRef,
-        body: &'body BodyData,
-    ) -> Self {
-        Self {
-            def_map,
-            semantic_ir,
-            body_ref,
-            body,
-        }
-    }
-
-    fn query_source(&self) -> BodyQuerySource<'_, 'db> {
-        BodyQuerySource::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+impl<'query, 'db> BodyTypePathResolver<'query, 'db> {
+    pub(crate) fn new(source: BodyQuerySource<'query, 'db>) -> Self {
+        Self { source }
     }
 
     fn impl_matcher(
         &self,
-    ) -> BodyImplMatcher<'_, BodyQuerySource<'_, 'db>, BodyQuerySource<'_, 'db>> {
-        let source = self.query_source();
+    ) -> BodyImplMatcher<'query, BodyQuerySource<'query, 'db>, BodyQuerySource<'query, 'db>> {
+        let source = self.source;
         BodyImplMatcher::new(ItemPathQuery::new(source, source))
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, 'db>> {
-        ItemStoreQuery::new(self.query_source())
+    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, 'db>> {
+        ItemStoreQuery::new(self.source)
     }
 
     pub(crate) fn resolve_in_scope(
@@ -111,8 +92,10 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             }
         }
 
-        let context = self.context_for_function(self.body.owner, self.body.owner_module)?;
-        ItemPathQuery::new(self.def_map, self.semantic_ir).resolve_type_path(context, path)
+        let context =
+            self.context_for_function(self.source.body().owner, self.source.body().owner_module)?;
+        let source = self.source;
+        ItemPathQuery::new(source, source).resolve_type_path(context, path)
     }
 
     pub(super) fn ty_from_type_ref_in_scope(
@@ -161,7 +144,10 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
             }
             _ => self.ty_from_type_ref_in_context(
                 ty,
-                self.context_for_function(self.body.owner, self.body.owner_module)?,
+                self.context_for_function(
+                    self.source.body().owner,
+                    self.source.body().owner_module,
+                )?,
                 subst,
             ),
         }
@@ -173,8 +159,8 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         function: FunctionRef,
         subst: &TypeSubst,
     ) -> Result<Ty, PackageStoreError> {
-        let context = self.context_for_function(function, self.body.owner_module)?;
-        if context.module.origin == DefMapRef::Body(self.body_ref) {
+        let context = self.context_for_function(function, self.source.body().owner_module)?;
+        if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
             return self.ty_from_type_ref_in_module_with_subst(ty, context.module, subst);
         }
 
@@ -196,7 +182,8 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         context: TypePathContext,
         subst: &TypeSubst,
     ) -> Result<Ty, PackageStoreError> {
-        let item_paths = ItemPathQuery::new(self.def_map, self.semantic_ir);
+        let source = self.source;
+        let item_paths = ItemPathQuery::new(source, source);
         ty_from_type_ref_in_context(&item_paths, ty, context, Ty::syntax(ty.clone()), subst)
     }
 
@@ -209,9 +196,9 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         // Body DefMaps allocate synthetic scope modules first, in ScopeId order. Named inline
         // modules may have ids outside that range, and the legacy body resolver did not model
         // their expression scopes either.
-        if module.origin == DefMapRef::Body(self.body_ref) {
+        if module.origin == DefMapRef::Body(self.source.body_ref()) {
             let scope = ScopeId(module.module.0);
-            if self.body.scope(scope).is_some() {
+            if self.source.body().scope(scope).is_some() {
                 return self.ty_from_type_ref_in_scope_with_subst(ty, scope, subst);
             }
         }
@@ -226,7 +213,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         // `self` parameters and explicit `Self` annotations need the enclosing impl owner, not
         // just the owner module. Semantic IR owns that function-to-owner mapping.
         let Some(impl_ref) = self
-            .context_for_function(function, self.body.owner_module)?
+            .context_for_function(function, self.source.body().owner_module)?
             .impl_ref
         else {
             return Ok(Vec::new());
@@ -256,10 +243,10 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         path: &Path,
     ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
         let from = ModuleRef {
-            origin: DefMapRef::Body(self.body_ref),
+            origin: DefMapRef::Body(self.source.body_ref()),
             module: ModuleId(scope.0),
         };
-        let result = DefMapQuery::new(self.query_source()).resolve_lexical_path(
+        let result = DefMapQuery::new(self.source).resolve_lexical_path(
             from,
             path,
             NameResolutionFilter::TypesOnly,
@@ -350,8 +337,8 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
 
         let context = item_query
             .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.body.owner_module));
-        if context.module.origin == DefMapRef::Body(self.body_ref) {
+            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
+        if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
             self.ty_from_type_ref_in_module_with_subst(aliased_ty, context.module, &alias_subst)
         } else {
             self.ty_from_type_ref_in_context_with_subst(aliased_ty, context, &alias_subst)
@@ -363,7 +350,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         ty: &NominalTy,
         name: &str,
     ) -> Result<Option<TypeAliasRef>, PackageStoreError> {
-        if ty.def.origin != DefMapRef::Body(self.body_ref) {
+        if ty.def.origin != DefMapRef::Body(self.source.body_ref()) {
             return Ok(None);
         }
 
@@ -435,8 +422,8 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
 
         let context = item_query
             .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.body.owner_module));
-        if context.module.origin == DefMapRef::Body(self.body_ref) {
+            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
+        if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
             self.ty_from_type_ref_in_module_with_subst(aliased_ty, context.module, &alias_subst)
         } else {
             self.ty_from_type_ref_in_context_with_subst(aliased_ty, context, &alias_subst)

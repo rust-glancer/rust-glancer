@@ -33,6 +33,14 @@ impl<'a, 'db> BodyQuerySource<'a, 'db> {
             body,
         }
     }
+
+    pub(crate) fn body_ref(&self) -> BodyRef {
+        self.body_ref
+    }
+
+    pub(crate) fn body(&self) -> &'a BodyData {
+        self.body
+    }
 }
 
 impl DefMapSource for BodyQuerySource<'_, '_> {

@@ -58,13 +58,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         }
     }
 
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db, '_> {
-        BodyTypePathResolver::new(
-            self.def_map_txn,
-            self.semantic_ir_txn,
-            self.body_ref,
-            self.body,
-        )
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db> {
+        BodyTypePathResolver::new(self.query_source())
     }
 
     fn query_source(&self) -> BodyQuerySource<'_, 'db> {
@@ -347,14 +342,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
         let scope = self.body.exprs[expr].scope;
         let visible_bindings = self.body.exprs[expr].visible_bindings;
-        BodyValuePathResolver::new(
-            self.def_map_txn,
-            self.semantic_ir_txn,
-            Some(self.semantic_index),
-            self.body_ref,
-            self.body,
-        )
-        .resolve_path_expr(scope, path, Some(visible_bindings))
+        BodyValuePathResolver::new(self.query_source(), Some(self.semantic_index))
+            .resolve_path_expr(scope, path, Some(visible_bindings))
     }
 
     pub(super) fn resolve_nonlocal_path_expr(
@@ -362,14 +351,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
         scope: ScopeId,
         path: &Path,
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
-        BodyValuePathResolver::new(
-            self.def_map_txn,
-            self.semantic_ir_txn,
-            Some(self.semantic_index),
-            self.body_ref,
-            self.body,
-        )
-        .resolve_nonlocal_path_expr(scope, path)
+        BodyValuePathResolver::new(self.query_source(), Some(self.semantic_index))
+            .resolve_nonlocal_path_expr(scope, path)
     }
 
     fn resolve_record_expr_path(
@@ -822,12 +805,9 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 /// The main resolver uses this during the fixed-point pass, and analysis reuses it for cursor
 /// queries over path prefixes. Keeping it read-only avoids cloning bodies just to answer
 /// goto-definition/type-at for `Type::assoc` or `Enum::Variant` segments.
-pub(crate) struct BodyValuePathResolver<'query, 'db, 'body> {
-    def_map: &'query DefMapReadTxn<'db>,
-    semantic_ir: &'query SemanticIrReadTxn<'db>,
+pub(crate) struct BodyValuePathResolver<'query, 'db> {
+    source: BodyQuerySource<'query, 'db>,
     semantic_index: Option<&'query SemanticResolutionIndex>,
-    body_ref: BodyRef,
-    body: &'body BodyData,
 }
 
 /// One declaration that can satisfy an unqualified value path inside a body scope.
@@ -841,44 +821,34 @@ enum BodyValueName {
     SemanticItems(Vec<SemanticItemRef>),
 }
 
-impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
+impl<'query, 'db> BodyValuePathResolver<'query, 'db> {
     pub(crate) fn new(
-        def_map: &'query DefMapReadTxn<'db>,
-        semantic_ir: &'query SemanticIrReadTxn<'db>,
+        source: BodyQuerySource<'query, 'db>,
         semantic_index: Option<&'query SemanticResolutionIndex>,
-        body_ref: BodyRef,
-        body: &'body BodyData,
     ) -> Self {
         Self {
-            def_map,
-            semantic_ir,
+            source,
             semantic_index,
-            body_ref,
-            body,
         }
     }
 
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db, 'body> {
-        BodyTypePathResolver::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
-    }
-
-    fn query_source(&self) -> BodyQuerySource<'_, 'db> {
-        BodyQuerySource::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'query, 'db> {
+        BodyTypePathResolver::new(self.source)
     }
 
     fn impl_matcher(
         &self,
-    ) -> BodyImplMatcher<'_, BodyQuerySource<'_, 'db>, BodyQuerySource<'_, 'db>> {
-        let source = self.query_source();
+    ) -> BodyImplMatcher<'query, BodyQuerySource<'query, 'db>, BodyQuerySource<'query, 'db>> {
+        let source = self.source;
         BodyImplMatcher::new(ItemPathQuery::new(source, source))
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, 'db>> {
-        ItemStoreQuery::new(self.query_source())
+    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, 'db>> {
+        ItemStoreQuery::new(self.source)
     }
 
-    fn def_map_query(&self) -> DefMapQuery<BodyQuerySource<'_, 'db>> {
-        DefMapQuery::new(self.query_source())
+    fn def_map_query(&self) -> DefMapQuery<BodyQuerySource<'query, 'db>> {
+        DefMapQuery::new(self.source)
     }
 
     pub(crate) fn resolve_nonlocal_path_expr(
@@ -917,7 +887,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                 let mut constructors = Vec::new();
                 for type_def in types
                     .into_iter()
-                    .filter(|ty| ty.origin == DefMapRef::Body(self.body_ref))
+                    .filter(|ty| ty.origin == DefMapRef::Body(self.source.body_ref()))
                 {
                     if self.item_query().type_def_has_value_constructor(type_def)? {
                         push_unique(&mut constructors, type_def);
@@ -957,7 +927,9 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             return Ok((resolution, ty));
         }
 
-        let result = self.def_map.resolve_path(self.body.owner_module, path)?;
+        let result = self
+            .def_map_query()
+            .resolve_path(self.source.body().owner_module, path)?;
         let ty = self.nominal_ty_from_defs(&result.resolved)?;
         Ok((
             BodyResolution::Declarations(
@@ -980,12 +952,12 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         // Value lookup is scope-ordered: an inner const/function shadows an outer binding just as
         // surely as an inner binding shadows an outer item.
         let from = ModuleRef {
-            origin: DefMapRef::Body(self.body_ref),
+            origin: DefMapRef::Body(self.source.body_ref()),
             module: ModuleId(start_scope.0),
         };
         let mut scope = Some(start_scope);
         while let Some(scope_id) = scope {
-            let Some(scope_data) = self.body.scope(scope_id) else {
+            let Some(scope_data) = self.source.body().scope(scope_id) else {
                 return Ok(None);
             };
 
@@ -995,7 +967,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
                         continue;
                     }
 
-                    let Some(binding_data) = self.body.binding(*binding) else {
+                    let Some(binding_data) = self.source.body().binding(*binding) else {
                         continue;
                     };
                     if binding_data.name.as_deref() == Some(name) {
@@ -1005,7 +977,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             }
 
             let module = ModuleRef {
-                origin: DefMapRef::Body(self.body_ref),
+                origin: DefMapRef::Body(self.source.body_ref()),
                 module: ModuleId(scope_id.0),
             };
             let defs = self.def_map_query().resolve_lexical_name_in_module(
@@ -1031,7 +1003,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         path: &Path,
     ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
         let from = ModuleRef {
-            origin: DefMapRef::Body(self.body_ref),
+            origin: DefMapRef::Body(self.source.body_ref()),
             module: ModuleId(scope.0),
         };
         let defs = self
@@ -1074,7 +1046,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
     ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
         match value_name {
             BodyValueName::Binding(binding) => {
-                let ty = self.body.bindings[binding].ty.clone();
+                let ty = self.source.body().bindings[binding].ty.clone();
                 Ok(Some((BodyResolution::Binding(binding), ty)))
             }
             BodyValueName::SemanticItems(items) => {
@@ -1128,8 +1100,10 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
 
         let context = item_query
             .type_path_context_for_owner(const_ref.origin, const_data.owner)?
-            .unwrap_or_else(|| rg_semantic_ir::TypePathContext::module(self.body.owner_module));
-        if context.module.origin == DefMapRef::Body(self.body_ref) {
+            .unwrap_or_else(|| {
+                rg_semantic_ir::TypePathContext::module(self.source.body().owner_module)
+            });
+        if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
             self.type_path_resolver()
                 .ty_from_type_ref_in_module_with_subst(ty, context.module, &TypeSubst::new())
         } else {
@@ -1193,7 +1167,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         }
 
         for nominal_ty in prefix_ty.as_nominals() {
-            if nominal_ty.def.origin != DefMapRef::Body(self.body_ref) {
+            if nominal_ty.def.origin != DefMapRef::Body(self.source.body_ref()) {
                 continue;
             }
             if let Some((const_ref, ty)) =
@@ -1233,7 +1207,7 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         ty: &NominalTy,
     ) -> Result<Vec<FunctionRef>, PackageStoreError> {
         let mut functions = Vec::new();
-        if ty.def.origin == DefMapRef::Body(self.body_ref) {
+        if ty.def.origin == DefMapRef::Body(self.source.body_ref()) {
             let item_query = self.item_query();
             for function in item_query.inherent_functions_for_type(ty.def)? {
                 let Some(function_data) = item_query.function_data(function)? else {
@@ -1250,10 +1224,10 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
             return Ok(functions);
         }
 
-        let source = self.query_source();
+        let source = self.source;
         let item_paths = ItemPathQuery::new(source, source);
         let inherent_functions = match self.semantic_index {
-            Some(index) => index.inherent_functions_for_type(self.semantic_ir, ty.def)?,
+            Some(index) => index.inherent_functions_for_type(item_paths.items(), ty.def)?,
             None => item_paths.items().inherent_functions_for_type(ty.def)?,
         };
 
@@ -1346,8 +1320,10 @@ impl<'query, 'db, 'body> BodyValuePathResolver<'query, 'db, 'body> {
         let context = self
             .item_query()
             .type_path_context_for_owner(const_ref.origin, owner)?
-            .unwrap_or_else(|| rg_semantic_ir::TypePathContext::module(self.body.owner_module));
-        if context.module.origin == DefMapRef::Body(self.body_ref) {
+            .unwrap_or_else(|| {
+                rg_semantic_ir::TypePathContext::module(self.source.body().owner_module)
+            });
+        if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
             self.type_path_resolver()
                 .ty_from_type_ref_in_module_with_subst(ty, context.module, &subst)
         } else {

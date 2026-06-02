@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, TraitImplRef, TraitRef, TypeDefRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
+use rg_semantic_ir::{ItemStoreQuery, ItemStoreSource, SemanticIrReadTxn};
 use rg_text::Name;
 
 use super::push_unique;
@@ -116,13 +116,15 @@ impl SemanticResolutionIndex {
         Ok(index)
     }
 
-    pub(crate) fn inherent_functions_for_type(
+    pub(crate) fn inherent_functions_for_type<'item, S>(
         &self,
-        semantic_ir: &SemanticIrReadTxn<'_>,
+        item_query: &ItemStoreQuery<'item, S>,
         ty: TypeDefRef,
-    ) -> Result<Vec<FunctionRef>, PackageStoreError> {
+    ) -> Result<Vec<FunctionRef>, PackageStoreError>
+    where
+        S: ItemStoreSource<'item, Error = PackageStoreError>,
+    {
         let mut functions = Vec::new();
-        let item_query = ItemStoreQuery::new(semantic_ir);
         let Some(impl_refs) = self.inherent_impls_by_type.get(&ty) else {
             return Ok(functions);
         };

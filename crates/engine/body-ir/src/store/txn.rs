@@ -64,8 +64,8 @@ impl<'db> BodyIrReadTxn<'db> {
             return Ok(TypePathResolution::Unknown);
         };
 
-        BodyTypePathResolver::new(def_map, semantic_ir, body_ref, body)
-            .resolve_in_scope(scope, path)
+        let source = BodyQuerySource::new(def_map, semantic_ir, body_ref, body);
+        BodyTypePathResolver::new(source).resolve_in_scope(scope, path)
     }
 
     /// Resolves a value path from a body-local lexical scope.
@@ -85,8 +85,8 @@ impl<'db> BodyIrReadTxn<'db> {
             return Ok((BodyResolution::Unknown, Ty::Unknown));
         };
 
-        BodyValuePathResolver::new(def_map, semantic_ir, None, body_ref, body)
-            .resolve_nonlocal_path_expr(scope, path)
+        let source = BodyQuerySource::new(def_map, semantic_ir, body_ref, body);
+        BodyValuePathResolver::new(source, None).resolve_nonlocal_path_expr(scope, path)
     }
 
     /// Converts one Semantic IR field declaration type into Body IR's small type vocabulary.
