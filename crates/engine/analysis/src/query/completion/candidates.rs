@@ -14,7 +14,6 @@ use rg_ir_view::{
     source::facts::{IndexedNameNamespace, IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
     ty::TyView,
     ty::locals::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
-    ty::member::{MemberMethodCandidate, MemberMethodOrigin, MemberView},
 };
 use rg_item_tree::FieldKey;
 use rg_ty::Ty;
@@ -24,6 +23,7 @@ use crate::{
         DotCompletionSite, PathCompletionSite, RecordFieldCompletionSite, UnqualifiedCompletionSite,
     },
     model::{CompletionApplicability, CompletionKind, CompletionTarget},
+    query::member::{MemberMethodCandidate, MemberMethodOrigin, MemberView},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

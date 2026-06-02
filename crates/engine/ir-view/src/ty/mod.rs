@@ -4,7 +4,6 @@
 //! from Semantic IR, DefMap, and Body IR out of query orchestration.
 
 pub mod locals;
-pub mod member;
 
 use rg_body_ir::BodyScopeQuery;
 use rg_ir_model::{

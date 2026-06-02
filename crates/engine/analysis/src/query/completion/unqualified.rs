@@ -2,13 +2,12 @@
 
 use std::collections::HashSet;
 
-use rg_ir_view::ty::member::MemberView;
-
 use crate::{
     Analysis,
     completion_site::{UnqualifiedCompletionContext, UnqualifiedCompletionSite},
     model::{CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem},
     query::declaration_details::{DeclarationDetailsContext, DeclarationDetailsResolver},
+    query::member::MemberView,
 };
 
 use super::{

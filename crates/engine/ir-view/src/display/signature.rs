@@ -13,11 +13,7 @@ use rg_item_tree::{
     ParamItem, TypeBound, TypeRef, VisibilityLevel, WherePredicate,
 };
 
-use crate::{
-    IndexedViewDb,
-    display::ty_label::TypeRenderer,
-    ty::member::{MemberField, MemberFunction},
-};
+use crate::{IndexedViewDb, display::ty_label::TypeRenderer};
 
 const MEMBER_PREVIEW_LIMIT: usize = 5;
 
@@ -135,10 +131,6 @@ impl SignatureRenderer {
         field_signature(data.field)
     }
 
-    pub fn member_field_signature(data: &MemberField<'_>) -> Option<String> {
-        Self::field_signature(data.data())
-    }
-
     pub fn enum_variant_signature(variant: &EnumVariantItem) -> String {
         match &variant.fields {
             FieldList::Named(fields) if fields.is_empty() => format!("{} {{}}", variant.name),
@@ -154,10 +146,6 @@ impl SignatureRenderer {
             }
             FieldList::Unit => variant.name.to_string(),
         }
-    }
-
-    pub fn member_function_signature(data: &MemberFunction<'_>) -> String {
-        Self::function_signature(data.data())
     }
 
     pub fn binding_signature(db: &IndexedViewDb<'_>, data: &BindingData) -> anyhow::Result<String> {

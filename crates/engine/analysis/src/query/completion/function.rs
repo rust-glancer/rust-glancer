@@ -3,12 +3,15 @@
 //! Function and method completions need more than a label: they reuse signature
 //! details for display and turn parameter names into LSP snippet placeholders.
 
-use rg_ir_view::{display::signature::SignatureRenderer, ty::member::MemberFunction};
+use rg_ir_view::display::signature::SignatureRenderer;
 use rg_item_tree::ParamItem;
 
-use crate::model::{
-    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
-    CompletionTarget,
+use crate::{
+    model::{
+        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
+        CompletionKind, CompletionTarget,
+    },
+    query::member::MemberFunction,
 };
 
 use super::{
@@ -109,7 +112,7 @@ impl<'source> FunctionCompletionRenderer<'source> {
 
         FunctionCompletionMetadata {
             label: label.clone(),
-            detail: Some(SignatureRenderer::member_function_signature(&function)),
+            detail: Some(SignatureRenderer::function_signature(function.data())),
             documentation: function.docs_text(),
             insert_text: self.insert_text(&label, function.params(), call_completion, edit),
             has_self_receiver: function.has_self_receiver(),

@@ -1,14 +1,14 @@
 //! Source-level declaration lookup shared by editor queries.
 
 use rg_ir_model::{
-    BodyBindingRef, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, ModuleRef,
+    BodyBindingRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, LocalDefRef, ModuleRef,
     SemanticItemKind, SemanticItemRef, TargetRef, identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery, ModuleOrigin};
 use rg_item_tree::TypeRef;
 use rg_parse::{FileId, Span};
 
-use crate::{IndexedViewDb, SymbolKind, ty::member::MemberView};
+use crate::{IndexedViewDb, SymbolKind};
 
 /// Composite declaration facts shared by editor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,15 +239,39 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
     }
 
     fn semantic_field(&self, field: FieldRef) -> anyhow::Result<Option<Declaration>> {
-        Ok(MemberView::new(self.db)
-            .field(field)?
-            .and_then(|field| field.declaration()))
+        let Some(data) = ItemStoreQuery::new(self.db).field_data(field)? else {
+            return Ok(None);
+        };
+        let Some(key) = data.field.key.as_ref() else {
+            return Ok(None);
+        };
+
+        Ok(Some(Declaration {
+            target: field.owner.origin.origin_target(),
+            kind: SymbolKind::Field,
+            name: key.declaration_label(),
+            file_id: data.file_id,
+            span: data.field.span,
+            selection_span: data.field.span,
+        }))
     }
 
     fn semantic_function(&self, function: FunctionRef) -> anyhow::Result<Option<Declaration>> {
-        Ok(MemberView::new(self.db)
-            .function(function)?
-            .map(|function| function.declaration()))
+        let Some(data) = ItemStoreQuery::new(self.db).function_data(function)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(Declaration {
+            target: function.origin.origin_target(),
+            kind: match data.owner {
+                ItemOwner::Module(_) => SymbolKind::Function,
+                ItemOwner::Trait(_) | ItemOwner::Impl(_) => SymbolKind::Method,
+            },
+            name: data.name.to_string(),
+            file_id: data.source.file_id,
+            span: data.span,
+            selection_span: data.name_span.unwrap_or(data.span),
+        }))
     }
 
     fn impl_label(self_ty: &TypeRef, trait_ref: Option<&TypeRef>) -> String {

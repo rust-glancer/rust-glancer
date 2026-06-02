@@ -9,13 +9,10 @@ use rg_ir_model::{
     identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery};
-use rg_ir_view::{
-    IndexedViewDb, display::signature::SignatureRenderer, item::path::PathView,
-    ty::member::MemberView,
-};
+use rg_ir_view::{IndexedViewDb, display::signature::SignatureRenderer, item::path::PathView};
 use rg_item_tree::Documentation;
 
-use crate::SymbolKind;
+use crate::{SymbolKind, query::member::MemberView};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct DeclarationDetailsContext {
@@ -154,7 +151,7 @@ impl<'a, 'db> DeclarationDetailsResolver<'a, 'db> {
         Ok(Some(DeclarationDetails {
             kind: function.symbol_kind(),
             path: function.display_path(&PathView::new(self.db))?,
-            signature: Some(SignatureRenderer::member_function_signature(&function)),
+            signature: Some(SignatureRenderer::function_signature(function.data())),
             docs: function.docs_text(),
         }))
     }
@@ -167,7 +164,7 @@ impl<'a, 'db> DeclarationDetailsResolver<'a, 'db> {
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Field,
             path: field.display_path(&PathView::new(self.db))?,
-            signature: SignatureRenderer::member_field_signature(&field),
+            signature: SignatureRenderer::field_signature(field.data()),
             docs: field.docs_text(),
         }))
     }
