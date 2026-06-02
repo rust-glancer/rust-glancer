@@ -2,39 +2,15 @@
 
 use rg_body_ir::BodyScopeQuery;
 use rg_ir_model::{
-    BodyRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TraitApplicability, TypeDefRef,
-    TypePathResolution,
+    BodyRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TypePathResolution,
     hir::items::{FieldData, FunctionData},
 };
 use rg_ir_storage::{ItemStoreQuery, Path};
 use rg_item_tree::{Documentation, FieldKey, ParamItem};
-use rg_ty::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, NominalTy, Ty};
+pub use rg_ty::MemberMethodOrigin;
+use rg_ty::{ItemPathQuery, MemberMethodCandidateRef, MemberQuery, Ty};
 
 use crate::{IndexedViewDb, SymbolKind, item::declaration::Declaration, item::path::PathView};
-
-/// A nominal receiver type with the generic arguments visible at the use site.
-#[derive(Debug, Clone, Copy)]
-pub enum MemberReceiverTy<'a> {
-    Nominal(&'a NominalTy),
-}
-
-impl<'a> MemberReceiverTy<'a> {
-    pub fn in_indexed_ty(ty: &'a Ty) -> impl Iterator<Item = Self> + 'a {
-        ty.as_nominals().iter().map(Self::Nominal)
-    }
-
-    fn owner(self) -> MemberOwnerRef {
-        match self {
-            Self::Nominal(ty) => MemberOwnerRef::Nominal(ty.def),
-        }
-    }
-}
-
-/// Reference to a declaration owner whose fields can be enumerated without receiver generic args.
-#[derive(Debug, Clone, Copy)]
-pub enum MemberOwnerRef {
-    Nominal(TypeDefRef),
-}
 
 /// Borrowed data for one resolved field, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
@@ -157,12 +133,6 @@ impl<'a> MemberMethodCandidate<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum MemberMethodOrigin {
-    Inherent,
-    Trait { applicability: TraitApplicability },
-}
-
 pub struct MemberView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -176,16 +146,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
         &'view self,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
-        let autoderef = Autoderef::new(ItemPathQuery::new(self.db, self.db));
         let mut fields = Vec::new();
-
-        for candidate in autoderef.candidates(AutoderefMode::FieldLookup, ty) {
-            let candidate = candidate?;
-            for receiver_ty in MemberReceiverTy::in_indexed_ty(candidate.ty()) {
-                fields.extend(self.field_candidates(receiver_ty)?);
-            }
+        let member_query = MemberQuery::new(ItemPathQuery::new(self.db, self.db));
+        for field_ref in member_query.fields_for_ty(ty)? {
+            let Some(field) = self.field(field_ref)? else {
+                continue;
+            };
+            fields.push(field);
         }
-
         Ok(fields)
     }
 
@@ -195,34 +163,25 @@ impl<'a, 'db> MemberView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
-        let mut fields = Vec::new();
-        for owner in self.owners_for_body_type_path(body, scope, path)? {
-            fields.extend(self.field_candidates_for_owner(owner)?);
-        }
-        Ok(fields)
-    }
-
-    fn field_candidates<'view>(
-        &'view self,
-        receiver_ty: MemberReceiverTy<'_>,
-    ) -> anyhow::Result<Vec<MemberField<'view>>> {
-        self.field_candidates_for_owner(receiver_ty.owner())
-    }
-
-    fn field_candidates_for_owner<'view>(
-        &'view self,
-        owner: MemberOwnerRef,
-    ) -> anyhow::Result<Vec<MemberField<'view>>> {
-        let field_refs: Vec<_> = match owner {
-            MemberOwnerRef::Nominal(ty) => ItemStoreQuery::new(self.db).fields_for_type(ty)?,
+        let Some(body_data) = self.db.body_ir.body_data(body)? else {
+            return Ok(Vec::new());
         };
+        let resolution = BodyScopeQuery::new(self.db, self.db, body, body_data)
+            .resolve_type_path_in_scope(scope, path)?;
 
         let mut fields = Vec::new();
-        for field_ref in field_refs {
-            let Some(field) = self.field(field_ref)? else {
-                continue;
-            };
-            fields.push(field);
+        let member_query = MemberQuery::new(ItemPathQuery::new(self.db, self.db));
+        if let TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types) =
+            resolution
+        {
+            for ty in types {
+                for field_ref in member_query.fields_for_type_def(ty)? {
+                    let Some(field) = self.field(field_ref)? else {
+                        continue;
+                    };
+                    fields.push(field);
+                }
+            }
         }
 
         Ok(fields)
@@ -240,86 +199,29 @@ impl<'a, 'db> MemberView<'a, 'db> {
             .map(|data| MemberFunction { function, data }))
     }
 
-    fn method_candidates<'view>(
-        &'view self,
-        receiver_ty: MemberReceiverTy<'_>,
-    ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
-        let mut candidates = Vec::new();
-
-        match receiver_ty {
-            MemberReceiverTy::Nominal(ty) => {
-                let item_paths = ItemPathQuery::new(self.db, self.db);
-                let matcher = ImplMatcher::new(item_paths);
-
-                for function in ItemStoreQuery::new(self.db).inherent_functions_for_type(ty.def)? {
-                    if !matcher.function_applies_to_receiver(function, ty)? {
-                        continue;
-                    }
-
-                    let Some(function) = self.function(function)? else {
-                        continue;
-                    };
-                    candidates.push(MemberMethodCandidate {
-                        function,
-                        origin: MemberMethodOrigin::Inherent,
-                    });
-                }
-
-                // Trait candidates carry applicability because this project intentionally avoids
-                // full solving, but still wants useful editor suggestions for likely matches.
-                for (function, applicability) in
-                    matcher.trait_function_candidates_for_receiver(None, ty, None)?
-                {
-                    let Some(function) = self.function(function)? else {
-                        continue;
-                    };
-                    candidates.push(MemberMethodCandidate {
-                        function,
-                        origin: MemberMethodOrigin::Trait { applicability },
-                    });
-                }
-            }
-        }
-
-        Ok(candidates)
-    }
-
     pub fn method_candidates_for_ty<'view>(
         &'view self,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
-        let autoderef = Autoderef::new(ItemPathQuery::new(self.db, self.db));
         let mut methods = Vec::new();
-
-        for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, ty) {
-            let candidate = candidate?;
-            for receiver_ty in MemberReceiverTy::in_indexed_ty(candidate.ty()) {
-                methods.extend(self.method_candidates(receiver_ty)?);
-            }
+        let member_query = MemberQuery::new(ItemPathQuery::new(self.db, self.db));
+        for candidate in member_query.method_candidates_for_ty(ty)? {
+            let Some(function) = self.function(candidate.function())? else {
+                continue;
+            };
+            methods.push(Self::method_candidate(function, candidate));
         }
 
         Ok(methods)
     }
 
-    fn owners_for_body_type_path(
-        &self,
-        body: BodyRef,
-        scope: ScopeId,
-        path: &Path,
-    ) -> anyhow::Result<Vec<MemberOwnerRef>> {
-        let Some(body_data) = self.db.body_ir.body_data(body)? else {
-            return Ok(Vec::new());
-        };
-        let resolution = BodyScopeQuery::new(self.db, self.db, body, body_data)
-            .resolve_type_path_in_scope(scope, path)?;
-        let owners = match resolution {
-            TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types) => {
-                types.into_iter().map(MemberOwnerRef::Nominal).collect()
-            }
-            TypePathResolution::TypeAliases(_)
-            | TypePathResolution::Traits(_)
-            | TypePathResolution::Unknown => Vec::new(),
-        };
-        Ok(owners)
+    fn method_candidate<'view>(
+        function: MemberFunction<'view>,
+        candidate: MemberMethodCandidateRef,
+    ) -> MemberMethodCandidate<'view> {
+        MemberMethodCandidate {
+            function,
+            origin: candidate.origin(),
+        }
     }
 }
