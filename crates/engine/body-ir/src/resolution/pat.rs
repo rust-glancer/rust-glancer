@@ -4,15 +4,14 @@
 //! bindings. Enum variants are matched against a known enum scrutinee/annotation type; patterns do
 //! not infer the scrutinee type by themselves.
 
-use rg_def_map::{DefMapReadTxn, Path, PathSegment};
-use rg_ir_model::{BindingId, BodyRef, ExprId, PatId, ScopeId, StmtId, TypeDefId};
+use rg_def_map::{Path, PathSegment};
+use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId, TypeDefId};
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
+use rg_semantic_ir::ItemStoreQuery;
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
-    ir::body::BodyData,
     ir::expr::ExprKind,
     ir::pat::{PatKind, RecordPatField},
     ir::path::BodyPath,
@@ -24,32 +23,19 @@ use super::{
     ty::subst_from_generics, type_path::BodyTypePathResolver,
 };
 
-pub(super) struct PatternTypePropagator<'query, 'db, 'body> {
-    def_map: &'query DefMapReadTxn<'db>,
-    semantic_ir: &'query SemanticIrReadTxn<'db>,
-    body_ref: BodyRef,
-    body: &'body mut BodyData,
+pub(super) struct PatternTypePropagator<'query, 'db> {
+    source: BodyQuerySource<'query, 'db>,
 }
 
-impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
-    pub(super) fn new(
-        def_map: &'query DefMapReadTxn<'db>,
-        semantic_ir: &'query SemanticIrReadTxn<'db>,
-        body_ref: BodyRef,
-        body: &'body mut BodyData,
-    ) -> Self {
-        Self {
-            def_map,
-            semantic_ir,
-            body_ref,
-            body,
-        }
+impl<'query, 'db> PatternTypePropagator<'query, 'db> {
+    pub(super) fn new(source: BodyQuerySource<'query, 'db>) -> Self {
+        Self { source }
     }
 
-    pub(super) fn propagate(&mut self) -> Result<bool, PackageStoreError> {
-        let mut changed = false;
+    pub(super) fn propagate(&self) -> Result<Vec<(BindingId, Ty)>, PackageStoreError> {
+        let mut updates = Vec::new();
 
-        for statement_idx in 0..self.body.statements.len() {
+        for statement_idx in 0..self.source.body().statements.len() {
             let statement = StmtId(statement_idx);
             let StmtKind::Let {
                 scope,
@@ -57,26 +43,26 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
                 annotation,
                 initializer,
                 ..
-            } = self.body.statements[statement].kind.clone()
+            } = self.source.body().statements[statement].kind.clone()
             else {
                 continue;
             };
 
             let expected_ty = self.expected_ty_for_let(scope, annotation.as_ref(), initializer)?;
-            changed |= self.propagate_pat(pat, &expected_ty)?;
+            self.propagate_pat(pat, &expected_ty, &mut updates)?;
         }
 
-        for expr_idx in 0..self.body.exprs.len() {
+        for expr_idx in 0..self.source.body().exprs.len() {
             let expr = ExprId(expr_idx);
-            match self.body.exprs[expr].kind.clone() {
+            match self.source.body().exprs[expr].kind.clone() {
                 ExprKind::Match { scrutinee, arms } => {
                     let Some(scrutinee) = scrutinee else {
                         continue;
                     };
-                    let expected_ty = self.body.exprs[scrutinee].ty.clone();
+                    let expected_ty = self.source.body().exprs[scrutinee].ty.clone();
                     for arm in arms {
                         if let Some(pat) = arm.pat {
-                            changed |= self.propagate_pat(pat, &expected_ty)?;
+                            self.propagate_pat(pat, &expected_ty, &mut updates)?;
                         }
                     }
                 }
@@ -87,7 +73,7 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
                     ..
                 } => {
                     let expected_ty = self.expected_ty_for_let(scope, None, initializer)?;
-                    changed |= self.propagate_pat(pat, &expected_ty)?;
+                    self.propagate_pat(pat, &expected_ty, &mut updates)?;
                 }
                 ExprKind::Path { .. }
                 | ExprKind::Call { .. }
@@ -122,19 +108,15 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
             }
         }
 
-        Ok(changed)
+        Ok(updates)
     }
 
-    fn query_source(&self) -> BodyQuerySource<'_, 'db> {
-        BodyQuerySource::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, 'db>> {
+        ItemStoreQuery::new(self.source)
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, 'db>> {
-        ItemStoreQuery::new(self.query_source())
-    }
-
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'_, 'db> {
-        BodyTypePathResolver::new(self.query_source())
+    fn type_path_resolver(&self) -> BodyTypePathResolver<'query, 'db> {
+        BodyTypePathResolver::new(self.source)
     }
 
     fn expected_ty_for_let(
@@ -153,45 +135,51 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         }
 
         Ok(initializer
-            .map(|expr| self.body.exprs[expr].ty.clone())
+            .map(|expr| self.source.body().exprs[expr].ty.clone())
             .unwrap_or(Ty::Unknown))
     }
 
-    fn propagate_pat(&mut self, pat: PatId, expected_ty: &Ty) -> Result<bool, PackageStoreError> {
+    fn propagate_pat(
+        &self,
+        pat: PatId,
+        expected_ty: &Ty,
+        updates: &mut Vec<(BindingId, Ty)>,
+    ) -> Result<(), PackageStoreError> {
         if matches!(expected_ty, Ty::Unknown) {
-            return Ok(false);
+            return Ok(());
         }
 
-        let Some(data) = self.body.pat(pat).cloned() else {
-            return Ok(false);
+        let Some(data) = self.source.body().pat(pat).cloned() else {
+            return Ok(());
         };
 
         match data.kind {
             PatKind::Binding {
                 binding, subpat, ..
             } => {
-                let mut changed = binding
-                    .map(|binding| self.set_binding_ty(binding, expected_ty.clone()))
-                    .unwrap_or(false);
-                if let Some(subpat) = subpat {
-                    changed |= self.propagate_pat(subpat, expected_ty)?;
+                if let Some(binding) = binding {
+                    self.push_binding_ty_update(binding, expected_ty.clone(), updates);
                 }
-                Ok(changed)
+                if let Some(subpat) = subpat {
+                    self.propagate_pat(subpat, expected_ty, updates)?;
+                }
+                Ok(())
             }
             PatKind::TupleStruct { path, fields } => {
-                self.propagate_tuple_variant(path.as_ref(), &fields, expected_ty)
+                self.propagate_tuple_variant(path.as_ref(), &fields, expected_ty, updates)
             }
             PatKind::Record { path, fields, .. } => {
-                self.propagate_record_variant(path.as_ref(), &fields, expected_ty)
+                self.propagate_record_variant(path.as_ref(), &fields, expected_ty, updates)
             }
             PatKind::Or { pats } => {
-                let mut changed = false;
                 for pat in pats {
-                    changed |= self.propagate_pat(pat, expected_ty)?;
+                    self.propagate_pat(pat, expected_ty, updates)?;
                 }
-                Ok(changed)
+                Ok(())
             }
-            PatKind::Ref { pat, .. } | PatKind::Box { pat } => self.propagate_pat(pat, expected_ty),
+            PatKind::Ref { pat, .. } | PatKind::Box { pat } => {
+                self.propagate_pat(pat, expected_ty, updates)
+            }
             PatKind::Tuple { .. }
             | PatKind::Slice { .. }
             | PatKind::Path { .. }
@@ -200,49 +188,49 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
             | PatKind::Range { .. }
             | PatKind::ConstBlock { .. }
             | PatKind::Wildcard
-            | PatKind::Unsupported => Ok(false),
+            | PatKind::Unsupported => Ok(()),
         }
     }
 
     fn propagate_tuple_variant(
-        &mut self,
+        &self,
         path: Option<&BodyPath>,
         fields: &[PatId],
         expected_ty: &Ty,
-    ) -> Result<bool, PackageStoreError> {
+        updates: &mut Vec<(BindingId, Ty)>,
+    ) -> Result<(), PackageStoreError> {
         let def_map_path = path.and_then(|path| path.as_def_map_path());
         let Some(variant_name) = variant_name(def_map_path.as_ref()) else {
-            return Ok(false);
+            return Ok(());
         };
 
-        let mut changed = false;
         for (idx, field_pat) in fields.iter().enumerate() {
             let field_key = FieldKey::Tuple(idx);
             if let Some(field_ty) = self.variant_field_ty(expected_ty, variant_name, &field_key)? {
-                changed |= self.propagate_pat(*field_pat, &field_ty)?;
+                self.propagate_pat(*field_pat, &field_ty, updates)?;
             }
         }
-        Ok(changed)
+        Ok(())
     }
 
     fn propagate_record_variant(
-        &mut self,
+        &self,
         path: Option<&BodyPath>,
         fields: &[RecordPatField],
         expected_ty: &Ty,
-    ) -> Result<bool, PackageStoreError> {
+        updates: &mut Vec<(BindingId, Ty)>,
+    ) -> Result<(), PackageStoreError> {
         let def_map_path = path.and_then(|path| path.as_def_map_path());
         let Some(variant_name) = variant_name(def_map_path.as_ref()) else {
-            return Ok(false);
+            return Ok(());
         };
 
-        let mut changed = false;
         for field in fields {
             if let Some(field_ty) = self.variant_field_ty(expected_ty, variant_name, &field.key)? {
-                changed |= self.propagate_pat(field.pat, &field_ty)?;
+                self.propagate_pat(field.pat, &field_ty, updates)?;
             }
         }
-        Ok(changed)
+        Ok(())
     }
 
     fn variant_field_ty(
@@ -315,20 +303,24 @@ impl<'query, 'db, 'body> PatternTypePropagator<'query, 'db, 'body> {
         ))
     }
 
-    fn set_binding_ty(&mut self, binding: BindingId, ty: Ty) -> bool {
+    fn push_binding_ty_update(
+        &self,
+        binding: BindingId,
+        ty: Ty,
+        updates: &mut Vec<(BindingId, Ty)>,
+    ) {
         if matches!(ty, Ty::Unknown) {
-            return false;
+            return;
         }
 
-        let Some(binding_data) = self.body.bindings.get_mut(binding) else {
-            return false;
+        let Some(binding_data) = self.source.body().bindings.get(binding) else {
+            return;
         };
         if !matches!(binding_data.ty, Ty::Unknown) {
-            return false;
+            return;
         }
 
-        binding_data.ty = ty;
-        true
+        updates.push((binding, ty));
     }
 }
 

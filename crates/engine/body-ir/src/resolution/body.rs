@@ -100,13 +100,8 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             for expr_idx in 0..self.body.exprs.len() {
                 changed |= self.resolve_expr(ExprId(expr_idx))?;
             }
-            changed |= PatternTypePropagator::new(
-                self.def_map_txn,
-                self.semantic_ir_txn,
-                self.body_ref,
-                self.body,
-            )
-            .propagate()?;
+            let binding_updates = PatternTypePropagator::new(self.query_source()).propagate()?;
+            changed |= self.apply_binding_type_updates(binding_updates);
 
             if !changed {
                 break;
@@ -166,6 +161,27 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
             self.body.bindings[binding].ty = ty;
         }
         Ok(())
+    }
+
+    fn apply_binding_type_updates(&mut self, updates: Vec<(BindingId, Ty)>) -> bool {
+        let mut changed = false;
+        for (binding, ty) in updates {
+            if matches!(ty, Ty::Unknown) {
+                continue;
+            }
+
+            let Some(binding_data) = self.body.bindings.get_mut(binding) else {
+                continue;
+            };
+            if !matches!(binding_data.ty, Ty::Unknown) {
+                continue;
+            }
+
+            binding_data.ty = ty;
+            changed = true;
+        }
+
+        changed
     }
 
     fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {
