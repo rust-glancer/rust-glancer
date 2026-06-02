@@ -1,12 +1,11 @@
 //! Reference search over the facts already held by the analysis graph.
 //!
 //! Reference lookup intentionally scans known source facts instead of building a separate index.
-//! The query owns the search surface and declaration-inclusion policy, while `ReferenceView`
-//! projects declaration identities into source locations.
+//! The query owns the search surface, declaration-inclusion policy, and declaration projection.
 
 use rg_ir_model::{TargetRef, identity::DeclarationRef};
-use rg_ir_view::source::reference::{IndexedSourceLocation, ReferenceView};
-use rg_parse::FileId;
+use rg_ir_view::item::declaration::DeclarationView;
+use rg_parse::{FileId, Span};
 
 use crate::{
     Analysis,
@@ -116,7 +115,6 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         let Some(symbol) = self.analysis.symbol_at_for_query(target, file_id, offset)? else {
             return Ok(Vec::new());
         };
-        let reference_view = ReferenceView::new(self.analysis.view_db());
         let declarations = self.unique_declarations_for_symbol(symbol)?;
         if declarations.is_empty() {
             return Ok(Vec::new());
@@ -124,12 +122,16 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
 
         let mut locations = Vec::new();
         if self.query.includes_declarations() {
-            for location in reference_view.declaration_locations(&declarations)? {
+            for location in self.declaration_locations(&declarations)? {
                 if self
                     .query
                     .accepts_declaration(location.target, location.file_id)
                 {
-                    locations.push(Self::reference_location(location));
+                    locations.push(ReferenceLocation {
+                        target: location.target,
+                        file_id: location.file_id,
+                        span: location.span,
+                    });
                 }
             }
         }
@@ -234,12 +236,23 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         Ok(())
     }
 
-    fn reference_location(location: IndexedSourceLocation) -> ReferenceLocation {
-        ReferenceLocation {
-            target: location.target,
-            file_id: location.file_id,
-            span: location.span,
+    fn declaration_locations(
+        &self,
+        declarations: &[DeclarationRef],
+    ) -> anyhow::Result<Vec<ReferenceSourceLocation>> {
+        let mut locations = Vec::new();
+        let declaration_view = DeclarationView::new(self.analysis.view_db());
+        for declaration_ref in declarations {
+            let Some(declaration) = declaration_view.declaration(*declaration_ref)? else {
+                continue;
+            };
+            locations.push(ReferenceSourceLocation {
+                target: declaration.target(),
+                file_id: declaration.file_id(),
+                span: declaration.selection_span(),
+            });
         }
+        Ok(locations)
     }
 }
 
@@ -247,4 +260,11 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
 struct ReferenceScanTarget {
     target: TargetRef,
     file_id: Option<FileId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ReferenceSourceLocation {
+    target: TargetRef,
+    file_id: FileId,
+    span: Span,
 }
