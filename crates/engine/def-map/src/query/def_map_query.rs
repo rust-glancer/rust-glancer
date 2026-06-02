@@ -132,6 +132,15 @@ where
             .and_then(|def_map| def_map.module(module_ref.module)))
     }
 
+    /// Lists modules recorded in one target DefMap without exposing the concrete store.
+    pub fn module_refs(&self, target: TargetRef) -> Result<Vec<ModuleRef>, PackageStoreError> {
+        Ok(self
+            .source
+            .def_map_for_origin(DefMapRef::Target(target))?
+            .map(|def_map| def_map.module_refs().collect())
+            .unwrap_or_default())
+    }
+
     pub fn local_def_data(
         &self,
         local_def_ref: LocalDefRef,

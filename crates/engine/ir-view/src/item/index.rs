@@ -105,23 +105,14 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
     }
 
     pub fn included_targets(&self) -> anyhow::Result<Vec<TargetRef>> {
-        Ok(self
-            .db
-            .semantic_ir
-            .included_stores()?
-            .into_iter()
-            .map(|store| store.target_ref()) // TODO: smell -- can't we use item stores down the line?
-            .collect())
+        Ok(ItemStoreQuery::new(self.db).visible_target_refs()?)
     }
 
     pub fn module_declarations(&self, target: TargetRef) -> anyhow::Result<Vec<DeclarationRef>> {
-        let Some(def_map) = self.db.def_map.def_map(target)? else {
-            return Ok(Vec::new());
-        };
-
-        Ok(def_map
-            .module_refs()
-            .map(|module_ref| DeclarationRef::module(module_ref))
+        Ok(DefMapQuery::new(self.db)
+            .module_refs(target)?
+            .into_iter()
+            .map(DeclarationRef::module)
             .collect())
     }
 
@@ -145,12 +136,10 @@ impl<'a, 'db> ItemIndexView<'a, 'db> {
         target: TargetRef,
         file_id: Option<FileId>,
     ) -> anyhow::Result<Vec<IndexedItem>> {
-        let Some(store) = self.db.semantic_ir.items(target)? else {
-            return Ok(Vec::new());
-        };
-
         let mut items = Vec::new();
-        for item in store.semantic_items() {
+        for item in
+            ItemStoreQuery::new(self.db).semantic_items_for_origin(DefMapRef::Target(target))?
+        {
             if item.module_owner().is_none() {
                 continue;
             }

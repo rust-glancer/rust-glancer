@@ -5,7 +5,8 @@
 
 use rg_ir_model::{
     ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner, LocalDefRef,
-    SemanticItemRef, StaticRef, TraitImplRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
+    SemanticItemRef, StaticRef, TargetRef, TraitImplRef, TraitRef, TypeAliasRef, TypeDefId,
+    TypeDefRef,
     hir::items::{
         ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, StaticData,
         TraitData, TypeAliasData,
@@ -69,6 +70,26 @@ where
     /// This keeps broad scans on the same visibility boundary as direct impl queries.
     pub fn visible_stores(&self) -> Result<Vec<&'a ItemStore>, S::Error> {
         self.source.visible_stores()
+    }
+
+    /// Returns target refs for all stores visible to broad item queries.
+    pub fn visible_target_refs(&self) -> Result<Vec<TargetRef>, S::Error> {
+        Ok(self
+            .visible_stores()?
+            .into_iter()
+            .map(|store| store.target_ref())
+            .collect())
+    }
+
+    /// Enumerates item views from one routed origin without exposing store iteration to callers.
+    pub fn semantic_items_for_origin(
+        &self,
+        origin: DefMapRef,
+    ) -> Result<Vec<SemanticItemView<'a>>, S::Error> {
+        Ok(self
+            .item_store_for_origin(origin)?
+            .map(|items| items.semantic_items().collect())
+            .unwrap_or_default())
     }
 
     /// Expands a stable item ref into the borrowed item data used by view/projection code.
