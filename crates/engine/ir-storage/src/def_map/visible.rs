@@ -100,7 +100,7 @@ impl VisibleScopeDefs {
         }
     }
 
-    pub(crate) fn push(&mut self, def: VisibleScopeDef, skip_shadowed: bool) {
+    pub fn push(&mut self, def: VisibleScopeDef, skip_shadowed: bool) {
         if skip_shadowed
             && self
                 .0
@@ -113,7 +113,7 @@ impl VisibleScopeDefs {
         self.0.push(def);
     }
 
-    pub(crate) fn sort(&mut self) {
+    pub fn sort(&mut self) {
         self.0.sort_by(|left, right| {
             left.label
                 .cmp(&right.label)

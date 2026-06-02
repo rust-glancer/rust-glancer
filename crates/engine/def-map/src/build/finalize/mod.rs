@@ -18,10 +18,8 @@ use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    DefMap, DefMapReadTxn, LocalDefData, MacroDefinitionData, ModuleData,
-    PackageDefMaps as DefMapPackage, PackageSlot,
-    def_map::TargetData,
-    model::{ModuleScopeBuilder, ScopeEntryRef},
+    DefMap, DefMapReadTxn, LocalDefData, MacroDefinitionData, ModuleData, ModuleScopeBuilder,
+    PackageDefMaps as DefMapPackage, PackageSlot, ScopeEntryRef, TargetData,
     query::{
         path_resolution::PathResolver,
         resolution_env::{ScopeResolutionEnv, TargetResolutionEnv},
@@ -431,31 +429,17 @@ pub(super) fn finalize_target_states(
         .context("while attempting to resolve target scopes")
 }
 
-impl DefMapPackage {
-    /// Freezes collected target states into the package payload stored by `DefMapDb`.
-    pub(super) fn freeze(package: &Package, package_states: &[TargetState]) -> Self {
-        Self {
-            name: package.package_name().to_string(),
-            target_names: rg_arena::Arena::from_vec(
-                package_states
-                    .iter()
-                    .map(|state| state.target_name.clone())
-                    .collect(),
-            ),
-            target_data: rg_arena::Arena::from_vec(
-                package_states
-                    .iter()
-                    .map(freeze_target_data)
-                    .collect::<Vec<_>>(),
-            ),
-            targets: rg_arena::Arena::from_vec(
-                package_states
-                    .iter()
-                    .map(freeze_target_state)
-                    .collect::<Vec<_>>(),
-            ),
-        }
-    }
+/// Freezes collected target states into the package payload stored by `DefMapDb`.
+pub(super) fn freeze_package(package: &Package, package_states: &[TargetState]) -> DefMapPackage {
+    DefMapPackage::new(
+        package.package_name().to_string(),
+        package_states
+            .iter()
+            .map(|state| state.target_name.clone())
+            .collect(),
+        package_states.iter().map(freeze_target_data).collect(),
+        package_states.iter().map(freeze_target_state).collect(),
+    )
 }
 
 /// Selects the standard prelude module visible from each dirty target.

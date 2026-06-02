@@ -70,7 +70,7 @@ impl ModuleScopeBuilder {
         entry.insert_binding(namespace, binding)
     }
 
-    pub(crate) fn copy_visible_bindings(
+    pub fn copy_visible_bindings(
         &mut self,
         name: &Name,
         entry: ScopeEntryRef<'_>,
@@ -117,11 +117,11 @@ impl ModuleScopeBuilder {
         }
     }
 
-    pub(crate) fn entry(&self, name: &str) -> Option<ScopeEntryRef<'_>> {
+    pub fn entry(&self, name: &str) -> Option<ScopeEntryRef<'_>> {
         self.names.get(name).map(ScopeEntryBuilder::as_ref)
     }
 
-    pub(crate) fn entries(&self) -> impl Iterator<Item = (&Name, ScopeEntryRef<'_>)> {
+    pub fn entries(&self) -> impl Iterator<Item = (&Name, ScopeEntryRef<'_>)> {
         self.names
             .iter()
             .map(|(name, entry)| (name, entry.as_ref()))
@@ -178,7 +178,7 @@ impl ScopeEntry {
         self.types.is_empty() && self.values.is_empty() && self.macros.is_empty()
     }
 
-    pub(crate) fn as_ref(&self) -> ScopeEntryRef<'_> {
+    pub fn as_ref(&self) -> ScopeEntryRef<'_> {
         ScopeEntryRef {
             types: &self.types,
             values: &self.values,
@@ -241,22 +241,22 @@ impl ScopeEntryBuilder {
 
 /// Borrowed view over either a mutable-build or frozen scope entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct ScopeEntryRef<'a> {
+pub struct ScopeEntryRef<'a> {
     types: &'a [ScopeBinding],
     values: &'a [ScopeBinding],
     macros: &'a [ScopeBinding],
 }
 
 impl<'a> ScopeEntryRef<'a> {
-    pub(crate) fn types(self) -> &'a [ScopeBinding] {
+    pub fn types(self) -> &'a [ScopeBinding] {
         self.types
     }
 
-    pub(crate) fn values(self) -> &'a [ScopeBinding] {
+    pub fn values(self) -> &'a [ScopeBinding] {
         self.values
     }
 
-    pub(crate) fn macros(self) -> &'a [ScopeBinding] {
+    pub fn macros(self) -> &'a [ScopeBinding] {
         self.macros
     }
 }
@@ -317,8 +317,7 @@ mod tests {
     use rg_ir_model::{DefId, ModuleId, ModuleRef, TargetRef};
     use rg_item_tree::VisibilityLevel;
     use rg_parse::TargetId;
-
-    use crate::PackageSlot;
+    use rg_workspace::PackageSlot;
 
     use super::{ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin};
 

@@ -1,5 +1,4 @@
 use rg_arena::Arena;
-use rg_def_map::DefMap;
 use rg_ir_model::{
     ConstId, ConstRef, DefMapRef, EnumId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId,
     LocalDefId, SemanticItemRef, StaticId, StaticRef, StructId, TargetRef, TraitId, TraitRef,
@@ -10,7 +9,7 @@ use rg_ir_model::{
     },
 };
 
-use crate::{SemanticItemView, view::SemanticItemData};
+use super::{SemanticItemView, view::SemanticItemData};
 
 #[derive(Debug)]
 pub struct ItemStoreBuilder {
@@ -32,7 +31,7 @@ pub struct ItemStoreBuilder {
 }
 
 impl ItemStoreBuilder {
-    pub(crate) fn new(origin: DefMapRef, local_def_count: usize) -> Self {
+    pub fn new(origin: DefMapRef, local_def_count: usize) -> Self {
         Self {
             origin,
             local_items: {
@@ -50,10 +49,6 @@ impl ItemStoreBuilder {
             consts: Arena::default(),
             statics: Arena::default(),
         }
-    }
-
-    pub fn for_def_map(def_map: &DefMap) -> Self {
-        Self::new(def_map.own_ref(), def_map.local_defs().len())
     }
 
     pub fn set_local_item(&mut self, local_def: LocalDefId, item: ItemId) {

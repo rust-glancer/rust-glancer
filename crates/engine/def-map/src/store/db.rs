@@ -177,10 +177,9 @@ pub struct DefMapStats {
 
 #[cfg(test)]
 mod tests {
-    use rg_arena::Arena;
     use rg_ir_model::TargetRef;
 
-    use crate::def_map::{DefMapBuilder, TargetData};
+    use crate::{DefMapBuilder, TargetData};
 
     use super::*;
 
@@ -206,17 +205,17 @@ mod tests {
     }
 
     fn package_with_one_target(name: &str) -> PackageDefMaps {
-        PackageDefMaps {
-            name: name.to_string(),
-            target_names: Arena::from_vec(vec![format!("{name}_lib")]),
-            target_data: Arena::from_vec(vec![TargetData::default()]),
-            targets: Arena::from_vec(vec![
+        PackageDefMaps::new(
+            name.to_string(),
+            vec![format!("{name}_lib")],
+            vec![TargetData::default()],
+            vec![
                 DefMapBuilder::new(TargetRef {
                     package: PackageSlot(0),
                     target: TargetId(0),
                 })
                 .build(),
-            ]),
-        }
+            ],
+        )
     }
 }

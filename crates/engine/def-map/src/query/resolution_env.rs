@@ -8,7 +8,7 @@ use rg_ir_model::{LocalDefRef, ModuleRef, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
 
-use crate::{LocalDefData, LocalDefKind, MacroDefinitionData, ModuleData, model::ScopeEntryRef};
+use crate::{LocalDefData, LocalDefKind, MacroDefinitionData, ModuleData, ScopeEntryRef};
 
 /// Minimal scope graph required by path and visibility lookup.
 pub(crate) trait ScopeResolutionEnv {

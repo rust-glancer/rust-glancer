@@ -1,8 +1,6 @@
 //! Query-facing semantic resolution context.
 
-use rg_ir_model::ModuleRef;
-
-use rg_ir_model::ImplRef;
+use rg_ir_model::{ImplRef, ModuleRef};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, rg_memsize::MemorySize)]
 pub struct TypePathContext {

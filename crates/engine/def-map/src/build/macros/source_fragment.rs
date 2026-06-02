@@ -17,10 +17,9 @@ use rg_text::Name;
 
 use crate::{
     ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
-    LocalDefKind, LocalImplData, ModuleData, ModuleOrigin, ModuleScope, ScopeBinding,
+    LocalDefKind, LocalImplData, ModuleData, ModuleOrigin, ModuleScope, Namespace, ScopeBinding,
     ScopeBindingOrigin,
     build::{collect::TargetState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult},
-    model::Namespace,
 };
 
 use super::{

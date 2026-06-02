@@ -1,17 +1,62 @@
+use std::collections::HashMap;
+
+use rg_arena::Arena;
 use rg_ir_model::{
     BodyRef, DefMapRef, ImportId, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef, ModuleId,
     ModuleRef, TargetRef,
     hir::source::{GeneratedSourceData, GeneratedSourceId},
 };
 
-use crate::{ImportData, LocalDefData, LocalImplData, MacroDefinitionData, ModuleData};
+use super::{
+    import::ImportData,
+    local::{LocalDefData, LocalImplData, MacroDefinitionData},
+    module::ModuleData,
+};
 
-use self::def_map_data::DefMapData;
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+struct DefMapData {
+    modules: Arena<ModuleId, ModuleData>,
+    local_defs: Arena<LocalDefId, LocalDefData>,
+    macro_definitions: HashMap<LocalDefId, MacroDefinitionData>,
+    local_impls: Arena<LocalImplId, LocalImplData>,
+    imports: Arena<ImportId, ImportData>,
+    generated_sources: Arena<GeneratedSourceId, GeneratedSourceData>,
+}
 
-mod def_map_data;
-pub(crate) mod target_data;
-
-pub(crate) use self::target_data::TargetData;
+impl DefMapData {
+    fn shrink_to_fit(&mut self) {
+        self.modules.shrink_to_fit();
+        for module in self.modules.iter_mut() {
+            module.shrink_to_fit();
+        }
+        self.local_defs.shrink_to_fit();
+        for local_def in self.local_defs.iter_mut() {
+            local_def.shrink_to_fit();
+        }
+        self.macro_definitions.shrink_to_fit();
+        for macro_definition in self.macro_definitions.values_mut() {
+            macro_definition.shrink_to_fit();
+        }
+        self.local_impls.shrink_to_fit();
+        self.imports.shrink_to_fit();
+        for import in self.imports.iter_mut() {
+            import.shrink_to_fit();
+        }
+        self.generated_sources.shrink_to_fit();
+        for generated_source in self.generated_sources.iter_mut() {
+            generated_source.shrink_to_fit();
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DefMapBuilder {
@@ -135,7 +180,7 @@ impl DefMap {
         self.data.modules.get(module_id)
     }
 
-    pub(crate) fn module_count(&self) -> usize {
+    pub fn module_count(&self) -> usize {
         self.data.modules.len()
     }
 

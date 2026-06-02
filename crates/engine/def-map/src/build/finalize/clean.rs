@@ -13,8 +13,8 @@ use super::super::{
     collect::collect_target_states, implicit_roots::build_implicit_roots,
     stats::DefMapFinalizationStats,
 };
-use super::{FinalizeTargetStates, finalize_target_states};
-use crate::{DefMapDb, PackageDefMaps as DefMapPackage, PackageSlot};
+use super::{FinalizeTargetStates, finalize_target_states, freeze_package};
+use crate::{DefMapDb, PackageSlot};
 
 /// Builds the final `DefMapDb` from collected per-target states.
 ///
@@ -60,7 +60,7 @@ pub(crate) fn build_db(
             let package_states = target_states
                 .package(PackageSlot(package_slot))
                 .expect("clean build should finalize every package");
-            DefMapPackage::freeze(package, package_states)
+            freeze_package(package, package_states)
         })
         .collect::<Vec<_>>();
 

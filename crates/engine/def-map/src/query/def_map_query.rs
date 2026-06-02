@@ -9,7 +9,7 @@ use rg_text::Name;
 
 use crate::{
     DefMap, LocalDefData, LocalImplData, MacroDefinitionData, ModuleData, Path, ResolvePathResult,
-    ScopeNamespace, VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin, model::ScopeEntryRef,
+    ScopeEntryRef, ScopeNamespace, VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin,
 };
 
 use super::{

@@ -1455,12 +1455,12 @@ name = "rg_def_map"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "derive_more",
  "expect-test",
  "rayon",
  "rg_arena",
  "rg_cfg_eval",
  "rg_ir_model",
+ "rg_ir_storage",
  "rg_item_tree",
  "rg_macro_expand",
  "rg_memsize",
@@ -1471,7 +1471,6 @@ dependencies = [
  "rg_tt",
  "rg_workspace",
  "test_fixture",
- "wincode",
 ]
 
 [[package]]
@@ -1484,6 +1483,22 @@ dependencies = [
  "rg_memsize",
  "rg_parse",
  "rg_text",
+ "rg_workspace",
+ "wincode",
+]
+
+[[package]]
+name = "rg_ir_storage"
+version = "0.1.0"
+dependencies = [
+ "derive_more",
+ "rg_arena",
+ "rg_ir_model",
+ "rg_item_tree",
+ "rg_memsize",
+ "rg_parse",
+ "rg_text",
+ "rg_tt",
  "rg_workspace",
  "wincode",
 ]
@@ -1688,6 +1703,7 @@ dependencies = [
  "rg_arena",
  "rg_def_map",
  "rg_ir_model",
+ "rg_ir_storage",
  "rg_item_tree",
  "rg_memsize",
  "rg_package_store",

@@ -14,8 +14,8 @@ use super::super::{
     collect::collect_package_target_states, implicit_roots::build_implicit_roots,
     stats::DefMapFinalizationStats,
 };
-use super::{FinalizeTargetStates, finalize_target_states};
-use crate::{DefMapDb, DefMapReadTxn, PackageDefMaps as DefMapPackage, PackageSlot};
+use super::{FinalizeTargetStates, finalize_target_states, freeze_package};
+use crate::{DefMapDb, DefMapReadTxn, PackageSlot};
 
 /// Rebuilds selected package def maps against the previous frozen graph.
 #[allow(clippy::too_many_arguments)]
@@ -106,7 +106,7 @@ pub(crate) fn rebuild_packages(
                 package_slot.0
             )
         })?;
-        let rebuilt = DefMapPackage::freeze(parse_package, &package_states);
+        let rebuilt = freeze_package(parse_package, &package_states);
         next.mutator()
             .replace_package(package_slot, rebuilt)
             .with_context(|| {

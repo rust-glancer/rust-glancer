@@ -6,7 +6,7 @@ use rg_parse::Span;
 use rg_text::{Name, NameInterner};
 use rg_workspace::RustEdition;
 
-use super::{Path, PathSegment, path::last_segment_name};
+use super::path::{Path, PathSegment, last_segment_name};
 
 /// One lowered import declaration.
 #[derive(
@@ -26,7 +26,7 @@ pub struct ImportData {
 
 impl ImportData {
     /// Returns the binding name introduced by this import when it is not a glob import.
-    pub(crate) fn binding_name(&self) -> Option<Name> {
+    pub fn binding_name(&self) -> Option<Name> {
         let inferred_name = match self.kind {
             ImportKind::Named => self.path.last_name(),
             ImportKind::SelfImport => self.path.last_name(),
@@ -72,7 +72,7 @@ impl ImportBinding {
         }
     }
 
-    pub(crate) fn resolve(&self, inferred_name: Option<Name>) -> Option<Name> {
+    pub fn resolve(&self, inferred_name: Option<Name>) -> Option<Name> {
         match self {
             Self::Inferred => inferred_name,
             Self::Explicit(name) => Some(name.clone()),
@@ -133,7 +133,7 @@ impl ImportPath {
         }
     }
 
-    pub(crate) fn standard_prelude(edition: RustEdition, interner: &mut NameInterner) -> Self {
+    pub fn standard_prelude(edition: RustEdition, interner: &mut NameInterner) -> Self {
         Self {
             absolute: true,
             segments: vec![
@@ -161,9 +161,9 @@ impl ImportPath {
     Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
 )]
 pub struct ImportSourcePath {
-    pub(crate) source_span: Option<Span>,
-    pub(crate) absolute: bool,
-    pub(crate) segments: Vec<ImportSourcePathSegment>,
+    pub source_span: Option<Span>,
+    pub absolute: bool,
+    pub segments: Vec<ImportSourcePathSegment>,
 }
 
 impl ImportSourcePath {
@@ -219,7 +219,7 @@ impl ImportSourcePath {
     Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
 )]
 pub struct ImportSourcePathSegment {
-    pub(crate) segment: PathSegment,
+    pub segment: PathSegment,
     pub span: Span,
 }
 

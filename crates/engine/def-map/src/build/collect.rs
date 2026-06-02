@@ -26,11 +26,9 @@ use rg_text::Name;
 use rg_workspace::{RustEdition, TargetKind};
 
 use crate::{
-    ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
-    LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope,
-    PackageSlot, ScopeBinding, ScopeBindingOrigin,
-    def_map::DefMapBuilder,
-    model::{ModuleScopeBuilder, Namespace},
+    DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
+    LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin,
+    ModuleScope, ModuleScopeBuilder, Namespace, PackageSlot, ScopeBinding, ScopeBindingOrigin,
 };
 
 use super::macros::{

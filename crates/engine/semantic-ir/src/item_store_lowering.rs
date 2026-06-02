@@ -47,7 +47,7 @@ where
         Self {
             def_map,
             reader,
-            items: ItemStoreBuilder::for_def_map(def_map),
+            items: ItemStoreBuilder::new(def_map.own_ref(), def_map.local_defs().len()),
             item_lifetime: PhantomData,
         }
     }

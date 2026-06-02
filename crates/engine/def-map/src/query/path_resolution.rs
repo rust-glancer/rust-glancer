@@ -14,8 +14,7 @@ use rg_package_store::PackageStoreError;
 use rg_text::Name;
 
 use crate::{
-    ImportPath, ModuleOrigin, Path, PathSegment, ScopeBinding,
-    model::{ModuleScopeBuilder, Namespace},
+    ImportPath, ModuleOrigin, ModuleScopeBuilder, Namespace, Path, PathSegment, ScopeBinding,
 };
 
 use super::resolution_env::{ScopeResolutionEnv, TargetResolutionEnv};
