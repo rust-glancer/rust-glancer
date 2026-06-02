@@ -1497,6 +1497,7 @@ dependencies = [
  "rg_body_ir",
  "rg_def_map",
  "rg_ir_model",
+ "rg_package_store",
  "rg_parse",
  "rg_semantic_ir",
  "rg_ty",

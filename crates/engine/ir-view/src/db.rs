@@ -1,8 +1,9 @@
 //! Shared read handle for indexed-data views.
 
 use rg_body_ir::BodyIrReadTxn;
-use rg_def_map::DefMapReadTxn;
-use rg_ir_model::DefMapRef;
+use rg_def_map::{DefMap, DefMapReadTxn, DefMapSource};
+use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
+use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStore, ItemStoreSource, SemanticIrReadTxn};
 
 /// Read-only database handle used by all indexed-data views.
@@ -32,11 +33,14 @@ impl<'db> IndexedViewDb<'db> {
 }
 
 impl<'a, 'db> ItemStoreSource<'a> for &'a IndexedViewDb<'db> {
-    type Error = anyhow::Error;
+    type Error = PackageStoreError;
 
-    fn item_store_for_origin(&self, origin: DefMapRef) -> anyhow::Result<Option<&'a ItemStore>> {
+    fn item_store_for_origin(
+        &self,
+        origin: DefMapRef,
+    ) -> Result<Option<&'a ItemStore>, PackageStoreError> {
         match origin {
-            DefMapRef::Target(target) => Ok(self.semantic_ir.items(target)?),
+            DefMapRef::Target(target) => self.semantic_ir.items(target),
             DefMapRef::Body(body_ref) => Ok(self
                 .body_ir
                 .body_data(body_ref)?
@@ -44,7 +48,35 @@ impl<'a, 'db> ItemStoreSource<'a> for &'a IndexedViewDb<'db> {
         }
     }
 
-    fn visible_stores(&self) -> anyhow::Result<Vec<&'a ItemStore>> {
-        Ok(self.semantic_ir.included_stores()?)
+    fn visible_stores(&self) -> Result<Vec<&'a ItemStore>, PackageStoreError> {
+        self.semantic_ir.included_stores()
+    }
+}
+
+impl DefMapSource for &IndexedViewDb<'_> {
+    fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
+        match origin {
+            DefMapRef::Target(target) => self.def_map.def_map(target),
+            DefMapRef::Body(body_ref) => Ok(self
+                .body_ir
+                .body_data(body_ref)?
+                .and_then(|body| body.body_def_map())),
+        }
+    }
+
+    fn extern_root(
+        &self,
+        target: TargetRef,
+        name: &str,
+    ) -> Result<Option<ModuleRef>, PackageStoreError> {
+        self.def_map.extern_root(target, name)
+    }
+
+    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        self.def_map.prelude_module(target)
+    }
+
+    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, PackageStoreError> {
+        self.def_map.root_module(target)
     }
 }

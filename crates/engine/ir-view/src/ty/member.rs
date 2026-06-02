@@ -7,7 +7,8 @@ use rg_ir_model::{
     hir::items::{FieldData, FunctionData},
 };
 use rg_semantic_ir::{
-    Autoderef, AutoderefMode, Documentation, FieldKey, ItemPathQuery, ItemStoreQuery, ParamItem,
+    Autoderef, AutoderefMode, Documentation, FieldKey, ImplMatcher, ItemPathQuery, ItemStoreQuery,
+    ParamItem,
 };
 use rg_ty::{NominalTy, Ty};
 
@@ -177,7 +178,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         &'view self,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
-        let autoderef = Autoderef::new(ItemPathQuery::new(&self.db.def_map, &self.db.semantic_ir));
+        let autoderef = Autoderef::new(ItemPathQuery::new(self.db, self.db));
         let mut fields = Vec::new();
 
         for candidate in autoderef.candidates(AutoderefMode::FieldLookup, ty) {
@@ -249,13 +250,11 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
         match receiver_ty {
             MemberReceiverTy::Nominal(ty) => {
+                let item_paths = ItemPathQuery::new(self.db, self.db);
+                let matcher = ImplMatcher::new(item_paths);
+
                 for function in ItemStoreQuery::new(self.db).inherent_functions_for_type(ty.def)? {
-                    if !self.db.body_ir.semantic_function_applies_to_receiver(
-                        &self.db.def_map,
-                        &self.db.semantic_ir,
-                        function,
-                        ty,
-                    )? {
+                    if !matcher.function_applies_to_receiver(function, ty)? {
                         continue;
                     }
 
@@ -270,14 +269,8 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
                 // Trait candidates carry applicability because this project intentionally avoids
                 // full solving, but still wants useful editor suggestions for likely matches.
-                for (function, applicability) in self
-                    .db
-                    .body_ir
-                    .semantic_trait_function_candidates_for_receiver(
-                        &self.db.def_map,
-                        &self.db.semantic_ir,
-                        ty,
-                    )?
+                for (function, applicability) in
+                    matcher.trait_function_candidates_for_receiver(None, ty, None)?
                 {
                     let Some(function) = self.function(function)? else {
                         continue;
@@ -297,7 +290,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         &'view self,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
-        let autoderef = Autoderef::new(ItemPathQuery::new(&self.db.def_map, &self.db.semantic_ir));
+        let autoderef = Autoderef::new(ItemPathQuery::new(self.db, self.db));
         let mut methods = Vec::new();
 
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, ty) {

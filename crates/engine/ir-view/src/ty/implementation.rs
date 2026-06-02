@@ -10,7 +10,8 @@ use rg_ir_model::{
     identity::{DeclarationRef, ExprRef},
 };
 use rg_semantic_ir::{
-    Autoderef, AutoderefMode, ItemPathQuery, ItemStoreQuery, ReferencePeelingCandidates,
+    Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, ItemStoreQuery,
+    ReferencePeelingCandidates,
 };
 use rg_ty::Ty;
 
@@ -226,7 +227,8 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         method_name: &str,
         receiver_ty: &Ty,
     ) -> anyhow::Result<()> {
-        let autoderef = Autoderef::new(ItemPathQuery::new(&self.db.def_map, &self.db.semantic_ir));
+        let autoderef = Autoderef::new(ItemPathQuery::new(self.db, self.db));
+        let matcher = ImplMatcher::new(ItemPathQuery::new(self.db, self.db));
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
             let candidate = candidate?;
             for ty in candidate.ty().as_nominals() {
@@ -237,12 +239,10 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
                     // The nominal type match can still include generic impls for other concrete
                     // args. Reuse method lookup's applicability check so goto-implementation
                     // follows the receiver the user actually called the method on.
-                    if !self.db.body_ir.semantic_trait_impl_applies_to_receiver(
-                        &self.db.def_map,
-                        &self.db.semantic_ir,
-                        trait_impl,
-                        ty,
-                    )? {
+                    if !matcher
+                        .trait_impl_applicability(trait_impl, ty)?
+                        .is_applicable()
+                    {
                         continue;
                     }
                     self.extend_matching_impl_methods(
@@ -279,12 +279,12 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         };
 
         for item in &data.items {
-            let AssocItemId::Function(id) = item else {
+            let &AssocItemId::Function(id) = item else {
                 continue;
             };
             let function = FunctionRef {
                 origin: impl_ref.origin,
-                id: *id,
+                id,
             };
             let Some(function_data) = ItemStoreQuery::new(self.db).function_data(function)? else {
                 continue;

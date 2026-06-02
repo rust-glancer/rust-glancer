@@ -1,16 +1,12 @@
 //! Read transactions over frozen Body IR package data.
 
 use rg_def_map::{DefMapReadTxn, PackageSlot, Path};
-use rg_ir_model::{
-    BodyRef, DefMapRef, FieldRef, FunctionRef, ScopeId, TargetRef, TraitApplicability,
-    TraitImplRef, TypePathResolution,
-};
+use rg_ir_model::{BodyRef, FieldRef, ScopeId, TargetRef, TypePathResolution};
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 use rg_semantic_ir::{
-    ImplMatcher, ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn, TypePathContext,
-    ty_from_type_ref_in_context,
+    ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn, TypePathContext, ty_from_type_ref_in_context,
 };
-use rg_ty::{NominalTy, Ty, TypeSubst};
+use rg_ty::{Ty, TypeSubst};
 
 use crate::{
     BodyData, BodyResolution, PackageBodies, TargetBodies,
@@ -109,69 +105,5 @@ impl<'db> BodyIrReadTxn<'db> {
             Ty::Unknown,
             &TypeSubst::new(),
         )?))
-    }
-
-    /// Checks whether a semantic function is a plausible method candidate for a receiver type.
-    pub fn semantic_function_applies_to_receiver(
-        &self,
-        def_map: &DefMapReadTxn<'db>,
-        semantic_ir: &SemanticIrReadTxn<'db>,
-        function_ref: FunctionRef,
-        receiver_ty: &NominalTy,
-    ) -> Result<bool, PackageStoreError> {
-        if let DefMapRef::Body(body_ref) = function_ref.origin {
-            let Some(body) = self.body_data(body_ref)? else {
-                return Ok(false);
-            };
-            let source = BodyQuerySource::new(def_map, semantic_ir, body_ref, body);
-            return ImplMatcher::new(ItemPathQuery::new(source, source))
-                .function_applies_to_receiver(function_ref, receiver_ty);
-        }
-
-        ImplMatcher::new(ItemPathQuery::new(def_map, semantic_ir))
-            .function_applies_to_receiver(function_ref, receiver_ty)
-    }
-
-    /// Returns trait-associated function candidates for a semantic receiver type.
-    pub fn semantic_trait_function_candidates_for_receiver(
-        &self,
-        def_map: &DefMapReadTxn<'db>,
-        semantic_ir: &SemanticIrReadTxn<'db>,
-        receiver_ty: &NominalTy,
-    ) -> Result<Vec<(FunctionRef, TraitApplicability)>, PackageStoreError> {
-        if let DefMapRef::Body(body_ref) = receiver_ty.def.origin {
-            let Some(body) = self.body_data(body_ref)? else {
-                return Ok(Vec::new());
-            };
-            let source = BodyQuerySource::new(def_map, semantic_ir, body_ref, body);
-            return ImplMatcher::new(ItemPathQuery::new(source, source))
-                .trait_function_candidates_for_receiver(None, receiver_ty, None);
-        }
-
-        ImplMatcher::new(ItemPathQuery::new(def_map, semantic_ir))
-            .trait_function_candidates_for_receiver(None, receiver_ty, None)
-    }
-
-    /// Checks whether a semantic trait impl is a plausible candidate for a receiver type.
-    pub fn semantic_trait_impl_applies_to_receiver(
-        &self,
-        def_map: &DefMapReadTxn<'db>,
-        semantic_ir: &SemanticIrReadTxn<'db>,
-        trait_impl: TraitImplRef,
-        receiver_ty: &NominalTy,
-    ) -> Result<bool, PackageStoreError> {
-        if let DefMapRef::Body(body_ref) = trait_impl.impl_ref.origin {
-            let Some(body) = self.body_data(body_ref)? else {
-                return Ok(false);
-            };
-            let source = BodyQuerySource::new(def_map, semantic_ir, body_ref, body);
-            return Ok(ImplMatcher::new(ItemPathQuery::new(source, source))
-                .trait_impl_applicability(trait_impl, receiver_ty)?
-                .is_applicable());
-        }
-
-        Ok(ImplMatcher::new(ItemPathQuery::new(def_map, semantic_ir))
-            .trait_impl_applicability(trait_impl, receiver_ty)?
-            .is_applicable())
     }
 }
