@@ -409,7 +409,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
             .project
             .def_map_db()
             .read_txn(unexpected_package_loader());
-        let result = def_map
+        let result = crate::DefMapQuery::new(&def_map)
             .resolve_path(
                 ModuleRef {
                     origin: DefMapRef::Target(target_ref),

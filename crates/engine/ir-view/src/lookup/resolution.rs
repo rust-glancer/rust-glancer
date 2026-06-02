@@ -5,7 +5,7 @@
 //! identities.
 
 use rg_body_ir::{BodyResolution, BodyScopeQuery};
-use rg_def_map::Path;
+use rg_def_map::{DefMapQuery, Path};
 use rg_ir_model::{
     BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
     identity::{DeclarationRef, ExprRef},
@@ -26,7 +26,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         context: rg_semantic_ir::TypePathContext,
         path: &Path,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        Ok(ItemPathQuery::new(&self.0.def_map, &self.0.semantic_ir)
+        Ok(ItemPathQuery::new(self.0, self.0)
             .semantic_items_for_type_path(context, path)?
             .into_iter()
             .map(DeclarationRef::from)
@@ -97,7 +97,10 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         path: &Path,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
         let mut declarations = Vec::new();
-        for def in self.0.def_map.resolve_path(module, path)?.resolved {
+        for def in DefMapQuery::new(self.0)
+            .resolve_path(module, path)?
+            .resolved
+        {
             declarations.extend(self.declarations_for_def(def)?);
         }
         Ok(declarations)

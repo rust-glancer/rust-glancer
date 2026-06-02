@@ -3,7 +3,7 @@
 //! Completion renderers use these facts heavily, but the facts themselves are not completion
 //! concepts: they are names visible from an indexed module or lexical body scope.
 
-use rg_def_map::{Path, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin};
+use rg_def_map::{DefMapQuery, Path, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin};
 use rg_ir_model::{DefId, FunctionRef, ModuleRef, SemanticItemRef, identity::DeclarationRef};
 use rg_semantic_ir::{Documentation, ItemStoreQuery};
 
@@ -98,9 +98,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         importing_module: ModuleRef,
         qualifier: &Path,
     ) -> anyhow::Result<Vec<ModuleScopeName>> {
-        let resolved = self
-            .db
-            .def_map
+        let resolved = DefMapQuery::new(self.db)
             .resolve_path_in_type_namespace(importing_module, qualifier)?;
         let mut names = Vec::new();
 
