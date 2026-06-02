@@ -6,10 +6,10 @@
 use rg_def_map::DefMapSource;
 use rg_ir_model::{FunctionRef, TraitApplicability};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemPathQuery, ItemStoreSource};
+use rg_semantic_ir::{ItemLookupIndex, ItemPathQuery, ItemStoreSource};
 use rg_ty::NominalTy;
 
-use super::{SemanticResolutionIndex, impl_match::BodyImplMatcher};
+use super::impl_match::BodyImplMatcher;
 
 pub(crate) fn function_applies_to_receiver<'query, D, I>(
     item_paths: ItemPathQuery<'query, D, I>,
@@ -25,7 +25,7 @@ where
 }
 
 pub(crate) fn trait_function_candidates_for_receiver<'query, D, I>(
-    index: Option<&SemanticResolutionIndex>,
+    index: Option<&ItemLookupIndex>,
     item_paths: ItemPathQuery<'query, D, I>,
     receiver_ty: &NominalTy,
     method_name: Option<&str>,

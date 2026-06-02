@@ -7,7 +7,6 @@ mod autoderef;
 mod body;
 mod deref;
 mod impl_match;
-mod index;
 mod method;
 mod normalize;
 mod pat;
@@ -19,7 +18,6 @@ pub(crate) use self::{
     body::BodyResolver,
     body::BodyValuePathResolver,
     impl_match::BodyImplMatcher,
-    index::SemanticResolutionIndex,
     method::{function_applies_to_receiver, trait_function_candidates_for_receiver},
     query_source::BodyQuerySource,
     ty::ty_from_type_ref_in_context,

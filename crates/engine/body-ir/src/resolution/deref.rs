@@ -9,20 +9,17 @@ use rg_ir_model::{
 };
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemPathQuery, ItemStoreSource, TypePathContext};
+use rg_semantic_ir::{ItemLookupIndex, ItemPathQuery, ItemStoreSource, TypePathContext};
 use rg_text::Name;
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
-use super::{
-    impl_match::BodyImplMatcher, index::SemanticResolutionIndex, push_unique,
-    ty::ty_from_type_ref_in_context,
-};
+use super::{impl_match::BodyImplMatcher, push_unique, ty::ty_from_type_ref_in_context};
 
 /// Resolves the associated `Target` type for applicable `core::ops::Deref` impls.
 #[derive(Clone)]
 pub(super) struct BodyDerefResolver<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
-    semantic_index: Option<&'query SemanticResolutionIndex>,
+    semantic_index: Option<&'query ItemLookupIndex>,
 }
 
 impl<'query, D, I> BodyDerefResolver<'query, D, I>
@@ -32,7 +29,7 @@ where
 {
     pub(super) fn new(
         item_paths: ItemPathQuery<'query, D, I>,
-        semantic_index: Option<&'query SemanticResolutionIndex>,
+        semantic_index: Option<&'query ItemLookupIndex>,
     ) -> Self {
         Self {
             item_paths,

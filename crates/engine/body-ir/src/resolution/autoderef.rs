@@ -9,10 +9,10 @@ use std::{borrow::Cow, collections::VecDeque};
 
 use rg_def_map::DefMapSource;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemPathQuery, ItemStoreSource};
+use rg_semantic_ir::{ItemLookupIndex, ItemPathQuery, ItemStoreSource};
 use rg_ty::Ty;
 
-use super::{deref::BodyDerefResolver, index::SemanticResolutionIndex};
+use super::deref::BodyDerefResolver;
 
 const AUTODEREF_LIMIT: usize = 8;
 
@@ -20,7 +20,7 @@ const AUTODEREF_LIMIT: usize = 8;
 #[derive(Clone)]
 pub struct BodyAutoderef<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
-    semantic_index: Option<&'query SemanticResolutionIndex>,
+    semantic_index: Option<&'query ItemLookupIndex>,
 }
 
 impl<'query, D, I> BodyAutoderef<'query, D, I>
@@ -39,7 +39,7 @@ where
     /// Creates an autoderef engine that can reuse the body-resolution method lookup index.
     pub(crate) fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
-        semantic_index: &'query SemanticResolutionIndex,
+        semantic_index: &'query ItemLookupIndex,
     ) -> Self {
         Self {
             item_paths,

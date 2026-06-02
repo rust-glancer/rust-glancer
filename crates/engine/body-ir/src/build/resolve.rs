@@ -6,14 +6,14 @@ use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{BodyId, BodyRef, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_semantic_ir::{ItemLookupIndex, ItemStoreQuery, SemanticIrReadTxn};
 
 use crate::{
     ir::{
         PackageBodies, TargetBodiesStatus,
         body_map::{BodyDefMapCollector, BodyItemStoreCollector},
     },
-    resolution::{BodyResolver, SemanticResolutionIndex},
+    resolution::BodyResolver,
 };
 
 use super::local_thread_pool;
@@ -23,7 +23,8 @@ pub(super) fn resolve_packages(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
 ) -> anyhow::Result<()> {
-    let semantic_index = SemanticResolutionIndex::build(semantic_ir)
+    let item_query = ItemStoreQuery::new(semantic_ir);
+    let semantic_index = ItemLookupIndex::build(&item_query)
         .context("while attempting to build semantic index for body resolution")?;
 
     if packages.len() <= 1 {
@@ -62,7 +63,8 @@ pub(super) fn resolve_selected_packages(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
 ) -> anyhow::Result<()> {
-    let semantic_index = SemanticResolutionIndex::build(semantic_ir)
+    let item_query = ItemStoreQuery::new(semantic_ir);
+    let semantic_index = ItemLookupIndex::build(&item_query)
         .context("while attempting to build semantic index for body resolution")?;
 
     if packages.len() <= 1 {
@@ -102,7 +104,7 @@ fn resolve_package(
     package: &mut PackageBodies,
     def_map_txn: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    semantic_index: &SemanticResolutionIndex,
+    semantic_index: &ItemLookupIndex,
 ) -> Result<(), PackageStoreError> {
     // Resolution is a mutation pass over already-lowered bodies. Skipped targets intentionally
     // keep their body stores empty so dependency body internals stay cheap by default.

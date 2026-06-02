@@ -1,21 +1,20 @@
-//! Transient lookup indexes used while resolving bodies.
+//! Precomputed lookup indexes over semantic-shaped item stores.
 //!
-//! Body resolution asks method-lookup questions for many expressions. Building this small index
-//! once per resolution pass avoids repeatedly scanning every semantic impl in every package.
+//! Method and deref queries ask the same receiver-based questions many times. This index pays the
+//! visible-store scan once and lets later query code jump straight to plausible impl/function
+//! candidates while preserving the normal item-store query semantics for the final checks.
 
 use std::collections::HashMap;
 
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, TraitImplRef, TraitRef, TypeDefRef};
-use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreQuery, ItemStoreSource, SemanticIrReadTxn};
 use rg_text::Name;
 
-use super::push_unique;
+use crate::{ItemStoreQuery, ItemStoreSource, push_unique};
 
-// TODO: Does not belong to body IR
+/// Receiver-oriented lookup cache built from the stores visible to an `ItemStoreQuery`.
 #[derive(Debug, Default)]
-pub(crate) struct SemanticResolutionIndex {
-    // Method lookup starts from a receiver type. These maps let the resolver jump directly to impls
+pub struct ItemLookupIndex {
+    // Method lookup starts from a receiver type. These maps let callers jump directly to impls
     // whose already-resolved `Self` type mentions that receiver, instead of re-scanning all impls.
     inherent_impls_by_type: HashMap<TypeDefRef, Vec<ImplRef>>,
     inherent_functions_by_type_and_name: HashMap<TypeDefRef, HashMap<Name, Vec<FunctionRef>>>,
@@ -26,16 +25,19 @@ pub(crate) struct SemanticResolutionIndex {
     trait_functions_by_trait_and_name: HashMap<TraitRef, HashMap<Name, Vec<FunctionRef>>>,
 }
 
-impl SemanticResolutionIndex {
-    pub(crate) fn build(semantic_ir: &SemanticIrReadTxn<'_>) -> Result<Self, PackageStoreError> {
+impl ItemLookupIndex {
+    /// Builds an index from the stores that are visible to broad item lookup.
+    pub fn build<'item, S>(item_query: &ItemStoreQuery<'item, S>) -> Result<Self, S::Error>
+    where
+        S: ItemStoreSource<'item>,
+    {
         let mut index = Self::default();
-        let item_query = ItemStoreQuery::new(semantic_ir);
 
-        // The index mirrors Semantic IR's broad lookup helpers, but pays the package-wide scan
-        // once up front instead of once per method expression.
-        for store in semantic_ir.included_stores()? {
-            // Trait methods are independent of a receiver type, so we can cache them by trait
-            // before processing impls that will later point back to these traits.
+        // The index mirrors broad item-store lookup helpers, but pays the store scan once up front
+        // instead of once per method expression.
+        for store in item_query.visible_stores()? {
+            // Trait methods are independent of a receiver type, so cache them by trait before
+            // processing impls that later point back to these traits.
             for (trait_ref, trait_data) in store.traits_with_refs() {
                 let functions = index.trait_functions_by_trait.entry(trait_ref).or_default();
                 index
@@ -64,9 +66,9 @@ impl SemanticResolutionIndex {
                 }
             }
 
-            // Semantic IR has already resolved impl headers into possible `Self` types. The index
-            // preserves that optimistic shape: ambiguous impls are attached to every resolved self
-            // type, and the later applicability check still decides whether each candidate fits.
+            // Item-store lowering has already resolved impl headers into possible `Self` types.
+            // The index preserves that optimistic shape: ambiguous impls are attached to every
+            // resolved self type, and later applicability checks still decide whether candidates fit.
             for (impl_ref, impl_data) in store.impls_with_refs() {
                 if impl_data.trait_ref.is_none() {
                     for self_ty in &impl_data.resolved_self_tys {
@@ -116,13 +118,14 @@ impl SemanticResolutionIndex {
         Ok(index)
     }
 
-    pub(crate) fn inherent_functions_for_type<'item, S>(
+    /// Expands indexed inherent impls to their function items through the caller's query source.
+    pub fn inherent_functions_for_type<'item, S>(
         &self,
         item_query: &ItemStoreQuery<'item, S>,
         ty: TypeDefRef,
-    ) -> Result<Vec<FunctionRef>, PackageStoreError>
+    ) -> Result<Vec<FunctionRef>, S::Error>
     where
-        S: ItemStoreSource<'item, Error = PackageStoreError>,
+        S: ItemStoreSource<'item>,
     {
         let mut functions = Vec::new();
         let Some(impl_refs) = self.inherent_impls_by_type.get(&ty) else {
@@ -152,13 +155,14 @@ impl SemanticResolutionIndex {
         Ok(functions)
     }
 
-    pub(crate) fn inherent_functions_for_type_and_name(
+    /// Returns same-name inherent functions indexed for a receiver type.
+    pub fn inherent_functions_for_type_and_name(
         &self,
         ty: TypeDefRef,
         name: &str,
     ) -> &[FunctionRef] {
         // Dot lookup almost always starts with the method name already known. Keeping the name as
-        // part of the key lets us avoid checking receiver applicability for unrelated methods.
+        // part of the key lets callers avoid checking receiver applicability for unrelated methods.
         self.inherent_functions_by_type_and_name
             .get(&ty)
             .and_then(|functions_by_name| functions_by_name.get(name))
@@ -166,22 +170,25 @@ impl SemanticResolutionIndex {
             .unwrap_or(&[])
     }
 
-    pub(crate) fn trait_impls_for_type(&self, ty: TypeDefRef) -> &[TraitImplRef] {
+    /// Returns trait impl candidates indexed for a receiver type.
+    pub fn trait_impls_for_type(&self, ty: TypeDefRef) -> &[TraitImplRef] {
         self.trait_impls_by_type
             .get(&ty)
             .map(Vec::as_slice)
             .unwrap_or(&[])
     }
 
-    pub(crate) fn trait_functions(&self, trait_ref: TraitRef) -> Option<&[FunctionRef]> {
+    /// Returns trait-declared functions if the trait was visible when the index was built.
+    pub fn trait_functions(&self, trait_ref: TraitRef) -> Option<&[FunctionRef]> {
         // `None` means the trait was not visible while this index was built. Callers can then fall
-        // back to the direct Semantic IR query for cross-subset/offloaded edge cases.
+        // back to the direct item-store query for cross-subset/offloaded edge cases.
         self.trait_functions_by_trait
             .get(&trait_ref)
             .map(Vec::as_slice)
     }
 
-    pub(crate) fn trait_functions_by_name(
+    /// Returns same-name trait functions if the trait was visible when the index was built.
+    pub fn trait_functions_by_name(
         &self,
         trait_ref: TraitRef,
         name: &str,

@@ -11,7 +11,7 @@ use rg_ir_model::{
 };
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn};
+use rg_semantic_ir::{ItemLookupIndex, ItemPathQuery, ItemStoreQuery, SemanticIrReadTxn};
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
@@ -22,7 +22,7 @@ use crate::{
 };
 
 use super::{
-    BodyQuerySource, SemanticResolutionIndex,
+    BodyQuerySource,
     autoderef::{BodyAutoderef, BodyAutoderefMode},
     impl_match::BodyImplMatcher,
     method::{function_applies_to_receiver, trait_function_candidates_for_receiver},
@@ -36,7 +36,7 @@ use super::{
 pub(crate) struct BodyResolver<'query, 'db, 'body> {
     def_map_txn: &'query DefMapReadTxn<'db>,
     semantic_ir_txn: &'query SemanticIrReadTxn<'db>,
-    semantic_index: &'query SemanticResolutionIndex,
+    semantic_index: &'query ItemLookupIndex,
     body_ref: BodyRef,
     body: &'body mut BodyData,
 }
@@ -45,7 +45,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
     pub(crate) fn new(
         def_map_txn: &'query DefMapReadTxn<'db>,
         semantic_ir_txn: &'query SemanticIrReadTxn<'db>,
-        semantic_index: &'query SemanticResolutionIndex,
+        semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
         body: &'body mut BodyData,
     ) -> Self {
@@ -823,7 +823,7 @@ impl<'query, 'db, 'body> BodyResolver<'query, 'db, 'body> {
 /// goto-definition/type-at for `Type::assoc` or `Enum::Variant` segments.
 pub(crate) struct BodyValuePathResolver<'query, 'db> {
     source: BodyQuerySource<'query, 'db>,
-    semantic_index: Option<&'query SemanticResolutionIndex>,
+    semantic_index: Option<&'query ItemLookupIndex>,
 }
 
 /// One declaration that can satisfy an unqualified value path inside a body scope.
@@ -840,7 +840,7 @@ enum BodyValueName {
 impl<'query, 'db> BodyValuePathResolver<'query, 'db> {
     pub(crate) fn new(
         source: BodyQuerySource<'query, 'db>,
-        semantic_index: Option<&'query SemanticResolutionIndex>,
+        semantic_index: Option<&'query ItemLookupIndex>,
     ) -> Self {
         Self {
             source,

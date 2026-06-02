@@ -64,6 +64,13 @@ where
         self.source.item_store_for_origin(origin)
     }
 
+    /// Returns the stores that broad lookup/indexing is allowed to scan.
+    ///
+    /// This keeps broad scans on the same visibility boundary as direct impl queries.
+    pub fn visible_stores(&self) -> Result<Vec<&'a ItemStore>, S::Error> {
+        self.source.visible_stores()
+    }
+
     /// Expands a stable item ref into the borrowed item data used by view/projection code.
     pub fn semantic_item_view(
         &self,
