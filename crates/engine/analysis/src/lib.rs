@@ -14,8 +14,8 @@ pub use rg_ir_view::SymbolKind;
 
 use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
-use rg_ir_view::{IndexedViewDb, item::module::ModuleView};
-use rg_parse::FileId;
+use rg_ir_view::IndexedViewDb;
+use rg_parse::{FileId, TargetId};
 use rg_ty::Ty;
 
 use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
@@ -192,6 +192,23 @@ impl<'a> Analysis<'a> {
         package: PackageSlot,
         file: FileId,
     ) -> anyhow::Result<Vec<TargetRef>> {
-        ModuleView::new(self.view_db()).targets_containing_file(package, file)
+        let mut targets = Vec::new();
+        let def_map_package = self.view_db().def_map_package(package)?;
+
+        for (target_idx, def_map) in def_map_package.def_maps().iter().enumerate() {
+            let target_ref = TargetRef {
+                package,
+                target: TargetId(target_idx),
+            };
+            let owns_file = def_map
+                .modules()
+                .iter()
+                .any(|module| module.origin.contains_file(file));
+            if owns_file {
+                targets.push(target_ref);
+            }
+        }
+
+        Ok(targets)
     }
 }

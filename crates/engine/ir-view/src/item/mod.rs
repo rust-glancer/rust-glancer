@@ -2,6 +2,4 @@
 
 pub mod declaration;
 pub mod details;
-pub mod index;
-pub mod module;
 pub mod path;

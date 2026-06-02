@@ -3,7 +3,6 @@
 //! `Ty` is the common type vocabulary analysis exposes today. This view keeps projection rules
 //! from Semantic IR, DefMap, and Body IR out of query orchestration.
 
-pub mod implementation;
 pub mod locals;
 pub mod member;
 

@@ -1,9 +1,9 @@
 //! Shared read handle for indexed-data views.
 
-use rg_body_ir::BodyIrReadTxn;
-use rg_def_map::DefMapReadTxn;
+use rg_body_ir::{BodyData, BodyIrReadTxn};
+use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
-use rg_ir_storage::{DefMap, DefMapSource, ItemStore, ItemStoreSource};
+use rg_ir_storage::{DefMap, DefMapSource, ItemStore, ItemStoreSource, PackageDefMaps};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
 
@@ -30,6 +30,20 @@ impl<'db> IndexedViewDb<'db> {
             semantic_ir,
             body_ir,
         }
+    }
+
+    pub fn def_map_package(
+        &self,
+        package: PackageSlot,
+    ) -> Result<&PackageDefMaps, PackageStoreError> {
+        self.def_map.package(package)
+    }
+
+    pub fn body_data(
+        &self,
+        body_ref: rg_ir_model::BodyRef,
+    ) -> Result<Option<&BodyData>, PackageStoreError> {
+        self.body_ir.body_data(body_ref)
     }
 }
 
