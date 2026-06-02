@@ -2,7 +2,8 @@ use std::{fmt::Write as _, fs, path::Path};
 
 use expect_test::Expect;
 use rg_body_ir::{BodyIrBuildPolicy, PackageBodies};
-use rg_def_map::{PackageDefMaps, PackageSlot};
+use rg_def_map::PackageSlot;
+use rg_ir_storage::PackageDefMaps;
 use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::PackageIr;
 use rg_workspace::WorkspaceMetadata;

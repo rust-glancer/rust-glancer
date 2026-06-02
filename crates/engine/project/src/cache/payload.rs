@@ -4,7 +4,7 @@
 //! prevents cache states where DefMap, Semantic IR, and Body IR come from different builds.
 
 use rg_body_ir::PackageBodies;
-use rg_def_map::PackageDefMaps as DefMapPackage;
+use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::PackageIr;
 

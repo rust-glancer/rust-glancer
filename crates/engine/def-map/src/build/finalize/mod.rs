@@ -12,16 +12,17 @@ mod rebuild;
 use anyhow::Context as _;
 
 use rg_ir_model::{DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
-use rg_ir_storage::{PathResolver, ScopeResolutionEnv, TargetResolutionEnv};
+use rg_ir_storage::{
+    DefMap, ImportPath, LocalDefData, MacroDefinitionData, ModuleData, ModuleScopeBuilder,
+    PackageDefMaps as DefMapPackage, PathResolver, ScopeEntryRef, ScopeResolutionEnv, TargetData,
+    TargetResolutionEnv,
+};
 use rg_item_tree::ItemTreeDb;
 use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
 
-use crate::{
-    DefMap, DefMapReadTxn, LocalDefData, MacroDefinitionData, ModuleData, ModuleScopeBuilder,
-    PackageDefMaps as DefMapPackage, PackageSlot, ScopeEntryRef, TargetData,
-};
+use crate::{DefMapReadTxn, PackageSlot};
 
 use super::{
     collect::TargetState,
@@ -483,7 +484,7 @@ fn select_preludes(
         let interner = interners.package_mut(package_slot).with_context(|| {
             format!("while attempting to fetch name interner for package {package_slot}")
         })?;
-        let prelude_path = crate::ImportPath::standard_prelude(workspace_package.edition, interner);
+        let prelude_path = ImportPath::standard_prelude(workspace_package.edition, interner);
 
         // Each target resolves its edition prelude from its own crate root. Targets without a root
         // module are malformed enough that later phases will simply see no prelude.

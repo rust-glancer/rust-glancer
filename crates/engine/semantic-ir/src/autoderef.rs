@@ -6,11 +6,11 @@
 
 use std::{borrow::Cow, collections::VecDeque};
 
-use rg_def_map::DefMapSource;
+use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemPathQuery, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_ty::Ty;
 
-use crate::{ItemLookupIndex, ItemPathQuery, ItemStoreSource, deref::DerefResolver};
+use crate::deref::DerefResolver;
 
 const AUTODEREF_LIMIT: usize = 8;
 

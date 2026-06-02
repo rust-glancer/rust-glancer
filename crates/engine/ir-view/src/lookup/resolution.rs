@@ -5,12 +5,11 @@
 //! identities.
 
 use rg_body_ir::{BodyResolution, BodyScopeQuery};
-use rg_def_map::{DefMapQuery, Path};
 use rg_ir_model::{
     BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_semantic_ir::{ItemPathQuery, ItemStoreQuery};
+use rg_ir_storage::{DefMapQuery, ItemPathQuery, ItemStoreQuery, Path, TypePathContext};
 
 use crate::IndexedViewDb;
 
@@ -23,7 +22,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
 
     pub fn declarations_for_semantic_type_path(
         &self,
-        context: rg_semantic_ir::TypePathContext,
+        context: TypePathContext,
         path: &Path,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
         Ok(ItemPathQuery::new(self.0, self.0)

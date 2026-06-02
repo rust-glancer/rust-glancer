@@ -4,10 +4,10 @@
 //! storage owns name, member, or type lookup. This adapter accepts completion-domain cursor sites
 //! and projects generic view facts into completion-ready candidates.
 
-use rg_def_map::Path;
 use rg_ir_model::{
     EnumVariantRef, FieldRef, FunctionRef, ModuleRef, TypeDefId, identity::DeclarationRef,
 };
+use rg_ir_storage::{ItemStoreQuery, Path};
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     lookup::name::{ModuleScopeName, NameLookupView, NameNamespace, NameOrigin},
@@ -16,7 +16,7 @@ use rg_ir_view::{
     ty::locals::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
     ty::member::{MemberMethodCandidate, MemberMethodOrigin, MemberView},
 };
-use rg_semantic_ir::{FieldKey, ItemStoreQuery};
+use rg_semantic_ir::FieldKey;
 use rg_ty::Ty;
 
 use crate::{
@@ -392,7 +392,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     fn module_path_candidates(
         &self,
         importing_module: ModuleRef,
-        qualifier: &rg_def_map::Path,
+        qualifier: &Path,
     ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
         let mut candidates = Vec::new();
         for name in

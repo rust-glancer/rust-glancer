@@ -1,9 +1,10 @@
 //! Read transactions over frozen def-map package data.
 
 use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
+use rg_ir_storage::{DefMap, DefMapSource, PackageDefMaps};
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 
-use crate::{DefMap, DefMapSource, PackageDefMaps, PackageSlot};
+use crate::PackageSlot;
 
 /// Read-only def-map access for one query transaction.
 #[derive(Debug, Clone)]

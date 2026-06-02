@@ -7,6 +7,11 @@
 use anyhow::{Context as _, Result};
 
 use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
+use rg_ir_storage::{
+    ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
+    LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope,
+    Namespace, ScopeBinding, ScopeBindingOrigin,
+};
 use rg_item_tree::{
     Documentation, ExternCrateItem, ImportAlias, ItemKind, ItemTreeId, ItemTreeRef,
     MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleItem,
@@ -15,11 +20,8 @@ use rg_item_tree::{
 use rg_parse::FileId;
 use rg_text::Name;
 
-use crate::{
-    ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
-    LocalDefKind, LocalImplData, ModuleData, ModuleOrigin, ModuleScope, Namespace, ScopeBinding,
-    ScopeBindingOrigin,
-    build::{collect::TargetState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult},
+use crate::build::{
+    collect::TargetState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult,
 };
 
 use super::{
@@ -228,11 +230,7 @@ impl SourceFragmentCollector<'_> {
         }
         self.state.def_map_builder.insert_macro_definition(
             local_def_id,
-            crate::MacroDefinitionData::from_item(
-                macro_definition,
-                self.state.edition,
-                self.state.target,
-            ),
+            MacroDefinitionData::from_item(macro_definition, self.state.edition, self.state.target),
         );
     }
 

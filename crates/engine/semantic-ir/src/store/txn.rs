@@ -2,9 +2,10 @@
 
 use rg_def_map::PackageSlot;
 use rg_ir_model::{DefMapRef, TargetRef};
+use rg_ir_storage::{ItemStore, ItemStoreSource};
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 
-use crate::{ItemStore, ItemStoreSource, PackageIr};
+use crate::PackageIr;
 
 /// Read-only semantic IR access for one query transaction.
 #[derive(Debug, Clone)]

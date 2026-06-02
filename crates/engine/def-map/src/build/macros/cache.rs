@@ -13,10 +13,9 @@ use std::{
 use anyhow::Context as _;
 
 use rg_ir_model::LocalDefRef;
+use rg_ir_storage::{MacroDefinitionData, MacroDefinitionPayload};
 use rg_macro_expand::{DeclarativeMacro, Edition, ExpansionSyntax};
 use rg_tt::{Span as TtSpan, TopSubtree};
-
-use crate::{MacroDefinitionData, MacroDefinitionPayload};
 
 use super::expand::MacroExpansionWork;
 

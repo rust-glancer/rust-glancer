@@ -9,10 +9,8 @@ use rg_ir_model::{
     AssocItemId, FunctionRef, ImplRef, ItemOwner, SemanticItemRef, TraitRef, TypeDefRef,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_semantic_ir::{
-    Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, ItemStoreQuery,
-    ReferencePeelingCandidates,
-};
+use rg_ir_storage::{ItemPathQuery, ItemStoreQuery};
+use rg_semantic_ir::{Autoderef, AutoderefMode, ImplMatcher, ReferencePeelingCandidates};
 use rg_ty::Ty;
 
 use crate::{IndexedViewDb, lookup::resolution::ResolutionView};

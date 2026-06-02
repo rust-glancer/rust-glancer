@@ -1,10 +1,11 @@
 //! Shared read handle for indexed-data views.
 
 use rg_body_ir::BodyIrReadTxn;
-use rg_def_map::{DefMap, DefMapReadTxn, DefMapSource};
+use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
+use rg_ir_storage::{DefMap, DefMapSource, ItemStore, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStore, ItemStoreSource, SemanticIrReadTxn};
+use rg_semantic_ir::SemanticIrReadTxn;
 
 /// Read-only database handle used by all indexed-data views.
 ///

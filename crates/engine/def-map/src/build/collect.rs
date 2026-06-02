@@ -16,6 +16,11 @@ use anyhow::Context as _;
 
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
 use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_storage::{
+    DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
+    LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin,
+    ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin,
+};
 use rg_item_tree::{
     Documentation, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
     MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
@@ -25,11 +30,7 @@ use rg_parse::{Package, Target};
 use rg_text::Name;
 use rg_workspace::{RustEdition, TargetKind};
 
-use crate::{
-    DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
-    LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin,
-    ModuleScope, ModuleScopeBuilder, Namespace, PackageSlot, ScopeBinding, ScopeBindingOrigin,
-};
+use crate::PackageSlot;
 
 use super::macros::{
     ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,

@@ -3,8 +3,8 @@
 //! Path completion scans recognize partially typed segments in paths such as
 //! `crate::module::Us` and return the qualifier, replacement span, and expected namespace.
 
-use rg_def_map::Path;
 use rg_ir_model::{BodyId, BodyRef, ScopeId, TargetRef};
+use rg_ir_storage::Path;
 use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};

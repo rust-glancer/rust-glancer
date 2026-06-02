@@ -3,17 +3,19 @@
 //! This module walks lowered bodies and fills resolution/type slots on bindings and expressions.
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
-use rg_def_map::{DefMapQuery, DefMapSource, NameResolutionFilter, Path, PathSegment};
 use rg_ir_model::{
     AssocItemId, BindingId, BodyRef, ConstRef, DefId, DefMapRef, ExprId, FunctionRef, ImplRef,
     ItemOwner, ModuleId, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TypeDefId,
     TypePathResolution, identity::DeclarationRef,
 };
+use rg_ir_storage::{
+    DefMapQuery, DefMapSource, ItemLookupIndex, ItemPathQuery, ItemStoreQuery, ItemStoreSource,
+    NameResolutionFilter, Path, PathSegment, TypePathContext,
+};
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{
-    Autoderef, AutoderefMode, ImplMatcher, ItemLookupIndex, ItemPathQuery, ItemStoreQuery,
-    ItemStoreSource, subst_from_generics, type_ref_is_self,
+    Autoderef, AutoderefMode, ImplMatcher, subst_from_generics, type_ref_is_self,
 };
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
@@ -1121,9 +1123,7 @@ where
 
         let context = item_query
             .type_path_context_for_owner(const_ref.origin, const_data.owner)?
-            .unwrap_or_else(|| {
-                rg_semantic_ir::TypePathContext::module(self.source.body().owner_module)
-            });
+            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
         if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
             self.type_path_resolver()
                 .ty_from_type_ref_in_module_with_subst(ty, context.module, &TypeSubst::new())
@@ -1343,9 +1343,7 @@ where
         let context = self
             .item_query()
             .type_path_context_for_owner(const_ref.origin, owner)?
-            .unwrap_or_else(|| {
-                rg_semantic_ir::TypePathContext::module(self.source.body().owner_module)
-            });
+            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
         if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
             self.type_path_resolver()
                 .ty_from_type_ref_in_module_with_subst(ty, context.module, &subst)

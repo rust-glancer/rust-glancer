@@ -14,11 +14,12 @@ use rg_ir_model::{
     BodyRef, DefMapRef, FunctionRef, ItemOwner, ModuleRef, TargetRef, TraitRef, TypeDefId,
     TypeDefRef,
 };
+use rg_ir_storage::{DefMap, ItemStore, ItemStoreQuery};
 use rg_ir_view::IndexedViewDb;
 use rg_item_tree::{ItemTreeDb, PackageNameInterners};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{FileId, ParseDb, Span};
-use rg_semantic_ir::{ItemStoreQuery, SemanticIrDb, SemanticIrReadTxn};
+use rg_semantic_ir::{SemanticIrDb, SemanticIrReadTxn};
 use rg_ty::{GenericArg, NominalTy, Ty};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
 use test_fixture::{FixtureMarkers, fixture_crate, fixture_crate_with_markers};
@@ -337,19 +338,19 @@ impl AnalysisFixtureDb {
         Analysis::new(view_db)
     }
 
-    fn resident_def_map(&self, target: TargetRef) -> Option<&rg_def_map::DefMap> {
+    fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
         self.def_map
             .resident_package(target.package)?
             .def_map(target.target)
     }
 
-    fn resident_target_ir(&self, target: TargetRef) -> Option<&rg_semantic_ir::ItemStore> {
+    fn resident_target_ir(&self, target: TargetRef) -> Option<&ItemStore> {
         self.semantic_ir
             .resident_package(target.package)?
             .target(target.target)
     }
 
-    fn resident_body_item_store(&self, body: BodyRef) -> Option<&rg_semantic_ir::ItemStore> {
+    fn resident_body_item_store(&self, body: BodyRef) -> Option<&ItemStore> {
         self.body_ir
             .resident_package(body.target.package)?
             .target(body.target.target)?

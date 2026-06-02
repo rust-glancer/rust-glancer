@@ -8,13 +8,14 @@ use rg_body_ir::{
     BodyCursorCandidate, PathCompletionNamespace as BodyPathCompletionNamespace,
     UnqualifiedCompletionNamespace as BodyUnqualifiedCompletionNamespace,
 };
-use rg_def_map::{DefMapCursorCandidate, Path};
+use rg_def_map::DefMapCursorCandidate;
 use rg_ir_model::{
     BodyBindingRef, ModuleRef, TargetRef,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
+use rg_ir_storage::{Path, TypePathContext};
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{FieldKey, SemanticCursorCandidate, TypePathContext};
+use rg_semantic_ir::{FieldKey, SemanticCursorCandidate};
 
 use crate::{IndexedViewDb, item::declaration::DeclarationView};
 

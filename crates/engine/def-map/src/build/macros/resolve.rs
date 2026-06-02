@@ -6,14 +6,13 @@
 use anyhow::Result;
 
 use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, TargetRef};
-use rg_ir_storage::{PathResolver, TargetResolutionEnv};
+use rg_ir_storage::{
+    ImportPath, LocalDefData, LocalDefKind, MacroDefinitionData, PathResolver, PathSegment,
+    ScopeBinding, ScopeBindingOrigin, TargetResolutionEnv,
+};
 use rg_text::Name;
 
-use crate::{
-    ImportPath, LocalDefData, LocalDefKind, MacroDefinitionData, PathSegment, ScopeBinding,
-    ScopeBindingOrigin,
-    build::{collect::TargetState, finalize::FinalizeTargetStates},
-};
+use crate::build::{collect::TargetState, finalize::FinalizeTargetStates};
 
 use super::{ItemOrder, MacroCallSite};
 

@@ -4,12 +4,11 @@
 //! parentheses, `.await`, and `?`, but it does not try to implement borrow checking, autoderef, the
 //! `Try` trait, or `Future::Output` projection.
 
-use rg_semantic_ir::{ItemStoreQuery, ItemStoreSource};
+use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource};
 use rg_ty::{GenericArg, Ty};
 
 use crate::ir::expr::ExprWrapperKind;
 
-use rg_def_map::DefMapSource;
 use rg_package_store::PackageStoreError;
 
 use super::{BodyQuerySource, push_unique};

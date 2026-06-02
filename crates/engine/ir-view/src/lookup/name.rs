@@ -3,9 +3,11 @@
 //! Completion renderers use these facts heavily, but the facts themselves are not completion
 //! concepts: they are names visible from an indexed module or lexical body scope.
 
-use rg_def_map::{DefMapQuery, Path, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin};
 use rg_ir_model::{DefId, FunctionRef, ModuleRef, SemanticItemRef, identity::DeclarationRef};
-use rg_semantic_ir::{Documentation, ItemStoreQuery};
+use rg_ir_storage::{
+    DefMapQuery, ItemStoreQuery, Path, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin,
+};
+use rg_semantic_ir::Documentation;
 
 use crate::{IndexedViewDb, SymbolKind};
 

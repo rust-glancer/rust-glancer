@@ -11,12 +11,13 @@ use crate::{
     ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData,
     PatBindingMode, PatData, PatKind, StmtKind, TargetBodiesStatus,
 };
-use rg_def_map::{DefMapDb, ModuleOrigin};
+use rg_def_map::DefMapDb;
 use rg_ir_model::{
     BindingId, BodyId, BodyRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef, FunctionRef,
     ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef, PatId, SemanticItemRef, StmtId,
     TargetRef, TraitRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
+use rg_ir_storage::{DefMap, ItemStore, ModuleOrigin};
 use rg_item_tree::{FieldItem, ItemTreeDb, PackageNameInterners};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::{Package, ParseDb, Target};
@@ -98,13 +99,13 @@ impl BodyIrFixtureDb {
         &self.parse
     }
 
-    fn resident_def_map(&self, target: TargetRef) -> Option<&rg_def_map::DefMap> {
+    fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
         self.def_map
             .resident_package(target.package)?
             .def_map(target.target)
     }
 
-    fn resident_target_ir(&self, target: TargetRef) -> Option<&rg_semantic_ir::ItemStore> {
+    fn resident_target_ir(&self, target: TargetRef) -> Option<&ItemStore> {
         self.semantic_ir
             .resident_package(target.package)?
             .target(target.target)
@@ -117,11 +118,11 @@ impl BodyIrFixtureDb {
             .body(body_ref.body)
     }
 
-    fn resident_body_item_store(&self, body_ref: BodyRef) -> Option<&rg_semantic_ir::ItemStore> {
+    fn resident_body_item_store(&self, body_ref: BodyRef) -> Option<&ItemStore> {
         self.resident_body(body_ref)?.body_item_store()
     }
 
-    fn resident_item_store(&self, origin: DefMapRef) -> Option<&rg_semantic_ir::ItemStore> {
+    fn resident_item_store(&self, origin: DefMapRef) -> Option<&ItemStore> {
         match origin {
             DefMapRef::Target(target) => self.resident_target_ir(target),
             DefMapRef::Body(body_ref) => self.resident_body_item_store(body_ref),

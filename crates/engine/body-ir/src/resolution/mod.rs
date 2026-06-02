@@ -9,10 +9,9 @@ mod pat;
 mod query_source;
 mod type_path;
 
-use rg_def_map::{DefMapSource, Path};
 use rg_ir_model::{BodyRef, ScopeId, TypePathResolution};
+use rg_ir_storage::{DefMapSource, ItemStoreSource, Path};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::ItemStoreSource;
 use rg_ty::Ty;
 
 use crate::{BodyData, BodyResolution};

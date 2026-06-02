@@ -4,12 +4,11 @@
 //! paths used by hover, completion details, and symbol containers. It intentionally does not try to
 //! reconstruct import aliases or rustdoc-style canonicalization.
 
-use rg_def_map::DefMapQuery;
 use rg_ir_model::{
     ConstRef, DefMapRef, FunctionRef, ImplId, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitRef,
     TypeAliasRef, TypeDefId, TypeDefRef, hir::items::EnumVariantData,
 };
-use rg_semantic_ir::ItemStoreQuery;
+use rg_ir_storage::{DefMapQuery, ItemStoreQuery};
 
 use crate::IndexedViewDb;
 

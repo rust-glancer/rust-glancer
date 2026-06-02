@@ -2,13 +2,13 @@ use std::{fmt, marker::PhantomData, sync::Arc};
 
 use expect_test::Expect;
 
-use crate::{
-    DefMap, DefMapDb, DefMapFinalizationStats, ImportData, ImportKind, Path, PathSegment,
-    ResolvePathResult, ScopeBinding, ScopeEntry,
-};
+use crate::{DefMapDb, DefMapFinalizationStats};
 use rg_ir_model::{
     DefId, DefMapRef, ModuleId, ModuleRef, TargetRef,
     hir::source::{ItemSource, ItemSourceKind},
+};
+use rg_ir_storage::{
+    DefMap, ImportData, ImportKind, Path, PathSegment, ResolvePathResult, ScopeBinding, ScopeEntry,
 };
 use rg_item_tree::{ItemTreeDb, PackageNameInterners, VisibilityLevel};
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
@@ -409,7 +409,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
             .project
             .def_map_db()
             .read_txn(unexpected_package_loader());
-        let result = crate::DefMapQuery::new(&def_map)
+        let result = rg_ir_storage::DefMapQuery::new(&def_map)
             .resolve_path(
                 ModuleRef {
                     origin: DefMapRef::Target(target_ref),
@@ -684,7 +684,7 @@ impl<'a> TargetDefMapSnapshot<'a> {
         modules
     }
 
-    fn sorted_scope_names(&self, scope: &crate::ModuleScope) -> Vec<String> {
+    fn sorted_scope_names(&self, scope: &rg_ir_storage::ModuleScope) -> Vec<String> {
         let mut names = scope
             .entries()
             .map(|(name, _)| name.clone())

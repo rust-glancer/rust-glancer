@@ -183,7 +183,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
     fn consider_fields(
         &self,
-        item_store: &rg_semantic_ir::ItemStore,
+        item_store: &rg_ir_storage::ItemStore,
         ty: rg_ir_model::TypeDefRef,
         best: &mut BestCursorCandidate,
     ) {
@@ -232,7 +232,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
     fn consider_variants(
         &self,
-        item_store: &rg_semantic_ir::ItemStore,
+        item_store: &rg_ir_storage::ItemStore,
         ty: rg_ir_model::TypeDefRef,
         best: &mut BestCursorCandidate,
     ) {

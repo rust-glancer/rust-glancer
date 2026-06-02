@@ -6,9 +6,9 @@
 //! the fixed point has stabilized.
 
 use rg_ir_model::{DefMapRef, ImportId, ModuleRef, TargetRef};
-use rg_ir_storage::{PathResolver, TargetResolutionEnv};
-
-use crate::{ImportKind, ScopeBinding, ScopeBindingOrigin};
+use rg_ir_storage::{
+    ImportKind, PathResolver, ScopeBinding, ScopeBindingOrigin, TargetResolutionEnv,
+};
 
 use super::{
     collect::TargetState,

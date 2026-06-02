@@ -10,6 +10,11 @@ use rg_ir_model::{
     DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef,
     hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource},
 };
+use rg_ir_storage::{
+    ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
+    LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope,
+    Namespace, PathSegment, ScopeBinding, ScopeBindingOrigin,
+};
 use rg_item_tree::{
     Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ItemTreeRef, MacroCallItem,
     MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource, UseImport, UseItem,
@@ -19,11 +24,8 @@ use rg_macro_expand::ExpansionSyntax;
 use rg_parse::{FileId, Span};
 use rg_text::{Name, NameInterner};
 
-use crate::{
-    ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
-    LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope,
-    Namespace, PathSegment, ScopeBinding, ScopeBindingOrigin,
-    build::{collect::TargetState, finalize::ScopeMatrix, stats::DefMapFinalizationStatsSink},
+use crate::build::{
+    collect::TargetState, finalize::ScopeMatrix, stats::DefMapFinalizationStatsSink,
 };
 
 use super::{

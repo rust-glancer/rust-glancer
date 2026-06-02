@@ -1,7 +1,7 @@
 //! View-native declaration categories.
 
-use rg_def_map::LocalDefKind;
 use rg_ir_model::SemanticItemKind;
+use rg_ir_storage::LocalDefKind;
 
 /// Generic indexed declaration category independent from any editor transport model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]

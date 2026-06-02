@@ -7,8 +7,9 @@ use rg_syntax::{AstNode as _, ast};
 
 use rg_def_map::PackageSlot;
 use rg_ir_model::{FunctionRef, ImplRef, ItemOwner, ModuleRef, TraitRef};
+use rg_ir_storage::ItemStoreQuery;
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{ItemStoreQuery, SemanticIrReadTxn};
+use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::NameInterner;
 
 use crate::ir::TargetBodies;

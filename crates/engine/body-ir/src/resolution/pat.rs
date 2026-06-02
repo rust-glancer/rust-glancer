@@ -4,13 +4,11 @@
 //! bindings. Enum variants are matched against a known enum scrutinee/annotation type; patterns do
 //! not infer the scrutinee type by themselves.
 
-use rg_def_map::{DefMapSource, Path, PathSegment};
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId, TypeDefId};
+use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource, Path, PathSegment};
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{
-    ItemStoreQuery, ItemStoreSource, ReferencePeelingCandidates, subst_from_generics,
-};
+use rg_semantic_ir::{ReferencePeelingCandidates, subst_from_generics};
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{

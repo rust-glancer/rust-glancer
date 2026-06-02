@@ -4,10 +4,11 @@
 //! that should be completed.
 
 use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
+use rg_ir_storage::{DefMap, ImportSourcePath, Path};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{DefMap, DefMapReadTxn, ImportSourcePath, Path};
+use crate::DefMapReadTxn;
 
 /// Source site selected for a qualified import-path completion query.
 #[derive(Debug, Clone, PartialEq, Eq)]

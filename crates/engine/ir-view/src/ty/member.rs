@@ -1,16 +1,13 @@
 //! Composite member view over nominal types.
 
 use rg_body_ir::BodyScopeQuery;
-use rg_def_map::Path;
 use rg_ir_model::{
     BodyRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TraitApplicability, TypeDefRef,
     TypePathResolution,
     hir::items::{FieldData, FunctionData},
 };
-use rg_semantic_ir::{
-    Autoderef, AutoderefMode, Documentation, FieldKey, ImplMatcher, ItemPathQuery, ItemStoreQuery,
-    ParamItem,
-};
+use rg_ir_storage::{ItemPathQuery, ItemStoreQuery, Path};
+use rg_semantic_ir::{Autoderef, AutoderefMode, Documentation, FieldKey, ImplMatcher, ParamItem};
 use rg_ty::{NominalTy, Ty};
 
 use crate::{IndexedViewDb, SymbolKind, item::declaration::Declaration, item::path::PathView};

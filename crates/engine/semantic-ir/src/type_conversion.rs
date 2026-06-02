@@ -3,14 +3,14 @@
 //! These helpers preserve known nominal/generic facts. They do not infer missing generic
 //! arguments, solve bounds, or inspect expression bodies to discover return types.
 
-use rg_def_map::{DefMapSource, Path};
 use rg_ir_model::TypePathResolution;
+use rg_ir_storage::{
+    DefMapSource, ItemPathQuery, ItemStoreSource, Path, PathSegment, TypePathContext,
+};
 use rg_item_tree::{GenericArg as ItemGenericArg, GenericParams, Mutability, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
-
-use crate::{ItemPathQuery, ItemStoreSource, TypePathContext};
 
 /// Converts syntax-level type data into the shared type vocabulary in one module/impl
 /// context, applying direct generic substitutions where they are already known.
@@ -135,7 +135,7 @@ pub(crate) fn type_param_name_from_type_ref(ty: &TypeRef) -> Option<Name> {
     let path = Path::from_type_path(path);
     let name = path.single_name()?;
     path.segments.iter().find_map(|segment| match segment {
-        rg_def_map::PathSegment::Name(segment_name) if segment_name.as_str() == name => {
+        PathSegment::Name(segment_name) if segment_name.as_str() == name => {
             Some(segment_name.clone())
         }
         _ => None,

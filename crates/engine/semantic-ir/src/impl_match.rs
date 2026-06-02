@@ -4,9 +4,11 @@
 //! items. They compare explicit impl self types against known receiver types and produce the
 //! substitutions that make associated signatures readable in the receiver context.
 
-use rg_def_map::DefMapSource;
 use rg_ir_model::{
     FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef, hir::items::ImplData,
+};
+use rg_ir_storage::{
+    DefMapSource, ItemLookupIndex, ItemPathQuery, ItemStoreSource, TypePathContext,
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, GenericParams, TypeRef};
 use rg_package_store::PackageStoreError;
@@ -14,7 +16,7 @@ use rg_text::Name;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
 use crate::{
-    ItemLookupIndex, ItemPathQuery, ItemStoreSource, TypePathContext, push_unique,
+    push_unique,
     type_conversion::{
         generic_arg_ty, generic_arg_type_ref, ty_from_type_ref_in_context,
         type_param_name_from_type_ref,

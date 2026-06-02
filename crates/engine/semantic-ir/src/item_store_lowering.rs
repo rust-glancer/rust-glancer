@@ -2,7 +2,6 @@ use std::marker::PhantomData;
 
 use anyhow::Context as _;
 
-use rg_def_map::DefMap;
 use rg_ir_model::{
     AssocItemId, ConstId, FunctionId, ItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef,
     StaticId, TraitId, TypeAliasId,
@@ -15,13 +14,13 @@ use rg_ir_model::{
         source::ItemSource,
     },
 };
+use rg_ir_storage::DefMap;
+use rg_ir_storage::{ItemStore, ItemStoreBuilder};
 use rg_item_tree::{
     ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeId, StaticItem, TraitItem,
     TypeAliasItem,
 };
 use rg_text::Name;
-
-use crate::{ItemStore, ItemStoreBuilder};
 
 /// Reads item-tree-shaped payloads from the storage layer named by an `ItemSource`.
 pub trait ItemStoreSourceReader<'item> {

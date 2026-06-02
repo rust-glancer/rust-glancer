@@ -3,16 +3,18 @@
 //! Semantic IR can resolve module items, but body-local structs live in lexical scopes. This
 //! resolver checks those scopes first and then falls back to the semantic/def-map context.
 
-use rg_def_map::{DefMapQuery, DefMapSource, NameResolutionFilter, Path, PathSegment};
 use rg_ir_model::{
     AssocItemId, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef, ScopeId,
     SemanticItemRef, TypeAliasRef, TypeDefRef, TypePathResolution,
 };
+use rg_ir_storage::{
+    DefMapQuery, DefMapSource, ItemPathQuery, ItemStoreQuery, ItemStoreSource,
+    NameResolutionFilter, Path, PathSegment, TypePathContext,
+};
 use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{
-    ImplMatcher, ItemPathQuery, ItemStoreQuery, ItemStoreSource, TypePathContext,
-    subst_from_generics, substitute_type_param, ty_from_type_path_resolution,
+    ImplMatcher, subst_from_generics, substitute_type_param, ty_from_type_path_resolution,
     ty_from_type_ref_in_context, type_ref_is_self,
 };
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};

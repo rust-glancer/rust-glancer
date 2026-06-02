@@ -7,7 +7,8 @@ use std::{fmt, marker::PhantomData, sync::Arc};
 
 use anyhow::Context as _;
 
-use rg_def_map::{PackageDefMaps as DefMapPackage, PackageSlot};
+use rg_def_map::PackageSlot;
+use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError, PackageSubset};
 
 use crate::{PackageIr, SemanticIrDb};

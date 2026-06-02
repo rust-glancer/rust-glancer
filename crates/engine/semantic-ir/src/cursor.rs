@@ -4,16 +4,16 @@
 //! signatures. Keeping this scan here prevents analysis from knowing how every semantic item stores
 //! generic params, field types, enum variants, impl headers, and associated function declarations.
 
-use rg_def_map::Path;
 use rg_ir_model::{DefMapRef, TargetRef};
 use rg_ir_model::{EnumVariantRef, FieldRef, FunctionRef, ItemOwner, TypeDefId, TypeDefRef};
+use rg_ir_storage::{ItemStoreQuery, Path, TypePathContext};
 use rg_item_tree::{
     FieldList, GenericArg, GenericParams, TypeBound, TypePath, TypeRef, WherePredicate,
 };
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
-use crate::{ItemStoreQuery, SemanticIrReadTxn, TypePathContext};
+use crate::SemanticIrReadTxn;
 
 /// One semantic signature source node that can participate in cursor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]

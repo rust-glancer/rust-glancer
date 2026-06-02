@@ -6,9 +6,10 @@ use std::{
 
 use expect_test::Expect;
 
-use crate::{ItemPathQuery, ItemStore, ItemStoreQuery, SemanticIrDb, SemanticIrReadTxn};
-use rg_def_map::{DefMapDb, PackageSlot, Path, PathSegment};
+use crate::{SemanticIrDb, SemanticIrReadTxn};
+use rg_def_map::{DefMapDb, PackageSlot};
 use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef, TypeAliasId};
+use rg_ir_storage::{DefMap, ItemPathQuery, ItemStore, ItemStoreQuery, Path, PathSegment};
 use rg_item_tree::{
     FieldItem, FieldList, ItemTreeDb, PackageNameInterners, ParamKind, VisibilityLevel,
 };
@@ -121,7 +122,7 @@ impl SemanticIrFixtureDb {
         &self.def_map
     }
 
-    fn resident_def_map(&self, target: TargetRef) -> Option<&rg_def_map::DefMap> {
+    fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
         self.def_map
             .resident_package(target.package)?
             .def_map(target.target)
@@ -131,7 +132,7 @@ impl SemanticIrFixtureDb {
         &self.semantic_ir
     }
 
-    fn resident_target_ir(&self, target: TargetRef) -> Option<&crate::ItemStore> {
+    fn resident_target_ir(&self, target: TargetRef) -> Option<&ItemStore> {
         self.semantic_ir
             .resident_package(target.package)?
             .target(target.target)

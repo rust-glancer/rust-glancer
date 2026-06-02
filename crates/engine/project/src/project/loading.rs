@@ -7,7 +7,8 @@
 use std::sync::{Arc, OnceLock};
 
 use rg_body_ir::PackageBodies;
-use rg_def_map::{PackageDefMaps as DefMapPackage, PackageSlot};
+use rg_def_map::PackageSlot;
+use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_semantic_ir::PackageIr;
 

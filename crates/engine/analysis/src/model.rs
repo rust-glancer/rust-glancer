@@ -1,13 +1,12 @@
 use std::fmt;
 
-use rg_def_map::Path;
 use rg_ir_model::{
     EnumVariantRef, FieldRef, FunctionRef, ModuleRef, SemanticItemKind, TargetRef,
     TraitApplicability,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
+use rg_ir_storage::{Path, TypePathContext};
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::TypePathContext;
 
 use rg_ir_view::SymbolKind;
 

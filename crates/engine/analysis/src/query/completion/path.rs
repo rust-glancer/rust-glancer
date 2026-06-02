@@ -1,7 +1,8 @@
 //! Qualified path completion assembly for body and import positions.
 
 use rg_ir_model::{EnumVariantRef, hir::items::EnumVariantData};
-use rg_semantic_ir::{Documentation, ItemStoreQuery};
+use rg_ir_storage::ItemStoreQuery;
+use rg_semantic_ir::Documentation;
 
 use crate::{
     Analysis,

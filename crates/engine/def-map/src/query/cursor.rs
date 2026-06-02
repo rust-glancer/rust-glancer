@@ -5,11 +5,12 @@
 //! item-tree storage.
 
 use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_storage::{DefMap, ModuleOrigin, Path};
 use rg_parse::{FileId, Span};
 
 use rg_package_store::PackageStoreError;
 
-use crate::{DefMap, DefMapReadTxn, ModuleOrigin, Path};
+use crate::DefMapReadTxn;
 
 /// One def-map source node that can participate in cursor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]

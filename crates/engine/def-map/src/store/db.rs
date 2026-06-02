@@ -1,6 +1,7 @@
 //! Def-map package store and transaction entry points.
 
 use rg_ir_model::TargetRef;
+use rg_ir_storage::{DefMap, PackageDefMaps};
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_parse::{self, TargetId};
@@ -8,7 +9,7 @@ use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    DefMap, DefMapReadTxn, PackageDefMaps, PackageSlot,
+    DefMapReadTxn, PackageSlot,
     build::{DefMapDbBuilder, DefMapDbPackageRebuilder},
 };
 
@@ -178,8 +179,7 @@ pub struct DefMapStats {
 #[cfg(test)]
 mod tests {
     use rg_ir_model::TargetRef;
-
-    use crate::{DefMapBuilder, TargetData};
+    use rg_ir_storage::{DefMapBuilder, TargetData};
 
     use super::*;
 

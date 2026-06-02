@@ -4,13 +4,13 @@
 //! facts as well: docs, display path, symbol kind, and a compact signature. This view keeps that
 //! storage-specific projection out of feature queries.
 
-use rg_def_map::DefMapQuery;
 use rg_ir_model::{
     BodyBindingRef, ConstRef, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, ModuleRef,
     SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
     identity::DeclarationRef,
 };
-use rg_semantic_ir::{Documentation, ItemStoreQuery};
+use rg_ir_storage::{DefMapQuery, ItemStoreQuery};
+use rg_semantic_ir::Documentation;
 
 use crate::{
     IndexedViewDb, SymbolKind, display::signature::SignatureRenderer, item::path::PathView,

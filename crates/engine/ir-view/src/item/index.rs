@@ -3,14 +3,13 @@
 //! This view answers "what declarations exist in this target or body" without committing callers
 //! to DefMap, Semantic IR, or Body IR storage shapes.
 
-use rg_def_map::DefMapQuery;
 use rg_ir_model::{
     AssocItemId, ConstRef, DefMapRef, EnumVariantRef as SemanticEnumVariantRef,
     FunctionRef as SemanticFunctionRef, ModuleId, ModuleRef, SemanticItemKind, TargetRef,
     TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
+use rg_ir_storage::{DefMapQuery, ItemStoreQuery, SemanticItemView};
 use rg_parse::{FileId, Span};
-use rg_semantic_ir::{ItemStoreQuery, SemanticItemView};
 
 use crate::{IndexedViewDb, ty::locals::BodyView};
 

@@ -1,7 +1,8 @@
 //! Generic module facts from the indexed module tree.
 
-use rg_def_map::{DefMapQuery, ModuleOrigin, PackageSlot};
+use rg_def_map::PackageSlot;
 use rg_ir_model::{ModuleRef, TargetRef};
+use rg_ir_storage::{DefMapQuery, ModuleOrigin};
 use rg_parse::{FileId, TargetId};
 
 use crate::IndexedViewDb;

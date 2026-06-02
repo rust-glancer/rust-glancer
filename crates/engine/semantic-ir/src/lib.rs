@@ -26,11 +26,6 @@ pub use self::{
         ty_from_type_ref_in_context, type_ref_is_self,
     },
 };
-pub use rg_ir_storage::{
-    ItemLookupIndex, ItemPathQuery, ItemStore, ItemStoreBuilder, ItemStoreQuery, ItemStoreSource,
-    SemanticItemView, TypePathContext,
-};
-
 pub use rg_item_tree::{
     Documentation, EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionItem,
     FunctionQualifiers, GenericParams, Mutability, ParamItem, TypeBound, TypeRef, VisibilityLevel,

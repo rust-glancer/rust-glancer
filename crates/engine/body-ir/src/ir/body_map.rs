@@ -1,16 +1,16 @@
 use anyhow::Context as _;
 use rg_arena::Arena;
-use rg_def_map::{
-    DefMap, DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
-    LocalDefData, LocalDefKind, LocalImplData, ModuleData, ModuleOrigin, ModuleScope,
-    ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin,
-};
 use rg_ir_model::{
     BodyRef, DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef,
     hir::source::{BodyItemSourceRef, ItemSource, ItemSourceKind},
 };
+use rg_ir_storage::{
+    DefMap, DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
+    ItemStore, LocalDefData, LocalDefKind, LocalImplData, ModuleData, ModuleOrigin, ModuleScope,
+    ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin,
+};
 use rg_item_tree::{Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource};
-use rg_semantic_ir::{ItemStore, ItemStoreLowerer, ItemStoreSourceReader};
+use rg_semantic_ir::{ItemStoreLowerer, ItemStoreSourceReader};
 
 use super::BodyData;
 

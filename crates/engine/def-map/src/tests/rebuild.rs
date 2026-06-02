@@ -9,7 +9,8 @@ use test_fixture::fixture_crate;
 
 use rg_ir_model::TargetRef;
 
-use crate::{DefMapDb, PackageDefMaps, PackageSlot};
+use crate::{DefMapDb, PackageSlot};
+use rg_ir_storage::PackageDefMaps;
 
 #[test]
 fn rebuild_resolves_dirty_imports_through_clean_packages() {

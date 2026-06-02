@@ -11,10 +11,11 @@ use rg_ir_model::{
     TargetRef,
     hir::source::{ItemSource, ItemSourceKind},
 };
+use rg_ir_storage::ItemStore;
 use rg_item_tree::{ItemNode, ItemTreeDb, Package as ItemTreePackage};
 use rg_parse::TargetId;
 
-use crate::{ItemStore, ItemStoreLowerer, ItemStoreSourceReader, PackageIr};
+use crate::{ItemStoreLowerer, ItemStoreSourceReader, PackageIr};
 
 pub(super) fn build_packages(
     item_tree: &ItemTreeDb,

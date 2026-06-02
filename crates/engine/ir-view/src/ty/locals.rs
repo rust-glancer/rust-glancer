@@ -10,8 +10,8 @@ use rg_ir_model::{
     BodyBindingRef, BodyRef, ExprId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef,
     TargetRef, hir::source::ItemSourceKind, identity::DeclarationRef,
 };
+use rg_ir_storage::ItemStoreQuery;
 use rg_parse::{FileId, Span, TextSpan};
-use rg_semantic_ir::ItemStoreQuery;
 use rg_ty::Ty;
 
 use crate::IndexedViewDb;

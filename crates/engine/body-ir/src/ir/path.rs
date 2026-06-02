@@ -1,6 +1,6 @@
 use std::fmt;
 
-use rg_def_map::{Path, PathSegment};
+use rg_ir_storage::{Path, PathSegment};
 use rg_item_tree::{GenericArg, TypeRef};
 use rg_parse::Span;
 use rg_text::Name;

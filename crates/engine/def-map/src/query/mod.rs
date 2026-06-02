@@ -7,4 +7,3 @@ pub use self::{
     cursor::DefMapCursorCandidate,
     path_completion::{DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite},
 };
-pub use rg_ir_storage::{DefMapQuery, DefMapSource, NameResolutionFilter, ResolvePathResult};

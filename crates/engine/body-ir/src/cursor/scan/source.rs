@@ -150,7 +150,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
     fn push_field_candidates(
         &self,
-        item_store: &rg_semantic_ir::ItemStore,
+        item_store: &rg_ir_storage::ItemStore,
         ty: rg_ir_model::TypeDefRef,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
@@ -189,7 +189,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
     fn push_variant_candidates(
         &self,
-        item_store: &rg_semantic_ir::ItemStore,
+        item_store: &rg_ir_storage::ItemStore,
         ty: rg_ir_model::TypeDefRef,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {

@@ -1,9 +1,8 @@
 use rg_arena::Arena;
-use rg_def_map::DefMap;
 use rg_ir_model::{BindingId, BodyId, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, StmtId};
+use rg_ir_storage::{DefMap, ItemStore};
 use rg_item_tree::{ItemNode, ItemTreeId};
 use rg_parse::{FileId, Span, TargetId};
-use rg_semantic_ir::ItemStore;
 
 use super::{
     body_map::BodySourceItems,

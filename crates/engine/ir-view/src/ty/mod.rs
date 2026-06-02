@@ -8,15 +8,12 @@ pub mod locals;
 pub mod member;
 
 use rg_body_ir::BodyScopeQuery;
-use rg_def_map::Path;
 use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticItemRef, TypePathResolution,
     identity::DeclarationRef, identity::ExprRef,
 };
-use rg_semantic_ir::{
-    ItemPathQuery, ItemStoreQuery, ReferencePeelingCandidates, TypePathContext,
-    ty_from_type_ref_in_context,
-};
+use rg_ir_storage::{ItemPathQuery, ItemStoreQuery, Path, TypePathContext};
+use rg_semantic_ir::{ReferencePeelingCandidates, ty_from_type_ref_in_context};
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{IndexedViewDb, ty::locals::BodyView};
