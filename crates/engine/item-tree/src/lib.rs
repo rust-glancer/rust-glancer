@@ -3,6 +3,9 @@ mod item;
 mod lower;
 mod package;
 
+#[doc(hidden)]
+pub mod testonly;
+
 #[cfg(test)]
 mod tests;
 

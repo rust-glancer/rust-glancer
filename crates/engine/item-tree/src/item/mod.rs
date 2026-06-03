@@ -33,6 +33,8 @@ mod type_ref;
 mod visibility;
 
 /// Stable file-local identifier for one lowered item-tree node.
+// TODO: now used in other places, so must be renamed / made more generic?
+// Or do we need to convert from item tree ID to some other item id in HIR?
 #[derive(
     Debug,
     Clone,
@@ -75,7 +77,9 @@ pub struct ItemTreeRef {
 }
 
 /// AST-independent item-tree node used by later lowering stages.
-#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
 pub struct ItemNode {
     pub kind: ItemKind,
     /// Name (when applicable), e.g. for functions or structs.
@@ -94,6 +98,19 @@ pub struct ItemNode {
 }
 
 impl ItemNode {
+    /// Creates an item node from source-like syntax that does not have target-specific cfg state.
+    pub fn source(
+        kind: ItemKind,
+        name: Option<Name>,
+        name_span: Option<Span>,
+        visibility: VisibilityLevel,
+        docs: Option<Documentation>,
+        span: Span,
+        file_id: FileId,
+    ) -> Self {
+        Self::new(kind, name, name_span, visibility, docs, span, file_id)
+    }
+
     /// Creates a fully-populated item node from already-lowered parts.
     pub(super) fn new(
         kind: ItemKind,
@@ -116,7 +133,7 @@ impl ItemNode {
         }
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.kind.shrink_to_fit();
         if let Some(name) = &mut self.name {
             name.shrink_to_fit();

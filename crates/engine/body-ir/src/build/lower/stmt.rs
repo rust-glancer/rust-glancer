@@ -2,20 +2,21 @@
 
 use rg_syntax::{
     AstNode as _,
-    ast::{self, HasName as _},
+    ast::{self, HasModuleItem as _, HasName as _, HasVisibility as _},
 };
 
+use rg_ir_model::{BindingId, ExprId, ScopeId, StmtId};
 use rg_item_tree::{
-    ConstItem, Documentation, EnumItem, FunctionItem, ImplItem, StaticItem, StructItem, TraitItem,
-    TypeAliasItem, TypeRef, UnionItem,
+    ConstItem, Documentation, EnumItem, ExternCrateItem, FunctionItem, ImplItem, ItemKind,
+    ItemNode, ItemTreeId, MacroUseAttr, ModuleItem, ModuleSource, StaticItem, StructItem,
+    TraitItem, TypeAliasItem, TypeRef, UnionItem, UseItem, VisibilityLevel,
 };
+use rg_parse::Span;
+use rg_text::Name;
+use rg_ty::Ty;
 
 use crate::ir::{
-    BindingData, BindingId, BindingKind, BodyFunctionData, BodyFunctionId, BodyFunctionOwner,
-    BodyImplData, BodyImplId, BodyItemData, BodyItemDeclaration, BodyItemId, BodyItemKind,
-    BodyItemOwner, BodyRefMutability, BodySelfParamKind, BodyTy, BodyValueItemData,
-    BodyValueItemDeclaration, BodyValueItemId, BodyValueItemKind, BodyValueItemOwner,
-    ExprBlockKind, ExprId, ExprKind, ScopeId, StmtData, StmtId, StmtKind,
+    BindingData, BindingKind, BodySelfParamKind, ExprBlockKind, ExprKind, StmtData, StmtKind,
 };
 
 use super::function::FunctionBodyLowering;
@@ -53,7 +54,7 @@ impl FunctionBodyLowering<'_> {
             BodySelfParamKind::Explicit
         } else if param.amp_token().is_some() {
             BodySelfParamKind::Reference {
-                mutability: BodyRefMutability::from_mut_token(param.mut_token().is_some()),
+                mutability: rg_ty::RefMutability::from_mut_token(param.mut_token().is_some()),
             }
         } else {
             BodySelfParamKind::Value
@@ -64,7 +65,7 @@ impl FunctionBodyLowering<'_> {
             kind: BindingKind::SelfParam(self_kind),
             name: Some(self.interner.intern("self")),
             annotation,
-            ty: BodyTy::Unknown,
+            ty: Ty::Unknown,
         })
     }
 
@@ -80,7 +81,7 @@ impl FunctionBodyLowering<'_> {
                 kind: BindingKind::Param,
                 name: None,
                 annotation,
-                ty: BodyTy::Unknown,
+                ty: Ty::Unknown,
             })],
         }
     }
@@ -180,294 +181,13 @@ impl FunctionBodyLowering<'_> {
 
     fn lower_item_statement(&mut self, item: ast::Item, scope: ScopeId) -> StmtId {
         let source = self.source(item.syntax());
-        // Body IR only keeps local items that can affect current editor queries. Other item
-        // statements remain represented as ignored statements so source layout stays stable.
-        let kind = match item {
-            ast::Item::Struct(item) => self
-                .lower_local_struct_item(item, scope)
-                .map(|item| StmtKind::Item { item })
-                .unwrap_or(StmtKind::ItemIgnored),
-            ast::Item::Enum(item) => self
-                .lower_local_enum_item(item, scope)
-                .map(|item| StmtKind::Item { item })
-                .unwrap_or(StmtKind::ItemIgnored),
-            ast::Item::Union(item) => self
-                .lower_local_union_item(item, scope)
-                .map(|item| StmtKind::Item { item })
-                .unwrap_or(StmtKind::ItemIgnored),
-            ast::Item::TypeAlias(item) => self
-                .lower_local_type_alias_item(item, scope)
-                .map(|item| StmtKind::Item { item })
-                .unwrap_or(StmtKind::ItemIgnored),
-            ast::Item::Trait(item) => self
-                .lower_local_trait_item(item, scope)
-                .map(|item| StmtKind::Item { item })
-                .unwrap_or(StmtKind::ItemIgnored),
-            ast::Item::Const(item) => self
-                .lower_local_const_item(item, BodyValueItemOwner::LocalScope(scope), scope)
-                .map(|item| StmtKind::ValueItem { item })
-                .unwrap_or(StmtKind::ItemIgnored),
-            ast::Item::Static(item) => self
-                .lower_local_static_item(item, BodyValueItemOwner::LocalScope(scope), scope)
-                .map(|item| StmtKind::ValueItem { item })
-                .unwrap_or(StmtKind::ItemIgnored),
-            ast::Item::Fn(item) => self
-                .lower_local_function_item(item, BodyFunctionOwner::LocalScope(scope))
-                .map(|function| StmtKind::Function { function })
-                .unwrap_or(StmtKind::ItemIgnored),
-            ast::Item::Impl(item) => self
-                .lower_local_impl_item(item, scope)
-                .map(|impl_id| StmtKind::Impl { impl_id })
-                .unwrap_or(StmtKind::ItemIgnored),
-            _ => StmtKind::ItemIgnored,
-        };
 
+        let kind = self
+            .lower_source_item(&item)
+            .map(|node| self.builder.alloc_scope_source_item(scope, node))
+            .map(|item| StmtKind::Item { item })
+            .unwrap_or(StmtKind::ItemIgnored);
         self.builder.alloc_statement(StmtData { source, kind })
-    }
-
-    fn lower_local_struct_item(&mut self, item: ast::Struct, scope: ScopeId) -> Option<BodyItemId> {
-        let name = item.name()?;
-        let name_source = self.source(name.syntax());
-        let name = self.intern_ast_name(name);
-
-        Some(self.builder.alloc_local_item(BodyItemData {
-            source: self.source(item.syntax()),
-            name_source,
-            scope,
-            owner: BodyItemOwner::LocalScope(scope),
-            kind: BodyItemKind::Struct,
-            name,
-            docs: Documentation::from_ast(&item),
-            declaration: BodyItemDeclaration::Struct(StructItem::from_ast(
-                &item,
-                self.line_index,
-                self.interner,
-            )),
-        }))
-    }
-
-    fn lower_local_enum_item(&mut self, item: ast::Enum, scope: ScopeId) -> Option<BodyItemId> {
-        let name = item.name()?;
-        let name_source = self.source(name.syntax());
-        let name = self.intern_ast_name(name);
-
-        Some(self.builder.alloc_local_item(BodyItemData {
-            source: self.source(item.syntax()),
-            name_source,
-            scope,
-            owner: BodyItemOwner::LocalScope(scope),
-            kind: BodyItemKind::Enum,
-            name,
-            docs: Documentation::from_ast(&item),
-            declaration: BodyItemDeclaration::Enum(EnumItem::from_ast(
-                &item,
-                self.line_index,
-                self.interner,
-            )),
-        }))
-    }
-
-    fn lower_local_union_item(&mut self, item: ast::Union, scope: ScopeId) -> Option<BodyItemId> {
-        let name = item.name()?;
-        let name_source = self.source(name.syntax());
-        let name = self.intern_ast_name(name);
-
-        Some(self.builder.alloc_local_item(BodyItemData {
-            source: self.source(item.syntax()),
-            name_source,
-            scope,
-            owner: BodyItemOwner::LocalScope(scope),
-            kind: BodyItemKind::Union,
-            name,
-            docs: Documentation::from_ast(&item),
-            declaration: BodyItemDeclaration::Union(UnionItem::from_ast(
-                &item,
-                self.line_index,
-                self.interner,
-            )),
-        }))
-    }
-
-    fn lower_local_type_alias_item(
-        &mut self,
-        item: ast::TypeAlias,
-        scope: ScopeId,
-    ) -> Option<BodyItemId> {
-        self.lower_type_alias_item(item, scope, BodyItemOwner::LocalScope(scope))
-    }
-
-    fn lower_type_alias_item(
-        &mut self,
-        item: ast::TypeAlias,
-        scope: ScopeId,
-        owner: BodyItemOwner,
-    ) -> Option<BodyItemId> {
-        let name = item.name()?;
-        let name_source = self.source(name.syntax());
-        let name = self.intern_ast_name(name);
-
-        Some(self.builder.alloc_local_item(BodyItemData {
-            source: self.source(item.syntax()),
-            name_source,
-            scope,
-            owner,
-            kind: BodyItemKind::TypeAlias,
-            name,
-            docs: Documentation::from_ast(&item),
-            declaration: BodyItemDeclaration::TypeAlias(TypeAliasItem::from_ast(
-                &item,
-                self.line_index,
-                self.interner,
-            )),
-        }))
-    }
-
-    fn lower_local_trait_item(&mut self, item: ast::Trait, scope: ScopeId) -> Option<BodyItemId> {
-        let name = item.name()?;
-        let name_source = self.source(name.syntax());
-        let name = self.intern_ast_name(name);
-
-        Some(self.builder.alloc_local_item(BodyItemData {
-            source: self.source(item.syntax()),
-            name_source,
-            scope,
-            owner: BodyItemOwner::LocalScope(scope),
-            kind: BodyItemKind::Trait,
-            name,
-            docs: Documentation::from_ast(&item),
-            declaration: BodyItemDeclaration::Trait(TraitItem::from_ast(
-                &item,
-                Vec::new(),
-                self.line_index,
-                self.interner,
-            )),
-        }))
-    }
-
-    fn lower_local_const_item(
-        &mut self,
-        item: ast::Const,
-        owner: BodyValueItemOwner,
-        scope: ScopeId,
-    ) -> Option<BodyValueItemId> {
-        let name = item.name()?;
-        let name_source = self.source(name.syntax());
-        let name = self.intern_ast_name(name);
-
-        Some(self.builder.alloc_local_value_item(BodyValueItemData {
-            source: self.source(item.syntax()),
-            name_source,
-            scope,
-            owner,
-            kind: BodyValueItemKind::Const,
-            name,
-            docs: Documentation::from_ast(&item),
-            declaration: BodyValueItemDeclaration::Const(ConstItem::from_ast(
-                &item,
-                self.line_index,
-                self.interner,
-            )),
-        }))
-    }
-
-    fn lower_local_static_item(
-        &mut self,
-        item: ast::Static,
-        owner: BodyValueItemOwner,
-        scope: ScopeId,
-    ) -> Option<BodyValueItemId> {
-        let name = item.name()?;
-        let name_source = self.source(name.syntax());
-        let name = self.intern_ast_name(name);
-
-        Some(self.builder.alloc_local_value_item(BodyValueItemData {
-            source: self.source(item.syntax()),
-            name_source,
-            scope,
-            owner,
-            kind: BodyValueItemKind::Static,
-            name,
-            docs: Documentation::from_ast(&item),
-            declaration: BodyValueItemDeclaration::Static(StaticItem::from_ast(
-                &item,
-                self.line_index,
-                self.interner,
-            )),
-        }))
-    }
-
-    fn lower_local_impl_item(&mut self, item: ast::Impl, scope: ScopeId) -> Option<BodyImplId> {
-        let impl_item = ImplItem::from_ast(&item, Vec::new(), self.line_index, self.interner);
-        let impl_id = self.builder.alloc_local_impl(BodyImplData {
-            source: self.source(item.syntax()),
-            scope,
-            generics: impl_item.generics,
-            trait_ref: impl_item.trait_ref,
-            self_ty: impl_item.self_ty,
-            self_item: None,
-            functions: Vec::new(),
-            consts: Vec::new(),
-            types: Vec::new(),
-        });
-
-        let mut functions = Vec::new();
-        let mut consts = Vec::new();
-        let mut types = Vec::new();
-        for item in item
-            .assoc_item_list()
-            .into_iter()
-            .flat_map(|item_list| item_list.assoc_items())
-        {
-            match item {
-                ast::AssocItem::Fn(function) => {
-                    if let Some(function) = self
-                        .lower_local_function_item(function, BodyFunctionOwner::LocalImpl(impl_id))
-                    {
-                        functions.push(function);
-                    }
-                }
-                ast::AssocItem::Const(item) => {
-                    if let Some(item) = self.lower_local_const_item(
-                        item,
-                        BodyValueItemOwner::LocalImpl(impl_id),
-                        scope,
-                    ) {
-                        consts.push(item);
-                    }
-                }
-                ast::AssocItem::TypeAlias(item) => {
-                    if let Some(item) =
-                        self.lower_type_alias_item(item, scope, BodyItemOwner::LocalImpl(impl_id))
-                    {
-                        types.push(item);
-                    }
-                }
-                ast::AssocItem::MacroCall(_) => {}
-            }
-        }
-        self.builder
-            .set_local_impl_items(impl_id, functions, consts, types);
-
-        Some(impl_id)
-    }
-
-    fn lower_local_function_item(
-        &mut self,
-        function: ast::Fn,
-        owner: BodyFunctionOwner,
-    ) -> Option<BodyFunctionId> {
-        let name = function.name()?;
-        let name_source = self.source(name.syntax());
-        let name = self.intern_ast_name(name);
-
-        Some(self.builder.alloc_local_function(BodyFunctionData {
-            source: self.source(function.syntax()),
-            name_source,
-            owner,
-            name,
-            docs: Documentation::from_ast(&function),
-            declaration: FunctionItem::from_ast(&function, self.line_index, self.interner),
-        }))
     }
 
     fn lower_let_statement(&mut self, statement: ast::LetStmt, scope: ScopeId) -> StmtId {
@@ -500,5 +220,318 @@ impl FunctionBodyLowering<'_> {
                 else_branch,
             },
         })
+    }
+
+    fn lower_source_item(&mut self, item: &ast::Item) -> Option<ItemNode> {
+        match item {
+            ast::Item::AsmExpr(item) => Some(self.named_source_item_node(
+                ItemKind::AsmExpr,
+                None,
+                VisibilityLevel::Private,
+                None,
+                item.syntax(),
+            )),
+            ast::Item::Const(item) => {
+                let kind =
+                    ItemKind::Const(ConstItem::from_ast(item, self.line_index, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Enum(item) => {
+                let kind = ItemKind::Enum(EnumItem::from_ast(item, self.line_index, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::ExternBlock(item) => Some(self.named_source_item_node(
+                ItemKind::ExternBlock,
+                None,
+                VisibilityLevel::Private,
+                None,
+                item.syntax(),
+            )),
+            ast::Item::ExternCrate(item) => {
+                let (name, name_span) = self.source_name_ref(item.name_ref());
+                let kind = ItemKind::ExternCrate(ExternCrateItem::from_ast(item, self.interner));
+                Some(Self::source_item_node(
+                    kind,
+                    name,
+                    name_span,
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    self.source(item.syntax()),
+                ))
+            }
+            ast::Item::Fn(item) => {
+                let kind = ItemKind::Function(FunctionItem::from_ast(
+                    item,
+                    self.line_index,
+                    self.interner,
+                ));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Impl(item) => {
+                let items = self.lower_source_assoc_items(item.assoc_item_list());
+                let kind = ItemKind::Impl(ImplItem::from_ast(
+                    item,
+                    items,
+                    self.line_index,
+                    self.interner,
+                ));
+                Some(self.named_source_item_node(
+                    kind,
+                    None,
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Module(item) => {
+                let module_item = self.lower_source_module_item(item);
+                Some(self.named_source_item_node(
+                    ItemKind::Module(module_item),
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Static(item) => {
+                let kind =
+                    ItemKind::Static(StaticItem::from_ast(item, self.line_index, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Struct(item) => {
+                let kind =
+                    ItemKind::Struct(StructItem::from_ast(item, self.line_index, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Trait(item) => {
+                let items = self.lower_source_assoc_items(item.assoc_item_list());
+                let kind = ItemKind::Trait(TraitItem::from_ast(
+                    item,
+                    items,
+                    self.line_index,
+                    self.interner,
+                ));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::TypeAlias(item) => {
+                let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
+                    item,
+                    self.line_index,
+                    self.interner,
+                ));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Union(item) => {
+                let kind =
+                    ItemKind::Union(UnionItem::from_ast(item, self.line_index, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::Use(item) => {
+                let kind = ItemKind::Use(UseItem::from_ast(item, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    None,
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(item),
+                    item.syntax(),
+                ))
+            }
+            ast::Item::MacroCall(_) | ast::Item::MacroDef(_) | ast::Item::MacroRules(_) => {
+                // TODO: Lower body-local macro items after body source collection has access to
+                // the macro expansion context used by file item-tree lowering.
+                None
+            }
+        }
+    }
+
+    fn lower_source_module_item(&mut self, item: &ast::Module) -> ModuleItem {
+        let source = match item.item_list() {
+            Some(item_list) => ModuleSource::Inline {
+                items: self.lower_source_child_items(item_list.items()),
+            },
+            None => ModuleSource::OutOfLine {
+                // TODO: Resolve out-of-line body-local modules once this lowering pass knows the
+                // module file context that normal item-tree lowering receives.
+                definition_file: None,
+            },
+        };
+
+        ModuleItem {
+            inner_docs: Documentation::inner_from_ast(item),
+            macro_use: MacroUseAttr::from_attrs(item, self.interner),
+            source,
+        }
+    }
+
+    fn lower_source_child_items(
+        &mut self,
+        items: impl IntoIterator<Item = ast::Item>,
+    ) -> Vec<ItemTreeId> {
+        let mut item_ids = Vec::new();
+        for item in items {
+            if let Some(node) = self.lower_source_item(&item) {
+                item_ids.push(self.builder.alloc_scopeless_source_item(node));
+            }
+        }
+        item_ids
+    }
+
+    fn lower_source_assoc_items(
+        &mut self,
+        item_list: Option<ast::AssocItemList>,
+    ) -> Vec<ItemTreeId> {
+        let Some(item_list) = item_list else {
+            return Vec::new();
+        };
+
+        let mut item_ids = Vec::new();
+        for item in item_list.assoc_items() {
+            if let Some(node) = self.lower_source_assoc_item(item) {
+                item_ids.push(self.builder.alloc_scopeless_source_item(node));
+            }
+        }
+        item_ids
+    }
+
+    fn lower_source_assoc_item(&mut self, item: ast::AssocItem) -> Option<ItemNode> {
+        match item {
+            ast::AssocItem::Const(item) => {
+                let kind =
+                    ItemKind::Const(ConstItem::from_ast(&item, self.line_index, self.interner));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(&item),
+                    item.syntax(),
+                ))
+            }
+            ast::AssocItem::Fn(item) => {
+                let kind = ItemKind::Function(FunctionItem::from_ast(
+                    &item,
+                    self.line_index,
+                    self.interner,
+                ));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(&item),
+                    item.syntax(),
+                ))
+            }
+            ast::AssocItem::TypeAlias(item) => {
+                let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
+                    &item,
+                    self.line_index,
+                    self.interner,
+                ));
+                Some(self.named_source_item_node(
+                    kind,
+                    item.name(),
+                    VisibilityLevel::from_ast(item.visibility()),
+                    Documentation::from_ast(&item),
+                    item.syntax(),
+                ))
+            }
+            ast::AssocItem::MacroCall(_) => None,
+        }
+    }
+
+    fn named_source_item_node(
+        &mut self,
+        kind: ItemKind,
+        name: Option<ast::Name>,
+        visibility: VisibilityLevel,
+        docs: Option<Documentation>,
+        syntax: &rg_syntax::SyntaxNode,
+    ) -> ItemNode {
+        let (name, name_span) = self.source_name(name);
+        Self::source_item_node(kind, name, name_span, visibility, docs, self.source(syntax))
+    }
+
+    fn source_item_node(
+        kind: ItemKind,
+        name: Option<Name>,
+        name_span: Option<Span>,
+        visibility: VisibilityLevel,
+        docs: Option<Documentation>,
+        source: crate::ir::BodySource,
+    ) -> ItemNode {
+        ItemNode::source(
+            kind,
+            name,
+            name_span,
+            visibility,
+            docs,
+            source.span,
+            source.file_id,
+        )
+    }
+
+    fn source_name(&mut self, name: Option<ast::Name>) -> (Option<Name>, Option<Span>) {
+        let Some(name) = name else {
+            return (None, None);
+        };
+
+        let span = self.source(name.syntax()).span;
+        (Some(self.intern_ast_name(name)), Some(span))
+    }
+
+    fn source_name_ref(&mut self, name_ref: Option<ast::NameRef>) -> (Option<Name>, Option<Span>) {
+        let Some(name_ref) = name_ref else {
+            return (None, None);
+        };
+
+        let span = self.source(name_ref.syntax()).span;
+        (Some(self.intern_ast_name_ref(name_ref)), Some(span))
     }
 }

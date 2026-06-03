@@ -4,13 +4,13 @@
 //! Qualified paths are left to the path-completion scanner because their
 //! candidate set comes from the resolved qualifier rather than lexical scope.
 
-use rg_def_map::TargetRef;
+use rg_ir_model::{BodyId, BodyRef, ScopeId, TargetRef};
 use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
 use crate::{
-    BodyData, BodyId, BodyIrReadTxn, BodyPath, BodyRef, ExprKind, ScopeId,
+    BodyData, BodyIrReadTxn, BodyPath, ExprKind,
     cursor::{UnqualifiedCompletionNamespace, UnqualifiedCompletionSite},
 };
 

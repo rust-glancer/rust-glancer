@@ -1,72 +1,77 @@
-use rg_body_ir::{
-    BindingData, BindingId, BodyEnumVariantRef, BodyFieldRef, BodyFunctionOwner, BodyFunctionRef,
-    BodyItemKind, BodyItemRef, BodyPrimitiveTy, BodyRef, BodyValueItemKind, BodyValueItemRef,
-    ExprId, ResolvedEnumVariantRef, ResolvedFieldRef, ResolvedFunctionRef, ScopeId,
-};
-use rg_def_map::{DefId, LocalDefKind, ModuleRef, Path, TargetRef};
-use rg_parse::{FileId, Span};
-use rg_semantic_ir::{EnumVariantRef, FieldRef, FunctionRef, TraitApplicability, TypePathContext};
+use std::fmt;
 
-pub(super) struct SymbolCandidate {
-    pub(super) symbol: SymbolAt,
-    pub(super) span: Span,
+use rg_ir_model::{
+    EnumVariantRef, FieldRef, FunctionRef, ModuleRef, SemanticItemKind, TargetRef,
+    TraitApplicability,
+    identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
+};
+use rg_ir_storage::{Path, TypePathContext};
+use rg_parse::{FileId, Span};
+
+use rg_ir_view::SymbolKind;
+
+/// Scope in which a type path should be resolved.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct TypePathScopeRef(TypePathScopeRepr);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TypePathScopeRepr {
+    Signature(TypePathContext),
+    Body(LexicalScopeRef),
+}
+
+impl TypePathScopeRef {
+    pub(crate) fn signature(context: TypePathContext) -> Self {
+        Self(TypePathScopeRepr::Signature(context))
+    }
+
+    pub(crate) fn body(scope: LexicalScopeRef) -> Self {
+        Self(TypePathScopeRepr::Body(scope))
+    }
+
+    pub(crate) fn repr(self) -> TypePathScopeRepr {
+        self.0
+    }
+}
+
+impl fmt::Debug for TypePathScopeRef {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            TypePathScopeRepr::Signature(context) => f
+                .debug_struct("TypePathScopeRef")
+                .field("kind", &"signature")
+                .field("module", &context.module)
+                .finish(),
+            TypePathScopeRepr::Body(scope) => f
+                .debug_struct("TypePathScopeRef")
+                .field("kind", &"body")
+                .field("scope", &scope)
+                .finish(),
+        }
+    }
 }
 
 /// Symbol found at one source offset.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SymbolAt {
     /// Function body declaration, e.g. the name in `fn use_it() { ... }`.
-    Body { body: BodyRef },
-    /// Local binding introduced by a parameter or pattern, e.g. `user` in `let user = input;`.
-    Binding { body: BodyRef, binding: BindingId },
-    /// Body-local type path, e.g. `User` in `let user: User;`.
-    BodyPath {
-        body: BodyRef,
-        scope: ScopeId,
-        path: Path,
+    FunctionBody { body: FunctionBodyRef },
+    /// Declaration-like source node.
+    Declaration {
+        declaration: DeclarationRef,
         span: Span,
     },
-    /// Body-local value path, e.g. `DEFAULT` in `let value = DEFAULT;`.
-    BodyValuePath {
-        body: BodyRef,
-        scope: ScopeId,
-        path: Path,
-        span: Span,
-    },
-    /// DefMap-backed declaration, e.g. a module-level `struct User;`.
-    Def { def: DefId, span: Span },
     /// Lowered expression node, e.g. the whole `user.id()` call expression.
-    Expr { body: BodyRef, expr: ExprId },
-    /// Semantic field declaration, e.g. `id` in a module-level `struct User { id: Id }`.
-    Field { field: FieldRef, span: Span },
-    /// Semantic function declaration, e.g. `make_user` in `fn make_user() -> User`.
-    Function { function: FunctionRef, span: Span },
-    /// Semantic enum variant declaration, e.g. `Some` in `enum Maybe<T> { Some(T) }`.
-    EnumVariant { variant: EnumVariantRef, span: Span },
-    /// Variant declared on a body-local enum, e.g. `Start` in `enum Action { Start }`.
-    LocalEnumVariant {
-        variant: BodyEnumVariantRef,
-        span: Span,
-    },
-    /// Body-local type-namespace item, e.g. `User` in `fn f() { struct User; }`.
-    ///
-    /// This also covers local `enum`, `union`, `type`, and `trait` declarations.
-    LocalItem { item: BodyItemRef, span: Span },
-    /// Body-local value-namespace item, e.g. `DEFAULT` in `fn f() { const DEFAULT: u8 = 0; }`.
-    ///
-    /// This covers local `const` and `static` declarations, not `let` bindings.
-    LocalValueItem { item: BodyValueItemRef, span: Span },
-    /// Field declared on a body-local struct or union,
-    /// e.g. `id` in `fn f() { struct User { id: Id } }`.
-    LocalField { field: BodyFieldRef, span: Span },
-    /// Body-local function-like item, e.g. `helper` in `fn f() { fn helper() {} }`.
-    LocalFunction {
-        function: BodyFunctionRef,
-        span: Span,
-    },
-    /// Semantic type path outside body IR, e.g. `User` in a function signature.
+    Expr { expr: ExprRef },
+    /// Type-namespace path, e.g. `User` in a signature or `let user: User;`.
     TypePath {
-        context: TypePathContext,
+        scope: TypePathScopeRef,
+        path: Path,
+        span: Span,
+    },
+    /// Value-namespace path inside a lowered body.
+    ValuePath {
+        scope: LexicalScopeRef,
         path: Path,
         span: Span,
     },
@@ -94,22 +99,6 @@ pub struct NavigationTarget {
     pub name: String,
     pub file_id: FileId,
     pub span: Option<Span>,
-}
-
-impl NavigationTarget {
-    pub(super) fn from_binding(target: TargetRef, binding: &BindingData) -> Self {
-        Self {
-            target,
-            kind: NavigationTargetKind::LocalBinding,
-            name: binding
-                .name
-                .as_ref()
-                .map(ToString::to_string)
-                .unwrap_or_else(|| "<unsupported>".to_string()),
-            file_id: binding.source.file_id,
-            span: Some(binding.source.span),
-        }
-    }
 }
 
 /// Hierarchical source outline for one file under one target context.
@@ -163,81 +152,6 @@ pub struct HoverBlock {
     pub docs: Option<String>,
 }
 
-/// LSP-shaped symbol category without depending on LSP transport types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
-pub enum SymbolKind {
-    #[display("const")]
-    Const,
-    #[display("enum")]
-    Enum,
-    #[display("variant")]
-    EnumVariant,
-    #[display("field")]
-    Field,
-    #[display("fn")]
-    Function,
-    #[display("impl")]
-    Impl,
-    #[display("macro")]
-    Macro,
-    #[display("method")]
-    Method,
-    #[display("module")]
-    Module,
-    #[display("static")]
-    Static,
-    #[display("struct")]
-    Struct,
-    #[display("trait")]
-    Trait,
-    #[display("type_alias")]
-    TypeAlias,
-    #[display("union")]
-    Union,
-    #[display("variable")]
-    Variable,
-}
-
-impl SymbolKind {
-    pub(super) fn from_local_def_kind(kind: LocalDefKind) -> Self {
-        match kind {
-            LocalDefKind::Const => Self::Const,
-            LocalDefKind::Enum => Self::Enum,
-            LocalDefKind::Function => Self::Function,
-            LocalDefKind::MacroDefinition => Self::Macro,
-            LocalDefKind::Static => Self::Static,
-            LocalDefKind::Struct => Self::Struct,
-            LocalDefKind::Trait => Self::Trait,
-            LocalDefKind::TypeAlias => Self::TypeAlias,
-            LocalDefKind::Union => Self::Union,
-        }
-    }
-
-    pub(super) fn from_body_item_kind(kind: BodyItemKind) -> Self {
-        match kind {
-            BodyItemKind::Struct => Self::Struct,
-            BodyItemKind::Enum => Self::Enum,
-            BodyItemKind::Union => Self::Union,
-            BodyItemKind::TypeAlias => Self::TypeAlias,
-            BodyItemKind::Trait => Self::Trait,
-        }
-    }
-
-    pub(super) fn from_body_value_item_kind(kind: BodyValueItemKind) -> Self {
-        match kind {
-            BodyValueItemKind::Const => Self::Const,
-            BodyValueItemKind::Static => Self::Static,
-        }
-    }
-
-    pub(super) fn from_body_function_owner(owner: BodyFunctionOwner) -> Self {
-        match owner {
-            BodyFunctionOwner::LocalScope(_) => Self::Function,
-            BodyFunctionOwner::LocalImpl(_) => Self::Method,
-        }
-    }
-}
-
 /// Navigation target category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 pub enum NavigationTargetKind {
@@ -271,35 +185,23 @@ pub enum NavigationTargetKind {
     Union,
 }
 
-impl NavigationTargetKind {
-    pub(super) fn from_local_def_kind(kind: LocalDefKind) -> Self {
+impl From<SymbolKind> for NavigationTargetKind {
+    fn from(kind: SymbolKind) -> Self {
         match kind {
-            LocalDefKind::Const => Self::Const,
-            LocalDefKind::Enum => Self::Enum,
-            LocalDefKind::Function => Self::Function,
-            LocalDefKind::MacroDefinition => Self::Macro,
-            LocalDefKind::Static => Self::Static,
-            LocalDefKind::Struct => Self::Struct,
-            LocalDefKind::Trait => Self::Trait,
-            LocalDefKind::TypeAlias => Self::TypeAlias,
-            LocalDefKind::Union => Self::Union,
-        }
-    }
-
-    pub(super) fn from_body_item_kind(kind: BodyItemKind) -> Self {
-        match kind {
-            BodyItemKind::Struct => Self::Struct,
-            BodyItemKind::Enum => Self::Enum,
-            BodyItemKind::Union => Self::Union,
-            BodyItemKind::TypeAlias => Self::TypeAlias,
-            BodyItemKind::Trait => Self::Trait,
-        }
-    }
-
-    pub(super) fn from_body_value_item_kind(kind: BodyValueItemKind) -> Self {
-        match kind {
-            BodyValueItemKind::Const => Self::Const,
-            BodyValueItemKind::Static => Self::Static,
+            SymbolKind::Const => Self::Const,
+            SymbolKind::Enum => Self::Enum,
+            SymbolKind::EnumVariant => Self::EnumVariant,
+            SymbolKind::Field => Self::Field,
+            SymbolKind::Function | SymbolKind::Method => Self::Function,
+            SymbolKind::Impl => Self::Impl,
+            SymbolKind::Macro => Self::Macro,
+            SymbolKind::Module => Self::Module,
+            SymbolKind::Static => Self::Static,
+            SymbolKind::Struct => Self::Struct,
+            SymbolKind::Trait => Self::Trait,
+            SymbolKind::TypeAlias => Self::TypeAlias,
+            SymbolKind::Union => Self::Union,
+            SymbolKind::Variable => Self::LocalBinding,
         }
     }
 }
@@ -334,15 +236,12 @@ pub struct CompletionEdit {
 /// Stable analysis identity behind one completion row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompletionTarget {
-    Binding { body: BodyRef, binding: BindingId },
-    BodyItem(BodyItemRef),
-    BodyValueItem(BodyValueItemRef),
-    EnumVariant(ResolvedEnumVariantRef),
-    Field(ResolvedFieldRef),
-    Function(ResolvedFunctionRef),
-    Def(DefId),
+    Declaration(DeclarationRef),
+    EnumVariant(EnumVariantRef),
+    Field(FieldRef),
+    Function(FunctionRef),
     Keyword(KeywordCompletion),
-    PrimitiveType(BodyPrimitiveTy),
+    PrimitiveType(rg_ty::PrimitiveTy),
 }
 
 /// Small, explicit set of Rust keyword and keyword-like snippet completions.
@@ -450,35 +349,18 @@ impl CompletionKind {
         }
     }
 
-    pub(super) fn from_local_def_kind(kind: LocalDefKind) -> Self {
-        match kind {
-            LocalDefKind::Const => Self::Const,
-            LocalDefKind::Enum => Self::Enum,
-            LocalDefKind::Function => Self::Function,
-            LocalDefKind::MacroDefinition => Self::Macro,
-            LocalDefKind::Static => Self::Static,
-            LocalDefKind::Struct => Self::Struct,
-            LocalDefKind::Trait => Self::Trait,
-            LocalDefKind::TypeAlias => Self::TypeAlias,
-            LocalDefKind::Union => Self::Union,
-        }
-    }
-
-    pub(super) fn from_body_item_kind(kind: BodyItemKind) -> Self {
-        match kind {
-            BodyItemKind::Struct => Self::Struct,
-            BodyItemKind::Enum => Self::Enum,
-            BodyItemKind::Union => Self::Union,
-            BodyItemKind::TypeAlias => Self::TypeAlias,
-            BodyItemKind::Trait => Self::Trait,
-        }
-    }
-
-    pub(super) fn from_body_value_item_kind(kind: BodyValueItemKind) -> Self {
-        match kind {
-            BodyValueItemKind::Const => Self::Const,
-            BodyValueItemKind::Static => Self::Static,
-        }
+    pub(super) fn from_semantic_item_kind(kind: SemanticItemKind) -> Option<Self> {
+        Some(match kind {
+            SemanticItemKind::Struct => Self::Struct,
+            SemanticItemKind::Enum => Self::Enum,
+            SemanticItemKind::Union => Self::Union,
+            SemanticItemKind::Trait => Self::Trait,
+            SemanticItemKind::Function => Self::Function,
+            SemanticItemKind::TypeAlias => Self::TypeAlias,
+            SemanticItemKind::Const => Self::Const,
+            SemanticItemKind::Static => Self::Static,
+            SemanticItemKind::Impl => return None,
+        })
     }
 }
 

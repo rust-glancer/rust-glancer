@@ -1,5 +1,7 @@
 //! Def-map package store and transaction entry points.
 
+use rg_ir_model::TargetRef;
+use rg_ir_storage::{DefMap, PackageDefMaps};
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_parse::{self, TargetId};
@@ -7,15 +9,14 @@ use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    DefMap, DefMapReadTxn, Package, PackageSlot,
+    DefMapReadTxn, PackageSlot,
     build::{DefMapDbBuilder, DefMapDbPackageRebuilder},
-    model::ResidentTargetRef,
 };
 
 /// Frozen def maps for all parsed packages and targets.
 #[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
 pub struct DefMapDb {
-    packages: PackageStore<Package>,
+    packages: PackageStore<PackageDefMaps>,
 }
 
 impl DefMapDb {
@@ -43,7 +44,7 @@ impl DefMapDb {
         )
     }
 
-    pub(crate) fn from_packages(packages: Vec<Package>) -> Self {
+    pub(crate) fn from_packages(packages: Vec<PackageDefMaps>) -> Self {
         Self::from_package_store(PackageStore::from_vec(packages))
     }
 
@@ -51,7 +52,7 @@ impl DefMapDb {
     ///
     /// Fresh builds use `from_packages`, while artifact-backed loading can construct resident and
     /// offloaded package slots directly after validating the workspace snapshot.
-    pub fn from_package_store(packages: PackageStore<Package>) -> Self {
+    pub fn from_package_store(packages: PackageStore<PackageDefMaps>) -> Self {
         Self { packages }
     }
 
@@ -65,7 +66,7 @@ impl DefMapDb {
     }
 
     /// Iterates over every resident target def map together with a resident-only target reference.
-    fn resident_target_maps(&self) -> impl Iterator<Item = (ResidentTargetRef, &DefMap)> {
+    fn resident_target_maps(&self) -> impl Iterator<Item = (TargetRef, &DefMap)> {
         self.packages
             .raw_entries_with_slots()
             .filter_map(|(package_slot, entry)| {
@@ -73,11 +74,11 @@ impl DefMapDb {
             })
             .flat_map(move |(package_slot, package)| {
                 package
-                    .targets()
+                    .def_maps()
                     .iter()
                     .enumerate()
                     .map(move |(target_idx, def_map)| {
-                        let target_ref = ResidentTargetRef {
+                        let target_ref = TargetRef {
                             package: package_slot,
                             target: TargetId(target_idx),
                         };
@@ -107,19 +108,22 @@ impl DefMapDb {
     }
 
     /// Returns one resident package def-map set by package slot.
-    pub fn resident_package(&self, package_slot: PackageSlot) -> Option<&Package> {
+    pub fn resident_package(&self, package_slot: PackageSlot) -> Option<&PackageDefMaps> {
         self.packages
             .raw_entry(package_slot)
             .and_then(|entry| entry.as_resident())
     }
 
-    pub fn read_txn<'db>(&'db self, loader: PackageLoader<'db, Package>) -> DefMapReadTxn<'db> {
+    pub fn read_txn<'db>(
+        &'db self,
+        loader: PackageLoader<'db, PackageDefMaps>,
+    ) -> DefMapReadTxn<'db> {
         DefMapReadTxn::from_package_store(self.packages.read_txn(loader))
     }
 
     pub fn read_txn_for_subset<'db>(
         &'db self,
-        loader: PackageLoader<'db, Package>,
+        loader: PackageLoader<'db, PackageDefMaps>,
         subset: &PackageSubset,
     ) -> DefMapReadTxn<'db> {
         DefMapReadTxn::from_package_store(self.packages.read_txn_for_subset(loader, subset))
@@ -138,7 +142,7 @@ impl DefMapDbMutator<'_> {
     pub(crate) fn replace_package(
         &mut self,
         package_slot: PackageSlot,
-        package: Package,
+        package: PackageDefMaps,
     ) -> Option<()> {
         self.db.packages.replace(package_slot, package)
     }
@@ -174,7 +178,8 @@ pub struct DefMapStats {
 
 #[cfg(test)]
 mod tests {
-    use rg_arena::Arena;
+    use rg_ir_model::TargetRef;
+    use rg_ir_storage::{DefMapBuilder, TargetData};
 
     use super::*;
 
@@ -199,11 +204,18 @@ mod tests {
         assert_eq!(target_packages, vec![PackageSlot(0), PackageSlot(2)]);
     }
 
-    fn package_with_one_target(name: &str) -> Package {
-        Package {
-            name: name.to_string(),
-            target_names: Arena::from_vec(vec![format!("{name}_lib")]),
-            targets: Arena::from_vec(vec![DefMap::default()]),
-        }
+    fn package_with_one_target(name: &str) -> PackageDefMaps {
+        PackageDefMaps::new(
+            name.to_string(),
+            vec![format!("{name}_lib")],
+            vec![TargetData::default()],
+            vec![
+                DefMapBuilder::new(TargetRef {
+                    package: PackageSlot(0),
+                    target: TargetId(0),
+                })
+                .build(),
+            ],
+        )
     }
 }

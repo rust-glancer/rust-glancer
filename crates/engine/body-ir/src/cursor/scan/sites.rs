@@ -5,14 +5,15 @@
 //! This module keeps the structural walk in one place while leaving those query-specific meanings
 //! with the callers.
 
+use rg_ir_model::{PatId, ScopeId};
 use rg_item_tree::{
-    FieldItem, FieldList, FunctionItem, GenericParams, TypeBound, TypePath, TypeRef, WherePredicate,
+    FieldItem, FieldList, FunctionItem, GenericParams, ImplItem, ItemKind, ItemNode, ModuleItem,
+    ModuleSource, TypeBound, TypePath, TypeRef, WherePredicate,
 };
 use rg_parse::{FileId, Span};
 
 use crate::{
-    BodyData, BodyFunctionData, BodyFunctionOwner, BodyItemDeclaration, BodyPath,
-    BodyValueItemDeclaration, ExprKind, PatId, ScopeId, StmtKind,
+    BodyData, BodyPath, ExprKind, StmtKind,
     walk::{
         PatWalkSite, walk_body_path_type_refs as walk_embedded_body_path_type_refs, walk_pat,
         walk_type_ref_paths,
@@ -205,10 +206,7 @@ where
 
     fn walk(&mut self) {
         self.walk_let_annotations();
-        self.walk_local_item_declarations();
-        self.walk_local_value_item_declarations();
-        self.walk_local_impl_declarations();
-        self.walk_local_function_declarations();
+        self.walk_source_item_declarations();
         self.walk_expression_type_refs();
         self.walk_pattern_path_type_refs();
     }
@@ -229,42 +227,16 @@ where
         }
     }
 
-    fn walk_local_item_declarations(&mut self) {
-        let body = self.sites.body;
-        for item in body.local_items.iter() {
-            let context = self.decl_context(item.scope, item.source.file_id);
-            self.walk_body_item_type_refs(context, item);
-        }
-    }
-
-    fn walk_local_value_item_declarations(&mut self) {
-        let body = self.sites.body;
-        for item in body.local_value_items.iter() {
-            let context = self.decl_context(item.scope, item.source.file_id);
-            self.walk_body_value_item_type_refs(context, item);
-        }
-    }
-
-    fn walk_local_impl_declarations(&mut self) {
-        let body = self.sites.body;
-        for impl_data in body.local_impls.iter() {
-            let context = self.decl_context(impl_data.scope, impl_data.source.file_id);
-            self.walk_generic_params_type_refs(context, &impl_data.generics);
-            if let Some(trait_ref) = &impl_data.trait_ref {
-                self.emit_type_ref(context, trait_ref);
+    fn walk_source_item_declarations(&mut self) {
+        for (scope_idx, scope_data) in self.sites.body.scopes.iter().enumerate() {
+            let scope = ScopeId(scope_idx);
+            for item in &scope_data.source_items {
+                let Some(item) = self.sites.body.source_item(*item) else {
+                    continue;
+                };
+                let context = self.decl_context(scope, item.file_id);
+                self.walk_source_item_type_refs(context, item);
             }
-            self.emit_type_ref(context, &impl_data.self_ty);
-        }
-    }
-
-    fn walk_local_function_declarations(&mut self) {
-        let body = self.sites.body;
-        for function in body.local_functions.iter() {
-            let Some(scope) = self.scope_for_body_function(function) else {
-                continue;
-            };
-            let context = self.decl_context(scope, function.source.file_id);
-            self.walk_function_item_type_refs(context, &function.declaration);
         }
     }
 
@@ -329,55 +301,81 @@ where
         });
     }
 
-    fn walk_body_item_type_refs(
-        &mut self,
-        context: TypeRefContext,
-        item: &'body crate::BodyItemData,
-    ) {
-        if let Some(generics) = item.generic_params() {
-            self.walk_generic_params_type_refs(context, generics);
-        }
-
-        match &item.declaration {
-            BodyItemDeclaration::Struct(item) => {
+    fn walk_source_item_type_refs(&mut self, context: TypeRefContext, item: &'body ItemNode) {
+        match &item.kind {
+            ItemKind::Struct(item) => {
+                self.walk_generic_params_type_refs(context, &item.generics);
                 self.walk_field_list_type_refs(context, &item.fields);
             }
-            BodyItemDeclaration::Enum(item) => {
+            ItemKind::Enum(item) => {
+                self.walk_generic_params_type_refs(context, &item.generics);
                 for variant in &item.variants {
                     self.walk_field_list_type_refs(context, &variant.fields);
                 }
             }
-            BodyItemDeclaration::Union(item) => {
+            ItemKind::Union(item) => {
+                self.walk_generic_params_type_refs(context, &item.generics);
                 self.walk_field_type_refs(context, &item.fields);
             }
-            BodyItemDeclaration::TypeAlias(item) => {
+            ItemKind::TypeAlias(item) => {
+                self.walk_generic_params_type_refs(context, &item.generics);
                 self.walk_type_bounds_type_refs(context, &item.bounds);
                 if let Some(ty) = &item.aliased_ty {
                     self.emit_type_ref(context, ty);
                 }
             }
-            BodyItemDeclaration::Trait(item) => {
+            ItemKind::Trait(item) => {
+                self.walk_generic_params_type_refs(context, &item.generics);
                 self.walk_type_bounds_type_refs(context, &item.super_traits);
+                for assoc_item in &item.items {
+                    if let Some(item) = self.sites.body.source_item(*assoc_item) {
+                        self.walk_source_item_type_refs(context, item);
+                    }
+                }
             }
-        }
-    }
-
-    fn walk_body_value_item_type_refs(
-        &mut self,
-        context: TypeRefContext,
-        item: &'body crate::BodyValueItemData,
-    ) {
-        match &item.declaration {
-            BodyValueItemDeclaration::Const(item) => {
+            ItemKind::Const(item) => {
                 self.walk_generic_params_type_refs(context, &item.generics);
                 if let Some(ty) = &item.ty {
                     self.emit_type_ref(context, ty);
                 }
             }
-            BodyValueItemDeclaration::Static(item) => {
+            ItemKind::Static(item) => {
                 if let Some(ty) = &item.ty {
                     self.emit_type_ref(context, ty);
                 }
+            }
+            ItemKind::Function(item) => self.walk_function_item_type_refs(context, item),
+            ItemKind::Impl(item) => self.walk_impl_item_type_refs(context, item),
+            ItemKind::Module(item) => self.walk_module_item_type_refs(context, item),
+            ItemKind::AsmExpr
+            | ItemKind::ExternBlock
+            | ItemKind::ExternCrate(_)
+            | ItemKind::MacroCall(_)
+            | ItemKind::MacroDefinition(_)
+            | ItemKind::Use(_) => {}
+        }
+    }
+
+    fn walk_impl_item_type_refs(&mut self, context: TypeRefContext, item: &'body ImplItem) {
+        self.walk_generic_params_type_refs(context, &item.generics);
+        if let Some(trait_ref) = &item.trait_ref {
+            self.emit_type_ref(context, trait_ref);
+        }
+        self.emit_type_ref(context, &item.self_ty);
+        for assoc_item in &item.items {
+            if let Some(item) = self.sites.body.source_item(*assoc_item) {
+                self.walk_source_item_type_refs(context, item);
+            }
+        }
+    }
+
+    fn walk_module_item_type_refs(&mut self, context: TypeRefContext, item: &'body ModuleItem) {
+        let ModuleSource::Inline { items } = &item.source else {
+            return;
+        };
+        for item in items {
+            if let Some(item) = self.sites.body.source_item(*item) {
+                self.walk_source_item_type_refs(context, item);
             }
         }
     }
@@ -436,17 +434,6 @@ where
     fn walk_field_type_refs(&mut self, context: TypeRefContext, fields: &'body [FieldItem]) {
         for field in fields {
             self.emit_type_ref(context, &field.ty);
-        }
-    }
-
-    fn scope_for_body_function(&self, function: &BodyFunctionData) -> Option<ScopeId> {
-        match function.owner {
-            BodyFunctionOwner::LocalScope(scope) => Some(scope),
-            BodyFunctionOwner::LocalImpl(impl_id) => self
-                .sites
-                .body
-                .local_impl(impl_id)
-                .map(|impl_data| impl_data.scope),
         }
     }
 

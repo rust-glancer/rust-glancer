@@ -3,6 +3,8 @@ mod cursor;
 mod ir;
 mod resolution;
 mod store;
+#[doc(hidden)]
+pub mod testonly;
 mod walk;
 
 use rg_def_map::PackageSlot;
@@ -15,31 +17,23 @@ mod tests;
 
 pub use self::{
     cursor::{
-        BodyCursorCandidate, BodyUnqualifiedCompletionCandidate, DotCompletionSite,
-        PathCompletionNamespace, PathCompletionSite, RecordFieldCompletionSite,
-        UnqualifiedCompletionNamespace, UnqualifiedCompletionSite,
+        BodyCursorCandidate, DotCompletionSite, PathCompletionNamespace, PathCompletionSite,
+        RecordFieldCompletionSite, UnqualifiedCompletionNamespace, UnqualifiedCompletionSite,
     },
     ir::{
-        BindingData, BindingId, BindingKind, BodyData, BodyEnumVariantData, BodyEnumVariantRef,
-        BodyFieldData, BodyFieldRef, BodyFloatTy, BodyFunctionData, BodyFunctionId,
-        BodyFunctionOwner, BodyFunctionRef, BodyGenericArg, BodyId, BodyImplData, BodyImplId,
-        BodyIrStats, BodyItemData, BodyItemDeclaration, BodyItemId, BodyItemKind, BodyItemOwner,
-        BodyItemRef, BodyLocalNominalTy, BodyNominalTy, BodyPath, BodyPrimitiveTy, BodyRef,
-        BodyRefMutability, BodyResolution, BodySelfParamKind, BodySignedIntTy, BodySource, BodyTy,
-        BodyTypePathResolution, BodyUnsignedIntTy, BodyValueItemData, BodyValueItemDeclaration,
-        BodyValueItemId, BodyValueItemKind, BodyValueItemOwner, BodyValueItemRef, ClosureCapture,
-        ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprId,
-        ExprKind, ExprRangeKind, ExprUnaryOp, LabelData, LiteralKind, PackageBodies,
-        PatBindingMode, PatData, PatId, PatKind, PatMutability, PatRangeKind, RecordExprField,
-        RecordExprSpread, RecordPatField, ResolvedEnumVariantRef, ResolvedFieldRef,
-        ResolvedFunctionRef, ScopeData, ScopeId, StmtData, StmtKind, TargetBodies,
-        TargetBodiesStatus,
+        BindingData, BindingKind, BodyData, BodyIrStats, BodyPath, BodySelfParamKind, BodySource,
+        BodySourceItems, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp,
+        ExprBlockKind, ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, LabelData, LiteralKind,
+        PackageBodies, PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind,
+        RecordExprField, RecordExprSpread, RecordPatField, ScopeData, StmtData, StmtKind,
+        TargetBodies, TargetBodiesStatus,
     },
-    resolution::{
-        BodyAutoderef, BodyAutoderefCandidate, BodyAutoderefCandidates, BodyAutoderefMode,
-    },
+    resolution::BodyScopeQuery,
     store::{BodyIrDb, BodyIrReadTxn},
 };
+
+// TODO: Shouldn't be exposed normally; remove after analysis owns resolver projection.
+pub use self::ir::BodyResolution;
 
 /// One package-local source file whose function bodies should be lowered during a partial rebuild.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

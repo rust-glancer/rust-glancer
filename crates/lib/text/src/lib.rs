@@ -241,12 +241,18 @@ impl PackageNameInterners {
 mod memsize {
     use std::{mem, sync::Weak};
 
-    use rg_memsize::{MemoryRecorder, MemorySize};
+    use rg_memsize::{MemoryRecorder, MemorySize, Shrink};
 
     use crate::{Name, NameInterner, PackageNameInterners};
 
     impl MemorySize for Name {
         fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
+    }
+
+    impl Shrink for Name {
+        fn shrink_to_fit(&mut self) {
+            Name::shrink_to_fit(self);
+        }
     }
 
     impl MemorySize for NameInterner {

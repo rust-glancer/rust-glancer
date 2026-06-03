@@ -13,9 +13,10 @@ mod target;
 use anyhow::Context as _;
 use rayon::prelude::*;
 
-use rg_def_map::{PackageSlot, TargetRef};
+use rg_def_map::PackageSlot;
+use rg_ir_model::{FunctionRef, TargetRef};
 use rg_parse::{FileId, ParseDb, Span, TargetId};
-use rg_semantic_ir::{FunctionRef, SemanticIrReadTxn};
+use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
 
 use crate::{
@@ -196,7 +197,7 @@ fn build_package_with_interner(
             package.0,
         )
     })?;
-    let target_count = package_ir.into_ref().targets().len();
+    let target_count = package_ir.targets().len();
     let mut targets = Vec::with_capacity(target_count);
 
     for target_idx in 0..target_count {
@@ -204,19 +205,20 @@ fn build_package_with_interner(
             package,
             target: TargetId(target_idx),
         };
-        let functions = semantic_ir
-            .functions(target_ref)
+        let store = semantic_ir
+            .items(target_ref)
             .with_context(|| {
                 format!("while attempting to fetch semantic IR functions for target {target_idx}")
             })?
-            .into_iter()
+            .context("store must be present")?;
+        let functions = store
+            .functions_with_refs()
             .map(|(function_ref, function)| (function_ref, function.source.file_id, function.span))
             .collect::<Vec<_>>();
-        let function_count = functions.len();
         if !scope.should_lower_package(package, parse_package)
             || !scope.should_lower_target(package, &functions)
         {
-            targets.push(TargetBodies::skipped(function_count));
+            targets.push(TargetBodies::skipped());
             continue;
         }
 
@@ -227,7 +229,7 @@ fn build_package_with_interner(
                 scope,
                 package,
                 functions,
-                target_bodies: TargetBodies::new(function_count),
+                target_bodies: TargetBodies::new(),
                 interner,
             }
             .lower()

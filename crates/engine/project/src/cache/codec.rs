@@ -96,10 +96,10 @@ impl PackageCacheCodec {
             );
         }
 
-        if artifact.payload.def_map.targets().len() != target_count {
+        if artifact.payload.def_map.def_maps().len() != target_count {
             anyhow::bail!(
                 "package cache artifact has {} def-map targets but header has {} targets",
-                artifact.payload.def_map.targets().len(),
+                artifact.payload.def_map.def_maps().len(),
                 target_count,
             );
         }

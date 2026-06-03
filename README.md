@@ -14,12 +14,11 @@ to understand how it works and how it's different from `rust-analyzer`.
 ## AI use disclaimer
 
 This project was created with heavy use of LLMs. It is not vibe coded and it is not AI slop, though.
-
-The whole project is my personal effort, and LLMs were used as:
-- Domain experts
-- "I am too lazy to type".
+If you want to learn about AI journey, how it went wrong, and how it become right again, [see this PR](https://github.com/rust-glancer/rust-glancer/pull/78).
 
 At no point were LLMs used as a replacement for a brain. So if you consider it to be slop, then it is _my_ slop.
+
+Keep in mind, however, that I am not an LSP expert. I learn as I build it, so if something is not good enough, _eventually_ I will notice and fix this. It's all a part of journey, and not every code smell is caused by AI (though many certainly are).
 
 ## Acknowledgements
 
@@ -32,7 +31,7 @@ who are ready for some compromises.
 
 ## Contributing
 
-See [docs/CONTRIBUTING.md].
+See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
 ## License
 

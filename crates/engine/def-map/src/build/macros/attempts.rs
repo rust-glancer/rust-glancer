@@ -8,6 +8,8 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 
+use rg_ir_model::{DefMapRef, TargetRef};
+use rg_ir_storage::{ScopeBindingOrigin, TargetResolutionEnv};
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
 use rg_macro_expand::{Edition, ExpansionSyntax};
 use rg_parse::{FileId, Span};
@@ -15,14 +17,10 @@ use rg_text::PackageNameInterners;
 use rg_tt::{Span as TtSpan, syntax_bridge::SpanFactory};
 use rg_workspace::RustEdition;
 
-use crate::{
-    ScopeBindingOrigin, TargetRef,
-    build::{
-        collect::TargetState,
-        finalize::{FinalizeTargetStates, ScopeMatrix},
-        stats::DefMapFinalizationStatsSink,
-    },
-    query::path_resolution::PathResolutionEnv,
+use crate::build::{
+    collect::TargetState,
+    finalize::{FinalizeTargetStates, ScopeMatrix},
+    stats::DefMapFinalizationStatsSink,
 };
 
 use super::{
@@ -94,7 +92,7 @@ impl MacroExpansionCursors {
 
 /// Resolves pending macro calls into concrete attempts for the current scope snapshot.
 pub(crate) fn collect_expansion_attempts(
-    env: &impl PathResolutionEnv,
+    env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     states: &FinalizeTargetStates,
     scan: MacroExpansionScan<'_>,
     cache: &mut MacroExpansionCache,
@@ -499,7 +497,7 @@ impl MacroExpansionAttempt {
     }
 
     fn for_call(
-        env: &impl PathResolutionEnv,
+        env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
         states: &FinalizeTargetStates,
         cache: &mut MacroExpansionCache,
         state: &TargetState,
@@ -558,7 +556,7 @@ impl MacroExpansionAttempt {
         // module. Imported bindings and `#[macro_export]` root bindings are path-based and have
         // already gone through ordinary scope resolution.
         if resolved.origin == ScopeBindingOrigin::Direct
-            && resolved.def_ref.target == state.target
+            && resolved.def_ref.origin == DefMapRef::Target(state.target)
             && resolved.local_def.module == call.module
             && let Some(order) = resolved.order
             && order > &call.order

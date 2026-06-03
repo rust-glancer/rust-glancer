@@ -1,6 +1,6 @@
 //! Project-level read transactions.
 
-use rg_analysis::AnalysisReadTxn;
+use rg_ir_view::IndexedViewDb;
 use rg_package_store::PackageSubset;
 
 use super::{loading::PackageReadLoaders, state::ProjectState, subset};
@@ -11,7 +11,7 @@ use super::{loading::PackageReadLoaders, state::ProjectState, subset};
 /// it, and reuse that view for the duration of the request.
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectReadTxn<'a> {
-    analysis: AnalysisReadTxn<'a>,
+    view_db: IndexedViewDb<'a>,
 }
 
 impl<'a> ProjectReadTxn<'a> {
@@ -27,7 +27,7 @@ impl<'a> ProjectReadTxn<'a> {
         let loaders = PackageReadLoaders::new(project);
 
         Ok(Self {
-            analysis: AnalysisReadTxn::from_phase_txns(
+            view_db: IndexedViewDb::new(
                 project
                     .def_map
                     .read_txn_for_subset(loaders.def_map.clone(), subset),
@@ -39,7 +39,7 @@ impl<'a> ProjectReadTxn<'a> {
         })
     }
 
-    pub(crate) fn analysis(&self) -> &AnalysisReadTxn<'a> {
-        &self.analysis
+    pub(crate) fn view_db(&self) -> &IndexedViewDb<'a> {
+        &self.view_db
     }
 }

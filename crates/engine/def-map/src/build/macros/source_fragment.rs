@@ -6,6 +6,12 @@
 
 use anyhow::{Context as _, Result};
 
+use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef};
+use rg_ir_storage::{
+    ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
+    LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope,
+    Namespace, ScopeBinding, ScopeBindingOrigin,
+};
 use rg_item_tree::{
     Documentation, ExternCrateItem, ImportAlias, ItemKind, ItemTreeId, ItemTreeRef,
     MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleItem,
@@ -14,12 +20,8 @@ use rg_item_tree::{
 use rg_parse::FileId;
 use rg_text::Name;
 
-use crate::{
-    DefId, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
-    LocalDefId, LocalDefKind, LocalDefRef, LocalImplData, ModuleData, ModuleId, ModuleOrigin,
-    ModuleRef, ModuleScope, ScopeBinding, ScopeBindingOrigin,
-    build::{collect::TargetState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult},
-    model::Namespace,
+use crate::build::{
+    collect::TargetState, finalize::ScopeMatrix, macros::MacroExpansionApplyResult,
 };
 
 use super::{
@@ -152,30 +154,30 @@ impl SourceFragmentCollector<'_> {
 
         // Local definitions become immediately visible in both the frozen def-map being built and
         // the mutable scope snapshot used by the macro expansion fixed-point loop.
-        let local_def_id = self.state.def_map.alloc_local_def(LocalDefData {
+        let local_def_id = self.state.def_map_builder.alloc_local_def(LocalDefData {
             module: module_id,
             name: name.clone(),
             kind,
             visibility: item.visibility.clone(),
-            source,
+            source: source.into(),
             file_id: item.file_id,
             name_span: item.name_span,
             span: item.span,
         });
         self.state
-            .def_map
+            .def_map_builder
             .module_mut(module_id)
             .expect("module should exist for source fragment local definition")
             .local_defs
             .push(local_def_id);
         let binding = ScopeBinding {
             def: DefId::Local(LocalDefRef {
-                target: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 local_def: local_def_id,
             }),
             visibility: item.visibility.clone(),
             owner: ModuleRef {
-                target: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: module_id,
             },
             origin: ScopeBindingOrigin::Direct,
@@ -226,28 +228,22 @@ impl SourceFragmentCollector<'_> {
         {
             self.export_macro_definition_to_root(name, local_def_id);
         }
-        self.state.def_map.insert_macro_definition(
+        self.state.def_map_builder.insert_macro_definition(
             local_def_id,
-            crate::MacroDefinitionData::from_item(
-                macro_definition,
-                self.state.edition,
-                self.state.target,
-            ),
+            MacroDefinitionData::from_item(macro_definition, self.state.edition, self.state.target),
         );
     }
 
     fn export_macro_definition_to_root(&mut self, name: &Name, local_def_id: LocalDefId) {
-        let Some(root_module) = self.state.def_map.root_module() else {
-            return;
-        };
+        let root_module = self.state.root_module;
         let binding = ScopeBinding {
             def: DefId::Local(LocalDefRef {
-                target: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 local_def: local_def_id,
             }),
             visibility: VisibilityLevel::Public,
             owner: ModuleRef {
-                target: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: root_module,
             },
             origin: ScopeBindingOrigin::MacroExport,
@@ -309,14 +305,14 @@ impl SourceFragmentCollector<'_> {
         item: &rg_item_tree::ItemNode,
         source: ItemTreeRef,
     ) {
-        let local_impl_id = self.state.def_map.alloc_local_impl(LocalImplData {
+        let local_impl_id = self.state.def_map_builder.alloc_local_impl(LocalImplData {
             module: module_id,
-            source,
+            source: source.into(),
             file_id: item.file_id,
             span: item.span,
         });
         self.state
-            .def_map
+            .def_map_builder
             .module_mut(module_id)
             .expect("module should exist for source fragment impl block")
             .impls
@@ -437,7 +433,7 @@ impl SourceFragmentCollector<'_> {
         docs: Option<Documentation>,
         origin: ModuleOrigin,
     ) -> ModuleId {
-        let module_id = self.state.def_map.alloc_module(ModuleData {
+        let module_id = self.state.def_map_builder.alloc_module(ModuleData {
             name,
             name_span,
             docs,
@@ -465,19 +461,19 @@ impl SourceFragmentCollector<'_> {
         visibility: VisibilityLevel,
     ) {
         self.state
-            .def_map
+            .def_map_builder
             .module_mut(parent_module)
             .expect("parent module should exist for source fragment child link")
             .children
             .push((module_name.clone(), child_module));
         let binding = ScopeBinding {
             def: DefId::Module(ModuleRef {
-                target: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: child_module,
             }),
             visibility,
             owner: ModuleRef {
-                target: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: parent_module,
             },
             origin: ScopeBindingOrigin::Direct,
@@ -508,7 +504,7 @@ impl SourceFragmentCollector<'_> {
                 continue;
             }
 
-            let import_id = self.state.def_map.alloc_import(ImportData {
+            let import_id = self.state.def_map_builder.alloc_import(ImportData {
                 module: module_id,
                 visibility: item.visibility.clone(),
                 kind: ImportKind::from_use_kind(import.kind),
@@ -519,11 +515,11 @@ impl SourceFragmentCollector<'_> {
                     ImportAlias::Explicit { span, .. } => Some(*span),
                     ImportAlias::Inferred | ImportAlias::Hidden => None,
                 },
-                source,
+                source: source.into(),
                 import_index,
             });
             self.state
-                .def_map
+                .def_map_builder
                 .module_mut(module_id)
                 .expect("module should exist for source fragment import")
                 .imports
@@ -545,10 +541,8 @@ impl SourceFragmentCollector<'_> {
         // applying aliases such as `extern crate dep as _`.
         let module_ref = if extern_name == "self" {
             ModuleRef {
-                target: self.state.target,
-                module: self.state.def_map.root_module().expect(
-                    "root module should exist before source fragment extern crate collection",
-                ),
+                origin: DefMapRef::Target(self.state.target),
+                module: self.state.root_module,
             }
         } else {
             let Some(module_ref) = self.state.implicit_roots.get(&extern_name).copied() else {
@@ -577,7 +571,7 @@ impl SourceFragmentCollector<'_> {
             def: DefId::Module(module_ref),
             visibility: item.visibility.clone(),
             owner: ModuleRef {
-                target: self.state.target,
+                origin: DefMapRef::Target(self.state.target),
                 module: module_id,
             },
             origin: ScopeBindingOrigin::Direct,

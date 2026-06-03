@@ -119,6 +119,46 @@ pub type AbsoluteAlias = ::absolute_type_fixture::Root;
 }
 
 #[test]
+fn lowers_macro_generated_signatures_and_impls() {
+    check_project_semantic_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "generated_semantic_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! make_generated {
+    () => {
+        pub struct Generated<T> {
+            pub value: T,
+        }
+
+        impl<T> Generated<T> {
+            pub fn new(value: T) -> Self {
+                Self { value }
+            }
+        }
+    };
+}
+
+make_generated!();
+"#,
+        expect![[r#"
+            package generated_semantic_fixture
+
+            generated_semantic_fixture [lib]
+            crate
+            - pub struct Generated<T>
+              - pub field value: T
+            - impl<T> Generated<T>
+              - pub fn new(value: T) -> Self
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_cross_crate_impl_queries() {
     check_project_semantic_queries(
         r#"

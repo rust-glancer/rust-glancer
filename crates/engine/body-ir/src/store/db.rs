@@ -1,6 +1,7 @@
 //! Body IR package store and transaction entry points.
 
-use rg_def_map::{Package as DefMapPackage, PackageSlot};
+use rg_def_map::PackageSlot;
+use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_semantic_ir::PackageIr;
 use rg_text::PackageNameInterners;
@@ -84,10 +85,6 @@ impl BodyIrDb {
                 stats.body_count += target.bodies().len();
                 for body in target.bodies() {
                     stats.scope_count += body.scopes.len();
-                    stats.local_item_count += body.local_items.len();
-                    stats.local_value_item_count += body.local_value_items.len();
-                    stats.local_impl_count += body.local_impls.len();
-                    stats.local_function_count += body.local_functions.len();
                     stats.binding_count += body.bindings.len();
                     stats.statement_count += body.statements.len();
                     stats.expression_count += body.exprs.len();
@@ -96,11 +93,6 @@ impl BodyIrDb {
         }
 
         stats
-    }
-
-    /// Returns the number of package slots tracked by this snapshot.
-    pub fn package_count(&self) -> usize {
-        self.packages.len()
     }
 
     /// Returns one resident package by package slot.

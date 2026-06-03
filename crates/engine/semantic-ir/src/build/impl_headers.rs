@@ -1,15 +1,14 @@
 //! Resolves impl headers after semantic item identities are available.
 
-use rg_def_map::{DefMapDb, DefMapReadTxn, ModuleRef, PackageSlot, Path, TargetRef};
+use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
+use rg_ir_model::{ImplRef, ModuleRef, TargetRef, TraitRef, TypeDefRef};
+use rg_ir_storage::{ItemStoreQuery, Path};
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
+use rg_ty::ItemPathQuery;
 
-use crate::{
-    SemanticIrReadTxn,
-    ir::ids::{ImplRef, TraitRef, TypeDefRef},
-    store::SemanticIrDbMutator,
-};
+use crate::{SemanticIrReadTxn, store::SemanticIrDbMutator};
 
 pub(super) fn resolve_impl_headers(
     db: &mut SemanticIrDbMutator<'_>,
@@ -37,17 +36,22 @@ pub(super) fn impl_header_resolutions_for_packages(
     packages: &[PackageSlot],
 ) -> Result<Vec<ImplHeaderResolution>, PackageStoreError> {
     let mut resolutions = Vec::new();
+    let item_query = ItemStoreQuery::new(semantic_ir);
 
     for package in packages {
         let package_ir = semantic_ir.package(*package)?;
 
-        for (target_idx, _) in package_ir.into_ref().targets().iter().enumerate() {
+        for (target_idx, _) in package_ir.targets().iter().enumerate() {
             let target = TargetRef {
                 package: *package,
                 target: TargetId(target_idx),
             };
-            for (impl_ref, _) in semantic_ir.impls(target)? {
-                let Some(data) = semantic_ir.impl_data(impl_ref)? else {
+            for (impl_ref, _) in semantic_ir
+                .items(target)?
+                .into_iter()
+                .flat_map(|i| i.impls_with_refs())
+            {
+                let Some(data) = item_query.impl_data(impl_ref)? else {
                     continue;
                 };
 
@@ -95,7 +99,7 @@ fn resolve_type_defs_from_ref(
         return Ok(Vec::new());
     };
 
-    db.type_defs_for_path(def_map, owner, &path)
+    ItemPathQuery::new(def_map, db).type_defs_for_path(owner, &path)
 }
 
 fn resolve_traits_from_ref(
@@ -108,5 +112,5 @@ fn resolve_traits_from_ref(
         return Ok(Vec::new());
     };
 
-    db.traits_for_path(def_map, owner, &path)
+    ItemPathQuery::new(def_map, db).traits_for_path(owner, &path)
 }

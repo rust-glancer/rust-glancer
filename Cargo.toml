@@ -12,8 +12,12 @@ members = [
   "crates/engine/macro-expand",
   "crates/engine/parse",
   "crates/engine/item-tree",
+  "crates/engine/ir-model",
+  "crates/engine/ir-storage",
+  "crates/engine/ir-view",
   "crates/engine/def-map",
   "crates/engine/semantic-ir",
+  "crates/engine/ty",
   "crates/engine/body-ir",
   "crates/engine/analysis",
   "crates/engine/project",
@@ -111,8 +115,12 @@ rg_lsp_engine = { path = "crates/lsp/engine" }
 rg_workspace = { path = "crates/engine/workspace" }
 rg_parse = { path = "crates/engine/parse" }
 rg_item_tree = { path = "crates/engine/item-tree" }
+rg_ir_model = { path = "crates/engine/ir-model" }
+rg_ir_storage = { path = "crates/engine/ir-storage" }
+rg_ir_view = { path = "crates/engine/ir-view" }
 rg_def_map = { path = "crates/engine/def-map" }
 rg_semantic_ir = { path = "crates/engine/semantic-ir" }
+rg_ty = { path = "crates/engine/ty" }
 rg_body_ir = { path = "crates/engine/body-ir" }
 rg_analysis = { path = "crates/engine/analysis" }
 rg_project = { path = "crates/engine/project" }

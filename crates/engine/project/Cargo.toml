@@ -21,6 +21,9 @@ rg_analysis.workspace = true
 rg_body_ir.workspace = true
 rg_cfg_eval.workspace = true
 rg_def_map.workspace = true
+rg_ir_model.workspace = true
+rg_ir_storage.workspace = true
+rg_ir_view.workspace = true
 rg_item_tree.workspace = true
 rg_memsize.workspace = true
 rg_package_store.workspace = true
@@ -34,6 +37,7 @@ serde = { workspace = true, features = ["derive"] }
 cargo_metadata.workspace = true
 divan.workspace = true
 expect-test.workspace = true
+rg_ty.workspace = true
 test_fixture.workspace = true
 
 [[bench]]

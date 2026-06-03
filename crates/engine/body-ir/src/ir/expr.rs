@@ -1,16 +1,12 @@
 use std::fmt;
 
+use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::Span;
 use rg_text::Name;
+use rg_ty::Ty;
 
-use super::{
-    body::BodySource,
-    ids::{BindingId, ExprId, PatId, ScopeId, StmtId},
-    path::BodyPath,
-    resolved::BodyResolution,
-    ty::{BodyRefMutability, BodyTy},
-};
+use super::{body::BodySource, path::BodyPath, resolved::BodyResolution};
 
 /// One lowered expression.
 #[derive(
@@ -26,7 +22,7 @@ pub struct ExprData {
     pub visible_bindings: usize,
     pub kind: ExprKind,
     pub resolution: BodyResolution,
-    pub ty: BodyTy,
+    pub ty: Ty,
 }
 
 impl ExprData {
@@ -491,7 +487,7 @@ pub enum ExprWrapperKind {
     Paren,
     /// `&<expr>` or `&mut <expr>`.
     #[display("ref")]
-    Ref { mutability: BodyRefMutability },
+    Ref { mutability: rg_ty::RefMutability },
     /// `<expr>.await`.
     #[display("await")]
     Await,

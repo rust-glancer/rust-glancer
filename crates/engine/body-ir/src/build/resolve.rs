@@ -2,14 +2,19 @@
 
 use anyhow::Context as _;
 use rayon::prelude::*;
-use rg_def_map::{DefMapReadTxn, PackageSlot, TargetRef};
+use rg_def_map::{DefMapReadTxn, PackageSlot};
+use rg_ir_model::{BodyId, BodyRef, TargetRef};
+use rg_ir_storage::{ItemLookupIndex, ItemStoreQuery};
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
 use rg_semantic_ir::SemanticIrReadTxn;
 
 use crate::{
-    ir::{BodyId, BodyRef, PackageBodies, TargetBodiesStatus},
-    resolution::{BodyResolver, SemanticResolutionIndex},
+    ir::{
+        PackageBodies, TargetBodiesStatus,
+        body_map::{BodyDefMapCollector, BodyItemStoreCollector},
+    },
+    resolution::BodyResolver,
 };
 
 use super::local_thread_pool;
@@ -19,7 +24,8 @@ pub(super) fn resolve_packages(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
 ) -> anyhow::Result<()> {
-    let semantic_index = SemanticResolutionIndex::build(semantic_ir)
+    let item_query = ItemStoreQuery::new(semantic_ir);
+    let semantic_index = ItemLookupIndex::build(&item_query)
         .context("while attempting to build semantic index for body resolution")?;
 
     if packages.len() <= 1 {
@@ -58,7 +64,8 @@ pub(super) fn resolve_selected_packages(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
 ) -> anyhow::Result<()> {
-    let semantic_index = SemanticResolutionIndex::build(semantic_ir)
+    let item_query = ItemStoreQuery::new(semantic_ir);
+    let semantic_index = ItemLookupIndex::build(&item_query)
         .context("while attempting to build semantic index for body resolution")?;
 
     if packages.len() <= 1 {
@@ -96,9 +103,9 @@ pub(super) fn resolve_selected_packages(
 fn resolve_package(
     package_slot: PackageSlot,
     package: &mut PackageBodies,
-    def_map: &DefMapReadTxn<'_>,
+    def_map_txn: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    semantic_index: &SemanticResolutionIndex,
+    semantic_index: &ItemLookupIndex,
 ) -> Result<(), PackageStoreError> {
     // Resolution is a mutation pass over already-lowered bodies. Skipped targets intentionally
     // keep their body stores empty so dependency body internals stay cheap by default.
@@ -111,19 +118,21 @@ fn resolve_package(
             package: package_slot,
             target: TargetId(target_idx),
         };
-
         for (body_idx, body) in target.bodies_mut().iter_mut().enumerate() {
-            BodyResolver::new(
-                def_map,
-                semantic_ir,
-                semantic_index,
-                BodyRef {
-                    target: target_ref,
-                    body: BodyId(body_idx),
-                },
-                body,
-            )
-            .resolve()?;
+            let body_ref = BodyRef {
+                target: target_ref,
+                body: BodyId(body_idx),
+            };
+            // First, collect the defmap
+            let body_def_map = BodyDefMapCollector::new(body_ref, body).collect();
+            // Then, collect the local items
+            let body_item_store = BodyItemStoreCollector::new(body, &body_def_map).collect();
+            // TODO: Note that there is no resolution for both defmap and local items just yet.
+            body.body_def_map = Some(body_def_map);
+            body.body_item_store = Some(body_item_store);
+
+            BodyResolver::new(def_map_txn, semantic_ir, semantic_index, body_ref, body)
+                .resolve()?;
         }
     }
 

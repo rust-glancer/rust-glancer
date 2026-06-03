@@ -18,7 +18,9 @@ use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
 
-use crate::{ModuleId, ModuleRef, PackageSlot, TargetRef};
+use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef};
+
+use crate::PackageSlot;
 
 /// Implicit roots for one target.
 type TargetImplicitRoots = HashMap<Name, ModuleRef>;
@@ -98,7 +100,7 @@ pub(super) fn build_implicit_roots(
                     target_roots.insert(
                         interner.intern(lib_name),
                         ModuleRef {
-                            target: lib_target,
+                            origin: DefMapRef::Target(lib_target),
                             module: ModuleId(0),
                         },
                     );
@@ -117,7 +119,7 @@ pub(super) fn build_implicit_roots(
                 target_roots.insert(
                     interner.intern(dependency.name()),
                     ModuleRef {
-                        target: lib_target,
+                        origin: DefMapRef::Target(lib_target),
                         module: ModuleId(0),
                     },
                 );

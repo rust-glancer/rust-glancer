@@ -8,13 +8,15 @@ use rg_syntax::{
     },
 };
 
+use rg_ir_model::{ExprId, ScopeId};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_parse::{Span, TextSpan};
+use rg_ty::Ty;
 
 use crate::ir::{
-    BindingData, BindingKind, BodyRefMutability, BodyTy, ClosureCapture, ClosureKind,
-    ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprId, ExprKind, ExprRangeKind, ExprUnaryOp,
-    ExprWrapperKind, LiteralKind, MatchArmData, RecordExprField, RecordExprSpread, ScopeId,
+    BindingData, BindingKind, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
+    ExprBinaryOp, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LiteralKind, MatchArmData,
+    RecordExprField, RecordExprSpread,
 };
 
 use super::function::FunctionBodyLowering;
@@ -70,7 +72,9 @@ impl FunctionBodyLowering<'_> {
             ast::Expr::PrefixExpr(prefix) => self.lower_unary_expr(prefix, scope),
             ast::Expr::RefExpr(ref_expr) => {
                 let kind = ExprWrapperKind::Ref {
-                    mutability: BodyRefMutability::from_mut_token(ref_expr.mut_token().is_some()),
+                    mutability: rg_ty::RefMutability::from_mut_token(
+                        ref_expr.mut_token().is_some(),
+                    ),
                 };
                 self.lower_wrapper_expr(ref_expr.syntax(), ref_expr.expr(), scope, kind)
             }
@@ -289,7 +293,7 @@ impl FunctionBodyLowering<'_> {
                     kind: BindingKind::Param,
                     name: None,
                     annotation: annotation.clone(),
-                    ty: BodyTy::Unknown,
+                    ty: Ty::Unknown,
                 });
                 (None, vec![binding])
             }

@@ -4,12 +4,10 @@ use expect_test::Expect;
 
 use crate::{
     BuiltinMacroItem, CfgSelectArmPayload, FieldItem, FieldList, FileTree, ItemKind, ItemNode,
-    ItemTreeDb, ItemTreeId, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleSource,
-    Package as ItemTreePackage, PackageNameInterners, ParamKind, TargetRoot, VisibilityLevel,
+    ItemTreeId, MacroDefinitionItem, MacroUseAttr, MacroUseSelector, ModuleSource,
+    Package as ItemTreePackage, ParamKind, TargetRoot, VisibilityLevel, testonly::ItemTreeFixture,
 };
 use rg_parse::{FileId, Package, ParseDb, Target};
-use rg_workspace::WorkspaceMetadata;
-use test_fixture::fixture_crate;
 
 pub(super) fn check_project_item_tree(fixture: &str, expect: Expect) {
     let db = ItemTreeFixtureDb::build(fixture);
@@ -32,23 +30,7 @@ pub(super) fn check_project_item_tree_with_spans(fixture: &str, expect: Expect) 
     expect.assert_eq(&actual);
 }
 
-struct ItemTreeFixtureDb {
-    parse: ParseDb,
-    item_tree: ItemTreeDb,
-}
-
-impl ItemTreeFixtureDb {
-    fn build(fixture: &str) -> Self {
-        let fixture = fixture_crate(fixture);
-        let metadata = WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build");
-        let mut parse = ParseDb::build(&metadata).expect("fixture parse db should build");
-        let mut names = PackageNameInterners::new(parse.package_count());
-        let item_tree =
-            ItemTreeDb::build(&mut parse, &mut names).expect("fixture item tree db should build");
-        Self { parse, item_tree }
-    }
-}
+type ItemTreeFixtureDb = ItemTreeFixture;
 
 /// Project-level item-tree snapshot context.
 /// Renders package sections such as `package demo`.
@@ -63,12 +45,12 @@ impl<'a> ProjectItemTreeSnapshot<'a> {
     }
 
     fn render(&self) -> String {
-        let package_dumps = sorted_packages(&self.db.parse)
+        let package_dumps = sorted_packages(self.db.parse_db())
             .into_iter()
             .map(|(package_slot, package)| {
                 let item_trees = self
                     .db
-                    .item_tree
+                    .item_tree_db()
                     .package(package_slot)
                     .expect("package item trees should exist while rendering snapshot");
                 PackageItemTreeSnapshot {

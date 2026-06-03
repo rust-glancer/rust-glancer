@@ -3,7 +3,8 @@ use std::path::Path;
 use anyhow::Context as _;
 
 use rg_analysis::Analysis;
-use rg_def_map::{PackageSlot, TargetRef};
+use rg_def_map::PackageSlot;
+use rg_ir_model::TargetRef;
 #[cfg(test)]
 use rg_parse::ParseDb;
 use rg_parse::{FileId, LineIndex};

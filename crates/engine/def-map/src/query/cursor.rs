@@ -4,14 +4,13 @@
 //! Analysis can therefore ask a read transaction for cursor candidates without reaching back into
 //! item-tree storage.
 
+use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_storage::{DefMap, ModuleOrigin, Path};
 use rg_parse::{FileId, Span};
 
 use rg_package_store::PackageStoreError;
 
-use crate::{
-    DefId, DefMap, DefMapReadTxn, LocalDefId, LocalDefRef, ModuleId, ModuleOrigin, ModuleRef, Path,
-    TargetRef,
-};
+use crate::DefMapReadTxn;
 
 /// One def-map source node that can participate in cursor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,11 +89,11 @@ impl NamespaceCursorScanner<'_, '_> {
     ) {
         for (module_idx, module) in def_map.modules().iter().enumerate() {
             let module_ref = ModuleRef {
-                target: self.target,
+                origin: DefMapRef::Target(self.target),
                 module: ModuleId(module_idx),
             };
             let declaration_file = match module.origin {
-                ModuleOrigin::Root { .. } => continue,
+                ModuleOrigin::Root { .. } | ModuleOrigin::Synthetic { .. } => continue,
                 ModuleOrigin::Inline {
                     declaration_file, ..
                 }
@@ -126,7 +125,7 @@ impl NamespaceCursorScanner<'_, '_> {
     ) {
         for (local_def_idx, local_def) in def_map.local_defs().iter().enumerate() {
             let local_def_ref = LocalDefRef {
-                target: self.target,
+                origin: DefMapRef::Target(self.target),
                 local_def: LocalDefId(local_def_idx),
             };
             if !self.file_matches(local_def.file_id) {
@@ -155,7 +154,7 @@ impl NamespaceCursorScanner<'_, '_> {
             }
 
             let module = ModuleRef {
-                target: self.target,
+                origin: DefMapRef::Target(self.target),
                 module: import.module,
             };
             for (idx, segment) in import.source_path.segments().iter().enumerate() {

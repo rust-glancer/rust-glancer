@@ -1,0 +1,20 @@
+[package]
+name = "rg_ty"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+description.workspace = true
+
+[dependencies]
+rg_ir_model.workspace = true
+rg_ir_storage.workspace = true
+rg_item_tree.workspace = true
+rg_memsize.workspace = true
+rg_text = { workspace = true, features = ["memsize"] }
+rg_wincode_utils.workspace = true
+wincode.workspace = true

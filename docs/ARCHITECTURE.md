@@ -47,9 +47,9 @@ The engine normally starts by indexing the workspace. Indexing has the following
 - Item tree building: converting raw AST nodes to the basics of our internal representation,
   without any attempt to analyze them yet.
 - DefMap building: resolving modules, imports, and item "locations". At this stage, we know what
-  exists where.
+  exists where. Additionally, at this stage we resolve declarative macros.
 - Semantic IR building: resolving information on the _item_ level, e.g. struct declarations, traits,
-  which structures implement which traits, etc.
+  which structures implement which traits, etc. This includes the macro-generated items too.
 - Body IR building: resolving information on the _body_ level, e.g. within a function body, which
   variable has which type. Body data is the heaviest across everything else, both in terms of size
   and complexity, so by default we only analyze bodies in the workspace, assuming that you don't
@@ -61,22 +61,22 @@ collected data.
 Additionally, for a `Project`, we can create an `Analysis`, which can be used for queries, e.g.
 to ask which traits this type implements or what completions are available at this cursor.
 
-And due to `Analysis`, almost every layer that was used during the build defines an interface
-for said queries, so not only the corresponding crates know how to _collect_ data, they also
-provide interfaces on how to _interpret_ said data to answer LSP questions.
+To support `Analysis`, we have a bunch of helper crates that provide abstract interfaces and
+query surface, such as `ir-storage` / `ty` / `ir-view`.
 
 ### Frozen workspaces
 
 Probably the most important fact about the engine is that it is _frozen_, not _incremental_.
 This means that we index the workspace once, and then run the queries against the data we've
 managed to collect. If something changes, we have to reindex (at least partially); we cannot
-update the data in place. As a result, we, for example, don't support dirty buffers.
+update the data in place.
 
-It is a limitation, but assuming that the indexing is fast enough, just saving the document
-when you need information from the LSP is not that big of a deal.
+Dirty buffers are supported as overlays that retain access to existing analysis but does not
+automatically index new facts. So things like completions, hover, inlay hints work, but with
+limitations. Reindexing happens on save.
 
-At the same time, working with frozen workspaces enables really cool memory optimizations that
-we make heavy use of. These are described below.
+It is a limitation, but  working with frozen workspaces enables really cool memory optimizations
+that we make heavy use of. These are described below.
 
 ## Memory efficiency
 

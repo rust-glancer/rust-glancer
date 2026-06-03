@@ -665,7 +665,7 @@ pub fn local_shadow() {
             - nominal struct analysis_primitive_shadow_type_at[lib]::crate::usize
 
             type at shadowed local binding
-            - local nominal struct fn analysis_primitive_shadow_type_at[lib]::crate::local_shadow::u8
+            - nominal struct fn analysis_primitive_shadow_type_at[lib]::crate::local_shadow::u8
         "#]],
     );
 }
@@ -1191,7 +1191,7 @@ pub fn use_it() {
             - nominal struct analysis_body_local_method_type[lib]::crate::GlobalId
 
             type at body-local Self method
-            - local nominal struct fn analysis_body_local_method_type[lib]::crate::use_it::User
+            - nominal struct fn analysis_body_local_method_type[lib]::crate::use_it::User
         "#]],
     );
 }
@@ -1268,7 +1268,7 @@ pub fn use_it() {
         )],
         expect![[r#"
             type at body-local generic impl method
-            - local nominal struct fn analysis_body_local_impl_generic_method_type[lib]::crate::use_it::User
+            - nominal struct fn analysis_body_local_impl_generic_method_type[lib]::crate::use_it::User
         "#]],
     );
 }
@@ -1509,13 +1509,13 @@ pub fn outside() {
         ],
         expect![[r#"
             type at local binding
-            - local nominal struct fn analysis_local_struct_type[lib]::crate::make::User
+            - nominal struct fn analysis_local_struct_type[lib]::crate::make::User
 
             type at local type path
-            - local nominal struct fn analysis_local_struct_type[lib]::crate::make::User
+            - nominal struct fn analysis_local_struct_type[lib]::crate::make::User
 
             type at local expr
-            - local nominal struct fn analysis_local_struct_type[lib]::crate::make::User
+            - nominal struct fn analysis_local_struct_type[lib]::crate::make::User
 
             type at module binding
             - nominal struct analysis_local_struct_type[lib]::crate::User
@@ -1551,7 +1551,7 @@ pub fn make() {
         )],
         expect![[r#"
             type at local enum variant
-            - local nominal enum fn analysis_local_enum_variant_type[lib]::crate::make::Action
+            - nominal enum fn analysis_local_enum_variant_type[lib]::crate::make::Action
         "#]],
     );
 }
@@ -1583,10 +1583,10 @@ pub fn make() {
         ],
         expect![[r#"
             type at record binding
-            - local nominal struct fn analysis_local_record_literal_type[lib]::crate::make::User
+            - nominal struct fn analysis_local_record_literal_type[lib]::crate::make::User
 
             type at record literal
-            - local nominal struct fn analysis_local_record_literal_type[lib]::crate::make::User
+            - nominal struct fn analysis_local_record_literal_type[lib]::crate::make::User
         "#]],
     );
 }
@@ -1756,13 +1756,13 @@ pub fn make() {
             - Self struct analysis_body_annotation_type[lib]::crate::User
 
             type at wildcard annotation
-            - local nominal struct fn analysis_body_annotation_type[lib]::crate::make::User
+            - nominal struct fn analysis_body_annotation_type[lib]::crate::make::User
 
             type at tuple annotation left
-            - local nominal struct fn analysis_body_annotation_type[lib]::crate::make::User
+            - nominal struct fn analysis_body_annotation_type[lib]::crate::make::User
 
             type at tuple annotation right
-            - local nominal struct fn analysis_body_annotation_type[lib]::crate::make::User
+            - nominal struct fn analysis_body_annotation_type[lib]::crate::make::User
         "#]],
     );
 }

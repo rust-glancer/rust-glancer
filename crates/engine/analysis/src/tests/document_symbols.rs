@@ -141,6 +141,9 @@ pub fn use_it() {
             - struct GlobalId @ 1:1-1:21 selection 1:12-1:20
             - fn use_it @ 3:1-26:2 selection 3:8-3:14
               - enum Action @ 4:5-7:6 selection 4:10-4:16
+                - variant Start @ 5:9-5:24 selection 5:9-5:14
+                  - field #0 @ 5:15-5:23
+                - variant Stop @ 6:9-6:13
               - union Bits @ 8:5-10:6 selection 8:11-8:15
                 - field id @ 9:9-9:11
               - type_alias Alias @ 11:5-11:27 selection 11:10-11:15

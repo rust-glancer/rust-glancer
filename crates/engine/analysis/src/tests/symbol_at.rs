@@ -32,7 +32,7 @@ pub fn use_it() {
         ],
         expect![[r#"
             symbol at declaration
-            - binding let local @ 8:9-8:14
+            - local local @ 8:9-8:14
 
             symbol at local path
             - expr path local @ 9:24-9:29
@@ -78,10 +78,10 @@ pub fn make(user: Us$symbol_param$er) -> Us$symbol_ret$er {
             - trait Named @ 3:11-3:16
 
             symbol at parameter type
-            - path User @ 7:19-7:23
+            - type path User @ 7:19-7:23
 
             symbol at return type
-            - path User @ 7:28-7:32
+            - type path User @ 7:28-7:32
         "#]],
     );
 }
@@ -111,10 +111,10 @@ pub fn make() {
         ],
         expect![[r#"
             symbol at local struct declaration
-            - struct fn analysis_local_struct_symbol[lib]::crate::make::User @ 4:12-4:16
+            - struct User @ 4:12-4:16
 
             symbol at local type path
-            - body path User @ 5:17-5:21
+            - type path User @ 5:17-5:21
 
             symbol at local constructor
             - expr path User @ 5:24-5:28
@@ -167,7 +167,7 @@ pub fn use_it() {
         ],
         expect![[r#"
             symbol at local alias declaration
-            - type fn analysis_more_body_local_symbols[lib]::crate::use_it::Alias @ 4:10-4:15
+            - type_alias Alias @ 4:10-4:15
 
             symbol at local const declaration
             - const DEFAULT @ 5:11-5:18
@@ -182,7 +182,7 @@ pub fn use_it() {
             - variant Start @ 11:9-11:14
 
             symbol at local alias path
-            - body path Alias @ 15:17-15:22
+            - type path Alias @ 15:17-15:22
 
             symbol at local function path
             - expr path helper @ 15:25-15:31
@@ -194,7 +194,7 @@ pub fn use_it() {
             - expr path CURRENT @ 17:20-17:27
 
             symbol at local variant path
-            - body value path Action::Start @ 18:27-18:32
+            - value path Action::Start @ 18:27-18:32
         "#]],
     );
 }

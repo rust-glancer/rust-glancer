@@ -3,12 +3,11 @@
 mod lower;
 mod resolve;
 
-use std::{fmt, marker::PhantomData, sync::Arc};
-
 use anyhow::Context as _;
 
-use rg_def_map::{Package as DefMapPackage, PackageSlot};
-use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError, PackageSubset};
+use rg_def_map::PackageSlot;
+use rg_ir_storage::PackageDefMaps as DefMapPackage;
+use rg_package_store::{PackageLoader, PackageSubset};
 use rg_semantic_ir::PackageIr;
 use rg_text::PackageNameInterners;
 
@@ -59,8 +58,12 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
     }
 
     pub fn build(mut self) -> anyhow::Result<BodyIrDb> {
-        let def_map_txn = self.def_map.read_txn(unexpected_package_loader());
-        let semantic_ir_txn = self.semantic_ir.read_txn(unexpected_package_loader());
+        let def_map_txn = self
+            .def_map
+            .read_txn(PackageLoader::resident_only("resident body IR build"));
+        let semantic_ir_txn = self
+            .semantic_ir
+            .read_txn(PackageLoader::resident_only("resident body IR build"));
         let mut packages = lower::build_packages(
             self.parse,
             &semantic_ir_txn,
@@ -199,25 +202,4 @@ fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
     slots.sort_by_key(|slot| slot.0);
     slots.dedup();
     slots
-}
-
-fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
-    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
-}
-
-struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
-
-impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnexpectedPackageLoader").finish()
-    }
-}
-
-impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
-    fn load(&self, package: PackageSlot) -> Result<Arc<T>, PackageStoreError> {
-        panic!(
-            "resident body IR build should not load offloaded package {}",
-            package.0,
-        )
-    }
 }

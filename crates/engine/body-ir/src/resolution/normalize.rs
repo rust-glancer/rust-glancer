@@ -4,30 +4,32 @@
 //! parentheses, `.await`, and `?`, but it does not try to implement borrow checking, autoderef, the
 //! `Try` trait, or `Future::Output` projection.
 
-use rg_semantic_ir::SemanticIrReadTxn;
+use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource};
+use rg_ty::{GenericArg, Ty};
 
-use crate::{
-    ir::body::BodyData,
-    ir::expr::ExprWrapperKind,
-    ir::ty::{BodyGenericArg, BodyTy},
-};
+use crate::ir::expr::ExprWrapperKind;
 
-use super::push_unique;
+use rg_package_store::PackageStoreError;
 
-pub(super) struct BodyTyNormalizer<'db, 'body> {
-    semantic_ir: &'db SemanticIrReadTxn<'db>,
-    body: &'body BodyData,
+use super::{BodyQuerySource, push_unique};
+
+pub(super) struct TyNormalizer<'a, D, I> {
+    source: BodyQuerySource<'a, D, I>,
 }
 
-impl<'db, 'body> BodyTyNormalizer<'db, 'body> {
-    pub(super) fn new(semantic_ir: &'db SemanticIrReadTxn<'db>, body: &'body BodyData) -> Self {
-        Self { semantic_ir, body }
+impl<'a, D, I> TyNormalizer<'a, D, I>
+where
+    D: DefMapSource<Error = PackageStoreError> + Copy,
+    I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
+{
+    pub(super) fn new(source: BodyQuerySource<'a, D, I>) -> Self {
+        Self { source }
     }
 
-    pub(super) fn ty_for_wrapper(&self, kind: ExprWrapperKind, inner_ty: BodyTy) -> BodyTy {
+    pub(super) fn ty_for_wrapper(&self, kind: ExprWrapperKind, inner_ty: Ty) -> Ty {
         match kind {
             ExprWrapperKind::Paren => inner_ty,
-            ExprWrapperKind::Ref { mutability } => BodyTy::reference(mutability, inner_ty),
+            ExprWrapperKind::Ref { mutability } => Ty::reference(mutability, inner_ty),
             // We currently model `async fn foo() -> T` as returning `T` directly. Preserving the
             // inner type through `.await` keeps that useful behavior without pretending to model
             // `Future::Output` for arbitrary future types.
@@ -35,15 +37,16 @@ impl<'db, 'body> BodyTyNormalizer<'db, 'body> {
             ExprWrapperKind::Try => self.try_output_ty(&inner_ty),
             // `return expr` evaluates to `!`; the child expression remains separately lowered and
             // queryable, so callers can still ask about `expr` itself.
-            ExprWrapperKind::Return => BodyTy::Never,
+            ExprWrapperKind::Return => Ty::Never,
         }
     }
 
-    fn try_output_ty(&self, ty: &BodyTy) -> BodyTy {
+    fn try_output_ty(&self, ty: &Ty) -> Ty {
         let mut outputs = Vec::new();
+        let item_query = ItemStoreQuery::new(self.source);
 
         for nominal in ty.as_nominals() {
-            let Ok(Some(name)) = self.semantic_ir.type_def_name(nominal.def) else {
+            let Ok(Some(name)) = item_query.type_def_name(nominal.def) else {
                 continue;
             };
             if matches!(name, "Result" | "Option") {
@@ -53,35 +56,10 @@ impl<'db, 'body> BodyTyNormalizer<'db, 'body> {
             }
         }
 
-        for local in ty.as_local_nominals() {
-            let Some(item) = self.body.local_item(local.item.item) else {
-                continue;
-            };
-            if matches!(item.name.as_str(), "Result" | "Option") {
-                if let Some(output) = first_type_arg(&local.args) {
-                    push_unique(&mut outputs, output);
-                }
-            }
-        }
-
-        one_ty_or_unknown(outputs)
+        Ty::one_or_unknown(outputs)
     }
 }
 
-fn first_type_arg(args: &[BodyGenericArg]) -> Option<BodyTy> {
-    args.iter().find_map(|arg| match arg {
-        BodyGenericArg::Type(ty) => Some((**ty).clone()),
-        BodyGenericArg::Lifetime(_)
-        | BodyGenericArg::Const(_)
-        | BodyGenericArg::AssocType { .. }
-        | BodyGenericArg::Unsupported(_) => None,
-    })
-}
-
-fn one_ty_or_unknown(mut tys: Vec<BodyTy>) -> BodyTy {
-    if tys.len() == 1 {
-        tys.pop().expect("one type should exist")
-    } else {
-        BodyTy::Unknown
-    }
+fn first_type_arg(args: &[GenericArg]) -> Option<Ty> {
+    args.iter().find_map(|arg| arg.as_ty().cloned())
 }

@@ -5,12 +5,9 @@
 //! the imported bindings into the next scope snapshot, and recording imports that still fail once
 //! the fixed point has stabilized.
 
-use crate::{
-    ImportData, ImportId, ImportKind, ModuleRef, ScopeBinding, ScopeBindingOrigin,
-    query::path_resolution::{
-        PathResolutionEnv, namespace_for_def_with_env, resolve_path_to_defs_with_env,
-        resolve_path_to_modules_with_env, visible_module_scope_entry_set_with_env,
-    },
+use rg_ir_model::{DefMapRef, ImportId, ModuleRef, TargetRef};
+use rg_ir_storage::{
+    ImportKind, PathResolver, ScopeBinding, ScopeBindingOrigin, TargetResolutionEnv,
 };
 
 use super::{
@@ -38,7 +35,7 @@ pub(super) struct UnresolvedImports {
 impl UnresolvedImports {
     pub(super) fn collect(
         states: &FinalizeTargetStates,
-        env: &impl PathResolutionEnv,
+        env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     ) -> anyhow::Result<Self> {
         let packages = states
             .iter_packages()
@@ -57,7 +54,7 @@ impl UnresolvedImports {
         Ok(Self { packages })
     }
 
-    pub(super) fn target_imports(&self, target: crate::TargetRef) -> Option<&[Vec<ImportId>]> {
+    pub(super) fn target_imports(&self, target: TargetRef) -> Option<&[Vec<ImportId>]> {
         self.packages
             .get(target.package.0)?
             .as_ref()?
@@ -72,26 +69,27 @@ impl UnresolvedImports {
 /// binding from the source module into the target module.
 pub(super) fn apply_imports(
     state: &TargetState,
-    env: &impl PathResolutionEnv,
+    env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
     next_scopes: &mut ScopeMatrix,
 ) -> anyhow::Result<()> {
-    for import in state.def_map.imports().iter() {
+    let resolver = PathResolver::new(env);
+    for import in state
+        .def_map_builder
+        .as_incomplete_def_map()
+        .imports()
+        .iter()
+    {
         match import.kind {
             ImportKind::Glob => {
-                let source_modules = resolve_path_to_modules_with_env(
-                    env,
-                    state.target,
-                    import.module,
-                    &import.path,
-                )?;
+                let source_modules =
+                    resolver.import_modules(state.target, import.module, &import.path)?;
 
                 for source_module in source_modules {
                     let import_owner = ModuleRef {
-                        target: state.target,
+                        origin: DefMapRef::Target(state.target),
                         module: import.module,
                     };
-                    let source_scope =
-                        visible_module_scope_entry_set_with_env(env, import_owner, source_module)?;
+                    let source_scope = resolver.visible_scope(import_owner, source_module)?;
                     let target_scope = next_scopes
                         .module_scope_mut(state.target, import.module)
                         .expect("target scope should exist for every import");
@@ -110,7 +108,7 @@ pub(super) fn apply_imports(
             }
             ImportKind::Named | ImportKind::SelfImport => {
                 let resolved_defs =
-                    resolve_path_to_defs_with_env(env, state.target, import.module, &import.path)?;
+                    resolver.import_defs(state.target, import.module, &import.path)?;
 
                 let Some(binding_name) = import.binding_name() else {
                     continue;
@@ -122,7 +120,7 @@ pub(super) fn apply_imports(
                 for resolved_def in resolved_defs {
                     // Resolution is namespace-aware, but the target textual name is shared across
                     // namespaces inside one scope entry.
-                    let Some(namespace) = namespace_for_def_with_env(env, resolved_def)? else {
+                    let Some(namespace) = resolver.namespace_for_def(resolved_def)? else {
                         continue;
                     };
                     target_scope.insert_binding(
@@ -132,7 +130,7 @@ pub(super) fn apply_imports(
                             def: resolved_def,
                             visibility: import.visibility.clone(),
                             owner: ModuleRef {
-                                target: state.target,
+                                origin: DefMapRef::Target(state.target),
                                 module: import.module,
                             },
                             origin: ScopeBindingOrigin::Import,
@@ -148,12 +146,26 @@ pub(super) fn apply_imports(
 
 fn unresolved_imports_for_target(
     state: &TargetState,
-    env: &impl PathResolutionEnv,
+    env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
 ) -> anyhow::Result<Vec<Vec<ImportId>>> {
-    let mut module_imports = vec![Vec::new(); state.def_map.module_count()];
+    let mut module_imports =
+        vec![Vec::new(); state.def_map_builder.as_incomplete_def_map().module_count()];
+    let resolver = PathResolver::new(env);
 
-    for (import_id, import) in state.def_map.imports_with_ids() {
-        if import_is_unresolved(state, env, import)? {
+    for (import_id, import) in state
+        .def_map_builder
+        .as_incomplete_def_map()
+        .imports_with_ids()
+    {
+        let is_unresolved = match import.kind {
+            ImportKind::Glob => resolver
+                .import_modules(state.target, import.module, &import.path)?
+                .is_empty(),
+            ImportKind::Named | ImportKind::SelfImport => resolver
+                .import_defs(state.target, import.module, &import.path)?
+                .is_empty(),
+        };
+        if is_unresolved {
             module_imports
                 .get_mut(import.module.0)
                 .expect("import module should exist while collecting unresolved imports")
@@ -162,26 +174,4 @@ fn unresolved_imports_for_target(
     }
 
     Ok(module_imports)
-}
-
-/// Checks whether one import failed to resolve, independent of whether it introduces a binding.
-fn import_is_unresolved(
-    state: &TargetState,
-    env: &impl PathResolutionEnv,
-    import: &ImportData,
-) -> anyhow::Result<bool> {
-    match import.kind {
-        ImportKind::Glob => {
-            Ok(
-                resolve_path_to_modules_with_env(env, state.target, import.module, &import.path)?
-                    .is_empty(),
-            )
-        }
-        ImportKind::Named | ImportKind::SelfImport => {
-            Ok(
-                resolve_path_to_defs_with_env(env, state.target, import.module, &import.path)?
-                    .is_empty(),
-            )
-        }
-    }
 }

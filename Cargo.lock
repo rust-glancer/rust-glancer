@@ -1382,11 +1382,15 @@ dependencies = [
  "expect-test",
  "rg_body_ir",
  "rg_def_map",
+ "rg_ir_model",
+ "rg_ir_storage",
+ "rg_ir_view",
  "rg_item_tree",
  "rg_package_store",
  "rg_parse",
  "rg_semantic_ir",
  "rg_syntax",
+ "rg_ty",
  "rg_workspace",
  "test_fixture",
 ]
@@ -1409,6 +1413,8 @@ dependencies = [
  "rayon",
  "rg_arena",
  "rg_def_map",
+ "rg_ir_model",
+ "rg_ir_storage",
  "rg_item_tree",
  "rg_memsize",
  "rg_package_store",
@@ -1416,9 +1422,8 @@ dependencies = [
  "rg_semantic_ir",
  "rg_syntax",
  "rg_text",
+ "rg_ty",
  "rg_wincode_utils",
- "rg_workspace",
- "test_fixture",
  "wincode",
 ]
 
@@ -1450,11 +1455,12 @@ name = "rg_def_map"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "derive_more",
  "expect-test",
  "rayon",
  "rg_arena",
  "rg_cfg_eval",
+ "rg_ir_model",
+ "rg_ir_storage",
  "rg_item_tree",
  "rg_macro_expand",
  "rg_memsize",
@@ -1465,7 +1471,53 @@ dependencies = [
  "rg_tt",
  "rg_workspace",
  "test_fixture",
+]
+
+[[package]]
+name = "rg_ir_model"
+version = "0.1.0"
+dependencies = [
+ "derive_more",
+ "rg_arena",
+ "rg_item_tree",
+ "rg_memsize",
+ "rg_parse",
+ "rg_text",
+ "rg_workspace",
  "wincode",
+]
+
+[[package]]
+name = "rg_ir_storage"
+version = "0.1.0"
+dependencies = [
+ "derive_more",
+ "rg_arena",
+ "rg_ir_model",
+ "rg_item_tree",
+ "rg_memsize",
+ "rg_parse",
+ "rg_text",
+ "rg_tt",
+ "rg_workspace",
+ "wincode",
+]
+
+[[package]]
+name = "rg_ir_view"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "derive_more",
+ "rg_body_ir",
+ "rg_def_map",
+ "rg_ir_model",
+ "rg_ir_storage",
+ "rg_item_tree",
+ "rg_package_store",
+ "rg_parse",
+ "rg_semantic_ir",
+ "rg_ty",
 ]
 
 [[package]]
@@ -1501,6 +1553,7 @@ dependencies = [
  "ls-types",
  "rg_analysis",
  "rg_def_map",
+ "rg_ir_model",
  "rg_lsp_proto",
  "rg_parse",
  "rg_project",
@@ -1627,12 +1680,16 @@ dependencies = [
  "rg_body_ir",
  "rg_cfg_eval",
  "rg_def_map",
+ "rg_ir_model",
+ "rg_ir_storage",
+ "rg_ir_view",
  "rg_item_tree",
  "rg_memsize",
  "rg_package_store",
  "rg_parse",
  "rg_semantic_ir",
  "rg_text",
+ "rg_ty",
  "rg_workspace",
  "serde",
  "test_fixture",
@@ -1644,16 +1701,19 @@ name = "rg_semantic_ir"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "derive_more",
  "expect-test",
  "rg_arena",
  "rg_def_map",
+ "rg_ir_model",
+ "rg_ir_storage",
  "rg_item_tree",
  "rg_memsize",
  "rg_package_store",
  "rg_parse",
  "rg_text",
+ "rg_ty",
  "rg_workspace",
- "test_fixture",
  "wincode",
 ]
 
@@ -1696,6 +1756,19 @@ dependencies = [
  "smol_str",
  "stdx",
  "text-size",
+ "wincode",
+]
+
+[[package]]
+name = "rg_ty"
+version = "0.1.0"
+dependencies = [
+ "rg_ir_model",
+ "rg_ir_storage",
+ "rg_item_tree",
+ "rg_memsize",
+ "rg_text",
+ "rg_wincode_utils",
  "wincode",
 ]
 

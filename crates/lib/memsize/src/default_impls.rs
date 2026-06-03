@@ -8,9 +8,39 @@ use std::{
     sync::Arc,
 };
 
-use crate::{MemoryRecorder, MemorySize, approximate_allocation_overhead};
+use crate::{MemoryRecorder, MemorySize, Shrink, approximate_allocation_overhead};
 
 crate::impl_memory_size_leaf!(
+    (),
+    bool,
+    char,
+    u8,
+    u16,
+    u32,
+    u64,
+    u128,
+    usize,
+    i8,
+    i16,
+    i32,
+    i64,
+    i128,
+    isize,
+    f32,
+    f64,
+);
+
+macro_rules! impl_shrink_leaf {
+    ($($ty:ty),+ $(,)?) => {
+        $(
+            impl Shrink for $ty {
+                fn shrink_to_fit(&mut self) {}
+            }
+        )+
+    };
+}
+
+impl_shrink_leaf!(
     (),
     bool,
     char,
@@ -45,6 +75,17 @@ where
     }
 }
 
+impl<T> Shrink for Option<T>
+where
+    T: Shrink,
+{
+    fn shrink_to_fit(&mut self) {
+        if let Some(value) = self {
+            value.shrink_to_fit();
+        }
+    }
+}
+
 impl<T, E> MemorySize for Result<T, E>
 where
     T: MemorySize,
@@ -54,6 +95,19 @@ where
         match self {
             Ok(value) => recorder.scope("ok", |recorder| value.record_memory_children(recorder)),
             Err(error) => recorder.scope("err", |recorder| error.record_memory_children(recorder)),
+        }
+    }
+}
+
+impl<T, E> Shrink for Result<T, E>
+where
+    T: Shrink,
+    E: Shrink,
+{
+    fn shrink_to_fit(&mut self) {
+        match self {
+            Ok(value) => value.shrink_to_fit(),
+            Err(error) => error.shrink_to_fit(),
         }
     }
 }
@@ -69,6 +123,15 @@ where
             recorder.record_approximate::<Box<T>>(approximate_allocation_overhead(payload));
             (**self).record_memory_children(recorder);
         });
+    }
+}
+
+impl<T> Shrink for Box<T>
+where
+    T: Shrink,
+{
+    fn shrink_to_fit(&mut self) {
+        (**self).shrink_to_fit();
     }
 }
 
@@ -113,6 +176,17 @@ impl MemorySize for Box<str> {
     }
 }
 
+impl<T> Shrink for Box<[T]>
+where
+    T: Shrink,
+{
+    fn shrink_to_fit(&mut self) {
+        for item in self.iter_mut() {
+            item.shrink_to_fit();
+        }
+    }
+}
+
 impl<T> MemorySize for Vec<T>
 where
     T: MemorySize,
@@ -137,6 +211,18 @@ where
     }
 }
 
+impl<T> Shrink for Vec<T>
+where
+    T: Shrink,
+{
+    fn shrink_to_fit(&mut self) {
+        Vec::shrink_to_fit(self);
+        for item in self {
+            item.shrink_to_fit();
+        }
+    }
+}
+
 impl<T, const N: usize> MemorySize for [T; N]
 where
     T: MemorySize,
@@ -147,6 +233,17 @@ where
                 item.record_memory_children(recorder);
             }
         });
+    }
+}
+
+impl<T, const N: usize> Shrink for [T; N]
+where
+    T: Shrink,
+{
+    fn shrink_to_fit(&mut self) {
+        for item in self {
+            item.shrink_to_fit();
+        }
     }
 }
 
@@ -198,6 +295,12 @@ impl MemorySize for String {
         recorder.record_spare_capacity::<String>(spare);
         let payload = self.capacity();
         recorder.record_approximate::<String>(approximate_allocation_overhead(payload));
+    }
+}
+
+impl Shrink for String {
+    fn shrink_to_fit(&mut self) {
+        String::shrink_to_fit(self);
     }
 }
 

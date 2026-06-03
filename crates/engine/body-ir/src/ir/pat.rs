@@ -1,11 +1,7 @@
+use rg_ir_model::{BindingId, ExprId, PatId};
 use rg_item_tree::FieldKey;
 
-use super::{
-    body::BodySource,
-    expr::LiteralKind,
-    ids::{BindingId, ExprId, PatId},
-    path::BodyPath,
-};
+use super::{body::BodySource, expr::LiteralKind, path::BodyPath};
 
 /// One lowered pattern node.
 #[derive(
@@ -85,6 +81,7 @@ pub enum PatKind {
 /// Binding mode written on an identifier pattern.
 #[derive(
     Debug,
+    Default,
     Clone,
     Copy,
     PartialEq,
@@ -97,13 +94,6 @@ pub enum PatKind {
 pub struct PatBindingMode {
     pub by_ref: bool,
     pub mutable: bool,
-}
-
-impl PatBindingMode {
-    pub const DEFAULT: Self = Self {
-        by_ref: false,
-        mutable: false,
-    };
 }
 
 /// Mutability written on a reference pattern.

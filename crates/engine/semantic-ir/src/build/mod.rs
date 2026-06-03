@@ -3,12 +3,11 @@
 mod impl_headers;
 mod lower;
 
-use std::{fmt, marker::PhantomData, sync::Arc};
-
 use anyhow::Context as _;
 
-use rg_def_map::{Package as DefMapPackage, PackageSlot};
-use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError, PackageSubset};
+use rg_def_map::PackageSlot;
+use rg_ir_storage::PackageDefMaps as DefMapPackage;
+use rg_package_store::{PackageLoader, PackageSubset};
 
 use crate::{PackageIr, SemanticIrDb};
 
@@ -120,22 +119,5 @@ fn normalized_package_slots(packages: &[PackageSlot]) -> Vec<PackageSlot> {
 }
 
 fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
-    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
-}
-
-struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
-
-impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnexpectedPackageLoader").finish()
-    }
-}
-
-impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
-    fn load(&self, package: PackageSlot) -> Result<Arc<T>, PackageStoreError> {
-        panic!(
-            "resident semantic IR build should not load offloaded package {}",
-            package.0,
-        )
-    }
+    PackageLoader::resident_only("resident semantic IR build")
 }

@@ -5,7 +5,8 @@
 
 use std::collections::HashSet;
 
-use rg_def_map::{PackageSlot, TargetRef};
+use rg_def_map::PackageSlot;
+use rg_ir_model::TargetRef;
 use rg_package_store::PackageSubset;
 use rg_workspace::{PackageId, TargetKind, WorkspaceMetadata};
 

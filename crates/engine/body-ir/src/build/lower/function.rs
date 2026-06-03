@@ -2,14 +2,12 @@
 
 use rg_syntax::ast;
 
-use rg_def_map::ModuleRef;
+use rg_ir_model::{ExprId, FunctionRef, ModuleRef, ScopeId};
 use rg_parse::LineIndex;
-use rg_semantic_ir::FunctionRef;
 use rg_text::NameInterner;
+use rg_ty::Ty;
 
-use crate::ir::{
-    BodyBuilder, BodyData, BodyResolution, BodySource, BodyTy, ExprData, ExprId, ExprKind, ScopeId,
-};
+use crate::ir::{BodyBuilder, BodyData, BodyResolution, BodySource, ExprData, ExprKind};
 
 use super::syntax::source_for;
 
@@ -75,7 +73,7 @@ impl FunctionBodyLowering<'_> {
             visible_bindings,
             kind,
             resolution: BodyResolution::Unknown,
-            ty: BodyTy::Unknown,
+            ty: Ty::Unknown,
         })
     }
 

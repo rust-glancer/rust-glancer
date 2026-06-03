@@ -3,11 +3,12 @@
 //! Path scanners provide reusable type-path and value-path traversal for point
 //! queries and whole-target scans after those queries choose their scope.
 
-use rg_def_map::Path;
+use rg_ir_model::{BodyRef, ScopeId};
+use rg_ir_storage::Path;
 use rg_item_tree::TypePath;
 use rg_parse::{FileId, Span};
 
-use crate::{BodyData, BodyPath, BodyRef, ExprKind, PatData, ScopeId};
+use crate::{BodyData, BodyPath, ExprKind, PatData};
 
 use super::{super::BodyCursorCandidate, sites::BodyScanSites};
 

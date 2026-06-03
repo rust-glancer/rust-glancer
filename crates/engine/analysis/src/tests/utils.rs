@@ -1,33 +1,31 @@
-use std::{fmt, fmt::Write as _, marker::PhantomData, sync::Arc};
+use std::fmt::Write as _;
 
 use expect_test::Expect;
 
 use crate::{
-    Analysis, AnalysisReadTxn, CompletionApplicability, CompletionClientCapabilities,
-    CompletionInsertText, CompletionItem, CompletionQuery, DocumentSymbol, HoverInfo,
-    NavigationTarget, ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, SymbolAt,
-    TypeHint, WorkspaceSymbol,
+    Analysis, CompletionApplicability, CompletionClientCapabilities, CompletionInsertText,
+    CompletionItem, CompletionQuery, DocumentSymbol, HoverInfo, NavigationTarget,
+    ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, SymbolAt, TypeHint,
+    WorkspaceSymbol,
 };
-use rg_body_ir::{
-    BodyGenericArg, BodyIrDb, BodyIrReadTxn, BodyItemRef, BodyLocalNominalTy, BodyNominalTy,
-    BodyTy, ExprData, ExprKind,
+use rg_body_ir::{BodyIrReadTxn, ExprData, ExprKind, testonly::BodyIrFixture};
+use rg_def_map::{PackageSlot, testonly::DefMapFixture};
+use rg_ir_model::{
+    BodyRef, DefMapRef, FunctionRef, ItemOwner, ModuleRef, TargetRef, TraitRef, TypeDefId,
+    TypeDefRef,
 };
-use rg_def_map::{DefMapDb, ModuleRef, PackageSlot, TargetRef};
-use rg_item_tree::{ItemTreeDb, PackageNameInterners};
-use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
+use rg_ir_storage::{DefMap, ItemStore, ItemStoreQuery};
+use rg_ir_view::IndexedViewDb;
+use rg_package_store::PackageLoader;
 use rg_parse::{FileId, ParseDb, Span};
-use rg_semantic_ir::{
-    FunctionRef, ItemOwner, SemanticIrDb, SemanticIrReadTxn, TraitRef, TypeDefId, TypeDefRef,
-};
+use rg_semantic_ir::{SemanticIrReadTxn, testonly::SemanticIrFixture};
+use rg_ty::{GenericArg, NominalTy, Ty};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
-use test_fixture::{FixtureMarkers, fixture_crate, fixture_crate_with_markers};
+use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers};
 
 pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], expect: Expect) {
     let (fixture, markers) = fixture_crate_with_markers(fixture);
-    let db = AnalysisFixtureDb::build(
-        WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build"),
-    );
+    let db = AnalysisFixtureDb::build_from_crate(fixture);
     let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
     let actual = format!("{}\n", renderer.render().trim_end());
     expect.assert_eq(&actual);
@@ -44,7 +42,7 @@ pub(super) fn check_analysis_queries_with_sysroot(
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should build")
         .with_sysroot_sources(Some(sysroot));
-    let db = AnalysisFixtureDb::build(workspace);
+    let db = AnalysisFixtureDb::build_from_crate_with_workspace(fixture, workspace);
     let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
     let actual = format!("{}\n", renderer.render().trim_end());
     expect.assert_eq(&actual);
@@ -52,10 +50,7 @@ pub(super) fn check_analysis_queries_with_sysroot(
 
 pub(super) fn check_document_symbols(fixture: &str, query: DocumentSymbolsQuery, expect: Expect) {
     let fixture = fixture_crate(fixture);
-    let db = AnalysisFixtureDb::build(
-        WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build"),
-    );
+    let db = AnalysisFixtureDb::build_from_crate(fixture);
     let renderer = AnalysisSymbolSnapshot::new(&db);
     let actual = format!("{}\n", renderer.render_document_symbols(&query).trim_end());
     expect.assert_eq(&actual);
@@ -63,10 +58,7 @@ pub(super) fn check_document_symbols(fixture: &str, query: DocumentSymbolsQuery,
 
 pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
-    let db = AnalysisFixtureDb::build(
-        WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build"),
-    );
+    let db = AnalysisFixtureDb::build_from_crate(fixture);
     let renderer = AnalysisSymbolSnapshot::new(&db);
     let actual = format!("{}\n", renderer.render_workspace_symbols(query).trim_end());
     expect.assert_eq(&actual);
@@ -74,10 +66,7 @@ pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect
 
 pub(super) fn check_type_hints(fixture: &str, query: TypeHintsQuery, expect: Expect) {
     let fixture = fixture_crate(fixture);
-    let db = AnalysisFixtureDb::build(
-        WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build"),
-    );
+    let db = AnalysisFixtureDb::build_from_crate(fixture);
     let renderer = AnalysisSymbolSnapshot::new(&db);
     let actual = format!("{}\n", renderer.render_type_hints(&query).trim_end());
     expect.assert_eq(&actual);
@@ -295,57 +284,56 @@ enum ReferenceQueryScope {
 }
 
 struct AnalysisFixtureDb {
-    parse: ParseDb,
-    def_map: DefMapDb,
-    semantic_ir: SemanticIrDb,
-    body_ir: BodyIrDb,
+    fixture: BodyIrFixture,
 }
 
 impl AnalysisFixtureDb {
-    fn build(workspace: WorkspaceMetadata) -> Self {
-        let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
-        let mut names = PackageNameInterners::new(parse.package_count());
-        let item_tree =
-            ItemTreeDb::build(&mut parse, &mut names).expect("fixture item tree db should build");
-        let def_map = DefMapDb::builder(&workspace, &parse, &item_tree)
-            .name_interners(&mut names)
-            .build()
-            .expect("fixture def map db should build");
-        let semantic_ir = SemanticIrDb::builder(&item_tree, &def_map)
-            .build()
-            .expect("fixture semantic ir db should build");
-        let body_ir = BodyIrDb::builder(&parse, &def_map, &semantic_ir)
-            .name_interners(&mut names)
-            .build()
-            .expect("fixture body ir db should build");
+    fn build_from_crate(fixture: CrateFixture) -> Self {
+        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+            .expect("fixture workspace metadata should build");
+        Self::build_from_crate_with_workspace(fixture, workspace)
+    }
 
+    fn build_from_crate_with_workspace(
+        fixture: CrateFixture,
+        workspace: WorkspaceMetadata,
+    ) -> Self {
+        let def_map = DefMapFixture::build_from_crate(fixture, workspace);
+        let semantic_ir = SemanticIrFixture::build_from_def_map(def_map);
         Self {
-            parse,
-            def_map,
-            semantic_ir,
-            body_ir,
+            fixture: BodyIrFixture::build_from_semantic_ir(semantic_ir),
         }
     }
 
     fn analysis(&self) -> Analysis<'_> {
-        let txn = AnalysisReadTxn::from_phase_txns(
-            self.def_map.read_txn(unexpected_package_loader()),
-            self.semantic_ir.read_txn(unexpected_package_loader()),
-            self.body_ir.read_txn(unexpected_package_loader()),
+        let view_db = IndexedViewDb::new(
+            self.fixture
+                .def_map_db()
+                .read_txn(PackageLoader::resident_only("resident analysis fixture")),
+            self.fixture
+                .semantic_ir_db()
+                .read_txn(PackageLoader::resident_only("resident analysis fixture")),
+            self.fixture
+                .body_ir_db()
+                .read_txn(PackageLoader::resident_only("resident analysis fixture")),
         );
-        Analysis::new(&txn)
+        Analysis::new(view_db)
     }
 
-    fn resident_def_map(&self, target: TargetRef) -> Option<&rg_def_map::DefMap> {
-        self.def_map
-            .resident_package(target.package)?
-            .target(target.target)
+    fn parse_db(&self) -> &ParseDb {
+        self.fixture.parse_db()
     }
 
-    fn resident_target_ir(&self, target: TargetRef) -> Option<&rg_semantic_ir::TargetIr> {
-        self.semantic_ir
-            .resident_package(target.package)?
-            .target(target.target)
+    fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
+        self.fixture.resident_def_map(target)
+    }
+
+    fn resident_target_ir(&self, target: TargetRef) -> Option<&ItemStore> {
+        self.fixture.resident_target_ir(target)
+    }
+
+    fn resident_body_item_store(&self, body: BodyRef) -> Option<&ItemStore> {
+        self.fixture.resident_body_item_store(body)
     }
 
     fn target_and_file_for_path(
@@ -356,7 +344,7 @@ impl AnalysisFixtureDb {
         let mut matches = Vec::new();
         let normalized_path = path.trim_start_matches('/');
 
-        for (package_slot, package) in self.parse.packages().iter().enumerate() {
+        for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
             if !selected.matches_package(package.package_name()) {
                 continue;
             }
@@ -396,7 +384,7 @@ impl AnalysisFixtureDb {
     fn target_for(&self, selected: &AnalysisTarget) -> TargetRef {
         let mut matches = Vec::new();
 
-        for (package_slot, package) in self.parse.packages().iter().enumerate() {
+        for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
             if !selected.matches_package(package.package_name()) {
                 continue;
             }
@@ -423,7 +411,7 @@ impl AnalysisFixtureDb {
     }
 
     fn all_targets(&self) -> Vec<TargetRef> {
-        self.parse
+        self.parse_db()
             .packages()
             .iter()
             .enumerate()
@@ -445,27 +433,6 @@ impl AnalysisFixtureDb {
             .modules()
             .iter()
             .any(|module| module.origin.contains_file(file_id))
-    }
-}
-
-fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
-    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
-}
-
-struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
-
-impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnexpectedPackageLoader").finish()
-    }
-}
-
-impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
-    fn load(&self, package: PackageSlot) -> Result<Arc<T>, PackageStoreError> {
-        panic!(
-            "resident analysis fixture should not load offloaded package {}",
-            package.0,
-        )
     }
 }
 
@@ -688,7 +655,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         };
 
         match symbol {
-            SymbolAt::Body { body } => {
+            SymbolAt::FunctionBody { body } => {
+                let body = body.body_ir();
                 let body_ir = self.body_ir_txn();
                 let body_data = body_ir
                     .body_data(body)
@@ -705,64 +673,16 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
-            SymbolAt::Binding { body, binding } => {
-                let body_ir = self.body_ir_txn();
-                let body_data = body_ir
-                    .body_data(body)
-                    .expect("body ref should load while rendering analysis symbol")
-                    .expect("body ref should exist while rendering analysis symbol");
-                let binding_data = body_data
-                    .binding(binding)
-                    .expect("binding id should exist while rendering analysis symbol");
-                writeln!(
-                    dump,
-                    "\n- binding {} {} @ {}",
-                    binding_data.kind,
-                    binding_data.name.as_deref().unwrap_or("<unsupported>"),
-                    self.render_source_span(
-                        body.target.package,
-                        binding_data.source.file_id,
-                        binding_data.source.span,
-                    )
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::BodyPath {
-                body,
-                ref path,
-                span,
-                ..
-            } => {
-                writeln!(
-                    dump,
-                    "\n- body path {path} @ {}",
-                    self.render_source_span(body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::BodyValuePath {
-                body,
-                ref path,
-                span,
-                ..
-            } => {
-                writeln!(
-                    dump,
-                    "\n- body value path {path} @ {}",
-                    self.render_source_span(body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::Def { def, span } => {
+            SymbolAt::Declaration { declaration, span } => {
                 let targets = self
                     .db
                     .analysis()
-                    .resolve_symbol(SymbolAt::Def { def, span })
+                    .resolve_symbol(SymbolAt::Declaration { declaration, span })
                     .expect("fixture symbol resolution should resolve");
                 let label = targets
                     .first()
                     .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "def <unresolved>".to_string());
+                    .unwrap_or_else(|| "declaration <unresolved>".to_string());
                 writeln!(
                     dump,
                     "\n- {label} @ {}",
@@ -770,14 +690,15 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
-            SymbolAt::Expr { body, expr } => {
+            SymbolAt::Expr { expr } => {
+                let body = expr.body_ir();
                 let body_ir = self.body_ir_txn();
                 let body_data = body_ir
                     .body_data(body)
                     .expect("body ref should load while rendering analysis symbol")
                     .expect("body ref should exist while rendering analysis symbol");
                 let expr_data = body_data
-                    .expr(expr)
+                    .expr(expr.expr_id())
                     .expect("expr id should exist while rendering analysis symbol");
                 writeln!(
                     dump,
@@ -786,136 +707,23 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
-            SymbolAt::Field { field, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::Field { field, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "field <unresolved>".to_string());
+            SymbolAt::TypePath { ref path, span, .. } => {
                 writeln!(
                     dump,
-                    "\n- {label} @ {}",
+                    "\n- type path {path} @ {}",
                     self.render_source_span(package, file_id, span)
                 )
                 .expect("string writes should not fail");
             }
-            SymbolAt::Function { function, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::Function { function, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "fn <unresolved>".to_string());
+            SymbolAt::ValuePath { ref path, span, .. } => {
                 writeln!(
                     dump,
-                    "\n- {label} @ {}",
+                    "\n- value path {path} @ {}",
                     self.render_source_span(package, file_id, span)
                 )
                 .expect("string writes should not fail");
             }
-            SymbolAt::EnumVariant { variant, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::EnumVariant { variant, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "variant <unresolved>".to_string());
-                writeln!(
-                    dump,
-                    "\n- {label} @ {}",
-                    self.render_source_span(package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::LocalItem { item, span } => {
-                let label = self.render_body_item_ref(item);
-                writeln!(
-                    dump,
-                    "\n- {label} @ {}",
-                    self.render_source_span(item.body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::LocalValueItem { item, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::LocalValueItem { item, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "value <unresolved>".to_string());
-                writeln!(
-                    dump,
-                    "\n- {label} @ {}",
-                    self.render_source_span(item.body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::LocalField { field, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::LocalField { field, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "field <unresolved>".to_string());
-                writeln!(
-                    dump,
-                    "\n- {label} @ {}",
-                    self.render_source_span(field.item.body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::LocalEnumVariant { variant, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::LocalEnumVariant { variant, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "variant <unresolved>".to_string());
-                writeln!(
-                    dump,
-                    "\n- {label} @ {}",
-                    self.render_source_span(variant.item.body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::LocalFunction { function, span } => {
-                let targets = self
-                    .db
-                    .analysis()
-                    .resolve_symbol(SymbolAt::LocalFunction { function, span })
-                    .expect("fixture symbol resolution should resolve");
-                let label = targets
-                    .first()
-                    .map(|target| format!("{} {}", target.kind, target.name))
-                    .unwrap_or_else(|| "fn <unresolved>".to_string());
-                writeln!(
-                    dump,
-                    "\n- {label} @ {}",
-                    self.render_source_span(function.body.target.package, file_id, span)
-                )
-                .expect("string writes should not fail");
-            }
-            SymbolAt::TypePath { ref path, span, .. }
-            | SymbolAt::UsePath { ref path, span, .. } => {
+            SymbolAt::UsePath { ref path, span, .. } => {
                 writeln!(
                     dump,
                     "\n- path {path} @ {}",
@@ -1176,24 +984,16 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         }
     }
 
-    fn render_ty(&self, ty: &BodyTy) -> String {
+    fn render_ty(&self, ty: &Ty) -> String {
         match ty {
-            BodyTy::Unit => "()".to_string(),
-            BodyTy::Never => "!".to_string(),
-            BodyTy::Primitive(primitive) => primitive.label().to_string(),
-            BodyTy::Syntax(ty) => format!("syntax {ty}"),
-            BodyTy::Reference { mutability, inner } => {
+            Ty::Unit => "()".to_string(),
+            Ty::Never => "!".to_string(),
+            Ty::Primitive(primitive) => primitive.label().to_string(),
+            Ty::Syntax(ty) => format!("syntax {ty}"),
+            Ty::Reference { mutability, inner } => {
                 format!("{}{}", mutability.render_prefix(), self.render_ty(inner))
             }
-            BodyTy::LocalNominal(items) => {
-                let mut items = items
-                    .iter()
-                    .map(|ty| self.render_body_local_nominal_ty(ty))
-                    .collect::<Vec<_>>();
-                items.sort();
-                format!("local nominal {}", items.join(" | "))
-            }
-            BodyTy::Nominal(types) => {
+            Ty::Nominal(types) => {
                 let mut types = types
                     .iter()
                     .map(|ty| self.render_body_nominal_ty(ty))
@@ -1201,7 +1001,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 types.sort();
                 format!("nominal {}", types.join(" | "))
             }
-            BodyTy::SelfTy(types) => {
+            Ty::SelfTy(types) => {
                 let mut types = types
                     .iter()
                     .map(|ty| self.render_body_nominal_ty(ty))
@@ -1209,19 +1009,11 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 types.sort();
                 format!("Self {}", types.join(" | "))
             }
-            BodyTy::Unknown => "<unknown>".to_string(),
+            Ty::Unknown => "<unknown>".to_string(),
         }
     }
 
-    fn render_body_local_nominal_ty(&self, ty: &BodyLocalNominalTy) -> String {
-        format!(
-            "{}{}",
-            self.render_body_item_ref(ty.item),
-            self.render_generic_args(&ty.args)
-        )
-    }
-
-    fn render_body_nominal_ty(&self, ty: &BodyNominalTy) -> String {
+    fn render_body_nominal_ty(&self, ty: &NominalTy) -> String {
         format!(
             "{}{}",
             self.render_type_def_ref(ty.def),
@@ -1229,7 +1021,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         )
     }
 
-    fn render_generic_args(&self, args: &[BodyGenericArg]) -> String {
+    fn render_generic_args(&self, args: &[GenericArg]) -> String {
         if args.is_empty() {
             return String::new();
         }
@@ -1243,47 +1035,34 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         )
     }
 
-    fn render_generic_arg(&self, arg: &BodyGenericArg) -> String {
+    fn render_generic_arg(&self, arg: &GenericArg) -> String {
         match arg {
-            BodyGenericArg::Type(ty) => self.render_ty(ty),
-            BodyGenericArg::Lifetime(lifetime) => lifetime.clone(),
-            BodyGenericArg::Const(value) => value.clone(),
-            BodyGenericArg::AssocType { name, ty } => match ty {
+            GenericArg::Type(ty) => self.render_ty(ty),
+            GenericArg::Lifetime(lifetime) => lifetime.clone(),
+            GenericArg::Const(value) => value.clone(),
+            GenericArg::AssocType { name, ty } => match ty {
                 Some(ty) => format!("{name} = {}", self.render_ty(ty)),
                 None => name.to_string(),
             },
-            BodyGenericArg::Unsupported(text) => format!("<unsupported:{text}>"),
+            GenericArg::Unsupported(text) => format!("<unsupported:{text}>"),
         }
     }
 
-    fn render_body_item_ref(&self, item_ref: BodyItemRef) -> String {
-        let body_ir = self.body_ir_txn();
-        let body = body_ir
-            .body_data(item_ref.body)
-            .expect("body item body should load while rendering analysis type")
-            .expect("body item body should exist while rendering analysis type");
-        let item = body
-            .local_item(item_ref.item)
-            .expect("body item id should exist while rendering analysis type");
-
-        format!(
-            "{} {}::{}",
-            item.kind,
-            self.render_function_ref(body.owner()),
-            item.name
-        )
-    }
-
     fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
-        let target_ir = self
-            .db
-            .resident_target_ir(ty.target)
-            .expect("target semantic IR should exist while rendering analysis type");
+        let items = match ty.origin {
+            DefMapRef::Target(target) => self
+                .db
+                .resident_target_ir(target)
+                .expect("target semantic IR should exist while rendering analysis type"),
+            DefMapRef::Body(body) => self
+                .db
+                .resident_body_item_store(body)
+                .expect("body item store should exist while rendering analysis type"),
+        };
 
         match ty.id {
             TypeDefId::Struct(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .struct_data(id)
                     .expect("struct id should exist while rendering analysis type");
                 format!(
@@ -1293,15 +1072,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
             }
             TypeDefId::Enum(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .enum_data(id)
                     .expect("enum id should exist while rendering analysis type");
                 format!("enum {}::{}", self.render_module_ref(data.owner), data.name)
             }
             TypeDefId::Union(id) => {
-                let data = target_ir
-                    .items()
+                let data = items
                     .union_data(id)
                     .expect("union id should exist while rendering analysis type");
                 format!(
@@ -1315,16 +1092,17 @@ impl<'a> AnalysisQuerySnapshot<'a> {
 
     fn render_function_ref(&self, function_ref: FunctionRef) -> String {
         let semantic_ir = self.semantic_ir_txn();
-        let data = semantic_ir
+        let item_query = ItemStoreQuery::new(&semantic_ir);
+        let data = item_query
             .function_data(function_ref)
             .expect("function ref should load while rendering analysis body item")
             .expect("function ref should exist while rendering analysis body item");
         let owner = match data.owner {
             ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
             ItemOwner::Trait(trait_id) => {
-                let trait_data = semantic_ir
+                let trait_data = item_query
                     .trait_data(TraitRef {
-                        target: function_ref.target,
+                        origin: function_ref.origin,
                         id: trait_id,
                     })
                     .expect("trait owner should load while rendering analysis body item")
@@ -1342,22 +1120,38 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     }
 
     fn semantic_ir_txn(&self) -> SemanticIrReadTxn<'_> {
-        self.db.semantic_ir.read_txn(unexpected_package_loader())
+        self.db
+            .fixture
+            .semantic_ir_db()
+            .read_txn(PackageLoader::resident_only("resident analysis fixture"))
     }
 
     fn body_ir_txn(&self) -> BodyIrReadTxn<'_> {
-        self.db.body_ir.read_txn(unexpected_package_loader())
+        self.db
+            .fixture
+            .body_ir_db()
+            .read_txn(PackageLoader::resident_only("resident analysis fixture"))
     }
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {
+        if let DefMapRef::Body(body_ref) = module_ref.origin {
+            let body_ir = self.body_ir_txn();
+            let body = body_ir
+                .body_data(body_ref)
+                .expect("body module owner should load while rendering analysis module")
+                .expect("body module owner should exist while rendering analysis module");
+            return self.render_function_ref(body.owner());
+        }
+
+        let target_ref = module_ref.origin.origin_target();
         let package = self
             .db
-            .parse
+            .parse_db()
             .packages()
-            .get(module_ref.target.package.0)
+            .get(target_ref.package.0)
             .expect("package slot should exist while rendering analysis module");
         let target = package
-            .target(module_ref.target.target)
+            .target(target_ref.target)
             .expect("target id should exist while rendering analysis module");
 
         format!(
@@ -1371,7 +1165,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     fn module_path(&self, module_ref: ModuleRef) -> String {
         let module = self
             .db
-            .resident_def_map(module_ref.target)
+            .resident_def_map(module_ref.origin.origin_target())
             .expect("target def map should exist while rendering analysis module path")
             .module(module_ref.module)
             .expect("module id should exist while rendering analysis module path");
@@ -1379,7 +1173,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         match module.parent {
             Some(parent) => {
                 let parent_path = self.module_path(ModuleRef {
-                    target: module_ref.target,
+                    origin: module_ref.origin,
                     module: parent,
                 });
                 let name = module
@@ -1405,7 +1199,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     fn render_source_span(&self, package: PackageSlot, file_id: FileId, span: Span) -> String {
         let line_column = span.line_column(
             self.db
-                .parse
+                .parse_db()
                 .package(package.0)
                 .expect("span package should exist while rendering analysis query")
                 .parsed_file(file_id)
@@ -1434,7 +1228,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     ) -> String {
         let parsed_file = self
             .db
-            .parse
+            .parse_db()
             .package(package.0)
             .expect("span package should exist while rendering analysis query text")
             .parsed_file(file_id)
@@ -1459,7 +1253,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     fn render_file_path(&self, package: PackageSlot, file_id: FileId) -> String {
         let package = self
             .db
-            .parse
+            .parse_db()
             .packages()
             .get(package.0)
             .expect("reference package should exist while rendering file path");
@@ -1478,7 +1272,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     .to_string()
             });
 
-        if self.db.parse.packages().len() > 1 {
+        if self.db.parse_db().packages().len() > 1 {
             format!("{}/{relative_path}", package.package_name())
         } else {
             relative_path
@@ -1632,7 +1426,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
     fn render_target_ref(&self, target_ref: TargetRef) -> String {
         let package = self
             .db
-            .parse
+            .parse_db()
             .packages()
             .get(target_ref.package.0)
             .expect("target package should exist while rendering workspace symbol");
@@ -1659,7 +1453,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
     fn render_file_path(&self, package: PackageSlot, file_id: FileId) -> String {
         let package = self
             .db
-            .parse
+            .parse_db()
             .packages()
             .get(package.0)
             .expect("symbol package should exist while rendering file path");
@@ -1681,7 +1475,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
     fn render_source_span(&self, package: PackageSlot, file_id: FileId, span: Span) -> String {
         let line_column = span.line_column(
             self.db
-                .parse
+                .parse_db()
                 .package(package.0)
                 .expect("span package should exist while rendering analysis symbol")
                 .parsed_file(file_id)

@@ -3,14 +3,13 @@
 //! Record-field sites are the field-name slots inside struct literals and record patterns, such
 //! as `User { na$0 }` or `let User { na$0 } = user`.
 
-use rg_def_map::TargetRef;
+use rg_ir_model::{BodyId, BodyRef, ScopeId, TargetRef};
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
 use crate::{
-    BodyData, BodyId, BodyIrReadTxn, BodyPath, BodyRef, ExprKind, PatData, PatKind,
-    RecordExprField, RecordPatField, ScopeId,
+    BodyData, BodyIrReadTxn, BodyPath, ExprKind, PatData, PatKind, RecordExprField, RecordPatField,
 };
 
 use super::{super::RecordFieldCompletionSite, sites::BodyScanSites};

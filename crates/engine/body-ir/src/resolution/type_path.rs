@@ -3,106 +3,122 @@
 //! Semantic IR can resolve module items, but body-local structs live in lexical scopes. This
 //! resolver checks those scopes first and then falls back to the semantic/def-map context.
 
-use rg_def_map::{DefMapReadTxn, ModuleRef, Path, PathSegment};
-use rg_item_tree::{GenericArg, TypePath, TypeRef};
+use rg_ir_model::{
+    AssocItemId, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef, ScopeId,
+    SemanticItemRef, TypeAliasRef, TypeDefRef, TypePathResolution,
+};
+use rg_ir_storage::{
+    DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, NameResolutionFilter, Path,
+    PathSegment, TypePathContext,
+};
+use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{FunctionRef, SemanticIrReadTxn, TypeDefRef, TypePathContext};
+use rg_ty::{GenericArg, ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
 
-use crate::{
-    BodyItemKind,
-    ir::body::BodyData,
-    ir::ids::{BodyItemId, BodyItemRef, BodyRef, ScopeId},
-    ir::item::BodyItemOwner,
-    ir::resolved::BodyTypePathResolution,
-    ir::ty::{BodyGenericArg, BodyLocalNominalTy, BodyPrimitiveTy, BodyTy},
-};
+use super::{BodyQuerySource, push_unique};
 
-use super::{
-    impl_match::LocalImplMatcher,
-    ty::{
-        TypeSubst, local_type_subst, subst_from_generics, substitute_type_param,
-        ty_from_body_resolution, ty_from_type_ref_in_context, type_ref_is_self,
-    },
-};
-
-pub(super) struct BodyTypePathResolver<'query, 'db, 'body> {
-    def_map: &'query DefMapReadTxn<'db>,
-    semantic_ir: &'query SemanticIrReadTxn<'db>,
-    body_ref: BodyRef,
-    body: &'body BodyData,
+pub(crate) struct BodyTypePathResolver<'query, D, I> {
+    source: BodyQuerySource<'query, D, I>,
 }
 
-impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
-    pub(super) fn new(
-        def_map: &'query DefMapReadTxn<'db>,
-        semantic_ir: &'query SemanticIrReadTxn<'db>,
-        body_ref: BodyRef,
-        body: &'body BodyData,
-    ) -> Self {
-        Self {
-            def_map,
-            semantic_ir,
-            body_ref,
-            body,
-        }
+impl<'query, D, I> BodyTypePathResolver<'query, D, I>
+where
+    D: DefMapSource<Error = PackageStoreError> + Copy,
+    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+{
+    pub(crate) fn new(source: BodyQuerySource<'query, D, I>) -> Self {
+        Self { source }
     }
 
-    fn local_impl_matcher(&self) -> LocalImplMatcher<'_, 'db, 'body> {
-        LocalImplMatcher::new(self.def_map, self.semantic_ir, self.body_ref, self.body)
+    fn impl_matcher(
+        &self,
+    ) -> ImplMatcher<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>> {
+        let source = self.source;
+        ImplMatcher::new(ItemPathQuery::new(source, source))
     }
 
-    pub(super) fn resolve_in_scope(
+    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
+        ItemStoreQuery::new(self.source)
+    }
+
+    pub(crate) fn resolve_in_scope(
         &self,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<BodyTypePathResolution, PackageStoreError> {
-        // Body-local type names shadow module items inside their lexical scope. Qualified paths
-        // skip this branch because local items cannot be named through module paths.
-        if let Some(name) = path.single_name() {
-            if let Some(item) = self.resolve_local_type_item(scope, name) {
-                return Ok(BodyTypePathResolution::BodyLocal(BodyItemRef {
-                    body: self.body_ref,
-                    item,
-                }));
+    ) -> Result<TypePathResolution, PackageStoreError> {
+        if let Some((prefix, name)) = split_associated_path(path) {
+            let prefix_resolution = self.resolve_in_scope(scope, &prefix)?;
+            let prefix_ty =
+                Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
+            let mut aliases = Vec::new();
+            for ty in prefix_ty.as_nominals() {
+                if let Some(alias) = self.associated_type_alias_for_type(ty, name)? {
+                    push_unique(&mut aliases, alias);
+                }
+            }
+            if !aliases.is_empty() {
+                return Ok(TypePathResolution::TypeAliases(aliases));
             }
         }
-        if let Some(item) = self.resolve_local_associated_type_item(scope, path)? {
-            return Ok(BodyTypePathResolution::BodyLocal(item));
+
+        let body_items = self.resolve_body_type_items_from_def_map(scope, path)?;
+        if !body_items.is_empty() {
+            let mut type_defs = Vec::new();
+            let mut type_aliases = Vec::new();
+            let mut traits = Vec::new();
+            for item in body_items {
+                match item {
+                    SemanticItemRef::TypeDef(type_def) => push_unique(&mut type_defs, type_def),
+                    SemanticItemRef::TypeAlias(type_alias) => {
+                        push_unique(&mut type_aliases, type_alias);
+                    }
+                    SemanticItemRef::Trait(trait_ref) => push_unique(&mut traits, trait_ref),
+                    SemanticItemRef::Impl(_)
+                    | SemanticItemRef::Function(_)
+                    | SemanticItemRef::Const(_)
+                    | SemanticItemRef::Static(_) => {}
+                }
+            }
+
+            if !type_defs.is_empty() {
+                return Ok(TypePathResolution::TypeDefs(type_defs));
+            }
+            if !type_aliases.is_empty() {
+                return Ok(TypePathResolution::TypeAliases(type_aliases));
+            }
+            if !traits.is_empty() {
+                return Ok(TypePathResolution::Traits(traits));
+            }
         }
 
-        let context = self.context_for_function(self.body.owner, self.body.owner_module)?;
-        let resolution = self
-            .semantic_ir
-            .resolve_type_path(self.def_map, context, path)?;
-        let resolution = BodyTypePathResolution::from(resolution);
-        if matches!(resolution, BodyTypePathResolution::Unknown)
-            && let Some(primitive) = path.single_name().and_then(BodyPrimitiveTy::from_name)
-        {
-            return Ok(BodyTypePathResolution::Primitive(primitive));
-        }
-        Ok(resolution)
+        let context =
+            self.context_for_function(self.source.body().owner, self.source.body().owner_module)?;
+        let source = self.source;
+        ItemPathQuery::new(source, source).resolve_type_path(context, path)
     }
 
-    pub(super) fn ty_from_type_ref_in_scope(
+    pub(super) fn resolve_type_ref_in_scope(
         &self,
         ty: &TypeRef,
         scope: ScopeId,
-    ) -> Result<BodyTy, PackageStoreError> {
-        self.ty_from_type_ref_in_scope_with_subst(ty, scope, &TypeSubst::new())
+    ) -> Result<Ty, PackageStoreError> {
+        self.resolve_type_ref_in_scope_with_subst(ty, scope, &TypeSubst::new())
     }
 
-    pub(super) fn ty_from_type_ref_in_scope_with_subst(
+    pub(super) fn resolve_type_ref_in_scope_with_subst(
         &self,
         ty: &TypeRef,
         scope: ScopeId,
         subst: &TypeSubst,
-    ) -> Result<BodyTy, PackageStoreError> {
+    ) -> Result<Ty, PackageStoreError> {
         // Path types are the only type syntax we resolve structurally today. Other forms stay as
         // syntax unless they have a cheap built-in representation such as `()` or `!`.
         match ty {
             TypeRef::Path(type_path) => {
                 let path = Path::from_type_path(type_path);
-                if let Some(ty) = substitute_type_param(&path, subst) {
+                if let Some(name) = path.single_name()
+                    && let Some(ty) = subst.type_param(name)
+                {
                     return Ok(ty);
                 }
 
@@ -114,115 +130,85 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
                 }
 
                 let resolution = self.resolve_in_scope(scope, &path)?;
-                if let BodyTypePathResolution::BodyLocal(item_ref) = resolution {
-                    let Some(item) = self.body.local_item(item_ref.item) else {
-                        return Ok(BodyTy::Unknown);
-                    };
-                    return match item.kind {
-                        BodyItemKind::Struct | BodyItemKind::Enum | BodyItemKind::Union => {
-                            Ok(ty_from_body_resolution(
-                                BodyTypePathResolution::BodyLocal(item_ref),
-                                BodyTy::Syntax(ty.clone()),
-                                args,
-                            ))
-                        }
-                        BodyItemKind::TypeAlias => {
-                            if let Some(aliased_ty) = item.aliased_ty() {
-                                let mut alias_subst = subst.clone();
-                                if let Some(generics) = item.generic_params() {
-                                    alias_subst.extend(subst_from_generics(generics, &args));
-                                }
-                                self.ty_from_type_ref_in_scope_with_subst(
-                                    aliased_ty,
-                                    item.scope,
-                                    &alias_subst,
-                                )
-                            } else {
-                                Ok(BodyTy::Syntax(ty.clone()))
-                            }
-                        }
-                        BodyItemKind::Trait => Ok(BodyTy::Syntax(ty.clone())),
-                    };
+                if let TypePathResolution::TypeAliases(aliases) = &resolution {
+                    return self.ty_from_type_aliases(aliases, &args, subst);
                 }
-
-                Ok(ty_from_body_resolution(
-                    resolution,
-                    BodyTy::Syntax(ty.clone()),
-                    args,
-                ))
+                let is_unknown = matches!(resolution, TypePathResolution::Unknown);
+                Ok(
+                    Ty::from_type_path_resolution(resolution, args).unwrap_or_else(|| {
+                        if is_unknown {
+                            path.single_name()
+                                .and_then(rg_ty::PrimitiveTy::from_name)
+                                .map(Ty::Primitive)
+                                .unwrap_or_else(|| Ty::syntax(ty.clone()))
+                        } else {
+                            Ty::syntax(ty.clone())
+                        }
+                    }),
+                )
             }
-            _ => self.ty_from_type_ref_in_context(
+            _ => self.resolve_type_ref_in_context(
                 ty,
-                self.context_for_function(self.body.owner, self.body.owner_module)?,
+                self.context_for_function(
+                    self.source.body().owner,
+                    self.source.body().owner_module,
+                )?,
                 subst,
             ),
         }
     }
 
-    pub(super) fn local_item_from_type_ref_in_scope(
-        &self,
-        ty: &TypeRef,
-        scope: ScopeId,
-    ) -> Result<Option<BodyItemRef>, PackageStoreError> {
-        let TypeRef::Path(type_path) = ty else {
-            return Ok(None);
-        };
-        let path = Path::from_type_path(type_path);
-        match self.resolve_in_scope(scope, &path)? {
-            BodyTypePathResolution::BodyLocal(item) => Ok(self
-                .body
-                .local_item(item.item)
-                .filter(|data| {
-                    matches!(
-                        data.kind,
-                        BodyItemKind::Struct | BodyItemKind::Enum | BodyItemKind::Union
-                    )
-                })
-                .map(|_| item)),
-            BodyTypePathResolution::Primitive(_)
-            | BodyTypePathResolution::SelfType(_)
-            | BodyTypePathResolution::TypeDefs(_)
-            | BodyTypePathResolution::Traits(_)
-            | BodyTypePathResolution::Unknown => Ok(None),
-        }
-    }
-
-    pub(super) fn ty_from_type_ref_for_function_with_subst(
+    pub(super) fn resolve_type_ref_for_function_with_subst(
         &self,
         ty: &TypeRef,
         function: FunctionRef,
         subst: &TypeSubst,
-    ) -> Result<BodyTy, PackageStoreError> {
-        self.ty_from_type_ref_in_context_with_subst(
-            ty,
-            self.context_for_function(function, self.body.owner_module)?,
-            subst,
-        )
+    ) -> Result<Ty, PackageStoreError> {
+        let context = self.context_for_function(function, self.source.body().owner_module)?;
+        if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
+            return self.resolve_type_ref_in_module_with_subst(ty, context.module, subst);
+        }
+
+        self.resolve_type_ref_in_context_with_subst(ty, context, subst)
     }
 
-    fn ty_from_type_ref_in_context(
+    fn resolve_type_ref_in_context(
         &self,
         ty: &TypeRef,
         context: TypePathContext,
         subst: &TypeSubst,
-    ) -> Result<BodyTy, PackageStoreError> {
-        self.ty_from_type_ref_in_context_with_subst(ty, context, subst)
+    ) -> Result<Ty, PackageStoreError> {
+        self.resolve_type_ref_in_context_with_subst(ty, context, subst)
     }
 
-    pub(super) fn ty_from_type_ref_in_context_with_subst(
+    pub(super) fn resolve_type_ref_in_context_with_subst(
         &self,
         ty: &TypeRef,
         context: TypePathContext,
         subst: &TypeSubst,
-    ) -> Result<BodyTy, PackageStoreError> {
-        ty_from_type_ref_in_context(
-            self.def_map,
-            self.semantic_ir,
-            ty,
-            context,
-            BodyTy::Syntax(ty.clone()),
-            subst,
-        )
+    ) -> Result<Ty, PackageStoreError> {
+        let source = self.source;
+        let item_paths = ItemPathQuery::new(source, source);
+        item_paths.resolve_type_ref(ty, context, Ty::syntax(ty.clone()), subst)
+    }
+
+    pub(super) fn resolve_type_ref_in_module_with_subst(
+        &self,
+        ty: &TypeRef,
+        module: ModuleRef,
+        subst: &TypeSubst,
+    ) -> Result<Ty, PackageStoreError> {
+        // Body DefMaps allocate synthetic scope modules first, in ScopeId order. Named inline
+        // modules may have ids outside that range, and the legacy body resolver did not model
+        // their expression scopes either.
+        if module.origin == DefMapRef::Body(self.source.body_ref()) {
+            let scope = ScopeId(module.module.0);
+            if self.source.body().scope(scope).is_some() {
+                return self.resolve_type_ref_in_scope_with_subst(ty, scope, subst);
+            }
+        }
+
+        self.resolve_type_ref_in_context_with_subst(ty, TypePathContext::module(module), subst)
     }
 
     pub(super) fn self_tys_for_function(
@@ -232,14 +218,14 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         // `self` parameters and explicit `Self` annotations need the enclosing impl owner, not
         // just the owner module. Semantic IR owns that function-to-owner mapping.
         let Some(impl_ref) = self
-            .context_for_function(function, self.body.owner_module)?
+            .context_for_function(function, self.source.body().owner_module)?
             .impl_ref
         else {
             return Ok(Vec::new());
         };
 
         Ok(self
-            .semantic_ir
+            .item_query()
             .impl_data(impl_ref)?
             .map(|impl_data| impl_data.resolved_self_tys.clone())
             .unwrap_or_default())
@@ -251,43 +237,37 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         fallback_module: ModuleRef,
     ) -> Result<TypePathContext, PackageStoreError> {
         Ok(self
-            .semantic_ir
+            .item_query()
             .type_path_context_for_function(function)?
             .unwrap_or_else(|| TypePathContext::module(fallback_module)))
     }
 
-    fn resolve_local_type_item(&self, scope: ScopeId, name: &str) -> Option<BodyItemId> {
-        self.body.walk_scopes(scope, |scope_data| {
-            for item in scope_data.local_items.iter().rev() {
-                let Some(item_data) = self.body.local_item(*item) else {
-                    continue;
-                };
-                if item_data.name == name {
-                    return Some(*item);
-                }
-            }
-
-            None
-        })
-    }
-
-    fn resolve_local_associated_type_item(
+    fn resolve_body_type_items_from_def_map(
         &self,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<Option<BodyItemRef>, PackageStoreError> {
-        let Some((prefix, name)) = split_associated_path(path) else {
-            return Ok(None);
+    ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
+        let from = ModuleRef {
+            origin: DefMapRef::Body(self.source.body_ref()),
+            module: ModuleId(scope.0),
         };
+        let result = DefMapQuery::new(self.source).resolve_lexical_path(
+            from,
+            path,
+            NameResolutionFilter::TypesOnly,
+        )?;
 
-        let prefix_resolution = self.resolve_in_scope(scope, &prefix)?;
-        for ty in self.local_nominal_tys_from_resolution(prefix_resolution) {
-            if let Some(item) = self.local_associated_type_item_for_type(&ty, name)? {
-                return Ok(Some(item));
+        let mut items = Vec::new();
+        for def in result.resolved {
+            let DefId::Local(local_def) = def else {
+                continue;
+            };
+            if let Some(item) = self.item_query().semantic_item_for_local_def(local_def)? {
+                push_unique(&mut items, item);
             }
         }
 
-        Ok(None)
+        Ok(items)
     }
 
     fn ty_from_local_associated_type_path(
@@ -296,56 +276,114 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         path: &Path,
         scope: ScopeId,
         subst: &TypeSubst,
-        args: &[BodyGenericArg],
-    ) -> Result<Option<BodyTy>, PackageStoreError> {
+        args: &[GenericArg],
+    ) -> Result<Option<Ty>, PackageStoreError> {
         let Some((_, name)) = split_associated_path(path) else {
             return Ok(None);
         };
         let Some(prefix_ty_ref) = prefix_type_ref(type_path) else {
             return Ok(None);
         };
-        let prefix_ty = self.ty_from_type_ref_in_scope_with_subst(&prefix_ty_ref, scope, subst)?;
+        let prefix_ty = self.resolve_type_ref_in_scope_with_subst(&prefix_ty_ref, scope, subst)?;
 
-        for ty in prefix_ty.as_local_nominals() {
-            let Some(item_ref) = self.local_associated_type_item_for_type(ty, name)? else {
+        for ty in prefix_ty.as_nominals() {
+            let Some(alias_ref) = self.associated_type_alias_for_type(ty, name)? else {
                 continue;
             };
             return self
-                .ty_from_local_associated_type_item(item_ref, ty, args)
+                .ty_from_associated_type_alias(alias_ref, ty, args)
                 .map(Some);
         }
 
         Ok(None)
     }
 
-    fn local_associated_type_item_for_type(
+    fn ty_from_type_aliases(
         &self,
-        ty: &BodyLocalNominalTy,
+        aliases: &[TypeAliasRef],
+        args: &[GenericArg],
+        subst: &TypeSubst,
+    ) -> Result<Ty, PackageStoreError> {
+        if aliases.len() != 1 {
+            return Ok(Ty::Unknown);
+        }
+
+        self.ty_from_type_alias(
+            aliases
+                .first()
+                .copied()
+                .expect("one alias should exist after length check"),
+            args,
+            subst,
+        )
+    }
+
+    fn ty_from_type_alias(
+        &self,
+        alias_ref: TypeAliasRef,
+        args: &[GenericArg],
+        subst: &TypeSubst,
+    ) -> Result<Ty, PackageStoreError> {
+        let item_query = self.item_query();
+        let Some(alias_data) = item_query.type_alias_data(alias_ref)? else {
+            return Ok(Ty::Unknown);
+        };
+        let Some(aliased_ty) = alias_data.signature.aliased_ty() else {
+            return Ok(Ty::Unknown);
+        };
+        if aliased_ty.is_self_type() {
+            return Ok(Ty::Unknown);
+        }
+
+        let mut alias_subst = subst.clone();
+        if let Some(generics) = alias_data.signature.generics() {
+            alias_subst.extend(TypeSubst::from_generics(generics, args));
+        }
+
+        let context = item_query
+            .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
+            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
+        if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
+            self.resolve_type_ref_in_module_with_subst(aliased_ty, context.module, &alias_subst)
+        } else {
+            self.resolve_type_ref_in_context_with_subst(aliased_ty, context, &alias_subst)
+        }
+    }
+
+    fn associated_type_alias_for_type(
+        &self,
+        ty: &NominalTy,
         name: &str,
-    ) -> Result<Option<BodyItemRef>, PackageStoreError> {
-        for impl_id in self
-            .body
-            .inherent_impls_for_local_type(self.body_ref, ty.item)
-        {
-            let Some(impl_data) = self.body.local_impl(impl_id) else {
+    ) -> Result<Option<TypeAliasRef>, PackageStoreError> {
+        if ty.def.origin != DefMapRef::Body(self.source.body_ref()) {
+            return Ok(None);
+        }
+
+        let item_query = self.item_query();
+        for impl_ref in item_query.inherent_impls_for_type(ty.def)? {
+            let Some(impl_data) = item_query.impl_data(impl_ref)? else {
                 continue;
             };
             if !self
-                .local_impl_matcher()
-                .local_impl_applies_to_receiver(impl_data, ty)?
+                .impl_matcher()
+                .impl_applies_to_receiver(impl_ref, impl_data, ty)?
             {
                 continue;
             }
 
-            for item in &impl_data.types {
-                let Some(item_data) = self.body.local_item(*item) else {
+            for item in &impl_data.items {
+                let AssocItemId::TypeAlias(id) = item else {
                     continue;
                 };
-                if item_data.name == name {
-                    return Ok(Some(BodyItemRef {
-                        body: self.body_ref,
-                        item: *item,
-                    }));
+                let alias_ref = TypeAliasRef {
+                    origin: impl_ref.origin,
+                    id: *id,
+                };
+                let Some(alias_data) = item_query.type_alias_data(alias_ref)? else {
+                    continue;
+                };
+                if alias_data.name == name {
+                    return Ok(Some(alias_ref));
                 }
             }
         }
@@ -353,61 +391,56 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         Ok(None)
     }
 
-    fn ty_from_local_associated_type_item(
+    fn ty_from_associated_type_alias(
         &self,
-        item_ref: BodyItemRef,
-        receiver_ty: &BodyLocalNominalTy,
-        args: &[BodyGenericArg],
-    ) -> Result<BodyTy, PackageStoreError> {
-        let Some(item) = self.body.local_item(item_ref.item) else {
-            return Ok(BodyTy::Unknown);
+        alias_ref: TypeAliasRef,
+        receiver_ty: &NominalTy,
+        args: &[GenericArg],
+    ) -> Result<Ty, PackageStoreError> {
+        let item_query = self.item_query();
+        let Some(alias_data) = item_query.type_alias_data(alias_ref)? else {
+            return Ok(Ty::Unknown);
         };
-        let Some(aliased_ty) = item.aliased_ty() else {
-            return Ok(BodyTy::Unknown);
+        let Some(aliased_ty) = alias_data.signature.aliased_ty() else {
+            return Ok(Ty::Unknown);
         };
-        if type_ref_is_self(aliased_ty) {
-            return Ok(BodyTy::LocalNominal(vec![receiver_ty.clone()]));
+        if aliased_ty.is_self_type() {
+            return Ok(Ty::nominal(vec![receiver_ty.clone()]));
         }
 
-        let BodyItemOwner::LocalImpl(impl_id) = item.owner else {
-            return self.ty_from_type_ref_in_scope_with_subst(
-                aliased_ty,
-                item.scope,
-                &TypeSubst::new(),
-            );
-        };
-        let Some(impl_data) = self.body.local_impl(impl_id) else {
-            return Ok(BodyTy::Unknown);
-        };
-
-        let mut alias_subst = local_type_subst(self.body, receiver_ty);
-        alias_subst.extend(
-            self.local_impl_matcher()
-                .local_impl_self_subst_for_impl(impl_data, receiver_ty),
-        );
-        if let Some(generics) = item.generic_params() {
-            alias_subst.extend(subst_from_generics(generics, args));
+        let mut alias_subst = self.semantic_type_subst(receiver_ty)?;
+        if let ItemOwner::Impl(impl_id) = alias_data.owner {
+            let impl_ref = ImplRef {
+                origin: alias_ref.origin,
+                id: impl_id,
+            };
+            if let Some(impl_data) = item_query.impl_data(impl_ref)? {
+                alias_subst.extend(
+                    self.impl_matcher()
+                        .impl_self_subst_for_impl(impl_data, receiver_ty),
+                );
+            }
         }
-        self.ty_from_type_ref_in_scope_with_subst(aliased_ty, item.scope, &alias_subst)
+        if let Some(generics) = alias_data.signature.generics() {
+            alias_subst.extend(TypeSubst::from_generics(generics, args));
+        }
+
+        let context = item_query
+            .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
+            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
+        if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
+            self.resolve_type_ref_in_module_with_subst(aliased_ty, context.module, &alias_subst)
+        } else {
+            self.resolve_type_ref_in_context_with_subst(aliased_ty, context, &alias_subst)
+        }
     }
 
-    fn local_nominal_tys_from_resolution(
-        &self,
-        resolution: BodyTypePathResolution,
-    ) -> Vec<BodyLocalNominalTy> {
-        match resolution {
-            BodyTypePathResolution::BodyLocal(item) => self
-                .body
-                .local_item(item.item)
-                .filter(|data| data.is_nominal_type())
-                .map(|_| vec![BodyLocalNominalTy::bare(item)])
-                .unwrap_or_default(),
-            BodyTypePathResolution::Primitive(_)
-            | BodyTypePathResolution::SelfType(_)
-            | BodyTypePathResolution::TypeDefs(_)
-            | BodyTypePathResolution::Traits(_)
-            | BodyTypePathResolution::Unknown => Vec::new(),
-        }
+    fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {
+        Ok(self
+            .item_query()
+            .generic_params_for_type_def(ty.def)?
+            .map(|generics| TypeSubst::from_generics(generics, &ty.args))
+            .unwrap_or_else(TypeSubst::new))
     }
 
     fn generic_args_from_type_path_in_scope(
@@ -415,7 +448,7 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
         type_path: &rg_item_tree::TypePath,
         scope: ScopeId,
         subst: &TypeSubst,
-    ) -> Result<Vec<BodyGenericArg>, PackageStoreError> {
+    ) -> Result<Vec<GenericArg>, PackageStoreError> {
         let Some(segment) = type_path.segments.last() else {
             return Ok(Vec::new());
         };
@@ -424,10 +457,10 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
 
     fn generic_args_from_item_tree_args_in_scope(
         &self,
-        args: &[GenericArg],
+        args: &[ItemGenericArg],
         scope: ScopeId,
         subst: &TypeSubst,
-    ) -> Result<Vec<BodyGenericArg>, PackageStoreError> {
+    ) -> Result<Vec<GenericArg>, PackageStoreError> {
         let mut generic_args = Vec::new();
         for arg in args {
             generic_args.push(self.generic_arg_from_item_tree_arg_in_scope(arg, scope, subst)?);
@@ -437,26 +470,26 @@ impl<'query, 'db, 'body> BodyTypePathResolver<'query, 'db, 'body> {
 
     fn generic_arg_from_item_tree_arg_in_scope(
         &self,
-        arg: &GenericArg,
+        arg: &ItemGenericArg,
         scope: ScopeId,
         subst: &TypeSubst,
-    ) -> Result<BodyGenericArg, PackageStoreError> {
+    ) -> Result<GenericArg, PackageStoreError> {
         match arg {
-            GenericArg::Type(ty) => Ok(BodyGenericArg::Type(Box::new(
-                self.ty_from_type_ref_in_scope_with_subst(ty, scope, subst)?,
+            ItemGenericArg::Type(ty) => Ok(GenericArg::Type(Box::new(
+                self.resolve_type_ref_in_scope_with_subst(ty, scope, subst)?,
             ))),
-            GenericArg::Lifetime(lifetime) => Ok(BodyGenericArg::Lifetime(lifetime.clone())),
-            GenericArg::Const(value) => Ok(BodyGenericArg::Const(value.clone())),
-            GenericArg::AssocType { name, ty } => Ok(BodyGenericArg::AssocType {
+            ItemGenericArg::Lifetime(lifetime) => Ok(GenericArg::Lifetime(lifetime.clone())),
+            ItemGenericArg::Const(value) => Ok(GenericArg::Const(value.clone())),
+            ItemGenericArg::AssocType { name, ty } => Ok(GenericArg::AssocType {
                 name: name.clone(),
                 ty: match ty {
                     Some(ty) => Some(Box::new(
-                        self.ty_from_type_ref_in_scope_with_subst(ty, scope, subst)?,
+                        self.resolve_type_ref_in_scope_with_subst(ty, scope, subst)?,
                     )),
                     None => None,
                 },
             }),
-            GenericArg::Unsupported(text) => Ok(BodyGenericArg::Unsupported(text.clone())),
+            ItemGenericArg::Unsupported(text) => Ok(GenericArg::Unsupported(text.clone())),
         }
     }
 }

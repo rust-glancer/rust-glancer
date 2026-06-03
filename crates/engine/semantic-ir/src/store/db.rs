@@ -1,10 +1,13 @@
 //! Semantic IR package store and transaction entry points.
 
-use rg_def_map::{Package as DefMapPackage, PackageSlot};
+use rg_def_map::PackageSlot;
+use rg_ir_model::ImplRef;
+use rg_ir_model::hir::items::ImplData;
+use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 
 use crate::{
-    ImplData, ImplRef, PackageIr, SemanticIrReadTxn, SemanticIrStats,
+    PackageIr, SemanticIrReadTxn, SemanticIrStats,
     build::{SemanticIrDbBuilder, SemanticIrDbPackageRebuilder},
 };
 
@@ -72,18 +75,17 @@ impl SemanticIrDb {
             let Some(package) = entry.as_resident() else {
                 continue;
             };
-            for target in package.targets() {
-                let items = target.items();
+            for items in package.targets() {
                 stats.target_count += 1;
-                stats.struct_count += items.structs.len();
-                stats.union_count += items.unions.len();
-                stats.enum_count += items.enums.len();
-                stats.trait_count += items.traits.len();
-                stats.impl_count += items.impls.len();
-                stats.function_count += items.functions.len();
-                stats.type_alias_count += items.type_aliases.len();
-                stats.const_count += items.consts.len();
-                stats.static_count += items.statics.len();
+                stats.struct_count += items.structs().len();
+                stats.union_count += items.unions().len();
+                stats.enum_count += items.enums().len();
+                stats.trait_count += items.traits().len();
+                stats.impl_count += items.impls().len();
+                stats.function_count += items.functions().len();
+                stats.type_alias_count += items.type_aliases().len();
+                stats.const_count += items.consts().len();
+                stats.static_count += items.statics().len();
             }
         }
 
@@ -147,10 +149,10 @@ impl SemanticIrDbMutator<'_> {
     }
 
     pub(crate) fn impl_data_mut(&mut self, impl_ref: ImplRef) -> Option<&mut ImplData> {
-        self.package_mut(impl_ref.target.package)?
-            .target_mut(impl_ref.target.target)?
-            .items_mut()
-            .impls
+        let target = impl_ref.origin.as_target_ref()?;
+        self.package_mut(target.package)?
+            .target_mut(target.target)?
+            .impls_mut()
             .get_mut(impl_ref.id)
     }
 

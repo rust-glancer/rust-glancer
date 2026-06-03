@@ -5,12 +5,14 @@ use rg_syntax::{
     ast::{self, HasName as _, RangeItem as _},
 };
 
+use rg_ir_model::{BindingId, ExprId, PatId, ScopeId};
 use rg_item_tree::{FieldKey, TypeRef};
 use rg_text::Name;
+use rg_ty::Ty;
 
 use crate::ir::{
-    BindingData, BindingId, BindingKind, BodyPath, BodyTy, ExprId, LiteralKind, PatBindingMode,
-    PatData, PatId, PatKind, PatMutability, PatRangeKind, RecordPatField, ScopeId,
+    BindingData, BindingKind, BodyPath, LiteralKind, PatBindingMode, PatData, PatKind,
+    PatMutability, PatRangeKind, RecordPatField,
     path::{BodyPathSegment, BodyPathSegmentKind},
 };
 
@@ -286,7 +288,7 @@ impl FunctionBodyLowering<'_> {
             kind,
             name: Some(name),
             annotation,
-            ty: BodyTy::Unknown,
+            ty: Ty::Unknown,
         });
         bindings.push(binding);
         Some(binding)
@@ -315,7 +317,7 @@ impl FunctionBodyLowering<'_> {
         self.builder.alloc_pat(PatData {
             source: self.source(syntax),
             kind: PatKind::Binding {
-                mode: PatBindingMode::DEFAULT,
+                mode: PatBindingMode::default(),
                 binding,
                 subpat: None,
                 path: None,

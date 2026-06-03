@@ -12,7 +12,8 @@ pub(crate) mod update;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use rg_def_map::{PackageSlot, TargetRef};
+use rg_def_map::PackageSlot;
+use rg_ir_model::TargetRef;
 use rg_parse::FileId;
 use rg_workspace::WorkspaceMetadata;
 

@@ -15,6 +15,12 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 
 use rg_cfg_eval::{CfgEvaluator, CfgOptions};
+use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_storage::{
+    DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
+    LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin,
+    ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin,
+};
 use rg_item_tree::{
     Documentation, ExternCrateItem, ItemKind, ItemNode, ItemTreeDb, ItemTreeId, ItemTreeRef,
     MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
@@ -24,13 +30,7 @@ use rg_parse::{Package, Target};
 use rg_text::Name;
 use rg_workspace::{RustEdition, TargetKind};
 
-use crate::{
-    DefId, DefMap, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
-    LocalDefData, LocalDefId, LocalDefKind, LocalDefRef, LocalImplData, MacroDefinitionData,
-    ModuleData, ModuleId, ModuleOrigin, ModuleRef, ModuleScope, PackageSlot, ScopeBinding,
-    ScopeBindingOrigin, TargetRef,
-    model::{ModuleScopeBuilder, Namespace},
-};
+use crate::PackageSlot;
 
 use super::macros::{
     ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroDirective, MacroDirectiveState,
@@ -44,11 +44,12 @@ use super::macros::{
 pub(super) struct TargetState {
     pub(super) target: TargetRef,
     pub(super) target_name: String,
+    pub(super) root_module: ModuleId,
     pub(super) edition: RustEdition,
     /// Target-specific cfg values used to decide which collected items really exist.
     pub(super) cfg_options: CfgOptions,
     pub(super) target_kind: TargetKind,
-    pub(super) def_map: DefMap,
+    pub(super) def_map_builder: DefMapBuilder,
     pub(super) base_scopes: Vec<ModuleScopeBuilder>,
     pub(super) implicit_roots: HashMap<Name, ModuleRef>,
     pub(super) prelude: Option<ModuleRef>,
@@ -159,7 +160,8 @@ struct TargetScopeCollector<'db> {
     cfg_options: &'db CfgOptions,
     target_kind: TargetKind,
     implicit_roots: &'db HashMap<Name, ModuleRef>,
-    def_map: DefMap,
+    root_module: Option<ModuleId>,
+    def_map_builder: DefMapBuilder,
     base_scopes: Vec<ModuleScopeBuilder>,
     macro_definitions: HashMap<LocalDefId, MacroDefinitionRecord>,
     textual_macro_scopes: TextualMacroScopes,
@@ -181,7 +183,8 @@ impl<'db> TargetScopeCollector<'db> {
             cfg_options,
             target_kind,
             implicit_roots,
-            def_map: DefMap::default(),
+            root_module: None,
+            def_map_builder: DefMapBuilder::new(target),
             base_scopes: Vec::new(),
             macro_definitions: HashMap::new(),
             textual_macro_scopes: TextualMacroScopes::default(),
@@ -213,7 +216,7 @@ impl<'db> TargetScopeCollector<'db> {
                 file_id: target.root_file,
             },
         );
-        self.def_map.set_root_module(root_module);
+        self.root_module = Some(root_module);
 
         self.collect_items(item_tree, root_module, root_file, &root_file_tree.top_level)
             .context("while attempting to collect root file items")?;
@@ -221,10 +224,11 @@ impl<'db> TargetScopeCollector<'db> {
         Ok(TargetState {
             target: self.target,
             target_name: target.name.clone(),
+            root_module,
             edition: self.edition,
             cfg_options: self.cfg_options.clone(),
             target_kind: self.target_kind.clone(),
-            def_map: self.def_map,
+            def_map_builder: self.def_map_builder,
             base_scopes: self.base_scopes,
             implicit_roots: self.implicit_roots.clone(),
             prelude: None,
@@ -244,7 +248,7 @@ impl<'db> TargetScopeCollector<'db> {
         docs: Option<rg_item_tree::Documentation>,
         origin: ModuleOrigin,
     ) -> ModuleId {
-        let module_id = self.def_map.alloc_module(ModuleData {
+        let module_id = self.def_map_builder.alloc_module(ModuleData {
             name,
             name_span,
             docs,
@@ -330,17 +334,17 @@ impl<'db> TargetScopeCollector<'db> {
         let namespace = kind.namespace();
         let name = item.name.clone()?;
 
-        let local_def_id = self.def_map.alloc_local_def(LocalDefData {
+        let local_def_id = self.def_map_builder.alloc_local_def(LocalDefData {
             module: module_id,
             name: name.clone(),
             kind,
             visibility: item.visibility.clone(),
-            source,
+            source: source.into(),
             file_id: item.file_id,
             name_span: item.name_span,
             span: item.span,
         });
-        self.def_map
+        self.def_map_builder
             .module_mut(module_id)
             .expect("module should exist for collected local definition")
             .local_defs
@@ -353,12 +357,12 @@ impl<'db> TargetScopeCollector<'db> {
                 namespace,
                 ScopeBinding {
                     def: DefId::Local(LocalDefRef {
-                        target: self.target,
+                        origin: DefMapRef::Target(self.target),
                         local_def: local_def_id,
                     }),
                     visibility: item.visibility.clone(),
                     owner: ModuleRef {
-                        target: self.target,
+                        origin: DefMapRef::Target(self.target),
                         module: module_id,
                     },
                     origin: ScopeBindingOrigin::Direct,
@@ -399,7 +403,7 @@ impl<'db> TargetScopeCollector<'db> {
         {
             self.export_macro_definition_to_root(name, local_def_id);
         }
-        self.def_map.insert_macro_definition(
+        self.def_map_builder.insert_macro_definition(
             local_def_id,
             MacroDefinitionData::from_item(macro_definition, self.edition, self.target),
         );
@@ -407,9 +411,9 @@ impl<'db> TargetScopeCollector<'db> {
 
     /// Makes a `#[macro_export]` definition visible through the crate root macro namespace.
     fn export_macro_definition_to_root(&mut self, name: &Name, local_def_id: LocalDefId) {
-        let Some(root_module) = self.def_map.root_module() else {
-            return;
-        };
+        let root_module = self
+            .root_module
+            .expect("root module should exist before macro export collection");
         self.base_scopes
             .get_mut(root_module.0)
             .expect("root scope should exist before macro export collection")
@@ -418,12 +422,12 @@ impl<'db> TargetScopeCollector<'db> {
                 Namespace::Macros,
                 ScopeBinding {
                     def: DefId::Local(LocalDefRef {
-                        target: self.target,
+                        origin: DefMapRef::Target(self.target),
                         local_def: local_def_id,
                     }),
                     visibility: VisibilityLevel::Public,
                     owner: ModuleRef {
-                        target: self.target,
+                        origin: DefMapRef::Target(self.target),
                         module: root_module,
                     },
                     origin: ScopeBindingOrigin::MacroExport,
@@ -471,13 +475,13 @@ impl<'db> TargetScopeCollector<'db> {
 
     /// Records one module-scope impl block without inserting a namespace binding.
     fn collect_local_impl(&mut self, module_id: ModuleId, item: &ItemNode, source: ItemTreeRef) {
-        let local_impl_id = self.def_map.alloc_local_impl(LocalImplData {
+        let local_impl_id = self.def_map_builder.alloc_local_impl(LocalImplData {
             module: module_id,
-            source,
+            source: source.into(),
             file_id: item.file_id,
             span: item.span,
         });
-        self.def_map
+        self.def_map_builder
             .module_mut(module_id)
             .expect("module should exist for collected impl block")
             .impls
@@ -594,7 +598,7 @@ impl<'db> TargetScopeCollector<'db> {
         module_name: &Name,
         visibility: rg_item_tree::VisibilityLevel,
     ) {
-        self.def_map
+        self.def_map_builder
             .module_mut(parent_module)
             .expect("parent module should exist for child link")
             .children
@@ -607,12 +611,12 @@ impl<'db> TargetScopeCollector<'db> {
                 Namespace::Types,
                 ScopeBinding {
                     def: DefId::Module(ModuleRef {
-                        target: self.target,
+                        origin: DefMapRef::Target(self.target),
                         module: child_module,
                     }),
                     visibility,
                     owner: ModuleRef {
-                        target: self.target,
+                        origin: DefMapRef::Target(self.target),
                         module: parent_module,
                     },
                     origin: ScopeBindingOrigin::Direct,
@@ -641,7 +645,7 @@ impl<'db> TargetScopeCollector<'db> {
                 continue;
             }
 
-            let import_id = self.def_map.alloc_import(ImportData {
+            let import_id = self.def_map_builder.alloc_import(ImportData {
                 module: module_id,
                 visibility: item.visibility.clone(),
                 kind: ImportKind::from_use_kind(import.kind),
@@ -652,10 +656,10 @@ impl<'db> TargetScopeCollector<'db> {
                     rg_item_tree::ImportAlias::Explicit { span, .. } => Some(*span),
                     rg_item_tree::ImportAlias::Inferred | rg_item_tree::ImportAlias::Hidden => None,
                 },
-                source,
+                source: source.into(),
                 import_index,
             });
-            self.def_map
+            self.def_map_builder
                 .module_mut(module_id)
                 .expect("module should exist for lowered import")
                 .imports
@@ -679,10 +683,9 @@ impl<'db> TargetScopeCollector<'db> {
 
         let module_ref = if extern_name == "self" {
             ModuleRef {
-                target: self.target,
+                origin: DefMapRef::Target(self.target),
                 module: self
-                    .def_map
-                    .root_module()
+                    .root_module
                     .expect("root module should exist before extern crate collection"),
             }
         } else {
@@ -722,7 +725,7 @@ impl<'db> TargetScopeCollector<'db> {
                     def: DefId::Module(module_ref),
                     visibility: item.visibility.clone(),
                     owner: ModuleRef {
-                        target: self.target,
+                        origin: DefMapRef::Target(self.target),
                         module: module_id,
                     },
                     origin: ScopeBindingOrigin::Direct,

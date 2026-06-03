@@ -3,15 +3,14 @@
 //! Source scans collect every body-local declaration and reference-like span
 //! that can participate in navigation, references, and symbol queries.
 
-use rg_def_map::TargetRef;
+use rg_ir_model::{
+    BindingId, BodyId, BodyRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TargetRef,
+    TypeDefId, hir::source::ItemSourceKind,
+};
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
-use crate::{
-    BindingId, BodyData, BodyEnumVariantRef, BodyFieldRef, BodyFunctionId, BodyFunctionRef, BodyId,
-    BodyIrReadTxn, BodyItemId, BodyItemRef, BodyRef, BodyValueItemId, BodyValueItemRef, ExprId,
-    ExprKind,
-};
+use crate::{BodyData, BodyIrReadTxn, ExprKind};
 
 use super::{
     super::BodyCursorCandidate,
@@ -98,65 +97,119 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             });
         }
 
-        for (item_idx, item) in body.local_items().iter().enumerate() {
-            if !self.file_matches(item.name_source.file_id) {
+        let Some(item_store) = body.body_item_store() else {
+            return;
+        };
+        for item in item_store.semantic_items() {
+            if self
+                .file_id
+                .is_some_and(|file_id| item.source().file_id != file_id)
+            {
                 continue;
             }
 
-            let item_ref = BodyItemRef {
-                body: body_ref,
-                item: BodyItemId(item_idx),
+            let declaration_span = match item.source().kind {
+                ItemSourceKind::Body(source) if source.body == body_ref => body
+                    .source_item(source.item)
+                    .and_then(|item| item.name_span)
+                    .unwrap_or_else(|| item.span().unwrap_or(body.source.span)),
+                _ => item.span().unwrap_or(body.source.span),
             };
-            candidates.push(BodyCursorCandidate::LocalItem {
-                item: item_ref,
-                span: item.name_source.span,
-            });
 
-            for (field_idx, field) in item.fields().iter().enumerate() {
-                candidates.push(BodyCursorCandidate::LocalField {
-                    field: BodyFieldRef {
-                        item: item_ref,
-                        index: field_idx,
-                    },
-                    span: field.span,
-                });
-            }
-
-            for (variant_idx, variant) in item.enum_variants().iter().enumerate() {
-                candidates.push(BodyCursorCandidate::LocalEnumVariant {
-                    variant: BodyEnumVariantRef {
-                        item: item_ref,
-                        index: variant_idx,
-                    },
-                    span: variant.name_span,
-                });
+            match item.item() {
+                SemanticItemRef::TypeDef(ty) => {
+                    candidates.push(BodyCursorCandidate::LocalItem {
+                        item: item.item(),
+                        span: declaration_span,
+                    });
+                    self.push_field_candidates(item_store, ty, candidates);
+                    self.push_variant_candidates(item_store, ty, candidates);
+                }
+                SemanticItemRef::Trait(_) | SemanticItemRef::TypeAlias(_) => {
+                    candidates.push(BodyCursorCandidate::LocalItem {
+                        item: item.item(),
+                        span: declaration_span,
+                    });
+                }
+                SemanticItemRef::Const(_) | SemanticItemRef::Static(_) => {
+                    candidates.push(BodyCursorCandidate::LocalValueItem {
+                        item: item.item(),
+                        span: declaration_span,
+                    });
+                }
+                SemanticItemRef::Function(function) => {
+                    candidates.push(BodyCursorCandidate::LocalFunction {
+                        function,
+                        span: declaration_span,
+                    });
+                }
+                SemanticItemRef::Impl(_) => {}
             }
         }
+    }
 
-        for (item_idx, item) in body.local_value_items().iter().enumerate() {
-            if !self.file_matches(item.name_source.file_id) {
-                continue;
+    fn push_field_candidates(
+        &self,
+        item_store: &rg_ir_storage::ItemStore,
+        ty: rg_ir_model::TypeDefRef,
+        candidates: &mut Vec<BodyCursorCandidate>,
+    ) {
+        match ty.id {
+            TypeDefId::Struct(id) => {
+                let Some(data) = item_store.struct_data(id) else {
+                    return;
+                };
+                if !self.file_matches(data.source.file_id) {
+                    return;
+                }
+                for (index, field) in data.fields.fields().iter().enumerate() {
+                    candidates.push(BodyCursorCandidate::LocalField {
+                        field: FieldRef { owner: ty, index },
+                        span: field.span,
+                    });
+                }
             }
-
-            candidates.push(BodyCursorCandidate::LocalValueItem {
-                item: BodyValueItemRef {
-                    body: body_ref,
-                    item: BodyValueItemId(item_idx),
-                },
-                span: item.name_source.span,
-            });
+            TypeDefId::Union(id) => {
+                let Some(data) = item_store.union_data(id) else {
+                    return;
+                };
+                if !self.file_matches(data.source.file_id) {
+                    return;
+                }
+                for (index, field) in data.fields.iter().enumerate() {
+                    candidates.push(BodyCursorCandidate::LocalField {
+                        field: FieldRef { owner: ty, index },
+                        span: field.span,
+                    });
+                }
+            }
+            TypeDefId::Enum(_) => {}
         }
+    }
 
-        for (function_idx, function) in body.local_functions().iter().enumerate() {
-            if !self.file_matches(function.name_source.file_id) {
+    fn push_variant_candidates(
+        &self,
+        item_store: &rg_ir_storage::ItemStore,
+        ty: rg_ir_model::TypeDefRef,
+        candidates: &mut Vec<BodyCursorCandidate>,
+    ) {
+        let TypeDefId::Enum(enum_id) = ty.id else {
+            return;
+        };
+        let Some(data) = item_store.enum_data(enum_id) else {
+            return;
+        };
+        for (index, variant) in data.variants.iter().enumerate() {
+            if !self.file_matches(data.source.file_id) {
                 continue;
             }
-            candidates.push(BodyCursorCandidate::LocalFunction {
-                function: BodyFunctionRef {
-                    body: body_ref,
-                    function: BodyFunctionId(function_idx),
+            candidates.push(BodyCursorCandidate::LocalEnumVariant {
+                variant: EnumVariantRef {
+                    origin: ty.origin,
+                    enum_id,
+                    index,
                 },
-                span: function.name_source.span,
+                span: variant.name_span,
             });
         }
     }

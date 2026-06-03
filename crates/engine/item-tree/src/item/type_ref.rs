@@ -88,6 +88,19 @@ impl TypeRef {
         Self::Unknown(text.into())
     }
 
+    /// Returns true when this type syntax is the special `Self` type.
+    pub fn is_self_type(&self) -> bool {
+        matches!(self, Self::Path(path) if path.is_self_type())
+    }
+
+    /// Returns the name of a plain single-segment type path.
+    pub fn type_param_name(&self) -> Option<Name> {
+        match self {
+            Self::Path(path) => path.single_name().cloned(),
+            _ => None,
+        }
+    }
+
     /// Returns true when this type syntax contains explicit generic arguments anywhere inside it.
     pub fn has_generic_args(&self) -> bool {
         match self {
@@ -270,6 +283,12 @@ impl TypeRef {
     }
 }
 
+impl rg_memsize::Shrink for TypeRef {
+    fn shrink_to_fit(&mut self) {
+        TypeRef::shrink_to_fit(self);
+    }
+}
+
 impl fmt::Display for TypeRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -381,6 +400,20 @@ impl TypePath {
         }
     }
 
+    /// Returns the name of a single-segment relative path.
+    pub fn single_name(&self) -> Option<&Name> {
+        if self.absolute || self.segments.len() != 1 {
+            return None;
+        }
+
+        self.segments.first().map(|segment| &segment.name)
+    }
+
+    pub fn is_self_type(&self) -> bool {
+        self.single_name()
+            .is_some_and(|name| name.as_str() == "Self")
+    }
+
     pub fn shrink_to_fit(&mut self) {
         self.segments.shrink_to_fit();
         for segment in &mut self.segments {
@@ -424,7 +457,7 @@ impl TypePathSegment {
     ) -> Self {
         let name = segment
             .name_ref()
-            .map(|name| interner.intern(name.syntax().text().to_string()))
+            .map(|name| interner.intern(name.syntax().text().to_string().trim()))
             .unwrap_or_else(|| interner.intern(normalized_syntax(segment)));
         let span = segment
             .name_ref()
@@ -520,6 +553,16 @@ impl GenericArg {
                 .map(|ty| TypeRef::from_ast(ty, line_index, interner))
                 .map(Self::Type)
                 .unwrap_or_else(|| Self::Unsupported(normalized_syntax(&arg))),
+        }
+    }
+
+    /// Extracts the syntax type from this argument when it is a type argument.
+    pub fn type_ref(&self) -> Option<&TypeRef> {
+        match self {
+            Self::Type(ty) => Some(ty),
+            Self::Lifetime(_) | Self::Const(_) | Self::AssocType { .. } | Self::Unsupported(_) => {
+                None
+            }
         }
     }
 
