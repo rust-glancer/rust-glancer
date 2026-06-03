@@ -5,10 +5,10 @@
 
 use rg_body_ir::BodyScopeQuery;
 use rg_ir_model::{
-    BodyRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TypePathResolution,
+    BodyRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TargetRef, TypePathResolution,
     hir::items::{FieldData, FunctionData},
 };
-use rg_ir_storage::{ItemStoreQuery, Path};
+use rg_ir_storage::{ItemStoreQuery, Path, TargetItemQuery};
 use rg_ir_view::{IndexedViewDb, item::path::PathView};
 use rg_item_tree::{Documentation, FieldKey, ParamItem};
 pub(crate) use rg_ty::MemberMethodOrigin;
@@ -125,10 +125,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
     pub(crate) fn field_candidates_for_ty<'view>(
         &'view self,
+        use_site: TargetRef,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
         let mut fields = Vec::new();
-        let member_query = MemberQuery::new(ItemPathQuery::new(self.db, self.db));
+        let member_query = MemberQuery::new(
+            ItemPathQuery::new(self.db, self.db),
+            TargetItemQuery::new(self.db, self.db, use_site),
+        );
         for field_ref in member_query.fields_for_ty(ty)? {
             let Some(field) = self.field(field_ref)? else {
                 continue;
@@ -151,7 +155,10 @@ impl<'a, 'db> MemberView<'a, 'db> {
             .resolve_type_path_in_scope(scope, path)?;
 
         let mut fields = Vec::new();
-        let member_query = MemberQuery::new(ItemPathQuery::new(self.db, self.db));
+        let member_query = MemberQuery::new(
+            ItemPathQuery::new(self.db, self.db),
+            TargetItemQuery::new(self.db, self.db, body.target),
+        );
         if let TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types) =
             resolution
         {
@@ -185,10 +192,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
     pub(crate) fn method_candidates_for_ty<'view>(
         &'view self,
+        use_site: TargetRef,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
         let mut methods = Vec::new();
-        let member_query = MemberQuery::new(ItemPathQuery::new(self.db, self.db));
+        let member_query = MemberQuery::new(
+            ItemPathQuery::new(self.db, self.db),
+            TargetItemQuery::new(self.db, self.db, use_site),
+        );
         for candidate in member_query.method_candidates_for_ty(ty)? {
             let Some(function) = self.function(candidate.function())? else {
                 continue;

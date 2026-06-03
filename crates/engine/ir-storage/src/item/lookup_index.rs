@@ -9,9 +9,9 @@ use std::collections::HashMap;
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, TraitImplRef, TraitRef, TypeDefRef};
 use rg_text::Name;
 
-use crate::{ItemStoreQuery, ItemStoreSource, push_unique};
+use crate::{ItemStoreQuery, ItemStoreSource, TargetItemQuery, push_unique};
 
-/// Receiver-oriented lookup cache built from the stores visible to an `ItemStoreQuery`.
+/// Receiver-oriented lookup cache built from the stores visible from one use-site target.
 #[derive(Debug, Default)]
 pub struct ItemLookupIndex {
     // Method lookup starts from a receiver type. These maps let callers jump directly to impls
@@ -26,16 +26,19 @@ pub struct ItemLookupIndex {
 }
 
 impl ItemLookupIndex {
-    /// Builds an index from the stores that are visible to broad item lookup.
-    pub fn build<'item, S>(item_query: &ItemStoreQuery<'item, S>) -> Result<Self, S::Error>
+    /// Builds an index from the stores visible from one use-site target.
+    pub fn build_from<'item, D, I>(
+        target_items: &TargetItemQuery<'item, D, I>,
+    ) -> Result<Self, I::Error>
     where
-        S: ItemStoreSource<'item>,
+        D: crate::DefMapSource<Error = I::Error>,
+        I: ItemStoreSource<'item>,
     {
         let mut index = Self::default();
 
-        // The index mirrors broad item-store lookup helpers, but pays the store scan once up front
-        // instead of once per method expression.
-        for store in item_query.visible_stores()? {
+        // The index mirrors target-scoped item-store lookup helpers, but pays the store scan once
+        // up front instead of once per method expression.
+        for store in target_items.visible_stores()? {
             // Trait methods are independent of a receiver type, so cache them by trait before
             // processing impls that later point back to these traits.
             for (trait_ref, trait_data) in store.traits_with_refs() {
@@ -51,7 +54,9 @@ impl ItemLookupIndex {
                             id: *id,
                         };
                         push_unique(functions, function_ref);
-                        if let Some(function_data) = item_query.function_data(function_ref)? {
+                        if let Some(function_data) =
+                            target_items.items().function_data(function_ref)?
+                        {
                             push_unique(
                                 index
                                     .trait_functions_by_trait_and_name
@@ -82,7 +87,8 @@ impl ItemLookupIndex {
                                     origin: impl_ref.origin,
                                     id: *id,
                                 };
-                                let Some(function_data) = item_query.function_data(function_ref)?
+                                let Some(function_data) =
+                                    target_items.items().function_data(function_ref)?
                                 else {
                                     continue;
                                 };

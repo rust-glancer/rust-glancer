@@ -7,7 +7,7 @@ mod view;
 pub use self::{
     context::TypePathContext,
     lookup_index::ItemLookupIndex,
-    query::{ItemStoreQuery, ItemStoreSource},
+    query::{ItemStoreQuery, ItemStoreSource, TargetItemQuery},
     store::{ItemStore, ItemStoreBuilder},
     view::SemanticItemView,
 };

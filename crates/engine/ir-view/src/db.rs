@@ -63,7 +63,7 @@ impl<'a, 'db> ItemStoreSource<'a> for &'a IndexedViewDb<'db> {
         }
     }
 
-    fn visible_stores(&self) -> Result<Vec<&'a ItemStore>, PackageStoreError> {
+    fn included_stores(&self) -> Result<Vec<&'a ItemStore>, PackageStoreError> {
         self.semantic_ir.included_stores()
     }
 }

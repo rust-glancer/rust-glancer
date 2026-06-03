@@ -332,7 +332,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
 
         let members = MemberView::new(self.db);
         let mut fields = Vec::new();
-        for field in members.field_candidates_for_ty(&receiver_ty)? {
+        for field in members.field_candidates_for_ty(receiver.body_ir().target, &receiver_ty)? {
             fields.push(field.field_ref());
         }
 
@@ -382,7 +382,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
 
         let members = MemberView::new(self.db);
         let mut methods = Vec::new();
-        for method in members.method_candidates_for_ty(&receiver_ty)? {
+        for method in members.method_candidates_for_ty(receiver.body_ir().target, &receiver_ty)? {
             methods.push(Self::dot_method_candidate(method));
         }
 

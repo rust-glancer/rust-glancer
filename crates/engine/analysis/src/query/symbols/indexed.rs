@@ -221,7 +221,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
     }
 
     fn included_targets(&self) -> Result<Vec<TargetRef>> {
-        Ok(ItemStoreQuery::new(self.db).visible_target_refs()?)
+        Ok(ItemStoreQuery::new(self.db).included_target_refs()?)
     }
 
     fn module_declarations(&self, target: TargetRef) -> Result<Vec<DeclarationRef>> {

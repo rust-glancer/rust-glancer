@@ -126,3 +126,124 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
         "#]],
     );
 }
+
+#[test]
+fn method_lookup_excludes_traits_from_unrelated_workspace_targets() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/shared", "crates/app", "crates/other"]
+resolver = "3"
+
+//- /crates/shared/Cargo.toml
+[package]
+name = "shared"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/shared/src/lib.rs
+pub struct Maybe;
+
+impl Maybe {
+    pub fn is_some(&self) -> bool {
+        true
+    }
+}
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shared = { path = "../shared" }
+
+//- /crates/app/src/lib.rs
+use shared::Maybe;
+
+pub fn use_it(maybe: Maybe) {
+    let ok = maybe.is_some();
+    let missing = maybe.and_then();
+}
+
+//- /crates/other/Cargo.toml
+[package]
+name = "other"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shared = { path = "../shared" }
+
+//- /crates/other/src/lib.rs
+use shared::Maybe;
+
+pub trait OtherExt {
+    fn and_then(&self) -> bool;
+}
+
+impl OtherExt for Maybe {
+    fn and_then(&self) -> bool {
+        true
+    }
+}
+"#,
+        expect![[r#"
+            package app
+
+            app [lib]
+            body b0 fn app[lib]::crate::use_it @ 3:1-6:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v2
+            bindings
+            - v0 param maybe `maybe`: Maybe => nominal struct shared[lib]::crate::Maybe @ 3:15-3:20
+            - v1 let ok `ok` => bool @ 4:9-4:11
+            - v2 let missing `missing` => <unknown> @ 5:9-5:16
+            body
+            expr e4 block s1 => () @ 3:29-6:2
+              stmt s0 let v1 @ 4:5-4:30
+                initializer
+                  expr e1 method_call is_some -> fn impl Maybe::is_some => bool @ 4:14-4:29
+                    receiver
+                      expr e0 path maybe -> local v0 => nominal struct shared[lib]::crate::Maybe @ 4:14-4:19
+              stmt s1 let v2 @ 5:5-5:36
+                initializer
+                  expr e3 method_call and_then => <unknown> @ 5:19-5:35
+                    receiver
+                      expr e2 path maybe -> local v0 => nominal struct shared[lib]::crate::Maybe @ 5:19-5:24
+
+
+            package other
+
+            other [lib]
+            body b0 fn impl OtherExt for Maybe::and_then @ 8:5-10:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `&self` => &Self struct shared[lib]::crate::Maybe @ 8:17-8:22
+            body
+            expr e1 block s1 => <unknown> @ 8:32-10:6
+              tail
+                expr e0 literal bool `true` => <unknown> @ 9:9-9:13
+
+
+            package shared
+
+            shared [lib]
+            body b0 fn impl Maybe::is_some @ 4:5-6:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `&self` => &Self struct shared[lib]::crate::Maybe @ 4:20-4:25
+            body
+            expr e1 block s1 => <unknown> @ 4:35-6:6
+              tail
+                expr e0 literal bool `true` => <unknown> @ 5:9-5:13
+        "#]],
+    );
+}

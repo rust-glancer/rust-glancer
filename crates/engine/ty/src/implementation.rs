@@ -5,13 +5,14 @@
 //! declaration shape that UI-facing analysis expects.
 
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitRef, TypeDefRef};
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::{DefMapSource, ItemStoreSource, TargetItemQuery};
 
 use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, ReferencePeelingCandidates, Ty};
 
 /// Ref-level implementation lookup shared by view and analysis adapters.
 pub struct ImplementationQuery<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
+    target_items: TargetItemQuery<'query, D, I>,
 }
 
 impl<'query, D, I> ImplementationQuery<'query, D, I>
@@ -19,8 +20,14 @@ where
     D: DefMapSource + Clone,
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
-    pub fn new(item_paths: ItemPathQuery<'query, D, I>) -> Self {
-        Self { item_paths }
+    pub fn new(
+        item_paths: ItemPathQuery<'query, D, I>,
+        target_items: TargetItemQuery<'query, D, I>,
+    ) -> Self {
+        Self {
+            item_paths,
+            target_items,
+        }
     }
 
     /// Returns impl blocks for all nominal type definitions reachable through reference peeling.
@@ -38,12 +45,12 @@ where
 
     /// Returns impl blocks whose resolved self type mentions this nominal type definition.
     pub fn impls_for_type_def(&self, ty: TypeDefRef) -> Result<Vec<ImplRef>, D::Error> {
-        self.item_paths.items().impls_for_type(ty)
+        self.target_items.impls_for_type(ty)
     }
 
     /// Returns impl blocks that resolve to the requested trait.
     pub fn impls_for_trait(&self, trait_ref: TraitRef) -> Result<Vec<ImplRef>, D::Error> {
-        self.item_paths.items().impls_for_trait(trait_ref)
+        self.target_items.impls_for_trait(trait_ref)
     }
 
     /// Returns concrete functions that implement or correspond to the selected function.
@@ -94,14 +101,14 @@ where
         method_name: &str,
         receiver_ty: &Ty,
     ) -> Result<Vec<FunctionRef>, D::Error> {
-        let autoderef = Autoderef::new(self.item_paths.clone());
-        let matcher = ImplMatcher::new(self.item_paths.clone());
+        let autoderef = Autoderef::new(self.item_paths.clone(), self.target_items.clone());
+        let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
         let mut functions = Vec::new();
 
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
             let candidate = candidate?;
             for ty in candidate.ty().as_nominals() {
-                for trait_impl in self.item_paths.items().trait_impls_for_type(ty.def)? {
+                for trait_impl in self.target_items.trait_impls_for_type(ty.def)? {
                     if trait_impl.trait_ref != trait_ref {
                         continue;
                     }
