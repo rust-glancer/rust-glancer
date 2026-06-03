@@ -49,6 +49,17 @@ pub trait EngineService {
         include_declaration: bool,
     ) -> EngineResult<Vec<ls_types::Location>>;
 
+    async fn prepare_rename(
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> EngineResult<Option<ls_types::PrepareRenameResponse>>;
+
+    async fn rename(
+        path: PathBuf,
+        position: ls_types::Position,
+        new_name: String,
+    ) -> EngineResult<Option<ls_types::WorkspaceEdit>>;
+
     async fn document_highlight(
         path: PathBuf,
         position: ls_types::Position,

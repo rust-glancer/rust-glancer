@@ -17,6 +17,10 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
         type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
         implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
         references_provider: Some(OneOf::Left(true)),
+        rename_provider: Some(OneOf::Right(RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: WorkDoneProgressOptions::default(),
+        })),
         document_highlight_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         completion_provider: Some(CompletionOptions {
@@ -51,7 +55,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
 #[cfg(test)]
 mod tests {
     use super::server_capabilities;
-    use tower_lsp_server::ls_types::{TextDocumentSyncCapability, TextDocumentSyncKind};
+    use tower_lsp_server::ls_types::{OneOf, TextDocumentSyncCapability, TextDocumentSyncKind};
 
     #[test]
     fn advertises_multi_root_workspace_support() {
@@ -99,6 +103,16 @@ mod tests {
     fn advertises_references_support() {
         let capabilities = server_capabilities();
         assert!(capabilities.references_provider.is_some());
+    }
+
+    #[test]
+    fn advertises_prepare_rename_support() {
+        let capabilities = server_capabilities();
+        let Some(OneOf::Right(rename)) = capabilities.rename_provider else {
+            panic!("rename capability should use explicit options");
+        };
+
+        assert_eq!(rename.prepare_provider, Some(true));
     }
 
     #[test]

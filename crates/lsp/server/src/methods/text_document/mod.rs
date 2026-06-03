@@ -10,4 +10,5 @@ pub(crate) mod hover;
 pub(crate) mod implementation;
 pub(crate) mod inlay_hint;
 pub(crate) mod references;
+pub(crate) mod rename;
 pub(crate) mod type_definition;

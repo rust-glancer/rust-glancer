@@ -7,7 +7,7 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
 #[cfg(test)]
 use rg_parse::ParseDb;
-use rg_parse::{FileId, LineIndex};
+use rg_parse::{FileId, LineIndex, Span};
 
 use super::{FileContext, state::ProjectState, stats::ProjectStats, subset};
 
@@ -128,6 +128,28 @@ impl<'a> ProjectSnapshot<'a> {
     /// Returns the source path for a package-local file id.
     pub fn file_path(&self, package: PackageSlot, file: FileId) -> Option<&Path> {
         self.state.parse_db().package(package.0)?.file_path(file)
+    }
+
+    /// Returns whether a package belongs to the analyzed workspace.
+    pub fn package_is_workspace_member(&self, package: PackageSlot) -> bool {
+        self.state
+            .parse_db()
+            .package(package.0)
+            .is_some_and(|package| package.is_workspace_member())
+    }
+
+    /// Returns source text for a byte span from the same snapshot that backs this project view.
+    pub fn file_text_for_span(
+        &self,
+        package: PackageSlot,
+        file: FileId,
+        span: Span,
+    ) -> Option<String> {
+        self.state
+            .parse_db()
+            .package(package.0)?
+            .parsed_file(file)?
+            .text_for_span(span)
     }
 
     /// Returns the line index used to convert offsets for a package-local file id.

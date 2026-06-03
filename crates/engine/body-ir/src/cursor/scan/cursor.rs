@@ -10,7 +10,7 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
-use crate::{BodyData, BodyIrReadTxn};
+use crate::{BodyData, BodyIrReadTxn, ExprData, ExprKind};
 
 use super::{
     super::BodyCursorCandidate,
@@ -106,12 +106,15 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
         for (expr_idx, expr) in body.exprs.iter().enumerate() {
             if expr.source.file_id == self.file_id && expr.source.span.touches(self.offset) {
+                let span = Self::member_reference_span(expr)
+                    .filter(|span| span.touches(self.offset))
+                    .unwrap_or(expr.source.span);
                 best.consider(
-                    expr.source.span,
+                    span,
                     BodyCursorCandidate::Expr {
                         body: body_ref,
                         expr: ExprId(expr_idx),
-                        span: expr.source.span,
+                        span,
                     },
                 );
             }
@@ -179,6 +182,17 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         }
 
         best.finish()
+    }
+
+    fn member_reference_span(expr: &ExprData) -> Option<Span> {
+        match &expr.kind {
+            ExprKind::Path { path } if path.segment_count() == 1 => path.segment_span(0),
+            ExprKind::MethodCall {
+                method_name_span, ..
+            } => *method_name_span,
+            ExprKind::Field { field_span, .. } => *field_span,
+            _ => None,
+        }
     }
 
     fn consider_fields(

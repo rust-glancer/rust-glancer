@@ -23,7 +23,8 @@ use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver
 pub use self::model::{
     CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
     CompletionTarget, DocumentSymbol, HoverBlock, HoverInfo, KeywordCompletion, NavigationTarget,
-    NavigationTargetKind, ReferenceLocation, SymbolAt, TypeHint, TypePathScopeRef, WorkspaceSymbol,
+    NavigationTargetKind, ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
+    TypeHint, TypePathScopeRef, WorkspaceSymbol,
 };
 
 /// High-level LSP-facing query API over one request-scoped project transaction.
@@ -158,6 +159,28 @@ impl<'a> Analysis<'a> {
         query: ReferenceQuery<'_>,
     ) -> anyhow::Result<Vec<ReferenceLocation>> {
         query::references::ReferenceResolver::new(self, query).references(target, file_id, offset)
+    }
+
+    /// Returns the source range and placeholder for a valid rename position.
+    pub fn prepare_rename(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Option<RenameTarget>> {
+        query::rename::RenameResolver::new(self).prepare_rename(target, file_id, offset)
+    }
+
+    /// Returns semantic source edits for renaming the symbol under a source offset.
+    pub fn rename(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+        new_name: &str,
+        query: ReferenceQuery<'_>,
+    ) -> anyhow::Result<Option<RenameResult>> {
+        query::rename::RenameResolver::new(self).rename(target, file_id, offset, new_name, query)
     }
 
     /// Returns best-effort completion candidates for a source offset.

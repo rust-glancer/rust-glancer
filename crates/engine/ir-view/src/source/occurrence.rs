@@ -207,6 +207,17 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 file_id,
                 span,
             ),
+            DefMapCursorCandidate::ImportAlias {
+                module,
+                path,
+                file_id,
+                span,
+            } => IndexedSourceOccurrence::structural(
+                IndexedSourceFact::UsePath { module, path },
+                target,
+                file_id,
+                span,
+            ),
         }
     }
 

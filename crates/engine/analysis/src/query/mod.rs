@@ -11,5 +11,6 @@ pub(crate) mod hover;
 pub(crate) mod member;
 pub(crate) mod navigation;
 pub(crate) mod references;
+pub(crate) mod rename;
 pub(crate) mod symbols;
 pub(crate) mod type_hints;

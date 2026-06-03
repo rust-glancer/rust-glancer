@@ -273,6 +273,63 @@ impl EngineService for Service {
             .map_err(EngineError::from)
     }
 
+    async fn prepare_rename(
+        self,
+        _: context::Context,
+        path: PathBuf,
+        position: ls_types::Position,
+    ) -> EngineResult<Option<ls_types::PrepareRenameResponse>> {
+        let dirty = match self.engine.dirty_document_snapshot(&path).await {
+            DirtyDocumentSnapshotState::Clean => None,
+            DirtyDocumentSnapshotState::Dirty(dirty) => Some(dirty),
+            DirtyDocumentSnapshotState::DirtyWithoutText => return Ok(None),
+        };
+
+        self.engine
+            .request(|respond_to| EngineCommand::PrepareRename {
+                path,
+                position,
+                dirty,
+                respond_to,
+            })
+            .await
+            .map_err(EngineError::from)
+    }
+
+    async fn rename(
+        self,
+        _: context::Context,
+        path: PathBuf,
+        position: ls_types::Position,
+        new_name: String,
+    ) -> EngineResult<Option<ls_types::WorkspaceEdit>> {
+        let dirty = {
+            let documents = self.engine.documents.lock().await;
+            if documents.has_dirty_documents_except(&path) {
+                return Err(EngineError::new(
+                    "rename requires saving other dirty Rust documents first",
+                ));
+            }
+
+            match documents.dirty_snapshot(&path) {
+                DirtyDocumentSnapshotState::Clean => None,
+                DirtyDocumentSnapshotState::Dirty(dirty) => Some(dirty),
+                DirtyDocumentSnapshotState::DirtyWithoutText => return Ok(None),
+            }
+        };
+
+        self.engine
+            .request(|respond_to| EngineCommand::Rename {
+                path,
+                position,
+                new_name,
+                dirty,
+                respond_to,
+            })
+            .await
+            .map_err(EngineError::from)
+    }
+
     async fn document_highlight(
         self,
         _: context::Context,

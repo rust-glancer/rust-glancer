@@ -44,6 +44,19 @@ pub(crate) enum EngineCommand {
         dirty: Option<DirtyDocumentSnapshot>,
         respond_to: EngineResponse<Vec<ls_types::Location>>,
     },
+    PrepareRename {
+        path: PathBuf,
+        position: ls_types::Position,
+        dirty: Option<DirtyDocumentSnapshot>,
+        respond_to: EngineResponse<Option<ls_types::PrepareRenameResponse>>,
+    },
+    Rename {
+        path: PathBuf,
+        position: ls_types::Position,
+        new_name: String,
+        dirty: Option<DirtyDocumentSnapshot>,
+        respond_to: EngineResponse<Option<ls_types::WorkspaceEdit>>,
+    },
     DocumentHighlight {
         path: PathBuf,
         position: ls_types::Position,
