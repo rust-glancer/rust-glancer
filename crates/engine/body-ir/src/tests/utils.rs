@@ -1,30 +1,22 @@
-use std::{
-    fmt::{self, Write as _},
-    marker::PhantomData,
-    sync::Arc,
-};
+use std::fmt::Write as _;
 
 use expect_test::Expect;
 
 use crate::{
-    BindingData, BodyData, BodyIrBuildPolicy, BodyIrDb, BodyIrReadTxn, BodyResolution, BodySource,
+    BindingData, BodyData, BodyIrBuildPolicy, BodyIrReadTxn, BodyResolution, BodySource,
     ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData,
-    PatBindingMode, PatData, PatKind, StmtKind, TargetBodiesStatus,
+    PatBindingMode, PatData, PatKind, StmtKind, TargetBodiesStatus, testonly::BodyIrFixture,
 };
-use rg_def_map::DefMapDb;
 use rg_ir_model::{
     BindingId, BodyId, BodyRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef, FunctionRef,
     ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef, PatId, SemanticItemRef, StmtId,
     TargetRef, TraitRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
-use rg_ir_storage::{DefMap, ItemStore, ModuleOrigin};
-use rg_item_tree::{FieldItem, ItemTreeDb, PackageNameInterners};
-use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
+use rg_ir_storage::ModuleOrigin;
+use rg_item_tree::FieldItem;
+use rg_package_store::PackageLoader;
 use rg_parse::{Package, ParseDb, Target};
-use rg_semantic_ir::SemanticIrDb;
 use rg_ty::{GenericArg, NominalTy, Ty};
-use rg_workspace::WorkspaceMetadata;
-use test_fixture::{CrateFixture, fixture_crate};
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build(fixture);
@@ -51,88 +43,7 @@ pub(super) fn check_project_body_ir_with_policy(
     expect.assert_eq(&actual);
 }
 
-struct BodyIrFixtureDb {
-    /// Keeps the temporary fixture files on disk while snapshots recover source text by span.
-    _fixture: CrateFixture,
-    parse: ParseDb,
-    def_map: DefMapDb,
-    semantic_ir: SemanticIrDb,
-    body_ir: BodyIrDb,
-}
-
-impl BodyIrFixtureDb {
-    fn build(fixture: &str) -> Self {
-        Self::build_with_policy(fixture, BodyIrBuildPolicy::default())
-    }
-
-    fn build_with_policy(fixture: &str, policy: BodyIrBuildPolicy) -> Self {
-        let fixture = fixture_crate(fixture);
-        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build");
-        let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
-        let mut names = PackageNameInterners::new(parse.package_count());
-        let item_tree =
-            ItemTreeDb::build(&mut parse, &mut names).expect("fixture item tree db should build");
-        let def_map = DefMapDb::builder(&workspace, &parse, &item_tree)
-            .name_interners(&mut names)
-            .build()
-            .expect("fixture def map db should build");
-        let semantic_ir = SemanticIrDb::builder(&item_tree, &def_map)
-            .build()
-            .expect("fixture semantic ir db should build");
-        let body_ir = BodyIrDb::builder(&parse, &def_map, &semantic_ir)
-            .name_interners(&mut names)
-            .policy(policy)
-            .build()
-            .expect("fixture body ir db should build");
-
-        Self {
-            _fixture: fixture,
-            parse,
-            def_map,
-            semantic_ir,
-            body_ir,
-        }
-    }
-
-    fn parse_db(&self) -> &ParseDb {
-        &self.parse
-    }
-
-    fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
-        self.def_map
-            .resident_package(target.package)?
-            .def_map(target.target)
-    }
-
-    fn resident_target_ir(&self, target: TargetRef) -> Option<&ItemStore> {
-        self.semantic_ir
-            .resident_package(target.package)?
-            .target(target.target)
-    }
-
-    fn resident_body(&self, body_ref: BodyRef) -> Option<&BodyData> {
-        self.body_ir
-            .resident_package(body_ref.target.package)?
-            .target(body_ref.target.target)?
-            .body(body_ref.body)
-    }
-
-    fn resident_body_item_store(&self, body_ref: BodyRef) -> Option<&ItemStore> {
-        self.resident_body(body_ref)?.body_item_store()
-    }
-
-    fn resident_item_store(&self, origin: DefMapRef) -> Option<&ItemStore> {
-        match origin {
-            DefMapRef::Target(target) => self.resident_target_ir(target),
-            DefMapRef::Body(body_ref) => self.resident_body_item_store(body_ref),
-        }
-    }
-
-    fn body_ir_db(&self) -> &BodyIrDb {
-        &self.body_ir
-    }
-}
+type BodyIrFixtureDb = BodyIrFixture;
 
 struct ProjectBodyIrSnapshot<'a> {
     project: &'a BodyIrFixtureDb,
@@ -1454,7 +1365,7 @@ impl TargetBodyIrSnapshot<'_> {
     fn body_ir_txn(&self) -> BodyIrReadTxn<'_> {
         self.project
             .body_ir_db()
-            .read_txn(unexpected_package_loader())
+            .read_txn(PackageLoader::resident_only("resident body IR fixture"))
     }
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {
@@ -1644,25 +1555,4 @@ fn sorted_targets(package: &Package) -> Vec<&Target> {
             ))
     });
     targets
-}
-
-fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
-    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
-}
-
-struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
-
-impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnexpectedPackageLoader").finish()
-    }
-}
-
-impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
-    fn load(&self, package: rg_def_map::PackageSlot) -> Result<Arc<T>, PackageStoreError> {
-        panic!(
-            "resident body IR fixture should not load offloaded package {}",
-            package.0,
-        )
-    }
 }

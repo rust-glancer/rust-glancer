@@ -20,4 +20,7 @@ pub use self::{
 };
 
 #[cfg(test)]
+pub mod testonly;
+
+#[cfg(test)]
 mod tests;

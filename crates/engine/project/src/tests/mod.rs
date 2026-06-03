@@ -3,12 +3,12 @@ mod utils;
 use std::sync::{Arc, Mutex};
 
 use expect_test::expect;
-use rg_workspace::WorkspaceMetadata;
-use test_fixture::fixture_crate;
+use test_fixture::testonly::MarkedText;
 
-use self::utils::{HostFixture, HostObservation, parse_dirty_text};
+use self::utils::{HostFixture, HostObservation};
 use crate::{
-    BuildProfileStage, PackageResidencyPolicy, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint,
+    BuildProfileStage, PackageResidencyPolicy, Project, ProjectMemoryHooks,
+    ProjectMemoryPurgePoint, testonly::ProjectSourceFixture,
 };
 
 #[derive(Debug)]
@@ -27,7 +27,7 @@ impl ProjectMemoryHooks for RecordingMemoryHooks {
 
 #[test]
 fn project_memory_hooks_report_fresh_build_lifecycle_points() {
-    let fixture = fixture_crate(
+    let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -39,8 +39,7 @@ edition = "2024"
 pub struct User;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should build");
+    let workspace = fixture.workspace_metadata();
     let points = Arc::new(Mutex::new(Vec::new()));
     let hooks: Arc<dyn ProjectMemoryHooks> = Arc::new(RecordingMemoryHooks {
         points: Arc::clone(&points),
@@ -66,7 +65,7 @@ pub struct User;
 
 #[test]
 fn timing_profile_reports_phase_checkpoints_without_memory_sampling() {
-    let fixture = fixture_crate(
+    let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -78,8 +77,7 @@ edition = "2024"
 pub struct User;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should build");
+    let workspace = fixture.workspace_metadata();
     let (_project, profile) = Project::builder(workspace)
         .profile_build_timing(true)
         .build()
@@ -113,7 +111,7 @@ pub struct User;
 
 #[test]
 fn def_map_finalization_stats_are_collected_only_when_requested() {
-    let fixture = fixture_crate(
+    let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -132,8 +130,7 @@ make_item!(User);
 make_item!(Admin);
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should build");
+    let workspace = fixture.workspace_metadata();
 
     let plain_build = Project::builder(workspace.clone())
         .build()
@@ -170,7 +167,7 @@ make_item!(Admin);
 
 #[test]
 fn profiled_build_reports_phase_checkpoints_without_exposing_phase_dbs() {
-    let fixture = fixture_crate(
+    let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -182,8 +179,7 @@ edition = "2024"
 pub struct User;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should build");
+    let workspace = fixture.workspace_metadata();
     let (_project, profile) = Project::builder(workspace)
         .measure_retained_memory(true)
         .build()
@@ -245,7 +241,7 @@ pub struct User;
 
 #[test]
 fn stage_memory_profile_captures_requested_transient_phase() {
-    let fixture = fixture_crate(
+    let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -257,8 +253,7 @@ edition = "2024"
 pub struct User;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should build");
+    let workspace = fixture.workspace_metadata();
     let (_project, profile) = Project::builder(workspace)
         .measure_retained_memory(true)
         .stage_memory_target(Some(BuildProfileStage::DefMap))
@@ -374,7 +369,7 @@ pub fn untouched_body() {}
 "#,
         PackageResidencyPolicy::AllOffloadable,
     );
-    let (dirty_text, cursors) = parse_dirty_text(
+    let dirty_text = MarkedText::parse(
         r#"
 mod other;
 
@@ -393,16 +388,20 @@ pub fn dirty_body(value: Dirty) {
         HostObservation::workspace_symbols("Saved"),
         HostObservation::workspace_symbols("Dirty"),
     ]);
-    let overlay = fixture.dirty_overlay("src/lib.rs", &dirty_text);
+    let overlay = fixture.dirty_overlay("src/lib.rs", dirty_text.text());
     let dirty_overlay = fixture.render_dirty_project(
         &overlay,
-        &dirty_text,
+        dirty_text.text(),
         &[
             HostObservation::resident_stats("dirty overlay"),
             HostObservation::body_ir_stats("dirty overlay"),
             HostObservation::workspace_symbols("Dirty"),
             HostObservation::workspace_symbols("Saved"),
-            HostObservation::completions_at("dirty receiver", "src/lib.rs", cursors["receiver"]),
+            HostObservation::completions_at(
+                "dirty receiver",
+                "src/lib.rs",
+                dirty_text.offset("receiver"),
+            ),
         ],
     );
     let saved_after = fixture.render(&[
@@ -482,7 +481,7 @@ pub struct Saved;
 "#,
         PackageResidencyPolicy::AllOffloadable,
     );
-    let (dirty_text, cursors) = parse_dirty_text(
+    let dirty_text = MarkedText::parse(
         r#"
 f$item$
 im$impl_item$
@@ -497,31 +496,35 @@ pub fn use_it() {
 "#,
     );
 
-    let overlay = fixture.dirty_overlay("src/lib.rs", &dirty_text);
+    let overlay = fixture.dirty_overlay("src/lib.rs", dirty_text.text());
     let actual = fixture.render_dirty_project(
         &overlay,
-        &dirty_text,
+        dirty_text.text(),
         &[
-            HostObservation::completions_at("dirty item keyword", "src/lib.rs", cursors["item"]),
+            HostObservation::completions_at(
+                "dirty item keyword",
+                "src/lib.rs",
+                dirty_text.offset("item"),
+            ),
             HostObservation::completions_at(
                 "dirty impl keyword",
                 "src/lib.rs",
-                cursors["impl_item"],
+                dirty_text.offset("impl_item"),
             ),
             HostObservation::completions_at(
                 "dirty statement keyword",
                 "src/lib.rs",
-                cursors["statement"],
+                dirty_text.offset("statement"),
             ),
             HostObservation::completions_at(
                 "dirty expression keyword",
                 "src/lib.rs",
-                cursors["expression"],
+                dirty_text.offset("expression"),
             ),
             HostObservation::completions_at(
                 "dirty bare expression keyword",
                 "src/lib.rs",
-                cursors["bare_expression"],
+                dirty_text.offset("bare_expression"),
             ),
         ],
     );

@@ -1,23 +1,15 @@
-use std::{
-    fmt::{self, Write as _},
-    marker::PhantomData,
-    sync::Arc,
-};
+use std::fmt::Write as _;
 
 use expect_test::Expect;
 
-use crate::{SemanticIrDb, SemanticIrReadTxn};
-use rg_def_map::{DefMapDb, PackageSlot};
+use crate::{SemanticIrReadTxn, testonly::SemanticIrFixture};
 use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef, TypeAliasId};
-use rg_ir_storage::{DefMap, ItemStore, ItemStoreQuery, Path, PathSegment};
-use rg_item_tree::{
-    FieldItem, FieldList, ItemTreeDb, PackageNameInterners, ParamKind, VisibilityLevel,
-};
-use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
+use rg_ir_storage::{ItemStore, ItemStoreQuery, Path, PathSegment};
+use rg_item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel};
+use rg_package_store::PackageLoader;
 use rg_parse::{Package, ParseDb, Target};
 use rg_ty::ItemPathQuery;
-use rg_workspace::{TargetKind, WorkspaceMetadata};
-use test_fixture::fixture_crate;
+use rg_workspace::TargetKind;
 
 use rg_ir_model::{
     AssocItemId, ConstId, FunctionId, FunctionRef, ImplId, ImplRef, ItemId, TraitRef, TypeDefId,
@@ -85,60 +77,7 @@ impl SemanticQuery {
     }
 }
 
-struct SemanticIrFixtureDb {
-    parse: ParseDb,
-    def_map: DefMapDb,
-    semantic_ir: SemanticIrDb,
-}
-
-impl SemanticIrFixtureDb {
-    fn build(fixture: &str) -> Self {
-        let fixture = fixture_crate(fixture);
-        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build");
-        let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
-        let mut names = PackageNameInterners::new(parse.package_count());
-        let item_tree =
-            ItemTreeDb::build(&mut parse, &mut names).expect("fixture item tree db should build");
-        let def_map = DefMapDb::builder(&workspace, &parse, &item_tree)
-            .name_interners(&mut names)
-            .build()
-            .expect("fixture def map db should build");
-        let semantic_ir = SemanticIrDb::builder(&item_tree, &def_map)
-            .build()
-            .expect("fixture semantic ir db should build");
-
-        Self {
-            parse,
-            def_map,
-            semantic_ir,
-        }
-    }
-
-    fn parse_db(&self) -> &ParseDb {
-        &self.parse
-    }
-
-    fn def_map_db(&self) -> &DefMapDb {
-        &self.def_map
-    }
-
-    fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
-        self.def_map
-            .resident_package(target.package)?
-            .def_map(target.target)
-    }
-
-    fn semantic_ir_db(&self) -> &SemanticIrDb {
-        &self.semantic_ir
-    }
-
-    fn resident_target_ir(&self, target: TargetRef) -> Option<&ItemStore> {
-        self.semantic_ir
-            .resident_package(target.package)?
-            .target(target.target)
-    }
-}
+type SemanticIrFixtureDb = SemanticIrFixture;
 
 struct ProjectSemanticIrSnapshot<'a> {
     project: &'a SemanticIrFixtureDb,
@@ -202,11 +141,11 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
         let def_map_txn = self
             .project
             .def_map_db()
-            .read_txn(unexpected_package_loader());
+            .read_txn(PackageLoader::resident_only("resident semantic IR fixture"));
         let semantic_ir_txn = self
             .project
             .semantic_ir_db()
-            .read_txn(unexpected_package_loader());
+            .read_txn(PackageLoader::resident_only("resident semantic IR fixture"));
         let item_query = ItemStoreQuery::new(&semantic_ir_txn);
         let mut type_defs = ItemPathQuery::new(&def_map_txn, &semantic_ir_txn)
             .type_defs_for_path(
@@ -985,25 +924,4 @@ fn sorted_targets(package: &Package) -> Vec<&Target> {
             ))
     });
     targets
-}
-
-fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
-    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
-}
-
-struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
-
-impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnexpectedPackageLoader").finish()
-    }
-}
-
-impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
-    fn load(&self, package: PackageSlot) -> Result<Arc<T>, PackageStoreError> {
-        panic!(
-            "resident semantic IR fixture should not load offloaded package {}",
-            package.0,
-        )
-    }
 }

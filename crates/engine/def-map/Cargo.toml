@@ -26,7 +26,7 @@ rg_syntax.workspace = true
 rg_text = { workspace = true, features = ["memsize"] }
 rg_tt.workspace = true
 rg_workspace.workspace = true
+test_fixture.workspace = true
 
 [dev-dependencies]
 expect-test.workspace = true
-test_fixture.workspace = true

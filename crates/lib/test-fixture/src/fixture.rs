@@ -77,7 +77,7 @@ impl FixtureSpec {
         self.files
     }
 
-    fn strip_markers_from_line(
+    pub(crate) fn strip_markers_from_line(
         line: &str,
         path: &str,
         line_offset: u32,

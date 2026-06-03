@@ -7,7 +7,6 @@ use rg_ir_storage::PackageDefMaps;
 use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::PackageIr;
 use rg_workspace::WorkspaceMetadata;
-use test_fixture::fixture_crate;
 
 use crate::cache::{
     CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, CachedCfgOptions, CachedDependency, CachedPackage,
@@ -15,12 +14,14 @@ use crate::cache::{
     CachedTarget, CachedTargetKind, Fingerprint, PackageCacheArtifact, PackageCacheCodec,
     PackageCacheHeader, PackageCachePayload, PackageCacheStore, WorkspaceCachePlan,
 };
-use crate::{PackageResidencyPolicy, Project, project::state::ProjectState};
+use crate::{
+    PackageResidencyPolicy, Project,
+    testonly::{ProjectFixture, ProjectSourceFixture},
+};
 
 pub(super) fn check_cache_plan(fixture: &str, expect: Expect) {
-    let fixture = fixture_crate(fixture);
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize");
+    let fixture = ProjectSourceFixture::build(fixture);
+    let workspace = fixture.workspace_metadata();
     let cache_plan = WorkspaceCachePlan::build(&workspace);
     let actual = render_cache_plan(&workspace, &cache_plan);
 
@@ -121,14 +122,9 @@ pub(super) fn check_minimal_cache_artifact_codec(expect: Expect) {
 }
 
 pub(super) fn check_fixture_cache_artifact_codec(fixture: &str, expect: Expect) {
-    let fixture = fixture_crate(fixture);
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize");
-    let project = Project::builder(workspace)
-        .build()
-        .expect("fixture project should build")
-        .into_project();
-    let artifact = package_artifact_from_project(&project.state, PackageSlot(0));
+    let fixture = ProjectSourceFixture::build(fixture);
+    let project = fixture.build_project();
+    let artifact = package_artifact_from_project(&project, PackageSlot(0));
 
     let bytes = PackageCacheCodec::encode_artifact(&artifact)
         .expect("package cache artifact should serialize");
@@ -149,14 +145,9 @@ pub(super) fn check_fixture_cache_artifact_codec(fixture: &str, expect: Expect) 
 }
 
 pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
-    let fixture = fixture_crate(fixture);
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize");
-    let project = Project::builder(workspace)
-        .build()
-        .expect("fixture project should build")
-        .into_project();
-    let artifact = package_artifact_from_project(&project.state, PackageSlot(0));
+    let fixture = ProjectSourceFixture::build(fixture);
+    let project = fixture.build_project();
+    let artifact = package_artifact_from_project(&project, PackageSlot(0));
     let store = PackageCacheStore::for_workspace_with_target_dir(
         project.workspace(),
         &project.state.cache_plan,
@@ -229,14 +220,9 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
 }
 
 pub(super) fn check_cache_store_generation_cleanup(fixture: &str, expect: Expect) {
-    let fixture = fixture_crate(fixture);
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize");
-    let project = Project::builder(workspace)
-        .build()
-        .expect("fixture project should build")
-        .into_project();
-    let artifact = package_artifact_from_project(&project.state, PackageSlot(0));
+    let fixture = ProjectSourceFixture::build(fixture);
+    let project = fixture.build_project();
+    let artifact = package_artifact_from_project(&project, PackageSlot(0));
     let store = PackageCacheStore::for_workspace_with_target_dir(
         project.workspace(),
         &project.state.cache_plan,
@@ -282,9 +268,8 @@ pub(super) fn check_cache_store_generation_cleanup(fixture: &str, expect: Expect
 }
 
 pub(super) fn check_residency_policy_controls_artifact_writes(fixture: &str, expect: Expect) {
-    let fixture = fixture_crate(fixture);
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize");
+    let fixture = ProjectSourceFixture::build(fixture);
+    let workspace = fixture.workspace_metadata();
 
     let mut dump = String::new();
     writeln!(&mut dump, "artifact writes by residency policy")
@@ -314,15 +299,10 @@ pub(super) fn check_residency_policy_controls_artifact_writes(fixture: &str, exp
 }
 
 pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
-    let fixture = fixture_crate(fixture);
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize");
-    let project = Project::builder(workspace)
-        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
-        .build()
-        .expect("fixture project should build")
-        .into_project();
-    let dep = package_slot_by_name(project.snapshot().parse_db(), "dep");
+    let fixture = ProjectSourceFixture::build(fixture);
+    let project = fixture
+        .build_project_with_package_residency_policy(PackageResidencyPolicy::WorkspaceResident);
+    let dep = ProjectFixture::package_slot_by_name_in(project.snapshot().parse_db(), "dep");
     let analysis = project
         .snapshot()
         .full_analysis()
@@ -373,7 +353,7 @@ pub(super) fn check_offloaded_dependency_query(fixture: &str, expect: Expect) {
 }
 
 pub(super) fn check_startup_cache_uses_matching_artifact(expect: Expect) {
-    let fixture = fixture_crate(
+    let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -397,14 +377,13 @@ edition = "2024"
 pub struct DepOld;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize");
+    let workspace = fixture.workspace_metadata();
     let project = Project::builder(workspace.clone())
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
         .expect("fixture project should build")
         .into_project();
-    let dep = package_slot_by_name(project.snapshot().parse_db(), "dep");
+    let dep = ProjectFixture::package_slot_by_name_in(project.snapshot().parse_db(), "dep");
     let old_header = project
         .state
         .cache_plan
@@ -423,8 +402,7 @@ pub struct DepOld;
 pub struct DepNew;
 "#,
     );
-    let workspace_after_edit = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize after source edit");
+    let workspace_after_edit = fixture.workspace_metadata();
     let cache_plan_after_edit = WorkspaceCachePlan::build(&workspace_after_edit);
     let parse_after_edit = rg_parse::ParseDb::build(&workspace_after_edit)
         .expect("fixture parse db should build after source edit");
@@ -476,7 +454,7 @@ pub struct DepNew;
 }
 
 pub(super) fn check_artifact_snapshot_source_fingerprint_matches_package_sources(expect: Expect) {
-    let fixture = fixture_crate(
+    let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -503,14 +481,9 @@ mod child;
 pub struct DepChild;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize");
-    let project = Project::builder(workspace)
-        .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
-        .build()
-        .expect("fixture project should build")
-        .into_project();
-    let dep = package_slot_by_name(project.snapshot().parse_db(), "dep");
+    let project = fixture
+        .build_project_with_package_residency_policy(PackageResidencyPolicy::WorkspaceResident);
+    let dep = ProjectFixture::package_slot_by_name_in(project.snapshot().parse_db(), "dep");
     let header = project
         .state
         .cache_plan
@@ -558,7 +531,7 @@ pub struct DepChild;
 }
 
 pub(super) fn check_startup_cache_probe_profile(expect: Expect) {
-    let fixture = fixture_crate(
+    let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -582,8 +555,7 @@ edition = "2024"
 pub struct Dep;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize");
+    let workspace = fixture.workspace_metadata();
     Project::builder(workspace.clone())
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
@@ -616,7 +588,7 @@ pub struct Dep;
 }
 
 pub(super) fn check_startup_cache_rejects_body_ir_policy_mismatch(expect: Expect) {
-    let fixture = fixture_crate(
+    let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -640,8 +612,7 @@ edition = "2024"
 pub fn dep_value() -> usize { 2 }
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize");
+    let workspace = fixture.workspace_metadata();
     Project::builder(workspace.clone())
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
@@ -658,7 +629,7 @@ pub fn dep_value() -> usize { 2 }
     let cache_probe = profile
         .cache_probe()
         .expect("startup cache probe profile should be recorded");
-    let artifact = package_cache_artifact(&project, "dep");
+    let artifact = package_cache_artifact_for(&project, "dep");
 
     let mut dump = String::new();
     writeln!(&mut dump, "startup body IR policy mismatch").expect("string writes should not fail");
@@ -677,7 +648,7 @@ pub fn dep_value() -> usize { 2 }
 }
 
 pub(super) fn check_startup_cache_rejects_stale_out_of_line_module(expect: Expect) {
-    let fixture = fixture_crate(
+    let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -704,14 +675,13 @@ mod child;
 pub struct DepChildOld;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize");
+    let workspace = fixture.workspace_metadata();
     let project = Project::builder(workspace.clone())
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
         .expect("fixture project should build")
         .into_project();
-    let dep = package_slot_by_name(project.snapshot().parse_db(), "dep");
+    let dep = ProjectFixture::package_slot_by_name_in(project.snapshot().parse_db(), "dep");
 
     fixture.write_fixture_files(
         r#"
@@ -719,8 +689,7 @@ pub struct DepChildOld;
 pub struct DepChildNew;
 "#,
     );
-    let workspace_after_edit = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should normalize after source edit");
+    let workspace_after_edit = fixture.workspace_metadata();
 
     // The changed file is discovered only after item-tree lowering. Startup cache validation must
     // therefore trust the artifact's saved parse manifest, not the fresh target-root-only parse DB.
@@ -756,88 +725,6 @@ pub struct DepChildNew;
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
 }
 
-fn package_artifact_from_project(
-    project: &ProjectState,
-    package: PackageSlot,
-) -> PackageCacheArtifact {
-    let header = project
-        .cache_plan
-        .artifact_header(package, &project.package_source_fingerprints)
-        .expect("cache-planned fixture package should have an artifact header");
-    let def_map = project
-        .def_map
-        .resident_package(package)
-        .expect("fixture package should have def-map data")
-        .clone();
-    let semantic_ir = project
-        .semantic_ir
-        .resident_package(package)
-        .expect("fixture package should have semantic IR data")
-        .clone();
-    let body_ir = project
-        .body_ir
-        .resident_package(package)
-        .expect("fixture package should have body IR data")
-        .clone();
-
-    PackageCacheArtifact::new(
-        header,
-        PackageCachePayload::new(
-            project
-                .parse
-                .package(package.0)
-                .expect("fixture package should have parse data")
-                .parse_snapshot()
-                .expect("fixture parse metadata should snapshot"),
-            def_map,
-            semantic_ir,
-            body_ir,
-        ),
-    )
-}
-
-fn package_slot_by_name(parse: &rg_parse::ParseDb, package_name: &str) -> PackageSlot {
-    parse
-        .packages()
-        .iter()
-        .enumerate()
-        .find_map(|(idx, package)| {
-            (package.package_name() == package_name).then_some(PackageSlot(idx))
-        })
-        .unwrap_or_else(|| panic!("fixture package {package_name} should be parsed"))
-}
-
-fn package_cache_artifact_exists(project: &Project, package_name: &str) -> bool {
-    let package = package_slot_by_name(project.snapshot().parse_db(), package_name);
-    let header = project
-        .state
-        .cache_plan
-        .artifact_header(package, &project.state.package_source_fingerprints)
-        .expect("fixture package should have a cache artifact header");
-
-    project
-        .state
-        .cache_store
-        .package_artifact_path(&header.package)
-        .exists()
-}
-
-fn package_cache_artifact(project: &Project, package_name: &str) -> PackageCacheArtifact {
-    let package = package_slot_by_name(project.snapshot().parse_db(), package_name);
-    let header = project
-        .state
-        .cache_plan
-        .artifact_header(package, &project.state.package_source_fingerprints)
-        .expect("fixture package should have a cache artifact header");
-
-    project
-        .state
-        .cache_store
-        .read_artifact(&header)
-        .expect("fixture package cache artifact should read")
-        .expect("fixture package cache artifact should exist")
-}
-
 fn render_artifact_existence_for_policy(
     label: &str,
     workspace: &WorkspaceMetadata,
@@ -856,7 +743,7 @@ fn render_artifact_existence_for_policy(
             dump,
             "- {} artifact {}",
             package.package_name(),
-            package_cache_artifact_exists(&project, package.package_name()),
+            package_cache_artifact_exists_for(&project, package.package_name()),
         )
         .expect("string writes should not fail");
     }
@@ -866,6 +753,75 @@ fn render_artifact_existence_for_policy(
         .cache_store
         .invalidate_workspace_cache()
         .unwrap_or_else(|error| panic!("{label} fixture cache namespace should clean up: {error}"));
+}
+
+fn package_artifact_from_project(project: &Project, package: PackageSlot) -> PackageCacheArtifact {
+    let state = &project.state;
+    let header = state
+        .cache_plan
+        .artifact_header(package, &state.package_source_fingerprints)
+        .expect("cache-planned fixture package should have an artifact header");
+    let def_map = state
+        .def_map
+        .resident_package(package)
+        .expect("fixture package should have def-map data")
+        .clone();
+    let semantic_ir = state
+        .semantic_ir
+        .resident_package(package)
+        .expect("fixture package should have semantic IR data")
+        .clone();
+    let body_ir = state
+        .body_ir
+        .resident_package(package)
+        .expect("fixture package should have body IR data")
+        .clone();
+
+    PackageCacheArtifact::new(
+        header,
+        PackageCachePayload::new(
+            state
+                .parse
+                .package(package.0)
+                .expect("fixture package should have parse data")
+                .parse_snapshot()
+                .expect("fixture parse metadata should snapshot"),
+            def_map,
+            semantic_ir,
+            body_ir,
+        ),
+    )
+}
+
+fn package_cache_artifact_for(project: &Project, package_name: &str) -> PackageCacheArtifact {
+    let package = ProjectFixture::package_slot_by_name_in(project.state.parse_db(), package_name);
+    let header = project
+        .state
+        .cache_plan
+        .artifact_header(package, &project.state.package_source_fingerprints)
+        .expect("fixture package should have a cache artifact header");
+
+    project
+        .state
+        .cache_store
+        .read_artifact(&header)
+        .expect("fixture package cache artifact should read")
+        .expect("fixture package cache artifact should exist")
+}
+
+fn package_cache_artifact_exists_for(project: &Project, package_name: &str) -> bool {
+    let package = ProjectFixture::package_slot_by_name_in(project.state.parse_db(), package_name);
+    let header = project
+        .state
+        .cache_plan
+        .artifact_header(package, &project.state.package_source_fingerprints)
+        .expect("fixture package should have a cache artifact header");
+
+    project
+        .state
+        .cache_store
+        .package_artifact_path(&header.package)
+        .exists()
 }
 
 fn render_cache_plan(workspace: &WorkspaceMetadata, cache_plan: &WorkspaceCachePlan) -> String {

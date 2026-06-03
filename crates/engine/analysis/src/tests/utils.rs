@@ -1,4 +1,4 @@
-use std::{fmt, fmt::Write as _, marker::PhantomData, sync::Arc};
+use std::fmt::Write as _;
 
 use expect_test::Expect;
 
@@ -8,28 +8,24 @@ use crate::{
     ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, SymbolAt, TypeHint,
     WorkspaceSymbol,
 };
-use rg_body_ir::{BodyIrDb, BodyIrReadTxn, ExprData, ExprKind};
-use rg_def_map::{DefMapDb, PackageSlot};
+use rg_body_ir::{BodyIrReadTxn, ExprData, ExprKind, testonly::BodyIrFixture};
+use rg_def_map::{PackageSlot, testonly::DefMapFixture};
 use rg_ir_model::{
     BodyRef, DefMapRef, FunctionRef, ItemOwner, ModuleRef, TargetRef, TraitRef, TypeDefId,
     TypeDefRef,
 };
 use rg_ir_storage::{DefMap, ItemStore, ItemStoreQuery};
 use rg_ir_view::IndexedViewDb;
-use rg_item_tree::{ItemTreeDb, PackageNameInterners};
-use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
+use rg_package_store::PackageLoader;
 use rg_parse::{FileId, ParseDb, Span};
-use rg_semantic_ir::{SemanticIrDb, SemanticIrReadTxn};
+use rg_semantic_ir::{SemanticIrReadTxn, testonly::SemanticIrFixture};
 use rg_ty::{GenericArg, NominalTy, Ty};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
-use test_fixture::{FixtureMarkers, fixture_crate, fixture_crate_with_markers};
+use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers};
 
 pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], expect: Expect) {
     let (fixture, markers) = fixture_crate_with_markers(fixture);
-    let db = AnalysisFixtureDb::build(
-        WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build"),
-    );
+    let db = AnalysisFixtureDb::build_from_crate(fixture);
     let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
     let actual = format!("{}\n", renderer.render().trim_end());
     expect.assert_eq(&actual);
@@ -46,7 +42,7 @@ pub(super) fn check_analysis_queries_with_sysroot(
     let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
         .expect("fixture workspace metadata should build")
         .with_sysroot_sources(Some(sysroot));
-    let db = AnalysisFixtureDb::build(workspace);
+    let db = AnalysisFixtureDb::build_from_crate_with_workspace(fixture, workspace);
     let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
     let actual = format!("{}\n", renderer.render().trim_end());
     expect.assert_eq(&actual);
@@ -54,10 +50,7 @@ pub(super) fn check_analysis_queries_with_sysroot(
 
 pub(super) fn check_document_symbols(fixture: &str, query: DocumentSymbolsQuery, expect: Expect) {
     let fixture = fixture_crate(fixture);
-    let db = AnalysisFixtureDb::build(
-        WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build"),
-    );
+    let db = AnalysisFixtureDb::build_from_crate(fixture);
     let renderer = AnalysisSymbolSnapshot::new(&db);
     let actual = format!("{}\n", renderer.render_document_symbols(&query).trim_end());
     expect.assert_eq(&actual);
@@ -65,10 +58,7 @@ pub(super) fn check_document_symbols(fixture: &str, query: DocumentSymbolsQuery,
 
 pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
-    let db = AnalysisFixtureDb::build(
-        WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build"),
-    );
+    let db = AnalysisFixtureDb::build_from_crate(fixture);
     let renderer = AnalysisSymbolSnapshot::new(&db);
     let actual = format!("{}\n", renderer.render_workspace_symbols(query).trim_end());
     expect.assert_eq(&actual);
@@ -76,10 +66,7 @@ pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect
 
 pub(super) fn check_type_hints(fixture: &str, query: TypeHintsQuery, expect: Expect) {
     let fixture = fixture_crate(fixture);
-    let db = AnalysisFixtureDb::build(
-        WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build"),
-    );
+    let db = AnalysisFixtureDb::build_from_crate(fixture);
     let renderer = AnalysisSymbolSnapshot::new(&db);
     let actual = format!("{}\n", renderer.render_type_hints(&query).trim_end());
     expect.assert_eq(&actual);
@@ -297,65 +284,56 @@ enum ReferenceQueryScope {
 }
 
 struct AnalysisFixtureDb {
-    parse: ParseDb,
-    def_map: DefMapDb,
-    semantic_ir: SemanticIrDb,
-    body_ir: BodyIrDb,
+    fixture: BodyIrFixture,
 }
 
 impl AnalysisFixtureDb {
-    fn build(workspace: WorkspaceMetadata) -> Self {
-        let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
-        let mut names = PackageNameInterners::new(parse.package_count());
-        let item_tree =
-            ItemTreeDb::build(&mut parse, &mut names).expect("fixture item tree db should build");
-        let def_map = DefMapDb::builder(&workspace, &parse, &item_tree)
-            .name_interners(&mut names)
-            .build()
-            .expect("fixture def map db should build");
-        let semantic_ir = SemanticIrDb::builder(&item_tree, &def_map)
-            .build()
-            .expect("fixture semantic ir db should build");
-        let body_ir = BodyIrDb::builder(&parse, &def_map, &semantic_ir)
-            .name_interners(&mut names)
-            .build()
-            .expect("fixture body ir db should build");
+    fn build_from_crate(fixture: CrateFixture) -> Self {
+        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+            .expect("fixture workspace metadata should build");
+        Self::build_from_crate_with_workspace(fixture, workspace)
+    }
 
+    fn build_from_crate_with_workspace(
+        fixture: CrateFixture,
+        workspace: WorkspaceMetadata,
+    ) -> Self {
+        let def_map = DefMapFixture::build_from_crate(fixture, workspace);
+        let semantic_ir = SemanticIrFixture::build_from_def_map(def_map);
         Self {
-            parse,
-            def_map,
-            semantic_ir,
-            body_ir,
+            fixture: BodyIrFixture::build_from_semantic_ir(semantic_ir),
         }
     }
 
     fn analysis(&self) -> Analysis<'_> {
         let view_db = IndexedViewDb::new(
-            self.def_map.read_txn(unexpected_package_loader()),
-            self.semantic_ir.read_txn(unexpected_package_loader()),
-            self.body_ir.read_txn(unexpected_package_loader()),
+            self.fixture
+                .def_map_db()
+                .read_txn(PackageLoader::resident_only("resident analysis fixture")),
+            self.fixture
+                .semantic_ir_db()
+                .read_txn(PackageLoader::resident_only("resident analysis fixture")),
+            self.fixture
+                .body_ir_db()
+                .read_txn(PackageLoader::resident_only("resident analysis fixture")),
         );
         Analysis::new(view_db)
     }
 
+    fn parse_db(&self) -> &ParseDb {
+        self.fixture.parse_db()
+    }
+
     fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
-        self.def_map
-            .resident_package(target.package)?
-            .def_map(target.target)
+        self.fixture.resident_def_map(target)
     }
 
     fn resident_target_ir(&self, target: TargetRef) -> Option<&ItemStore> {
-        self.semantic_ir
-            .resident_package(target.package)?
-            .target(target.target)
+        self.fixture.resident_target_ir(target)
     }
 
     fn resident_body_item_store(&self, body: BodyRef) -> Option<&ItemStore> {
-        self.body_ir
-            .resident_package(body.target.package)?
-            .target(body.target.target)?
-            .body(body.body)?
-            .body_item_store()
+        self.fixture.resident_body_item_store(body)
     }
 
     fn target_and_file_for_path(
@@ -366,7 +344,7 @@ impl AnalysisFixtureDb {
         let mut matches = Vec::new();
         let normalized_path = path.trim_start_matches('/');
 
-        for (package_slot, package) in self.parse.packages().iter().enumerate() {
+        for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
             if !selected.matches_package(package.package_name()) {
                 continue;
             }
@@ -406,7 +384,7 @@ impl AnalysisFixtureDb {
     fn target_for(&self, selected: &AnalysisTarget) -> TargetRef {
         let mut matches = Vec::new();
 
-        for (package_slot, package) in self.parse.packages().iter().enumerate() {
+        for (package_slot, package) in self.parse_db().packages().iter().enumerate() {
             if !selected.matches_package(package.package_name()) {
                 continue;
             }
@@ -433,7 +411,7 @@ impl AnalysisFixtureDb {
     }
 
     fn all_targets(&self) -> Vec<TargetRef> {
-        self.parse
+        self.parse_db()
             .packages()
             .iter()
             .enumerate()
@@ -455,27 +433,6 @@ impl AnalysisFixtureDb {
             .modules()
             .iter()
             .any(|module| module.origin.contains_file(file_id))
-    }
-}
-
-fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
-    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
-}
-
-struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
-
-impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnexpectedPackageLoader").finish()
-    }
-}
-
-impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
-    fn load(&self, package: PackageSlot) -> Result<Arc<T>, PackageStoreError> {
-        panic!(
-            "resident analysis fixture should not load offloaded package {}",
-            package.0,
-        )
     }
 }
 
@@ -1163,11 +1120,17 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     }
 
     fn semantic_ir_txn(&self) -> SemanticIrReadTxn<'_> {
-        self.db.semantic_ir.read_txn(unexpected_package_loader())
+        self.db
+            .fixture
+            .semantic_ir_db()
+            .read_txn(PackageLoader::resident_only("resident analysis fixture"))
     }
 
     fn body_ir_txn(&self) -> BodyIrReadTxn<'_> {
-        self.db.body_ir.read_txn(unexpected_package_loader())
+        self.db
+            .fixture
+            .body_ir_db()
+            .read_txn(PackageLoader::resident_only("resident analysis fixture"))
     }
 
     fn render_module_ref(&self, module_ref: ModuleRef) -> String {
@@ -1183,7 +1146,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         let target_ref = module_ref.origin.origin_target();
         let package = self
             .db
-            .parse
+            .parse_db()
             .packages()
             .get(target_ref.package.0)
             .expect("package slot should exist while rendering analysis module");
@@ -1236,7 +1199,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     fn render_source_span(&self, package: PackageSlot, file_id: FileId, span: Span) -> String {
         let line_column = span.line_column(
             self.db
-                .parse
+                .parse_db()
                 .package(package.0)
                 .expect("span package should exist while rendering analysis query")
                 .parsed_file(file_id)
@@ -1265,7 +1228,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     ) -> String {
         let parsed_file = self
             .db
-            .parse
+            .parse_db()
             .package(package.0)
             .expect("span package should exist while rendering analysis query text")
             .parsed_file(file_id)
@@ -1290,7 +1253,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     fn render_file_path(&self, package: PackageSlot, file_id: FileId) -> String {
         let package = self
             .db
-            .parse
+            .parse_db()
             .packages()
             .get(package.0)
             .expect("reference package should exist while rendering file path");
@@ -1309,7 +1272,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     .to_string()
             });
 
-        if self.db.parse.packages().len() > 1 {
+        if self.db.parse_db().packages().len() > 1 {
             format!("{}/{relative_path}", package.package_name())
         } else {
             relative_path
@@ -1463,7 +1426,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
     fn render_target_ref(&self, target_ref: TargetRef) -> String {
         let package = self
             .db
-            .parse
+            .parse_db()
             .packages()
             .get(target_ref.package.0)
             .expect("target package should exist while rendering workspace symbol");
@@ -1490,7 +1453,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
     fn render_file_path(&self, package: PackageSlot, file_id: FileId) -> String {
         let package = self
             .db
-            .parse
+            .parse_db()
             .packages()
             .get(package.0)
             .expect("symbol package should exist while rendering file path");
@@ -1512,7 +1475,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
     fn render_source_span(&self, package: PackageSlot, file_id: FileId, span: Span) -> String {
         let line_column = span.line_column(
             self.db
-                .parse
+                .parse_db()
                 .package(package.0)
                 .expect("span package should exist while rendering analysis symbol")
                 .parsed_file(file_id)

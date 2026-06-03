@@ -1424,8 +1424,6 @@ dependencies = [
  "rg_text",
  "rg_ty",
  "rg_wincode_utils",
- "rg_workspace",
- "test_fixture",
  "wincode",
 ]
 
@@ -1716,7 +1714,6 @@ dependencies = [
  "rg_text",
  "rg_ty",
  "rg_workspace",
- "test_fixture",
  "wincode",
 ]
 

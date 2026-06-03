@@ -3,6 +3,8 @@ mod cursor;
 mod ir;
 mod item_store_lowering;
 mod store;
+#[doc(hidden)]
+pub mod testonly;
 
 #[cfg(test)]
 mod tests;

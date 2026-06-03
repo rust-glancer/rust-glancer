@@ -1,6 +1,8 @@
 mod build;
 mod query;
 mod store;
+#[doc(hidden)]
+pub mod testonly;
 
 pub use rg_workspace::PackageSlot;
 

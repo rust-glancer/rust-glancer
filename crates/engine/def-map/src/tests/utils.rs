@@ -1,8 +1,6 @@
-use std::{fmt, marker::PhantomData, sync::Arc};
-
 use expect_test::Expect;
 
-use crate::{DefMapDb, DefMapFinalizationStats};
+use crate::{DefMapDb, DefMapFinalizationStats, testonly::DefMapFixture};
 use rg_ir_model::{
     DefId, DefMapRef, ModuleId, ModuleRef, TargetRef,
     hir::source::{ItemSource, ItemSourceKind},
@@ -10,11 +8,10 @@ use rg_ir_model::{
 use rg_ir_storage::{
     DefMap, ImportData, ImportKind, Path, PathSegment, ResolvePathResult, ScopeBinding, ScopeEntry,
 };
-use rg_item_tree::{ItemTreeDb, PackageNameInterners, VisibilityLevel};
-use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
+use rg_item_tree::VisibilityLevel;
+use rg_package_store::PackageLoader;
 use rg_parse::{FileId, Package, ParseDb, Target};
-use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
-use test_fixture::fixture_crate;
+use rg_workspace::TargetKind;
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
     let db = DefMapFixtureDb::build(fixture);
@@ -81,70 +78,37 @@ impl PathResolutionQuery {
 }
 
 pub(super) struct DefMapFixtureDb {
-    parse: ParseDb,
-    def_map: DefMapDb,
+    fixture: DefMapFixture,
 }
 
 impl DefMapFixtureDb {
     pub(super) fn build(fixture: &str) -> Self {
-        let fixture = fixture_crate(fixture);
-        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build");
-        Self::build_from_workspace(workspace)
+        Self {
+            fixture: DefMapFixture::build(fixture),
+        }
     }
 
     pub(super) fn build_with_finalization_stats(fixture: &str) -> (Self, DefMapFinalizationStats) {
-        let fixture = fixture_crate(fixture);
-        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build");
-        let mut stats = DefMapFinalizationStats::default();
-        let db = Self::build_from_workspace_with_finalization_stats(workspace, Some(&mut stats));
-        (db, stats)
+        let (fixture, stats) = DefMapFixture::build_with_finalization_stats(fixture);
+        (Self { fixture }, stats)
     }
 
     pub(super) fn build_with_sysroot(fixture: &str) -> Self {
-        let fixture = fixture_crate(fixture);
-        let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
-            .expect("fixture sysroot should be complete");
-        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build")
-            .with_sysroot_sources(Some(sysroot));
-        Self::build_from_workspace(workspace)
-    }
-
-    fn build_from_workspace(workspace: WorkspaceMetadata) -> Self {
-        Self::build_from_workspace_with_finalization_stats(workspace, None)
-    }
-
-    fn build_from_workspace_with_finalization_stats(
-        workspace: WorkspaceMetadata,
-        finalization_stats: Option<&mut DefMapFinalizationStats>,
-    ) -> Self {
-        let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
-        let mut names = PackageNameInterners::new(parse.package_count());
-        let item_tree =
-            ItemTreeDb::build(&mut parse, &mut names).expect("fixture item tree db should build");
-        let mut builder =
-            DefMapDb::builder(&workspace, &parse, &item_tree).name_interners(&mut names);
-        if let Some(stats) = finalization_stats {
-            builder = builder.finalization_stats(stats);
+        Self {
+            fixture: DefMapFixture::build_with_sysroot(fixture),
         }
-        let def_map = builder.build().expect("fixture def map db should build");
-        Self { parse, def_map }
     }
 
     fn parse_db(&self) -> &ParseDb {
-        &self.parse
+        self.fixture.parse_db()
     }
 
     pub(super) fn def_map_db(&self) -> &DefMapDb {
-        &self.def_map
+        self.fixture.def_map_db()
     }
 
     fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
-        self.def_map
-            .resident_package(target.package)?
-            .def_map(target.target)
+        self.fixture.resident_def_map(target)
     }
 
     /// Returns the library target for one package.
@@ -408,7 +372,7 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
         let def_map = self
             .project
             .def_map_db()
-            .read_txn(unexpected_package_loader());
+            .read_txn(PackageLoader::resident_only("def-map fixture query"));
         let result = rg_ir_storage::DefMapQuery::new(&def_map)
             .resolve_path(
                 ModuleRef {
@@ -540,27 +504,6 @@ impl<'a> ProjectPathResolutionSnapshot<'a> {
         }
 
         rendered
-    }
-}
-
-fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
-    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
-}
-
-struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
-
-impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnexpectedPackageLoader").finish()
-    }
-}
-
-impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
-    fn load(&self, package: rg_workspace::PackageSlot) -> Result<Arc<T>, PackageStoreError> {
-        panic!(
-            "def-map fixture query should not load offloaded package {}",
-            package.0,
-        );
     }
 }
 

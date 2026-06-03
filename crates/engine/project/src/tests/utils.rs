@@ -1,11 +1,4 @@
-use std::{
-    collections::HashMap,
-    fmt::{self, Write as _},
-    fs,
-    marker::PhantomData,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{fmt::Write as _, path::Path};
 
 use expect_test::Expect;
 use rg_analysis::{
@@ -14,39 +7,16 @@ use rg_analysis::{
 };
 use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
-use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
-use rg_parse::{FileId, ParseDb};
+use rg_package_store::PackageLoader;
+use rg_parse::FileId;
 use rg_ty::ReferencePeelingCandidates;
-use rg_workspace::WorkspaceMetadata;
-use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate_with_markers};
 
 use crate::{
-    AnalysisChangeSummary, DirtyFileChange, FileContext, PackageResidencyPolicy, Project,
-    SavedFileChange,
+    AnalysisChangeSummary, FileContext, PackageResidencyPolicy, Project, testonly::ProjectFixture,
 };
 
 pub(super) struct HostFixture {
-    fixture: CrateFixture,
-    markers: FixtureMarkers,
-    host: Project,
-}
-
-fn merge_change_summary(target: &mut AnalysisChangeSummary, source: AnalysisChangeSummary) {
-    for changed_file in source.changed_files {
-        if !target.changed_files.contains(&changed_file) {
-            target.changed_files.push(changed_file);
-        }
-    }
-    for package in source.affected_packages {
-        if !target.affected_packages.contains(&package) {
-            target.affected_packages.push(package);
-        }
-    }
-    for target_ref in source.changed_targets {
-        if !target.changed_targets.contains(&target_ref) {
-            target.changed_targets.push(target_ref);
-        }
-    }
+    fixture: ProjectFixture,
 }
 
 impl HostFixture {
@@ -58,69 +28,36 @@ impl HostFixture {
         spec: &str,
         package_residency_policy: PackageResidencyPolicy,
     ) -> Self {
-        let (fixture, markers) = fixture_crate_with_markers(spec);
-        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-            .expect("fixture workspace metadata should build");
-        let host = Project::builder(workspace)
-            .package_residency_policy(package_residency_policy)
-            .build()
-            .expect("analysis project should build")
-            .into_project();
-
         Self {
-            fixture,
-            markers,
-            host,
+            fixture: ProjectFixture::build_with_package_residency_policy(
+                spec,
+                package_residency_policy,
+            ),
         }
     }
 
     pub(super) fn file_id_for_path(&self, relative_path: &str) -> FileId {
-        file_id_for_path(
-            self.host.snapshot().parse_db(),
-            &self.fixture.path(relative_path),
-        )
+        self.fixture.file_id_for_path(relative_path)
     }
 
     pub(super) fn remove_cache_namespace(&self) {
-        match fs::remove_dir_all(self.host.state.cache_store.root()) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => panic!(
-                "fixture cache namespace {} should be removable: {error}",
-                self.host.state.cache_store.root().display(),
-            ),
-        }
+        self.fixture.remove_cache_namespace();
     }
 
     pub(super) fn corrupt_package_cache_artifact(&self, package_name: &str) {
-        let path = self.package_cache_artifact_path(package_name);
-
-        fs::write(&path, b"not a package cache artifact").unwrap_or_else(|error| {
-            panic!(
-                "fixture package cache artifact {} should be writable: {error}",
-                path.display(),
-            )
-        });
+        self.fixture.corrupt_package_cache_artifact(package_name);
     }
 
     pub(super) fn remove_package_cache_artifact(&self, package_name: &str) {
-        let path = self.package_cache_artifact_path(package_name);
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => panic!(
-                "fixture package cache artifact {} should be removable: {error}",
-                path.display(),
-            ),
-        }
+        self.fixture.remove_package_cache_artifact(package_name);
     }
 
     pub(super) fn package_cache_artifact_exists(&self, package_name: &str) -> bool {
-        self.package_cache_artifact_path(package_name).exists()
+        self.fixture.package_cache_artifact_exists(package_name)
     }
 
     pub(super) fn document_symbol_names(&self, relative_path: &str) -> Vec<String> {
-        let snapshot = self.host.snapshot();
+        let snapshot = self.fixture.project().snapshot();
         let contexts = snapshot
             .file_contexts_for_path(self.fixture.path(relative_path))
             .expect("fixture path should resolve to file contexts");
@@ -151,7 +88,8 @@ impl HostFixture {
 
     pub(super) fn workspace_symbols_error(&self, query: &str) -> String {
         let analysis = self
-            .host
+            .fixture
+            .project()
             .snapshot()
             .full_analysis()
             .expect("fixture analysis should construct before lazy package load");
@@ -163,24 +101,7 @@ impl HostFixture {
     }
 
     pub(super) fn dirty_overlay(&self, relative_path: &str, text: &str) -> Project {
-        self.host
-            .dirty_overlay([DirtyFileChange::new(self.fixture.path(relative_path), text)])
-            .expect("fixture dirty overlay should build")
-            .expect("fixture dirty overlay should touch a known file")
-    }
-
-    fn package_cache_artifact_path(&self, package_name: &str) -> PathBuf {
-        let package = package_slot_by_name(self.host.snapshot().parse_db(), package_name);
-        let header = self
-            .host
-            .state
-            .cache_plan
-            .artifact_header(package, &self.host.state.package_source_fingerprints)
-            .expect("fixture package should have a cache artifact header");
-        self.host
-            .state
-            .cache_store
-            .package_artifact_path(&header.package)
+        self.fixture.dirty_overlay(relative_path, text)
     }
 
     pub(super) fn check(&self, observations: &[HostObservation<'_>], expect: Expect) {
@@ -189,7 +110,7 @@ impl HostFixture {
     }
 
     pub(super) fn render(&self, observations: &[HostObservation<'_>]) -> String {
-        self.render_project(&self.host, observations)
+        self.render_project(self.fixture.project(), observations)
     }
 
     pub(super) fn render_project(
@@ -221,23 +142,7 @@ impl HostFixture {
     }
 
     fn save(&mut self, spec: &str) -> AnalysisChangeSummary {
-        let saved_files = self.fixture.write_fixture_files(spec);
-        let mut summary = AnalysisChangeSummary {
-            changed_files: Vec::new(),
-            affected_packages: Vec::new(),
-            changed_targets: Vec::new(),
-        };
-
-        for file in saved_files.files() {
-            let change = SavedFileChange::new(self.fixture.path(file.relative_path()));
-            let change_summary = self
-                .host
-                .apply_change(change)
-                .expect("fixture save change should apply");
-            merge_change_summary(&mut summary, change_summary);
-        }
-
-        summary
+        self.fixture.apply_saved_fixture(spec)
     }
 
     fn render_save_result(
@@ -246,7 +151,7 @@ impl HostFixture {
         observations: &[HostObservation<'_>],
     ) -> String {
         let mut dump = self.render_change_summary(summary);
-        let observations = self.render_observations(&self.host, None, observations);
+        let observations = self.render_observations(self.fixture.project(), None, observations);
         if !observations.is_empty() {
             writeln!(&mut dump).expect("string writes should not fail");
             dump.push_str(&observations);
@@ -257,11 +162,15 @@ impl HostFixture {
     fn render_change_summary(&self, summary: &AnalysisChangeSummary) -> String {
         let mut dump = String::new();
 
-        self.render_changed_files(&self.host, &summary.changed_files, &mut dump);
+        self.render_changed_files(self.fixture.project(), &summary.changed_files, &mut dump);
         writeln!(&mut dump).expect("string writes should not fail");
-        self.render_affected_packages(&self.host, &summary.affected_packages, &mut dump);
+        self.render_affected_packages(
+            self.fixture.project(),
+            &summary.affected_packages,
+            &mut dump,
+        );
         writeln!(&mut dump).expect("string writes should not fail");
-        self.render_changed_targets(&self.host, &summary.changed_targets, &mut dump);
+        self.render_changed_targets(self.fixture.project(), &summary.changed_targets, &mut dump);
 
         dump
     }
@@ -482,7 +391,7 @@ impl HostFixture {
     ) {
         writeln!(dump, "type names at `{label}`").expect("string writes should not fail");
 
-        let marker = self.markers.position(marker);
+        let marker = self.fixture.markers().position(marker);
         let path = self.fixture.path(&marker.path);
         let mut names = nominal_type_names_at(project, package_name, &path, marker.offset);
         names.sort();
@@ -718,48 +627,6 @@ impl<'a> HostObservation<'a> {
     }
 }
 
-/// Removes `$name$` cursor markers and reports their byte offsets in the cleaned text.
-pub(super) fn parse_dirty_text(text: &str) -> (String, HashMap<String, usize>) {
-    let mut clean = String::new();
-    let mut cursors = HashMap::new();
-    let mut remaining = text;
-
-    while let Some(start) = remaining.find('$') {
-        clean.push_str(&remaining[..start]);
-        let after_start = &remaining[start + "$".len()..];
-        let end = after_start
-            .find('$')
-            .expect("dirty text cursor should end with `$`");
-        let cursor = &after_start[..end];
-        assert!(
-            !cursor.is_empty(),
-            "dirty text cursor should have a non-empty name"
-        );
-        assert!(
-            cursors.insert(cursor.to_string(), clean.len()).is_none(),
-            "dirty text cursor `{cursor}` should be unique"
-        );
-        remaining = &after_start[end + "$".len()..];
-    }
-
-    clean.push_str(remaining);
-    (clean, cursors)
-}
-
-fn file_id_for_path(parse: &ParseDb, path: &Path) -> FileId {
-    let canonical_path = path
-        .canonicalize()
-        .expect("fixture source path should canonicalize");
-
-    parse
-        .packages()
-        .iter()
-        .flat_map(|package| package.parsed_files())
-        .find(|file| file.path() == canonical_path.as_path())
-        .unwrap_or_else(|| panic!("fixture file {} should be parsed", path.display()))
-        .file_id()
-}
-
 fn nominal_type_names_at(
     host: &Project,
     package_name: &str,
@@ -767,8 +634,8 @@ fn nominal_type_names_at(
     offset: u32,
 ) -> Vec<String> {
     let snapshot = host.snapshot();
-    let package_slot = package_slot_by_name(snapshot.parse_db(), package_name);
-    let file_id = file_id_for_path(snapshot.parse_db(), path);
+    let package_slot = ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), package_name);
+    let file_id = ProjectFixture::file_id_for_path_in(snapshot.parse_db(), path);
     let target = snapshot
         .targets_for_file(package_slot, file_id)
         .expect("fixture target lookup should start")
@@ -785,8 +652,14 @@ fn nominal_type_names_at(
         return Vec::new();
     };
 
-    let semantic_ir = host.state.semantic_ir.read_txn(unexpected_package_loader());
-    let def_map = host.state.def_map.read_txn(unexpected_package_loader());
+    let semantic_ir = host
+        .state
+        .semantic_ir
+        .read_txn(PackageLoader::resident_only("resident project fixture"));
+    let def_map = host
+        .state
+        .def_map
+        .read_txn(PackageLoader::resident_only("resident project fixture"));
     let mut names = Vec::new();
     for candidate in ReferencePeelingCandidates::new(&ty) {
         for ty in candidate.ty().as_nominals() {
@@ -818,41 +691,9 @@ fn nominal_type_names_at(
     names
 }
 
-fn package_slot_by_name(parse: &ParseDb, package_name: &str) -> PackageSlot {
-    parse
-        .packages()
-        .iter()
-        .enumerate()
-        .find_map(|(idx, package)| {
-            (package.package_name() == package_name).then_some(PackageSlot(idx))
-        })
-        .unwrap_or_else(|| panic!("fixture package {package_name} should be parsed"))
-}
-
 fn push_document_symbol_names(symbol: &rg_analysis::DocumentSymbol, names: &mut Vec<String>) {
     names.push(symbol.name.clone());
     for child in &symbol.children {
         push_document_symbol_names(child, names);
-    }
-}
-
-fn unexpected_package_loader<T: 'static>() -> PackageLoader<'static, T> {
-    PackageLoader::new(UnexpectedPackageLoader(PhantomData))
-}
-
-struct UnexpectedPackageLoader<T>(PhantomData<fn() -> T>);
-
-impl<T> fmt::Debug for UnexpectedPackageLoader<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("UnexpectedPackageLoader").finish()
-    }
-}
-
-impl<T> LoadPackage<T> for UnexpectedPackageLoader<T> {
-    fn load(&self, package: PackageSlot) -> Result<Arc<T>, PackageStoreError> {
-        panic!(
-            "resident project fixture should not load offloaded package {}",
-            package.0,
-        )
     }
 }

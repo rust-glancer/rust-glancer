@@ -3,6 +3,8 @@ mod cursor;
 mod ir;
 mod resolution;
 mod store;
+#[doc(hidden)]
+pub mod testonly;
 mod walk;
 
 use rg_def_map::PackageSlot;

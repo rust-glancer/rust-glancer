@@ -5,7 +5,7 @@ use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::ParseDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
-use test_fixture::fixture_crate;
+use test_fixture::{CrateFixture, fixture_crate};
 
 use rg_ir_model::TargetRef;
 
@@ -14,7 +14,7 @@ use rg_ir_storage::PackageDefMaps;
 
 #[test]
 fn rebuild_resolves_dirty_imports_through_clean_packages() {
-    let fixture = fixture_crate(
+    let fixture = RebuildFixture::build(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -44,87 +44,17 @@ dep = { path = "../dep" }
 //- /crates/app/src/lib.rs
 pub use dep::api::Api as Before;
 "#,
+        "dep",
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should build");
-    let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
-    let mut old_names = PackageNameInterners::new(parse.package_count());
-    let item_tree =
-        ItemTreeDb::build(&mut parse, &mut old_names).expect("fixture item-tree db should build");
-    let mut old = DefMapDb::builder(&workspace, &parse, &item_tree)
-        .name_interners(&mut old_names)
-        .build()
-        .expect("fixture def-map db should build");
-    let dep_slot = package_slot(&parse, "dep");
-    let dep_package = Arc::new(
-        old.resident_package(dep_slot)
-            .expect("old dep package should be resident before offload")
-            .clone(),
-    );
-    old.offload_package(dep_slot)
-        .expect("old dep package should be offloadable");
-
-    fixture.write_fixture_files(
+    let rebuilt = fixture.rebuild_package_after_edit(
         r#"
 //- /crates/app/src/lib.rs
 pub use dep::api::Api as Renamed;
 "#,
+        "app",
     );
 
-    let mut parse = ParseDb::build(&workspace).expect("updated fixture parse db should build");
-    let mut interner = PackageNameInterners::new(parse.package_count());
-    let item_tree = ItemTreeDb::build(&mut parse, &mut interner)
-        .expect("updated fixture item-tree db should build");
-
-    let mut app_slot = None;
-    for (package_idx, package) in parse.packages().iter().enumerate() {
-        if package.package_name() == "app" {
-            app_slot = Some(PackageSlot(package_idx));
-        }
-    }
-    let app_slot = app_slot.expect("fixture app package should exist");
-
-    let old_read = old.read_txn(PackageLoader::new(ExpectedPackageLoader {
-        package: dep_slot,
-        payload: dep_package,
-    }));
-    let rebuilt = old
-        .package_rebuilder(
-            &old_read,
-            &workspace,
-            &parse,
-            &item_tree,
-            &[app_slot],
-            &mut interner,
-        )
-        .build()
-        .expect("fixture def-map package rebuild should succeed");
-
-    let app_package = parse
-        .package(app_slot.0)
-        .expect("fixture app package should exist after rebuild");
-    let app_lib = app_package
-        .targets()
-        .iter()
-        .find(|target| target.kind.is_lib())
-        .expect("fixture app package should have a library target");
-    let app_target = TargetRef {
-        package: app_slot,
-        target: app_lib.id,
-    };
-    let app_package = rebuilt
-        .resident_package(app_target.package)
-        .expect("rebuilt app package should exist");
-    let app_def_map = app_package
-        .def_map(app_target.target)
-        .expect("rebuilt app def-map should exist");
-    let root_module = app_package
-        .target_data(app_target.target)
-        .and_then(|target_data| target_data.root_module())
-        .expect("rebuilt app def-map should have a root module");
-    let root = app_def_map
-        .module(root_module)
-        .expect("rebuilt app root module should exist");
+    let root = rebuilt.lib_root_module("app");
     let renamed_entry = root
         .scope
         .entry("Renamed")
@@ -142,7 +72,7 @@ pub use dep::api::Api as Renamed;
 
 #[test]
 fn rebuild_expands_dirty_macro_calls_from_clean_packages() {
-    let fixture = fixture_crate(
+    let fixture = RebuildFixture::build(
         r#"
 //- /Cargo.toml
 [workspace]
@@ -176,76 +106,125 @@ use dep::make_dep_item;
 
 pub struct Before;
 "#,
+        "dep",
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
-        .expect("fixture workspace metadata should build");
-    let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
-    let mut old_names = PackageNameInterners::new(parse.package_count());
-    let item_tree =
-        ItemTreeDb::build(&mut parse, &mut old_names).expect("fixture item-tree db should build");
-    let mut old = DefMapDb::builder(&workspace, &parse, &item_tree)
-        .name_interners(&mut old_names)
-        .build()
-        .expect("fixture def-map db should build");
-    let dep_slot = package_slot(&parse, "dep");
-    let dep_package = Arc::new(
-        old.resident_package(dep_slot)
-            .expect("old dep package should be resident before offload")
-            .clone(),
-    );
-    old.offload_package(dep_slot)
-        .expect("old dep package should be offloadable");
-
-    fixture.write_fixture_files(
+    let rebuilt = fixture.rebuild_package_after_edit(
         r#"
 //- /crates/app/src/lib.rs
 use dep::make_dep_item;
 
 make_dep_item!();
 "#,
+        "app",
     );
 
-    let mut parse = ParseDb::build(&workspace).expect("updated fixture parse db should build");
-    let mut interner = PackageNameInterners::new(parse.package_count());
-    let item_tree = ItemTreeDb::build(&mut parse, &mut interner)
-        .expect("updated fixture item-tree db should build");
-    let app_slot = package_slot(&parse, "app");
-
-    let old_read = old.read_txn(PackageLoader::new(ExpectedPackageLoader {
-        package: dep_slot,
-        payload: dep_package,
-    }));
-    let rebuilt = old
-        .package_rebuilder(
-            &old_read,
-            &workspace,
-            &parse,
-            &item_tree,
-            &[app_slot],
-            &mut interner,
-        )
-        .build()
-        .expect("fixture def-map package rebuild should succeed");
-
-    let app_target = lib_target(&parse, app_slot);
-    let app_package = rebuilt
-        .resident_package(app_target.package)
-        .expect("rebuilt app package should exist");
-    let app_def_map = app_package
-        .def_map(app_target.target)
-        .expect("rebuilt app def-map should exist");
-    let root_module = app_package
-        .target_data(app_target.target)
-        .and_then(|target_data| target_data.root_module())
-        .expect("rebuilt app def-map should have a root module");
-    let root = app_def_map
-        .module(root_module)
-        .expect("rebuilt app root module should exist");
+    let root = rebuilt.lib_root_module("app");
 
     assert!(
         root.scope.entry("GeneratedFromDep").is_some(),
         "dirty app macro call should expand using the clean dependency macro definition"
     );
+}
+
+/// Rebuilds one edited package against an old snapshot with one clean package offloaded.
+struct RebuildFixture {
+    fixture: CrateFixture,
+    workspace: WorkspaceMetadata,
+    old: DefMapDb,
+    clean_package: PackageSlot,
+    clean_payload: Arc<PackageDefMaps>,
+}
+
+impl RebuildFixture {
+    fn build(fixture: &str, clean_package: &str) -> Self {
+        let fixture = fixture_crate(fixture);
+        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+            .expect("fixture workspace metadata should build");
+        let (parse, item_tree, mut names) = Self::build_item_tree(&workspace);
+        let mut old = DefMapDb::builder(&workspace, &parse, &item_tree)
+            .name_interners(&mut names)
+            .build()
+            .expect("fixture def-map db should build");
+        let clean_package = package_slot(&parse, clean_package);
+        let clean_payload = Arc::new(
+            old.resident_package(clean_package)
+                .expect("old clean package should be resident before offload")
+                .clone(),
+        );
+        old.offload_package(clean_package)
+            .expect("old clean package should be offloadable");
+
+        Self {
+            fixture,
+            workspace,
+            old,
+            clean_package,
+            clean_payload,
+        }
+    }
+
+    fn rebuild_package_after_edit(&self, edit: &str, package_name: &str) -> RebuiltDefMaps {
+        self.fixture.write_fixture_files(edit);
+
+        let (parse, item_tree, mut names) = Self::build_item_tree(&self.workspace);
+        let package = package_slot(&parse, package_name);
+        let old_read = self.old.read_txn(PackageLoader::new(ExpectedPackageLoader {
+            package: self.clean_package,
+            payload: Arc::clone(&self.clean_payload),
+        }));
+        let def_map = self
+            .old
+            .package_rebuilder(
+                &old_read,
+                &self.workspace,
+                &parse,
+                &item_tree,
+                &[package],
+                &mut names,
+            )
+            .build()
+            .expect("fixture def-map package rebuild should succeed");
+
+        RebuiltDefMaps { parse, def_map }
+    }
+
+    fn build_item_tree(
+        workspace: &WorkspaceMetadata,
+    ) -> (ParseDb, ItemTreeDb, PackageNameInterners) {
+        let mut parse = ParseDb::build(workspace).expect("fixture parse db should build");
+        let mut names = PackageNameInterners::new(parse.package_count());
+        let item_tree =
+            ItemTreeDb::build(&mut parse, &mut names).expect("fixture item-tree db should build");
+
+        (parse, item_tree, names)
+    }
+}
+
+struct RebuiltDefMaps {
+    parse: ParseDb,
+    def_map: DefMapDb,
+}
+
+impl RebuiltDefMaps {
+    fn lib_root_module(&self, package_name: &str) -> &rg_ir_storage::ModuleData {
+        let package_slot = package_slot(&self.parse, package_name);
+        let target = lib_target(&self.parse, package_slot);
+        let package = self
+            .def_map
+            .resident_package(target.package)
+            .expect("rebuilt package should exist");
+        let def_map = package
+            .def_map(target.target)
+            .expect("rebuilt target def-map should exist");
+        let root_module = package
+            .target_data(target.target)
+            .and_then(|target_data| target_data.root_module())
+            .expect("rebuilt target def-map should have a root module");
+
+        def_map
+            .module(root_module)
+            .expect("rebuilt root module should exist")
+    }
 }
 
 fn package_slot(parse: &ParseDb, name: &str) -> PackageSlot {
