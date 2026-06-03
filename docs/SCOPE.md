@@ -11,7 +11,7 @@ At least, at the time of writing, my goals are (in that order):
 - Maintainable. I am a grug brain, so I don't like overly smart code. It is important
   that I know the whole codebase and can orient myself there.
 - Provide enough data for day-to-day work. Normal things should work kind of well;
-  I'm fine with some things not being implemented as long as I get ~70% of a complete
+  I'm fine with some things not being implemented as long as I get ~85% of a complete
   LSP.
 
 As a result, the following things are expected:
@@ -37,5 +37,5 @@ and can compensate for the LSP incompleteness, grep if required, or, if the code
 so complex that it cannot be understood without an LSP, simplify it.
 
 For people who, for any reason, need to rely on a complete LSP, there is a _really_ great
-one -- rust-analyzer. It's super cool, it's much smarter than anything I will ever be able to
-implement, and I don't want to compete with it. Each project can have its own niche.
+one -- rust-analyzer. It's super cool, it is build by people who are much smarter than me,
+and I don't want to compete with it. Each project can have its own niche.
