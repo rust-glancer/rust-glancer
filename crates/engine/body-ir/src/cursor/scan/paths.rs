@@ -75,7 +75,7 @@ impl ValuePathCursorScanner<'_> {
                 | ExprKind::Record {
                     path: Some(path), ..
                 } => {
-                    self.scan_body_path(expr_data.scope, path, expr_data.source.file_id);
+                    self.scan_body_path(expr_data.scope, path, expr_data.source.file_id, false);
                 }
                 _ => {}
             }
@@ -93,16 +93,27 @@ impl ValuePathCursorScanner<'_> {
     /// Visits value paths directly owned by one pattern node.
     fn scan_pat_data(&mut self, scope: ScopeId, data: &PatData) {
         if let Some(path) = data.kind.value_path() {
-            self.scan_body_path(scope, path, data.source.file_id);
+            self.scan_body_path(
+                scope,
+                path,
+                data.source.file_id,
+                self.include_single_segment,
+            );
         }
     }
 
     /// Adds one candidate per value path segment so associated items and variants stay distinct.
-    fn scan_body_path(&mut self, scope: ScopeId, path: &BodyPath, file_id: FileId) {
-        // Single-segment expression paths are already represented by the surrounding expression
-        // node. Segment candidates are only needed when the cursor can mean a prefix or an
-        // associated item/variant inside one qualified path.
-        if path.segment_count() <= 1 && !self.include_single_segment {
+    fn scan_body_path(
+        &mut self,
+        scope: ScopeId,
+        path: &BodyPath,
+        file_id: FileId,
+        include_single_segment: bool,
+    ) {
+        // Expression paths already have an expression candidate for single-segment names. Segment
+        // candidates are only needed for qualified expressions or for pattern paths, which do not
+        // have expression ids of their own.
+        if path.segment_count() <= 1 && !include_single_segment {
             return;
         }
 

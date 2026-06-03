@@ -71,6 +71,45 @@ pub fn use_it() {
 }
 
 #[test]
+fn rename_respects_local_binding_shadowing_same_name_function() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_rename_method_receiver_shadow"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn bar(baz: u8) -> u8 {
+    fo$fn_ref$o(baz)
+}
+
+fn foo(baz: u8) -> u8 {
+    let fo$local_ref$o: Option<u8> = Some(baz);
+    foo.map(|baba| baba + baba);
+    baz
+}
+"#,
+        &[
+            AnalysisQuery::rename("rename function", "fn_ref", "qux"),
+            AnalysisQuery::rename("rename local", "local_ref", "maybe"),
+        ],
+        expect![[r#"
+            rename function
+            - target `foo` @ src/lib.rs:2:5-2:8
+            - `foo` -> `qux` @ src/lib.rs:2:5-2:8
+            - `foo` -> `qux` @ src/lib.rs:5:4-5:7
+
+            rename local
+            - target `foo` @ src/lib.rs:6:9-6:12
+            - `foo` -> `maybe` @ src/lib.rs:6:9-6:12
+            - `foo` -> `maybe` @ src/lib.rs:7:5-7:8
+        "#]],
+    );
+}
+
+#[test]
 fn rejects_unsupported_rename_targets() {
     check_analysis_queries(
         r#"
