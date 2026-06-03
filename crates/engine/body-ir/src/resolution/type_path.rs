@@ -9,7 +9,7 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{
     DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, NameResolutionFilter, Path,
-    PathSegment, TypePathContext,
+    PathSegment, TargetItemQuery, TypePathContext,
 };
 use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
@@ -34,7 +34,9 @@ where
         &self,
     ) -> ImplMatcher<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>> {
         let source = self.source;
-        ImplMatcher::new(ItemPathQuery::new(source, source))
+        let item_paths = ItemPathQuery::new(source, source);
+        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
+        ImplMatcher::new(item_paths, target_items)
     }
 
     fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
@@ -360,7 +362,9 @@ where
         }
 
         let item_query = self.item_query();
-        for impl_ref in item_query.inherent_impls_for_type(ty.def)? {
+        let source = self.source;
+        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
+        for impl_ref in target_items.inherent_impls_for_type(ty.def)? {
             let Some(impl_data) = item_query.impl_data(impl_ref)? else {
                 continue;
             };

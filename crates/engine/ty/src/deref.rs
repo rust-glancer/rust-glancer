@@ -7,7 +7,8 @@ use rg_ir_model::{
     AssocItemId, TraitImplRef, TypeAliasRef, TypePathResolution, hir::items::ImplData,
 };
 use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemStoreSource, Path, PathSegment, TypePathContext,
+    DefMapSource, ItemLookupIndex, ItemStoreSource, Path, PathSegment, TargetItemQuery,
+    TypePathContext,
 };
 use rg_item_tree::TypeRef;
 use rg_text::Name;
@@ -18,6 +19,7 @@ use crate::{ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
 #[derive(Clone)]
 pub(crate) struct DerefResolver<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
+    target_items: TargetItemQuery<'query, D, I>,
     lookup_index: Option<&'query ItemLookupIndex>,
 }
 
@@ -28,10 +30,12 @@ where
 {
     pub(crate) fn new(
         item_paths: ItemPathQuery<'query, D, I>,
+        target_items: TargetItemQuery<'query, D, I>,
         lookup_index: Option<&'query ItemLookupIndex>,
     ) -> Self {
         Self {
             item_paths,
+            target_items,
             lookup_index,
         }
     }
@@ -54,12 +58,12 @@ where
     /// For `impl<T> core::ops::Deref for Wrapper<T> { type Target = T; }` and receiver
     /// `Wrapper<User>`, this resolves the target as `User`.
     fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<Vec<Ty>, D::Error> {
-        let matcher = ImplMatcher::new(self.item_paths.clone());
+        let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
         let item_query = self.item_paths.items();
         let mut targets = Vec::new();
         let trait_impls = match self.lookup_index {
             Some(index) => index.trait_impls_for_type(receiver_ty.def).to_vec(),
-            None => item_query.trait_impls_for_type(receiver_ty.def)?,
+            None => self.target_items.trait_impls_for_type(receiver_ty.def)?,
         };
 
         for trait_impl in trait_impls {

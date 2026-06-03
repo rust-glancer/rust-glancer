@@ -8,7 +8,9 @@ use crate::{GenericArg, ItemPathQuery, NominalTy, Ty, TypeSubst};
 use rg_ir_model::{
     FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef, hir::items::ImplData,
 };
-use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TypePathContext};
+use rg_ir_storage::{
+    DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext,
+};
 use rg_item_tree::{GenericArg as ItemGenericArg, GenericParams, TypeRef};
 use rg_text::Name;
 
@@ -41,6 +43,7 @@ impl TraitImplMatch {
 /// Matcher for impl headers stored in semantic-shaped item stores.
 pub struct ImplMatcher<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
+    target_items: TargetItemQuery<'query, D, I>,
 }
 
 impl<'query, D, I> ImplMatcher<'query, D, I>
@@ -49,8 +52,14 @@ where
     I: ItemStoreSource<'query, Error = D::Error>,
 {
     /// Creates a matcher over the same path/item routing used by type conversion.
-    pub fn new(item_paths: ItemPathQuery<'query, D, I>) -> Self {
-        Self { item_paths }
+    pub fn new(
+        item_paths: ItemPathQuery<'query, D, I>,
+        target_items: TargetItemQuery<'query, D, I>,
+    ) -> Self {
+        Self {
+            item_paths,
+            target_items,
+        }
     }
 
     /// Checks whether a function owned by an inherent impl can be called on the receiver type.
@@ -199,7 +208,7 @@ where
         let mut functions = Vec::new();
         let trait_impls = match index {
             Some(index) => index.trait_impls_for_type(receiver_ty.def).to_vec(),
-            None => item_query.trait_impls_for_type(receiver_ty.def)?,
+            None => self.target_items.trait_impls_for_type(receiver_ty.def)?,
         };
 
         for trait_impl in trait_impls {

@@ -10,7 +10,7 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{
     DefMapQuery, DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource,
-    NameResolutionFilter, Path, PathSegment, TypePathContext,
+    NameResolutionFilter, Path, PathSegment, TargetItemQuery, TypePathContext,
 };
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
@@ -69,14 +69,18 @@ where
 
     fn autoderef(&self) -> Autoderef<'_, BodyQuerySource<'_, &D, &I>, BodyQuerySource<'_, &D, &I>> {
         let source = self.query_source();
-        Autoderef::with_index(ItemPathQuery::new(source, source), self.semantic_index)
+        let item_paths = ItemPathQuery::new(source, source);
+        let target_items = TargetItemQuery::new(source, source, self.body_ref.target);
+        Autoderef::with_index(item_paths, target_items, self.semantic_index)
     }
 
     fn impl_matcher(
         &self,
     ) -> ImplMatcher<'_, BodyQuerySource<'_, &D, &I>, BodyQuerySource<'_, &D, &I>> {
         let source = self.query_source();
-        ImplMatcher::new(ItemPathQuery::new(source, source))
+        let item_paths = ItemPathQuery::new(source, source);
+        let target_items = TargetItemQuery::new(source, source, self.body_ref.target);
+        ImplMatcher::new(item_paths, target_items)
     }
 
     fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, &D, &I>> {
@@ -596,8 +600,10 @@ where
     ) -> Result<Vec<FunctionRef>, PackageStoreError> {
         let mut functions = Vec::new();
         if ty.def.origin == DefMapRef::Body(self.body_ref) {
+            let source = self.query_source();
             let item_query = self.item_query();
-            for function in item_query.inherent_functions_for_type(ty.def)? {
+            let target_items = TargetItemQuery::new(source, source, self.body_ref.target);
+            for function in target_items.inherent_functions_for_type(ty.def)? {
                 let Some(function_data) = item_query.function_data(function)? else {
                     continue;
                 };
@@ -617,21 +623,26 @@ where
 
         let source = self.query_source();
         let item_paths = ItemPathQuery::new(source, source);
+        let target_items = TargetItemQuery::new(source, source, self.body_ref.target);
         for function in self
             .semantic_index
             .inherent_functions_for_type_and_name(ty.def, method_name)
             .to_vec()
         {
-            if ImplMatcher::new(item_paths.clone()).function_applies_to_receiver(function, ty)? {
+            if ImplMatcher::new(item_paths.clone(), target_items.clone())
+                .function_applies_to_receiver(function, ty)?
+            {
                 functions.push(function);
             }
         }
 
-        for (function, _) in ImplMatcher::new(item_paths).trait_function_candidates_for_receiver(
-            Some(self.semantic_index),
-            ty,
-            Some(method_name),
-        )? {
+        for (function, _) in ImplMatcher::new(item_paths, target_items)
+            .trait_function_candidates_for_receiver(
+                Some(self.semantic_index),
+                ty,
+                Some(method_name),
+            )?
+        {
             push_unique(&mut functions, function);
         }
         Ok(functions)
@@ -855,7 +866,9 @@ where
         &self,
     ) -> ImplMatcher<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>> {
         let source = self.source;
-        ImplMatcher::new(ItemPathQuery::new(source, source))
+        let item_paths = ItemPathQuery::new(source, source);
+        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
+        ImplMatcher::new(item_paths, target_items)
     }
 
     fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
@@ -1222,8 +1235,10 @@ where
     ) -> Result<Vec<FunctionRef>, PackageStoreError> {
         let mut functions = Vec::new();
         if ty.def.origin == DefMapRef::Body(self.source.body_ref()) {
+            let source = self.source;
             let item_query = self.item_query();
-            for function in item_query.inherent_functions_for_type(ty.def)? {
+            let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
+            for function in target_items.inherent_functions_for_type(ty.def)? {
                 let Some(function_data) = item_query.function_data(function)? else {
                     continue;
                 };
@@ -1240,22 +1255,23 @@ where
 
         let source = self.source;
         let item_paths = ItemPathQuery::new(source, source);
+        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
         let inherent_functions = match self.semantic_index {
             Some(index) => index.inherent_functions_for_type(item_paths.items(), ty.def)?,
-            None => item_paths.items().inherent_functions_for_type(ty.def)?,
+            None => target_items.inherent_functions_for_type(ty.def)?,
         };
 
         for function in inherent_functions {
-            if ImplMatcher::new(item_paths.clone()).function_applies_to_receiver(function, ty)? {
+            if ImplMatcher::new(item_paths.clone(), target_items.clone())
+                .function_applies_to_receiver(function, ty)?
+            {
                 functions.push(function);
             }
         }
 
-        for (function, _) in ImplMatcher::new(item_paths).trait_function_candidates_for_receiver(
-            self.semantic_index,
-            ty,
-            None,
-        )? {
+        for (function, _) in ImplMatcher::new(item_paths, target_items)
+            .trait_function_candidates_for_receiver(self.semantic_index, ty, None)?
+        {
             push_unique(&mut functions, function);
         }
         Ok(functions)
@@ -1266,8 +1282,10 @@ where
         ty: &NominalTy,
         name: &str,
     ) -> Result<Option<(ConstRef, Ty)>, PackageStoreError> {
+        let source = self.source;
         let item_query = self.item_query();
-        for impl_ref in item_query.inherent_impls_for_type(ty.def)? {
+        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
+        for impl_ref in target_items.inherent_impls_for_type(ty.def)? {
             let Some(impl_data) = item_query.impl_data(impl_ref)? else {
                 continue;
             };

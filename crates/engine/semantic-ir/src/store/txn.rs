@@ -51,7 +51,7 @@ impl<'a, 'db> ItemStoreSource<'a> for &'a SemanticIrReadTxn<'db> {
         (*self).items(target)
     }
 
-    fn visible_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {
+    fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {
         (*self).included_stores()
     }
 }
