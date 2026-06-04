@@ -366,8 +366,36 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
         let Some(first) = chars.next() else {
             return false;
         };
-        (first == '_' || first.is_ascii_alphabetic())
+        name != "_"
+            && (first == '_' || first.is_ascii_alphabetic())
             && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
             && !matches!(name, "self" | "Self" | "crate" | "super")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RenameResolver;
+
+    #[test]
+    fn validates_supported_new_names() {
+        let cases = [
+            ("value", true, "ordinary identifier"),
+            ("_value", true, "leading underscore identifier"),
+            ("r#type", true, "raw keyword identifier"),
+            ("_", false, "wildcard is not a binding name"),
+            ("r#_", false, "raw wildcard is not a binding name"),
+            ("type", false, "keyword requires raw identifier syntax"),
+            ("self", false, "special path segment is not renameable"),
+            ("", false, "empty replacement is not an identifier"),
+        ];
+
+        for (input, expected, message) in cases {
+            assert_eq!(
+                RenameResolver::<'_, '_>::is_supported_new_name(input),
+                expected,
+                "{message}"
+            );
+        }
     }
 }
