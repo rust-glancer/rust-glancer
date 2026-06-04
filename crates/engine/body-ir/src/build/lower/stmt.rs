@@ -19,9 +19,9 @@ use crate::ir::{
     BindingData, BindingKind, BodySelfParamKind, ExprBlockKind, ExprKind, StmtData, StmtKind,
 };
 
-use super::function::FunctionBodyLowering;
+use super::body::BodyLowering;
 
-impl FunctionBodyLowering<'_> {
+impl BodyLowering<'_> {
     pub(super) fn lower_params(
         &mut self,
         param_list: Option<ast::ParamList>,

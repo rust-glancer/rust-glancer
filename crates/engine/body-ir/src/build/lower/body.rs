@@ -1,44 +1,44 @@
-//! Shared lowering context for one function body.
+//! Shared lowering context for expression bodies.
 
 use rg_syntax::ast;
 
-use rg_ir_model::{ExprId, FunctionRef, ModuleRef, ScopeId};
+use rg_ir_model::{ExprId, ModuleRef, ScopeId};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
 use rg_ty::Ty;
 
-use crate::ir::{BodyBuilder, BodyData, BodyResolution, BodySource, ExprData, ExprKind};
+use crate::ir::{BodyBuilder, BodyData, BodyOwner, BodyResolution, BodySource, ExprData, ExprKind};
 
 use super::syntax::source_for;
 
-pub(super) struct FunctionBodyLowering<'a> {
-    owner: FunctionRef,
+pub(super) struct BodyLowering<'a> {
+    owner: BodyOwner,
     owner_module: ModuleRef,
-    function_source: BodySource,
+    body_source: BodySource,
     pub(super) line_index: &'a LineIndex,
     pub(super) interner: &'a mut NameInterner,
     pub(super) builder: BodyBuilder,
 }
 
-impl<'a> FunctionBodyLowering<'a> {
+impl<'a> BodyLowering<'a> {
     pub(super) fn new(
-        owner: FunctionRef,
+        owner: BodyOwner,
         owner_module: ModuleRef,
-        function_source: BodySource,
+        body_source: BodySource,
         line_index: &'a LineIndex,
         interner: &'a mut NameInterner,
     ) -> Self {
         Self {
             owner,
             owner_module,
-            function_source,
+            body_source,
             line_index,
             interner,
             builder: BodyBuilder::default(),
         }
     }
 
-    pub(super) fn lower(mut self, function: ast::Fn, body: ast::BlockExpr) -> BodyData {
+    pub(super) fn lower_function(mut self, function: ast::Fn, body: ast::BlockExpr) -> BodyData {
         // Parameters live in the function's outer lexical scope. The body block gets a child scope
         // so locals do not appear before the function boundary.
         let param_scope = self.builder.alloc_scope(None);
@@ -48,16 +48,34 @@ impl<'a> FunctionBodyLowering<'a> {
         BodyData::new(
             self.owner,
             self.owner_module,
-            self.function_source,
+            self.body_source,
             param_scope,
             root_expr,
             params,
             self.builder,
         )
     }
+
+    pub(super) fn lower_initializer(mut self, expr: ast::Expr) -> BodyData {
+        // Item initializers are expression bodies without parameters. They still need a root scope
+        // so ordinary body path resolution, type paths, and source scans can use the same pipeline
+        // as function bodies.
+        let root_scope = self.builder.alloc_scope(None);
+        let root_expr = self.lower_expr(expr, root_scope);
+
+        BodyData::new(
+            self.owner,
+            self.owner_module,
+            self.body_source,
+            root_scope,
+            root_expr,
+            Vec::new(),
+            self.builder,
+        )
+    }
 }
 
-impl FunctionBodyLowering<'_> {
+impl BodyLowering<'_> {
     pub(super) fn alloc_expr(
         &mut self,
         syntax: &rg_syntax::SyntaxNode,
@@ -78,6 +96,6 @@ impl FunctionBodyLowering<'_> {
     }
 
     pub(super) fn source(&self, syntax: &rg_syntax::SyntaxNode) -> BodySource {
-        source_for(self.function_source.file_id, syntax)
+        source_for(self.body_source.file_id, syntax)
     }
 }

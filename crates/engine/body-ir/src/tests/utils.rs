@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 use expect_test::Expect;
 
 use crate::{
-    BindingData, BodyData, BodyIrBuildPolicy, BodyIrReadTxn, BodyResolution, BodySource,
+    BindingData, BodyData, BodyIrBuildPolicy, BodyIrReadTxn, BodyOwner, BodyResolution, BodySource,
     ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData,
     PatBindingMode, PatData, PatKind, StmtKind, TargetBodiesStatus, testonly::BodyIrFixture,
 };
@@ -136,7 +136,7 @@ impl TargetBodyIrSnapshot<'_> {
             .bodies()
             .iter()
             .enumerate()
-            .map(|(idx, body)| (self.render_function_ref(body.owner), BodyId(idx)))
+            .map(|(idx, body)| (self.render_body_owner(body.owner()), BodyId(idx)))
             .collect::<Vec<_>>();
         bodies.sort_by(|left, right| left.0.cmp(&right.0));
 
@@ -175,7 +175,7 @@ impl TargetBodyIrSnapshot<'_> {
             .bodies()
             .iter()
             .enumerate()
-            .map(|(idx, body)| (self.render_function_ref(body.owner), BodyId(idx)))
+            .map(|(idx, body)| (self.render_body_owner(body.owner()), BodyId(idx)))
             .collect::<Vec<_>>();
         bodies.sort_by(|left, right| left.0.cmp(&right.0));
 
@@ -200,7 +200,7 @@ impl TargetBodyIrSnapshot<'_> {
             dump,
             "body b{} {} @ {}",
             body_id.0,
-            self.render_function_ref(body.owner),
+            self.render_body_owner(body.owner()),
             self.render_source(body.source),
         )
         .expect("string writes should not fail");
@@ -259,7 +259,7 @@ impl TargetBodyIrSnapshot<'_> {
             dump,
             "body b{} {} @ {}",
             body_id.0,
-            self.render_function_ref(body.owner),
+            self.render_body_owner(body.owner()),
             self.render_source(body.source),
         )
         .expect("string writes should not fail");
@@ -1082,6 +1082,10 @@ impl TargetBodyIrSnapshot<'_> {
         }
     }
 
+    fn render_body_owner(&self, owner: BodyOwner) -> String {
+        self.render_resolved_declaration_ref(owner.declaration())
+    }
+
     fn render_semantic_item_ref(&self, item: SemanticItemRef) -> String {
         match item {
             SemanticItemRef::TypeDef(ty) => self.render_type_def_ref(ty),
@@ -1421,20 +1425,20 @@ impl TargetBodyIrSnapshot<'_> {
             return "<missing>".to_string();
         };
         let Some(def_map) = body.body_def_map() else {
-            return self.render_function_ref(body.owner);
+            return self.render_body_owner(body.owner());
         };
         let Some(module_data) = def_map.module(module) else {
             return "<missing>".to_string();
         };
 
         if matches!(module_data.origin, ModuleOrigin::Synthetic { .. }) {
-            return self.render_function_ref(body.owner);
+            return self.render_body_owner(body.owner());
         }
 
         let parent_path = module_data
             .parent
             .map(|parent| self.render_body_module_ref(body_ref, parent))
-            .unwrap_or_else(|| self.render_function_ref(body.owner));
+            .unwrap_or_else(|| self.render_body_owner(body.owner()));
         let Some(name) = module_data.name.as_deref() else {
             return parent_path;
         };

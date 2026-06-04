@@ -15,7 +15,7 @@ use crate::ir::{
     path::{BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind},
 };
 
-use super::function::FunctionBodyLowering;
+use super::body::BodyLowering;
 
 impl LiteralKind {
     pub(super) fn from_ast(literal: &ast::Literal) -> Self {
@@ -116,7 +116,7 @@ impl ExprRangeKind {
     }
 }
 
-impl FunctionBodyLowering<'_> {
+impl BodyLowering<'_> {
     pub(super) fn lower_body_path(&mut self, path: ast::Path) -> Option<BodyPath> {
         let source_span = Span::from_text_range(path.syntax().text_range());
         let absolute = path

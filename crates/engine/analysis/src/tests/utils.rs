@@ -8,7 +8,7 @@ use crate::{
     ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, RenameEdit, RenameResult,
     RenameTarget, SourceTextView, SymbolAt, TypeHint, WorkspaceSymbol,
 };
-use rg_body_ir::{BodyIrReadTxn, ExprData, ExprKind, testonly::BodyIrFixture};
+use rg_body_ir::{BodyIrReadTxn, BodyOwner, ExprData, ExprKind, testonly::BodyIrFixture};
 use rg_def_map::{PackageSlot, testonly::DefMapFixture};
 use rg_ir_model::{
     BodyRef, DefMapRef, FunctionRef, ItemOwner, ModuleRef, TargetRef, TraitRef, TypeDefId,
@@ -1209,12 +1209,50 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             .function_data(function_ref)
             .expect("function ref should load while rendering analysis body item")
             .expect("function ref should exist while rendering analysis body item");
-        let owner = match data.owner {
+        let owner = self.render_item_owner(&item_query, function_ref.origin, data.owner);
+
+        format!("fn {owner}::{}", data.name)
+    }
+
+    fn render_body_owner(&self, owner: BodyOwner) -> String {
+        let semantic_ir = self.semantic_ir_txn();
+        let item_query = ItemStoreQuery::new(&semantic_ir);
+        match owner {
+            BodyOwner::Function(function_ref) => self.render_function_ref(function_ref),
+            BodyOwner::Const(const_ref) => {
+                let data = item_query
+                    .const_data(const_ref)
+                    .expect("const ref should load while rendering analysis body item")
+                    .expect("const ref should exist while rendering analysis body item");
+                let owner = self.render_item_owner(&item_query, const_ref.origin, data.owner);
+                format!("const {owner}::{}", data.name)
+            }
+            BodyOwner::Static(static_ref) => {
+                let data = item_query
+                    .static_data(static_ref)
+                    .expect("static ref should load while rendering analysis body item")
+                    .expect("static ref should exist while rendering analysis body item");
+                format!(
+                    "static {}::{}",
+                    self.render_module_ref(data.owner),
+                    data.name
+                )
+            }
+        }
+    }
+
+    fn render_item_owner(
+        &self,
+        item_query: &ItemStoreQuery<'_, &SemanticIrReadTxn<'_>>,
+        origin: DefMapRef,
+        owner: ItemOwner,
+    ) -> String {
+        match owner {
             ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
             ItemOwner::Trait(trait_id) => {
                 let trait_data = item_query
                     .trait_data(TraitRef {
-                        origin: function_ref.origin,
+                        origin,
                         id: trait_id,
                     })
                     .expect("trait owner should load while rendering analysis body item")
@@ -1226,9 +1264,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
             }
             ItemOwner::Impl(_) => "impl".to_string(),
-        };
-
-        format!("fn {owner}::{}", data.name)
+        }
     }
 
     fn semantic_ir_txn(&self) -> SemanticIrReadTxn<'_> {
@@ -1252,7 +1288,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 .body_data(body_ref)
                 .expect("body module owner should load while rendering analysis module")
                 .expect("body module owner should exist while rendering analysis module");
-            return self.render_function_ref(body.owner());
+            return self.render_body_owner(body.owner());
         }
 
         let target_ref = module_ref.origin.origin_target();

@@ -12,7 +12,7 @@ use crate::{
     TraitRef, TypeAliasRef, TypeDefRef,
 };
 
-/// Stable identity for one lowered function body.
+/// Stable identity for one lowered function body declaration.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FunctionBodyRef(BodyIrBodyRef);
 

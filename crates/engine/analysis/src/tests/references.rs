@@ -69,6 +69,38 @@ pub fn use_it() {
 }
 
 #[test]
+fn finds_item_initializer_references() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_item_initializer_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub const LIMIT: u32 = 3;
+pub static CURRENT: u32 = LI$initializer_ref$MIT;
+
+pub fn use_it() -> u32 {
+    LIMIT
+}
+"#,
+        &[AnalysisQuery::references(
+            "const references",
+            "initializer_ref",
+            ReferenceQuery::all(),
+        )],
+        expect![[r#"
+            const references
+            - `LIMIT` @ src/lib.rs:1:11-1:16
+            - `LIMIT` @ src/lib.rs:2:27-2:32
+            - `LIMIT` @ src/lib.rs:5:5-5:10
+        "#]],
+    );
+}
+
+#[test]
 fn local_binding_method_receiver_shadows_same_name_function() {
     check_analysis_queries(
         r#"

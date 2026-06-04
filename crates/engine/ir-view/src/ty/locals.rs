@@ -351,7 +351,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             }
 
             groups.push(BodyLocalGroup {
-                owner: DeclarationRef::from(body.owner()),
+                owner: body.owner().declaration(),
                 body: BodyRef {
                     target,
                     body: rg_ir_model::BodyId(body_idx),

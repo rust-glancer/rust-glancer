@@ -291,6 +291,16 @@ pub fn use_it(value: i32) {
             package body_literal_pattern_fixture
 
             body_literal_pattern_fixture [lib]
+            body b2 const body_literal_pattern_fixture[lib]::crate::max_value @ 2:1-2:31
+            patterns
+            <none>
+
+
+            body b1 const body_literal_pattern_fixture[lib]::crate::min_value @ 1:1-1:30
+            patterns
+            <none>
+
+
             body b0 fn body_literal_pattern_fixture[lib]::crate::use_it @ 4:1-10:2
             patterns
             - p0 binding move v0 path value `value` @ 4:15-4:20

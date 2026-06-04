@@ -348,19 +348,16 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         let span = candidate.span();
         let occurrence = match candidate {
             BodyCursorCandidate::Body { body, .. } => {
-                let file_id = match self.analysis.body_ir.body_data(body)? {
-                    Some(data) => data.source().file_id,
-                    None => {
-                        let Some(file_id) = fallback_file_id else {
-                            return Ok(None);
-                        };
-                        file_id
-                    }
+                let Some(data) = self.analysis.body_ir.body_data(body)? else {
+                    return Ok(None);
+                };
+                let Some(_) = data.function_owner() else {
+                    return Ok(None);
                 };
                 Some(IndexedSourceOccurrence::structural(
                     IndexedSourceFact::FunctionBody(FunctionBodyRef::from_body_ir(body)),
                     target,
-                    file_id,
+                    data.source().file_id,
                     span,
                 ))
             }

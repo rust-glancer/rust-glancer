@@ -19,7 +19,7 @@ use crate::ir::{
     RecordExprField, RecordExprSpread, RecordFieldSyntax,
 };
 
-use super::function::FunctionBodyLowering;
+use super::body::BodyLowering;
 
 impl From<&ast::RecordExprField> for RecordFieldSyntax {
     fn from(field: &ast::RecordExprField) -> Self {
@@ -31,7 +31,7 @@ impl From<&ast::RecordExprField> for RecordFieldSyntax {
     }
 }
 
-impl FunctionBodyLowering<'_> {
+impl BodyLowering<'_> {
     pub(super) fn lower_expr(&mut self, expr: ast::Expr, scope: ScopeId) -> ExprId {
         match expr {
             ast::Expr::ArrayExpr(array) => self.lower_array_expr(array, scope),

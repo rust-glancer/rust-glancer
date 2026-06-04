@@ -16,7 +16,7 @@ use crate::ir::{
     path::{BodyPathSegment, BodyPathSegmentKind},
 };
 
-use super::function::FunctionBodyLowering;
+use super::body::BodyLowering;
 
 /// How lowering should classify a simple identifier pattern before real pattern resolution exists.
 ///
@@ -31,7 +31,7 @@ enum IdentPatResolution {
     ForceBinding,
 }
 
-impl FunctionBodyLowering<'_> {
+impl BodyLowering<'_> {
     pub(super) fn lower_pat(
         &mut self,
         pat: ast::Pat,

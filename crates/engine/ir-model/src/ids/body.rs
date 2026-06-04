@@ -5,7 +5,7 @@ use crate::TargetRef;
 use crate::declare_id;
 
 declare_id! {
-    /// Stable identifier for one lowered function body inside a target.
+    /// Stable identifier for one lowered body inside a target.
     pub struct BodyId;
 
     /// Stable identifier for one expression inside a body.
@@ -24,7 +24,7 @@ declare_id! {
     pub struct ScopeId;
 }
 
-/// Stable reference to one lowered function body across the project.
+/// Stable reference to one lowered body across the project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct BodyRef {
     pub target: TargetRef,

@@ -1,10 +1,10 @@
-//! Mechanical lowering from function-body AST into Body IR.
+//! Mechanical lowering from AST expression bodies into Body IR.
 //!
 //! This pass intentionally does not resolve names. It records the source shape, lexical scopes,
 //! and visibility-order binding boundaries so the later resolution pass can stay focused.
 
+mod body;
 mod expr;
-mod function;
 mod pat;
 mod stmt;
 mod syntax;
@@ -14,8 +14,8 @@ use anyhow::Context as _;
 use rayon::prelude::*;
 
 use rg_def_map::PackageSlot;
-use rg_ir_model::{FunctionRef, TargetRef};
-use rg_parse::{FileId, ParseDb, Span, TargetId};
+use rg_ir_model::{ConstRef, StaticRef, TargetRef};
+use rg_parse::{FileId, ParseDb, TargetId};
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
 
@@ -208,15 +208,49 @@ fn build_package_with_interner(
         let store = semantic_ir
             .items(target_ref)
             .with_context(|| {
-                format!("while attempting to fetch semantic IR functions for target {target_idx}")
+                format!("while attempting to fetch semantic IR items for target {target_idx}")
             })?
             .context("store must be present")?;
         let functions = store
             .functions_with_refs()
             .map(|(function_ref, function)| (function_ref, function.source.file_id, function.span))
             .collect::<Vec<_>>();
+        let consts = store
+            .consts()
+            .iter_with_ids()
+            .map(|(id, data)| {
+                (
+                    ConstRef {
+                        origin: store.origin(),
+                        id,
+                    },
+                    data.source.file_id,
+                    data.span,
+                )
+            })
+            .collect::<Vec<_>>();
+        let statics = store
+            .statics()
+            .iter_with_ids()
+            .map(|(id, data)| {
+                (
+                    StaticRef {
+                        origin: store.origin(),
+                        id,
+                    },
+                    data.source.file_id,
+                    data.span,
+                )
+            })
+            .collect::<Vec<_>>();
+        let body_files = functions
+            .iter()
+            .map(|(_, file_id, _)| *file_id)
+            .chain(consts.iter().map(|(_, file_id, _)| *file_id))
+            .chain(statics.iter().map(|(_, file_id, _)| *file_id))
+            .collect::<Vec<_>>();
         if !scope.should_lower_package(package, parse_package)
-            || !scope.should_lower_target(package, &functions)
+            || !scope.should_lower_target(package, &body_files)
         {
             targets.push(TargetBodies::skipped());
             continue;
@@ -229,6 +263,8 @@ fn build_package_with_interner(
                 scope,
                 package,
                 functions,
+                consts,
+                statics,
                 target_bodies: TargetBodies::new(),
                 interner,
             }
@@ -256,14 +292,10 @@ impl BodyIrLoweringScope<'_> {
         }
     }
 
-    fn should_lower_target(
-        self,
-        package: PackageSlot,
-        functions: &[(FunctionRef, FileId, Span)],
-    ) -> bool {
+    fn should_lower_target(self, package: PackageSlot, files_with_bodies: &[FileId]) -> bool {
         match self {
             Self::PackagePolicy(_) => true,
-            Self::SelectedFiles(files) => functions.iter().any(|(_, file_id, _)| {
+            Self::SelectedFiles(files) => files_with_bodies.iter().any(|file_id| {
                 files
                     .iter()
                     .any(|file| file.package == package && file.file == *file_id)
@@ -271,7 +303,7 @@ impl BodyIrLoweringScope<'_> {
         }
     }
 
-    fn should_lower_function(self, package: PackageSlot, file_id: FileId) -> bool {
+    fn should_lower_body_file(self, package: PackageSlot, file_id: FileId) -> bool {
         match self {
             Self::PackagePolicy(_) => true,
             Self::SelectedFiles(files) => files
