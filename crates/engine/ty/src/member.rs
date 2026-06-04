@@ -5,7 +5,7 @@
 //! item refs so higher layers can decide how to present them.
 
 use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TypeDefRef};
-use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource};
+use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
 
 use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, NominalTy, Ty};
 
@@ -50,6 +50,7 @@ pub enum MemberMethodOrigin {
 /// Ref-level member lookup shared by analysis and view adapters.
 pub struct MemberQuery<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
+    target_items: TargetItemQuery<'query, D, I>,
     lookup_index: Option<&'query ItemLookupIndex>,
 }
 
@@ -59,9 +60,13 @@ where
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
     /// Creates a member query that scans the visible item stores directly.
-    pub fn new(item_paths: ItemPathQuery<'query, D, I>) -> Self {
+    pub fn new(
+        item_paths: ItemPathQuery<'query, D, I>,
+        target_items: TargetItemQuery<'query, D, I>,
+    ) -> Self {
         Self {
             item_paths,
+            target_items,
             lookup_index: None,
         }
     }
@@ -69,10 +74,12 @@ where
     /// Creates a member query that can reuse a precomputed receiver lookup index.
     pub fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
+        target_items: TargetItemQuery<'query, D, I>,
         lookup_index: &'query ItemLookupIndex,
     ) -> Self {
         Self {
             item_paths,
+            target_items,
             lookup_index: Some(lookup_index),
         }
     }
@@ -117,7 +124,7 @@ where
         receiver_ty: &NominalTy,
     ) -> Result<Vec<MemberMethodCandidateRef>, D::Error> {
         let mut candidates = Vec::new();
-        let matcher = ImplMatcher::new(self.item_paths.clone());
+        let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
 
         for function in self.inherent_functions_for_nominal(receiver_ty)? {
             if !matcher.function_applies_to_receiver(function, receiver_ty)? {
@@ -149,16 +156,17 @@ where
                 index.inherent_functions_for_type(self.item_paths.items(), receiver_ty.def)
             }
             None => self
-                .item_paths
-                .items()
+                .target_items
                 .inherent_functions_for_type(receiver_ty.def),
         }
     }
 
     fn autoderef(&self) -> Autoderef<'query, D, I> {
         match self.lookup_index {
-            Some(index) => Autoderef::with_index(self.item_paths.clone(), index),
-            None => Autoderef::new(self.item_paths.clone()),
+            Some(index) => {
+                Autoderef::with_index(self.item_paths.clone(), self.target_items.clone(), index)
+            }
+            None => Autoderef::new(self.item_paths.clone(), self.target_items.clone()),
         }
     }
 }

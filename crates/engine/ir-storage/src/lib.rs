@@ -13,7 +13,7 @@ pub use self::{
     },
     item::{
         ItemLookupIndex, ItemStore, ItemStoreBuilder, ItemStoreQuery, ItemStoreSource,
-        SemanticItemView, TypePathContext,
+        SemanticItemView, TargetItemQuery, TypePathContext,
     },
 };
 

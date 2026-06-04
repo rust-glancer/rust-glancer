@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{BodyId, BodyRef, TargetRef};
-use rg_ir_storage::{ItemLookupIndex, ItemStoreQuery};
+use rg_ir_storage::{ItemLookupIndex, TargetItemQuery};
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
 use rg_semantic_ir::SemanticIrReadTxn;
@@ -24,19 +24,9 @@ pub(super) fn resolve_packages(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
 ) -> anyhow::Result<()> {
-    let item_query = ItemStoreQuery::new(semantic_ir);
-    let semantic_index = ItemLookupIndex::build(&item_query)
-        .context("while attempting to build semantic index for body resolution")?;
-
     if packages.len() <= 1 {
         for (package_idx, package) in packages.iter_mut().enumerate() {
-            resolve_package(
-                PackageSlot(package_idx),
-                package,
-                def_map,
-                semantic_ir,
-                &semantic_index,
-            )?;
+            resolve_package(PackageSlot(package_idx), package, def_map, semantic_ir)?;
         }
         return Ok(());
     }
@@ -46,13 +36,7 @@ pub(super) fn resolve_packages(
         .install(|| {
             packages.par_iter_mut().enumerate().try_for_each(
                 |(package_idx, package)| -> Result<(), PackageStoreError> {
-                    resolve_package(
-                        PackageSlot(package_idx),
-                        package,
-                        def_map,
-                        semantic_ir,
-                        &semantic_index,
-                    )
+                    resolve_package(PackageSlot(package_idx), package, def_map, semantic_ir)
                 },
             )
         })
@@ -64,19 +48,9 @@ pub(super) fn resolve_selected_packages(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
 ) -> anyhow::Result<()> {
-    let item_query = ItemStoreQuery::new(semantic_ir);
-    let semantic_index = ItemLookupIndex::build(&item_query)
-        .context("while attempting to build semantic index for body resolution")?;
-
     if packages.len() <= 1 {
         for (package_slot, package) in packages {
-            resolve_package(
-                *package_slot,
-                package,
-                def_map,
-                semantic_ir,
-                &semantic_index,
-            )?;
+            resolve_package(*package_slot, package, def_map, semantic_ir)?;
         }
         return Ok(());
     }
@@ -88,13 +62,7 @@ pub(super) fn resolve_selected_packages(
                 .par_iter_mut()
                 .try_for_each(|entry| -> Result<(), PackageStoreError> {
                     let package_slot = entry.0;
-                    resolve_package(
-                        package_slot,
-                        &mut entry.1,
-                        def_map,
-                        semantic_ir,
-                        &semantic_index,
-                    )
+                    resolve_package(package_slot, &mut entry.1, def_map, semantic_ir)
                 })
         })
         .context("while attempting to resolve selected body IR packages")
@@ -105,7 +73,6 @@ fn resolve_package(
     package: &mut PackageBodies,
     def_map_txn: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
-    semantic_index: &ItemLookupIndex,
 ) -> Result<(), PackageStoreError> {
     // Resolution is a mutation pass over already-lowered bodies. Skipped targets intentionally
     // keep their body stores empty so dependency body internals stay cheap by default.
@@ -118,6 +85,10 @@ fn resolve_package(
             package: package_slot,
             target: TargetId(target_idx),
         };
+
+        let target_items = TargetItemQuery::new(def_map_txn, semantic_ir, target_ref);
+        let semantic_index = ItemLookupIndex::build_from(&target_items)?;
+
         for (body_idx, body) in target.bodies_mut().iter_mut().enumerate() {
             let body_ref = BodyRef {
                 target: target_ref,
@@ -131,7 +102,7 @@ fn resolve_package(
             body.body_def_map = Some(body_def_map);
             body.body_item_store = Some(body_item_store);
 
-            BodyResolver::new(def_map_txn, semantic_ir, semantic_index, body_ref, body)
+            BodyResolver::new(def_map_txn, semantic_ir, &semantic_index, body_ref, body)
                 .resolve()?;
         }
     }

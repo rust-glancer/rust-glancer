@@ -225,6 +225,90 @@ impl ImportedTrait for Local {
 }
 
 #[test]
+fn target_queries_exclude_impls_from_unrelated_workspace_targets() {
+    check_project_semantic_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/shared", "crates/app", "crates/other"]
+resolver = "3"
+
+//- /crates/shared/Cargo.toml
+[package]
+name = "shared"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/shared/src/lib.rs
+pub struct Maybe;
+
+impl Maybe {
+    pub fn is_some(&self) -> bool {
+        true
+    }
+}
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shared = { path = "../shared" }
+
+//- /crates/app/src/lib.rs
+use shared::Maybe;
+
+pub trait AppExt {
+    fn and_then(&self);
+}
+
+impl AppExt for Maybe {
+    fn and_then(&self) {}
+}
+
+//- /crates/other/Cargo.toml
+[package]
+name = "other"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shared = { path = "../shared" }
+
+//- /crates/other/src/lib.rs
+use shared::Maybe;
+
+pub trait OtherExt {
+    fn and_then(&self);
+}
+
+impl OtherExt for Maybe {
+    fn and_then(&self) {}
+}
+"#,
+        &[SemanticQuery::lib("app", "shared::Maybe")],
+        expect![[r#"
+            query app [lib] crate resolves shared::Maybe -> struct shared[lib]::crate::Maybe
+            impls
+            - impl AppExt for Maybe
+            - impl Maybe
+            trait impls
+            - impl AppExt for Maybe => trait app[lib]::crate::AppExt
+            traits
+            - trait app[lib]::crate::AppExt
+            inherent functions
+            - fn impl Maybe::is_some
+            trait functions
+            - fn trait app[lib]::crate::AppExt::and_then
+            trait impl functions
+            - fn impl AppExt for Maybe::and_then
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_bin_queries_to_sibling_lib_and_dependencies() {
     check_project_semantic_queries(
         r#"

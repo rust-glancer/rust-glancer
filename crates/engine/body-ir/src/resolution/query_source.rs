@@ -94,7 +94,7 @@ where
         }
     }
 
-    fn visible_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {
-        self.item_stores.visible_stores()
+    fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {
+        self.item_stores.included_stores()
     }
 }

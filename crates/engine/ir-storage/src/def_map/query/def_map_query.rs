@@ -128,6 +128,37 @@ where
             .unwrap_or_default())
     }
 
+    /// Returns targets whose DefMap roots are visible from `root`.
+    ///
+    /// This is the target-level language visibility closure: the target itself plus targets named
+    /// by external roots and preludes reachable from it. It is intentionally separate from package
+    /// transaction inclusion, which is only a storage/materialization boundary.
+    pub fn visible_targets_from(&self, root: TargetRef) -> Result<Vec<TargetRef>, S::Error> {
+        let mut visible_targets = Vec::new();
+        let mut pending_targets = vec![root];
+
+        while let Some(target) = pending_targets.pop() {
+            if visible_targets.contains(&target) {
+                continue;
+            }
+            visible_targets.push(target);
+
+            for (_, module) in self.source.extern_roots(target)? {
+                if let Some(target) = module.origin.as_target_ref() {
+                    pending_targets.push(target);
+                }
+            }
+
+            if let Some(module) = self.source.prelude_module(target)?
+                && let Some(target) = module.origin.as_target_ref()
+            {
+                pending_targets.push(target);
+            }
+        }
+
+        Ok(visible_targets)
+    }
+
     pub fn local_def_data(
         &self,
         local_def_ref: LocalDefRef,

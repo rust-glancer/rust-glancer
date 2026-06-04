@@ -5,8 +5,7 @@
 
 use rg_ir_model::{
     ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner, LocalDefRef,
-    SemanticItemRef, StaticRef, TargetRef, TraitImplRef, TraitRef, TypeAliasRef, TypeDefId,
-    TypeDefRef,
+    SemanticItemRef, StaticRef, TargetRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
     hir::items::{
         ConstData, EnumData, EnumVariantData, FieldData, FunctionData, ImplData, StaticData,
         TraitData, TypeAliasData,
@@ -14,26 +13,8 @@ use rg_ir_model::{
 };
 use rg_item_tree::{FieldKey, FieldList, GenericParams};
 
-use crate::{ItemStore, SemanticItemView, TypePathContext, push_unique};
-
-/// Provides the stores that semantic-shaped item refs can point into.
-///
-/// Layer-specific code implements this once, and the query code below can then treat target items
-/// and body-local items as the same kind of data.
-pub trait ItemStoreSource<'a> {
-    type Error;
-
-    /// Finds the store that owns refs with this origin.
-    ///
-    /// `None` means the origin is outside of the source's view, for example a different body.
-    fn item_store_for_origin(
-        &self,
-        origin: DefMapRef,
-    ) -> Result<Option<&'a ItemStore>, Self::Error>;
-
-    /// Defines how far queries such as target-item impl search are allowed to look.
-    fn visible_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error>;
-}
+use super::ItemStoreSource;
+use crate::{ItemStore, SemanticItemView, TypePathContext};
 
 /// Shared item queries over any storage that can route `DefMapRef` origins to item stores.
 ///
@@ -65,20 +46,32 @@ where
         self.source.item_store_for_origin(origin)
     }
 
-    /// Returns the stores that broad lookup/indexing is allowed to scan.
-    ///
-    /// This keeps broad scans on the same visibility boundary as direct impl queries.
-    pub fn visible_stores(&self) -> Result<Vec<&'a ItemStore>, S::Error> {
-        self.source.visible_stores()
+    /// Returns the stores that are materialized by this query source.
+    pub fn included_stores(&self) -> Result<Vec<&'a ItemStore>, S::Error> {
+        self.source.included_stores()
     }
 
-    /// Returns target refs for all stores visible to broad item queries.
-    pub fn visible_target_refs(&self) -> Result<Vec<TargetRef>, S::Error> {
+    /// Returns target refs for all stores materialized by this query source.
+    pub fn included_target_refs(&self) -> Result<Vec<TargetRef>, S::Error> {
         Ok(self
-            .visible_stores()?
+            .included_stores()?
             .into_iter()
             .map(|store| store.target_ref())
             .collect())
+    }
+
+    /// Returns stores for the exact targets selected by a language-visibility query.
+    pub fn stores_for_targets(
+        &self,
+        targets: &[TargetRef],
+    ) -> Result<Vec<&'a ItemStore>, S::Error> {
+        let mut stores = Vec::new();
+        for target in targets {
+            if let Some(store) = self.item_store_for_origin(DefMapRef::Target(*target))? {
+                stores.push(store);
+            }
+        }
+        Ok(stores)
     }
 
     /// Enumerates item views from one routed origin without exposing store iteration to callers.
@@ -370,130 +363,5 @@ where
         Ok(self
             .item_store_for_origin(static_ref.origin)?
             .and_then(|items| items.static_data(static_ref.id)))
-    }
-
-    /// Searches the impl index visible from the type's origin, not just the type's own store.
-    pub fn impls_for_type(&self, ty: TypeDefRef) -> Result<Vec<ImplRef>, S::Error> {
-        let mut impls = Vec::new();
-        for store in self.impl_stores_for_origin(ty.origin)? {
-            impls.extend(store.impls_with_refs().filter_map(|(impl_ref, data)| {
-                data.resolved_self_tys.contains(&ty).then_some(impl_ref)
-            }));
-        }
-        Ok(impls)
-    }
-
-    /// Searches visible impls for a trait ref while keeping duplicate refs out of the result.
-    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> Result<Vec<ImplRef>, S::Error> {
-        let mut impls = Vec::new();
-        for store in self.impl_stores_for_origin(trait_ref.origin)? {
-            for (impl_ref, data) in store.impls_with_refs() {
-                if data.resolved_trait_refs.contains(&trait_ref) {
-                    push_unique(&mut impls, impl_ref);
-                }
-            }
-        }
-        Ok(impls)
-    }
-
-    /// Narrows type impl lookup to inherent impls, which is the path used for method completion.
-    pub fn inherent_impls_for_type(&self, ty: TypeDefRef) -> Result<Vec<ImplRef>, S::Error> {
-        let mut impls = Vec::new();
-        for impl_ref in self.impls_for_type(ty)? {
-            let Some(data) = self.impl_data(impl_ref)? else {
-                continue;
-            };
-            if data.trait_ref.is_none() {
-                impls.push(impl_ref);
-            }
-        }
-        Ok(impls)
-    }
-
-    /// Collects inherent functions for callers that care about callable members, not impl blocks.
-    pub fn inherent_functions_for_type(
-        &self,
-        ty: TypeDefRef,
-    ) -> Result<Vec<FunctionRef>, S::Error> {
-        let mut functions = Vec::new();
-        for impl_ref in self.inherent_impls_for_type(ty)? {
-            let Some(data) = self.impl_data(impl_ref)? else {
-                continue;
-            };
-            functions.extend(data.functions());
-        }
-        Ok(functions)
-    }
-
-    /// Expands matching trait impl blocks into the trait refs they actually implement.
-    pub fn trait_impls_for_type(&self, ty: TypeDefRef) -> Result<Vec<TraitImplRef>, S::Error> {
-        let mut trait_impls = Vec::new();
-        for impl_ref in self.impls_for_type(ty)? {
-            let Some(data) = self.impl_data(impl_ref)? else {
-                continue;
-            };
-
-            for trait_ref in &data.resolved_trait_refs {
-                push_unique(
-                    &mut trait_impls,
-                    TraitImplRef {
-                        impl_ref,
-                        trait_ref: *trait_ref,
-                    },
-                );
-            }
-        }
-        Ok(trait_impls)
-    }
-
-    /// Lists trait declarations implemented by the visible impls for a nominal type.
-    pub fn traits_for_type(&self, ty: TypeDefRef) -> Result<Vec<TraitRef>, S::Error> {
-        let mut traits = Vec::new();
-        for trait_impl in self.trait_impls_for_type(ty)? {
-            push_unique(&mut traits, trait_impl.trait_ref);
-        }
-        Ok(traits)
-    }
-
-    /// Collects trait-declared functions available for a nominal type.
-    pub fn trait_functions_for_type(&self, ty: TypeDefRef) -> Result<Vec<FunctionRef>, S::Error> {
-        let mut functions = Vec::new();
-        for trait_ref in self.traits_for_type(ty)? {
-            let Some(data) = self.trait_data(trait_ref)? else {
-                continue;
-            };
-            for function in data.functions() {
-                push_unique(&mut functions, function);
-            }
-        }
-        Ok(functions)
-    }
-
-    /// Collects concrete trait-impl functions available for a nominal type.
-    pub fn trait_impl_functions_for_type(
-        &self,
-        ty: TypeDefRef,
-    ) -> Result<Vec<FunctionRef>, S::Error> {
-        let mut functions = Vec::new();
-        for trait_impl in self.trait_impls_for_type(ty)? {
-            let Some(data) = self.impl_data(trait_impl.impl_ref)? else {
-                continue;
-            };
-            functions.extend(data.functions());
-        }
-        Ok(functions)
-    }
-
-    /// Target-origin impl lookup can see all visible semantic stores; body-local refs stay scoped
-    /// to their owning body store.
-    fn impl_stores_for_origin(&self, origin: DefMapRef) -> Result<Vec<&'a ItemStore>, S::Error> {
-        if origin.as_target_ref().is_some() {
-            return self.source.visible_stores();
-        }
-
-        Ok(self
-            .item_store_for_origin(origin)?
-            .into_iter()
-            .collect::<Vec<_>>())
     }
 }

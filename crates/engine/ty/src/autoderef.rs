@@ -6,7 +6,7 @@
 
 use std::{borrow::Cow, collections::VecDeque};
 
-use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource};
+use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
 
 use crate::{ItemPathQuery, RefMutability, Ty, deref::DerefResolver};
 
@@ -16,6 +16,7 @@ const AUTODEREF_LIMIT: usize = 8;
 #[derive(Clone)]
 pub struct Autoderef<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
+    target_items: TargetItemQuery<'query, D, I>,
     lookup_index: Option<&'query ItemLookupIndex>,
 }
 
@@ -25,9 +26,13 @@ where
     I: ItemStoreSource<'query, Error = D::Error> + Clone,
 {
     /// Creates an autoderef engine without a precomputed lookup index.
-    pub fn new(item_paths: ItemPathQuery<'query, D, I>) -> Self {
+    pub fn new(
+        item_paths: ItemPathQuery<'query, D, I>,
+        target_items: TargetItemQuery<'query, D, I>,
+    ) -> Self {
         Self {
             item_paths,
+            target_items,
             lookup_index: None,
         }
     }
@@ -35,10 +40,12 @@ where
     /// Creates an autoderef engine that can reuse a receiver lookup index.
     pub fn with_index(
         item_paths: ItemPathQuery<'query, D, I>,
+        target_items: TargetItemQuery<'query, D, I>,
         lookup_index: &'query ItemLookupIndex,
     ) -> Self {
         Self {
             item_paths,
+            target_items,
             lookup_index: Some(lookup_index),
         }
     }
@@ -74,7 +81,12 @@ where
     }
 
     fn deref_targets(&self, ty: &Ty) -> Result<Vec<Ty>, D::Error> {
-        DerefResolver::new(self.item_paths.clone(), self.lookup_index).targets_for_ty(ty)
+        DerefResolver::new(
+            self.item_paths.clone(),
+            self.target_items.clone(),
+            self.lookup_index,
+        )
+        .targets_for_ty(ty)
     }
 }
 

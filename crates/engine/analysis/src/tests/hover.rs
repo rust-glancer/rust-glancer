@@ -389,6 +389,79 @@ pub fn use_roots(_: cra$crate_root_hover$te::Api, _: de$dep_root_hover$p::Thing)
 }
 
 #[test]
+fn hovers_over_method_when_unrelated_workspace_crate_has_same_named_trait_method() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/shared", "crates/unrelated", "crates/app"]
+resolver = "3"
+
+//- /crates/shared/Cargo.toml
+[package]
+name = "shared"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/shared/src/lib.rs
+pub struct Maybe<T>(T);
+pub struct User;
+pub struct Label;
+
+impl<T> Maybe<T> {
+    pub fn and_then(self) -> Label {
+        Label
+    }
+}
+
+//- /crates/unrelated/Cargo.toml
+[package]
+name = "unrelated"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shared = { path = "../shared" }
+
+//- /crates/unrelated/src/lib.rs
+pub trait Layer<S> {
+    fn and_then(self) -> S;
+}
+
+impl<T, S> Layer<S> for shared::Maybe<T> {
+    fn and_then(self) -> S {
+        loop {}
+    }
+}
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+shared = { path = "../shared" }
+
+//- /crates/app/src/lib.rs
+pub fn demo(maybe: shared::Maybe<shared::User>) {
+    let _label = maybe.an$method_hover$d_then();
+}
+"#,
+        &[AnalysisQuery::hover("hover visible method", "method_hover").in_lib("app")],
+        expect![[r#"
+            hover visible method
+            - range: 2:18-2:34
+            - block:
+              kind: method
+              path: shared::Maybe::and_then
+              signature:
+                pub fn and_then(self) -> Label
+        "#]],
+    );
+}
+
+#[test]
 fn hovers_with_bounded_item_previews() {
     check_analysis_queries(
         r#"

@@ -5,7 +5,7 @@ use rg_ir_model::{
     FunctionRef, ImplRef, SemanticItemRef, TargetRef,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_ir_storage::ItemStoreQuery;
+use rg_ir_storage::{ItemStoreQuery, TargetItemQuery};
 use rg_parse::FileId;
 use rg_ty::{ImplementationQuery, ItemPathQuery, Ty};
 
@@ -50,14 +50,17 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         for declaration in source_symbols.declarations_for_symbol(symbol.clone())? {
             Self::extend_unique_declarations(
                 &mut declarations,
-                self.implementations_for_declaration(declaration)?,
+                self.implementations_for_declaration(target, declaration)?,
             );
         }
 
         if declarations.is_empty()
             && let Some(ty) = source_symbols.ty_for_symbol(symbol)?
         {
-            Self::extend_unique_declarations(&mut declarations, self.implementations_for_ty(&ty)?);
+            Self::extend_unique_declarations(
+                &mut declarations,
+                self.implementations_for_ty(target, &ty)?,
+            );
         }
 
         NavigationTargetProjection::new(self.0.view_db()).targets_for_declarations(declarations)
@@ -88,8 +91,10 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
             return Ok(None);
         }
 
-        let implementation_query =
-            ImplementationQuery::new(ItemPathQuery::new(self.0.view_db(), self.0.view_db()));
+        let implementation_query = ImplementationQuery::new(
+            ItemPathQuery::new(self.0.view_db(), self.0.view_db()),
+            TargetItemQuery::new(self.0.view_db(), self.0.view_db(), body_ref.target),
+        );
         let mut implementations = Vec::new();
         for declaration in declarations {
             let Some(function) = self.function_ref_for_declaration(declaration)? else {
@@ -105,10 +110,13 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
 
     fn implementations_for_declaration(
         &self,
+        use_site: TargetRef,
         declaration: DeclarationRef,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let implementation_query =
-            ImplementationQuery::new(ItemPathQuery::new(self.0.view_db(), self.0.view_db()));
+        let implementation_query = ImplementationQuery::new(
+            ItemPathQuery::new(self.0.view_db(), self.0.view_db()),
+            TargetItemQuery::new(self.0.view_db(), self.0.view_db(), use_site),
+        );
         let mut implementations = Vec::new();
 
         match declaration {
@@ -167,9 +175,15 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         Ok(implementations)
     }
 
-    fn implementations_for_ty(&self, ty: &Ty) -> anyhow::Result<Vec<DeclarationRef>> {
-        let implementation_query =
-            ImplementationQuery::new(ItemPathQuery::new(self.0.view_db(), self.0.view_db()));
+    fn implementations_for_ty(
+        &self,
+        use_site: TargetRef,
+        ty: &Ty,
+    ) -> anyhow::Result<Vec<DeclarationRef>> {
+        let implementation_query = ImplementationQuery::new(
+            ItemPathQuery::new(self.0.view_db(), self.0.view_db()),
+            TargetItemQuery::new(self.0.view_db(), self.0.view_db(), use_site),
+        );
         let mut implementations = Vec::new();
         Self::extend_impl_refs(&mut implementations, implementation_query.impls_for_ty(ty)?);
         Ok(implementations)
