@@ -41,6 +41,7 @@ pub struct RecordExprField {
     pub key: FieldKey,
     pub key_span: Span,
     pub source_span: Span,
+    pub explicit: bool,
     pub value: Option<ExprId>,
 }
 

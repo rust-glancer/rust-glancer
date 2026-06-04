@@ -10,6 +10,7 @@ use rg_ir_model::{
     identity::{DeclarationRef, ExprRef},
 };
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery, Path, TypePathContext};
+use rg_item_tree::FieldKey;
 use rg_ty::ItemPathQuery;
 
 use crate::IndexedViewDb;
@@ -138,6 +139,40 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let (resolution, _) = BodyScopeQuery::new(self.0, self.0, body_ref, body)
             .resolve_value_path_in_scope(scope, path)?;
         self.declarations_for_body_resolution(Some(body_ref), &resolution)
+    }
+
+    pub fn declarations_for_body_record_field(
+        &self,
+        body_ref: BodyRef,
+        scope: ScopeId,
+        owner: &Path,
+        key: &FieldKey,
+    ) -> anyhow::Result<Vec<DeclarationRef>> {
+        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
+            return Ok(Vec::new());
+        };
+        let resolution = BodyScopeQuery::new(self.0, self.0, body_ref, body)
+            .resolve_type_path_in_scope(scope, owner)?;
+
+        let (TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types)) =
+            resolution
+        else {
+            return Ok(Vec::new());
+        };
+
+        let item_query = ItemStoreQuery::new(self.0);
+        let mut declarations = Vec::new();
+        for ty in types {
+            for field in item_query.fields_for_type(ty)? {
+                let Some(data) = item_query.field_data(field)? else {
+                    continue;
+                };
+                if data.field.key.as_ref() == Some(key) {
+                    declarations.push(DeclarationRef::from(field));
+                }
+            }
+        }
+        Ok(declarations)
     }
 
     pub(crate) fn declarations_for_body_resolution(

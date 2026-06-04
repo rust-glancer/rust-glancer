@@ -148,6 +148,7 @@ pub struct RecordPatField {
     pub key: FieldKey,
     pub key_span: rg_parse::Span,
     pub source_span: rg_parse::Span,
+    pub explicit: bool,
     pub pat: PatId,
 }
 

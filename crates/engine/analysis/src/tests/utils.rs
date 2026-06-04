@@ -756,6 +756,20 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
                 .expect("string writes should not fail");
             }
+            SymbolAt::RecordField {
+                ref owner,
+                ref key,
+                span,
+                ..
+            } => {
+                writeln!(
+                    dump,
+                    "\n- record field {owner}::{} @ {}",
+                    key.declaration_label(),
+                    self.render_source_span(package, file_id, span)
+                )
+                .expect("string writes should not fail");
+            }
             SymbolAt::UsePath { ref path, span, .. } => {
                 writeln!(
                     dump,

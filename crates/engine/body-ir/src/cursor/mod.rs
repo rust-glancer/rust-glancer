@@ -120,6 +120,15 @@ pub enum BodyCursorCandidate {
     LocalEnumVariant { variant: EnumVariantRef, span: Span },
     /// Body-local function-like item, e.g. `helper` in `fn f() { fn helper() {} }`.
     LocalFunction { function: FunctionRef, span: Span },
+    /// Explicit record field key, e.g. `name` in `User { name: value }`.
+    RecordFieldKey {
+        body: BodyRef,
+        scope: ScopeId,
+        owner: Path,
+        key: FieldKey,
+        file_id: FileId,
+        span: Span,
+    },
     /// Type-namespace path inside a body, e.g. `User` in `let user: User;`.
     TypePath {
         body: BodyRef,
@@ -153,6 +162,7 @@ impl BodyCursorCandidate {
             | Self::LocalField { span, .. }
             | Self::LocalEnumVariant { span, .. }
             | Self::LocalFunction { span, .. }
+            | Self::RecordFieldKey { span, .. }
             | Self::TypePath { span, .. }
             | Self::ValuePath { span, .. } => *span,
         }

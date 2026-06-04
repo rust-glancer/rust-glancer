@@ -68,7 +68,8 @@ impl<'a, 'db> HoverResolver<'a, 'db> {
             | SymbolAt::UsePath { path, .. } => path.last_segment_label(),
             SymbolAt::FunctionBody { .. }
             | SymbolAt::Declaration { .. }
-            | SymbolAt::Expr { .. } => None,
+            | SymbolAt::Expr { .. }
+            | SymbolAt::RecordField { .. } => None,
         }
     }
 

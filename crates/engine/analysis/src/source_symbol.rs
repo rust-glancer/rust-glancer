@@ -73,6 +73,12 @@ impl SourceSymbol {
             IndexedSourceFact::ValuePath { scope, path } => {
                 SymbolAt::ValuePath { scope, path, span }
             }
+            IndexedSourceFact::RecordField { scope, owner, key } => SymbolAt::RecordField {
+                scope,
+                owner,
+                key,
+                span,
+            },
             IndexedSourceFact::UsePath { module, path } => SymbolAt::UsePath { module, path, span },
         };
         Self {
@@ -161,6 +167,14 @@ impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
                 scope.scope_id(),
                 &path,
             ),
+            SymbolAt::RecordField {
+                scope, owner, key, ..
+            } => resolution.declarations_for_body_record_field(
+                scope.body_ir(),
+                scope.scope_id(),
+                &owner,
+                &key,
+            ),
             SymbolAt::UsePath { module, path, .. } => {
                 resolution.declarations_for_use_path(module, &path)
             }
@@ -187,7 +201,9 @@ impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
             SymbolAt::ValuePath { scope, path, .. } => {
                 Some(ty_view.ty_for_body_value_path(scope.body_ir(), scope.scope_id(), &path)?)
             }
-            SymbolAt::UsePath { .. } | SymbolAt::FunctionBody { .. } => None,
+            SymbolAt::RecordField { .. }
+            | SymbolAt::UsePath { .. }
+            | SymbolAt::FunctionBody { .. } => None,
         };
         Ok(ty)
     }

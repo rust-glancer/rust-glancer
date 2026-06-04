@@ -10,11 +10,12 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
-use crate::{BodyData, BodyIrReadTxn, ExprKind};
+use crate::{BodyData, BodyIrReadTxn, ExprKind, PatKind};
 
 use super::{
     super::BodyCursorCandidate,
     paths::{TypePathCursorScanner, ValuePathCursorScanner},
+    sites::BodyScanSites,
 };
 
 /// Scans one target for every body-local source candidate used by whole-project queries.
@@ -56,6 +57,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
             self.push_declaration_candidates(body_ref, body, &mut candidates);
             self.push_member_reference_candidates(body_ref, body, &mut candidates);
+            self.push_record_field_key_candidates(body_ref, body, &mut candidates);
 
             TypePathCursorScanner {
                 body_ref,
@@ -250,6 +252,76 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 span,
             });
         }
+    }
+
+    /// Adds explicit record field keys that resolve through their record owner type.
+    fn push_record_field_key_candidates(
+        &self,
+        body_ref: BodyRef,
+        body: &BodyData,
+        candidates: &mut Vec<BodyCursorCandidate>,
+    ) {
+        for expr in body.exprs().iter() {
+            if !self.file_matches(expr.source.file_id) {
+                continue;
+            }
+            let ExprKind::Record {
+                path: Some(owner),
+                fields,
+                ..
+            } = &expr.kind
+            else {
+                continue;
+            };
+            let Some(owner) = owner.as_def_map_path() else {
+                continue;
+            };
+
+            for field in fields {
+                // Shorthand record fields need a rename edit that can expand to `new: old`.
+                // Until rename supports that per-occurrence rewrite, only explicit keys are safe.
+                if !field.explicit {
+                    continue;
+                }
+                candidates.push(BodyCursorCandidate::RecordFieldKey {
+                    body: body_ref,
+                    scope: expr.scope,
+                    owner: owner.clone(),
+                    key: field.key.clone(),
+                    file_id: expr.source.file_id,
+                    span: field.key_span,
+                });
+            }
+        }
+
+        let sites = BodyScanSites::new(body);
+        sites.walk_pats(self.file_id, None, |site| {
+            let PatKind::Record {
+                path: Some(owner),
+                fields,
+                ..
+            } = &site.data.kind
+            else {
+                return;
+            };
+            let Some(owner) = owner.as_def_map_path() else {
+                return;
+            };
+
+            for field in fields {
+                if !field.explicit {
+                    continue;
+                }
+                candidates.push(BodyCursorCandidate::RecordFieldKey {
+                    body: body_ref,
+                    scope: site.scope,
+                    owner: owner.clone(),
+                    key: field.key.clone(),
+                    file_id: site.data.source.file_id,
+                    span: field.key_span,
+                });
+            }
+        });
     }
 
     fn file_matches(&self, file_id: FileId) -> bool {

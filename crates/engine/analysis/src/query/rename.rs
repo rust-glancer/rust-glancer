@@ -160,6 +160,7 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             SymbolAt::TypePath { path, .. }
             | SymbolAt::ValuePath { path, .. }
             | SymbolAt::UsePath { path, .. } => path.last_segment_label(),
+            SymbolAt::RecordField { key, .. } => Some(key.declaration_label()),
             SymbolAt::FunctionBody { .. }
             | SymbolAt::Declaration { .. }
             | SymbolAt::Expr { .. } => None,

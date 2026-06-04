@@ -622,12 +622,14 @@ impl FunctionBodyLowering<'_> {
         let key_span = self.source(field_name.syntax()).span;
         let key = FieldKey::Named(self.intern_ast_name_ref(field_name));
         let source_span = self.source(field.syntax()).span;
+        let explicit = field.colon_token().is_some();
         let value = field.expr().map(|expr| self.lower_expr(expr, scope));
 
         Some(RecordExprField {
             key,
             key_span,
             source_span,
+            explicit,
             value,
         })
     }

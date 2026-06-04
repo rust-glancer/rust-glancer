@@ -35,6 +35,37 @@ fn foo(baz: u8) -> u8 {
     );
 }
 
+#[test]
+fn source_scan_includes_explicit_record_field_keys() {
+    check_source_candidates(
+        "name",
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_cursor_record_field_keys"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(input: u8) -> u8 {
+    struct User {
+        name: u8,
+        other: u8,
+    }
+
+    let user = User { name: input, other: input };
+    let User { name: extracted, other } = user;
+    extracted
+}
+"#,
+        expect![[r#"
+            local_field @ 3:9-3:13
+            record_field User::name @ 7:23-7:27
+            record_field User::name @ 8:16-8:20
+        "#]],
+    );
+}
+
 fn check_source_candidates(ident: &str, fixture: &str, expect: Expect) {
     let db = BodyIrFixture::build(fixture);
     let package = db
@@ -115,6 +146,9 @@ fn render_candidate_kind(candidate: &BodyCursorCandidate) -> String {
         BodyCursorCandidate::LocalField { .. } => "local_field".to_string(),
         BodyCursorCandidate::LocalEnumVariant { .. } => "local_variant".to_string(),
         BodyCursorCandidate::LocalFunction { .. } => "local_function".to_string(),
+        BodyCursorCandidate::RecordFieldKey { owner, key, .. } => {
+            format!("record_field {owner}::{}", key.declaration_label())
+        }
         BodyCursorCandidate::TypePath { path, .. } => format!("type_path {path}"),
         BodyCursorCandidate::ValuePath { path, .. } => format!("value_path {path}"),
     }

@@ -10,6 +10,7 @@ use rg_ir_model::{
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
 use rg_ir_storage::{Path, TypePathContext};
+use rg_item_tree::FieldKey;
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::SemanticCursorCandidate;
 
@@ -95,6 +96,11 @@ pub enum IndexedSourceFact {
     ValuePath {
         scope: LexicalScopeRef,
         path: Path,
+    },
+    RecordField {
+        scope: LexicalScopeRef,
+        owner: Path,
+        key: FieldKey,
     },
     UsePath {
         module: ModuleRef,
@@ -333,6 +339,23 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 let declaration = DeclarationRef::from(function);
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
+            BodyCursorCandidate::RecordFieldKey {
+                body,
+                scope,
+                owner,
+                key,
+                file_id,
+                ..
+            } => Some(IndexedSourceOccurrence::reference(
+                IndexedSourceFact::RecordField {
+                    scope: LexicalScopeRef::new(body, scope),
+                    owner,
+                    key,
+                },
+                target,
+                file_id,
+                span,
+            )),
             BodyCursorCandidate::TypePath {
                 body,
                 scope,

@@ -10,11 +10,12 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
-use crate::{BodyData, BodyIrReadTxn, ExprData, ExprKind};
+use crate::{BodyData, BodyIrReadTxn, ExprData, ExprKind, PatKind};
 
 use super::{
     super::BodyCursorCandidate,
     paths::{TypePathCursorScanner, ValuePathCursorScanner},
+    sites::BodyScanSites,
 };
 
 /// Scans one Body IR transaction for all cursor candidates at a source offset.
@@ -106,6 +107,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
         for (expr_idx, expr) in body.exprs.iter().enumerate() {
             if expr.source.file_id == self.file_id && expr.source.span.touches(self.offset) {
+                self.consider_record_expr_fields(body_ref, expr, &mut best);
                 let span = Self::member_reference_span(expr)
                     .filter(|span| span.touches(self.offset))
                     .unwrap_or(expr.source.span);
@@ -119,6 +121,8 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                 );
             }
         }
+
+        self.consider_record_pat_fields(body_ref, body, &mut best);
 
         for (binding_idx, binding) in body.bindings.iter().enumerate() {
             if binding.source.file_id == self.file_id && binding.source.span.touches(self.offset) {
@@ -182,6 +186,81 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         }
 
         best.finish()
+    }
+
+    fn consider_record_expr_fields(
+        &self,
+        body_ref: BodyRef,
+        expr: &ExprData,
+        best: &mut BestCursorCandidate,
+    ) {
+        let ExprKind::Record {
+            path: Some(owner),
+            fields,
+            ..
+        } = &expr.kind
+        else {
+            return;
+        };
+        let Some(owner) = owner.as_def_map_path() else {
+            return;
+        };
+
+        for field in fields {
+            if !field.explicit || !field.key_span.touches(self.offset) {
+                continue;
+            }
+            best.consider(
+                field.key_span,
+                BodyCursorCandidate::RecordFieldKey {
+                    body: body_ref,
+                    scope: expr.scope,
+                    owner: owner.clone(),
+                    key: field.key.clone(),
+                    file_id: expr.source.file_id,
+                    span: field.key_span,
+                },
+            );
+        }
+    }
+
+    fn consider_record_pat_fields(
+        &self,
+        body_ref: BodyRef,
+        body: &BodyData,
+        best: &mut BestCursorCandidate,
+    ) {
+        let sites = BodyScanSites::new(body);
+        sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
+            let PatKind::Record {
+                path: Some(owner),
+                fields,
+                ..
+            } = &site.data.kind
+            else {
+                return;
+            };
+            let Some(owner) = owner.as_def_map_path() else {
+                return;
+            };
+
+            for field in fields {
+                if !field.explicit || !field.key_span.touches(self.offset) {
+                    continue;
+                }
+                best.consider(
+                    field.key_span,
+                    BodyCursorCandidate::RecordFieldKey {
+                        body: body_ref,
+                        scope: site.scope,
+                        owner: owner.clone(),
+                        key: field.key.clone(),
+                        file_id: site.data.source.file_id,
+                        span: field.key_span,
+                    },
+                );
+            }
+        });
     }
 
     fn member_reference_span(expr: &ExprData) -> Option<Span> {

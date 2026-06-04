@@ -6,6 +6,7 @@ use rg_ir_model::{
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
 use rg_ir_storage::{Path, TypePathContext};
+use rg_item_tree::FieldKey;
 use rg_parse::{FileId, Span};
 
 use rg_ir_view::SymbolKind;
@@ -73,6 +74,13 @@ pub enum SymbolAt {
     ValuePath {
         scope: LexicalScopeRef,
         path: Path,
+        span: Span,
+    },
+    /// Field key inside an explicit record expression or pattern.
+    RecordField {
+        scope: LexicalScopeRef,
+        owner: Path,
+        key: FieldKey,
         span: Span,
     },
     /// Import path, e.g. `crate::user::User` in `use crate::user::User;`.
