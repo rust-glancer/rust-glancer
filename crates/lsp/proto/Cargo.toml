@@ -13,8 +13,6 @@ description.workspace = true
 [dependencies]
 anyhow.workspace = true
 ls_types.workspace = true
-rg_project.workspace = true
-rg_workspace.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tarpc.workspace = true
 thiserror.workspace = true

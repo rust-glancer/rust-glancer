@@ -15,7 +15,9 @@ mod notifications;
 mod service;
 
 pub use self::{
-    analysis_config::AnalysisConfig,
+    analysis_config::{
+        AnalysisConfig, CargoMetadataConfig, CargoMetadataTarget, PackageResidencyPolicy,
+    },
     client_capabilities::ClientCapabilities,
     completion::CompletionClientCapabilities,
     diagnostics_config::DiagnosticsConfig,
@@ -27,5 +29,3 @@ pub use self::{
         NotificationsServiceClient,
     },
 };
-pub use rg_project::PackageResidencyPolicy;
-pub use rg_workspace::CargoMetadataConfig;

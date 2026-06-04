@@ -1569,8 +1569,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "ls-types",
- "rg_project",
- "rg_workspace",
  "serde",
  "tarpc",
  "thiserror",

@@ -7,12 +7,16 @@ use std::{
 use anyhow::Context as _;
 use rg_analysis::{CompletionQuery, ReferenceQuery, RenameEdit, RenameTarget, TypeHint};
 use rg_ir_model::TargetRef;
-use rg_lsp_proto::{AnalysisConfig, CompletionClientCapabilities};
+use rg_lsp_proto::{
+    AnalysisConfig, CargoMetadataTarget as ProtoCargoMetadataTarget, CompletionClientCapabilities,
+    PackageResidencyPolicy as ProtoPackageResidencyPolicy,
+};
 use rg_parse::TextSpan;
 use rg_project::{
-    CacheProbeProfile, FileContext, Project, ProjectMemoryHooks, ProjectSnapshot, SavedFileChange,
+    CacheProbeProfile, FileContext, PackageResidencyPolicy, Project, ProjectMemoryHooks,
+    ProjectSnapshot, SavedFileChange,
 };
-use rg_workspace::{CargoMetadataTarget, SysrootSources, WorkspaceMetadata};
+use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
 
 use crate::{
     dirty_state::{DirtyDocumentIdentity, DirtyState},
@@ -338,16 +342,35 @@ impl EngineWorker {
     }
 
     fn initialize(&mut self, root: PathBuf, analysis: AnalysisConfig) -> anyhow::Result<()> {
-        let package_residency_policy = analysis.package_residency_policy;
-        let cargo_metadata_config = analysis.cargo_metadata_config;
+        // Keep protocol DTOs out of the project layer. The engine boundary is where client-facing
+        // configuration becomes concrete workspace/project configuration.
+        let package_residency_policy = match analysis.package_residency_policy {
+            ProtoPackageResidencyPolicy::AllResident => PackageResidencyPolicy::AllResident,
+            ProtoPackageResidencyPolicy::WorkspaceResident => {
+                PackageResidencyPolicy::WorkspaceResident
+            }
+            ProtoPackageResidencyPolicy::WorkspaceAndPathDepsResident => {
+                PackageResidencyPolicy::WorkspaceAndPathDepsResident
+            }
+            ProtoPackageResidencyPolicy::WorkspacePathAndDirectDepsResident => {
+                PackageResidencyPolicy::WorkspacePathAndDirectDepsResident
+            }
+            ProtoPackageResidencyPolicy::AllOffloadable => PackageResidencyPolicy::AllOffloadable,
+        };
+        let cargo_metadata_config = match analysis.cargo_metadata_config.target() {
+            ProtoCargoMetadataTarget::Auto => CargoMetadataConfig::default(),
+            ProtoCargoMetadataTarget::Triple(target) => {
+                CargoMetadataConfig::default().target_triple(target.as_str())
+            }
+        };
         let started = Instant::now();
-        let configured_target = match cargo_metadata_config.target() {
-            CargoMetadataTarget::Auto => "auto",
-            CargoMetadataTarget::Triple(target) => target.as_str(),
+        let configured_target = match analysis.cargo_metadata_config.target() {
+            ProtoCargoMetadataTarget::Auto => "auto",
+            ProtoCargoMetadataTarget::Triple(target) => target.as_str(),
         };
         tracing::info!(
             root = %root.display(),
-            package_residency = package_residency_policy.config_name(),
+            package_residency = analysis.package_residency_policy.config_name(),
             cargo_target = configured_target,
             "starting workspace indexing"
         );

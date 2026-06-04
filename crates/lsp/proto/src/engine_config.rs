@@ -22,8 +22,8 @@ impl EngineConfig {
 #[cfg(test)]
 mod tests {
     use ls_types::LSPAny;
-    use rg_project::PackageResidencyPolicy;
-    use rg_workspace::CargoMetadataTarget;
+
+    use crate::{CargoMetadataTarget, PackageResidencyPolicy};
 
     use super::EngineConfig;
 

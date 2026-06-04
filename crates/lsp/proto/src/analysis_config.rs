@@ -1,6 +1,4 @@
 use ls_types::LSPAny;
-use rg_project::PackageResidencyPolicy;
-use rg_workspace::CargoMetadataConfig;
 use serde::{Deserialize, Serialize};
 
 /// Analysis configuration sent by the LSP client during initialization.
@@ -8,6 +6,85 @@ use serde::{Deserialize, Serialize};
 pub struct AnalysisConfig {
     pub package_residency_policy: PackageResidencyPolicy,
     pub cargo_metadata_config: CargoMetadataConfig,
+}
+
+/// Protocol-level cache residency policy requested by an LSP client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PackageResidencyPolicy {
+    AllResident,
+    WorkspaceResident,
+    WorkspaceAndPathDepsResident,
+    WorkspacePathAndDirectDepsResident,
+    AllOffloadable,
+}
+
+impl PackageResidencyPolicy {
+    /// Stable kebab-case name accepted in LSP initialization options.
+    pub fn config_name(self) -> &'static str {
+        match self {
+            Self::AllResident => "all-resident",
+            Self::WorkspaceResident => "workspace",
+            Self::WorkspaceAndPathDepsResident => "workspace-and-path-deps",
+            Self::WorkspacePathAndDirectDepsResident => "workspace-path-and-direct-deps",
+            Self::AllOffloadable => "all-offloadable",
+        }
+    }
+
+    /// Parses the public policy names accepted by frontends.
+    pub fn from_config_name(value: &str) -> Option<Self> {
+        let normalized = value.trim().replace('_', "-").to_ascii_lowercase();
+        match normalized.as_str() {
+            "all-resident" => Some(Self::AllResident),
+            "workspace" | "workspace-resident" => Some(Self::WorkspaceResident),
+            "workspace-and-path-deps" | "workspace-path-deps" => {
+                Some(Self::WorkspaceAndPathDepsResident)
+            }
+            "workspace-path-and-direct-deps" | "workspace-path-direct-deps" => {
+                Some(Self::WorkspacePathAndDirectDepsResident)
+            }
+            "all-offloadable" => Some(Self::AllOffloadable),
+            _ => None,
+        }
+    }
+}
+
+/// Protocol-level Cargo metadata target filter requested by an LSP client.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CargoMetadataConfig {
+    target: CargoMetadataTarget,
+}
+
+impl CargoMetadataConfig {
+    /// Uses an explicit target triple instead of auto-detecting the rustc host target.
+    pub fn target_triple(mut self, target_triple: impl Into<String>) -> Self {
+        let target_triple = target_triple.into().trim().to_string();
+        self.target = if target_triple.is_empty() {
+            CargoMetadataTarget::Auto
+        } else {
+            CargoMetadataTarget::Triple(target_triple)
+        };
+        self
+    }
+
+    /// Returns the configured target selection before auto-detection is resolved.
+    pub fn target(&self) -> &CargoMetadataTarget {
+        &self.target
+    }
+}
+
+impl Default for CargoMetadataConfig {
+    fn default() -> Self {
+        Self {
+            target: CargoMetadataTarget::Auto,
+        }
+    }
+}
+
+/// Target platform selection for Cargo metadata filtering.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CargoMetadataTarget {
+    Auto,
+    Triple(String),
 }
 
 impl AnalysisConfig {
@@ -58,10 +135,8 @@ impl Default for AnalysisConfig {
 #[cfg(test)]
 mod tests {
     use ls_types::LSPAny;
-    use rg_project::PackageResidencyPolicy;
-    use rg_workspace::CargoMetadataTarget;
 
-    use super::AnalysisConfig;
+    use super::{AnalysisConfig, CargoMetadataTarget, PackageResidencyPolicy};
 
     #[test]
     fn defaults_to_workspace_and_path_dependency_residency() {
