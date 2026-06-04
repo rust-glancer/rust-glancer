@@ -388,6 +388,68 @@ pub fn use_it(user: User, name: u8, age: u8) {
 }
 
 #[test]
+fn rename_expands_record_shorthand_occurrences() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_rename_record_shorthand"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User {
+    pub na$field_decl$me: u8,
+    pub age: u8,
+}
+
+pub fn use_it(source: User, na$param_decl$me: u8, age: u8) -> u8 {
+    let direct = User { na$literal_shorthand$me, age };
+    let explicit = User { name: name, age };
+    let User { na$pattern_shorthand$me, age: other } = source;
+    let _field = source.na$field_access$me;
+    name + direct.name + explicit.name + other
+}
+"#,
+        &[
+            AnalysisQuery::rename("rename field with shorthand", "field_decl", "title"),
+            AnalysisQuery::rename(
+                "rename parameter through shorthand literal",
+                "literal_shorthand",
+                "label",
+            ),
+            AnalysisQuery::rename(
+                "rename pattern shorthand binding",
+                "pattern_shorthand",
+                "selected",
+            ),
+        ],
+        expect![[r#"
+            rename field with shorthand
+            - target `name` @ src/lib.rs:2:9-2:13
+            - `name` -> `title` @ src/lib.rs:2:9-2:13
+            - `name` -> `title: name` @ src/lib.rs:7:25-7:29
+            - `name` -> `title` @ src/lib.rs:8:27-8:31
+            - `name` -> `title: name` @ src/lib.rs:9:16-9:20
+            - `name` -> `title` @ src/lib.rs:10:25-10:29
+            - `name` -> `title` @ src/lib.rs:11:19-11:23
+            - `name` -> `title` @ src/lib.rs:11:35-11:39
+
+            rename parameter through shorthand literal
+            - target `name` @ src/lib.rs:7:25-7:29
+            - `name` -> `label` @ src/lib.rs:6:29-6:33
+            - `name` -> `name: label` @ src/lib.rs:7:25-7:29
+            - `name` -> `label` @ src/lib.rs:8:33-8:37
+
+            rename pattern shorthand binding
+            - target `name` @ src/lib.rs:9:16-9:20
+            - `name` -> `name: selected` @ src/lib.rs:9:16-9:20
+            - `name` -> `selected` @ src/lib.rs:11:5-11:9
+        "#]],
+    );
+}
+
+#[test]
 fn rejects_unsupported_rename_targets() {
     check_analysis_queries(
         r#"

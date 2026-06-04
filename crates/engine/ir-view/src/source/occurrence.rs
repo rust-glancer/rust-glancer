@@ -3,7 +3,10 @@
 //! This adapter merges cursor/source candidates from DefMap, Semantic IR, and Body IR into one
 //! occurrence vocabulary. Analysis decides what each occurrence means for navigation or refs.
 
-use rg_body_ir::BodyCursorCandidate;
+use rg_body_ir::{
+    BindingSurface, BodyCursorCandidate, RecordFieldKeySurface, ValueReferenceSource,
+    ValueReferenceSurface,
+};
 use rg_def_map::DefMapCursorCandidate;
 use rg_ir_model::{
     BodyBindingRef, ModuleRef, TargetRef,
@@ -24,6 +27,15 @@ pub enum IndexedSourceRole {
     Structural,
 }
 
+/// Source syntax shape that may need query-specific handling after semantic resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexedSourceSurface {
+    Plain,
+    RecordFieldKey { shorthand: bool },
+    RecordExprShorthandValue { key: FieldKey, field_span: Span },
+    RecordPatShorthandBinding { key: FieldKey, field_span: Span },
+}
+
 /// One indexed source span that can be interpreted by analysis queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedSourceOccurrence {
@@ -31,6 +43,7 @@ pub struct IndexedSourceOccurrence {
     file_id: FileId,
     span: Span,
     role: IndexedSourceRole,
+    surface: IndexedSourceSurface,
     fact: IndexedSourceFact,
 }
 
@@ -43,8 +56,16 @@ impl IndexedSourceOccurrence {
         FileId,
         Span,
         IndexedSourceRole,
+        IndexedSourceSurface,
     ) {
-        (self.fact, self.target, self.file_id, self.span, self.role)
+        (
+            self.fact,
+            self.target,
+            self.file_id,
+            self.span,
+            self.role,
+            self.surface,
+        )
     }
 
     fn declaration(
@@ -53,22 +74,44 @@ impl IndexedSourceOccurrence {
         file_id: FileId,
         span: Span,
     ) -> Self {
+        Self::declaration_with_surface(fact, target, file_id, span, IndexedSourceSurface::Plain)
+    }
+
+    fn declaration_with_surface(
+        fact: IndexedSourceFact,
+        target: TargetRef,
+        file_id: FileId,
+        span: Span,
+        surface: IndexedSourceSurface,
+    ) -> Self {
         Self {
             fact,
             target,
             file_id,
             span,
             role: IndexedSourceRole::Declaration,
+            surface,
         }
     }
 
     fn reference(fact: IndexedSourceFact, target: TargetRef, file_id: FileId, span: Span) -> Self {
+        Self::reference_with_surface(fact, target, file_id, span, IndexedSourceSurface::Plain)
+    }
+
+    fn reference_with_surface(
+        fact: IndexedSourceFact,
+        target: TargetRef,
+        file_id: FileId,
+        span: Span,
+        surface: IndexedSourceSurface,
+    ) -> Self {
         Self {
             fact,
             target,
             file_id,
             span,
             role: IndexedSourceRole::Reference,
+            surface,
         }
     }
 
@@ -79,6 +122,7 @@ impl IndexedSourceOccurrence {
             file_id,
             span,
             role: IndexedSourceRole::Structural,
+            surface: IndexedSourceSurface::Plain,
         }
     }
 }
@@ -290,9 +334,44 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                     span,
                 ))
             }
-            BodyCursorCandidate::Binding { body, binding, .. } => {
+            BodyCursorCandidate::Binding {
+                body,
+                binding,
+                surface,
+                ..
+            } => {
                 let declaration = DeclarationRef::body_binding(BodyBindingRef { body, binding });
-                self.declaration_occurrence(declaration, target, span, fallback_file_id)?
+                match surface {
+                    BindingSurface::Plain => {
+                        self.declaration_occurrence(declaration, target, span, fallback_file_id)?
+                    }
+                    BindingSurface::RecordPatShorthand { key, field_span } => {
+                        let file_id = match self.analysis.body_ir.body_data(body)? {
+                            Some(body_data) => match body_data.binding(binding) {
+                                Some(data) => data.source.file_id,
+                                None => {
+                                    let Some(file_id) = fallback_file_id else {
+                                        return Ok(None);
+                                    };
+                                    file_id
+                                }
+                            },
+                            None => {
+                                let Some(file_id) = fallback_file_id else {
+                                    return Ok(None);
+                                };
+                                file_id
+                            }
+                        };
+                        Some(IndexedSourceOccurrence::declaration_with_surface(
+                            IndexedSourceFact::Declaration(declaration),
+                            target,
+                            file_id,
+                            span,
+                            IndexedSourceSurface::RecordPatShorthandBinding { key, field_span },
+                        ))
+                    }
+                }
             }
             BodyCursorCandidate::Expr { body, expr, .. } => {
                 let file_id = match self.analysis.body_ir.body_data(body)? {
@@ -345,8 +424,9 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 owner,
                 key,
                 file_id,
+                surface,
                 ..
-            } => Some(IndexedSourceOccurrence::reference(
+            } => Some(IndexedSourceOccurrence::reference_with_surface(
                 IndexedSourceFact::RecordField {
                     scope: LexicalScopeRef::new(body, scope),
                     owner,
@@ -355,7 +435,37 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 target,
                 file_id,
                 span,
+                IndexedSourceSurface::RecordFieldKey {
+                    shorthand: matches!(surface, RecordFieldKeySurface::Shorthand { .. }),
+                },
             )),
+            BodyCursorCandidate::ValueReference {
+                body,
+                scope,
+                source,
+                file_id,
+                surface,
+                ..
+            } => {
+                let fact = match source {
+                    ValueReferenceSource::Expr(expr) => {
+                        IndexedSourceFact::Expr(ExprRef::new(body, expr))
+                    }
+                    ValueReferenceSource::Path(path) => IndexedSourceFact::ValuePath {
+                        scope: LexicalScopeRef::new(body, scope),
+                        path,
+                    },
+                };
+                let surface = match surface {
+                    ValueReferenceSurface::Plain => IndexedSourceSurface::Plain,
+                    ValueReferenceSurface::RecordExprShorthand { key, field_span } => {
+                        IndexedSourceSurface::RecordExprShorthandValue { key, field_span }
+                    }
+                };
+                Some(IndexedSourceOccurrence::reference_with_surface(
+                    fact, target, file_id, span, surface,
+                ))
+            }
             BodyCursorCandidate::TypePath {
                 body,
                 scope,
@@ -365,21 +475,6 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             } => Some(IndexedSourceOccurrence::reference(
                 IndexedSourceFact::TypePath {
                     scope: IndexedTypePathScope::Body(LexicalScopeRef::new(body, scope)),
-                    path,
-                },
-                target,
-                file_id,
-                span,
-            )),
-            BodyCursorCandidate::ValuePath {
-                body,
-                scope,
-                path,
-                file_id,
-                ..
-            } => Some(IndexedSourceOccurrence::reference(
-                IndexedSourceFact::ValuePath {
-                    scope: LexicalScopeRef::new(body, scope),
                     path,
                 },
                 target,

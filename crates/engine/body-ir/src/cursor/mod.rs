@@ -88,6 +88,51 @@ pub struct RecordFieldCompletionSite {
     pub existing_fields: Vec<FieldKey>,
 }
 
+/// Source spelling for a local binding declaration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BindingSurface {
+    /// Ordinary binding syntax, e.g. `user` in `let user = input;`.
+    Plain,
+    /// Binding introduced by record-pattern shorthand, e.g. `name` in `let User { name } = user;`.
+    ///
+    /// The field key and whole field span let rename expand the token to `new_key: new_binding`
+    /// without pretending the binding declaration itself is a different semantic candidate.
+    RecordPatShorthand { key: FieldKey, field_span: Span },
+}
+
+/// Source spelling for a record field key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RecordFieldKeySurface {
+    /// Explicit key syntax, e.g. `name` in `User { name: value }`.
+    Plain,
+    /// Shorthand key syntax, e.g. `name` in `User { name }`.
+    ///
+    /// The whole field span is useful for future rewrite forms that may need more than the key
+    /// token, while ordinary rename still edits only `span`.
+    Shorthand { field_span: Span },
+}
+
+/// Lowered source backing a value-namespace reference candidate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueReferenceSource {
+    /// Expression-backed reference, e.g. `foo` in `foo()` or `name` in `User { name }`.
+    Expr(ExprId),
+    /// Path-segment reference without a dedicated expression id, e.g. `Some` in a pattern path.
+    Path(Path),
+}
+
+/// Source spelling for a value-namespace reference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValueReferenceSurface {
+    /// Ordinary value reference syntax, e.g. `user` in `user.name`.
+    Plain,
+    /// Value implied by record-expression shorthand, e.g. `name` in `User { name }`.
+    ///
+    /// The field key and whole field span let rename expand the token to `field_key: new_value`
+    /// while preserving that the occurrence still resolves like a normal value reference.
+    RecordExprShorthand { key: FieldKey, field_span: Span },
+}
+
 /// One body source node that can participate in cursor queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BodyCursorCandidate {
@@ -98,6 +143,7 @@ pub enum BodyCursorCandidate {
         body: BodyRef,
         binding: BindingId,
         span: Span,
+        surface: BindingSurface,
     },
     /// Lowered expression node, e.g. the whole `user.id()` call expression.
     Expr {
@@ -128,21 +174,19 @@ pub enum BodyCursorCandidate {
         key: FieldKey,
         file_id: FileId,
         span: Span,
+        surface: RecordFieldKeySurface,
+    },
+    /// Value-namespace reference, e.g. `user`, `Status::Ready`, or `name` in `User { name }`.
+    ValueReference {
+        body: BodyRef,
+        scope: ScopeId,
+        source: ValueReferenceSource,
+        file_id: FileId,
+        span: Span,
+        surface: ValueReferenceSurface,
     },
     /// Type-namespace path inside a body, e.g. `User` in `let user: User;`.
     TypePath {
-        body: BodyRef,
-        scope: ScopeId,
-        path: Path,
-        file_id: FileId,
-        span: Span,
-    },
-    /// A value-namespace path segment inside a body expression or pattern.
-    ///
-    /// Type annotations have their own candidate kind because `Self` and body-local items need
-    /// type resolution. This variant is for value-looking paths such as associated functions and
-    /// enum variants, where a cursor on each segment can mean a different target.
-    ValuePath {
         body: BodyRef,
         scope: ScopeId,
         path: Path,
@@ -163,8 +207,8 @@ impl BodyCursorCandidate {
             | Self::LocalEnumVariant { span, .. }
             | Self::LocalFunction { span, .. }
             | Self::RecordFieldKey { span, .. }
-            | Self::TypePath { span, .. }
-            | Self::ValuePath { span, .. } => *span,
+            | Self::ValueReference { span, .. }
+            | Self::TypePath { span, .. } => *span,
         }
     }
 }

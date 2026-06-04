@@ -7,13 +7,14 @@ use rg_ir_model::{
     BindingId, BodyId, BodyRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TargetRef,
     TypeDefId, hir::source::ItemSourceKind,
 };
+use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
-use rg_parse::FileId;
+use rg_parse::{FileId, Span};
 
 use crate::{BodyData, BodyIrReadTxn, ExprKind, PatKind};
 
 use super::{
-    super::BodyCursorCandidate,
+    super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
     paths::{TypePathCursorScanner, ValuePathCursorScanner},
     sites::BodyScanSites,
 };
@@ -88,14 +89,28 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         body: &BodyData,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
+        let record_shorthand_bindings = self.record_shorthand_bindings(body);
         for (binding_idx, binding) in body.bindings().iter().enumerate() {
             if !self.file_matches(binding.source.file_id) {
                 continue;
             }
+            let binding_id = BindingId(binding_idx);
+            let surface = if let Some((_, key, _span, field_span)) = record_shorthand_bindings
+                .iter()
+                .find(|(binding, _, _, _)| *binding == binding_id)
+            {
+                BindingSurface::RecordPatShorthand {
+                    key: key.clone(),
+                    field_span: *field_span,
+                }
+            } else {
+                BindingSurface::Plain
+            };
             candidates.push(BodyCursorCandidate::Binding {
                 body: body_ref,
-                binding: BindingId(binding_idx),
+                binding: binding_id,
                 span: binding.source.span,
+                surface,
             });
         }
 
@@ -148,6 +163,45 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 SemanticItemRef::Impl(_) => {}
             }
         }
+    }
+
+    fn record_shorthand_bindings(&self, body: &BodyData) -> Vec<(BindingId, FieldKey, Span, Span)> {
+        let mut bindings = Vec::new();
+        let sites = BodyScanSites::new(body);
+        sites.walk_pats(self.file_id, None, |site| {
+            let PatKind::Record { fields, .. } = &site.data.kind else {
+                return;
+            };
+
+            for field in fields {
+                if field.explicit {
+                    continue;
+                }
+                let Some(pat) = body.pat(field.pat) else {
+                    continue;
+                };
+                let PatKind::Binding {
+                    binding: Some(binding),
+                    ..
+                } = &pat.kind
+                else {
+                    continue;
+                };
+                if bindings
+                    .iter()
+                    .any(|(seen_binding, _, _, _)| seen_binding == binding)
+                {
+                    continue;
+                }
+                bindings.push((
+                    *binding,
+                    field.key.clone(),
+                    field.key_span,
+                    field.source_span,
+                ));
+            }
+        });
+        bindings
     }
 
     fn push_field_candidates(
@@ -223,8 +277,12 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         body: &BodyData,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
+        let record_shorthand_values = Self::record_expr_shorthand_values(body);
         for (expr_idx, expr) in body.exprs().iter().enumerate() {
             if !self.file_matches(expr.source.file_id) {
+                continue;
+            }
+            if record_shorthand_values.contains(&ExprId(expr_idx)) {
                 continue;
             }
 
@@ -254,7 +312,25 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
     }
 
-    /// Adds explicit record field keys that resolve through their record owner type.
+    fn record_expr_shorthand_values(body: &BodyData) -> Vec<ExprId> {
+        let mut values = Vec::new();
+        for expr in body.exprs().iter() {
+            let ExprKind::Record { fields, .. } = &expr.kind else {
+                continue;
+            };
+            for field in fields {
+                if field.explicit {
+                    continue;
+                }
+                if let Some(value) = field.value {
+                    values.push(value);
+                }
+            }
+        }
+        values
+    }
+
+    /// Adds record field keys that resolve through their record owner type.
     fn push_record_field_key_candidates(
         &self,
         body_ref: BodyRef,
@@ -278,11 +354,6 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             };
 
             for field in fields {
-                // Shorthand record fields need a rename edit that can expand to `new: old`.
-                // Until rename supports that per-occurrence rewrite, only explicit keys are safe.
-                if !field.explicit {
-                    continue;
-                }
                 candidates.push(BodyCursorCandidate::RecordFieldKey {
                     body: body_ref,
                     scope: expr.scope,
@@ -290,6 +361,13 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                     key: field.key.clone(),
                     file_id: expr.source.file_id,
                     span: field.key_span,
+                    surface: if field.explicit {
+                        RecordFieldKeySurface::Plain
+                    } else {
+                        RecordFieldKeySurface::Shorthand {
+                            field_span: field.source_span,
+                        }
+                    },
                 });
             }
         }
@@ -309,9 +387,6 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             };
 
             for field in fields {
-                if !field.explicit {
-                    continue;
-                }
                 candidates.push(BodyCursorCandidate::RecordFieldKey {
                     body: body_ref,
                     scope: site.scope,
@@ -319,6 +394,13 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                     key: field.key.clone(),
                     file_id: site.data.source.file_id,
                     span: field.key_span,
+                    surface: if field.explicit {
+                        RecordFieldKeySurface::Plain
+                    } else {
+                        RecordFieldKeySurface::Shorthand {
+                            field_span: field.source_span,
+                        }
+                    },
                 });
             }
         });

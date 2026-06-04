@@ -8,7 +8,8 @@ use rg_ir_view::{
     IndexedViewDb,
     lookup::resolution::ResolutionView,
     source::{
-        IndexedSourceFact, IndexedSourceOccurrence, IndexedTypePathScope, SourceOccurrenceView,
+        IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceSurface, IndexedTypePathScope,
+        SourceOccurrenceView,
     },
     ty::TyView,
 };
@@ -25,6 +26,7 @@ pub(crate) struct SourceSymbol {
     file_id: FileId,
     span: Span,
     role: SourceSymbolRole,
+    surface: IndexedSourceSurface,
 }
 
 impl SourceSymbol {
@@ -52,8 +54,28 @@ impl SourceSymbol {
         self.role
     }
 
+    pub(crate) fn surface(&self) -> &IndexedSourceSurface {
+        &self.surface
+    }
+
+    pub(crate) fn plain_declaration(
+        declaration: DeclarationRef,
+        target: TargetRef,
+        file_id: FileId,
+        span: Span,
+    ) -> Self {
+        Self {
+            symbol: SymbolAt::Declaration { declaration, span },
+            target,
+            file_id,
+            span,
+            role: SourceSymbolRole::Declaration,
+            surface: IndexedSourceSurface::Plain,
+        }
+    }
+
     fn from_occurrence(occurrence: IndexedSourceOccurrence) -> Self {
-        let (fact, target, file_id, span, role) = occurrence.into_parts();
+        let (fact, target, file_id, span, role, surface) = occurrence.into_parts();
         let symbol = match fact {
             IndexedSourceFact::Declaration(declaration) => {
                 SymbolAt::Declaration { declaration, span }
@@ -87,6 +109,7 @@ impl SourceSymbol {
             file_id,
             span,
             role,
+            surface,
         }
     }
 }

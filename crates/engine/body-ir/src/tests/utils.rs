@@ -376,7 +376,10 @@ impl TargetBodyIrSnapshot<'_> {
                     .unwrap_or_else(|| "<missing>".to_string());
                 let fields = fields
                     .iter()
-                    .map(|field| format!("{}=p{}", field.key, field.pat.0))
+                    .map(|field| {
+                        let shorthand = if field.explicit { "" } else { "shorthand " };
+                        format!("{shorthand}{}=p{}", field.key, field.pat.0)
+                    })
                     .collect::<Vec<_>>()
                     .join(", ");
                 let rest = rest

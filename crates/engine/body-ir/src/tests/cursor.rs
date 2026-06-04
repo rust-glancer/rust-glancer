@@ -3,7 +3,10 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
 use rg_package_store::PackageLoader;
 
-use crate::{BodyCursorCandidate, testonly::BodyIrFixture};
+use crate::{
+    BindingSurface, BodyCursorCandidate, ValueReferenceSource, ValueReferenceSurface,
+    testonly::BodyIrFixture,
+};
 
 #[test]
 fn source_scan_uses_expr_candidates_for_single_segment_expression_paths() {
@@ -62,6 +65,42 @@ pub fn use_it(input: u8) -> u8 {
             local_field @ 3:9-3:13
             record_field User::name @ 7:23-7:27
             record_field User::name @ 8:16-8:20
+        "#]],
+    );
+}
+
+#[test]
+fn source_scan_includes_record_shorthand_candidates() {
+    check_source_candidates(
+        "name",
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_cursor_record_shorthand"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+struct User {
+    name: u8,
+    other: u8,
+}
+
+pub fn use_it(input: User, name: u8) -> u8 {
+    let built = User { name, other: name };
+    let User { name, other: extra } = input;
+    name + built.name + extra
+}
+"#,
+        expect![[r#"
+            binding @ 6:28-6:32
+            expr @ 7:37-7:41
+            expr @ 9:18-9:22
+            expr @ 9:5-9:9
+            record_field User::name @ 7:24-7:28
+            record_field User::name @ 8:16-8:20
+            record_shorthand_binding name @ 8:16-8:20
+            record_shorthand_value name for name @ 7:24-7:28
         "#]],
     );
 }
@@ -139,7 +178,12 @@ fn render_candidate_span(
 fn render_candidate_kind(candidate: &BodyCursorCandidate) -> String {
     match candidate {
         BodyCursorCandidate::Body { .. } => "body".to_string(),
-        BodyCursorCandidate::Binding { .. } => "binding".to_string(),
+        BodyCursorCandidate::Binding { surface, .. } => match surface {
+            BindingSurface::Plain => "binding".to_string(),
+            BindingSurface::RecordPatShorthand { key, .. } => {
+                format!("record_shorthand_binding {}", key.declaration_label())
+            }
+        },
         BodyCursorCandidate::Expr { .. } => "expr".to_string(),
         BodyCursorCandidate::LocalItem { .. } => "local_item".to_string(),
         BodyCursorCandidate::LocalValueItem { .. } => "local_value_item".to_string(),
@@ -150,6 +194,23 @@ fn render_candidate_kind(candidate: &BodyCursorCandidate) -> String {
             format!("record_field {owner}::{}", key.declaration_label())
         }
         BodyCursorCandidate::TypePath { path, .. } => format!("type_path {path}"),
-        BodyCursorCandidate::ValuePath { path, .. } => format!("value_path {path}"),
+        BodyCursorCandidate::ValueReference {
+            source, surface, ..
+        } => match surface {
+            ValueReferenceSurface::Plain => match source {
+                ValueReferenceSource::Expr(_) => "expr".to_string(),
+                ValueReferenceSource::Path(path) => format!("value_path {path}"),
+            },
+            ValueReferenceSurface::RecordExprShorthand { key, .. } => {
+                let value = match source {
+                    ValueReferenceSource::Expr(_) => key.declaration_label(),
+                    ValueReferenceSource::Path(path) => path.to_string(),
+                };
+                format!(
+                    "record_shorthand_value {value} for {}",
+                    key.declaration_label()
+                )
+            }
+        },
     }
 }

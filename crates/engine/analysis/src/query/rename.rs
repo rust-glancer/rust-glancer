@@ -4,7 +4,10 @@
 //! stricter policy: only declaration-like names with unambiguous source occurrences become edits.
 
 use rg_ir_model::identity::DeclarationRef;
-use rg_ir_view::item::declaration::{Declaration, DeclarationView};
+use rg_ir_view::{
+    item::declaration::{Declaration, DeclarationView},
+    source::IndexedSourceSurface,
+};
 use rg_syntax::{Edition, SyntaxKind};
 
 use crate::{
@@ -12,6 +15,8 @@ use crate::{
     model::{RenameEdit, RenameResult, RenameTarget, SymbolAt},
     source_symbol::{SourceSymbol, SourceSymbolResolver, SourceSymbolRole},
 };
+
+use super::references::ReferenceResolver;
 
 pub(crate) struct RenameResolver<'a, 'db> {
     analysis: &'a Analysis<'db>,
@@ -51,26 +56,92 @@ impl<'a, 'db> RenameResolver<'a, 'db> {
             "rename target `{new_name}` is not a supported Rust identifier"
         );
 
-        let Some(rename_target) = self.prepare_rename(target, file_id, offset)? else {
+        let Some(symbol) = self
+            .analysis
+            .source_symbol_at_for_query(target, file_id, offset)?
+        else {
             return Ok(None);
         };
-        let references = self
-            .analysis
-            .references(target, file_id, offset, query)?
+        let Some(rename_target) = self.rename_target_for_symbol(symbol.clone())? else {
+            return Ok(None);
+        };
+        let declarations = self.unique_declarations_for_symbol(symbol.symbol().clone())?;
+        let edits = ReferenceResolver::new(self.analysis, query)
+            .source_symbols_matching_declarations(&declarations)?
             .into_iter()
-            .map(|reference| RenameEdit {
-                target: reference.target,
-                file_id: reference.file_id,
-                span: reference.span,
-                old_text: rename_target.placeholder.clone(),
-                new_text: new_name.to_string(),
+            .map(|symbol| {
+                Self::rename_edit_for_symbol(symbol, &rename_target.placeholder, new_name)
             })
-            .collect();
+            .collect::<Vec<_>>();
+        let edits = Self::normalize_rename_edits(edits)?;
 
         Ok(Some(RenameResult {
             target: rename_target,
-            edits: references,
+            edits,
         }))
+    }
+
+    fn rename_edit_for_symbol(symbol: SourceSymbol, old_name: &str, new_name: &str) -> RenameEdit {
+        let new_text = Self::replacement_text(symbol.surface(), old_name, new_name);
+        RenameEdit {
+            target: symbol.target(),
+            file_id: symbol.file_id(),
+            span: symbol.span(),
+            old_text: old_name.to_string(),
+            new_text,
+        }
+    }
+
+    fn replacement_text(surface: &IndexedSourceSurface, old_name: &str, new_name: &str) -> String {
+        match surface {
+            IndexedSourceSurface::Plain
+            | IndexedSourceSurface::RecordFieldKey { shorthand: false } => new_name.to_string(),
+            IndexedSourceSurface::RecordFieldKey { shorthand: true } => {
+                format!("{new_name}: {old_name}")
+            }
+            IndexedSourceSurface::RecordExprShorthandValue { key, .. }
+            | IndexedSourceSurface::RecordPatShorthandBinding { key, .. } => {
+                format!("{}: {new_name}", key.declaration_label())
+            }
+        }
+    }
+
+    fn normalize_rename_edits(mut edits: Vec<RenameEdit>) -> anyhow::Result<Vec<RenameEdit>> {
+        edits.sort_by_key(|edit| {
+            (
+                edit.target.package.0,
+                edit.target.target.0,
+                edit.file_id.0,
+                edit.span.text.start,
+                edit.span.text.end,
+            )
+        });
+
+        let mut normalized: Vec<RenameEdit> = Vec::new();
+        for edit in edits {
+            let Some(previous) = normalized.last() else {
+                normalized.push(edit);
+                continue;
+            };
+            if previous.target != edit.target || previous.file_id != edit.file_id {
+                normalized.push(edit);
+                continue;
+            }
+            if previous.span == edit.span {
+                if previous.old_text == edit.old_text && previous.new_text == edit.new_text {
+                    continue;
+                }
+                anyhow::bail!("rename produced conflicting edits for the same source span");
+            }
+            if previous.span.text.start < edit.span.text.end
+                && edit.span.text.start < previous.span.text.end
+            {
+                anyhow::bail!("rename produced overlapping source edits");
+            }
+            normalized.push(edit);
+        }
+
+        Ok(normalized)
     }
 
     fn rename_target_for_symbol(

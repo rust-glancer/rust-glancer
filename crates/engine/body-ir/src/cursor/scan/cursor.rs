@@ -7,13 +7,14 @@ use rg_ir_model::{
     BindingId, BodyId, BodyRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TargetRef,
     TypeDefId, hir::source::ItemSourceKind,
 };
+use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
 use crate::{BodyData, BodyIrReadTxn, ExprData, ExprKind, PatKind};
 
 use super::{
-    super::BodyCursorCandidate,
+    super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
     paths::{TypePathCursorScanner, ValuePathCursorScanner},
     sites::BodyScanSites,
 };
@@ -104,9 +105,14 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             body: body_ref,
             span: body.source.span,
         });
+        let record_shorthand_values = Self::record_expr_shorthand_values(body);
+        let record_shorthand_bindings = self.record_shorthand_bindings(body);
 
         for (expr_idx, expr) in body.exprs.iter().enumerate() {
             if expr.source.file_id == self.file_id && expr.source.span.touches(self.offset) {
+                if record_shorthand_values.contains(&ExprId(expr_idx)) {
+                    continue;
+                }
                 self.consider_record_expr_fields(body_ref, expr, &mut best);
                 let span = Self::member_reference_span(expr)
                     .filter(|span| span.touches(self.offset))
@@ -126,12 +132,25 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
         for (binding_idx, binding) in body.bindings.iter().enumerate() {
             if binding.source.file_id == self.file_id && binding.source.span.touches(self.offset) {
+                let binding_id = BindingId(binding_idx);
+                let surface = if let Some((_, key, _span, field_span)) = record_shorthand_bindings
+                    .iter()
+                    .find(|(binding, _, _, _)| *binding == binding_id)
+                {
+                    BindingSurface::RecordPatShorthand {
+                        key: key.clone(),
+                        field_span: *field_span,
+                    }
+                } else {
+                    BindingSurface::Plain
+                };
                 best.consider(
                     binding.source.span,
                     BodyCursorCandidate::Binding {
                         body: body_ref,
-                        binding: BindingId(binding_idx),
+                        binding: binding_id,
                         span: binding.source.span,
+                        surface,
                     },
                 );
             }
@@ -188,6 +207,63 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         best.finish()
     }
 
+    fn record_shorthand_bindings(&self, body: &BodyData) -> Vec<(BindingId, FieldKey, Span, Span)> {
+        let mut bindings = Vec::new();
+        let sites = BodyScanSites::new(body);
+        sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
+            let PatKind::Record { fields, .. } = &site.data.kind else {
+                return;
+            };
+
+            for field in fields {
+                if field.explicit {
+                    continue;
+                }
+                let Some(pat) = body.pat(field.pat) else {
+                    continue;
+                };
+                let PatKind::Binding {
+                    binding: Some(binding),
+                    ..
+                } = &pat.kind
+                else {
+                    continue;
+                };
+                if bindings
+                    .iter()
+                    .any(|(seen_binding, _, _, _)| seen_binding == binding)
+                {
+                    continue;
+                }
+                bindings.push((
+                    *binding,
+                    field.key.clone(),
+                    field.key_span,
+                    field.source_span,
+                ));
+            }
+        });
+        bindings
+    }
+
+    fn record_expr_shorthand_values(body: &BodyData) -> Vec<ExprId> {
+        let mut values = Vec::new();
+        for expr in body.exprs.iter() {
+            let ExprKind::Record { fields, .. } = &expr.kind else {
+                continue;
+            };
+            for field in fields {
+                if field.explicit {
+                    continue;
+                }
+                if let Some(value) = field.value {
+                    values.push(value);
+                }
+            }
+        }
+        values
+    }
+
     fn consider_record_expr_fields(
         &self,
         body_ref: BodyRef,
@@ -219,6 +295,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                     key: field.key.clone(),
                     file_id: expr.source.file_id,
                     span: field.key_span,
+                    surface: RecordFieldKeySurface::Plain,
                 },
             );
         }
@@ -257,6 +334,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                         key: field.key.clone(),
                         file_id: site.data.source.file_id,
                         span: field.key_span,
+                        surface: RecordFieldKeySurface::Plain,
                     },
                 );
             }

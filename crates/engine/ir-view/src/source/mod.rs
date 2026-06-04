@@ -9,6 +9,6 @@ pub use completion::{
     IndexedUnqualifiedNameSite, SourceCompletionView,
 };
 pub use occurrence::{
-    IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceRole, IndexedTypePathScope,
-    SourceOccurrenceView,
+    IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceRole, IndexedSourceSurface,
+    IndexedTypePathScope, SourceOccurrenceView,
 };

@@ -136,10 +136,19 @@ impl FunctionBodyLowering<'_> {
                         let name = self.intern_ast_name_or_name_ref(field_name);
                         let key = FieldKey::Named(name.clone());
                         let source_span = self.source(field.syntax()).span;
-                        let inner = field.pat();
-                        let explicit = inner.is_some();
-                        let pat = if let Some(inner) = inner {
-                            self.lower_pat_inner(inner, scope, kind, None, alloc_bindings, bindings)
+                        let explicit = field.colon_token().is_some();
+                        let pat = if explicit {
+                            match field.pat() {
+                                Some(inner) => self.lower_pat_inner(
+                                    inner,
+                                    scope,
+                                    kind,
+                                    None,
+                                    alloc_bindings,
+                                    bindings,
+                                ),
+                                None => self.alloc_unsupported_pat(field.syntax()),
+                            }
                         } else {
                             self.lower_record_shorthand_pat(
                                 field.syntax(),

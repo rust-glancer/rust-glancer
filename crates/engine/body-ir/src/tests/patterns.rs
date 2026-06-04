@@ -204,9 +204,9 @@ pub fn use_it(
             - p18 binding move v13 path end `end` @ 23:21-23:24
             - p19 slice [p16, p17, p18] `[start, .., end]` @ 23:9-23:25
             - p20 binding move v14 path field_left `field_left` @ 24:22-24:32
-            - p21 binding move v15 path right `right` @ 24:34-24:39
+            - p21 binding move v15 `right` @ 24:34-24:39
             - p22 rest `..` @ 24:41-24:43
-            - p23 record Pair [left=p20, right=p21] rest p22 `Pair { left: field_left, right, .. }` @ 24:9-24:45
+            - p23 record Pair [left=p20, shorthand right=p21] rest p22 `Pair { left: field_left, right, .. }` @ 24:9-24:45
             - p24 binding move <none> path None `None` @ 26:9-26:13
             - p25 binding move v16 path value `value` @ 27:9-27:14
         "#]],
