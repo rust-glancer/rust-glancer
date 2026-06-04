@@ -451,7 +451,7 @@ pub fn demo(maybe: shared::Maybe<shared::User>) {
         &[AnalysisQuery::hover("hover visible method", "method_hover").in_lib("app")],
         expect![[r#"
             hover visible method
-            - range: 2:18-2:34
+            - range: 2:24-2:32
             - block:
               kind: method
               path: shared::Maybe::and_then
