@@ -7,7 +7,6 @@ use rg_ir_model::{
     BindingId, BodyId, BodyRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TargetRef,
     TypeDefId, hir::source::ItemSourceKind,
 };
-use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
@@ -16,6 +15,7 @@ use crate::{BodyData, BodyIrReadTxn, ExprData, ExprKind, PatKind};
 use super::{
     super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
     paths::{TypePathCursorScanner, ValuePathCursorScanner},
+    record_pat_shorthand::RecordPatShorthandBinding,
     sites::BodyScanSites,
 };
 
@@ -108,11 +108,16 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         let record_shorthand_values = Self::record_expr_shorthand_values(body);
         let record_shorthand_bindings = self.record_shorthand_bindings(body);
 
+        // First look at expressions under the cursor: calls, paths, field accesses, literals, and
+        // so on. Record shorthand values are skipped here because the key token has its own
+        // source-level candidate.
         for (expr_idx, expr) in body.exprs.iter().enumerate() {
             if expr.source.file_id == self.file_id && expr.source.span.touches(self.offset) {
                 if record_shorthand_values.contains(&ExprId(expr_idx)) {
                     continue;
                 }
+                // Record expression keys can resolve to fields, while the record expression itself
+                // is still an ordinary expression candidate.
                 self.consider_record_expr_fields(body_ref, expr, &mut best);
                 let span = Self::member_reference_span(expr)
                     .filter(|span| span.touches(self.offset))
@@ -128,28 +133,35 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             }
         }
 
+        // Record pattern keys are not expressions, so check them separately before ordinary
+        // binding declarations.
         self.consider_record_pat_fields(body_ref, body, &mut best);
 
+        // Then look for local bindings introduced by params, lets, closures, and patterns. For
+        // shorthand record patterns, keep enough surface information for rename to expand the field.
         for (binding_idx, binding) in body.bindings.iter().enumerate() {
-            if binding.source.file_id == self.file_id && binding.source.span.touches(self.offset) {
+            let binding_span = binding.name_span.unwrap_or(binding.source.span);
+            if binding.source.file_id == self.file_id && binding_span.touches(self.offset) {
                 let binding_id = BindingId(binding_idx);
-                let surface = if let Some((_, key, _span, field_span)) = record_shorthand_bindings
+                let surface = if let Some(shorthand) = record_shorthand_bindings
                     .iter()
-                    .find(|(binding, _, _, _)| *binding == binding_id)
+                    .find(|shorthand| shorthand.binding == binding_id)
                 {
                     BindingSurface::RecordPatShorthand {
-                        key: key.clone(),
-                        field_span: *field_span,
+                        key: shorthand.key.clone(),
+                        field_span: shorthand.field_span,
+                        pat_span: shorthand.pat_span,
+                        binding_name_span: shorthand.binding_name_span,
                     }
                 } else {
                     BindingSurface::Plain
                 };
                 best.consider(
-                    binding.source.span,
+                    binding_span,
                     BodyCursorCandidate::Binding {
                         body: body_ref,
                         binding: binding_id,
-                        span: binding.source.span,
+                        span: binding_span,
                         surface,
                     },
                 );
@@ -157,6 +169,9 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         }
 
         if let Some(item_store) = body.body_item_store() {
+            // Body-local items live in the same source range as the body but are stored in a local
+            // item store. Their names can be the best answer when the cursor is on a nested item
+            // declaration or one of its fields/variants.
             for item in item_store.semantic_items() {
                 if item.source().file_id != self.file_id {
                     continue;
@@ -207,7 +222,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         best.finish()
     }
 
-    fn record_shorthand_bindings(&self, body: &BodyData) -> Vec<(BindingId, FieldKey, Span, Span)> {
+    fn record_shorthand_bindings(&self, body: &BodyData) -> Vec<RecordPatShorthandBinding> {
         let mut bindings = Vec::new();
         let sites = BodyScanSites::new(body);
         sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
@@ -216,31 +231,16 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             };
 
             for field in fields {
-                if field.explicit {
-                    continue;
-                }
-                let Some(pat) = body.pat(field.pat) else {
-                    continue;
-                };
-                let PatKind::Binding {
-                    binding: Some(binding),
-                    ..
-                } = &pat.kind
-                else {
+                let Some(shorthand) = RecordPatShorthandBinding::from_field(body, field) else {
                     continue;
                 };
                 if bindings
                     .iter()
-                    .any(|(seen_binding, _, _, _)| seen_binding == binding)
+                    .any(|seen: &RecordPatShorthandBinding| seen.binding == shorthand.binding)
                 {
                     continue;
                 }
-                bindings.push((
-                    *binding,
-                    field.key.clone(),
-                    field.key_span,
-                    field.source_span,
-                ));
+                bindings.push(shorthand);
             }
         });
         bindings
@@ -253,7 +253,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                 continue;
             };
             for field in fields {
-                if field.explicit {
+                if field.syntax.is_explicit() {
                     continue;
                 }
                 if let Some(value) = field.value {
@@ -283,7 +283,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         };
 
         for field in fields {
-            if !field.explicit || !field.key_span.touches(self.offset) {
+            if !field.syntax.is_explicit() || !field.key_span.touches(self.offset) {
                 continue;
             }
             best.consider(
@@ -295,7 +295,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                     key: field.key.clone(),
                     file_id: expr.source.file_id,
                     span: field.key_span,
-                    surface: RecordFieldKeySurface::Plain,
+                    surface: RecordFieldKeySurface::Explicit,
                 },
             );
         }
@@ -322,7 +322,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             };
 
             for field in fields {
-                if !field.explicit || !field.key_span.touches(self.offset) {
+                if !field.syntax.is_explicit() || !field.key_span.touches(self.offset) {
                     continue;
                 }
                 best.consider(
@@ -334,7 +334,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                         key: field.key.clone(),
                         file_id: site.data.source.file_id,
                         span: field.key_span,
-                        surface: RecordFieldKeySurface::Plain,
+                        surface: RecordFieldKeySurface::Explicit,
                     },
                 );
             }

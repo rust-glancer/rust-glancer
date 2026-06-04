@@ -450,6 +450,75 @@ pub fn use_it(source: User, na$param_decl$me: u8, age: u8) -> u8 {
 }
 
 #[test]
+fn rename_preserves_record_pattern_shorthand_syntax() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_rename_record_pattern_shorthand"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub struct User {
+    pub na$field_decl$me: Option<u8>,
+}
+
+pub fn use_it(by_ref_source: User, by_mut_source: User, by_at_source: User) -> u8 {
+    let User { ref na$ref_binding$me } = by_ref_source;
+    let by_ref = name.as_ref().map(|value| *value).unwrap_or(0);
+    let User { mut na$mut_binding$me } = by_mut_source;
+    name = Some(by_ref);
+    let by_at = match by_at_source {
+        User { name: ali$at_binding$as @ Some(_) } => alias.unwrap_or(0),
+        User { name: None } => 0,
+    };
+    by_ref + by_at
+}
+"#,
+        &[
+            AnalysisQuery::rename(
+                "rename field through complex shorthand",
+                "field_decl",
+                "title",
+            ),
+            AnalysisQuery::rename("rename ref shorthand binding", "ref_binding", "borrowed"),
+            AnalysisQuery::rename("rename mut shorthand binding", "mut_binding", "editable"),
+            AnalysisQuery::rename("rename explicit at binding", "at_binding", "matched"),
+        ],
+        expect![[r#"
+            rename field through complex shorthand
+            - target `name` @ src/lib.rs:7:9-7:13
+            - `name` -> `title` @ src/lib.rs:7:9-7:13
+            - `ref name` -> `title: ref name` @ src/lib.rs:11:16-11:24
+            - `mut name` -> `title: mut name` @ src/lib.rs:13:16-13:24
+            - `name` -> `title` @ src/lib.rs:16:16-16:20
+            - `name` -> `title` @ src/lib.rs:17:16-17:20
+
+            rename ref shorthand binding
+            - target `name` @ src/lib.rs:11:20-11:24
+            - `ref name` -> `name: ref borrowed` @ src/lib.rs:11:16-11:24
+            - `name` -> `borrowed` @ src/lib.rs:12:18-12:22
+
+            rename mut shorthand binding
+            - target `name` @ src/lib.rs:13:20-13:24
+            - `mut name` -> `name: mut editable` @ src/lib.rs:13:16-13:24
+            - `name` -> `editable` @ src/lib.rs:14:5-14:9
+
+            rename explicit at binding
+            - target `alias` @ src/lib.rs:16:22-16:27
+            - `alias` -> `matched` @ src/lib.rs:16:22-16:27
+            - `alias` -> `matched` @ src/lib.rs:16:43-16:48
+        "#]],
+    );
+}
+
+#[test]
 fn rejects_unsupported_rename_targets() {
     check_analysis_queries(
         r#"

@@ -7,15 +7,15 @@ use rg_ir_model::{
     BindingId, BodyId, BodyRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TargetRef,
     TypeDefId, hir::source::ItemSourceKind,
 };
-use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
-use rg_parse::{FileId, Span};
+use rg_parse::FileId;
 
 use crate::{BodyData, BodyIrReadTxn, ExprKind, PatKind};
 
 use super::{
     super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
     paths::{TypePathCursorScanner, ValuePathCursorScanner},
+    record_pat_shorthand::RecordPatShorthandBinding,
     sites::BodyScanSites,
 };
 
@@ -95,21 +95,24 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 continue;
             }
             let binding_id = BindingId(binding_idx);
-            let surface = if let Some((_, key, _span, field_span)) = record_shorthand_bindings
+            let surface = if let Some(shorthand) = record_shorthand_bindings
                 .iter()
-                .find(|(binding, _, _, _)| *binding == binding_id)
+                .find(|shorthand| shorthand.binding == binding_id)
             {
                 BindingSurface::RecordPatShorthand {
-                    key: key.clone(),
-                    field_span: *field_span,
+                    key: shorthand.key.clone(),
+                    field_span: shorthand.field_span,
+                    pat_span: shorthand.pat_span,
+                    binding_name_span: shorthand.binding_name_span,
                 }
             } else {
                 BindingSurface::Plain
             };
+            let span = binding.name_span.unwrap_or(binding.source.span);
             candidates.push(BodyCursorCandidate::Binding {
                 body: body_ref,
                 binding: binding_id,
-                span: binding.source.span,
+                span,
                 surface,
             });
         }
@@ -165,7 +168,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
     }
 
-    fn record_shorthand_bindings(&self, body: &BodyData) -> Vec<(BindingId, FieldKey, Span, Span)> {
+    fn record_shorthand_bindings(&self, body: &BodyData) -> Vec<RecordPatShorthandBinding> {
         let mut bindings = Vec::new();
         let sites = BodyScanSites::new(body);
         sites.walk_pats(self.file_id, None, |site| {
@@ -174,31 +177,16 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             };
 
             for field in fields {
-                if field.explicit {
-                    continue;
-                }
-                let Some(pat) = body.pat(field.pat) else {
-                    continue;
-                };
-                let PatKind::Binding {
-                    binding: Some(binding),
-                    ..
-                } = &pat.kind
-                else {
+                let Some(shorthand) = RecordPatShorthandBinding::from_field(body, field) else {
                     continue;
                 };
                 if bindings
                     .iter()
-                    .any(|(seen_binding, _, _, _)| seen_binding == binding)
+                    .any(|seen: &RecordPatShorthandBinding| seen.binding == shorthand.binding)
                 {
                     continue;
                 }
-                bindings.push((
-                    *binding,
-                    field.key.clone(),
-                    field.key_span,
-                    field.source_span,
-                ));
+                bindings.push(shorthand);
             }
         });
         bindings
@@ -319,7 +307,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 continue;
             };
             for field in fields {
-                if field.explicit {
+                if field.syntax.is_explicit() {
                     continue;
                 }
                 if let Some(value) = field.value {
@@ -361,10 +349,10 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                     key: field.key.clone(),
                     file_id: expr.source.file_id,
                     span: field.key_span,
-                    surface: if field.explicit {
-                        RecordFieldKeySurface::Plain
+                    surface: if field.syntax.is_explicit() {
+                        RecordFieldKeySurface::Explicit
                     } else {
-                        RecordFieldKeySurface::Shorthand {
+                        RecordFieldKeySurface::RecordExprShorthand {
                             field_span: field.source_span,
                         }
                     },
@@ -394,11 +382,15 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                     key: field.key.clone(),
                     file_id: site.data.source.file_id,
                     span: field.key_span,
-                    surface: if field.explicit {
-                        RecordFieldKeySurface::Plain
+                    surface: if field.syntax.is_explicit() {
+                        RecordFieldKeySurface::Explicit
                     } else {
-                        RecordFieldKeySurface::Shorthand {
+                        RecordFieldKeySurface::RecordPatShorthand {
                             field_span: field.source_span,
+                            pat_span: body
+                                .pat(field.pat)
+                                .map(|pat| pat.source.span)
+                                .unwrap_or(field.source_span),
                         }
                     },
                 });

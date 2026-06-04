@@ -156,7 +156,7 @@ impl ValuePathCursorScanner<'_> {
         file_id: FileId,
     ) {
         for field in fields {
-            if field.explicit || !self.offset_matches(field.key_span) {
+            if field.syntax.is_explicit() || !self.offset_matches(field.key_span) {
                 continue;
             }
             let FieldKey::Named(name) = &field.key else {

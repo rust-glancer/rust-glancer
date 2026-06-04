@@ -1,5 +1,6 @@
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId};
 use rg_item_tree::{ItemTreeId, TypeRef};
+use rg_parse::Span;
 use rg_text::Name;
 use rg_ty::Ty;
 
@@ -11,6 +12,7 @@ use super::body::BodySource;
 )]
 pub struct BindingData {
     pub source: BodySource,
+    pub name_span: Option<Span>,
     pub scope: ScopeId,
     pub kind: BindingKind,
     pub name: Option<Name>,

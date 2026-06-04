@@ -6,7 +6,7 @@ use crate::{
     Analysis, CompletionApplicability, CompletionClientCapabilities, CompletionInsertText,
     CompletionItem, CompletionQuery, DocumentSymbol, HoverInfo, NavigationTarget,
     ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, RenameEdit, RenameResult,
-    RenameTarget, SymbolAt, TypeHint, WorkspaceSymbol,
+    RenameTarget, SourceTextView, SymbolAt, TypeHint, WorkspaceSymbol,
 };
 use rg_body_ir::{BodyIrReadTxn, ExprData, ExprKind, testonly::BodyIrFixture};
 use rg_def_map::{PackageSlot, testonly::DefMapFixture};
@@ -331,7 +331,7 @@ impl AnalysisFixtureDb {
                 .body_ir_db()
                 .read_txn(PackageLoader::resident_only("resident analysis fixture")),
         );
-        Analysis::new(view_db)
+        Analysis::new(view_db, SourceTextView::new(self.fixture.parse_db()))
     }
 
     fn parse_db(&self) -> &ParseDb {

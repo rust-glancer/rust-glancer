@@ -5,6 +5,7 @@ pub(crate) mod body_map;
 pub(crate) mod expr;
 pub(crate) mod pat;
 pub(crate) mod path;
+pub(crate) mod record;
 pub(crate) mod resolved;
 pub(crate) mod stmt;
 
@@ -21,6 +22,7 @@ pub use self::{
     },
     pat::{PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordPatField},
     path::BodyPath,
+    record::RecordFieldSyntax,
     resolved::BodyResolution,
     stmt::{BindingData, BindingKind, BodySelfParamKind, StmtData, StmtKind},
 };

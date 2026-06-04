@@ -30,10 +30,40 @@ pub enum IndexedSourceRole {
 /// Source syntax shape that may need query-specific handling after semantic resolution.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IndexedSourceSurface {
+    /// Ordinary occurrence that can be rewritten by replacing the selected source span.
+    ///
+    /// For `let title = name;`, renaming the `name` reference edits only that token.
     Plain,
-    RecordFieldKey { shorthand: bool },
+    /// Explicit record field key, e.g. `name` in `User { name: value }`.
+    ///
+    /// The key is a field reference, but the source spelling already has separate key and value
+    /// syntax, so field rename still edits only the key token.
+    RecordFieldKeyExplicit,
+    /// Field-key side of record-expression shorthand, e.g. the field `name` in `User { name }`.
+    ///
+    /// Renaming the field has to expand the field to `title: name`, while renaming the local value
+    /// is handled by the paired `RecordExprShorthandValue` occurrence.
+    RecordExprShorthandFieldKey { field_span: Span },
+    /// Field-key side of record-pattern shorthand, e.g. the field `name` in `User { ref name }`.
+    ///
+    /// Renaming the field rewrites the whole field to `title: ref name` so pattern modifiers and
+    /// subpatterns stay intact.
+    RecordPatShorthandFieldKey { field_span: Span, pat_span: Span },
+    /// Value-reference side of record-expression shorthand, e.g. the local `name` in `User { name }`.
+    ///
+    /// Renaming the local value rewrites the field to `name: title` instead of changing the field
+    /// key.
     RecordExprShorthandValue { key: FieldKey, field_span: Span },
-    RecordPatShorthandBinding { key: FieldKey, field_span: Span },
+    /// Binding-declaration side of record-pattern shorthand, e.g. the binding in `User { ref name }`.
+    ///
+    /// Renaming the binding rewrites the whole field to `name: ref title`, preserving the field key
+    /// and any pattern syntax around the binding name.
+    RecordPatShorthandBinding {
+        key: FieldKey,
+        field_span: Span,
+        pat_span: Span,
+        binding_name_span: Span,
+    },
 }
 
 /// One indexed source span that can be interpreted by analysis queries.
@@ -345,7 +375,12 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                     BindingSurface::Plain => {
                         self.declaration_occurrence(declaration, target, span, fallback_file_id)?
                     }
-                    BindingSurface::RecordPatShorthand { key, field_span } => {
+                    BindingSurface::RecordPatShorthand {
+                        key,
+                        field_span,
+                        pat_span,
+                        binding_name_span,
+                    } => {
                         let file_id = match self.analysis.body_ir.body_data(body)? {
                             Some(body_data) => match body_data.binding(binding) {
                                 Some(data) => data.source.file_id,
@@ -368,7 +403,12 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                             target,
                             file_id,
                             span,
-                            IndexedSourceSurface::RecordPatShorthandBinding { key, field_span },
+                            IndexedSourceSurface::RecordPatShorthandBinding {
+                                key,
+                                field_span,
+                                pat_span,
+                                binding_name_span,
+                            },
                         ))
                     }
                 }
@@ -426,19 +466,32 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 file_id,
                 surface,
                 ..
-            } => Some(IndexedSourceOccurrence::reference_with_surface(
-                IndexedSourceFact::RecordField {
-                    scope: LexicalScopeRef::new(body, scope),
-                    owner,
-                    key,
-                },
-                target,
-                file_id,
-                span,
-                IndexedSourceSurface::RecordFieldKey {
-                    shorthand: matches!(surface, RecordFieldKeySurface::Shorthand { .. }),
-                },
-            )),
+            } => {
+                let surface = match surface {
+                    RecordFieldKeySurface::Explicit => IndexedSourceSurface::RecordFieldKeyExplicit,
+                    RecordFieldKeySurface::RecordExprShorthand { field_span } => {
+                        IndexedSourceSurface::RecordExprShorthandFieldKey { field_span }
+                    }
+                    RecordFieldKeySurface::RecordPatShorthand {
+                        field_span,
+                        pat_span,
+                    } => IndexedSourceSurface::RecordPatShorthandFieldKey {
+                        field_span,
+                        pat_span,
+                    },
+                };
+                Some(IndexedSourceOccurrence::reference_with_surface(
+                    IndexedSourceFact::RecordField {
+                        scope: LexicalScopeRef::new(body, scope),
+                        owner,
+                        key,
+                    },
+                    target,
+                    file_id,
+                    span,
+                    surface,
+                ))
+            }
             BodyCursorCandidate::ValueReference {
                 body,
                 scope,

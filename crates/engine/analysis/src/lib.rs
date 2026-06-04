@@ -15,7 +15,7 @@ pub use rg_ir_view::SymbolKind;
 use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
 use rg_ir_view::IndexedViewDb;
-use rg_parse::{FileId, TargetId};
+use rg_parse::{FileId, ParseDb, Span, TargetId};
 use rg_ty::Ty;
 
 use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
@@ -30,16 +30,29 @@ pub use self::model::{
 /// High-level LSP-facing query API over one request-scoped project transaction.
 pub struct Analysis<'a> {
     view_db: IndexedViewDb<'a>,
+    source_text: SourceTextView<'a>,
 }
 
 impl<'a> Analysis<'a> {
-    /// Builds a query API over one request-scoped indexed view.
-    pub fn new(view_db: IndexedViewDb<'a>) -> Self {
-        Self { view_db }
+    /// Builds a query API over one request-scoped indexed view and its matching source snapshot.
+    pub fn new(view_db: IndexedViewDb<'a>, source_text: SourceTextView<'a>) -> Self {
+        Self {
+            view_db,
+            source_text,
+        }
     }
 
     pub(crate) fn view_db(&self) -> &IndexedViewDb<'a> {
         &self.view_db
+    }
+
+    pub(crate) fn source_text_for_span(
+        &self,
+        package: PackageSlot,
+        file: FileId,
+        span: Span,
+    ) -> Option<String> {
+        self.source_text.text_for_span(package, file, span)
     }
 
     /// Returns the smallest known symbol under a source offset.
@@ -233,5 +246,27 @@ impl<'a> Analysis<'a> {
         }
 
         Ok(targets)
+    }
+}
+
+/// Read-only source text view paired with one analysis snapshot.
+///
+/// Edit-planning queries need exact source snippets for syntax-preserving rewrites. Keeping that
+/// access here lets indexed views stay focused on semantic facts.
+#[derive(Debug, Clone, Copy)]
+pub struct SourceTextView<'a> {
+    parse: &'a ParseDb,
+}
+
+impl<'a> SourceTextView<'a> {
+    pub fn new(parse: &'a ParseDb) -> Self {
+        Self { parse }
+    }
+
+    fn text_for_span(&self, package: PackageSlot, file: FileId, span: Span) -> Option<String> {
+        self.parse
+            .package(package.0)?
+            .parsed_file(file)?
+            .text_for_span(span)
     }
 }

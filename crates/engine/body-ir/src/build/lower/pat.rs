@@ -12,11 +12,24 @@ use rg_ty::Ty;
 
 use crate::ir::{
     BindingData, BindingKind, BodyPath, LiteralKind, PatBindingMode, PatData, PatKind,
-    PatMutability, PatRangeKind, RecordPatField,
+    PatMutability, PatRangeKind, RecordFieldSyntax, RecordPatField,
     path::{BodyPathSegment, BodyPathSegmentKind},
 };
 
 use super::function::FunctionBodyLowering;
+
+/// How lowering should classify a simple identifier pattern before real pattern resolution exists.
+///
+/// TODO: Remove this once pattern resolution decides whether `Name` resolves as a value path or
+/// introduces a local binding. Lowering currently needs bindings early for scope construction, so
+/// it uses a syntax heuristic with a narrow override for record-pattern shorthand.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IdentPatResolution {
+    /// Use the existing capitalized-name heuristic for ambiguous standalone identifiers.
+    UseHeuristic,
+    /// Force binding allocation for syntax that Rust already disambiguates as a binding.
+    ForceBinding,
+}
 
 impl FunctionBodyLowering<'_> {
     pub(super) fn lower_pat(
@@ -43,6 +56,27 @@ impl FunctionBodyLowering<'_> {
         alloc_bindings: bool,
         bindings: &mut Vec<BindingId>,
     ) -> PatId {
+        self.lower_pat_inner_with_ident_resolution(
+            pat,
+            scope,
+            kind,
+            annotation,
+            alloc_bindings,
+            bindings,
+            IdentPatResolution::UseHeuristic,
+        )
+    }
+
+    fn lower_pat_inner_with_ident_resolution(
+        &mut self,
+        pat: ast::Pat,
+        scope: ScopeId,
+        kind: BindingKind,
+        annotation: Option<TypeRef>,
+        alloc_bindings: bool,
+        bindings: &mut Vec<BindingId>,
+        ident_resolution: IdentPatResolution,
+    ) -> PatId {
         let source = self.source(pat.syntax());
         let pat_kind = match pat {
             ast::Pat::BoxPat(pat) => {
@@ -50,7 +84,15 @@ impl FunctionBodyLowering<'_> {
                     return self.alloc_unsupported_pat(pat.syntax());
                 };
                 PatKind::Box {
-                    pat: self.lower_pat_inner(inner, scope, kind, None, alloc_bindings, bindings),
+                    pat: self.lower_pat_inner_with_ident_resolution(
+                        inner,
+                        scope,
+                        kind,
+                        None,
+                        alloc_bindings,
+                        bindings,
+                        ident_resolution,
+                    ),
                 }
             }
             ast::Pat::IdentPat(pat) => {
@@ -82,12 +124,15 @@ impl FunctionBodyLowering<'_> {
                 // and unit-variant path. Keep existing binding visibility stable while preserving
                 // the path-shaped interpretation in the IR.
                 let binding = if !alloc_bindings
-                    || ambiguous_path.is_some() && is_capitalized(name.as_str())
+                    || ident_resolution == IdentPatResolution::UseHeuristic
+                        && ambiguous_path.is_some()
+                        && is_capitalized(name.as_str())
                 {
                     None
                 } else {
                     self.push_pat_binding(
                         pat.syntax(),
+                        name_span,
                         scope,
                         kind,
                         name,
@@ -136,8 +181,8 @@ impl FunctionBodyLowering<'_> {
                         let name = self.intern_ast_name_or_name_ref(field_name);
                         let key = FieldKey::Named(name.clone());
                         let source_span = self.source(field.syntax()).span;
-                        let explicit = field.colon_token().is_some();
-                        let pat = if explicit {
+                        let syntax = RecordFieldSyntax::from(&field);
+                        let pat = if syntax.is_explicit() {
                             match field.pat() {
                                 Some(inner) => self.lower_pat_inner(
                                     inner,
@@ -150,20 +195,22 @@ impl FunctionBodyLowering<'_> {
                                 None => self.alloc_unsupported_pat(field.syntax()),
                             }
                         } else {
-                            self.lower_record_shorthand_pat(
-                                field.syntax(),
-                                scope,
-                                kind,
-                                name,
-                                alloc_bindings,
-                                bindings,
-                            )
+                            match field.pat() {
+                                Some(inner) => self.lower_record_shorthand_pat(
+                                    inner,
+                                    scope,
+                                    kind,
+                                    alloc_bindings,
+                                    bindings,
+                                ),
+                                None => self.alloc_unsupported_pat(field.syntax()),
+                            }
                         };
                         Some(RecordPatField {
                             key,
                             key_span,
                             source_span,
-                            explicit,
+                            syntax,
                             pat,
                         })
                     })
@@ -275,6 +322,7 @@ impl FunctionBodyLowering<'_> {
     fn push_pat_binding(
         &mut self,
         syntax: &rg_syntax::SyntaxNode,
+        name_span: rg_parse::Span,
         scope: ScopeId,
         kind: BindingKind,
         name: Name,
@@ -296,6 +344,7 @@ impl FunctionBodyLowering<'_> {
 
         let binding = self.builder.alloc_binding(BindingData {
             source: self.source(syntax),
+            name_span: Some(name_span),
             scope,
             kind,
             name: Some(name),
@@ -316,25 +365,25 @@ impl FunctionBodyLowering<'_> {
 
     fn lower_record_shorthand_pat(
         &mut self,
-        syntax: &rg_syntax::SyntaxNode,
+        pat: ast::Pat,
         scope: ScopeId,
         kind: BindingKind,
-        name: Name,
         alloc_bindings: bool,
         bindings: &mut Vec<BindingId>,
     ) -> PatId {
-        let binding = alloc_bindings
-            .then(|| self.push_pat_binding(syntax, scope, kind, name, None, bindings))
-            .flatten();
-        self.builder.alloc_pat(PatData {
-            source: self.source(syntax),
-            kind: PatKind::Binding {
-                mode: PatBindingMode::default(),
-                binding,
-                subpat: None,
-                path: None,
-            },
-        })
+        // A colonless record field is still a real binding pattern: `User { ref name }` binds by
+        // reference, and `User { mut name }` creates a mutable binding. The shorthand-specific rule
+        // is that `User { Name }` names a field binding even though a standalone `Name` pattern may
+        // resolve as a path-like unit variant.
+        self.lower_pat_inner_with_ident_resolution(
+            pat,
+            scope,
+            kind,
+            None,
+            alloc_bindings,
+            bindings,
+            IdentPatResolution::ForceBinding,
+        )
     }
 
     fn alloc_unsupported_pat(&mut self, syntax: &rg_syntax::SyntaxNode) -> PatId {
@@ -349,4 +398,14 @@ fn is_capitalized(name: &str) -> bool {
     name.bytes()
         .next()
         .is_some_and(|byte| byte.is_ascii_uppercase())
+}
+
+impl From<&ast::RecordPatField> for RecordFieldSyntax {
+    fn from(field: &ast::RecordPatField) -> Self {
+        if field.colon_token().is_some() {
+            Self::Explicit
+        } else {
+            Self::Shorthand
+        }
+    }
 }

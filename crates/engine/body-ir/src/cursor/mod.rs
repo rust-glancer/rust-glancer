@@ -95,21 +95,34 @@ pub enum BindingSurface {
     Plain,
     /// Binding introduced by record-pattern shorthand, e.g. `name` in `let User { name } = user;`.
     ///
-    /// The field key and whole field span let rename expand the token to `new_key: new_binding`
-    /// without pretending the binding declaration itself is a different semantic candidate.
-    RecordPatShorthand { key: FieldKey, field_span: Span },
+    /// The field and pattern spans let rename expand the field while preserving modifiers and
+    /// subpatterns:
+    ///
+    /// - rename field: `User { ref name }` -> `User { title: ref name }`
+    /// - rename binding: `User { ref name }` -> `User { name: ref title }`
+    RecordPatShorthand {
+        key: FieldKey,
+        field_span: Span,
+        pat_span: Span,
+        binding_name_span: Span,
+    },
 }
 
 /// Source spelling for a record field key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecordFieldKeySurface {
     /// Explicit key syntax, e.g. `name` in `User { name: value }`.
-    Plain,
-    /// Shorthand key syntax, e.g. `name` in `User { name }`.
+    Explicit,
+    /// Expression shorthand key syntax, e.g. `name` in `User { name }`.
     ///
-    /// The whole field span is useful for future rewrite forms that may need more than the key
-    /// token, while ordinary rename still edits only `span`.
-    Shorthand { field_span: Span },
+    /// Renaming the field key expands the value expression: `User { name }` becomes
+    /// `User { title: name }`.
+    RecordExprShorthand { field_span: Span },
+    /// Pattern shorthand key syntax, e.g. `name` in `User { ref name }`.
+    ///
+    /// Renaming the field key must preserve the whole pattern: `User { ref name }` becomes
+    /// `User { title: ref name }`.
+    RecordPatShorthand { field_span: Span, pat_span: Span },
 }
 
 /// Lowered source backing a value-namespace reference candidate.

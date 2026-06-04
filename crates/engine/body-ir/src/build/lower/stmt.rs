@@ -61,6 +61,10 @@ impl FunctionBodyLowering<'_> {
         };
         self.builder.alloc_binding(BindingData {
             source,
+            name_span: param
+                .name()
+                .map(|name| self.source(name.syntax()).span)
+                .or_else(|| Some(source.span)),
             scope,
             kind: BindingKind::SelfParam(self_kind),
             name: Some(self.interner.intern("self")),
@@ -77,6 +81,7 @@ impl FunctionBodyLowering<'_> {
             Some(pat) => self.lower_pat(pat, scope, BindingKind::Param, annotation).1,
             None => vec![self.builder.alloc_binding(BindingData {
                 source: self.source(param.syntax()),
+                name_span: None,
                 scope,
                 kind: BindingKind::Param,
                 name: None,

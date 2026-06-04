@@ -304,10 +304,25 @@ impl TargetBodyIrSnapshot<'_> {
             .map(|ty| format!(": {ty}"))
             .unwrap_or_default();
         let name = binding.name.as_deref().unwrap_or("<unsupported>");
+        let name_span = binding
+            .name_span
+            .filter(|span| {
+                *span != binding.source.span && matches!(binding.kind, crate::BindingKind::Let)
+            })
+            .map(|span| {
+                format!(
+                    " name @ {}",
+                    self.render_source(BodySource {
+                        file_id: binding.source.file_id,
+                        span,
+                    })
+                )
+            })
+            .unwrap_or_default();
 
         writeln!(
             dump,
-            "- v{} {} {} `{}`{} => {} @ {}",
+            "- v{} {} {} `{}`{} => {} @ {}{}",
             id.0,
             binding.kind,
             name,
@@ -315,6 +330,7 @@ impl TargetBodyIrSnapshot<'_> {
             annotation,
             self.render_ty(&binding.ty),
             self.render_source(binding.source),
+            name_span,
         )
         .expect("string writes should not fail");
 
@@ -377,7 +393,11 @@ impl TargetBodyIrSnapshot<'_> {
                 let fields = fields
                     .iter()
                     .map(|field| {
-                        let shorthand = if field.explicit { "" } else { "shorthand " };
+                        let shorthand = if field.syntax.is_shorthand() {
+                            "shorthand "
+                        } else {
+                            ""
+                        };
                         format!("{shorthand}{}=p{}", field.key, field.pat.0)
                     })
                     .collect::<Vec<_>>()

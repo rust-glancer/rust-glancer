@@ -105,6 +105,49 @@ pub fn use_it(input: User, name: u8) -> u8 {
     );
 }
 
+#[test]
+fn source_scan_uses_name_span_for_record_pattern_shorthand_bindings() {
+    check_source_candidates(
+        "name",
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_cursor_record_pattern_shorthand"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+enum Option<T> {
+    Some(T),
+    None,
+}
+
+struct User {
+    name: Option<u8>,
+}
+
+fn use_it(by_ref: User, by_mut: User, by_at: User) {
+    let User { ref name } = by_ref;
+    let User { mut name } = by_mut;
+    match by_at {
+        User { name: alias @ Some(_) } => alias,
+        User { name: None } => None,
+    };
+    name;
+}
+"#,
+        expect![[r#"
+            expr @ 17:5-17:9
+            record_field User::name @ 11:20-11:24
+            record_field User::name @ 12:20-12:24
+            record_field User::name @ 14:16-14:20
+            record_field User::name @ 15:16-15:20
+            record_shorthand_binding name @ 11:20-11:24
+            record_shorthand_binding name @ 12:20-12:24
+        "#]],
+    );
+}
+
 fn check_source_candidates(ident: &str, fixture: &str, expect: Expect) {
     let db = BodyIrFixture::build(fixture);
     let package = db
