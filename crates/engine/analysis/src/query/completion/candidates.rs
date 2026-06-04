@@ -4,6 +4,7 @@
 //! storage owns name, member, or type lookup. This adapter accepts completion-domain cursor sites
 //! and projects generic view facts into completion-ready candidates.
 
+use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
     EnumVariantRef, FieldRef, FunctionRef, ModuleRef, TypeDefId, identity::DeclarationRef,
 };
@@ -15,7 +16,6 @@ use rg_ir_view::{
     ty::TyView,
     ty::locals::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
 };
-use rg_item_tree::FieldKey;
 use rg_ty::Ty;
 
 use crate::{

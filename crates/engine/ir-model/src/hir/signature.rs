@@ -4,7 +4,7 @@
 //! only the parts that participate in queries, so these types keep the hot declaration families
 //! smaller without making downstream crates know about the storage tradeoff.
 
-use rg_item_tree::{
+use crate::items::{
     ConstItem, FunctionItem, FunctionQualifiers, GenericParams, ParamItem, TypeAliasItem,
     TypeBound, TypeRef,
 };

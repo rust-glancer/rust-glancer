@@ -3,6 +3,7 @@
 //! This module deliberately stays narrow: it recognizes `core::ops::Deref` impls for a known
 //! nominal receiver and resolves the impl's associated `Target` type with the receiver substitution.
 
+use rg_ir_model::items::TypeRef;
 use rg_ir_model::{
     AssocItemId, TraitImplRef, TypeAliasRef, TypePathResolution, hir::items::ImplData,
 };
@@ -10,7 +11,6 @@ use rg_ir_storage::{
     DefMapSource, ItemLookupIndex, ItemStoreSource, Path, PathSegment, TargetItemQuery,
     TypePathContext,
 };
-use rg_item_tree::TypeRef;
 use rg_text::Name;
 
 use crate::{ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};

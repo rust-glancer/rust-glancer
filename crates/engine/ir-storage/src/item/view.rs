@@ -1,5 +1,6 @@
 //! Borrowed semantic item views shared by read transactions and downstream queries.
 
+use rg_ir_model::items::{Documentation, GenericParams, TypeRef, VisibilityLevel};
 use rg_ir_model::{
     AssocItemId, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, SemanticItemKind,
     SemanticItemRef, TypeDefRef,
@@ -11,7 +12,6 @@ use rg_ir_model::{
         source::ItemSource,
     },
 };
-use rg_item_tree::{Documentation, GenericParams, TypeRef, VisibilityLevel};
 use rg_parse::Span;
 use rg_text::Name;
 

@@ -1,41 +1,16 @@
-use rg_syntax::{
-    AstNode as _,
-    ast::{self},
-};
+use rg_ir_model::items::Documentation;
+use rg_syntax::{AstNode as _, ast};
 
-/// User-facing documentation attached to one source declaration.
-///
-/// The text is already stripped from Rust doc-comment/doc-attribute syntax, but otherwise remains
-/// Markdown-like so editor features can render it without re-reading AST.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct Documentation {
-    pub(crate) text: String,
-}
+use super::MaybeFromAst;
 
-impl Documentation {
-    pub fn new(text: impl Into<String>) -> Option<Self> {
-        let text = text.into();
-        (!text.trim().is_empty()).then_some(Self { text })
-    }
+pub struct OuterDocs;
+pub struct InnerDocs;
 
-    pub fn concat(first: Option<Self>, second: Option<Self>) -> Option<Self> {
-        let mut parts = Vec::new();
-        if let Some(first) = first {
-            parts.push(first.text);
-        }
-        if let Some(second) = second {
-            parts.push(second.text);
-        }
+impl MaybeFromAst<OuterDocs> for Documentation {
+    type AstNode = dyn ast::HasDocComments;
+    type Context<'a> = OuterDocs;
 
-        Self::new(parts.join("\n"))
-    }
-
-    pub fn from_ast<T>(item: &T) -> Option<Self>
-    where
-        T: ast::HasDocComments,
-    {
+    fn maybe_from_ast(item: &Self::AstNode, _ctx: Self::Context<'_>) -> Option<Self> {
         let mut lines = Vec::new();
 
         for comment in item.doc_comments().filter(ast::Comment::is_outer) {
@@ -52,11 +27,13 @@ impl Documentation {
 
         Self::new(lines.join("\n"))
     }
+}
 
-    pub fn inner_from_ast<T>(item: &T) -> Option<Self>
-    where
-        T: ast::HasAttrs,
-    {
+impl MaybeFromAst<InnerDocs> for Documentation {
+    type AstNode = dyn ast::HasAttrs;
+    type Context<'a> = InnerDocs;
+
+    fn maybe_from_ast(item: &Self::AstNode, _ctx: Self::Context<'_>) -> Option<Self> {
         let inner_node = item.inner_attributes_node()?;
         let mut lines = Vec::new();
 
@@ -79,18 +56,6 @@ impl Documentation {
         }
 
         Self::new(lines.join("\n"))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.text
-    }
-
-    pub fn text(&self) -> String {
-        self.text.clone()
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.text.shrink_to_fit();
     }
 }
 
@@ -122,9 +87,11 @@ fn normalize_doc_text(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use rg_ir_model::items::Documentation;
     use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 
-    use super::Documentation;
+    use super::{InnerDocs, OuterDocs};
+    use crate::item::MaybeFromAst;
 
     #[test]
     fn extracts_line_doc_comments() {
@@ -142,9 +109,10 @@ mod tests {
             .syntax()
             .descendants()
             .find_map(ast::Struct::cast)
-            .unwrap();
+            .expect("fixture should contain struct");
 
-        let docs = Documentation::from_ast(&item).expect("docs should be extracted");
+        let docs = <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&item, OuterDocs)
+            .expect("docs should be extracted");
 
         assert_eq!(docs.as_str(), "User account.\nStores the display name.");
     }
@@ -164,9 +132,10 @@ mod tests {
             .syntax()
             .descendants()
             .find_map(ast::Struct::cast)
-            .unwrap();
+            .expect("fixture should contain struct");
 
-        let docs = Documentation::from_ast(&item).expect("docs should be extracted");
+        let docs = <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&item, OuterDocs)
+            .expect("docs should be extracted");
 
         assert_eq!(docs.as_str(), "User account.");
     }
@@ -184,7 +153,8 @@ mod tests {
         .ok()
         .expect("fixture should parse");
 
-        let docs = Documentation::inner_from_ast(&file).expect("docs should be extracted");
+        let docs = <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(&file, InnerDocs)
+            .expect("docs should be extracted");
 
         assert_eq!(docs.as_str(), "Module overview.\nMore module details.");
     }
@@ -206,9 +176,10 @@ mod tests {
             .syntax()
             .descendants()
             .find_map(ast::Module::cast)
-            .unwrap();
+            .expect("fixture should contain module");
 
-        let docs = Documentation::inner_from_ast(&item).expect("docs should be extracted");
+        let docs = <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(&item, InnerDocs)
+            .expect("docs should be extracted");
 
         assert_eq!(docs.as_str(), "Inline module overview.");
     }

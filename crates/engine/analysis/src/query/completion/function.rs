@@ -3,8 +3,8 @@
 //! Function and method completions need more than a label: they reuse signature
 //! details for display and turn parameter names into LSP snippet placeholders.
 
+use rg_ir_model::items::ParamItem;
 use rg_ir_view::display::signature::SignatureRenderer;
-use rg_item_tree::ParamItem;
 
 use crate::{
     model::{

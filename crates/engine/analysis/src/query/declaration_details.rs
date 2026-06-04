@@ -3,6 +3,7 @@
 //! Declarations identify source facts, but UI features usually need surrounding presentation
 //! facts as well: docs, display path, symbol kind, and a compact signature.
 
+use rg_ir_model::items::Documentation;
 use rg_ir_model::{
     BodyBindingRef, ConstRef, EnumVariantRef, FieldRef, FunctionRef, LocalDefRef, ModuleRef,
     SemanticItemRef, StaticRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
@@ -10,7 +11,6 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery};
 use rg_ir_view::{IndexedViewDb, display::signature::SignatureRenderer, item::path::PathView};
-use rg_item_tree::Documentation;
 
 use crate::{SymbolKind, query::member::MemberView};
 

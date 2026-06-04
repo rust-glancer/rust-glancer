@@ -8,8 +8,8 @@
 //! During def-map construction this module reads from the fixed-point scope snapshot. After
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
+use rg_ir_model::items::VisibilityLevel;
 use rg_ir_model::{DefId, DefMapRef, ModuleId, ModuleRef, TargetRef};
-use rg_item_tree::VisibilityLevel;
 use rg_text::Name;
 
 use super::super::{

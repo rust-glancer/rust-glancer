@@ -5,12 +5,12 @@
 //! identities.
 
 use rg_body_ir::{BodyResolution, BodyScopeQuery};
+use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
     BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
     identity::{DeclarationRef, ExprRef},
 };
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery, Path, TypePathContext};
-use rg_item_tree::FieldKey;
 use rg_ty::ItemPathQuery;
 
 use crate::IndexedViewDb;

@@ -1,5 +1,5 @@
+use rg_ir_model::items::{ItemTag, MacroDefinitionItem, VisibilityLevel};
 use rg_ir_model::{ModuleId, TargetRef, hir::source::ItemSource};
-use rg_item_tree::{ItemTag, MacroDefinitionItem, VisibilityLevel};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 use rg_tt::TopSubtree;

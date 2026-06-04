@@ -6,6 +6,7 @@
 
 pub mod hir;
 mod ids;
+pub mod items;
 mod resolution;
 
 pub use self::ids::{

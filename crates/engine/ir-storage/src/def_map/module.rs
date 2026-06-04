@@ -1,5 +1,5 @@
+use rg_ir_model::items::Documentation;
 use rg_ir_model::{ImportId, LocalDefId, LocalImplId, ModuleId};
-use rg_item_tree::Documentation;
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 

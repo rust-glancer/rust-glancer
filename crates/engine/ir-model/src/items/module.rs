@@ -13,7 +13,7 @@ pub struct ModuleItem {
 }
 
 impl ModuleItem {
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         if let Some(docs) = &mut self.inner_docs {
             docs.shrink_to_fit();
         }
@@ -34,7 +34,7 @@ pub enum ModuleSource {
 }
 
 impl ModuleSource {
-    fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         match self {
             Self::Inline { items } => items.shrink_to_fit(),
             Self::OutOfLine { .. } => {}

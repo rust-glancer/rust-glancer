@@ -16,7 +16,6 @@ wincode.workspace = true
 rg_arena = { workspace = true, features = ["memsize"] }
 rg_memsize.workspace = true
 rg_ir_model.workspace = true
-rg_item_tree.workspace = true
 rg_parse.workspace = true
 rg_text = { workspace = true, features = ["memsize"] }
 rg_tt.workspace = true

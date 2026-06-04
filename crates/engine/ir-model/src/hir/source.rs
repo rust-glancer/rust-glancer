@@ -1,5 +1,5 @@
+use crate::items::{ItemNode, ItemTreeId, ItemTreeRef};
 use rg_arena::Arena;
-use rg_item_tree::{ItemNode, ItemTreeId, ItemTreeRef};
 use rg_memsize::MemorySize;
 use rg_parse::{FileId, Span};
 use wincode::{SchemaRead, SchemaWrite};

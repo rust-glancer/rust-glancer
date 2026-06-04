@@ -5,7 +5,7 @@ use rg_syntax::{
     ast::{self, HasGenericArgs as _, PathSegmentKind},
 };
 
-use rg_item_tree::{GenericArg, TypePath, TypeRef};
+use rg_item_tree::{FromAst as _, GenericArg, TypePath, TypeRef};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
@@ -223,11 +223,15 @@ impl BodyLowering<'_> {
                 type_ref,
                 trait_ref,
             } => {
-                let ty = type_ref.map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
+                let ty = type_ref
+                    .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
                 let trait_ref = trait_ref
                     .and_then(|trait_ref| trait_ref.path())
                     .map(|path| {
-                        TypeRef::Path(TypePath::from_ast(path, self.line_index, self.interner))
+                        TypeRef::Path(TypePath::from_ast(
+                            &path,
+                            (self.line_index, &mut *self.interner),
+                        ))
                     });
                 let span = segment
                     .type_anchor()
@@ -251,7 +255,7 @@ impl BodyLowering<'_> {
                 colon_colon: args.coloncolon_token().is_some(),
                 args: args
                     .generic_args()
-                    .map(|arg| GenericArg::from_ast(arg, self.line_index, self.interner))
+                    .map(|arg| GenericArg::from_ast(&arg, (self.line_index, &mut *self.interner)))
                     .collect(),
             });
         }

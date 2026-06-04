@@ -9,7 +9,7 @@ use rg_syntax::{
 };
 
 use rg_ir_model::{ExprId, ScopeId};
-use rg_item_tree::{FieldKey, TypeRef};
+use rg_item_tree::{FieldKey, FromAst as _, TypeRef};
 use rg_parse::{Span, TextSpan};
 use rg_ty::Ty;
 
@@ -183,7 +183,7 @@ impl BodyLowering<'_> {
         let expr = cast.expr().map(|expr| self.lower_expr(expr, scope));
         let ty = cast
             .ty()
-            .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
+            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
 
         self.alloc_expr(cast.syntax(), scope, ExprKind::Cast { expr, ty })
     }
@@ -259,7 +259,7 @@ impl BodyLowering<'_> {
         let ret_ty = closure
             .ret_type()
             .and_then(|ret_ty| ret_ty.ty())
-            .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
+            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
         let body = closure
             .body()
             .map(|body| self.lower_expr(body, closure_scope));
@@ -293,7 +293,7 @@ impl BodyLowering<'_> {
         let source = self.source(param.syntax());
         let annotation = param
             .ty()
-            .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
+            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
         let (pat, bindings) = match param.pat() {
             Some(pat) => self.lower_pat(pat, scope, BindingKind::Param, annotation.clone()),
             None => {

@@ -1,7 +1,7 @@
 use std::fmt;
 
+use rg_ir_model::items::{ImportAlias, UseImportKind, UsePath, VisibilityLevel};
 use rg_ir_model::{ModuleId, hir::source::ItemSource};
-use rg_item_tree::{ImportAlias, UseImportKind, UsePath, VisibilityLevel};
 use rg_parse::Span;
 use rg_text::{Name, NameInterner};
 use rg_workspace::RustEdition;

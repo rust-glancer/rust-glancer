@@ -1,4 +1,4 @@
-use rg_item_tree::{
+use crate::items::{
     Documentation, EnumVariantItem, FieldItem, FieldList, GenericParams, Mutability, ParamKind,
     TypeBound, TypeRef, VisibilityLevel,
 };
