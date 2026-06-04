@@ -27,12 +27,22 @@ pub(crate) fn workspace_edit(
     let mut changes = HashMap::<Uri, Vec<TextEdit>>::new();
 
     for edit in edits {
-        let Some(path) = snapshot.file_path(edit.target.package, edit.file_id) else {
-            continue;
-        };
-        let Some(uri) = Uri::from_file_path(path) else {
-            continue;
-        };
+        let path = snapshot
+            .file_path(edit.target.package, edit.file_id)
+            .with_context(|| {
+                format!(
+                    "while attempting to find file path for rename edit in package {:?}, file {:?}",
+                    edit.target.package, edit.file_id
+                )
+            })?;
+        let uri = Uri::from_file_path(path).with_context(|| {
+            format!(
+                "while attempting to convert file path `{}` to URI for rename edit in package {:?}, file {:?}",
+                path.display(),
+                edit.target.package,
+                edit.file_id
+            )
+        })?;
         let range = range_for_file(snapshot, edit.target.package, edit.file_id, edit.span)?;
         let text_edit = TextEdit {
             range,

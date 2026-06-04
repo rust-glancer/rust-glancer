@@ -304,6 +304,9 @@ impl EngineService for Service {
         new_name: String,
     ) -> EngineResult<Option<ls_types::WorkspaceEdit>> {
         let dirty = {
+            // Technically we have a TOCTOU here, but if someone really will try to
+            // do a rename while simulanteously editing multiple files... They probably
+            // should stop doing weird things.
             let documents = self.engine.documents.lock().await;
             if documents.has_dirty_documents_except(&path) {
                 return Err(EngineError::new(
