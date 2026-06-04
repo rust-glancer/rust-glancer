@@ -64,7 +64,7 @@ impl BodyLowering<'_> {
             name_span: param
                 .name()
                 .map(|name| self.source(name.syntax()).span)
-                .or_else(|| Some(source.span)),
+                .or(Some(source.span)),
             scope,
             kind: BindingKind::SelfParam(self_kind),
             name: Some(self.interner.intern("self")),

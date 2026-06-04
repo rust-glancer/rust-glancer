@@ -158,7 +158,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
     ) -> anyhow::Result<Vec<SourceSymbol>> {
         let mut symbols = Vec::new();
         for candidate in self.reference_candidates()? {
-            if self.source_symbol_matches_declarations(candidate.symbol().clone(), &declarations)? {
+            if self.source_symbol_matches_declarations(candidate.symbol().clone(), declarations)? {
                 symbols.push(candidate);
             }
         }

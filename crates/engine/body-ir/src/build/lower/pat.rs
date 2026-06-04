@@ -31,6 +31,34 @@ enum IdentPatResolution {
     ForceBinding,
 }
 
+#[derive(Debug, Clone)]
+struct PatLoweringOptions {
+    kind: BindingKind,
+    annotation: Option<TypeRef>,
+    alloc_bindings: bool,
+    ident_resolution: IdentPatResolution,
+}
+
+impl PatLoweringOptions {
+    fn without_annotation(&self) -> Self {
+        Self {
+            kind: self.kind,
+            annotation: None,
+            alloc_bindings: self.alloc_bindings,
+            ident_resolution: self.ident_resolution,
+        }
+    }
+}
+
+struct PatBindingRequest<'a> {
+    syntax: &'a rg_syntax::SyntaxNode,
+    name_span: rg_parse::Span,
+    scope: ScopeId,
+    kind: BindingKind,
+    name: Name,
+    annotation: Option<TypeRef>,
+}
+
 impl BodyLowering<'_> {
     pub(super) fn lower_pat(
         &mut self,
@@ -59,11 +87,13 @@ impl BodyLowering<'_> {
         self.lower_pat_inner_with_ident_resolution(
             pat,
             scope,
-            kind,
-            annotation,
-            alloc_bindings,
+            PatLoweringOptions {
+                kind,
+                annotation,
+                alloc_bindings,
+                ident_resolution: IdentPatResolution::UseHeuristic,
+            },
             bindings,
-            IdentPatResolution::UseHeuristic,
         )
     }
 
@@ -71,13 +101,13 @@ impl BodyLowering<'_> {
         &mut self,
         pat: ast::Pat,
         scope: ScopeId,
-        kind: BindingKind,
-        annotation: Option<TypeRef>,
-        alloc_bindings: bool,
+        options: PatLoweringOptions,
         bindings: &mut Vec<BindingId>,
-        ident_resolution: IdentPatResolution,
     ) -> PatId {
         let source = self.source(pat.syntax());
+        let kind = options.kind;
+        let alloc_bindings = options.alloc_bindings;
+        let ident_resolution = options.ident_resolution;
         let pat_kind = match pat {
             ast::Pat::BoxPat(pat) => {
                 let Some(inner) = pat.pat() else {
@@ -87,11 +117,8 @@ impl BodyLowering<'_> {
                     pat: self.lower_pat_inner_with_ident_resolution(
                         inner,
                         scope,
-                        kind,
-                        None,
-                        alloc_bindings,
+                        options.without_annotation(),
                         bindings,
-                        ident_resolution,
                     ),
                 }
             }
@@ -131,12 +158,14 @@ impl BodyLowering<'_> {
                     None
                 } else {
                     self.push_pat_binding(
-                        pat.syntax(),
-                        name_span,
-                        scope,
-                        kind,
-                        name,
-                        annotation.clone(),
+                        PatBindingRequest {
+                            syntax: pat.syntax(),
+                            name_span,
+                            scope,
+                            kind,
+                            name,
+                            annotation: options.annotation.clone(),
+                        },
                         bindings,
                     )
                 };
@@ -165,7 +194,7 @@ impl BodyLowering<'_> {
                     inner,
                     scope,
                     kind,
-                    annotation,
+                    options.annotation.clone(),
                     alloc_bindings,
                     bindings,
                 );
@@ -321,14 +350,18 @@ impl BodyLowering<'_> {
 
     fn push_pat_binding(
         &mut self,
-        syntax: &rg_syntax::SyntaxNode,
-        name_span: rg_parse::Span,
-        scope: ScopeId,
-        kind: BindingKind,
-        name: Name,
-        annotation: Option<TypeRef>,
+        request: PatBindingRequest<'_>,
         bindings: &mut Vec<BindingId>,
     ) -> Option<BindingId> {
+        let PatBindingRequest {
+            syntax,
+            name_span,
+            scope,
+            kind,
+            name,
+            annotation,
+        } = request;
+
         // Multiple bindings with the same textual name can appear in or-patterns. Reuse the first
         // lowered binding so later occurrences do not look like value paths.
         if let Some(binding) = bindings.iter().copied().find(|binding| {
@@ -378,11 +411,13 @@ impl BodyLowering<'_> {
         self.lower_pat_inner_with_ident_resolution(
             pat,
             scope,
-            kind,
-            None,
-            alloc_bindings,
+            PatLoweringOptions {
+                kind,
+                annotation: None,
+                alloc_bindings,
+                ident_resolution: IdentPatResolution::ForceBinding,
+            },
             bindings,
-            IdentPatResolution::ForceBinding,
         )
     }
 
