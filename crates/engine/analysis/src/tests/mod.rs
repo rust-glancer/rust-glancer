@@ -7,6 +7,7 @@ mod goto_implementation;
 mod goto_type_definition;
 mod hover;
 mod references;
+mod rename;
 mod resolve_symbol;
 mod symbol_at;
 mod type_at;

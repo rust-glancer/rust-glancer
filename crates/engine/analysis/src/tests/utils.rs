@@ -5,10 +5,10 @@ use expect_test::Expect;
 use crate::{
     Analysis, CompletionApplicability, CompletionClientCapabilities, CompletionInsertText,
     CompletionItem, CompletionQuery, DocumentSymbol, HoverInfo, NavigationTarget,
-    ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, SymbolAt, TypeHint,
-    WorkspaceSymbol,
+    ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, RenameEdit, RenameResult,
+    RenameTarget, SourceTextView, SymbolAt, TypeHint, WorkspaceSymbol,
 };
-use rg_body_ir::{BodyIrReadTxn, ExprData, ExprKind, testonly::BodyIrFixture};
+use rg_body_ir::{BodyIrReadTxn, BodyOwner, ExprData, ExprKind, testonly::BodyIrFixture};
 use rg_def_map::{PackageSlot, testonly::DefMapFixture};
 use rg_ir_model::{
     BodyRef, DefMapRef, FunctionRef, ItemOwner, ModuleRef, TargetRef, TraitRef, TypeDefId,
@@ -124,6 +124,18 @@ impl AnalysisQuery {
         Self::new(title, marker, AnalysisQueryKind::References(query))
     }
 
+    pub(super) fn prepare_rename(title: &'static str, marker: &'static str) -> Self {
+        Self::new(title, marker, AnalysisQueryKind::PrepareRename)
+    }
+
+    pub(super) fn rename(
+        title: &'static str,
+        marker: &'static str,
+        new_name: &'static str,
+    ) -> Self {
+        Self::new(title, marker, AnalysisQueryKind::Rename(new_name))
+    }
+
     pub(super) fn in_bin(mut self, package_name: &'static str) -> Self {
         self.target = AnalysisTarget::bin(package_name);
         self
@@ -228,6 +240,8 @@ enum AnalysisQueryKind {
     GotoTypeDefinition,
     GotoImplementation,
     References(ReferenceQuery),
+    PrepareRename,
+    Rename(&'static str),
     TypeAt,
     CompletionsAt,
     CompletionsAtVerbose,
@@ -317,7 +331,7 @@ impl AnalysisFixtureDb {
                 .body_ir_db()
                 .read_txn(PackageLoader::resident_only("resident analysis fixture")),
         );
-        Analysis::new(view_db)
+        Analysis::new(view_db, SourceTextView::new(self.fixture.parse_db()))
     }
 
     fn parse_db(&self) -> &ParseDb {
@@ -578,6 +592,25 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 };
                 self.render_references(references, &mut dump);
             }
+            AnalysisQueryKind::PrepareRename => {
+                let rename_target = self
+                    .db
+                    .analysis()
+                    .prepare_rename(target, file_id, offset)
+                    .expect("fixture prepare rename query should resolve");
+                self.render_rename_target(rename_target, target.package, &mut dump);
+            }
+            AnalysisQueryKind::Rename(new_name) => {
+                let use_site_targets = self.db.all_targets();
+                let reference_query =
+                    AnalysisReferenceQuery::find_references(&use_site_targets, true);
+                let rename_result = self
+                    .db
+                    .analysis()
+                    .rename(target, file_id, offset, new_name, reference_query)
+                    .expect("fixture rename query should resolve");
+                self.render_rename_result(rename_result, target.package, &mut dump);
+            }
             AnalysisQueryKind::TypeAt => {
                 let ty = self
                     .db
@@ -719,6 +752,20 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 writeln!(
                     dump,
                     "\n- value path {path} @ {}",
+                    self.render_source_span(package, file_id, span)
+                )
+                .expect("string writes should not fail");
+            }
+            SymbolAt::RecordField {
+                ref owner,
+                ref key,
+                span,
+                ..
+            } => {
+                writeln!(
+                    dump,
+                    "\n- record field {owner}::{} @ {}",
+                    key.declaration_label(),
                     self.render_source_span(package, file_id, span)
                 )
                 .expect("string writes should not fail");
@@ -942,6 +989,71 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         }
     }
 
+    fn render_rename_target(
+        &self,
+        target: Option<RenameTarget>,
+        package: PackageSlot,
+        dump: &mut String,
+    ) {
+        let Some(target) = target else {
+            writeln!(dump, "\n- <none>").expect("string writes should not fail");
+            return;
+        };
+
+        writeln!(
+            dump,
+            "\n- `{}` @ {}",
+            target.placeholder,
+            self.render_file_span(package, target.file_id, target.span)
+        )
+        .expect("string writes should not fail");
+    }
+
+    fn render_rename_result(
+        &self,
+        result: Option<RenameResult>,
+        package: PackageSlot,
+        dump: &mut String,
+    ) {
+        let Some(result) = result else {
+            writeln!(dump, "\n- <none>").expect("string writes should not fail");
+            return;
+        };
+
+        writeln!(
+            dump,
+            "\n- target `{}` @ {}",
+            result.target.placeholder,
+            self.render_file_span(package, result.target.file_id, result.target.span)
+        )
+        .expect("string writes should not fail");
+
+        let mut edits = result.edits;
+        edits.sort_by_key(|edit| {
+            (
+                edit.target.package.0,
+                edit.target.target.0,
+                edit.file_id.0,
+                edit.span.text.start,
+            )
+        });
+
+        for edit in edits {
+            self.render_rename_edit(edit, dump);
+        }
+    }
+
+    fn render_rename_edit(&self, edit: RenameEdit, dump: &mut String) {
+        writeln!(
+            dump,
+            "- `{}` -> `{}` @ {}",
+            edit.old_text,
+            edit.new_text,
+            self.render_file_span(edit.target.package, edit.file_id, edit.span)
+        )
+        .expect("string writes should not fail");
+    }
+
     fn render_hover(
         &self,
         hover: Option<HoverInfo>,
@@ -1097,12 +1209,50 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             .function_data(function_ref)
             .expect("function ref should load while rendering analysis body item")
             .expect("function ref should exist while rendering analysis body item");
-        let owner = match data.owner {
+        let owner = self.render_item_owner(&item_query, function_ref.origin, data.owner);
+
+        format!("fn {owner}::{}", data.name)
+    }
+
+    fn render_body_owner(&self, owner: BodyOwner) -> String {
+        let semantic_ir = self.semantic_ir_txn();
+        let item_query = ItemStoreQuery::new(&semantic_ir);
+        match owner {
+            BodyOwner::Function(function_ref) => self.render_function_ref(function_ref),
+            BodyOwner::Const(const_ref) => {
+                let data = item_query
+                    .const_data(const_ref)
+                    .expect("const ref should load while rendering analysis body item")
+                    .expect("const ref should exist while rendering analysis body item");
+                let owner = self.render_item_owner(&item_query, const_ref.origin, data.owner);
+                format!("const {owner}::{}", data.name)
+            }
+            BodyOwner::Static(static_ref) => {
+                let data = item_query
+                    .static_data(static_ref)
+                    .expect("static ref should load while rendering analysis body item")
+                    .expect("static ref should exist while rendering analysis body item");
+                format!(
+                    "static {}::{}",
+                    self.render_module_ref(data.owner),
+                    data.name
+                )
+            }
+        }
+    }
+
+    fn render_item_owner(
+        &self,
+        item_query: &ItemStoreQuery<'_, &SemanticIrReadTxn<'_>>,
+        origin: DefMapRef,
+        owner: ItemOwner,
+    ) -> String {
+        match owner {
             ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
             ItemOwner::Trait(trait_id) => {
                 let trait_data = item_query
                     .trait_data(TraitRef {
-                        origin: function_ref.origin,
+                        origin,
                         id: trait_id,
                     })
                     .expect("trait owner should load while rendering analysis body item")
@@ -1114,9 +1264,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
             }
             ItemOwner::Impl(_) => "impl".to_string(),
-        };
-
-        format!("fn {owner}::{}", data.name)
+        }
     }
 
     fn semantic_ir_txn(&self) -> SemanticIrReadTxn<'_> {
@@ -1140,7 +1288,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 .body_data(body_ref)
                 .expect("body module owner should load while rendering analysis module")
                 .expect("body module owner should exist while rendering analysis module");
-            return self.render_function_ref(body.owner());
+            return self.render_body_owner(body.owner());
         }
 
         let target_ref = module_ref.origin.origin_target();

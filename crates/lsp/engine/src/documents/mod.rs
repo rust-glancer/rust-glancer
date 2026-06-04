@@ -141,6 +141,12 @@ impl DocumentStore {
             Arc::clone(text),
         ))
     }
+
+    pub(crate) fn has_dirty_documents_except(&self, path: &Path) -> bool {
+        self.documents
+            .iter()
+            .any(|(document_path, document)| document_path != path && document.dirty)
+    }
 }
 
 #[derive(Debug, Clone, Default)]

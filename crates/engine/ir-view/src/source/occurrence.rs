@@ -3,13 +3,17 @@
 //! This adapter merges cursor/source candidates from DefMap, Semantic IR, and Body IR into one
 //! occurrence vocabulary. Analysis decides what each occurrence means for navigation or refs.
 
-use rg_body_ir::BodyCursorCandidate;
+use rg_body_ir::{
+    BindingSurface, BodyCursorCandidate, RecordFieldKeySurface, ValueReferenceSource,
+    ValueReferenceSurface,
+};
 use rg_def_map::DefMapCursorCandidate;
 use rg_ir_model::{
     BodyBindingRef, ModuleRef, TargetRef,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
 use rg_ir_storage::{Path, TypePathContext};
+use rg_item_tree::FieldKey;
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::SemanticCursorCandidate;
 
@@ -23,6 +27,45 @@ pub enum IndexedSourceRole {
     Structural,
 }
 
+/// Source syntax shape that may need query-specific handling after semantic resolution.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexedSourceSurface {
+    /// Ordinary occurrence that can be rewritten by replacing the selected source span.
+    ///
+    /// For `let title = name;`, renaming the `name` reference edits only that token.
+    Plain,
+    /// Explicit record field key, e.g. `name` in `User { name: value }`.
+    ///
+    /// The key is a field reference, but the source spelling already has separate key and value
+    /// syntax, so field rename still edits only the key token.
+    RecordFieldKeyExplicit,
+    /// Field-key side of record-expression shorthand, e.g. the field `name` in `User { name }`.
+    ///
+    /// Renaming the field has to expand the field to `title: name`, while renaming the local value
+    /// is handled by the paired `RecordExprShorthandValue` occurrence.
+    RecordExprShorthandFieldKey { field_span: Span },
+    /// Field-key side of record-pattern shorthand, e.g. the field `name` in `User { ref name }`.
+    ///
+    /// Renaming the field rewrites the whole field to `title: ref name` so pattern modifiers and
+    /// subpatterns stay intact.
+    RecordPatShorthandFieldKey { field_span: Span, pat_span: Span },
+    /// Value-reference side of record-expression shorthand, e.g. the local `name` in `User { name }`.
+    ///
+    /// Renaming the local value rewrites the field to `name: title` instead of changing the field
+    /// key.
+    RecordExprShorthandValue { key: FieldKey, field_span: Span },
+    /// Binding-declaration side of record-pattern shorthand, e.g. the binding in `User { ref name }`.
+    ///
+    /// Renaming the binding rewrites the whole field to `name: ref title`, preserving the field key
+    /// and any pattern syntax around the binding name.
+    RecordPatShorthandBinding {
+        key: FieldKey,
+        field_span: Span,
+        pat_span: Span,
+        binding_name_span: Span,
+    },
+}
+
 /// One indexed source span that can be interpreted by analysis queries.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedSourceOccurrence {
@@ -30,6 +73,7 @@ pub struct IndexedSourceOccurrence {
     file_id: FileId,
     span: Span,
     role: IndexedSourceRole,
+    surface: IndexedSourceSurface,
     fact: IndexedSourceFact,
 }
 
@@ -42,8 +86,16 @@ impl IndexedSourceOccurrence {
         FileId,
         Span,
         IndexedSourceRole,
+        IndexedSourceSurface,
     ) {
-        (self.fact, self.target, self.file_id, self.span, self.role)
+        (
+            self.fact,
+            self.target,
+            self.file_id,
+            self.span,
+            self.role,
+            self.surface,
+        )
     }
 
     fn declaration(
@@ -52,22 +104,44 @@ impl IndexedSourceOccurrence {
         file_id: FileId,
         span: Span,
     ) -> Self {
+        Self::declaration_with_surface(fact, target, file_id, span, IndexedSourceSurface::Plain)
+    }
+
+    fn declaration_with_surface(
+        fact: IndexedSourceFact,
+        target: TargetRef,
+        file_id: FileId,
+        span: Span,
+        surface: IndexedSourceSurface,
+    ) -> Self {
         Self {
             fact,
             target,
             file_id,
             span,
             role: IndexedSourceRole::Declaration,
+            surface,
         }
     }
 
     fn reference(fact: IndexedSourceFact, target: TargetRef, file_id: FileId, span: Span) -> Self {
+        Self::reference_with_surface(fact, target, file_id, span, IndexedSourceSurface::Plain)
+    }
+
+    fn reference_with_surface(
+        fact: IndexedSourceFact,
+        target: TargetRef,
+        file_id: FileId,
+        span: Span,
+        surface: IndexedSourceSurface,
+    ) -> Self {
         Self {
             fact,
             target,
             file_id,
             span,
             role: IndexedSourceRole::Reference,
+            surface,
         }
     }
 
@@ -78,6 +152,7 @@ impl IndexedSourceOccurrence {
             file_id,
             span,
             role: IndexedSourceRole::Structural,
+            surface: IndexedSourceSurface::Plain,
         }
     }
 }
@@ -95,6 +170,11 @@ pub enum IndexedSourceFact {
     ValuePath {
         scope: LexicalScopeRef,
         path: Path,
+    },
+    RecordField {
+        scope: LexicalScopeRef,
+        owner: Path,
+        key: FieldKey,
     },
     UsePath {
         module: ModuleRef,
@@ -207,6 +287,17 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 file_id,
                 span,
             ),
+            DefMapCursorCandidate::ImportAlias {
+                module,
+                path,
+                file_id,
+                span,
+            } => IndexedSourceOccurrence::structural(
+                IndexedSourceFact::UsePath { module, path },
+                target,
+                file_id,
+                span,
+            ),
         }
     }
 
@@ -257,25 +348,67 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         let span = candidate.span();
         let occurrence = match candidate {
             BodyCursorCandidate::Body { body, .. } => {
-                let file_id = match self.analysis.body_ir.body_data(body)? {
-                    Some(data) => data.source().file_id,
-                    None => {
-                        let Some(file_id) = fallback_file_id else {
-                            return Ok(None);
-                        };
-                        file_id
-                    }
+                let Some(data) = self.analysis.body_ir.body_data(body)? else {
+                    return Ok(None);
+                };
+                let Some(_) = data.function_owner() else {
+                    return Ok(None);
                 };
                 Some(IndexedSourceOccurrence::structural(
                     IndexedSourceFact::FunctionBody(FunctionBodyRef::from_body_ir(body)),
                     target,
-                    file_id,
+                    data.source().file_id,
                     span,
                 ))
             }
-            BodyCursorCandidate::Binding { body, binding, .. } => {
+            BodyCursorCandidate::Binding {
+                body,
+                binding,
+                surface,
+                ..
+            } => {
                 let declaration = DeclarationRef::body_binding(BodyBindingRef { body, binding });
-                self.declaration_occurrence(declaration, target, span, fallback_file_id)?
+                match surface {
+                    BindingSurface::Plain => {
+                        self.declaration_occurrence(declaration, target, span, fallback_file_id)?
+                    }
+                    BindingSurface::RecordPatShorthand {
+                        key,
+                        field_span,
+                        pat_span,
+                        binding_name_span,
+                    } => {
+                        let file_id = match self.analysis.body_ir.body_data(body)? {
+                            Some(body_data) => match body_data.binding(binding) {
+                                Some(data) => data.source.file_id,
+                                None => {
+                                    let Some(file_id) = fallback_file_id else {
+                                        return Ok(None);
+                                    };
+                                    file_id
+                                }
+                            },
+                            None => {
+                                let Some(file_id) = fallback_file_id else {
+                                    return Ok(None);
+                                };
+                                file_id
+                            }
+                        };
+                        Some(IndexedSourceOccurrence::declaration_with_surface(
+                            IndexedSourceFact::Declaration(declaration),
+                            target,
+                            file_id,
+                            span,
+                            IndexedSourceSurface::RecordPatShorthandBinding {
+                                key,
+                                field_span,
+                                pat_span,
+                                binding_name_span,
+                            },
+                        ))
+                    }
+                }
             }
             BodyCursorCandidate::Expr { body, expr, .. } => {
                 let file_id = match self.analysis.body_ir.body_data(body)? {
@@ -322,6 +455,67 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 let declaration = DeclarationRef::from(function);
                 self.declaration_occurrence(declaration, target, span, fallback_file_id)?
             }
+            BodyCursorCandidate::RecordFieldKey {
+                body,
+                scope,
+                owner,
+                key,
+                file_id,
+                surface,
+                ..
+            } => {
+                let surface = match surface {
+                    RecordFieldKeySurface::Explicit => IndexedSourceSurface::RecordFieldKeyExplicit,
+                    RecordFieldKeySurface::RecordExprShorthand { field_span } => {
+                        IndexedSourceSurface::RecordExprShorthandFieldKey { field_span }
+                    }
+                    RecordFieldKeySurface::RecordPatShorthand {
+                        field_span,
+                        pat_span,
+                    } => IndexedSourceSurface::RecordPatShorthandFieldKey {
+                        field_span,
+                        pat_span,
+                    },
+                };
+                Some(IndexedSourceOccurrence::reference_with_surface(
+                    IndexedSourceFact::RecordField {
+                        scope: LexicalScopeRef::new(body, scope),
+                        owner,
+                        key,
+                    },
+                    target,
+                    file_id,
+                    span,
+                    surface,
+                ))
+            }
+            BodyCursorCandidate::ValueReference {
+                body,
+                scope,
+                source,
+                file_id,
+                surface,
+                ..
+            } => {
+                let fact = match source {
+                    ValueReferenceSource::Expr(expr) => {
+                        IndexedSourceFact::Expr(ExprRef::new(body, expr))
+                    }
+                    ValueReferenceSource::Path(path) => IndexedSourceFact::ValuePath {
+                        scope: LexicalScopeRef::new(body, scope),
+                        path,
+                    },
+                };
+                let surface = match surface {
+                    ValueReferenceSurface::Plain => IndexedSourceSurface::Plain,
+                    ValueReferenceSurface::RecordExprShorthand { key, field_span } => {
+                        IndexedSourceSurface::RecordExprShorthandValue { key, field_span }
+                    }
+                };
+                Some(IndexedSourceOccurrence::reference_with_surface(
+                    fact, target, file_id, span, surface,
+                ))
+            }
             BodyCursorCandidate::TypePath {
                 body,
                 scope,
@@ -331,21 +525,6 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
             } => Some(IndexedSourceOccurrence::reference(
                 IndexedSourceFact::TypePath {
                     scope: IndexedTypePathScope::Body(LexicalScopeRef::new(body, scope)),
-                    path,
-                },
-                target,
-                file_id,
-                span,
-            )),
-            BodyCursorCandidate::ValuePath {
-                body,
-                scope,
-                path,
-                file_id,
-                ..
-            } => Some(IndexedSourceOccurrence::reference(
-                IndexedSourceFact::ValuePath {
-                    scope: LexicalScopeRef::new(body, scope),
                     path,
                 },
                 target,

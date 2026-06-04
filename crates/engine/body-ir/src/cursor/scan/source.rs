@@ -10,11 +10,13 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
-use crate::{BodyData, BodyIrReadTxn, ExprKind};
+use crate::{BodyData, BodyIrReadTxn, ExprKind, PatKind};
 
 use super::{
-    super::BodyCursorCandidate,
+    super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
     paths::{TypePathCursorScanner, ValuePathCursorScanner},
+    record_pat_shorthand::RecordPatShorthandBinding,
+    sites::BodyScanSites,
 };
 
 /// Scans one target for every body-local source candidate used by whole-project queries.
@@ -56,6 +58,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
             self.push_declaration_candidates(body_ref, body, &mut candidates);
             self.push_member_reference_candidates(body_ref, body, &mut candidates);
+            self.push_record_field_key_candidates(body_ref, body, &mut candidates);
 
             TypePathCursorScanner {
                 body_ref,
@@ -86,14 +89,31 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         body: &BodyData,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
+        let record_shorthand_bindings = self.record_shorthand_bindings(body);
         for (binding_idx, binding) in body.bindings().iter().enumerate() {
             if !self.file_matches(binding.source.file_id) {
                 continue;
             }
+            let binding_id = BindingId(binding_idx);
+            let surface = if let Some(shorthand) = record_shorthand_bindings
+                .iter()
+                .find(|shorthand| shorthand.binding == binding_id)
+            {
+                BindingSurface::RecordPatShorthand {
+                    key: shorthand.key.clone(),
+                    field_span: shorthand.field_span,
+                    pat_span: shorthand.pat_span,
+                    binding_name_span: shorthand.binding_name_span,
+                }
+            } else {
+                BindingSurface::Plain
+            };
+            let span = binding.name_span.unwrap_or(binding.source.span);
             candidates.push(BodyCursorCandidate::Binding {
                 body: body_ref,
-                binding: BindingId(binding_idx),
-                span: binding.source.span,
+                binding: binding_id,
+                span,
+                surface,
             });
         }
 
@@ -146,6 +166,30 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 SemanticItemRef::Impl(_) => {}
             }
         }
+    }
+
+    fn record_shorthand_bindings(&self, body: &BodyData) -> Vec<RecordPatShorthandBinding> {
+        let mut bindings = Vec::new();
+        let sites = BodyScanSites::new(body);
+        sites.walk_pats(self.file_id, None, |site| {
+            let PatKind::Record { fields, .. } = &site.data.kind else {
+                return;
+            };
+
+            for field in fields {
+                let Some(shorthand) = RecordPatShorthandBinding::from_field(body, field) else {
+                    continue;
+                };
+                if bindings
+                    .iter()
+                    .any(|seen: &RecordPatShorthandBinding| seen.binding == shorthand.binding)
+                {
+                    continue;
+                }
+                bindings.push(shorthand);
+            }
+        });
+        bindings
     }
 
     fn push_field_candidates(
@@ -221,8 +265,12 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         body: &BodyData,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
+        let record_shorthand_values = Self::record_expr_shorthand_values(body);
         for (expr_idx, expr) in body.exprs().iter().enumerate() {
             if !self.file_matches(expr.source.file_id) {
+                continue;
+            }
+            if record_shorthand_values.contains(&ExprId(expr_idx)) {
                 continue;
             }
 
@@ -250,6 +298,104 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 span,
             });
         }
+    }
+
+    fn record_expr_shorthand_values(body: &BodyData) -> Vec<ExprId> {
+        let mut values = Vec::new();
+        for expr in body.exprs().iter() {
+            let ExprKind::Record { fields, .. } = &expr.kind else {
+                continue;
+            };
+            for field in fields {
+                if field.syntax.is_explicit() {
+                    continue;
+                }
+                if let Some(value) = field.value {
+                    values.push(value);
+                }
+            }
+        }
+        values
+    }
+
+    /// Adds record field keys that resolve through their record owner type.
+    fn push_record_field_key_candidates(
+        &self,
+        body_ref: BodyRef,
+        body: &BodyData,
+        candidates: &mut Vec<BodyCursorCandidate>,
+    ) {
+        for expr in body.exprs().iter() {
+            if !self.file_matches(expr.source.file_id) {
+                continue;
+            }
+            let ExprKind::Record {
+                path: Some(owner),
+                fields,
+                ..
+            } = &expr.kind
+            else {
+                continue;
+            };
+            let Some(owner) = owner.as_def_map_path() else {
+                continue;
+            };
+
+            for field in fields {
+                candidates.push(BodyCursorCandidate::RecordFieldKey {
+                    body: body_ref,
+                    scope: expr.scope,
+                    owner: owner.clone(),
+                    key: field.key.clone(),
+                    file_id: expr.source.file_id,
+                    span: field.key_span,
+                    surface: if field.syntax.is_explicit() {
+                        RecordFieldKeySurface::Explicit
+                    } else {
+                        RecordFieldKeySurface::RecordExprShorthand {
+                            field_span: field.source_span,
+                        }
+                    },
+                });
+            }
+        }
+
+        let sites = BodyScanSites::new(body);
+        sites.walk_pats(self.file_id, None, |site| {
+            let PatKind::Record {
+                path: Some(owner),
+                fields,
+                ..
+            } = &site.data.kind
+            else {
+                return;
+            };
+            let Some(owner) = owner.as_def_map_path() else {
+                return;
+            };
+
+            for field in fields {
+                candidates.push(BodyCursorCandidate::RecordFieldKey {
+                    body: body_ref,
+                    scope: site.scope,
+                    owner: owner.clone(),
+                    key: field.key.clone(),
+                    file_id: site.data.source.file_id,
+                    span: field.key_span,
+                    surface: if field.syntax.is_explicit() {
+                        RecordFieldKeySurface::Explicit
+                    } else {
+                        RecordFieldKeySurface::RecordPatShorthand {
+                            field_span: field.source_span,
+                            pat_span: body
+                                .pat(field.pat)
+                                .map(|pat| pat.source.span)
+                                .unwrap_or(field.source_span),
+                        }
+                    },
+                });
+            }
+        });
     }
 
     fn file_matches(&self, file_id: FileId) -> bool {

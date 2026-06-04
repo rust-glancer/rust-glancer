@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc};
 
-use rg_analysis::Analysis;
+use rg_analysis::{Analysis, SourceTextView};
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
 use rg_def_map::{DefMapDb, PackageSlot};
 use rg_ir_model::TargetRef;
@@ -76,8 +76,8 @@ impl ProjectState {
     }
 
     /// Returns the high-level query API for this frozen project analysis.
-    pub(crate) fn analysis<'a>(&self, txn: &ProjectReadTxn<'a>) -> Analysis<'a> {
-        Analysis::new(txn.view_db().clone())
+    pub(crate) fn analysis<'a>(&'a self, txn: &ProjectReadTxn<'a>) -> Analysis<'a> {
+        Analysis::new(txn.view_db().clone(), SourceTextView::new(self.parse_db()))
     }
 
     /// Iterates over non-sysroot package slots from the current Cargo graph.

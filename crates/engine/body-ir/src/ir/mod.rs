@@ -5,12 +5,13 @@ pub(crate) mod body_map;
 pub(crate) mod expr;
 pub(crate) mod pat;
 pub(crate) mod path;
+pub(crate) mod record;
 pub(crate) mod resolved;
 pub(crate) mod stmt;
 
 pub use self::{
     body::{
-        BodyData, BodyIrStats, BodySource, PackageBodies, ScopeData, TargetBodies,
+        BodyData, BodyIrStats, BodyOwner, BodySource, PackageBodies, ScopeData, TargetBodies,
         TargetBodiesStatus,
     },
     body_map::BodySourceItems,
@@ -21,6 +22,7 @@ pub use self::{
     },
     pat::{PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordPatField},
     path::BodyPath,
+    record::RecordFieldSyntax,
     resolved::BodyResolution,
     stmt::{BindingData, BindingKind, BodySelfParamKind, StmtData, StmtKind},
 };

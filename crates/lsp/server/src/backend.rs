@@ -294,6 +294,40 @@ impl LanguageServer for Backend {
     #[tracing::instrument(
         skip_all,
         fields(
+            rg.method = "prepareRename",
+            rg.uri = ?params.text_document.uri
+        )
+    )]
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> Result<Option<PrepareRenameResponse>> {
+        let Some(context) = self.method_context_for(&params.text_document.uri).await? else {
+            return Ok(None);
+        };
+        methods::text_document::rename::prepare_rename(context, params).await
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(
+            rg.method = "rename",
+            rg.uri = ?params.text_document_position.text_document.uri
+        )
+    )]
+    async fn rename(&self, params: RenameParams) -> Result<Option<WorkspaceEdit>> {
+        let Some(context) = self
+            .method_context_for(&params.text_document_position.text_document.uri)
+            .await?
+        else {
+            return Ok(None);
+        };
+        methods::text_document::rename::rename(context, params).await
+    }
+
+    #[tracing::instrument(
+        skip_all,
+        fields(
             rg.method = "documentHighlight",
             rg.uri = ?params.text_document_position_params.text_document.uri
         )

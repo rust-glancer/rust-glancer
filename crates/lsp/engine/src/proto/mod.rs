@@ -7,4 +7,5 @@ pub(crate) mod markdown;
 pub(crate) mod navigation;
 pub(crate) mod position;
 pub(crate) mod references;
+pub(crate) mod rename;
 pub(crate) mod symbols;

@@ -69,6 +69,75 @@ pub fn use_it() {
 }
 
 #[test]
+fn finds_item_initializer_references() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_item_initializer_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub const LIMIT: u32 = 3;
+pub static CURRENT: u32 = LI$initializer_ref$MIT;
+
+pub fn use_it() -> u32 {
+    LIMIT
+}
+"#,
+        &[AnalysisQuery::references(
+            "const references",
+            "initializer_ref",
+            ReferenceQuery::all(),
+        )],
+        expect![[r#"
+            const references
+            - `LIMIT` @ src/lib.rs:1:11-1:16
+            - `LIMIT` @ src/lib.rs:2:27-2:32
+            - `LIMIT` @ src/lib.rs:5:5-5:10
+        "#]],
+    );
+}
+
+#[test]
+fn local_binding_method_receiver_shadows_same_name_function() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_method_receiver_shadow_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn bar(baz: u8) -> u8 {
+    fo$fn_ref$o(baz)
+}
+
+fn foo(baz: u8) -> u8 {
+    let fo$local_ref$o: Option<u8> = Some(baz);
+    fo$local_use$o.map(|baba| baba + baba);
+    baz
+}
+"#,
+        &[
+            AnalysisQuery::references("function references", "fn_ref", ReferenceQuery::all()),
+            AnalysisQuery::references("local references", "local_ref", ReferenceQuery::all()),
+        ],
+        expect![[r#"
+            function references
+            - `foo` @ src/lib.rs:2:5-2:8
+            - `foo` @ src/lib.rs:5:4-5:7
+
+            local references
+            - `foo` @ src/lib.rs:6:9-6:12
+            - `foo` @ src/lib.rs:7:5-7:8
+        "#]],
+    );
+}
+
+#[test]
 fn finds_body_local_method_references() {
     check_analysis_queries(
         r#"

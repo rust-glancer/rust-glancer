@@ -15,6 +15,8 @@ use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_ty::{GenericArg, ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
 
+use crate::ir::BodyOwner;
+
 use super::{BodyQuerySource, push_unique};
 
 pub(crate) struct BodyTypePathResolver<'query, D, I> {
@@ -93,8 +95,7 @@ where
             }
         }
 
-        let context =
-            self.context_for_function(self.source.body().owner, self.source.body().owner_module)?;
+        let context = self.context_for_body_owner()?;
         let source = self.source;
         ItemPathQuery::new(source, source).resolve_type_path(context, path)
     }
@@ -149,14 +150,7 @@ where
                     }),
                 )
             }
-            _ => self.resolve_type_ref_in_context(
-                ty,
-                self.context_for_function(
-                    self.source.body().owner,
-                    self.source.body().owner_module,
-                )?,
-                subst,
-            ),
+            _ => self.resolve_type_ref_in_context(ty, self.context_for_body_owner()?, subst),
         }
     }
 
@@ -242,6 +236,23 @@ where
             .item_query()
             .type_path_context_for_function(function)?
             .unwrap_or_else(|| TypePathContext::module(fallback_module)))
+    }
+
+    fn context_for_body_owner(&self) -> Result<TypePathContext, PackageStoreError> {
+        let fallback_module = self.source.body().owner_module();
+        match self.source.body().owner() {
+            BodyOwner::Function(function) => self.context_for_function(function, fallback_module),
+            BodyOwner::Const(const_ref) => {
+                let item_query = self.item_query();
+                let Some(data) = item_query.const_data(const_ref)? else {
+                    return Ok(TypePathContext::module(fallback_module));
+                };
+                item_query
+                    .type_path_context_for_owner(const_ref.origin, data.owner)?
+                    .map_or_else(|| Ok(TypePathContext::module(fallback_module)), Ok)
+            }
+            BodyOwner::Static(_) => Ok(TypePathContext::module(fallback_module)),
+        }
     }
 
     fn resolve_body_type_items_from_def_map(

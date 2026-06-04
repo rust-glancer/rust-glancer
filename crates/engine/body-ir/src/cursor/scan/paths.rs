@@ -5,12 +5,15 @@
 
 use rg_ir_model::{BodyRef, ScopeId};
 use rg_ir_storage::Path;
-use rg_item_tree::TypePath;
+use rg_item_tree::{FieldKey, TypePath};
 use rg_parse::{FileId, Span};
 
 use crate::{BodyData, BodyPath, ExprKind, PatData};
 
-use super::{super::BodyCursorCandidate, sites::BodyScanSites};
+use super::{
+    super::{BodyCursorCandidate, ValueReferenceSource, ValueReferenceSurface},
+    sites::BodyScanSites,
+};
 
 /// Adds type-namespace path candidates from body-local type annotations.
 pub(super) struct TypePathCursorScanner<'a> {
@@ -75,9 +78,16 @@ impl ValuePathCursorScanner<'_> {
                 | ExprKind::Record {
                     path: Some(path), ..
                 } => {
-                    self.scan_body_path(expr_data.scope, path, expr_data.source.file_id);
+                    self.scan_body_path(expr_data.scope, path, expr_data.source.file_id, false);
                 }
                 _ => {}
+            }
+            if let ExprKind::Record { fields, .. } = &expr_data.kind {
+                self.scan_record_expr_shorthand_values(
+                    expr_data.scope,
+                    fields,
+                    expr_data.source.file_id,
+                );
             }
         }
 
@@ -93,16 +103,27 @@ impl ValuePathCursorScanner<'_> {
     /// Visits value paths directly owned by one pattern node.
     fn scan_pat_data(&mut self, scope: ScopeId, data: &PatData) {
         if let Some(path) = data.kind.value_path() {
-            self.scan_body_path(scope, path, data.source.file_id);
+            self.scan_body_path(
+                scope,
+                path,
+                data.source.file_id,
+                self.include_single_segment,
+            );
         }
     }
 
     /// Adds one candidate per value path segment so associated items and variants stay distinct.
-    fn scan_body_path(&mut self, scope: ScopeId, path: &BodyPath, file_id: FileId) {
-        // Single-segment expression paths are already represented by the surrounding expression
-        // node. Segment candidates are only needed when the cursor can mean a prefix or an
-        // associated item/variant inside one qualified path.
-        if path.segment_count() <= 1 && !self.include_single_segment {
+    fn scan_body_path(
+        &mut self,
+        scope: ScopeId,
+        path: &BodyPath,
+        file_id: FileId,
+        include_single_segment: bool,
+    ) {
+        // Expression paths already have an expression candidate for single-segment names. Segment
+        // candidates are only needed for qualified expressions or for pattern paths, which do not
+        // have expression ids of their own.
+        if path.segment_count() <= 1 && !include_single_segment {
             return;
         }
 
@@ -114,14 +135,47 @@ impl ValuePathCursorScanner<'_> {
                 let Some(path) = path.prefix_through(idx) else {
                     continue;
                 };
-                self.candidates.push(BodyCursorCandidate::ValuePath {
+                self.candidates.push(BodyCursorCandidate::ValueReference {
                     body: self.body_ref,
                     scope,
-                    path,
                     file_id,
                     span,
+                    source: ValueReferenceSource::Path(path),
+                    surface: ValueReferenceSurface::Plain,
                 });
             }
+        }
+    }
+
+    /// Shorthand record fields are source-level value uses even though there is no child
+    /// expression node to attach a regular `Expr` candidate to.
+    fn scan_record_expr_shorthand_values(
+        &mut self,
+        scope: ScopeId,
+        fields: &[crate::RecordExprField],
+        file_id: FileId,
+    ) {
+        for field in fields {
+            if field.syntax.is_explicit() || !self.offset_matches(field.key_span) {
+                continue;
+            }
+            let FieldKey::Named(name) = &field.key else {
+                continue;
+            };
+            self.candidates.push(BodyCursorCandidate::ValueReference {
+                body: self.body_ref,
+                scope,
+                file_id,
+                span: field.key_span,
+                source: match field.value {
+                    Some(expr) => ValueReferenceSource::Expr(expr),
+                    None => ValueReferenceSource::Path(Path::unqualified_name(name.as_str())),
+                },
+                surface: ValueReferenceSurface::RecordExprShorthand {
+                    key: field.key.clone(),
+                    field_span: field.source_span,
+                },
+            });
         }
     }
 

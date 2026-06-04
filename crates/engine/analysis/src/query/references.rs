@@ -112,39 +112,15 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         file_id: FileId,
         offset: u32,
     ) -> anyhow::Result<Vec<ReferenceLocation>> {
-        let Some(symbol) = self.analysis.symbol_at_for_query(target, file_id, offset)? else {
-            return Ok(Vec::new());
-        };
-        let declarations = self.unique_declarations_for_symbol(symbol)?;
-        if declarations.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let mut locations = Vec::new();
-        if self.query.includes_declarations() {
-            for location in self.declaration_locations(&declarations)? {
-                if self
-                    .query
-                    .accepts_declaration(location.target, location.file_id)
-                {
-                    locations.push(ReferenceLocation {
-                        target: location.target,
-                        file_id: location.file_id,
-                        span: location.span,
-                    });
-                }
-            }
-        }
-
-        for candidate in self.reference_candidates()? {
-            if self.source_symbol_matches_declarations(candidate.symbol().clone(), &declarations)? {
-                locations.push(ReferenceLocation {
-                    target: candidate.target(),
-                    file_id: candidate.file_id(),
-                    span: candidate.span(),
-                });
-            }
-        }
+        let symbols = self.matching_source_symbols(target, file_id, offset)?;
+        let mut locations = symbols
+            .into_iter()
+            .map(|symbol| ReferenceLocation {
+                target: symbol.target(),
+                file_id: symbol.file_id(),
+                span: symbol.span(),
+            })
+            .collect::<Vec<_>>();
 
         locations.sort_by_key(|location| {
             (
@@ -157,6 +133,75 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         });
         locations.dedup();
         Ok(locations)
+    }
+
+    pub(crate) fn matching_source_symbols(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Vec<SourceSymbol>> {
+        let Some(symbol) = self.analysis.symbol_at_for_query(target, file_id, offset)? else {
+            return Ok(Vec::new());
+        };
+        let declarations = self.unique_declarations_for_symbol(symbol)?;
+        if declarations.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.source_symbols_matching_declarations(&declarations)
+    }
+
+    pub(crate) fn source_symbols_matching_declarations(
+        &self,
+        declarations: &[DeclarationRef],
+    ) -> anyhow::Result<Vec<SourceSymbol>> {
+        let mut symbols = Vec::new();
+        for candidate in self.reference_candidates()? {
+            if self.source_symbol_matches_declarations(candidate.symbol().clone(), declarations)? {
+                symbols.push(candidate);
+            }
+        }
+
+        // Rename needs declaration occurrences with their source-surface metadata. Prefer scanned
+        // source symbols when they exist, and project a plain declaration only for declarations
+        // outside the requested scan surface.
+        if self.query.includes_declarations() {
+            for location in self.declaration_locations(declarations)? {
+                if !self
+                    .query
+                    .accepts_declaration(location.target, location.file_id)
+                {
+                    continue;
+                }
+                if symbols.iter().any(|symbol| {
+                    symbol.role() == SourceSymbolRole::Declaration
+                        && symbol.target() == location.target
+                        && symbol.file_id() == location.file_id
+                        && symbol.span() == location.span
+                }) {
+                    continue;
+                }
+                symbols.push(SourceSymbol::plain_declaration(
+                    location.declaration,
+                    location.target,
+                    location.file_id,
+                    location.span,
+                ));
+            }
+        }
+
+        symbols.sort_by_key(|symbol| {
+            (
+                symbol.target().package.0,
+                symbol.target().target.0,
+                symbol.file_id().0,
+                symbol.span().text.start,
+                symbol.span().text.end,
+            )
+        });
+        symbols.dedup();
+        Ok(symbols)
     }
 
     fn unique_declarations_for_symbol(
@@ -247,6 +292,7 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                 continue;
             };
             locations.push(ReferenceSourceLocation {
+                declaration: *declaration_ref,
                 target: declaration.target(),
                 file_id: declaration.file_id(),
                 span: declaration.selection_span(),
@@ -264,6 +310,7 @@ struct ReferenceScanTarget {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ReferenceSourceLocation {
+    declaration: DeclarationRef,
     target: TargetRef,
     file_id: FileId,
     span: Span,

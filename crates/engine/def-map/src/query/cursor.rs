@@ -26,6 +26,12 @@ pub enum DefMapCursorCandidate {
         file_id: FileId,
         span: Span,
     },
+    ImportAlias {
+        module: ModuleRef,
+        path: Path,
+        file_id: FileId,
+        span: Span,
+    },
 }
 
 impl DefMapReadTxn<'_> {
@@ -171,7 +177,7 @@ impl NamespaceCursorScanner<'_, '_> {
             if let Some(alias_span) = import.alias_span
                 && self.offset_matches(alias_span)
             {
-                candidates.push(DefMapCursorCandidate::UsePath {
+                candidates.push(DefMapCursorCandidate::ImportAlias {
                     module,
                     path: Path::from(&import.path),
                     file_id: import.source.file_id,

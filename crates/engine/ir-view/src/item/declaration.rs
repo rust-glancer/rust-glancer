@@ -216,7 +216,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
                 .to_string(),
             file_id: binding.source.file_id,
             span: binding.source.span,
-            selection_span: binding.source.span,
+            selection_span: binding.name_span.unwrap_or(binding.source.span),
         }))
     }
 

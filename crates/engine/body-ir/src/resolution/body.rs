@@ -194,10 +194,9 @@ where
 
         if let BindingKind::SelfParam(kind) = binding_data.kind
             && binding_data.name.as_deref() == Some("self")
+            && let Some(function) = self.body.function_owner()
         {
-            let self_tys = self
-                .type_path_resolver()
-                .self_tys_for_function(self.body.owner)?;
+            let self_tys = self.type_path_resolver().self_tys_for_function(function)?;
             if !self_tys.is_empty() {
                 let ty = Ty::self_ty(self_tys.into_iter().map(NominalTy::bare).collect());
                 return Ok(match kind {

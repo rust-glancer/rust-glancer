@@ -1,5 +1,8 @@
 use rg_arena::Arena;
-use rg_ir_model::{BindingId, BodyId, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, StmtId};
+use rg_ir_model::{
+    BindingId, BodyId, ConstRef, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, StaticRef, StmtId,
+    identity::DeclarationRef,
+};
 use rg_ir_storage::{DefMap, ItemStore};
 use rg_item_tree::{ItemNode, ItemTreeId};
 use rg_parse::{FileId, Span, TargetId};
@@ -140,12 +143,51 @@ pub enum TargetBodiesStatus {
     Skipped,
 }
 
-/// Lowered body for one function.
+/// Semantic item that owns a lowered expression body.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+pub enum BodyOwner {
+    /// Function body, such as `fn read() { value }`.
+    Function(FunctionRef),
+    /// Const initializer body, such as `const LIMIT: u8 = value;`.
+    Const(ConstRef),
+    /// Static initializer body, such as `static CURRENT: u8 = value;`.
+    Static(StaticRef),
+}
+
+impl BodyOwner {
+    /// Returns the function ref when this body is owned by a function declaration.
+    pub fn function(self) -> Option<FunctionRef> {
+        match self {
+            Self::Function(function) => Some(function),
+            Self::Const(_) | Self::Static(_) => None,
+        }
+    }
+
+    /// Returns the declaration that should own facts derived from this body.
+    pub fn declaration(self) -> DeclarationRef {
+        match self {
+            Self::Function(function) => DeclarationRef::from(function),
+            Self::Const(const_ref) => DeclarationRef::from(const_ref),
+            Self::Static(static_ref) => DeclarationRef::from(static_ref),
+        }
+    }
+}
+
+/// Lowered expression body for a function, const, or static initializer.
 #[derive(
     Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
 )]
 pub struct BodyData {
-    pub(crate) owner: FunctionRef,
+    pub(crate) owner: BodyOwner,
     pub(crate) owner_module: ModuleRef,
     pub(crate) source: BodySource,
     pub(crate) source_items: BodySourceItems,
@@ -162,8 +204,12 @@ pub struct BodyData {
 }
 
 impl BodyData {
-    pub fn owner(&self) -> FunctionRef {
+    pub fn owner(&self) -> BodyOwner {
         self.owner
+    }
+
+    pub fn function_owner(&self) -> Option<FunctionRef> {
+        self.owner.function()
     }
 
     pub fn owner_module(&self) -> ModuleRef {
@@ -243,7 +289,7 @@ impl BodyData {
     }
 
     pub(crate) fn new(
-        owner: FunctionRef,
+        owner: BodyOwner,
         owner_module: ModuleRef,
         source: BodySource,
         param_scope: ScopeId,

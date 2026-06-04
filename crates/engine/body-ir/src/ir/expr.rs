@@ -6,7 +6,7 @@ use rg_parse::Span;
 use rg_text::Name;
 use rg_ty::Ty;
 
-use super::{body::BodySource, path::BodyPath, resolved::BodyResolution};
+use super::{RecordFieldSyntax, body::BodySource, path::BodyPath, resolved::BodyResolution};
 
 /// One lowered expression.
 #[derive(
@@ -41,6 +41,7 @@ pub struct RecordExprField {
     pub key: FieldKey,
     pub key_span: Span,
     pub source_span: Span,
+    pub syntax: RecordFieldSyntax,
     pub value: Option<ExprId>,
 }
 

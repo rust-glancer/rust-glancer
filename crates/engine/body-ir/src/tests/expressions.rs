@@ -722,3 +722,39 @@ pub fn use_it(pair: Pair) -> Right {
         "#]],
     );
 }
+
+#[test]
+fn lowers_and_resolves_item_initializer_bodies() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_item_initializer_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub const LIMIT: u32 = 3;
+pub static CURRENT: u32 = LIMIT;
+"#,
+        expect![[r#"
+            package body_item_initializer_fixture
+
+            body_item_initializer_fixture [lib]
+            body b0 const body_item_initializer_fixture[lib]::crate::LIMIT @ 1:1-1:26
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 literal int `3` => <unknown> @ 1:24-1:25
+
+
+            body b1 static body_item_initializer_fixture[lib]::crate::CURRENT @ 2:1-2:33
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 path LIMIT -> item const body_item_initializer_fixture[lib]::crate::LIMIT => <unknown> @ 2:27-2:32
+        "#]],
+    );
+}

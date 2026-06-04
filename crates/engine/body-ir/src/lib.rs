@@ -17,16 +17,18 @@ mod tests;
 
 pub use self::{
     cursor::{
-        BodyCursorCandidate, DotCompletionSite, PathCompletionNamespace, PathCompletionSite,
-        RecordFieldCompletionSite, UnqualifiedCompletionNamespace, UnqualifiedCompletionSite,
+        BindingSurface, BodyCursorCandidate, DotCompletionSite, PathCompletionNamespace,
+        PathCompletionSite, RecordFieldCompletionSite, RecordFieldKeySurface,
+        UnqualifiedCompletionNamespace, UnqualifiedCompletionSite, ValueReferenceSource,
+        ValueReferenceSurface,
     },
     ir::{
-        BindingData, BindingKind, BodyData, BodyIrStats, BodyPath, BodySelfParamKind, BodySource,
-        BodySourceItems, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp,
-        ExprBlockKind, ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, LabelData, LiteralKind,
-        PackageBodies, PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind,
-        RecordExprField, RecordExprSpread, RecordPatField, ScopeData, StmtData, StmtKind,
-        TargetBodies, TargetBodiesStatus,
+        BindingData, BindingKind, BodyData, BodyIrStats, BodyOwner, BodyPath, BodySelfParamKind,
+        BodySource, BodySourceItems, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
+        ExprBinaryOp, ExprBlockKind, ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, LabelData,
+        LiteralKind, PackageBodies, PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind,
+        RecordExprField, RecordExprSpread, RecordFieldSyntax, RecordPatField, ScopeData, StmtData,
+        StmtKind, TargetBodies, TargetBodiesStatus,
     },
     resolution::BodyScopeQuery,
     store::{BodyIrDb, BodyIrReadTxn},

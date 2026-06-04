@@ -8,7 +8,8 @@ use rg_ir_view::{
     IndexedViewDb,
     lookup::resolution::ResolutionView,
     source::{
-        IndexedSourceFact, IndexedSourceOccurrence, IndexedTypePathScope, SourceOccurrenceView,
+        IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceSurface, IndexedTypePathScope,
+        SourceOccurrenceView,
     },
     ty::TyView,
 };
@@ -25,6 +26,7 @@ pub(crate) struct SourceSymbol {
     file_id: FileId,
     span: Span,
     role: SourceSymbolRole,
+    surface: IndexedSourceSurface,
 }
 
 impl SourceSymbol {
@@ -52,8 +54,28 @@ impl SourceSymbol {
         self.role
     }
 
+    pub(crate) fn surface(&self) -> &IndexedSourceSurface {
+        &self.surface
+    }
+
+    pub(crate) fn plain_declaration(
+        declaration: DeclarationRef,
+        target: TargetRef,
+        file_id: FileId,
+        span: Span,
+    ) -> Self {
+        Self {
+            symbol: SymbolAt::Declaration { declaration, span },
+            target,
+            file_id,
+            span,
+            role: SourceSymbolRole::Declaration,
+            surface: IndexedSourceSurface::Plain,
+        }
+    }
+
     fn from_occurrence(occurrence: IndexedSourceOccurrence) -> Self {
-        let (fact, target, file_id, span, role) = occurrence.into_parts();
+        let (fact, target, file_id, span, role, surface) = occurrence.into_parts();
         let symbol = match fact {
             IndexedSourceFact::Declaration(declaration) => {
                 SymbolAt::Declaration { declaration, span }
@@ -73,6 +95,12 @@ impl SourceSymbol {
             IndexedSourceFact::ValuePath { scope, path } => {
                 SymbolAt::ValuePath { scope, path, span }
             }
+            IndexedSourceFact::RecordField { scope, owner, key } => SymbolAt::RecordField {
+                scope,
+                owner,
+                key,
+                span,
+            },
             IndexedSourceFact::UsePath { module, path } => SymbolAt::UsePath { module, path, span },
         };
         Self {
@@ -81,6 +109,7 @@ impl SourceSymbol {
             file_id,
             span,
             role,
+            surface,
         }
     }
 }
@@ -161,6 +190,14 @@ impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
                 scope.scope_id(),
                 &path,
             ),
+            SymbolAt::RecordField {
+                scope, owner, key, ..
+            } => resolution.declarations_for_body_record_field(
+                scope.body_ir(),
+                scope.scope_id(),
+                &owner,
+                &key,
+            ),
             SymbolAt::UsePath { module, path, .. } => {
                 resolution.declarations_for_use_path(module, &path)
             }
@@ -187,7 +224,9 @@ impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
             SymbolAt::ValuePath { scope, path, .. } => {
                 Some(ty_view.ty_for_body_value_path(scope.body_ir(), scope.scope_id(), &path)?)
             }
-            SymbolAt::UsePath { .. } | SymbolAt::FunctionBody { .. } => None,
+            SymbolAt::RecordField { .. }
+            | SymbolAt::UsePath { .. }
+            | SymbolAt::FunctionBody { .. } => None,
         };
         Ok(ty)
     }

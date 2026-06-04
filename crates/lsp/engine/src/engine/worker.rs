@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_analysis::{CompletionQuery, ReferenceQuery, TypeHint};
+use rg_analysis::{CompletionQuery, ReferenceQuery, RenameEdit, RenameTarget, TypeHint};
 use rg_ir_model::TargetRef;
 use rg_lsp_proto::{AnalysisConfig, CompletionClientCapabilities};
 use rg_parse::TextSpan;
@@ -24,7 +24,7 @@ use crate::{
     },
     memory::{MemoryControl, MemoryReporter, ProjectMemoryReporter},
     project_stats::{ProjectStats, log_retained_memory},
-    proto::{completion, hover, inlay_hint, navigation, position, references, symbols},
+    proto::{completion, hover, inlay_hint, navigation, position, references, rename, symbols},
 };
 
 #[derive(Debug)]
@@ -187,6 +187,43 @@ impl EngineWorker {
                         QueryContext::document("references", queue_elapsed, dirty.as_ref());
                     self.respond_to_query(context, respond_to, |worker| {
                         worker.references(path, position, include_declaration, dirty)
+                    });
+                }
+                EngineCommand::PrepareRename {
+                    path,
+                    position,
+                    dirty,
+                    respond_to,
+                } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        line = position.line,
+                        character = position.character,
+                        "engine command started: prepare_rename"
+                    );
+                    let context =
+                        QueryContext::document("prepare_rename", queue_elapsed, dirty.as_ref());
+                    self.respond_to_query(context, respond_to, |worker| {
+                        worker.prepare_rename(path, position, dirty)
+                    });
+                }
+                EngineCommand::Rename {
+                    path,
+                    position,
+                    new_name,
+                    dirty,
+                    respond_to,
+                } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        line = position.line,
+                        character = position.character,
+                        new_name = %new_name,
+                        "engine command started: rename"
+                    );
+                    let context = QueryContext::document("rename", queue_elapsed, dirty.as_ref());
+                    self.respond_to_query(context, respond_to, |worker| {
+                        worker.rename(path, position, new_name, dirty)
                     });
                 }
                 EngineCommand::DocumentHighlight {
@@ -502,6 +539,132 @@ impl EngineWorker {
         );
 
         Ok(locations)
+    }
+
+    fn prepare_rename(
+        &mut self,
+        path: PathBuf,
+        position: ls_types::Position,
+        dirty: Option<DirtyDocumentSnapshot>,
+    ) -> anyhow::Result<Option<ls_types::PrepareRenameResponse>> {
+        let started = Instant::now();
+        let response = self
+            .project
+            .with_query_snapshot(dirty.as_ref(), |snapshot| {
+                let target_offsets = Self::target_offsets(snapshot, &path, position)?;
+                let analysis_targets = target_offsets
+                    .iter()
+                    .map(|(_, target, _)| *target)
+                    .collect::<Vec<_>>();
+                let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
+
+                for (context, target, offset) in target_offsets {
+                    if !snapshot.package_is_workspace_member(context.package) {
+                        continue;
+                    }
+                    let Some(rename_target) =
+                        analysis.prepare_rename(target, context.file, offset)?
+                    else {
+                        continue;
+                    };
+                    if !Self::rename_target_matches_source(
+                        snapshot,
+                        context.package,
+                        &rename_target,
+                    ) {
+                        continue;
+                    }
+
+                    return rename::prepare_rename(snapshot, context.package, rename_target)
+                        .map(Some);
+                }
+
+                Ok(None)
+            })?;
+
+        tracing::debug!(
+            path = %path.display(),
+            line = position.line,
+            character = position.character,
+            has_result = response.is_some(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "prepare rename query finished"
+        );
+
+        Ok(response)
+    }
+
+    fn rename(
+        &mut self,
+        path: PathBuf,
+        position: ls_types::Position,
+        new_name: String,
+        dirty: Option<DirtyDocumentSnapshot>,
+    ) -> anyhow::Result<Option<ls_types::WorkspaceEdit>> {
+        let started = Instant::now();
+        let edit = self
+            .project
+            .with_query_snapshot(dirty.as_ref(), |snapshot| {
+                let target_offsets = Self::target_offsets(snapshot, &path, position)?;
+                let analysis = snapshot.full_analysis()?;
+                let mut edits = Vec::new();
+
+                for (context, target, offset) in target_offsets {
+                    if !snapshot.package_is_workspace_member(context.package) {
+                        continue;
+                    }
+                    let declaration_targets = analysis
+                        .goto_definition(target, context.file, offset)?
+                        .into_iter()
+                        .map(|target| target.target)
+                        .collect::<Vec<_>>();
+                    let search_targets =
+                        snapshot.reference_search_targets(context.package, &declaration_targets);
+                    let Some(rename_result) = analysis.rename(
+                        target,
+                        context.file,
+                        offset,
+                        &new_name,
+                        ReferenceQuery::find_references(&search_targets, true),
+                    )?
+                    else {
+                        continue;
+                    };
+
+                    if !Self::rename_target_matches_source(
+                        snapshot,
+                        context.package,
+                        &rename_result.target,
+                    ) {
+                        continue;
+                    }
+                    for edit in rename_result.edits {
+                        if !edits.contains(&edit) {
+                            edits.push(edit);
+                        }
+                    }
+                }
+
+                let Some(edits) = Self::verified_rename_edits(snapshot, edits) else {
+                    return Ok(None);
+                };
+                if edits.is_empty() {
+                    return Ok(None);
+                }
+                rename::workspace_edit(snapshot, edits).map(Some)
+            })?;
+
+        tracing::debug!(
+            path = %path.display(),
+            line = position.line,
+            character = position.character,
+            new_name = %new_name,
+            has_edit = edit.is_some(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "rename query finished"
+        );
+
+        Ok(edit)
     }
 
     fn document_highlight(
@@ -953,6 +1116,62 @@ impl EngineWorker {
             "converted LSP range to text span"
         );
         Some(span)
+    }
+
+    fn rename_target_matches_source(
+        snapshot: ProjectSnapshot<'_>,
+        package: rg_def_map::PackageSlot,
+        target: &RenameTarget,
+    ) -> bool {
+        snapshot
+            .file_text_for_span(package, target.file_id, target.span)
+            .is_some_and(|text| text == target.placeholder)
+    }
+
+    fn verified_rename_edits(
+        snapshot: ProjectSnapshot<'_>,
+        edits: Vec<RenameEdit>,
+    ) -> Option<Vec<RenameEdit>> {
+        let mut verified = Vec::new();
+
+        for edit in edits {
+            // Keep this query limited to workspace-owned files. References may legitimately see
+            // dependency declarations, but rename should not edit source outside this workspace.
+            if !snapshot.package_is_workspace_member(edit.target.package) {
+                tracing::debug!(
+                    package = ?edit.target.package,
+                    "rename rejected because an edit targets a non-workspace package"
+                );
+                return None;
+            }
+
+            let Some(text) =
+                snapshot.file_text_for_span(edit.target.package, edit.file_id, edit.span)
+            else {
+                tracing::debug!(
+                    package = ?edit.target.package,
+                    file = ?edit.file_id,
+                    "rename rejected because an edit span has no source text"
+                );
+                return None;
+            };
+            if text != edit.old_text {
+                tracing::debug!(
+                    package = ?edit.target.package,
+                    file = ?edit.file_id,
+                    expected = %edit.old_text,
+                    actual = %text,
+                    "rename rejected because an edit span did not match the expected source text"
+                );
+                return None;
+            }
+
+            if !verified.contains(&edit) {
+                verified.push(edit);
+            }
+        }
+
+        Some(verified)
     }
 
     /// Runs a read-only request, responds immediately, then heals disposable cache failures.

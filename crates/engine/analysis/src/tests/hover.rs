@@ -52,7 +52,7 @@ fn hovers_over_documented_items_and_usages() {
                 Builds a user.
 
             hover field
-            - range: 17:17-17:26
+            - range: 17:22-17:26
             - block:
               kind: field
               path: analysis_hover::User
@@ -137,7 +137,7 @@ fn hovers_over_enum_variants_and_body_local_items() {
         ],
         expect![[r#"
             hover body-local method
-            - range: 27:15-27:27
+            - range: 27:23-27:25
             - block:
               kind: method
               signature:
@@ -146,7 +146,7 @@ fn hovers_over_enum_variants_and_body_local_items() {
                 Returns the request id.
 
             hover body-local field
-            - range: 28:18-28:28
+            - range: 28:26-28:28
             - block:
               kind: field
               signature:
@@ -451,7 +451,7 @@ pub fn demo(maybe: shared::Maybe<shared::User>) {
         &[AnalysisQuery::hover("hover visible method", "method_hover").in_lib("app")],
         expect![[r#"
             hover visible method
-            - range: 2:18-2:34
+            - range: 2:24-2:32
             - block:
               kind: method
               path: shared::Maybe::and_then

@@ -10,11 +10,13 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
-use crate::{BodyData, BodyIrReadTxn};
+use crate::{BodyData, BodyIrReadTxn, ExprData, ExprKind, PatKind};
 
 use super::{
-    super::BodyCursorCandidate,
+    super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
     paths::{TypePathCursorScanner, ValuePathCursorScanner},
+    record_pat_shorthand::RecordPatShorthandBinding,
+    sites::BodyScanSites,
 };
 
 /// Scans one Body IR transaction for all cursor candidates at a source offset.
@@ -103,34 +105,73 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             body: body_ref,
             span: body.source.span,
         });
+        let record_shorthand_values = Self::record_expr_shorthand_values(body);
+        let record_shorthand_bindings = self.record_shorthand_bindings(body);
 
+        // First look at expressions under the cursor: calls, paths, field accesses, literals, and
+        // so on. Record shorthand values are skipped here because the key token has its own
+        // source-level candidate.
         for (expr_idx, expr) in body.exprs.iter().enumerate() {
             if expr.source.file_id == self.file_id && expr.source.span.touches(self.offset) {
+                if record_shorthand_values.contains(&ExprId(expr_idx)) {
+                    continue;
+                }
+                // Record expression keys can resolve to fields, while the record expression itself
+                // is still an ordinary expression candidate.
+                self.consider_record_expr_fields(body_ref, expr, &mut best);
+                let span = Self::member_reference_span(expr)
+                    .filter(|span| span.touches(self.offset))
+                    .unwrap_or(expr.source.span);
                 best.consider(
-                    expr.source.span,
+                    span,
                     BodyCursorCandidate::Expr {
                         body: body_ref,
                         expr: ExprId(expr_idx),
-                        span: expr.source.span,
+                        span,
                     },
                 );
             }
         }
 
+        // Record pattern keys are not expressions, so check them separately before ordinary
+        // binding declarations.
+        self.consider_record_pat_fields(body_ref, body, &mut best);
+
+        // Then look for local bindings introduced by params, lets, closures, and patterns. For
+        // shorthand record patterns, keep enough surface information for rename to expand the field.
         for (binding_idx, binding) in body.bindings.iter().enumerate() {
-            if binding.source.file_id == self.file_id && binding.source.span.touches(self.offset) {
+            let binding_span = binding.name_span.unwrap_or(binding.source.span);
+            if binding.source.file_id == self.file_id && binding_span.touches(self.offset) {
+                let binding_id = BindingId(binding_idx);
+                let surface = if let Some(shorthand) = record_shorthand_bindings
+                    .iter()
+                    .find(|shorthand| shorthand.binding == binding_id)
+                {
+                    BindingSurface::RecordPatShorthand {
+                        key: shorthand.key.clone(),
+                        field_span: shorthand.field_span,
+                        pat_span: shorthand.pat_span,
+                        binding_name_span: shorthand.binding_name_span,
+                    }
+                } else {
+                    BindingSurface::Plain
+                };
                 best.consider(
-                    binding.source.span,
+                    binding_span,
                     BodyCursorCandidate::Binding {
                         body: body_ref,
-                        binding: BindingId(binding_idx),
-                        span: binding.source.span,
+                        binding: binding_id,
+                        span: binding_span,
+                        surface,
                     },
                 );
             }
         }
 
         if let Some(item_store) = body.body_item_store() {
+            // Body-local items live in the same source range as the body but are stored in a local
+            // item store. Their names can be the best answer when the cursor is on a nested item
+            // declaration or one of its fields/variants.
             for item in item_store.semantic_items() {
                 if item.source().file_id != self.file_id {
                     continue;
@@ -179,6 +220,136 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         }
 
         best.finish()
+    }
+
+    fn record_shorthand_bindings(&self, body: &BodyData) -> Vec<RecordPatShorthandBinding> {
+        let mut bindings = Vec::new();
+        let sites = BodyScanSites::new(body);
+        sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
+            let PatKind::Record { fields, .. } = &site.data.kind else {
+                return;
+            };
+
+            for field in fields {
+                let Some(shorthand) = RecordPatShorthandBinding::from_field(body, field) else {
+                    continue;
+                };
+                if bindings
+                    .iter()
+                    .any(|seen: &RecordPatShorthandBinding| seen.binding == shorthand.binding)
+                {
+                    continue;
+                }
+                bindings.push(shorthand);
+            }
+        });
+        bindings
+    }
+
+    fn record_expr_shorthand_values(body: &BodyData) -> Vec<ExprId> {
+        let mut values = Vec::new();
+        for expr in body.exprs.iter() {
+            let ExprKind::Record { fields, .. } = &expr.kind else {
+                continue;
+            };
+            for field in fields {
+                if field.syntax.is_explicit() {
+                    continue;
+                }
+                if let Some(value) = field.value {
+                    values.push(value);
+                }
+            }
+        }
+        values
+    }
+
+    fn consider_record_expr_fields(
+        &self,
+        body_ref: BodyRef,
+        expr: &ExprData,
+        best: &mut BestCursorCandidate,
+    ) {
+        let ExprKind::Record {
+            path: Some(owner),
+            fields,
+            ..
+        } = &expr.kind
+        else {
+            return;
+        };
+        let Some(owner) = owner.as_def_map_path() else {
+            return;
+        };
+
+        for field in fields {
+            if !field.syntax.is_explicit() || !field.key_span.touches(self.offset) {
+                continue;
+            }
+            best.consider(
+                field.key_span,
+                BodyCursorCandidate::RecordFieldKey {
+                    body: body_ref,
+                    scope: expr.scope,
+                    owner: owner.clone(),
+                    key: field.key.clone(),
+                    file_id: expr.source.file_id,
+                    span: field.key_span,
+                    surface: RecordFieldKeySurface::Explicit,
+                },
+            );
+        }
+    }
+
+    fn consider_record_pat_fields(
+        &self,
+        body_ref: BodyRef,
+        body: &BodyData,
+        best: &mut BestCursorCandidate,
+    ) {
+        let sites = BodyScanSites::new(body);
+        sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
+            let PatKind::Record {
+                path: Some(owner),
+                fields,
+                ..
+            } = &site.data.kind
+            else {
+                return;
+            };
+            let Some(owner) = owner.as_def_map_path() else {
+                return;
+            };
+
+            for field in fields {
+                if !field.syntax.is_explicit() || !field.key_span.touches(self.offset) {
+                    continue;
+                }
+                best.consider(
+                    field.key_span,
+                    BodyCursorCandidate::RecordFieldKey {
+                        body: body_ref,
+                        scope: site.scope,
+                        owner: owner.clone(),
+                        key: field.key.clone(),
+                        file_id: site.data.source.file_id,
+                        span: field.key_span,
+                        surface: RecordFieldKeySurface::Explicit,
+                    },
+                );
+            }
+        });
+    }
+
+    fn member_reference_span(expr: &ExprData) -> Option<Span> {
+        match &expr.kind {
+            ExprKind::Path { path } if path.segment_count() == 1 => path.segment_span(0),
+            ExprKind::MethodCall {
+                method_name_span, ..
+            } => *method_name_span,
+            ExprKind::Field { field_span, .. } => *field_span,
+            _ => None,
+        }
     }
 
     fn consider_fields(

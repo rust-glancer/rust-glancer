@@ -1,6 +1,8 @@
 use rg_ir_model::{BindingId, ExprId, PatId};
 use rg_item_tree::FieldKey;
 
+use crate::RecordFieldSyntax;
+
 use super::{body::BodySource, expr::LiteralKind, path::BodyPath};
 
 /// One lowered pattern node.
@@ -148,6 +150,7 @@ pub struct RecordPatField {
     pub key: FieldKey,
     pub key_span: rg_parse::Span,
     pub source_span: rg_parse::Span,
+    pub syntax: RecordFieldSyntax,
     pub pat: PatId,
 }
 

@@ -16,12 +16,22 @@ use rg_ty::Ty;
 use crate::ir::{
     BindingData, BindingKind, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
     ExprBinaryOp, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LiteralKind, MatchArmData,
-    RecordExprField, RecordExprSpread,
+    RecordExprField, RecordExprSpread, RecordFieldSyntax,
 };
 
-use super::function::FunctionBodyLowering;
+use super::body::BodyLowering;
 
-impl FunctionBodyLowering<'_> {
+impl From<&ast::RecordExprField> for RecordFieldSyntax {
+    fn from(field: &ast::RecordExprField) -> Self {
+        if field.colon_token().is_some() {
+            Self::Explicit
+        } else {
+            Self::Shorthand
+        }
+    }
+}
+
+impl BodyLowering<'_> {
     pub(super) fn lower_expr(&mut self, expr: ast::Expr, scope: ScopeId) -> ExprId {
         match expr {
             ast::Expr::ArrayExpr(array) => self.lower_array_expr(array, scope),
@@ -289,6 +299,7 @@ impl FunctionBodyLowering<'_> {
             None => {
                 let binding = self.builder.alloc_binding(BindingData {
                     source,
+                    name_span: None,
                     scope,
                     kind: BindingKind::Param,
                     name: None,
@@ -622,12 +633,14 @@ impl FunctionBodyLowering<'_> {
         let key_span = self.source(field_name.syntax()).span;
         let key = FieldKey::Named(self.intern_ast_name_ref(field_name));
         let source_span = self.source(field.syntax()).span;
+        let syntax = RecordFieldSyntax::from(&field);
         let value = field.expr().map(|expr| self.lower_expr(expr, scope));
 
         Some(RecordExprField {
             key,
             key_span,
             source_span,
+            syntax,
             value,
         })
     }

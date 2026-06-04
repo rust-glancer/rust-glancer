@@ -206,9 +206,61 @@ pub fn use_it(
             - p20 binding move v14 path field_left `field_left` @ 24:22-24:32
             - p21 binding move v15 path right `right` @ 24:34-24:39
             - p22 rest `..` @ 24:41-24:43
-            - p23 record Pair [left=p20, right=p21] rest p22 `Pair { left: field_left, right, .. }` @ 24:9-24:45
+            - p23 record Pair [left=p20, shorthand right=p21] rest p22 `Pair { left: field_left, right, .. }` @ 24:9-24:45
             - p24 binding move <none> path None `None` @ 26:9-26:13
             - p25 binding move v16 path value `value` @ 27:9-27:14
+        "#]],
+    );
+}
+
+#[test]
+fn preserves_record_shorthand_pattern_modes_and_explicit_subpatterns() {
+    check_project_body_ir_patterns(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_record_shorthand_pattern_shape"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub struct User {
+    pub name: Option<u8>,
+}
+
+pub fn use_it(by_ref: User, by_mut: User, by_at: User) {
+    let User { ref name } = by_ref;
+    let User { mut name } = by_mut;
+    match by_at {
+        User { name: alias @ Some(_) } => alias,
+        User { name: None } => None,
+    };
+}
+"#,
+        expect![[r#"
+            package body_record_shorthand_pattern_shape
+
+            body_record_shorthand_pattern_shape [lib]
+            body b0 fn body_record_shorthand_pattern_shape[lib]::crate::use_it @ 10:1-17:2
+            patterns
+            - p0 binding move v0 path by_ref `by_ref` @ 10:15-10:21
+            - p1 binding move v1 path by_mut `by_mut` @ 10:29-10:35
+            - p2 binding move v2 path by_at `by_at` @ 10:43-10:48
+            - p3 binding ref v3 `ref name` @ 11:16-11:24
+            - p4 record User [shorthand name=p3] `User { ref name }` @ 11:9-11:26
+            - p5 binding move mut v4 `mut name` @ 12:16-12:24
+            - p6 record User [shorthand name=p5] `User { mut name }` @ 12:9-12:26
+            - p7 wildcard `_` @ 14:35-14:36
+            - p8 tuple_struct Some [p7] `Some(_)` @ 14:30-14:37
+            - p9 binding move v5 subpat p8 `alias @ Some(_)` @ 14:22-14:37
+            - p10 record User [name=p9] `User { name: alias @ Some(_) }` @ 14:9-14:39
+            - p11 binding move <none> path None `None` @ 15:22-15:26
+            - p12 record User [name=p11] `User { name: None }` @ 15:9-15:28
         "#]],
     );
 }
@@ -239,6 +291,16 @@ pub fn use_it(value: i32) {
             package body_literal_pattern_fixture
 
             body_literal_pattern_fixture [lib]
+            body b2 const body_literal_pattern_fixture[lib]::crate::max_value @ 2:1-2:31
+            patterns
+            <none>
+
+
+            body b1 const body_literal_pattern_fixture[lib]::crate::min_value @ 1:1-1:30
+            patterns
+            <none>
+
+
             body b0 fn body_literal_pattern_fixture[lib]::crate::use_it @ 4:1-10:2
             patterns
             - p0 binding move v0 path value `value` @ 4:15-4:20
