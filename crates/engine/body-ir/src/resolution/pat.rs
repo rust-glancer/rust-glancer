@@ -17,7 +17,7 @@ use crate::{
     ir::stmt::StmtKind,
 };
 
-use super::{BodyQuerySource, push_unique, type_path::BodyTypePathResolver};
+use super::{BodyQuerySource, TypeRefUseSite, push_unique, type_path::BodyTypePathResolver};
 
 pub(super) struct PatternTypePropagator<'query, D, I> {
     source: BodyQuerySource<'query, D, I>,
@@ -128,7 +128,8 @@ where
         if let Some(annotation) = annotation {
             let ty = self
                 .type_path_resolver()
-                .resolve_type_ref_in_scope(annotation, scope)?;
+                .type_ref(TypeRefUseSite::Scope(scope))
+                .resolve(annotation)?;
             if !matches!(ty, Ty::Unknown) {
                 return Ok(ty);
             }
@@ -295,11 +296,9 @@ where
 
         Ok(Some(
             self.type_path_resolver()
-                .resolve_type_ref_in_module_with_subst(
-                    &field.ty,
-                    variant_data.owner_module,
-                    &subst,
-                )?,
+                .type_ref(TypeRefUseSite::Module(variant_data.owner_module))
+                .with_subst(&subst)
+                .resolve(&field.ty)?,
         ))
     }
 

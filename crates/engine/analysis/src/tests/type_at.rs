@@ -1716,6 +1716,53 @@ pub fn make() {
 }
 
 #[test]
+fn returns_parent_body_local_associated_item_types_from_nested_body() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_nested_body_parent_assoc_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct User;
+
+    impl User {
+        const DEFAULT: GlobalId = GlobalId;
+        type Id = GlobalId;
+    }
+
+    fn helper() {
+        let default$type_nested_assoc_const$ = User::DEFAULT;
+        let typed$type_nested_assoc_type$: User::Id = GlobalId;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty(
+                "type at nested associated const result",
+                "type_nested_assoc_const",
+            ),
+            AnalysisQuery::ty(
+                "type at nested associated type result",
+                "type_nested_assoc_type",
+            ),
+        ],
+        expect![[r#"
+            type at nested associated const result
+            - nominal struct analysis_nested_body_parent_assoc_type[lib]::crate::GlobalId
+
+            type at nested associated type result
+            - nominal struct analysis_nested_body_parent_assoc_type[lib]::crate::GlobalId
+        "#]],
+    );
+}
+
+#[test]
 fn returns_body_local_enum_pattern_payload_types() {
     check_analysis_queries(
         r#"

@@ -29,15 +29,14 @@ where
         ty: TypeDefRef,
     ) -> Result<Vec<ImplRef>, PackageStoreError> {
         let mut impls = Vec::new();
-        let Some(store) = self.active_body_store()? else {
-            return Ok(impls);
-        };
 
-        for (impl_ref, impl_data) in store.impls_with_refs() {
-            if impl_data.trait_ref.is_some() || !impl_data.resolved_self_tys.contains(&ty) {
-                continue;
+        for store in self.body_lookup_stores()? {
+            for (impl_ref, impl_data) in store.impls_with_refs() {
+                if impl_data.trait_ref.is_some() || !impl_data.resolved_self_tys.contains(&ty) {
+                    continue;
+                }
+                push_unique(&mut impls, impl_ref);
             }
-            push_unique(&mut impls, impl_ref);
         }
 
         Ok(impls)
@@ -93,22 +92,21 @@ where
         ty: TypeDefRef,
     ) -> Result<Vec<TraitImplRef>, PackageStoreError> {
         let mut trait_impls = Vec::new();
-        let Some(store) = self.active_body_store()? else {
-            return Ok(trait_impls);
-        };
 
-        for (impl_ref, impl_data) in store.impls_with_refs() {
-            if impl_data.trait_ref.is_none() || !impl_data.resolved_self_tys.contains(&ty) {
-                continue;
-            }
-            for trait_ref in &impl_data.resolved_trait_refs {
-                push_unique(
-                    &mut trait_impls,
-                    TraitImplRef {
-                        impl_ref,
-                        trait_ref: *trait_ref,
-                    },
-                );
+        for store in self.body_lookup_stores()? {
+            for (impl_ref, impl_data) in store.impls_with_refs() {
+                if impl_data.trait_ref.is_none() || !impl_data.resolved_self_tys.contains(&ty) {
+                    continue;
+                }
+                for trait_ref in &impl_data.resolved_trait_refs {
+                    push_unique(
+                        &mut trait_impls,
+                        TraitImplRef {
+                            impl_ref,
+                            trait_ref: *trait_ref,
+                        },
+                    );
+                }
             }
         }
 
@@ -119,8 +117,28 @@ where
         ItemStoreQuery::new(self.source)
     }
 
-    fn active_body_store(&self) -> Result<Option<&'query ItemStore>, PackageStoreError> {
-        self.item_query()
-            .item_store_for_origin(DefMapRef::Body(self.source.body_ref()))
+    fn body_lookup_stores(&self) -> Result<Vec<&'query ItemStore>, PackageStoreError> {
+        let mut origins = Vec::new();
+
+        // Check the active body first, then the body-local modules that own this declaration and
+        // its fallback. Target modules are still handled by TargetItemQuery.
+        push_unique(&mut origins, DefMapRef::Body(self.source.body_ref()));
+        for module in [
+            self.source.body().owner_module(),
+            self.source.body().fallback_module(),
+        ] {
+            if let DefMapRef::Body(_) = module.origin {
+                push_unique(&mut origins, module.origin);
+            }
+        }
+
+        let item_query = self.item_query();
+        let mut stores = Vec::new();
+        for origin in origins {
+            if let Some(store) = item_query.item_store_for_origin(origin)? {
+                stores.push(store);
+            }
+        }
+        Ok(stores)
     }
 }

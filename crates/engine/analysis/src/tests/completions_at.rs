@@ -1896,6 +1896,48 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_parent_body_local_impl_methods_from_nested_body() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_nested_body_parent_impl_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    struct User;
+
+    impl User {
+        fn id(&self) -> GlobalId {
+            missing()
+        }
+
+        fn make() -> GlobalId {
+            missing()
+        }
+    }
+
+    fn helper(user: User) {
+        user.$0;
+    }
+}
+"#,
+        &[AnalysisQuery::complete(
+            "parent body-local impl completions from nested body",
+            "0",
+        )],
+        expect![[r#"
+            parent body-local impl completions from nested body
+            - inherent_method id
+        "#]],
+    );
+}
+
+#[test]
 fn completes_body_local_generic_impl_method_return_and_field_receivers() {
     check_analysis_queries(
         r#"

@@ -11,13 +11,16 @@ use rg_ir_storage::{
     DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, NameResolutionFilter, Path,
     PathSegment, TargetItemQuery, TypePathContext,
 };
-use rg_item_tree::{GenericArg as ItemGenericArg, TypePath, TypeRef};
+use rg_item_tree::{TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_ty::{GenericArg, ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
 
 use crate::ir::BodyOwner;
 
-use super::{BodyLocalItemQuery, BodyQuerySource, push_unique};
+use super::{
+    BodyLocalItemQuery, BodyQuerySource, push_unique,
+    type_ref::{TypeRefResolutionQuery, TypeRefUseSite},
+};
 
 pub(crate) struct BodyTypePathResolver<'query, D, I> {
     source: BodyQuerySource<'query, D, I>,
@@ -32,6 +35,17 @@ where
         Self { source }
     }
 
+    pub(crate) fn type_ref(
+        &self,
+        use_site: TypeRefUseSite,
+    ) -> TypeRefResolutionQuery<'_, 'query, D, I> {
+        TypeRefResolutionQuery::new(self, use_site)
+    }
+
+    pub(super) fn source(&self) -> BodyQuerySource<'query, D, I> {
+        self.source
+    }
+
     fn impl_matcher(
         &self,
     ) -> ImplMatcher<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>> {
@@ -41,7 +55,7 @@ where
         ImplMatcher::new(item_paths, target_items)
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
+    pub(super) fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
         ItemStoreQuery::new(self.source)
     }
 
@@ -71,32 +85,7 @@ where
 
         let body_items = self.resolve_body_type_items_from_def_map(scope, path)?;
         if !body_items.is_empty() {
-            let mut type_defs = Vec::new();
-            let mut type_aliases = Vec::new();
-            let mut traits = Vec::new();
-            for item in body_items {
-                match item {
-                    SemanticItemRef::TypeDef(type_def) => push_unique(&mut type_defs, type_def),
-                    SemanticItemRef::TypeAlias(type_alias) => {
-                        push_unique(&mut type_aliases, type_alias);
-                    }
-                    SemanticItemRef::Trait(trait_ref) => push_unique(&mut traits, trait_ref),
-                    SemanticItemRef::Impl(_)
-                    | SemanticItemRef::Function(_)
-                    | SemanticItemRef::Const(_)
-                    | SemanticItemRef::Static(_) => {}
-                }
-            }
-
-            if !type_defs.is_empty() {
-                return Ok(TypePathResolution::TypeDefs(type_defs));
-            }
-            if !type_aliases.is_empty() {
-                return Ok(TypePathResolution::TypeAliases(type_aliases));
-            }
-            if !traits.is_empty() {
-                return Ok(TypePathResolution::Traits(traits));
-            }
+            return Ok(self.type_resolution_from_items(body_items));
         }
 
         let source = self.source;
@@ -121,111 +110,6 @@ where
         )
     }
 
-    pub(crate) fn resolve_type_ref_in_scope(
-        &self,
-        ty: &TypeRef,
-        scope: ScopeId,
-    ) -> Result<Ty, PackageStoreError> {
-        self.resolve_type_ref_in_scope_with_subst(ty, scope, &TypeSubst::new())
-    }
-
-    pub(super) fn resolve_type_ref_in_scope_with_subst(
-        &self,
-        ty: &TypeRef,
-        scope: ScopeId,
-        subst: &TypeSubst,
-    ) -> Result<Ty, PackageStoreError> {
-        // Path types are the only type syntax we resolve structurally today. Other forms stay as
-        // syntax unless they have a cheap built-in representation such as `()` or `!`.
-        match ty {
-            TypeRef::Path(type_path) => {
-                let path = Path::from_type_path(type_path);
-                if let Some(name) = path.single_name()
-                    && let Some(ty) = subst.type_param(name)
-                {
-                    return Ok(ty);
-                }
-
-                let args = self.generic_args_from_type_path_in_scope(type_path, scope, subst)?;
-                if let Some(ty) =
-                    self.ty_from_local_associated_type_path(type_path, &path, scope, subst, &args)?
-                {
-                    return Ok(ty);
-                }
-
-                let resolution = self.resolve_in_scope(scope, &path)?;
-                if let TypePathResolution::TypeAliases(aliases) = &resolution {
-                    return self.ty_from_type_aliases(aliases, &args, subst);
-                }
-                let is_unknown = matches!(resolution, TypePathResolution::Unknown);
-                Ok(
-                    Ty::from_type_path_resolution(resolution, args).unwrap_or_else(|| {
-                        if is_unknown {
-                            path.single_name()
-                                .and_then(rg_ty::PrimitiveTy::from_name)
-                                .map(Ty::Primitive)
-                                .unwrap_or_else(|| Ty::syntax(ty.clone()))
-                        } else {
-                            Ty::syntax(ty.clone())
-                        }
-                    }),
-                )
-            }
-            _ => self.resolve_type_ref_in_context(ty, self.context_for_body_owner()?, subst),
-        }
-    }
-
-    pub(super) fn resolve_type_ref_for_function_with_subst(
-        &self,
-        ty: &TypeRef,
-        function: FunctionRef,
-        subst: &TypeSubst,
-    ) -> Result<Ty, PackageStoreError> {
-        let context = self.context_for_function(function, self.source.body().owner_module)?;
-        if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
-            return self.resolve_type_ref_in_module_with_subst(ty, context.module, subst);
-        }
-
-        self.resolve_type_ref_in_context_with_subst(ty, context, subst)
-    }
-
-    fn resolve_type_ref_in_context(
-        &self,
-        ty: &TypeRef,
-        context: TypePathContext,
-        subst: &TypeSubst,
-    ) -> Result<Ty, PackageStoreError> {
-        self.resolve_type_ref_in_context_with_subst(ty, context, subst)
-    }
-
-    pub(super) fn resolve_type_ref_in_context_with_subst(
-        &self,
-        ty: &TypeRef,
-        context: TypePathContext,
-        subst: &TypeSubst,
-    ) -> Result<Ty, PackageStoreError> {
-        let source = self.source;
-        let item_paths = ItemPathQuery::new(source, source);
-        item_paths.resolve_type_ref(ty, context, Ty::syntax(ty.clone()), subst)
-    }
-
-    pub(super) fn resolve_type_ref_in_module_with_subst(
-        &self,
-        ty: &TypeRef,
-        module: ModuleRef,
-        subst: &TypeSubst,
-    ) -> Result<Ty, PackageStoreError> {
-        if let Some(scope) = self
-            .source
-            .body()
-            .scope_for_module(self.source.body_ref(), module)
-        {
-            return self.resolve_type_ref_in_scope_with_subst(ty, scope, subst);
-        }
-
-        self.resolve_type_ref_in_context_with_subst(ty, TypePathContext::module(module), subst)
-    }
-
     pub(super) fn self_tys_for_function(
         &self,
         function: FunctionRef,
@@ -246,7 +130,7 @@ where
             .unwrap_or_default())
     }
 
-    fn context_for_function(
+    pub(super) fn context_for_function(
         &self,
         function: FunctionRef,
         fallback_module: ModuleRef,
@@ -257,7 +141,7 @@ where
             .unwrap_or_else(|| TypePathContext::module(fallback_module)))
     }
 
-    fn context_for_body_owner(&self) -> Result<TypePathContext, PackageStoreError> {
+    pub(super) fn context_for_body_owner(&self) -> Result<TypePathContext, PackageStoreError> {
         let fallback_module = self.source.body().owner_module();
         match self.source.body().owner() {
             BodyOwner::Function(function) => self.context_for_function(function, fallback_module),
@@ -289,8 +173,38 @@ where
             NameResolutionFilter::TypesOnly,
         )?;
 
+        self.semantic_items_for_defs(result.resolved)
+    }
+
+    pub(super) fn resolve_body_type_items_from_module(
+        &self,
+        module: ModuleRef,
+        path: &Path,
+    ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
+        let def_maps = DefMapQuery::new(self.source);
+        let result = def_maps.resolve_path_in_type_namespace(module, path)?;
+        let items = self.semantic_items_for_defs(result.resolved)?;
+        if !items.is_empty() {
+            return Ok(items);
+        }
+
+        // A body-local module only carries the lexical body facts. The inherited fallback keeps
+        // signatures on parent body-local items able to name ordinary surrounding module items.
+        let fallback_module = self.source.body().fallback_module();
+        if fallback_module == module {
+            return Ok(items);
+        }
+
+        let result = def_maps.resolve_path_in_type_namespace(fallback_module, path)?;
+        self.semantic_items_for_defs(result.resolved)
+    }
+
+    fn semantic_items_for_defs(
+        &self,
+        defs: Vec<DefId>,
+    ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
         let mut items = Vec::new();
-        for def in result.resolved {
+        for def in defs {
             let DefId::Local(local_def) = def else {
                 continue;
             };
@@ -298,39 +212,42 @@ where
                 push_unique(&mut items, item);
             }
         }
-
         Ok(items)
     }
 
-    fn ty_from_local_associated_type_path(
+    pub(super) fn type_resolution_from_items(
         &self,
-        type_path: &TypePath,
-        path: &Path,
-        scope: ScopeId,
-        subst: &TypeSubst,
-        args: &[GenericArg],
-    ) -> Result<Option<Ty>, PackageStoreError> {
-        let Some((_, name)) = split_associated_path(path) else {
-            return Ok(None);
-        };
-        let Some(prefix_ty_ref) = prefix_type_ref(type_path) else {
-            return Ok(None);
-        };
-        let prefix_ty = self.resolve_type_ref_in_scope_with_subst(&prefix_ty_ref, scope, subst)?;
-
-        for ty in prefix_ty.as_nominals() {
-            let Some(alias_ref) = self.associated_type_alias_for_type(ty, name)? else {
-                continue;
-            };
-            return self
-                .ty_from_associated_type_alias(alias_ref, ty, args)
-                .map(Some);
+        items: Vec<SemanticItemRef>,
+    ) -> TypePathResolution {
+        let mut type_defs = Vec::new();
+        let mut type_aliases = Vec::new();
+        let mut traits = Vec::new();
+        for item in items {
+            match item {
+                SemanticItemRef::TypeDef(type_def) => push_unique(&mut type_defs, type_def),
+                SemanticItemRef::TypeAlias(type_alias) => {
+                    push_unique(&mut type_aliases, type_alias);
+                }
+                SemanticItemRef::Trait(trait_ref) => push_unique(&mut traits, trait_ref),
+                SemanticItemRef::Impl(_)
+                | SemanticItemRef::Function(_)
+                | SemanticItemRef::Const(_)
+                | SemanticItemRef::Static(_) => {}
+            }
         }
 
-        Ok(None)
+        if !type_defs.is_empty() {
+            TypePathResolution::TypeDefs(type_defs)
+        } else if !type_aliases.is_empty() {
+            TypePathResolution::TypeAliases(type_aliases)
+        } else if !traits.is_empty() {
+            TypePathResolution::Traits(traits)
+        } else {
+            TypePathResolution::Unknown
+        }
     }
 
-    fn ty_from_type_aliases(
+    pub(super) fn ty_from_type_aliases(
         &self,
         aliases: &[TypeAliasRef],
         args: &[GenericArg],
@@ -375,16 +292,14 @@ where
         let context = item_query
             .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
             .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
-        if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
-            self.resolve_type_ref_in_module_with_subst(aliased_ty, context.module, &alias_subst)
-        } else {
-            self.resolve_type_ref_in_context_with_subst(aliased_ty, context, &alias_subst)
-        }
+        self.type_ref(TypeRefUseSite::OwnerContext(context))
+            .with_subst(&alias_subst)
+            .resolve(aliased_ty)
     }
 
     /// Attempts to find the type alias with given name for the provided type
     /// in the body-local context.
-    fn associated_type_alias_for_type(
+    pub(super) fn associated_type_alias_for_type(
         &self,
         ty: &NominalTy,
         name: &str,
@@ -425,7 +340,7 @@ where
         Ok(None)
     }
 
-    fn ty_from_associated_type_alias(
+    pub(super) fn ty_from_associated_type_alias(
         &self,
         alias_ref: TypeAliasRef,
         receiver_ty: &NominalTy,
@@ -462,73 +377,24 @@ where
         let context = item_query
             .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
             .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
-        if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
-            self.resolve_type_ref_in_module_with_subst(aliased_ty, context.module, &alias_subst)
-        } else {
-            self.resolve_type_ref_in_context_with_subst(aliased_ty, context, &alias_subst)
-        }
+        self.type_ref(TypeRefUseSite::OwnerContext(context))
+            .with_subst(&alias_subst)
+            .resolve(aliased_ty)
     }
 
-    fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {
+    pub(super) fn semantic_type_subst(
+        &self,
+        ty: &NominalTy,
+    ) -> Result<TypeSubst, PackageStoreError> {
         Ok(self
             .item_query()
             .generic_params_for_type_def(ty.def)?
             .map(|generics| TypeSubst::from_generics(generics, &ty.args))
             .unwrap_or_else(TypeSubst::new))
     }
-
-    fn generic_args_from_type_path_in_scope(
-        &self,
-        type_path: &rg_item_tree::TypePath,
-        scope: ScopeId,
-        subst: &TypeSubst,
-    ) -> Result<Vec<GenericArg>, PackageStoreError> {
-        let Some(segment) = type_path.segments.last() else {
-            return Ok(Vec::new());
-        };
-        self.generic_args_from_item_tree_args_in_scope(&segment.args, scope, subst)
-    }
-
-    fn generic_args_from_item_tree_args_in_scope(
-        &self,
-        args: &[ItemGenericArg],
-        scope: ScopeId,
-        subst: &TypeSubst,
-    ) -> Result<Vec<GenericArg>, PackageStoreError> {
-        let mut generic_args = Vec::new();
-        for arg in args {
-            generic_args.push(self.generic_arg_from_item_tree_arg_in_scope(arg, scope, subst)?);
-        }
-        Ok(generic_args)
-    }
-
-    fn generic_arg_from_item_tree_arg_in_scope(
-        &self,
-        arg: &ItemGenericArg,
-        scope: ScopeId,
-        subst: &TypeSubst,
-    ) -> Result<GenericArg, PackageStoreError> {
-        match arg {
-            ItemGenericArg::Type(ty) => Ok(GenericArg::Type(Box::new(
-                self.resolve_type_ref_in_scope_with_subst(ty, scope, subst)?,
-            ))),
-            ItemGenericArg::Lifetime(lifetime) => Ok(GenericArg::Lifetime(lifetime.clone())),
-            ItemGenericArg::Const(value) => Ok(GenericArg::Const(value.clone())),
-            ItemGenericArg::AssocType { name, ty } => Ok(GenericArg::AssocType {
-                name: name.clone(),
-                ty: match ty {
-                    Some(ty) => Some(Box::new(
-                        self.resolve_type_ref_in_scope_with_subst(ty, scope, subst)?,
-                    )),
-                    None => None,
-                },
-            }),
-            ItemGenericArg::Unsupported(text) => Ok(GenericArg::Unsupported(text.clone())),
-        }
-    }
 }
 
-fn split_associated_path(path: &Path) -> Option<(Path, &str)> {
+pub(super) fn split_associated_path(path: &Path) -> Option<(Path, &str)> {
     if path.segments.len() < 2 {
         return None;
     }
@@ -546,7 +412,7 @@ fn split_associated_path(path: &Path) -> Option<(Path, &str)> {
     ))
 }
 
-fn prefix_type_ref(path: &TypePath) -> Option<TypeRef> {
+pub(super) fn prefix_type_ref(path: &TypePath) -> Option<TypeRef> {
     let prefix_len = path.segments.len().checked_sub(1)?;
     if prefix_len == 0 {
         return None;

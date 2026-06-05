@@ -650,6 +650,90 @@ pub fn use_it() {
 }
 
 #[test]
+fn resolves_nested_body_references_to_parent_body_impl_items() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "nested_body_parent_impl_items_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    struct User;
+
+    impl User {
+        fn id(&self) -> GlobalId {
+            GlobalId
+        }
+
+        const DEFAULT: GlobalId = GlobalId;
+        type Id = GlobalId;
+    }
+
+    fn helper(user: User) -> GlobalId {
+        let id = user.id();
+        let default = User::DEFAULT;
+        let typed: User::Id = GlobalId;
+        id
+    }
+}
+"#,
+        expect![[r#"
+            package nested_body_parent_impl_items_fixture
+
+            nested_body_parent_impl_items_fixture [lib]
+            body b0 fn nested_body_parent_impl_items_fixture[lib]::crate::use_it @ 3:1-21:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>; source_items i0, i4, i5
+            source_items
+            - i0 struct User @ 4:5-4:17
+            - i1 fn id @ 7:9-9:10
+            - i2 const DEFAULT @ 11:9-11:44
+            - i3 type_alias Id @ 12:9-12:28
+            - i4 impl <unnamed> @ 6:5-13:6
+            - i5 fn helper @ 15:5-20:6
+            bindings
+            body
+            expr e0 block s1 => () @ 3:17-21:2
+              stmt s0 source_item i0 @ 4:5-4:17
+              stmt s1 source_item i4 @ 6:5-13:6
+              stmt s2 source_item i5 @ 15:5-20:6
+
+
+            body b1 fn fn nested_body_parent_impl_items_fixture[lib]::crate::use_it::helper @ 15:5-20:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v2, v3
+            bindings
+            - v0 param user `user`: User => nominal struct fn nested_body_parent_impl_items_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 15:15-15:19
+            - v1 let id `id` => nominal struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId @ 16:13-16:15
+            - v2 let default `default` => nominal struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId @ 17:13-17:20
+            - v3 let typed `typed`: User::Id => nominal struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId @ 18:13-18:18
+            body
+            expr e5 block s1 => nominal struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId @ 15:39-20:6
+              stmt s0 let v1 @ 16:9-16:28
+                initializer
+                  expr e1 method_call id -> fn impl User::id => nominal struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId @ 16:18-16:27
+                    receiver
+                      expr e0 path user -> local v0 => nominal struct fn nested_body_parent_impl_items_fixture[lib]::crate::use_it::User @ 4:5-4:17 @ 16:18-16:22
+              stmt s1 let v2 @ 17:9-17:37
+                initializer
+                  expr e2 path User::DEFAULT -> const impl User::DEFAULT => nominal struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId @ 17:23-17:36
+              stmt s2 let v3: User::Id @ 18:9-18:40
+                initializer
+                  expr e3 path GlobalId -> item struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId => nominal struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId @ 18:31-18:39
+              tail
+                expr e4 path id -> local v1 => nominal struct nested_body_parent_impl_items_fixture[lib]::crate::GlobalId @ 19:9-19:11
+"#]],
+    );
+}
+
+#[test]
 fn resolves_body_local_values_by_scope_before_category() {
     check_project_body_ir(
         r#"

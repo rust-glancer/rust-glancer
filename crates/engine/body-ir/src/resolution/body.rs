@@ -24,8 +24,9 @@ use crate::{
 };
 
 use super::{
-    BodyLocalItemQuery, BodyQuerySource, BodyReceiverFunctionQuery, normalize::TyNormalizer,
-    pat::PatternTypePropagator, push_unique, type_path::BodyTypePathResolver,
+    BodyLocalItemQuery, BodyQuerySource, BodyReceiverFunctionQuery, TypeRefUseSite,
+    normalize::TyNormalizer, pat::PatternTypePropagator, push_unique,
+    type_path::BodyTypePathResolver,
 };
 
 pub(crate) struct BodyResolver<'query, 'body, D, I> {
@@ -151,7 +152,8 @@ where
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .type_path_resolver()
-                .resolve_type_ref_in_scope(annotation, binding_data.scope);
+                .type_ref(TypeRefUseSite::Scope(binding_data.scope))
+                .resolve(annotation);
         }
 
         if let BindingKind::SelfParam(kind) = binding_data.kind
@@ -196,7 +198,8 @@ where
             ExprKind::Cast { ty: Some(ty), .. } => {
                 self.body.exprs[expr].ty = self
                     .type_path_resolver()
-                    .resolve_type_ref_in_scope(&ty, self.body.exprs[expr].scope)?;
+                    .type_ref(TypeRefUseSite::Scope(self.body.exprs[expr].scope))
+                    .resolve(&ty)?;
             }
             ExprKind::Match { arms, .. } => {
                 let mut arm_tys = Vec::new();
@@ -414,11 +417,9 @@ where
                 let subst = self.semantic_type_subst(nominal_ty)?;
                 let field_ty = self
                     .type_path_resolver()
-                    .resolve_type_ref_in_module_with_subst(
-                        &field_data.field.ty,
-                        field_data.owner_module,
-                        &subst,
-                    )?;
+                    .type_ref(TypeRefUseSite::Module(field_data.owner_module))
+                    .with_subst(&subst)
+                    .resolve(&field_data.field.ty)?;
                 push_unique(&mut field_tys, field_ty);
             }
         }
@@ -623,7 +624,9 @@ where
             .transpose()?
             .unwrap_or_default();
         self.type_path_resolver()
-            .resolve_type_ref_for_function_with_subst(ret_ty, function_ref, &subst)
+            .type_ref(TypeRefUseSite::Function(function_ref))
+            .with_subst(&subst)
+            .resolve(ret_ty)
     }
 
     fn call_ty(&self, callee: Option<ExprId>) -> Result<Ty, PackageStoreError> {
@@ -1037,13 +1040,9 @@ where
         let context = item_query
             .type_path_context_for_owner(const_ref.origin, const_data.owner)?
             .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
-        if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
-            self.type_path_resolver()
-                .resolve_type_ref_in_module_with_subst(ty, context.module, &TypeSubst::new())
-        } else {
-            self.type_path_resolver()
-                .resolve_type_ref_in_context_with_subst(ty, context, &TypeSubst::new())
-        }
+        self.type_path_resolver()
+            .type_ref(TypeRefUseSite::OwnerContext(context))
+            .resolve(ty)
     }
 
     fn semantic_static_ty(&self, static_ref: StaticRef) -> Result<Ty, PackageStoreError> {
@@ -1056,7 +1055,8 @@ where
         };
 
         self.type_path_resolver()
-            .resolve_type_ref_in_module_with_subst(ty, static_data.owner, &TypeSubst::new())
+            .type_ref(TypeRefUseSite::Module(static_data.owner))
+            .resolve(ty)
     }
 
     fn resolve_associated_path(
@@ -1240,13 +1240,10 @@ where
             .item_query()
             .type_path_context_for_owner(const_ref.origin, owner)?
             .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
-        if context.module.origin == DefMapRef::Body(self.source.body_ref()) {
-            self.type_path_resolver()
-                .resolve_type_ref_in_module_with_subst(ty, context.module, &subst)
-        } else {
-            self.type_path_resolver()
-                .resolve_type_ref_in_context_with_subst(ty, context, &subst)
-        }
+        self.type_path_resolver()
+            .type_ref(TypeRefUseSite::OwnerContext(context))
+            .with_subst(&subst)
+            .resolve(ty)
     }
 
     fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {

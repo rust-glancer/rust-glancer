@@ -11,7 +11,9 @@ use rg_text::NameInterner;
 use crate::{
     BodyOwner, TargetBodies,
     ir::body_map::{BodyDefMapCollector, BodyItemStoreCollector},
-    resolution::{BodyQuerySource, BodyResolver, BodyTypePathResolver, push_unique},
+    resolution::{
+        BodyQuerySource, BodyResolver, BodyTypePathResolver, TypeRefUseSite, push_unique,
+    },
 };
 
 use super::{
@@ -239,7 +241,9 @@ impl<'target> TargetBodyBuildState<'target> {
                         continue;
                     };
 
-                    let ty = resolver.resolve_type_ref_in_scope(&self_ty, scope)?;
+                    let ty = resolver
+                        .type_ref(TypeRefUseSite::Scope(scope))
+                        .resolve(&self_ty)?;
                     let mut resolved_self_tys = Vec::new();
                     for nominal in ty.as_nominals() {
                         push_unique(&mut resolved_self_tys, nominal.def);
