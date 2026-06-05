@@ -88,7 +88,6 @@ where
     }
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
-        self.resolve_body_item_store_impls()?;
         self.resolve_bindings()?;
 
         // Pattern propagation can unlock later expression types, and those expressions can then
@@ -105,49 +104,6 @@ where
 
             if !changed {
                 break;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn resolve_body_item_store_impls(&mut self) -> Result<(), PackageStoreError> {
-        let Some(item_store) = self.body.body_item_store() else {
-            return Ok(());
-        };
-
-        let impl_headers = item_store
-            .impls_with_refs()
-            .map(|(impl_ref, impl_data)| (impl_ref.id, impl_data.owner, impl_data.self_ty.clone()))
-            .collect::<Vec<_>>();
-
-        let mut resolved_headers = Vec::new();
-        for (impl_id, owner, self_ty) in impl_headers {
-            if owner.origin != DefMapRef::Body(self.body_ref) {
-                continue;
-            }
-
-            let scope = ScopeId(owner.module.0);
-            if self.body.scope(scope).is_none() {
-                continue;
-            }
-
-            let ty = self
-                .type_path_resolver()
-                .resolve_type_ref_in_scope(&self_ty, scope)?;
-            let mut resolved_self_tys = Vec::new();
-            for nominal in ty.as_nominals() {
-                push_unique(&mut resolved_self_tys, nominal.def);
-            }
-            resolved_headers.push((impl_id, resolved_self_tys));
-        }
-
-        let Some(item_store) = self.body.body_item_store.as_mut() else {
-            return Ok(());
-        };
-        for (impl_id, resolved_self_tys) in resolved_headers {
-            if let Some(impl_data) = item_store.impls_mut().get_mut(impl_id) {
-                impl_data.resolved_self_tys = resolved_self_tys;
             }
         }
 

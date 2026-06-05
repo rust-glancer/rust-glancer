@@ -6,10 +6,12 @@ use rg_package_store::PackageStoreError;
 
 use crate::ir::body::BodyData;
 
-/// Routes semantic-shaped queries to target storage or to the active body storage.
+/// Routes semantic-shaped queries to target storage or to body-local storage.
 ///
-/// Body resolution often needs DefMap lookup and item data together. Keeping both routes in one
-/// source makes those algorithms use the same query objects as target-level analysis.
+/// The active body is still carried separately because lexical binding lookup needs its scopes and
+/// expressions. DefMap and item-store lookup first uses final body fields when they exist, then
+/// falls back to the routed provider so build-time resolution can see body-local stores before
+/// they are written back to frozen `BodyData`.
 #[derive(Clone, Copy)]
 pub(crate) struct BodyQuerySource<'a, D, I> {
     def_maps: D,
@@ -44,11 +46,14 @@ where
     type Error = PackageStoreError;
 
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
-        match origin {
-            DefMapRef::Target(_) => self.def_maps.def_map_for_origin(origin),
-            DefMapRef::Body(body_ref) if body_ref == self.body_ref => Ok(self.body.body_def_map()),
-            DefMapRef::Body(_) => Ok(None),
+        if let DefMapRef::Body(body_ref) = origin
+            && body_ref == self.body_ref
+            && let Some(def_map) = self.body.body_def_map()
+        {
+            return Ok(Some(def_map));
         }
+
+        self.def_maps.def_map_for_origin(origin)
     }
 
     fn extern_root(
@@ -85,13 +90,14 @@ where
         &self,
         origin: DefMapRef,
     ) -> Result<Option<&'a ItemStore>, Self::Error> {
-        match origin {
-            DefMapRef::Target(_) => self.item_stores.item_store_for_origin(origin),
-            DefMapRef::Body(body_ref) if body_ref == self.body_ref => {
-                Ok(self.body.body_item_store())
-            }
-            DefMapRef::Body(_) => Ok(None),
+        if let DefMapRef::Body(body_ref) = origin
+            && body_ref == self.body_ref
+            && let Some(item_store) = self.body.body_item_store()
+        {
+            return Ok(Some(item_store));
         }
+
+        self.item_stores.item_store_for_origin(origin)
     }
 
     fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {

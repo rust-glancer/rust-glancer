@@ -100,7 +100,7 @@ where
         ItemPathQuery::new(source, source).resolve_type_path(context, path)
     }
 
-    pub(super) fn resolve_type_ref_in_scope(
+    pub(crate) fn resolve_type_ref_in_scope(
         &self,
         ty: &TypeRef,
         scope: ScopeId,

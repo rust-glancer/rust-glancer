@@ -1,7 +1,9 @@
 //! Builds and rebuilds Body IR snapshots.
 
 mod lower;
+mod query_source;
 mod resolve;
+mod state;
 
 use anyhow::Context as _;
 

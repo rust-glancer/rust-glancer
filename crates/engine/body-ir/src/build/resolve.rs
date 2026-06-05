@@ -3,21 +3,14 @@
 use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
-use rg_ir_model::{BodyId, BodyRef, TargetRef};
-use rg_ir_storage::{ItemLookupIndex, TargetItemQuery};
+use rg_ir_model::TargetRef;
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
 use rg_semantic_ir::SemanticIrReadTxn;
 
-use crate::{
-    ir::{
-        PackageBodies, TargetBodiesStatus,
-        body_map::{BodyDefMapCollector, BodyItemStoreCollector},
-    },
-    resolution::BodyResolver,
-};
+use crate::ir::{PackageBodies, TargetBodiesStatus};
 
-use super::local_thread_pool;
+use super::{local_thread_pool, state::TargetBodyBuildState};
 
 pub(super) fn resolve_packages(
     packages: &mut [PackageBodies],
@@ -86,25 +79,7 @@ fn resolve_package(
             target: TargetId(target_idx),
         };
 
-        let target_items = TargetItemQuery::new(def_map_txn, semantic_ir, target_ref);
-        let semantic_index = ItemLookupIndex::build_from(&target_items)?;
-
-        for (body_idx, body) in target.bodies_mut().iter_mut().enumerate() {
-            let body_ref = BodyRef {
-                target: target_ref,
-                body: BodyId(body_idx),
-            };
-            // First, collect the defmap
-            let body_def_map = BodyDefMapCollector::new(body_ref, body).collect();
-            // Then, collect the local items
-            let body_item_store = BodyItemStoreCollector::new(body, &body_def_map).collect();
-            // TODO: Note that there is no resolution for both defmap and local items just yet.
-            body.body_def_map = Some(body_def_map);
-            body.body_item_store = Some(body_item_store);
-
-            BodyResolver::new(def_map_txn, semantic_ir, &semantic_index, body_ref, body)
-                .resolve()?;
-        }
+        TargetBodyBuildState::new(target_ref, target).resolve(def_map_txn, semantic_ir)?;
     }
 
     Ok(())
