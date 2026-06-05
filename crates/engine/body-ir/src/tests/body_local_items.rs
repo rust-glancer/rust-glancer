@@ -1,4 +1,8 @@
 use expect_test::expect;
+use rg_def_map::PackageSlot;
+use rg_ir_model::{BodyId, BodyRef, TargetRef};
+
+use crate::testonly::BodyIrFixture;
 
 use super::utils::check_project_body_ir;
 
@@ -743,6 +747,213 @@ pub fn use_it() {
               stmt s4 let v3 @ 13:5-13:38
                 initializer
                   expr e7 path named -> local v2 => nominal enum fn body_local_enum_pattern_fixture[lib]::crate::use_it::Action @ 5:5-8:6 @ 13:32-13:37
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_body_local_chained_import_aliases() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_local_import_alias_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it(id: GlobalId) {
+    use crate::GlobalId as RootId;
+    use RootId as LocalId;
+
+    let typed: LocalId = id;
+}
+"#,
+        expect![[r#"
+            package body_local_import_alias_fixture
+
+            body_local_import_alias_fixture [lib]
+            body b0 fn body_local_import_alias_fixture[lib]::crate::use_it @ 3:1-8:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1; source_items i0, i1
+            source_items
+            - i0 use <unnamed> @ 4:5-4:35
+            - i1 use <unnamed> @ 5:5-5:27
+            bindings
+            - v0 param id `id`: GlobalId => nominal struct body_local_import_alias_fixture[lib]::crate::GlobalId @ 3:15-3:17
+            - v1 let typed `typed`: LocalId => nominal struct body_local_import_alias_fixture[lib]::crate::GlobalId @ 7:9-7:14
+            body
+            expr e1 block s1 => () @ 3:29-8:2
+              stmt s0 source_item i0 @ 4:5-4:35
+              stmt s1 source_item i1 @ 5:5-5:27
+              stmt s2 let v1: LocalId @ 7:5-7:29
+                initializer
+                  expr e0 path id -> local v0 => nominal struct body_local_import_alias_fixture[lib]::crate::GlobalId @ 7:26-7:28
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_body_local_module_imports() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_local_module_import_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    mod local {
+        pub struct User;
+        pub const VALUE: User = missing();
+    }
+
+    use local::User as LocalUser;
+    use local::*;
+
+    let user: LocalUser;
+    let value = VALUE;
+}
+"#,
+        expect![[r#"
+            package body_local_module_import_fixture
+
+            body_local_module_import_fixture [lib]
+            body b0 fn body_local_module_import_fixture[lib]::crate::use_it @ 1:1-12:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v1; source_items i2, i3, i4
+            source_items
+            - i0 struct User @ 3:9-3:25
+            - i1 const VALUE @ 4:9-4:43
+            - i2 module local @ 2:5-5:6
+            - i3 use <unnamed> @ 7:5-7:34
+            - i4 use <unnamed> @ 8:5-8:18
+            bindings
+            - v0 let user `user`: LocalUser => nominal struct fn body_local_module_import_fixture[lib]::crate::use_it::local::User @ 3:9-3:25 @ 10:9-10:13
+            - v1 let value `value` => nominal struct fn body_local_module_import_fixture[lib]::crate::use_it::local::User @ 3:9-3:25 @ 11:9-11:14
+            body
+            expr e1 block s1 => () @ 1:17-12:2
+              stmt s0 source_item i2 @ 2:5-5:6
+              stmt s1 source_item i3 @ 7:5-7:34
+              stmt s2 source_item i4 @ 8:5-8:18
+              stmt s3 let v0: LocalUser @ 10:5-10:25
+              stmt s4 let v1 @ 11:5-11:23
+                initializer
+                  expr e0 path VALUE -> const fn body_local_module_import_fixture[lib]::crate::use_it::local::VALUE => nominal struct fn body_local_module_import_fixture[lib]::crate::use_it::local::User @ 3:9-3:25 @ 11:17-11:22
+        "#]],
+    );
+}
+
+#[test]
+fn records_unresolved_body_local_imports() {
+    let db = BodyIrFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_local_unresolved_import_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    use missing::Item;
+
+    let value: Item;
+}
+"#,
+    );
+    let package = db
+        .parse_db()
+        .packages()
+        .first()
+        .expect("fixture should contain one package");
+    let target = package
+        .targets()
+        .first()
+        .expect("fixture package should contain one target");
+    let body = db
+        .resident_body(BodyRef {
+            target: TargetRef {
+                package: PackageSlot(0),
+                target: target.id,
+            },
+            body: BodyId(0),
+        })
+        .expect("fixture should contain one lowered body");
+    let def_map = body
+        .body_def_map()
+        .expect("lowered body should contain a finalized body-local defmap");
+
+    let unresolved_imports = def_map
+        .modules()
+        .iter()
+        .flat_map(|module| module.unresolved_imports.iter())
+        .collect::<Vec<_>>();
+    assert_eq!(unresolved_imports.len(), 1);
+
+    let import = def_map
+        .imports()
+        .get(unresolved_imports[0].0)
+        .expect("unresolved import id should point to a body-local import");
+    assert_eq!(import.binding_name().as_deref(), Some("Item"));
+}
+
+#[test]
+fn resolves_imports_before_body_local_impl_headers() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_local_imported_impl_header_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+pub struct LocalId;
+
+pub fn use_it(id: GlobalId) {
+    use crate::GlobalId as Id;
+
+    impl Id {
+        fn local(&self) -> LocalId {
+            missing()
+        }
+    }
+
+    let local = id.local();
+}
+"#,
+        expect![[r#"
+            package body_local_imported_impl_header_fixture
+
+            body_local_imported_impl_header_fixture [lib]
+            body b0 fn body_local_imported_impl_header_fixture[lib]::crate::use_it @ 4:1-14:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1; source_items i0, i2
+            source_items
+            - i0 use <unnamed> @ 5:5-5:31
+            - i1 fn local @ 8:9-10:10
+            - i2 impl <unnamed> @ 7:5-11:6
+            bindings
+            - v0 param id `id`: GlobalId => nominal struct body_local_imported_impl_header_fixture[lib]::crate::GlobalId @ 4:15-4:17
+            - v1 let local `local` => nominal struct body_local_imported_impl_header_fixture[lib]::crate::LocalId @ 13:9-13:14
+            body
+            expr e2 block s1 => () @ 4:29-14:2
+              stmt s0 source_item i0 @ 5:5-5:31
+              stmt s1 source_item i2 @ 7:5-11:6
+              stmt s2 let v1 @ 13:5-13:28
+                initializer
+                  expr e1 method_call local -> fn impl Id::local => nominal struct body_local_imported_impl_header_fixture[lib]::crate::LocalId @ 13:17-13:27
+                    receiver
+                      expr e0 path id -> local v0 => nominal struct body_local_imported_impl_header_fixture[lib]::crate::GlobalId @ 13:17-13:19
         "#]],
     );
 }

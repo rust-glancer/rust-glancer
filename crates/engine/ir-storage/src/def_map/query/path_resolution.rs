@@ -348,11 +348,12 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         importing_module: ModuleId,
         path: &ImportPath,
     ) -> Result<Vec<DefId>, E::Error> {
-        self.import_defs_with_filter(
-            importing_target,
-            importing_module,
+        self.import_defs_from_module(
+            ModuleRef {
+                origin: DefMapRef::Target(importing_target),
+                module: importing_module,
+            },
             path,
-            NameResolutionFilter::AllNamespaces,
         )
     }
 
@@ -363,8 +364,38 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         importing_module: ModuleId,
         path: &ImportPath,
     ) -> Result<Vec<ModuleRef>, E::Error> {
-        let resolved_defs = self.import_defs_with_filter(
-            importing_target,
+        self.import_modules_from_module(
+            ModuleRef {
+                origin: DefMapRef::Target(importing_target),
+                module: importing_module,
+            },
+            path,
+        )
+    }
+
+    /// Resolves an import path from a concrete module origin.
+    ///
+    /// Target-level imports delegate here, and body-local import finalization can use the same path
+    /// rules without losing the body origin of the importing synthetic module.
+    pub fn import_defs_from_module(
+        &self,
+        importing_module: ModuleRef,
+        path: &ImportPath,
+    ) -> Result<Vec<DefId>, E::Error> {
+        self.import_defs_from_module_with_filter(
+            importing_module,
+            path,
+            NameResolutionFilter::AllNamespaces,
+        )
+    }
+
+    /// Resolves an import path from a concrete module origin and keeps only module results.
+    pub fn import_modules_from_module(
+        &self,
+        importing_module: ModuleRef,
+        path: &ImportPath,
+    ) -> Result<Vec<ModuleRef>, E::Error> {
+        let resolved_defs = self.import_defs_from_module_with_filter(
             importing_module,
             path,
             NameResolutionFilter::TypesOnly,
@@ -432,18 +463,14 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         Ok(bindings)
     }
 
-    fn import_defs_with_filter(
+    fn import_defs_from_module_with_filter(
         &self,
-        importing_target: TargetRef,
-        importing_module: ModuleId,
+        importing_module: ModuleRef,
         path: &ImportPath,
         terminal_filter: NameResolutionFilter,
     ) -> Result<Vec<DefId>, E::Error> {
         let result = self.resolve_path_segments(
-            ModuleRef {
-                origin: DefMapRef::Target(importing_target),
-                module: importing_module,
-            },
+            importing_module,
             path.absolute,
             &path.segments,
             terminal_filter,

@@ -1,16 +1,19 @@
 use anyhow::Context as _;
 use rg_arena::Arena;
 use rg_ir_model::{
-    BodyRef, DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef,
+    BodyRef, DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef,
     hir::source::{BodyItemSourceRef, ItemSource, ItemSourceKind},
 };
 use rg_ir_storage::{
-    DefMap, DefMapBuilder, ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath,
-    ItemStore, LocalDefData, LocalDefKind, LocalImplData, ModuleData, ModuleOrigin, ModuleScope,
-    ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin,
+    DefMap, DefMapBuilder, DefMapSource, ImportBinding, ImportData, ImportKind, ImportPath,
+    ImportSourcePath, ItemStore, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
+    ModuleData, ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, PathResolver,
+    ScopeBinding, ScopeBindingOrigin, ScopeEntryRef, ScopeResolutionEnv, TargetResolutionEnv,
 };
 use rg_item_tree::{Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource};
+use rg_package_store::PackageStoreError;
 use rg_semantic_ir::{ItemStoreLowerer, ItemStoreSourceReader};
+use rg_text::Name;
 
 use super::BodyData;
 
@@ -71,8 +74,8 @@ impl<'body> BodyDefMapCollector<'body> {
         }
     }
 
-    /// Collects the body item tree into a body-local DefMap.
-    pub fn collect(mut self) -> DefMap {
+    /// Collects direct body-local scope facts. Imports are finalized in a separate fixed-point step.
+    pub fn collect(mut self) -> BodyDefMapBuildState {
         // First, go through all the scopes and allocate synthetic modules.
         for (_, scope) in self.body.scopes.iter_with_ids() {
             // Body scopes are synthetic modules. They carry lexical scope data, but they do not
@@ -113,11 +116,11 @@ impl<'body> BodyDefMapCollector<'body> {
             }
         }
 
-        // TODO: For now, we do not have any kind of import resolution / fixed loop,
-        // as they are much less relevant for bodies. It might be relevant eventually
-        // but for now it's omitted for simplicity.
-        self.freeze_scopes();
-        self.builder.build()
+        BodyDefMapBuildState {
+            body_ref: self.body_ref,
+            builder: self.builder,
+            base_scopes: self.base_scopes,
+        }
     }
 
     fn alloc_module(&mut self, module: ModuleData) -> ModuleId {
@@ -126,15 +129,6 @@ impl<'body> BodyDefMapCollector<'body> {
         let module = self.builder.alloc_module(module);
         self.base_scopes.push(ModuleScopeBuilder::default());
         module
-    }
-
-    fn freeze_scopes(&mut self) {
-        for (module_idx, base_scope) in self.base_scopes.iter().enumerate() {
-            self.builder
-                .module_mut(ModuleId(module_idx))
-                .expect("module should exist for body scope freeze")
-                .scope = base_scope.freeze();
-        }
     }
 
     fn collect_item(&mut self, module: ModuleId, item_id: ItemTreeId) {
@@ -332,6 +326,305 @@ impl<'body> BodyDefMapCollector<'body> {
                 item: item_id,
             },
         )
+    }
+}
+
+/// Body-local DefMap state before imports have been fixed up and frozen.
+pub(crate) struct BodyDefMapBuildState {
+    body_ref: BodyRef,
+    builder: DefMapBuilder,
+    base_scopes: Vec<ModuleScopeBuilder>,
+}
+
+impl BodyDefMapBuildState {
+    pub(crate) fn finalize<S>(mut self, def_maps: S) -> Result<DefMap, PackageStoreError>
+    where
+        S: DefMapSource<Error = PackageStoreError> + Copy,
+    {
+        let final_scopes = self.resolve_import_scopes(def_maps)?;
+        let unresolved_imports = self.collect_unresolved_imports(def_maps, &final_scopes)?;
+
+        for (module_idx, scope) in final_scopes.iter().enumerate() {
+            let module = self
+                .builder
+                .module_mut(ModuleId(module_idx))
+                .expect("module should exist for body scope freeze");
+            module.scope = scope.freeze();
+            module.unresolved_imports = unresolved_imports
+                .get(module_idx)
+                .expect("unresolved imports should exist for every body module")
+                .clone();
+        }
+
+        Ok(self.builder.build())
+    }
+
+    fn resolve_import_scopes<S>(
+        &self,
+        def_maps: S,
+    ) -> Result<Vec<ModuleScopeBuilder>, PackageStoreError>
+    where
+        S: DefMapSource<Error = PackageStoreError> + Copy,
+    {
+        let mut current_scopes = self.base_scopes.clone();
+
+        loop {
+            let mut next_scopes = self.base_scopes.clone();
+            let env = BodyDefMapFinalizationEnv {
+                def_maps,
+                state: self,
+                current_scopes: &current_scopes,
+            };
+            self.apply_imports(&env, &mut next_scopes)?;
+
+            if next_scopes == current_scopes {
+                return Ok(current_scopes);
+            }
+
+            current_scopes = next_scopes;
+        }
+    }
+
+    fn apply_imports<S>(
+        &self,
+        env: &BodyDefMapFinalizationEnv<'_, S>,
+        next_scopes: &mut [ModuleScopeBuilder],
+    ) -> Result<(), PackageStoreError>
+    where
+        S: DefMapSource<Error = PackageStoreError> + Copy,
+    {
+        let resolver = PathResolver::new(env);
+        for import in self.builder.as_incomplete_def_map().imports() {
+            let importing_module = self.importing_module(import.module);
+            match import.kind {
+                ImportKind::Glob => {
+                    let source_modules =
+                        resolver.import_modules_from_module(importing_module, &import.path)?;
+
+                    for source_module in source_modules {
+                        let source_scope =
+                            resolver.visible_scope(importing_module, source_module)?;
+                        let target_scope = next_scopes
+                            .get_mut(import.module.0)
+                            .expect("target scope should exist for body import");
+
+                        for (name, entry) in source_scope.entries() {
+                            target_scope.copy_visible_bindings(
+                                name,
+                                entry,
+                                import.visibility.clone(),
+                                importing_module,
+                            );
+                        }
+                    }
+                }
+                ImportKind::Named | ImportKind::SelfImport => {
+                    let resolved_defs =
+                        resolver.import_defs_from_module(importing_module, &import.path)?;
+                    let Some(binding_name) = import.binding_name() else {
+                        continue;
+                    };
+                    let target_scope = next_scopes
+                        .get_mut(import.module.0)
+                        .expect("target scope should exist for body import");
+
+                    for resolved_def in resolved_defs {
+                        let Some(namespace) = resolver.namespace_for_def(resolved_def)? else {
+                            continue;
+                        };
+                        target_scope.insert_binding(
+                            &binding_name,
+                            namespace,
+                            ScopeBinding {
+                                def: resolved_def,
+                                visibility: import.visibility.clone(),
+                                owner: importing_module,
+                                origin: ScopeBindingOrigin::Import,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn collect_unresolved_imports<S>(
+        &self,
+        def_maps: S,
+        final_scopes: &[ModuleScopeBuilder],
+    ) -> Result<Vec<Vec<rg_ir_model::ImportId>>, PackageStoreError>
+    where
+        S: DefMapSource<Error = PackageStoreError> + Copy,
+    {
+        let mut module_imports =
+            vec![Vec::new(); self.builder.as_incomplete_def_map().module_count()];
+        let env = BodyDefMapFinalizationEnv {
+            def_maps,
+            state: self,
+            current_scopes: final_scopes,
+        };
+        let resolver = PathResolver::new(&env);
+
+        for (import_id, import) in self.builder.as_incomplete_def_map().imports_with_ids() {
+            let importing_module = self.importing_module(import.module);
+            let is_unresolved = match import.kind {
+                ImportKind::Glob => resolver
+                    .import_modules_from_module(importing_module, &import.path)?
+                    .is_empty(),
+                ImportKind::Named | ImportKind::SelfImport => resolver
+                    .import_defs_from_module(importing_module, &import.path)?
+                    .is_empty(),
+            };
+            if is_unresolved {
+                module_imports
+                    .get_mut(import.module.0)
+                    .expect("import module should exist while collecting body unresolved imports")
+                    .push(import_id);
+            }
+        }
+
+        Ok(module_imports)
+    }
+
+    fn importing_module(&self, module: ModuleId) -> ModuleRef {
+        ModuleRef {
+            origin: DefMapRef::Body(self.body_ref),
+            module,
+        }
+    }
+}
+
+struct BodyDefMapFinalizationEnv<'state, S> {
+    def_maps: S,
+    state: &'state BodyDefMapBuildState,
+    current_scopes: &'state [ModuleScopeBuilder],
+}
+
+impl<S> BodyDefMapFinalizationEnv<'_, S>
+where
+    S: DefMapSource<Error = PackageStoreError> + Copy,
+{
+    fn is_active_body_origin(&self, origin: DefMapRef) -> bool {
+        origin == DefMapRef::Body(self.state.body_ref)
+    }
+}
+
+impl<S> ScopeResolutionEnv for BodyDefMapFinalizationEnv<'_, S>
+where
+    S: DefMapSource<Error = PackageStoreError> + Copy,
+{
+    type Error = PackageStoreError;
+
+    fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
+        if self.is_active_body_origin(module_ref.origin) {
+            return Ok(self
+                .state
+                .builder
+                .as_incomplete_def_map()
+                .module(module_ref.module));
+        }
+
+        Ok(self
+            .def_maps
+            .def_map_for_origin(module_ref.origin)?
+            .and_then(|def_map| def_map.module(module_ref.module)))
+    }
+
+    fn module_scope_entry<'a>(
+        &'a self,
+        module_ref: ModuleRef,
+        name: &str,
+    ) -> Result<Option<ScopeEntryRef<'a>>, Self::Error> {
+        if self.is_active_body_origin(module_ref.origin) {
+            return Ok(self
+                .current_scopes
+                .get(module_ref.module.0)
+                .and_then(|scope| scope.entry(name)));
+        }
+
+        Ok(self
+            .module_data(module_ref)?
+            .and_then(|module| module.scope.entry(name))
+            .map(|entry| entry.as_ref()))
+    }
+
+    fn module_scope_entries<'a>(
+        &'a self,
+        module_ref: ModuleRef,
+    ) -> Result<Vec<(&'a Name, ScopeEntryRef<'a>)>, Self::Error> {
+        if self.is_active_body_origin(module_ref.origin) {
+            return Ok(self
+                .current_scopes
+                .get(module_ref.module.0)
+                .map(|scope| scope.entries().collect())
+                .unwrap_or_default());
+        }
+
+        Ok(self
+            .module_data(module_ref)?
+            .map(|module| {
+                module
+                    .scope
+                    .entries()
+                    .map(|(name, entry)| (name, entry.as_ref()))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+
+    fn local_def_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&LocalDefData>, Self::Error> {
+        if self.is_active_body_origin(local_def_ref.origin) {
+            return Ok(self
+                .state
+                .builder
+                .as_incomplete_def_map()
+                .local_def(local_def_ref.local_def));
+        }
+
+        Ok(self
+            .def_maps
+            .def_map_for_origin(local_def_ref.origin)?
+            .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
+    }
+
+    fn macro_definition_data(
+        &self,
+        local_def_ref: LocalDefRef,
+    ) -> Result<Option<&MacroDefinitionData>, Self::Error> {
+        if self.is_active_body_origin(local_def_ref.origin) {
+            return Ok(self
+                .state
+                .builder
+                .as_incomplete_def_map()
+                .macro_definition(local_def_ref.local_def));
+        }
+
+        Ok(self
+            .def_maps
+            .def_map_for_origin(local_def_ref.origin)?
+            .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))
+    }
+}
+
+impl<S> TargetResolutionEnv for BodyDefMapFinalizationEnv<'_, S>
+where
+    S: DefMapSource<Error = PackageStoreError> + Copy,
+{
+    fn extern_root(&self, target: TargetRef, name: &str) -> Result<Option<ModuleRef>, Self::Error> {
+        self.def_maps.extern_root(target, name)
+    }
+
+    fn prelude_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
+        self.def_maps.prelude_module(target)
+    }
+
+    fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
+        self.def_maps.root_module(target)
     }
 }
 

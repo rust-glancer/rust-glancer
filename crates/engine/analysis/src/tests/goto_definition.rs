@@ -925,6 +925,48 @@ pub fn make() {
 }
 
 #[test]
+fn resolves_body_local_imported_paths_and_impl_headers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_import_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+pub struct LocalId;
+
+pub fn use_it(id: GlobalId) {
+    use crate::GlobalId as RootId;
+    use RootId as LocalAlias;
+
+    impl LocalAlias {
+        fn local(&self) -> LocalId {
+            missing()
+        }
+    }
+
+    let _typed: Local$goto_alias$Alias = id;
+    let _local = id.lo$goto_method$cal();
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto chained body-local import", "goto_alias"),
+            AnalysisQuery::goto("goto imported impl method", "goto_method"),
+        ],
+        expect![[r#"
+            goto chained body-local import
+            - struct GlobalId @ 1:12-1:20
+
+            goto imported impl method
+            - fn local @ 9:12-9:17
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_body_let_annotation_paths_with_body_context() {
     check_analysis_queries(
         r#"

@@ -773,6 +773,48 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_body_local_imported_items() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_import_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    mod local {
+        pub struct User;
+        pub const VALUE: User = missing();
+    }
+
+    use local::*;
+
+    let _typed: U$type$;
+    let _value = V$value$;
+}
+"#,
+        &[
+            AnalysisQuery::complete("body-local imported type completions", "type"),
+            AnalysisQuery::complete("body-local imported value completions", "value"),
+        ],
+        expect![[r#"
+            body-local imported type completions
+            - struct User
+            - module local
+
+            body-local imported value completions
+            - struct User
+            - const VALUE
+            - variable _typed
+            - module local
+            - fn use_it
+        "#]],
+    );
+}
+
+#[test]
 fn completes_unqualified_type_args_in_generic_type_paths() {
     check_analysis_queries_with_sysroot(
         r#"

@@ -1197,6 +1197,41 @@ pub fn use_it() {
 }
 
 #[test]
+fn returns_body_local_imported_value_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_import_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    mod local {
+        pub struct User;
+        pub const VALUE: User = missing();
+    }
+
+    use local::User as LocalUser;
+    use local::*;
+
+    let _user: LocalUser;
+    let _value = VAL$type_value$UE;
+}
+"#,
+        &[AnalysisQuery::ty(
+            "type at body-local imported value",
+            "type_value",
+        )],
+        expect![[r#"
+            type at body-local imported value
+            - nominal struct fn analysis_body_local_import_type[lib]::crate::use_it::User
+        "#]],
+    );
+}
+
+#[test]
 fn returns_nested_body_local_impl_method_call_types() {
     check_analysis_queries(
         r#"

@@ -44,7 +44,7 @@ impl<'target> TargetBodyBuildState<'target> {
         // Before resolving bodies on the expr level, we need to collect
         // the items declared within the body, and we need to match `impl`
         // blocks to their corresponding `Self` types.
-        self.collect_body_local_items();
+        self.collect_body_local_items(def_map)?;
         self.resolve_body_local_impl_headers(def_map, semantic_ir)?;
 
         // Now that we collected body local items, we can build a lookup index
@@ -65,20 +65,27 @@ impl<'target> TargetBodyBuildState<'target> {
     }
 
     // Go through each body, and collect definitions & items within this body.
-    fn collect_body_local_items(&mut self) {
+    fn collect_body_local_items(
+        &mut self,
+        def_map: &DefMapReadTxn<'_>,
+    ) -> Result<(), PackageStoreError> {
         self.body_local_items.clear();
         for (body_idx, body) in self.target_bodies.bodies().iter().enumerate() {
             let body_ref = self.body_ref(body_idx);
 
             // Body-local item collection is separated from expression resolution so future passes
             // can finalize imports and discover nested body owners before any body is resolved.
-            let def_map = BodyDefMapCollector::new(body_ref, body).collect();
+            let def_map = BodyDefMapCollector::new(body_ref, body)
+                .collect()
+                .finalize(def_map)?;
             let item_store = BodyItemStoreCollector::new(body, &def_map).collect();
             self.body_local_items.push(Some(BodyLocalItems {
                 def_map,
                 item_store,
             }));
         }
+
+        Ok(())
     }
 
     // After body-local item collection, impl headers can be resolved against the body defmap and
