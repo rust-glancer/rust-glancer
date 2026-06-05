@@ -1,0 +1,36 @@
+name: Cargo cache
+description: Restore and save Cargo dependency and build artifacts.
+
+inputs:
+  scope:
+    description: Stable cache scope, usually the workflow job or build mode.
+    required: true
+  target-dir:
+    description: Cargo target directory to cache.
+    required: true
+  dependency-key:
+    description: Hash or version string that changes when Rust dependencies/toolchain change.
+    required: true
+  exclude-paths:
+    description: Optional newline-separated cache path patterns to exclude.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Cache Cargo artifacts
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+      with:
+        path: |
+          ~/.cargo/registry/index
+          ~/.cargo/registry/cache
+          ~/.cargo/registry/src
+          ~/.cargo/git/db
+          ~/.cargo/git/checkouts
+          ${{ inputs.target-dir }}
+          ${{ inputs.exclude-paths }}
+        key: cargo-${{ runner.os }}-${{ inputs.scope }}-${{ inputs.dependency-key }}-${{ github.sha }}
+        restore-keys: |
+          cargo-${{ runner.os }}-${{ inputs.scope }}-${{ inputs.dependency-key }}-
+          cargo-${{ runner.os }}-${{ inputs.scope }}-

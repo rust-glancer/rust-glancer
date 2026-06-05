@@ -15,6 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/cargo-cache
+        with:
+          scope: ci-${{ github.job }}
+          target-dir: target
+          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
       - name: Check formatting
         run: cargo fmt --check
       - name: Run clippy
@@ -25,6 +30,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/cargo-cache
+        with:
+          scope: ci-${{ github.job }}
+          target-dir: target
+          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
       - uses: taiki-e/install-action@50b4a718b59c718df4ef27a3b445f86cd57b9f00 # v2.80.0
         with:
           tool: cargo-nextest@0.9.132
@@ -34,8 +44,15 @@ jobs:
   test-targets:
     name: test-targets
     runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: target/test-targets
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: ./.github/actions/cargo-cache
+        with:
+          scope: ci-${{ github.job }}
+          target-dir: target/test-targets
+          dependency-key: ${{ hashFiles('rust-toolchain.toml', 'test_targets/**/Cargo.lock', 'test_targets/**/Cargo.toml') }}
       - uses: taiki-e/install-action@50b4a718b59c718df4ef27a3b445f86cd57b9f00 # v2.80.0
         with:
           tool: just@1.48.1
