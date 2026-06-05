@@ -420,6 +420,60 @@ pub fn make() {
 }
 
 #[test]
+fn finds_parent_body_local_references_inside_associated_item_bodies() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_assoc_body_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    const SE$seed_ref$ED: GlobalId = GlobalId;
+
+    struct User;
+
+    trait Named {
+        const TRAIT_DEFAULT: GlobalId = SEED;
+
+        fn trait_make() -> GlobalId {
+            SEED
+        }
+    }
+
+    impl User {
+        const DEFAULT: GlobalId = SEED;
+
+        fn make() -> GlobalId {
+            SEED
+        }
+    }
+
+    let _default = User::DEFAULT;
+    let _made = User::make();
+}
+"#,
+        &[AnalysisQuery::references(
+            "parent body-local const references inside associated bodies",
+            "seed_ref",
+            ReferenceQuery::all(),
+        )],
+        expect![[r#"
+            parent body-local const references inside associated bodies
+            - `SEED` @ src/lib.rs:4:11-4:15
+            - `SEED` @ src/lib.rs:9:41-9:45
+            - `SEED` @ src/lib.rs:12:13-12:17
+            - `SEED` @ src/lib.rs:17:35-17:39
+            - `SEED` @ src/lib.rs:20:13-20:17
+        "#]],
+    );
+}
+
+#[test]
 fn scoped_references_keep_external_declaration_without_external_uses() {
     check_analysis_queries(
         r#"

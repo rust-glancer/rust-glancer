@@ -2,7 +2,8 @@
 
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
-    BodyId, BodyRef, ConstRef, DefMapRef, ItemOwner, StaticRef, TargetRef, TypePathResolution,
+    BodyId, BodyRef, ConstRef, DefMapRef, ItemOwner, ModuleRef, StaticRef, TargetRef,
+    TypePathResolution,
 };
 use rg_ir_storage::{DefMap, ItemLookupIndex, ItemStore, Path, TargetItemQuery};
 use rg_semantic_ir::SemanticIrReadTxn;
@@ -137,20 +138,23 @@ impl<'target> TargetBodyBuildState<'target> {
 
     fn nested_body_tasks(
         body_ref: BodyRef,
-        fallback_module: rg_ir_model::ModuleRef,
+        fallback_module: ModuleRef,
         item_store: &ItemStore,
     ) -> Vec<BodyLoweringTask> {
+        let origin = DefMapRef::Body(body_ref);
         let mut tasks = Vec::new();
 
-        // Body-local module items become ordinary body owners once their item store exists. We
-        // intentionally skip associated items here; their owner context needs a separate slice.
+        // Associated items share the function/const arenas with module items. Their body still
+        // belongs to the associated item, but type lookup starts from the owning impl/trait module.
         for (function_ref, function_data) in item_store.functions_with_refs() {
-            let ItemOwner::Module(owner_module) = function_data.owner else {
-                continue;
-            };
-            if function_ref.origin != DefMapRef::Body(body_ref) {
+            if function_ref.origin != origin {
                 continue;
             }
+            let Some(owner_module) =
+                Self::owner_module_for_body_item_owner(item_store, function_data.owner)
+            else {
+                continue;
+            };
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Function(function_ref),
                 owner_module,
@@ -161,12 +165,14 @@ impl<'target> TargetBodyBuildState<'target> {
         }
 
         for (const_id, const_data) in item_store.consts().iter_with_ids() {
-            let ItemOwner::Module(owner_module) = const_data.owner else {
+            let Some(owner_module) =
+                Self::owner_module_for_body_item_owner(item_store, const_data.owner)
+            else {
                 continue;
             };
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Const(ConstRef {
-                    origin: DefMapRef::Body(body_ref),
+                    origin,
                     id: const_id,
                 }),
                 owner_module,
@@ -179,7 +185,7 @@ impl<'target> TargetBodyBuildState<'target> {
         for (static_id, static_data) in item_store.statics().iter_with_ids() {
             tasks.push(BodyLoweringTask {
                 owner: BodyOwner::Static(StaticRef {
-                    origin: DefMapRef::Body(body_ref),
+                    origin,
                     id: static_id,
                 }),
                 owner_module: static_data.owner,
@@ -189,7 +195,19 @@ impl<'target> TargetBodyBuildState<'target> {
             });
         }
 
+        tasks.sort_by_key(|task| (task.file_id.0, task.span.text.start, task.span.text.end));
         tasks
+    }
+
+    fn owner_module_for_body_item_owner(
+        item_store: &ItemStore,
+        owner: ItemOwner,
+    ) -> Option<ModuleRef> {
+        match owner {
+            ItemOwner::Module(module) => Some(module),
+            ItemOwner::Trait(trait_id) => item_store.trait_data(trait_id).map(|data| data.owner),
+            ItemOwner::Impl(impl_id) => item_store.impl_data(impl_id).map(|data| data.owner),
+        }
     }
 
     // After body-local item collection, impl headers can be resolved against the body defmap and
