@@ -474,6 +474,39 @@ pub fn make() {
 }
 
 #[test]
+fn finds_lowercase_const_references_from_ambiguous_patterns() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_ambiguous_pattern_const_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub const re$ready_ref$ady: u8 = 1;
+
+pub fn use_it(value: u8) {
+    match value {
+        ready => {}
+        _ => {}
+    }
+}
+"#,
+        &[AnalysisQuery::references(
+            "lowercase const references from ambiguous pattern",
+            "ready_ref",
+            ReferenceQuery::all(),
+        )],
+        expect![[r#"
+            lowercase const references from ambiguous pattern
+            - `ready` @ src/lib.rs:1:11-1:16
+            - `ready` @ src/lib.rs:5:9-5:14
+        "#]],
+    );
+}
+
+#[test]
 fn scoped_references_keep_external_declaration_without_external_uses() {
     check_analysis_queries(
         r#"

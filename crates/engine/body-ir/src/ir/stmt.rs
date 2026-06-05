@@ -20,6 +20,26 @@ pub struct BindingData {
     pub ty: Ty,
 }
 
+/// How a lowered binding slot should be treated before final binding materialization.
+///
+/// Pattern lowering records ambiguous identifiers as slots first. Body resolution then decides
+/// whether each slot becomes a real binding or remains a path-pattern use.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    wincode::SchemaRead,
+    wincode::SchemaWrite,
+    rg_memsize::MemorySize,
+)]
+#[memsize(leaf)]
+pub(crate) enum PendingBindingResolution {
+    AlwaysBinding,
+    AmbiguousPattern,
+}
+
 impl BindingData {
     pub(crate) fn shrink_to_fit(&mut self) {
         if let Some(name) = &mut self.name {

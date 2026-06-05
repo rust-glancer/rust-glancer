@@ -7,6 +7,7 @@ mod body;
 mod body_items;
 mod normalize;
 mod pat;
+mod pat_binding;
 mod query_source;
 mod receiver_items;
 mod type_path;

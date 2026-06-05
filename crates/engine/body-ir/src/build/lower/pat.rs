@@ -14,21 +14,18 @@ use crate::ir::{
     BindingData, BindingKind, BodyPath, LiteralKind, PatBindingMode, PatData, PatKind,
     PatMutability, PatRangeKind, RecordFieldSyntax, RecordPatField,
     path::{BodyPathSegment, BodyPathSegmentKind},
+    stmt::PendingBindingResolution,
 };
 
 use super::body::BodyLowering;
 
-/// How lowering should classify a simple identifier pattern before real pattern resolution exists.
-///
-/// TODO: Remove this once pattern resolution decides whether `Name` resolves as a value path or
-/// introduces a local binding. Lowering currently needs bindings early for scope construction, so
-/// it uses a syntax heuristic with a narrow override for record-pattern shorthand.
+/// A priori binding information from the syntactic position of an identifier pattern.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IdentPatResolution {
-    /// Use the existing capitalized-name heuristic for ambiguous standalone identifiers.
-    UseHeuristic,
-    /// Force binding allocation for syntax that Rust already disambiguates as a binding.
-    ForceBinding,
+enum IdentPatBinding {
+    /// Impossible to know whether this is a binding yet. Body resolution decides later.
+    AmbiguousCandidate,
+    /// This syntax position guarantees the identifier introduces a binding.
+    SyntacticBinding,
 }
 
 #[derive(Debug, Clone)]
@@ -36,7 +33,7 @@ struct PatLoweringOptions {
     kind: BindingKind,
     annotation: Option<TypeRef>,
     alloc_bindings: bool,
-    ident_resolution: IdentPatResolution,
+    ident_binding: IdentPatBinding,
 }
 
 impl PatLoweringOptions {
@@ -45,7 +42,7 @@ impl PatLoweringOptions {
             kind: self.kind,
             annotation: None,
             alloc_bindings: self.alloc_bindings,
-            ident_resolution: self.ident_resolution,
+            ident_binding: self.ident_binding,
         }
     }
 }
@@ -57,6 +54,7 @@ struct PatBindingRequest<'a> {
     kind: BindingKind,
     name: Name,
     annotation: Option<TypeRef>,
+    resolution: PendingBindingResolution,
 }
 
 impl BodyLowering<'_> {
@@ -84,20 +82,20 @@ impl BodyLowering<'_> {
         alloc_bindings: bool,
         bindings: &mut Vec<BindingId>,
     ) -> PatId {
-        self.lower_pat_inner_with_ident_resolution(
+        self.lower_pat_inner_with_ident_binding(
             pat,
             scope,
             PatLoweringOptions {
                 kind,
                 annotation,
                 alloc_bindings,
-                ident_resolution: IdentPatResolution::UseHeuristic,
+                ident_binding: IdentPatBinding::AmbiguousCandidate,
             },
             bindings,
         )
     }
 
-    fn lower_pat_inner_with_ident_resolution(
+    fn lower_pat_inner_with_ident_binding(
         &mut self,
         pat: ast::Pat,
         scope: ScopeId,
@@ -107,14 +105,14 @@ impl BodyLowering<'_> {
         let source = self.source(pat.syntax());
         let kind = options.kind;
         let alloc_bindings = options.alloc_bindings;
-        let ident_resolution = options.ident_resolution;
+        let ident_binding = options.ident_binding;
         let pat_kind = match pat {
             ast::Pat::BoxPat(pat) => {
                 let Some(inner) = pat.pat() else {
                     return self.alloc_unsupported_pat(pat.syntax());
                 };
                 PatKind::Box {
-                    pat: self.lower_pat_inner_with_ident_resolution(
+                    pat: self.lower_pat_inner_with_ident_binding(
                         inner,
                         scope,
                         options.without_annotation(),
@@ -147,16 +145,20 @@ impl BodyLowering<'_> {
                     self.lower_pat_inner(pat, scope, kind, None, alloc_bindings, bindings)
                 });
 
-                // Bare identifiers need real pattern resolution to decide between local binding
-                // and unit-variant path. Keep existing binding visibility stable while preserving
-                // the path-shaped interpretation in the IR.
-                let binding = if !alloc_bindings
-                    || ident_resolution == IdentPatResolution::UseHeuristic
-                        && ambiguous_path.is_some()
-                        && is_capitalized(name.as_str())
-                {
+                // Bare identifiers keep both meanings until body resolution can check the value
+                // namespace. Syntax-known binding sites, such as parameters and record shorthand,
+                // skip that ambiguity and materialize as bindings later.
+                let binding = if !alloc_bindings {
                     None
                 } else {
+                    let resolution = if kind == BindingKind::Param
+                        || ident_binding == IdentPatBinding::SyntacticBinding
+                        || ambiguous_path.is_none()
+                    {
+                        PendingBindingResolution::AlwaysBinding
+                    } else {
+                        PendingBindingResolution::AmbiguousPattern
+                    };
                     self.push_pat_binding(
                         PatBindingRequest {
                             syntax: pat.syntax(),
@@ -165,6 +167,7 @@ impl BodyLowering<'_> {
                             kind,
                             name,
                             annotation: options.annotation.clone(),
+                            resolution,
                         },
                         bindings,
                     )
@@ -360,6 +363,7 @@ impl BodyLowering<'_> {
             kind,
             name,
             annotation,
+            resolution,
         } = request;
 
         // Multiple bindings with the same textual name can appear in or-patterns. Reuse the first
@@ -375,15 +379,18 @@ impl BodyLowering<'_> {
             return Some(binding);
         }
 
-        let binding = self.builder.alloc_binding(BindingData {
-            source: self.source(syntax),
-            name_span: Some(name_span),
-            scope,
-            kind,
-            name: Some(name),
-            annotation,
-            ty: Ty::Unknown,
-        });
+        let binding = self.builder.alloc_pending_binding(
+            BindingData {
+                source: self.source(syntax),
+                name_span: Some(name_span),
+                scope,
+                kind,
+                name: Some(name),
+                annotation,
+                ty: Ty::Unknown,
+            },
+            resolution,
+        );
         bindings.push(binding);
         Some(binding)
     }
@@ -408,14 +415,14 @@ impl BodyLowering<'_> {
         // reference, and `User { mut name }` creates a mutable binding. The shorthand-specific rule
         // is that `User { Name }` names a field binding even though a standalone `Name` pattern may
         // resolve as a path-like unit variant.
-        self.lower_pat_inner_with_ident_resolution(
+        self.lower_pat_inner_with_ident_binding(
             pat,
             scope,
             PatLoweringOptions {
                 kind,
                 annotation: None,
                 alloc_bindings,
-                ident_resolution: IdentPatResolution::ForceBinding,
+                ident_binding: IdentPatBinding::SyntacticBinding,
             },
             bindings,
         )
@@ -427,12 +434,6 @@ impl BodyLowering<'_> {
             kind: PatKind::Unsupported,
         })
     }
-}
-
-fn is_capitalized(name: &str) -> bool {
-    name.bytes()
-        .next()
-        .is_some_and(|byte| byte.is_ascii_uppercase())
 }
 
 impl From<&ast::RecordPatField> for RecordFieldSyntax {

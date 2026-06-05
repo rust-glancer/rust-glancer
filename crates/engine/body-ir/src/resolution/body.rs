@@ -25,8 +25,8 @@ use crate::{
 
 use super::{
     BodyLocalItemQuery, BodyQuerySource, BodyReceiverFunctionQuery, TypeRefUseSite,
-    normalize::TyNormalizer, pat::PatternTypePropagator, push_unique,
-    type_path::BodyTypePathResolver,
+    normalize::TyNormalizer, pat::PatternTypePropagator, pat_binding::PatternBindingMaterializer,
+    push_unique, type_path::BodyTypePathResolver,
 };
 
 pub(crate) struct BodyResolver<'query, 'body, D, I> {
@@ -95,6 +95,7 @@ where
     }
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
+        self.materialize_pattern_bindings()?;
         self.resolve_bindings()?;
 
         // Pattern propagation can unlock later expression types, and those expressions can then
@@ -115,6 +116,17 @@ where
         }
 
         Ok(())
+    }
+
+    fn materialize_pattern_bindings(&mut self) -> Result<(), PackageStoreError> {
+        PatternBindingMaterializer::new(
+            self.def_maps,
+            self.item_stores,
+            self.semantic_index,
+            self.body_ref,
+            self.body,
+        )
+        .materialize()
     }
 
     fn resolve_bindings(&mut self) -> Result<(), PackageStoreError> {

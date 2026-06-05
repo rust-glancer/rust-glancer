@@ -11,7 +11,7 @@ use super::{
     body_map::BodySourceItems,
     expr::ExprData,
     pat::PatData,
-    stmt::{BindingData, StmtData},
+    stmt::{BindingData, PendingBindingResolution, StmtData},
 };
 
 /// Coarse totals for reporting that the Body IR phase produced useful data.
@@ -199,6 +199,7 @@ pub struct BodyData {
     pub(crate) params: Vec<BindingId>,
     pub(crate) scopes: Arena<ScopeId, ScopeData>,
     pub(crate) bindings: Arena<BindingId, BindingData>,
+    pub(crate) pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
     pub(crate) pats: Arena<PatId, PatData>,
     pub(crate) statements: Arena<StmtId, StmtData>,
     pub(crate) exprs: Arena<ExprId, ExprData>,
@@ -327,6 +328,7 @@ impl BodyData {
             params,
             scopes: builder.scopes,
             bindings: builder.bindings,
+            pending_binding_resolutions: builder.pending_binding_resolutions,
             pats: builder.pats,
             statements: builder.statements,
             exprs: builder.exprs,
@@ -350,6 +352,7 @@ impl BodyData {
         for binding in self.bindings.iter_mut() {
             binding.shrink_to_fit();
         }
+        self.pending_binding_resolutions.shrink_to_fit();
         self.pats.shrink_to_fit();
         for pat in self.pats.iter_mut() {
             pat.shrink_to_fit();
@@ -371,6 +374,7 @@ pub(crate) struct BodyBuilder {
     pub(crate) source_items: BodySourceItems,
     pub(crate) scopes: Arena<ScopeId, ScopeData>,
     pub(crate) bindings: Arena<BindingId, BindingData>,
+    pub(crate) pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
     pub(crate) pats: Arena<PatId, PatData>,
     pub(crate) statements: Arena<StmtId, StmtData>,
     pub(crate) exprs: Arena<ExprId, ExprData>,
@@ -403,8 +407,21 @@ impl BodyBuilder {
     }
 
     pub(crate) fn alloc_binding(&mut self, data: BindingData) -> BindingId {
+        self.alloc_pending_binding(data, PendingBindingResolution::AlwaysBinding)
+    }
+
+    pub(crate) fn alloc_pending_binding(
+        &mut self,
+        data: BindingData,
+        resolution: PendingBindingResolution,
+    ) -> BindingId {
         let scope = data.scope;
         let binding = self.bindings.alloc(data);
+        let resolution_id = self.pending_binding_resolutions.alloc(resolution);
+        debug_assert_eq!(
+            binding, resolution_id,
+            "pending binding resolution should mirror binding slot ids"
+        );
         self.scopes
             .get_mut(scope)
             .expect("binding scope should exist while lowering body")
