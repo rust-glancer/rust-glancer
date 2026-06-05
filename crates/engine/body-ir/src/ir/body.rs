@@ -107,8 +107,8 @@ impl TargetBodies {
         self.bodies.as_slice()
     }
 
-    pub(crate) fn alloc_body(&mut self, data: BodyData) {
-        self.bodies.alloc(data);
+    pub(crate) fn alloc_body(&mut self, data: BodyData) -> BodyId {
+        self.bodies.alloc(data)
     }
 
     pub(crate) fn bodies_mut(&mut self) -> &mut [BodyData] {
@@ -189,6 +189,7 @@ impl BodyOwner {
 pub struct BodyData {
     pub(crate) owner: BodyOwner,
     pub(crate) owner_module: ModuleRef,
+    pub(crate) fallback_module: ModuleRef,
     pub(crate) source: BodySource,
     pub(crate) source_items: BodySourceItems,
     pub(crate) body_def_map: Option<DefMap>,
@@ -214,6 +215,10 @@ impl BodyData {
 
     pub fn owner_module(&self) -> ModuleRef {
         self.owner_module
+    }
+
+    pub fn fallback_module(&self) -> ModuleRef {
+        self.fallback_module
     }
 
     pub fn source(&self) -> BodySource {
@@ -302,6 +307,7 @@ impl BodyData {
     pub(crate) fn new(
         owner: BodyOwner,
         owner_module: ModuleRef,
+        fallback_module: ModuleRef,
         source: BodySource,
         param_scope: ScopeId,
         root_expr: ExprId,
@@ -311,6 +317,7 @@ impl BodyData {
         Self {
             owner,
             owner_module,
+            fallback_module,
             source,
             source_items: builder.source_items,
             body_def_map: None,

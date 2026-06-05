@@ -10,7 +10,7 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{
     DefMapQuery, DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource,
-    NameResolutionFilter, Path, PathSegment, TargetItemQuery, TypePathContext,
+    NameResolutionFilter, Path, PathSegment, ResolvePathResult, TargetItemQuery, TypePathContext,
 };
 use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
@@ -847,9 +847,7 @@ where
             return Ok((resolution, ty));
         }
 
-        let result = self
-            .def_map_query()
-            .resolve_path(self.source.body().owner_module, path)?;
+        let result = self.resolve_path_from_owner_modules(path)?;
         let ty = self.nominal_ty_from_defs(&result.resolved)?;
         Ok((
             BodyResolution::Declarations(
@@ -915,6 +913,24 @@ where
         }
 
         Ok(None)
+    }
+
+    fn resolve_path_from_owner_modules(
+        &self,
+        path: &Path,
+    ) -> Result<ResolvePathResult, PackageStoreError> {
+        let owner_module = self.source.body().owner_module();
+        let result = self.def_map_query().resolve_path(owner_module, path)?;
+        if !result.resolved.is_empty() {
+            return Ok(result);
+        }
+
+        let fallback_module = self.source.body().fallback_module();
+        if fallback_module == owner_module {
+            return Ok(result);
+        }
+
+        self.def_map_query().resolve_path(fallback_module, path)
     }
 
     fn resolve_body_value_path_from_def_map(

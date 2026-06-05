@@ -9,6 +9,7 @@ mod pat;
 mod stmt;
 mod syntax;
 mod target;
+mod task;
 
 use anyhow::Context as _;
 use rayon::prelude::*;
@@ -25,6 +26,7 @@ use crate::{
 };
 
 use self::target::TargetLowering;
+pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering};
 use super::local_thread_pool;
 
 pub(super) fn build_packages(

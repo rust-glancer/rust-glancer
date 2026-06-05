@@ -243,6 +243,7 @@ pub fn use_it() {
 
             body-local const references
             - `DEFAULT` @ src/lib.rs:5:11-5:18
+            - `DEFAULT` @ src/lib.rs:8:9-8:16
             - `DEFAULT` @ src/lib.rs:16:20-16:27
 
             body-local static references
@@ -321,6 +322,50 @@ pub fn make() {
             inner const references
             - `helper` @ src/lib.rs:18:15-18:21
             - `helper` @ src/lib.rs:19:27-19:33
+        "#]],
+    );
+}
+
+#[test]
+fn finds_parent_body_local_references_from_nested_body_owners() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_nested_body_owner_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct Local;
+    const SE$const_ref$ED: Local = Local;
+    static CURRENT: Local = SEED;
+
+    fn helper() -> Local {
+        SEED
+    }
+
+    const AGAIN: Local = SEED;
+    static LAST: Local = SEED;
+    let _direct = SEED;
+}
+"#,
+        &[AnalysisQuery::references(
+            "parent body-local const references",
+            "const_ref",
+            ReferenceQuery::all(),
+        )],
+        expect![[r#"
+            parent body-local const references
+            - `SEED` @ src/lib.rs:5:11-5:15
+            - `SEED` @ src/lib.rs:6:29-6:33
+            - `SEED` @ src/lib.rs:9:9-9:13
+            - `SEED` @ src/lib.rs:12:26-12:30
+            - `SEED` @ src/lib.rs:13:26-13:30
+            - `SEED` @ src/lib.rs:14:19-14:23
         "#]],
     );
 }

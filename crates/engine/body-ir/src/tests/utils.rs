@@ -132,24 +132,15 @@ impl TargetBodyIrSnapshot<'_> {
             return dump;
         }
 
-        let mut bodies = target_bodies
-            .bodies()
-            .iter()
-            .enumerate()
-            .map(|(idx, body)| (self.render_body_owner(body.owner()), BodyId(idx)))
-            .collect::<Vec<_>>();
-        bodies.sort_by(|left, right| left.0.cmp(&right.0));
-
-        for (idx, (_, body_id)) in bodies.into_iter().enumerate() {
+        // Body IDs encode the order bodies were materialized. Rendering in that order keeps
+        // multi-body snapshots readable once nested const/static initializer bodies appear.
+        for (idx, body) in target_bodies.bodies().iter().enumerate() {
+            let body_id = BodyId(idx);
             if idx == 0 {
                 dump.push('\n');
             } else {
                 dump.push_str("\n\n");
             }
-
-            let body = target_bodies
-                .body(body_id)
-                .expect("body id should exist while rendering body IR");
             self.render_body(body, body_id, &mut dump);
         }
 
@@ -171,24 +162,13 @@ impl TargetBodyIrSnapshot<'_> {
             return dump;
         }
 
-        let mut bodies = target_bodies
-            .bodies()
-            .iter()
-            .enumerate()
-            .map(|(idx, body)| (self.render_body_owner(body.owner()), BodyId(idx)))
-            .collect::<Vec<_>>();
-        bodies.sort_by(|left, right| left.0.cmp(&right.0));
-
-        for (idx, (_, body_id)) in bodies.into_iter().enumerate() {
+        for (idx, body) in target_bodies.bodies().iter().enumerate() {
+            let body_id = BodyId(idx);
             if idx == 0 {
                 dump.push('\n');
             } else {
                 dump.push_str("\n\n");
             }
-
-            let body = target_bodies
-                .body(body_id)
-                .expect("body id should exist while rendering body IR patterns");
             self.render_body_patterns(body, body_id, &mut dump);
         }
 

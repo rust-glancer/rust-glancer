@@ -14,6 +14,7 @@ use super::syntax::source_for;
 pub(super) struct BodyLowering<'a> {
     owner: BodyOwner,
     owner_module: ModuleRef,
+    fallback_module: ModuleRef,
     body_source: BodySource,
     pub(super) line_index: &'a LineIndex,
     pub(super) interner: &'a mut NameInterner,
@@ -24,6 +25,7 @@ impl<'a> BodyLowering<'a> {
     pub(super) fn new(
         owner: BodyOwner,
         owner_module: ModuleRef,
+        fallback_module: ModuleRef,
         body_source: BodySource,
         line_index: &'a LineIndex,
         interner: &'a mut NameInterner,
@@ -31,6 +33,7 @@ impl<'a> BodyLowering<'a> {
         Self {
             owner,
             owner_module,
+            fallback_module,
             body_source,
             line_index,
             interner,
@@ -48,6 +51,7 @@ impl<'a> BodyLowering<'a> {
         BodyData::new(
             self.owner,
             self.owner_module,
+            self.fallback_module,
             self.body_source,
             param_scope,
             root_expr,
@@ -66,6 +70,7 @@ impl<'a> BodyLowering<'a> {
         BodyData::new(
             self.owner,
             self.owner_module,
+            self.fallback_module,
             self.body_source,
             root_scope,
             root_expr,

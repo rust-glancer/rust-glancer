@@ -886,6 +886,59 @@ pub fn make() {
 }
 
 #[test]
+fn resolves_parent_body_local_items_from_nested_body_owners() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_nested_body_owner_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct Local;
+    const DEFAULT: Local = Local;
+    static CURRENT: Local = Local;
+
+    fn helper() -> Local {
+        DEF$goto_nested_const$AULT
+    }
+
+    const AGAIN: Local = CUR$goto_nested_static$RENT;
+    static LAST: Local = Lo$goto_nested_type$cal;
+}
+"#,
+        &[
+            AnalysisQuery::goto(
+                "goto parent const from nested function",
+                "goto_nested_const",
+            ),
+            AnalysisQuery::goto(
+                "goto parent static from nested const initializer",
+                "goto_nested_static",
+            ),
+            AnalysisQuery::goto(
+                "goto parent type from nested static initializer",
+                "goto_nested_type",
+            ),
+        ],
+        expect![[r#"
+            goto parent const from nested function
+            - const DEFAULT @ 5:11-5:18
+
+            goto parent static from nested const initializer
+            - static CURRENT @ 6:12-6:19
+
+            goto parent type from nested static initializer
+            - struct Local @ 4:12-4:17
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_body_local_associated_consts_and_types() {
     check_analysis_queries(
         r#"

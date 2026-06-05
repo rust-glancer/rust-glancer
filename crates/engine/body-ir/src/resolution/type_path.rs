@@ -99,9 +99,26 @@ where
             }
         }
 
-        let context = self.context_for_body_owner()?;
         let source = self.source;
-        ItemPathQuery::new(source, source).resolve_type_path(context, path)
+        let item_paths = ItemPathQuery::new(source, source);
+        let context = self.context_for_body_owner()?;
+        let resolution = item_paths.resolve_type_path(context, path)?;
+        if !matches!(resolution, TypePathResolution::Unknown) {
+            return Ok(resolution);
+        }
+
+        let fallback_module = self.source.body().fallback_module();
+        if fallback_module == context.module {
+            return Ok(resolution);
+        }
+
+        item_paths.resolve_type_path(
+            TypePathContext {
+                module: fallback_module,
+                impl_ref: context.impl_ref,
+            },
+            path,
+        )
     }
 
     pub(crate) fn resolve_type_ref_in_scope(

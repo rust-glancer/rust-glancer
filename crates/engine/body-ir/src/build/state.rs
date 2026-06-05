@@ -1,18 +1,23 @@
 //! Target-local mutable state used while Body IR resolution is assembled.
 
 use rg_def_map::DefMapReadTxn;
-use rg_ir_model::{BodyId, BodyRef, DefMapRef, TargetRef, TypePathResolution};
+use rg_ir_model::{
+    BodyId, BodyRef, ConstRef, DefMapRef, ItemOwner, StaticRef, TargetRef, TypePathResolution,
+};
 use rg_ir_storage::{DefMap, ItemLookupIndex, ItemStore, Path, TargetItemQuery};
-use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
+use rg_text::NameInterner;
 
 use crate::{
-    TargetBodies,
+    BodyOwner, TargetBodies,
     ir::body_map::{BodyDefMapCollector, BodyItemStoreCollector},
     resolution::{BodyQuerySource, BodyResolver, BodyTypePathResolver, push_unique},
 };
 
-use super::query_source::BodyBuildQuerySource;
+use super::{
+    lower::{BodyLoweringTask, BodyTaskLowering},
+    query_source::BodyBuildQuerySource,
+};
 
 /// Body-local item facts collected for one lowered body.
 pub(super) struct BodyLocalItems {
@@ -23,16 +28,25 @@ pub(super) struct BodyLocalItems {
 /// Coordinates all body-local facts needed to resolve one target's bodies.
 pub(super) struct TargetBodyBuildState<'target> {
     target: TargetRef,
+    parse_package: &'target rg_parse::Package,
     target_bodies: &'target mut TargetBodies,
     body_local_items: Vec<Option<BodyLocalItems>>,
+    interner: &'target mut NameInterner,
 }
 
 impl<'target> TargetBodyBuildState<'target> {
-    pub(super) fn new(target: TargetRef, target_bodies: &'target mut TargetBodies) -> Self {
+    pub(super) fn new(
+        target: TargetRef,
+        parse_package: &'target rg_parse::Package,
+        target_bodies: &'target mut TargetBodies,
+        interner: &'target mut NameInterner,
+    ) -> Self {
         Self {
             target,
+            parse_package,
             target_bodies,
             body_local_items: Vec::new(),
+            interner,
         }
     }
 
@@ -40,11 +54,11 @@ impl<'target> TargetBodyBuildState<'target> {
         mut self,
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
-    ) -> Result<(), PackageStoreError> {
+    ) -> anyhow::Result<()> {
         // Before resolving bodies on the expr level, we need to collect
         // the items declared within the body, and we need to match `impl`
         // blocks to their corresponding `Self` types.
-        self.collect_body_local_items(def_map)?;
+        self.materialize_body_local_items(def_map, semantic_ir)?;
         self.resolve_body_local_impl_headers(def_map, semantic_ir)?;
 
         // Now that we collected body local items, we can build a lookup index
@@ -64,28 +78,116 @@ impl<'target> TargetBodyBuildState<'target> {
         Ok(())
     }
 
-    // Go through each body, and collect definitions & items within this body.
-    fn collect_body_local_items(
+    // Walk every known body, collecting local facts and lowering newly discovered nested bodies.
+    // This is a worklist rather than recursive descent: collecting one body can append nested
+    // fn/const/static bodies, and the loop visits those appended bodies before resolution starts.
+    fn materialize_body_local_items(
         &mut self,
         def_map: &DefMapReadTxn<'_>,
-    ) -> Result<(), PackageStoreError> {
+        semantic_ir: &SemanticIrReadTxn<'_>,
+    ) -> anyhow::Result<()> {
         self.body_local_items.clear();
-        for (body_idx, body) in self.target_bodies.bodies().iter().enumerate() {
+        // `body_local_items` is the cursor into `target_bodies`: each collected slot means that
+        // body has its local DefMap/item store ready. Nested lowering may extend `target_bodies`,
+        // so the loop stops only once every appended body has been collected too.
+        while self.body_local_items.len() < self.target_bodies.bodies().len() {
+            let body_idx = self.body_local_items.len();
             let body_ref = self.body_ref(body_idx);
+            let items = self.collect_body_local_items(body_idx, def_map, semantic_ir)?;
+            let fallback_module = self.target_bodies.bodies()[body_idx].fallback_module();
+            let nested_tasks =
+                Self::nested_body_tasks(body_ref, fallback_module, &items.item_store);
+            self.body_local_items.push(Some(items));
 
-            // Body-local item collection is separated from expression resolution so future passes
-            // can finalize imports and discover nested body owners before any body is resolved.
-            let def_map = BodyDefMapCollector::new(body_ref, body)
-                .collect()
-                .finalize(def_map)?;
-            let item_store = BodyItemStoreCollector::new(body, &def_map).collect();
-            self.body_local_items.push(Some(BodyLocalItems {
-                def_map,
-                item_store,
-            }));
+            if !nested_tasks.is_empty() {
+                BodyTaskLowering::new(self.parse_package, self.target_bodies, self.interner)
+                    .lower_tasks(&nested_tasks)?;
+            }
         }
 
         Ok(())
+    }
+
+    // Collects the local items within a single already-lowered body.
+    fn collect_body_local_items(
+        &self,
+        body_idx: usize,
+        def_map: &DefMapReadTxn<'_>,
+        semantic_ir: &SemanticIrReadTxn<'_>,
+    ) -> anyhow::Result<BodyLocalItems> {
+        let body_ref = self.body_ref(body_idx);
+        let body = &self.target_bodies.bodies()[body_idx];
+
+        // Finalization can see previously collected body-local DefMaps. This is what lets nested
+        // bodies import names from the body scope that declared them.
+        let source =
+            BodyBuildQuerySource::new(def_map, semantic_ir, self.target, &self.body_local_items);
+        let def_map = BodyDefMapCollector::new(body_ref, body)
+            .collect()
+            .finalize(&source)?;
+        let item_store = BodyItemStoreCollector::new(body, &def_map).collect();
+
+        Ok(BodyLocalItems {
+            def_map,
+            item_store,
+        })
+    }
+
+    fn nested_body_tasks(
+        body_ref: BodyRef,
+        fallback_module: rg_ir_model::ModuleRef,
+        item_store: &ItemStore,
+    ) -> Vec<BodyLoweringTask> {
+        let mut tasks = Vec::new();
+
+        // Body-local module items become ordinary body owners once their item store exists. We
+        // intentionally skip associated items here; their owner context needs a separate slice.
+        for (function_ref, function_data) in item_store.functions_with_refs() {
+            let ItemOwner::Module(owner_module) = function_data.owner else {
+                continue;
+            };
+            if function_ref.origin != DefMapRef::Body(body_ref) {
+                continue;
+            }
+            tasks.push(BodyLoweringTask {
+                owner: BodyOwner::Function(function_ref),
+                owner_module,
+                fallback_module,
+                file_id: function_data.source.file_id,
+                span: function_data.span,
+            });
+        }
+
+        for (const_id, const_data) in item_store.consts().iter_with_ids() {
+            let ItemOwner::Module(owner_module) = const_data.owner else {
+                continue;
+            };
+            tasks.push(BodyLoweringTask {
+                owner: BodyOwner::Const(ConstRef {
+                    origin: DefMapRef::Body(body_ref),
+                    id: const_id,
+                }),
+                owner_module,
+                fallback_module,
+                file_id: const_data.source.file_id,
+                span: const_data.span,
+            });
+        }
+
+        for (static_id, static_data) in item_store.statics().iter_with_ids() {
+            tasks.push(BodyLoweringTask {
+                owner: BodyOwner::Static(StaticRef {
+                    origin: DefMapRef::Body(body_ref),
+                    id: static_id,
+                }),
+                owner_module: static_data.owner,
+                fallback_module,
+                file_id: static_data.source.file_id,
+                span: static_data.span,
+            });
+        }
+
+        tasks
     }
 
     // After body-local item collection, impl headers can be resolved against the body defmap and
@@ -94,7 +196,7 @@ impl<'target> TargetBodyBuildState<'target> {
         &mut self,
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
-    ) -> Result<(), PackageStoreError> {
+    ) -> anyhow::Result<()> {
         for body_idx in 0..self.target_bodies.bodies().len() {
             let body_ref = self.body_ref(body_idx);
             let body = &self.target_bodies.bodies()[body_idx];
@@ -182,7 +284,7 @@ impl<'target> TargetBodyBuildState<'target> {
         def_map: &DefMapReadTxn<'_>,
         semantic_ir: &SemanticIrReadTxn<'_>,
         semantic_index: &ItemLookupIndex,
-    ) -> Result<(), PackageStoreError> {
+    ) -> anyhow::Result<()> {
         // Make the body resolver aware of body-local items.
         let source =
             BodyBuildQuerySource::new(def_map, semantic_ir, self.target, &self.body_local_items);

@@ -549,6 +549,102 @@ pub fn use_it() {
                       expr e4 path Action::Start -> variant enum fn body_more_local_items_fixture[lib]::crate::use_it::Action @ 4:5-7:6::Start => nominal enum fn body_more_local_items_fixture[lib]::crate::use_it::Action @ 4:5-7:6 @ 30:18-30:31
                     arg
                       expr e5 path GlobalId -> item struct body_more_local_items_fixture[lib]::crate::GlobalId => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 30:32-30:40
+
+
+            body b1 fn fn body_more_local_items_fixture[lib]::crate::use_it::helper @ 15:5-17:6
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e1 block s1 => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 15:26-17:6
+              tail
+                expr e0 path GlobalId -> item struct body_more_local_items_fixture[lib]::crate::GlobalId => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 16:9-16:17
+
+
+            body b2 const fn body_more_local_items_fixture[lib]::crate::use_it::DEFAULT @ 13:5-13:37
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 path GlobalId -> item struct body_more_local_items_fixture[lib]::crate::GlobalId => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 13:28-13:36
+
+
+            body b3 static fn body_more_local_items_fixture[lib]::crate::use_it::CURRENT @ 14:5-14:45
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 path GlobalId -> item struct body_more_local_items_fixture[lib]::crate::GlobalId => nominal struct body_more_local_items_fixture[lib]::crate::GlobalId @ 14:36-14:44
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_nested_body_references_to_parent_body_items() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "nested_body_parent_items_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    struct Local;
+    const DEFAULT: Local = Local;
+
+    fn helper() -> Local {
+        DEFAULT
+    }
+
+    let value: Local = helper();
+}
+"#,
+        expect![[r#"
+            package nested_body_parent_items_fixture
+
+            nested_body_parent_items_fixture [lib]
+            body b0 fn nested_body_parent_items_fixture[lib]::crate::use_it @ 1:1-10:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0; source_items i0, i1, i2
+            source_items
+            - i0 struct Local @ 2:5-2:18
+            - i1 const DEFAULT @ 3:5-3:34
+            - i2 fn helper @ 5:5-7:6
+            bindings
+            - v0 let value `value`: Local => nominal struct fn nested_body_parent_items_fixture[lib]::crate::use_it::Local @ 2:5-2:18 @ 9:9-9:14
+            body
+            expr e2 block s1 => () @ 1:17-10:2
+              stmt s0 source_item i0 @ 2:5-2:18
+              stmt s1 source_item i1 @ 3:5-3:34
+              stmt s2 source_item i2 @ 5:5-7:6
+              stmt s3 let v0: Local @ 9:5-9:33
+                initializer
+                  expr e1 call => nominal struct fn nested_body_parent_items_fixture[lib]::crate::use_it::Local @ 2:5-2:18 @ 9:24-9:32
+                    callee
+                      expr e0 path helper -> fn fn nested_body_parent_items_fixture[lib]::crate::use_it::helper => <unknown> @ 9:24-9:30
+
+
+            body b1 fn fn nested_body_parent_items_fixture[lib]::crate::use_it::helper @ 5:5-7:6
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e1 block s1 => <unknown> @ 5:26-7:6
+              tail
+                expr e0 path DEFAULT -> item const fn nested_body_parent_items_fixture[lib]::crate::use_it::DEFAULT => <unknown> @ 6:9-6:16
+
+
+            body b2 const fn nested_body_parent_items_fixture[lib]::crate::use_it::DEFAULT @ 3:5-3:34
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 path Local -> item struct fn nested_body_parent_items_fixture[lib]::crate::use_it::Local => nominal struct fn nested_body_parent_items_fixture[lib]::crate::use_it::Local @ 2:5-2:18 @ 3:28-3:33
         "#]],
     );
 }
@@ -624,6 +720,36 @@ pub fn use_it() {
                   stmt s6 let v2 @ 19:9-19:33
                     initializer
                       expr e4 path helper -> const fn body_local_value_shadowing_fixture[lib]::crate::use_it::helper => nominal struct body_local_value_shadowing_fixture[lib]::crate::Inner @ 19:26-19:32
+
+
+            body b1 fn fn body_local_value_shadowing_fixture[lib]::crate::use_it::helper @ 5:5-7:6
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e1 block s1 => nominal struct body_local_value_shadowing_fixture[lib]::crate::Outer @ 5:26-7:6
+              tail
+                expr e0 path Outer -> item struct body_local_value_shadowing_fixture[lib]::crate::Outer => nominal struct body_local_value_shadowing_fixture[lib]::crate::Outer @ 6:9-6:14
+
+
+            body b2 fn fn body_local_value_shadowing_fixture[lib]::crate::use_it::value @ 11:9-13:10
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e1 block s1 => nominal struct body_local_value_shadowing_fixture[lib]::crate::Inner @ 11:29-13:10
+              tail
+                expr e0 path Inner -> item struct body_local_value_shadowing_fixture[lib]::crate::Inner => nominal struct body_local_value_shadowing_fixture[lib]::crate::Inner @ 12:13-12:18
+
+
+            body b3 const fn body_local_value_shadowing_fixture[lib]::crate::use_it::helper @ 18:9-18:37
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 path Inner -> item struct body_local_value_shadowing_fixture[lib]::crate::Inner => nominal struct body_local_value_shadowing_fixture[lib]::crate::Inner @ 18:31-18:36
         "#]],
     );
 }
@@ -846,6 +972,16 @@ pub fn use_it() {
               stmt s4 let v1 @ 11:5-11:23
                 initializer
                   expr e0 path VALUE -> const fn body_local_module_import_fixture[lib]::crate::use_it::local::VALUE => nominal struct fn body_local_module_import_fixture[lib]::crate::use_it::local::User @ 3:9-3:25 @ 11:17-11:22
+
+
+            body b1 const fn body_local_module_import_fixture[lib]::crate::use_it::local::VALUE @ 4:9-4:43
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e1 call => <unknown> @ 4:33-4:42
+              callee
+                expr e0 path missing -> item <unresolved> => <unknown> @ 4:33-4:40
         "#]],
     );
 }

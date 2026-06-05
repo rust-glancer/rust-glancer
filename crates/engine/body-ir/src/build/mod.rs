@@ -73,8 +73,14 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             self.policy,
             self.interners.as_mut(),
         )?;
-        resolve::resolve_packages(&mut packages, &def_map_txn, &semantic_ir_txn)
-            .context("while attempting to resolve body IR packages")?;
+        resolve::resolve_packages(
+            &mut packages,
+            self.parse,
+            self.interners.as_mut(),
+            &def_map_txn,
+            &semantic_ir_txn,
+        )
+        .context("while attempting to resolve body IR packages")?;
         let mut db = BodyIrDb::from_packages(packages);
         {
             let mut mutator = db.mutator();
@@ -172,8 +178,14 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             self.interners,
         )
         .context("while attempting to lower rebuilt body IR packages")?;
-        resolve::resolve_selected_packages(&mut rebuilt_packages, &def_map_txn, &semantic_ir_txn)
-            .context("while attempting to resolve rebuilt body IR packages")?;
+        resolve::resolve_selected_packages(
+            &mut rebuilt_packages,
+            self.parse,
+            self.interners,
+            &def_map_txn,
+            &semantic_ir_txn,
+        )
+        .context("while attempting to resolve rebuilt body IR packages")?;
         let rebuilt_slots = rebuilt_packages
             .iter()
             .map(|(package, _)| *package)

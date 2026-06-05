@@ -339,6 +339,49 @@ pub fn make() -> Value {
 }
 
 #[test]
+fn renames_parent_body_local_const_from_nested_body_owners() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_rename_nested_body_owner_const"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct Local;
+    const SEED: Local = Local;
+
+    fn helper() -> Local {
+        SE$nested_const_use$ED
+    }
+
+    const AGAIN: Local = SEED;
+    static LAST: Local = SEED;
+    let _direct = SEED;
+}
+"#,
+        &[AnalysisQuery::rename(
+            "rename parent const from nested body",
+            "nested_const_use",
+            "FALLBACK",
+        )],
+        expect![[r#"
+            rename parent const from nested body
+            - target `SEED` @ src/lib.rs:8:9-8:13
+            - `SEED` -> `FALLBACK` @ src/lib.rs:5:11-5:15
+            - `SEED` -> `FALLBACK` @ src/lib.rs:8:9-8:13
+            - `SEED` -> `FALLBACK` @ src/lib.rs:11:26-11:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:12:26-12:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:13:19-13:23
+        "#]],
+    );
+}
+
+#[test]
 fn rename_field_in_record_literals_patterns_and_accesses() {
     check_analysis_queries(
         r#"
