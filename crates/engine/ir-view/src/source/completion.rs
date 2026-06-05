@@ -7,12 +7,12 @@ use rg_body_ir::{
     PathCompletionNamespace as BodyPathCompletionNamespace,
     UnqualifiedCompletionNamespace as BodyUnqualifiedCompletionNamespace,
 };
+use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
     ModuleRef, TargetRef,
     identity::{ExprRef, LexicalScopeRef},
 };
 use rg_ir_storage::Path;
-use rg_item_tree::FieldKey;
 use rg_parse::{FileId, Span};
 
 use crate::IndexedViewDb;

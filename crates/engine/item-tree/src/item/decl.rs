@@ -1,45 +1,35 @@
-//! Syntax-level declaration facts stored in item trees.
-//!
-//! These types preserve what the user wrote in signatures and item headers. Name resolution,
-//! type solving, and semantic ownership are left to later IR layers.
-
-use std::fmt;
-
+use rg_ir_model::items::{
+    ConstItem, ConstParamData, Documentation, EnumItem, EnumVariantItem, FieldItem, FieldKey,
+    FieldList, FunctionItem, FunctionQualifiers, GenericParams, ImplItem, ItemTreeId,
+    LifetimeParamData, Mutability, ParamItem, ParamKind, StaticItem, StructItem, TraitItem,
+    TypeAliasItem, TypeParamData, TypeRef, UnionItem, VisibilityLevel, WherePredicate,
+};
+use rg_parse::{LineIndex, Span};
 use rg_syntax::{
     AstNode as _,
     ast::{self, HasGenericParams, HasName, HasTypeBounds, HasVisibility},
 };
+use rg_text::NameInterner;
 
-use rg_parse::{LineIndex, Span};
-use rg_text::{Name, NameInterner};
+use super::{FromAst, MaybeFromAst, OuterDocs, normalized_syntax, type_bound_list_from_ast};
 
-use super::{
-    Documentation, ItemTreeId, Mutability, TypeBound, TypeRef, VisibilityLevel, normalized_syntax,
-};
-
-/// Generic parameter data attached to an item declaration.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-pub struct GenericParams {
-    pub lifetimes: Vec<LifetimeParamData>,
-    pub types: Vec<TypeParamData>,
-    pub consts: Vec<ConstParamData>,
-    pub where_predicates: Vec<WherePredicate>,
+pub struct TraitItemContext<'a> {
+    pub items: Vec<ItemTreeId>,
+    pub line_index: &'a LineIndex,
+    pub interner: &'a mut NameInterner,
 }
 
-impl GenericParams {
-    pub fn from_ast<T>(item: &T, line_index: &LineIndex, interner: &mut NameInterner) -> Self
-    where
-        T: HasGenericParams,
-    {
+pub struct ImplItemContext<'a> {
+    pub items: Vec<ItemTreeId>,
+    pub line_index: &'a LineIndex,
+    pub interner: &'a mut NameInterner,
+}
+
+impl FromAst for GenericParams {
+    type AstNode = dyn HasGenericParams;
+    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
+
+    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         let mut params = Self::default();
 
         if let Some(param_list) = item.generic_param_list() {
@@ -53,7 +43,7 @@ impl GenericParams {
                                 .unwrap_or_else(|| interner.intern("<missing>")),
                             ty: param
                                 .ty()
-                                .map(|ty| TypeRef::from_ast(ty, line_index, interner)),
+                                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
                             default: param.default_val().map(|value| normalized_syntax(&value)),
                         });
                     }
@@ -72,14 +62,14 @@ impl GenericParams {
                                 .name()
                                 .map(|name| interner.intern(name.text()))
                                 .unwrap_or_else(|| interner.intern("<missing>")),
-                            bounds: TypeBound::list_from_ast(
+                            bounds: type_bound_list_from_ast(
                                 param.type_bound_list(),
                                 line_index,
-                                interner,
+                                &mut *interner,
                             ),
                             default: param
                                 .default_type()
-                                .map(|ty| TypeRef::from_ast(ty, line_index, interner)),
+                                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
                         });
                     }
                 }
@@ -89,177 +79,19 @@ impl GenericParams {
         if let Some(where_clause) = item.where_clause() {
             params.where_predicates = where_clause
                 .predicates()
-                .map(|predicate| WherePredicate::from_ast(predicate, line_index, interner))
+                .map(|predicate| WherePredicate::from_ast(&predicate, (line_index, &mut *interner)))
                 .collect();
         }
 
         params
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.lifetimes.shrink_to_fit();
-        for param in &mut self.lifetimes {
-            param.shrink_to_fit();
-        }
-        self.types.shrink_to_fit();
-        for param in &mut self.types {
-            param.shrink_to_fit();
-        }
-        self.consts.shrink_to_fit();
-        for param in &mut self.consts {
-            param.shrink_to_fit();
-        }
-        self.where_predicates.shrink_to_fit();
-        for predicate in &mut self.where_predicates {
-            predicate.shrink_to_fit();
-        }
-    }
 }
 
-impl fmt::Display for GenericParams {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut params = Vec::new();
+impl FromAst for WherePredicate {
+    type AstNode = ast::WherePred;
+    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
 
-        params.extend(self.lifetimes.iter().map(|param| {
-            if param.bounds.is_empty() {
-                param.name.to_string()
-            } else {
-                format!("{}: {}", param.name, param.bounds.join(" + "))
-            }
-        }));
-        params.extend(self.types.iter().map(|param| {
-            let mut text = param.name.to_string();
-            if !param.bounds.is_empty() {
-                text.push_str(": ");
-                text.push_str(
-                    &param
-                        .bounds
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(" + "),
-                );
-            }
-            if let Some(default) = &param.default {
-                text.push_str(" = ");
-                text.push_str(&default.to_string());
-            }
-            text
-        }));
-        params.extend(self.consts.iter().map(|param| {
-            let mut text = format!("const {}", param.name);
-            if let Some(ty) = &param.ty {
-                text.push_str(": ");
-                text.push_str(&ty.to_string());
-            }
-            if let Some(default) = &param.default {
-                text.push_str(" = ");
-                text.push_str(default);
-            }
-            text
-        }));
-
-        if !params.is_empty() {
-            write!(f, "<{}>", params.join(", "))?;
-        }
-
-        if !self.where_predicates.is_empty() {
-            write!(f, " where ")?;
-            for (idx, predicate) in self.where_predicates.iter().enumerate() {
-                if idx > 0 {
-                    write!(f, ", ")?;
-                }
-                write!(f, "{predicate}")?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct LifetimeParamData {
-    pub name: Name,
-    pub bounds: Vec<String>,
-}
-
-impl LifetimeParamData {
-    fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        self.bounds.shrink_to_fit();
-        for bound in &mut self.bounds {
-            bound.shrink_to_fit();
-        }
-    }
-}
-
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct TypeParamData {
-    pub name: Name,
-    pub bounds: Vec<TypeBound>,
-    pub default: Option<TypeRef>,
-}
-
-impl TypeParamData {
-    fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        self.bounds.shrink_to_fit();
-        for bound in &mut self.bounds {
-            bound.shrink_to_fit();
-        }
-        if let Some(default) = &mut self.default {
-            default.shrink_to_fit();
-        }
-    }
-}
-
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct ConstParamData {
-    pub name: Name,
-    pub ty: Option<TypeRef>,
-    pub default: Option<String>,
-}
-
-impl ConstParamData {
-    fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        if let Some(ty) = &mut self.ty {
-            ty.shrink_to_fit();
-        }
-        if let Some(default) = &mut self.default {
-            default.shrink_to_fit();
-        }
-    }
-}
-
-/// Where-clause predicate that can affect later signature resolution.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub enum WherePredicate {
-    Type {
-        ty: TypeRef,
-        bounds: Vec<TypeBound>,
-    },
-    Lifetime {
-        lifetime: String,
-        bounds: Vec<String>,
-    },
-    Unsupported(String),
-}
-
-impl WherePredicate {
-    fn from_ast(
-        predicate: ast::WherePred,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> Self {
+    fn from_ast(predicate: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         if let Some(lifetime) = predicate.lifetime() {
             return Self::Lifetime {
                 lifetime: normalized_syntax(&lifetime),
@@ -269,66 +101,27 @@ impl WherePredicate {
 
         if let Some(ty) = predicate.ty() {
             return Self::Type {
-                ty: TypeRef::from_ast(ty, line_index, interner),
-                bounds: TypeBound::list_from_ast(predicate.type_bound_list(), line_index, interner),
+                ty: TypeRef::from_ast(&ty, (line_index, &mut *interner)),
+                bounds: type_bound_list_from_ast(predicate.type_bound_list(), line_index, interner),
             };
         }
 
-        Self::Unsupported(normalized_syntax(&predicate))
-    }
-
-    fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Type { ty, bounds } => {
-                ty.shrink_to_fit();
-                bounds.shrink_to_fit();
-                for bound in bounds {
-                    bound.shrink_to_fit();
-                }
-            }
-            Self::Lifetime { lifetime, bounds } => {
-                lifetime.shrink_to_fit();
-                bounds.shrink_to_fit();
-                for bound in bounds {
-                    bound.shrink_to_fit();
-                }
-            }
-            Self::Unsupported(text) => text.shrink_to_fit(),
-        }
+        Self::Unsupported(normalized_syntax(predicate))
     }
 }
 
-impl fmt::Display for WherePredicate {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Type { ty, bounds } => write_bound_list(f, &ty.to_string(), bounds),
-            Self::Lifetime { lifetime, bounds } => {
-                write!(f, "{lifetime}: {}", bounds.join(" + "))
-            }
-            Self::Unsupported(text) => write!(f, "<unsupported:{text}>"),
-        }
-    }
-}
+impl FromAst for FunctionItem {
+    type AstNode = ast::Fn;
+    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct FunctionItem {
-    pub generics: GenericParams,
-    pub params: Vec<ParamItem>,
-    pub ret_ty: Option<TypeRef>,
-    pub qualifiers: FunctionQualifiers,
-}
-
-impl FunctionItem {
-    pub fn from_ast(item: &ast::Fn, line_index: &LineIndex, interner: &mut NameInterner) -> Self {
+    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, line_index, interner),
-            params: ParamItem::list_from_ast(item.param_list(), line_index, interner),
+            generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
+            params: param_list_from_ast(item.param_list(), line_index, &mut *interner),
             ret_ty: item
                 .ret_type()
                 .and_then(|ret_ty| ret_ty.ty())
-                .map(|ty| TypeRef::from_ast(ty, line_index, interner)),
+                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
             qualifiers: FunctionQualifiers {
                 is_async: item.async_token().is_some(),
                 is_const: item.const_token().is_some(),
@@ -336,215 +129,62 @@ impl FunctionItem {
             },
         }
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        self.params.shrink_to_fit();
-        for param in &mut self.params {
-            param.shrink_to_fit();
-        }
-        if let Some(ret_ty) = &mut self.ret_ty {
-            ret_ty.shrink_to_fit();
-        }
-    }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-pub struct FunctionQualifiers {
-    pub is_async: bool,
-    pub is_const: bool,
-    pub is_unsafe: bool,
-}
+impl FromAst for StructItem {
+    type AstNode = ast::Struct;
+    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct ParamItem {
-    pub pat: String,
-    pub ty: Option<TypeRef>,
-    pub kind: ParamKind,
-}
-
-impl ParamItem {
-    pub fn list_from_ast(
-        param_list: Option<ast::ParamList>,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> Vec<Self> {
-        let Some(param_list) = param_list else {
-            return Vec::new();
-        };
-
-        let mut params = Vec::new();
-
-        if let Some(self_param) = param_list.self_param() {
-            params.push(Self {
-                pat: normalized_syntax(&self_param),
-                ty: self_param
-                    .ty()
-                    .map(|ty| TypeRef::from_ast(ty, line_index, interner)),
-                kind: ParamKind::SelfParam,
-            });
-        }
-
-        for param in param_list.params() {
-            params.push(Self {
-                pat: param
-                    .pat()
-                    .map(|pat| normalized_syntax(&pat))
-                    .unwrap_or_else(|| "<missing>".to_string()),
-                ty: param
-                    .ty()
-                    .map(|ty| TypeRef::from_ast(ty, line_index, interner)),
-                kind: ParamKind::Normal,
-            });
-        }
-
-        params
-    }
-
-    fn shrink_to_fit(&mut self) {
-        self.pat.shrink_to_fit();
-        if let Some(ty) = &mut self.ty {
-            ty.shrink_to_fit();
-        }
-    }
-}
-
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-#[memsize(leaf)]
-pub enum ParamKind {
-    SelfParam,
-    Normal,
-}
-
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct StructItem {
-    pub generics: GenericParams,
-    pub fields: FieldList,
-}
-
-impl StructItem {
-    pub fn from_ast(
-        item: &ast::Struct,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> Self {
+    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, line_index, interner),
-            fields: FieldList::from_ast(item.field_list(), line_index, interner),
+            generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
+            fields: FieldList::from_ast(&item.field_list(), (line_index, interner)),
         }
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        self.fields.shrink_to_fit();
-    }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct UnionItem {
-    pub generics: GenericParams,
-    pub fields: Vec<FieldItem>,
-}
+impl FromAst for UnionItem {
+    type AstNode = ast::Union;
+    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
 
-impl UnionItem {
-    pub fn from_ast(
-        item: &ast::Union,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> Self {
+    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, line_index, interner),
+            generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
             fields: item
                 .record_field_list()
-                .map(|fields| FieldItem::record_list_from_ast(fields, line_index, interner))
+                .map(|fields| record_field_list_from_ast(&fields, line_index, &mut *interner))
                 .unwrap_or_default(),
         }
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        self.fields.shrink_to_fit();
-        for field in &mut self.fields {
-            field.shrink_to_fit();
-        }
-    }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct EnumItem {
-    pub generics: GenericParams,
-    pub variants: Vec<EnumVariantItem>,
-}
+impl FromAst for EnumItem {
+    type AstNode = ast::Enum;
+    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
 
-impl EnumItem {
-    pub fn from_ast(item: &ast::Enum, line_index: &LineIndex, interner: &mut NameInterner) -> Self {
+    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, line_index, interner),
+            generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
             variants: item
                 .variant_list()
                 .map(|variant_list| {
                     variant_list
                         .variants()
-                        .map(|variant| EnumVariantItem::from_ast(variant, line_index, interner))
+                        .map(|variant| {
+                            EnumVariantItem::from_ast(&variant, (line_index, &mut *interner))
+                        })
                         .collect()
                 })
                 .unwrap_or_default(),
         }
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        self.variants.shrink_to_fit();
-        for variant in &mut self.variants {
-            variant.shrink_to_fit();
-        }
-    }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct EnumVariantItem {
-    pub name: Name,
-    pub span: Span,
-    pub name_span: Span,
-    pub docs: Option<Documentation>,
-    pub fields: FieldList,
-}
+impl FromAst for EnumVariantItem {
+    type AstNode = ast::Variant;
+    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
 
-impl EnumVariantItem {
-    fn from_ast(
-        variant: ast::Variant,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> Self {
+    fn from_ast(variant: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         let name = variant.name();
         let span = Span::from_text_range(variant.syntax().text_range());
         let name_span = name
@@ -558,385 +198,225 @@ impl EnumVariantItem {
                 .unwrap_or_else(|| interner.intern("<missing>")),
             span,
             name_span,
-            docs: Documentation::from_ast(&variant),
-            fields: FieldList::from_ast(variant.field_list(), line_index, interner),
+            docs: <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(variant, OuterDocs),
+            fields: FieldList::from_ast(&variant.field_list(), (line_index, interner)),
         }
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-        self.fields.shrink_to_fit();
     }
 }
 
-/// Field shape shared by structs and enum variants.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub enum FieldList {
-    Named(Vec<FieldItem>),
-    Tuple(Vec<FieldItem>),
-    Unit,
-}
+impl FromAst for FieldList {
+    type AstNode = Option<ast::FieldList>;
+    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
 
-impl FieldList {
-    pub fn from_ast(
-        field_list: Option<ast::FieldList>,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> Self {
+    fn from_ast(field_list: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         match field_list {
-            Some(ast::FieldList::RecordFieldList(fields)) => Self::Named(
-                FieldItem::record_list_from_ast(fields, line_index, interner),
-            ),
+            Some(ast::FieldList::RecordFieldList(fields)) => {
+                Self::Named(record_field_list_from_ast(fields, line_index, interner))
+            }
             Some(ast::FieldList::TupleFieldList(fields)) => {
-                Self::Tuple(FieldItem::tuple_list_from_ast(fields, line_index, interner))
+                Self::Tuple(tuple_field_list_from_ast(fields, line_index, interner))
             }
             None => Self::Unit,
         }
     }
-
-    pub fn fields(&self) -> &[FieldItem] {
-        match self {
-            Self::Named(fields) | Self::Tuple(fields) => fields,
-            Self::Unit => &[],
-        }
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Named(fields) | Self::Tuple(fields) => {
-                fields.shrink_to_fit();
-                for field in fields {
-                    field.shrink_to_fit();
-                }
-            }
-            Self::Unit => {}
-        }
-    }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct FieldItem {
-    pub key: Option<FieldKey>,
-    pub visibility: VisibilityLevel,
-    pub ty: TypeRef,
-    pub span: Span,
-    pub docs: Option<Documentation>,
-}
+impl FromAst for TraitItem {
+    type AstNode = ast::Trait;
+    type Context<'a> = TraitItemContext<'a>;
 
-/// User-visible field identity before semantic ownership is known.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-pub enum FieldKey {
-    Named(Name),
-    Tuple(usize),
-}
-
-impl FieldKey {
-    pub fn declaration_label(&self) -> String {
-        match self {
-            Self::Named(name) => name.to_string(),
-            Self::Tuple(index) => format!("#{index}"),
-        }
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        if let Self::Named(name) = self {
-            name.shrink_to_fit();
-        }
-    }
-}
-
-impl fmt::Display for FieldKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Named(name) => write!(f, "{name}"),
-            Self::Tuple(index) => write!(f, "{index}"),
-        }
-    }
-}
-
-impl FieldItem {
-    /// Returns the user-visible declaration label for this field's key, if one was parsed.
-    pub fn key_declaration_label(&self) -> Option<String> {
-        self.key.as_ref().map(FieldKey::declaration_label)
-    }
-
-    fn record_list_from_ast(
-        fields: ast::RecordFieldList,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> Vec<Self> {
-        fields
-            .fields()
-            .map(|field| {
-                let name = field.name();
-                let span = name
-                    .as_ref()
-                    .map(|name| name.syntax().text_range())
-                    .unwrap_or_else(|| field.syntax().text_range());
-
-                Self {
-                    key: name.map(|name| FieldKey::Named(interner.intern(name.text()))),
-                    visibility: VisibilityLevel::from_ast(field.visibility()),
-                    ty: field
-                        .ty()
-                        .map(|ty| TypeRef::from_ast(ty, line_index, interner))
-                        .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
-                    span: Span::from_text_range(span),
-                    docs: Documentation::from_ast(&field),
-                }
-            })
-            .collect()
-    }
-
-    fn tuple_list_from_ast(
-        fields: ast::TupleFieldList,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> Vec<Self> {
-        fields
-            .fields()
-            .enumerate()
-            .map(|(index, field)| Self {
-                key: Some(FieldKey::Tuple(index)),
-                visibility: VisibilityLevel::from_ast(field.visibility()),
-                ty: field
-                    .ty()
-                    .map(|ty| TypeRef::from_ast(ty, line_index, interner))
-                    .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
-                span: Span::from_text_range(field.syntax().text_range()),
-                docs: Documentation::from_ast(&field),
-            })
-            .collect()
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        if let Some(key) = &mut self.key {
-            key.shrink_to_fit();
-        }
-        self.ty.shrink_to_fit();
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-    }
-}
-
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct TraitItem {
-    pub generics: GenericParams,
-    pub super_traits: Vec<TypeBound>,
-    pub items: Vec<ItemTreeId>,
-    pub is_unsafe: bool,
-}
-
-impl TraitItem {
-    pub fn from_ast(
-        item: &ast::Trait,
-        items: Vec<ItemTreeId>,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> Self {
+    fn from_ast(item: &Self::AstNode, ctx: Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, line_index, interner),
-            super_traits: TypeBound::list_from_ast(item.type_bound_list(), line_index, interner),
-            items,
+            generics: GenericParams::from_ast(item, (ctx.line_index, &mut *ctx.interner)),
+            super_traits: type_bound_list_from_ast(
+                item.type_bound_list(),
+                ctx.line_index,
+                ctx.interner,
+            ),
+            items: ctx.items,
             is_unsafe: item.unsafe_token().is_some(),
         }
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        self.super_traits.shrink_to_fit();
-        for bound in &mut self.super_traits {
-            bound.shrink_to_fit();
-        }
-        self.items.shrink_to_fit();
-    }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct ImplItem {
-    pub generics: GenericParams,
-    pub trait_ref: Option<TypeRef>,
-    pub self_ty: TypeRef,
-    pub items: Vec<ItemTreeId>,
-    pub is_unsafe: bool,
-}
+impl FromAst for ImplItem {
+    type AstNode = ast::Impl;
+    type Context<'a> = ImplItemContext<'a>;
 
-impl ImplItem {
-    pub fn from_ast(
-        item: &ast::Impl,
-        items: Vec<ItemTreeId>,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> Self {
-        let (trait_ref, self_ty) = Self::header_from_ast(item, line_index, interner);
+    fn from_ast(item: &Self::AstNode, ctx: Self::Context<'_>) -> Self {
+        let (trait_ref, self_ty) = impl_header_from_ast(item, ctx.line_index, &mut *ctx.interner);
 
         Self {
-            generics: GenericParams::from_ast(item, line_index, interner),
+            generics: GenericParams::from_ast(item, (ctx.line_index, &mut *ctx.interner)),
             trait_ref,
             self_ty,
-            items,
+            items: ctx.items,
             is_unsafe: item.unsafe_token().is_some(),
         }
     }
-
-    fn header_from_ast(
-        item: &ast::Impl,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> (Option<TypeRef>, TypeRef) {
-        // `rg_syntax` exposes impl headers as child type nodes. The presence of `for` decides
-        // whether the first type is a trait path or the inherent self type.
-        let types = item
-            .syntax()
-            .children()
-            .filter_map(ast::Type::cast)
-            .collect::<Vec<_>>();
-
-        if item.for_token().is_some() {
-            let trait_ref = types
-                .first()
-                .cloned()
-                .map(|ty| TypeRef::from_ast(ty, line_index, interner));
-            let self_ty = types
-                .get(1)
-                .cloned()
-                .map(|ty| TypeRef::from_ast(ty, line_index, interner))
-                .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
-            return (trait_ref, self_ty);
-        }
-
-        let self_ty = types
-            .first()
-            .cloned()
-            .map(|ty| TypeRef::from_ast(ty, line_index, interner))
-            .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
-        (None, self_ty)
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        if let Some(trait_ref) = &mut self.trait_ref {
-            trait_ref.shrink_to_fit();
-        }
-        self.self_ty.shrink_to_fit();
-        self.items.shrink_to_fit();
-    }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct TypeAliasItem {
-    pub generics: GenericParams,
-    pub bounds: Vec<TypeBound>,
-    pub aliased_ty: Option<TypeRef>,
-}
+impl FromAst for TypeAliasItem {
+    type AstNode = ast::TypeAlias;
+    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
 
-impl TypeAliasItem {
-    pub fn from_ast(
-        item: &ast::TypeAlias,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> Self {
+    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, line_index, interner),
-            bounds: TypeBound::list_from_ast(item.type_bound_list(), line_index, interner),
+            generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
+            bounds: type_bound_list_from_ast(item.type_bound_list(), line_index, &mut *interner),
             aliased_ty: item
                 .ty()
-                .map(|ty| TypeRef::from_ast(ty, line_index, interner)),
-        }
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        self.bounds.shrink_to_fit();
-        for bound in &mut self.bounds {
-            bound.shrink_to_fit();
-        }
-        if let Some(aliased_ty) = &mut self.aliased_ty {
-            aliased_ty.shrink_to_fit();
+                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
         }
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct ConstItem {
-    pub generics: GenericParams,
-    pub ty: Option<TypeRef>,
-}
+impl FromAst for ConstItem {
+    type AstNode = ast::Const;
+    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
 
-impl ConstItem {
-    pub fn from_ast(
-        item: &ast::Const,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> Self {
+    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         Self {
-            generics: GenericParams::from_ast(item, line_index, interner),
+            generics: GenericParams::from_ast(item, (line_index, &mut *interner)),
             ty: item
                 .ty()
-                .map(|ty| TypeRef::from_ast(ty, line_index, interner)),
-        }
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        if let Some(ty) = &mut self.ty {
-            ty.shrink_to_fit();
+                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
         }
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
-pub struct StaticItem {
-    pub ty: Option<TypeRef>,
-    pub mutability: Mutability,
-}
+impl FromAst for StaticItem {
+    type AstNode = ast::Static;
+    type Context<'a> = (&'a LineIndex, &'a mut NameInterner);
 
-impl StaticItem {
-    pub fn from_ast(
-        item: &ast::Static,
-        line_index: &LineIndex,
-        interner: &mut NameInterner,
-    ) -> Self {
+    fn from_ast(item: &Self::AstNode, (line_index, interner): Self::Context<'_>) -> Self {
         Self {
             ty: item
                 .ty()
-                .map(|ty| TypeRef::from_ast(ty, line_index, interner)),
+                .map(|ty| TypeRef::from_ast(&ty, (line_index, interner))),
             mutability: Mutability::from_mut_token(item.mut_token().is_some()),
         }
     }
+}
 
-    pub fn shrink_to_fit(&mut self) {
-        if let Some(ty) = &mut self.ty {
-            ty.shrink_to_fit();
-        }
+fn param_list_from_ast(
+    param_list: Option<ast::ParamList>,
+    line_index: &LineIndex,
+    interner: &mut NameInterner,
+) -> Vec<ParamItem> {
+    let Some(param_list) = param_list else {
+        return Vec::new();
+    };
+
+    let mut params = Vec::new();
+
+    if let Some(self_param) = param_list.self_param() {
+        params.push(ParamItem {
+            pat: normalized_syntax(&self_param),
+            ty: self_param
+                .ty()
+                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
+            kind: ParamKind::SelfParam,
+        });
     }
+
+    for param in param_list.params() {
+        params.push(ParamItem {
+            pat: param
+                .pat()
+                .map(|pat| normalized_syntax(&pat))
+                .unwrap_or_else(|| "<missing>".to_string()),
+            ty: param
+                .ty()
+                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner))),
+            kind: ParamKind::Normal,
+        });
+    }
+
+    params
+}
+
+fn record_field_list_from_ast(
+    fields: &ast::RecordFieldList,
+    line_index: &LineIndex,
+    interner: &mut NameInterner,
+) -> Vec<FieldItem> {
+    fields
+        .fields()
+        .map(|field| {
+            let name = field.name();
+            let span = name
+                .as_ref()
+                .map(|name| name.syntax().text_range())
+                .unwrap_or_else(|| field.syntax().text_range());
+
+            FieldItem {
+                key: name.map(|name| FieldKey::Named(interner.intern(name.text()))),
+                visibility: VisibilityLevel::from_ast(&field.visibility(), ()),
+                ty: field
+                    .ty()
+                    .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)))
+                    .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
+                span: Span::from_text_range(span),
+                docs: <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&field, OuterDocs),
+            }
+        })
+        .collect()
+}
+
+fn tuple_field_list_from_ast(
+    fields: &ast::TupleFieldList,
+    line_index: &LineIndex,
+    interner: &mut NameInterner,
+) -> Vec<FieldItem> {
+    fields
+        .fields()
+        .enumerate()
+        .map(|(index, field)| FieldItem {
+            key: Some(FieldKey::Tuple(index)),
+            visibility: VisibilityLevel::from_ast(&field.visibility(), ()),
+            ty: field
+                .ty()
+                .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)))
+                .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&field))),
+            span: Span::from_text_range(field.syntax().text_range()),
+            docs: <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&field, OuterDocs),
+        })
+        .collect()
+}
+
+fn impl_header_from_ast(
+    item: &ast::Impl,
+    line_index: &LineIndex,
+    interner: &mut NameInterner,
+) -> (Option<TypeRef>, TypeRef) {
+    // `rg_syntax` exposes impl headers as child type nodes. The presence of `for` decides whether
+    // the first type is a trait path or the inherent self type.
+    let types = item
+        .syntax()
+        .children()
+        .filter_map(ast::Type::cast)
+        .collect::<Vec<_>>();
+
+    if item.for_token().is_some() {
+        let trait_ref = types
+            .first()
+            .cloned()
+            .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)));
+        let self_ty = types
+            .get(1)
+            .cloned()
+            .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)))
+            .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
+        return (trait_ref, self_ty);
+    }
+
+    let self_ty = types
+        .first()
+        .cloned()
+        .map(|ty| TypeRef::from_ast(&ty, (line_index, interner)))
+        .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(item)));
+    (None, self_ty)
 }
 
 fn lifetime_bounds_from_ast(bound_list: Option<ast::TypeBoundList>) -> Vec<String> {
@@ -949,22 +429,4 @@ fn lifetime_bounds_from_ast(bound_list: Option<ast::TypeBoundList>) -> Vec<Strin
                 .map(|lifetime| normalized_syntax(&lifetime))
         })
         .collect()
-}
-
-fn write_bound_list(
-    f: &mut fmt::Formatter<'_>,
-    subject: &str,
-    bounds: &[TypeBound],
-) -> fmt::Result {
-    write!(f, "{subject}")?;
-    if !bounds.is_empty() {
-        write!(f, ": ")?;
-        for (idx, bound) in bounds.iter().enumerate() {
-            if idx > 0 {
-                write!(f, " + ")?;
-            }
-            write!(f, "{bound}")?;
-        }
-    }
-    Ok(())
 }

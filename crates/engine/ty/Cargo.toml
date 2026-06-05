@@ -13,7 +13,6 @@ description.workspace = true
 [dependencies]
 rg_ir_model.workspace = true
 rg_ir_storage.workspace = true
-rg_item_tree.workspace = true
 rg_memsize.workspace = true
 rg_text = { workspace = true, features = ["memsize"] }
 rg_wincode_utils.workspace = true

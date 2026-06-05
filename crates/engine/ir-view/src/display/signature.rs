@@ -8,7 +8,7 @@ use rg_ir_model::hir::items::{
     ConstData, EnumData, FieldData, FunctionData, StaticData, StructData, TraitData, TypeAliasData,
     UnionData,
 };
-use rg_item_tree::{
+use rg_ir_model::items::{
     EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionQualifiers, GenericParams, Mutability,
     ParamItem, TypeBound, TypeRef, VisibilityLevel, WherePredicate,
 };

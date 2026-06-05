@@ -1,7 +1,7 @@
 use std::fmt;
 
 use rg_ir_model::TargetRef;
-use rg_item_tree::{TypePath, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind};
+use rg_ir_model::items::{TypePath, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind};
 use rg_text::Name;
 
 /// Structured path used by def-map path resolution queries.
@@ -192,7 +192,7 @@ pub(crate) fn last_segment_name(segments: &[PathSegment]) -> Option<Name> {
 
 #[cfg(test)]
 mod tests {
-    use rg_item_tree::{
+    use rg_ir_model::items::{
         TypePath, TypePathSegment, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind,
     };
     use rg_parse::{Span, TextSpan};

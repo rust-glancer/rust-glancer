@@ -1,11 +1,11 @@
 use std::fmt;
 
+use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
     ModuleRef,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
 use rg_ir_storage::{Path, TypePathContext};
-use rg_item_tree::FieldKey;
 use rg_parse::Span;
 
 /// Scope in which a type path should be resolved.

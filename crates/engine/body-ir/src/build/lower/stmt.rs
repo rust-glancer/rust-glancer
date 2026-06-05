@@ -7,9 +7,10 @@ use rg_syntax::{
 
 use rg_ir_model::{BindingId, ExprId, ScopeId, StmtId};
 use rg_item_tree::{
-    ConstItem, Documentation, EnumItem, ExternCrateItem, FunctionItem, ImplItem, ItemKind,
-    ItemNode, ItemTreeId, MacroUseAttr, ModuleItem, ModuleSource, StaticItem, StructItem,
-    TraitItem, TypeAliasItem, TypeRef, UnionItem, UseItem, VisibilityLevel,
+    ConstItem, Documentation, EnumItem, ExternCrateItem, FromAst as _, FunctionItem, ImplItem,
+    ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroUseAttr, MaybeFromAst,
+    ModuleItem, ModuleSource, OuterDocs, StaticItem, StructItem, TraitItem, TraitItemContext,
+    TypeAliasItem, TypeRef, UnionItem, UseItem, VisibilityLevel,
 };
 use rg_parse::Span;
 use rg_text::Name;
@@ -49,7 +50,7 @@ impl BodyLowering<'_> {
         let source = self.source(param.syntax());
         let annotation = param
             .ty()
-            .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
+            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
         let self_kind = if annotation.is_some() {
             BodySelfParamKind::Explicit
         } else if param.amp_token().is_some() {
@@ -76,7 +77,7 @@ impl BodyLowering<'_> {
     fn lower_param(&mut self, param: ast::Param, scope: ScopeId) -> Vec<BindingId> {
         let annotation = param
             .ty()
-            .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
+            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
         match param.pat() {
             Some(pat) => self.lower_pat(pat, scope, BindingKind::Param, annotation).1,
             None => vec![self.builder.alloc_binding(BindingData {
@@ -152,7 +153,7 @@ impl BodyLowering<'_> {
                     bikeshed: modifier.bikeshed_token().is_some(),
                     result_ty: modifier
                         .ty()
-                        .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner)),
+                        .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner))),
                 };
             }
         }
@@ -207,7 +208,7 @@ impl BodyLowering<'_> {
             .map(|block| self.lower_block_expr(block, scope));
         let annotation = statement
             .ty()
-            .map(|ty| TypeRef::from_ast(ty, self.line_index, self.interner));
+            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
         let bindings = statement
             .pat()
             .map(|pat| self.lower_pat(pat, scope, BindingKind::Let, annotation.clone()))
@@ -237,23 +238,28 @@ impl BodyLowering<'_> {
                 item.syntax(),
             )),
             ast::Item::Const(item) => {
-                let kind =
-                    ItemKind::Const(ConstItem::from_ast(item, self.line_index, self.interner));
+                let kind = ItemKind::Const(ConstItem::from_ast(
+                    item,
+                    (self.line_index, &mut *self.interner),
+                ));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
                     item.syntax(),
                 ))
             }
             ast::Item::Enum(item) => {
-                let kind = ItemKind::Enum(EnumItem::from_ast(item, self.line_index, self.interner));
+                let kind = ItemKind::Enum(EnumItem::from_ast(
+                    item,
+                    (self.line_index, &mut *self.interner),
+                ));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
                     item.syntax(),
                 ))
             }
@@ -266,27 +272,27 @@ impl BodyLowering<'_> {
             )),
             ast::Item::ExternCrate(item) => {
                 let (name, name_span) = self.source_name_ref(item.name_ref());
-                let kind = ItemKind::ExternCrate(ExternCrateItem::from_ast(item, self.interner));
+                let kind =
+                    ItemKind::ExternCrate(ExternCrateItem::from_ast(item, &mut *self.interner));
                 Some(Self::source_item_node(
                     kind,
                     name,
                     name_span,
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
                     self.source(item.syntax()),
                 ))
             }
             ast::Item::Fn(item) => {
                 let kind = ItemKind::Function(FunctionItem::from_ast(
                     item,
-                    self.line_index,
-                    self.interner,
+                    (self.line_index, &mut *self.interner),
                 ));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
                     item.syntax(),
                 ))
             }
@@ -294,15 +300,17 @@ impl BodyLowering<'_> {
                 let items = self.lower_source_assoc_items(item.assoc_item_list());
                 let kind = ItemKind::Impl(ImplItem::from_ast(
                     item,
-                    items,
-                    self.line_index,
-                    self.interner,
+                    ImplItemContext {
+                        items,
+                        line_index: self.line_index,
+                        interner: &mut *self.interner,
+                    },
                 ));
                 Some(self.named_source_item_node(
                     kind,
                     None,
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
                     item.syntax(),
                 ))
             }
@@ -311,30 +319,34 @@ impl BodyLowering<'_> {
                 Some(self.named_source_item_node(
                     ItemKind::Module(module_item),
                     item.name(),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
                     item.syntax(),
                 ))
             }
             ast::Item::Static(item) => {
-                let kind =
-                    ItemKind::Static(StaticItem::from_ast(item, self.line_index, self.interner));
+                let kind = ItemKind::Static(StaticItem::from_ast(
+                    item,
+                    (self.line_index, &mut *self.interner),
+                ));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
                     item.syntax(),
                 ))
             }
             ast::Item::Struct(item) => {
-                let kind =
-                    ItemKind::Struct(StructItem::from_ast(item, self.line_index, self.interner));
+                let kind = ItemKind::Struct(StructItem::from_ast(
+                    item,
+                    (self.line_index, &mut *self.interner),
+                ));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
                     item.syntax(),
                 ))
             }
@@ -342,50 +354,53 @@ impl BodyLowering<'_> {
                 let items = self.lower_source_assoc_items(item.assoc_item_list());
                 let kind = ItemKind::Trait(TraitItem::from_ast(
                     item,
-                    items,
-                    self.line_index,
-                    self.interner,
+                    TraitItemContext {
+                        items,
+                        line_index: self.line_index,
+                        interner: &mut *self.interner,
+                    },
                 ));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
                     item.syntax(),
                 ))
             }
             ast::Item::TypeAlias(item) => {
                 let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
                     item,
-                    self.line_index,
-                    self.interner,
+                    (self.line_index, &mut *self.interner),
                 ));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
                     item.syntax(),
                 ))
             }
             ast::Item::Union(item) => {
-                let kind =
-                    ItemKind::Union(UnionItem::from_ast(item, self.line_index, self.interner));
+                let kind = ItemKind::Union(UnionItem::from_ast(
+                    item,
+                    (self.line_index, &mut *self.interner),
+                ));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
                     item.syntax(),
                 ))
             }
             ast::Item::Use(item) => {
-                let kind = ItemKind::Use(UseItem::from_ast(item, self.interner));
+                let kind = ItemKind::Use(UseItem::from_ast(item, &mut *self.interner));
                 Some(self.named_source_item_node(
                     kind,
                     None,
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(item, OuterDocs),
                     item.syntax(),
                 ))
             }
@@ -410,8 +425,8 @@ impl BodyLowering<'_> {
         };
 
         ModuleItem {
-            inner_docs: Documentation::inner_from_ast(item),
-            macro_use: MacroUseAttr::from_attrs(item, self.interner),
+            inner_docs: <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(item, InnerDocs),
+            macro_use: MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
             source,
         }
     }
@@ -449,41 +464,41 @@ impl BodyLowering<'_> {
     fn lower_source_assoc_item(&mut self, item: ast::AssocItem) -> Option<ItemNode> {
         match item {
             ast::AssocItem::Const(item) => {
-                let kind =
-                    ItemKind::Const(ConstItem::from_ast(&item, self.line_index, self.interner));
+                let kind = ItemKind::Const(ConstItem::from_ast(
+                    &item,
+                    (self.line_index, &mut *self.interner),
+                ));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(&item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&item, OuterDocs),
                     item.syntax(),
                 ))
             }
             ast::AssocItem::Fn(item) => {
                 let kind = ItemKind::Function(FunctionItem::from_ast(
                     &item,
-                    self.line_index,
-                    self.interner,
+                    (self.line_index, &mut *self.interner),
                 ));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(&item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&item, OuterDocs),
                     item.syntax(),
                 ))
             }
             ast::AssocItem::TypeAlias(item) => {
                 let kind = ItemKind::TypeAlias(TypeAliasItem::from_ast(
                     &item,
-                    self.line_index,
-                    self.interner,
+                    (self.line_index, &mut *self.interner),
                 ));
                 Some(self.named_source_item_node(
                     kind,
                     item.name(),
-                    VisibilityLevel::from_ast(item.visibility()),
-                    Documentation::from_ast(&item),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
+                    <Documentation as MaybeFromAst<OuterDocs>>::maybe_from_ast(&item, OuterDocs),
                     item.syntax(),
                 ))
             }

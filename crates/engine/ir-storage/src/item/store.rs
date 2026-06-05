@@ -351,7 +351,7 @@ impl ItemStore {
     pub fn generic_params_for_type_def(
         &self,
         id: TypeDefId,
-    ) -> Option<&rg_item_tree::GenericParams> {
+    ) -> Option<&rg_ir_model::items::GenericParams> {
         match id {
             TypeDefId::Struct(id) => self.struct_data(id).map(|data| &data.generics),
             TypeDefId::Enum(id) => self.enum_data(id).map(|data| &data.generics),

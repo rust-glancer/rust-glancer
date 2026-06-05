@@ -3,6 +3,7 @@
 //! Target and body IR store item data in the same `ItemStore` shape. This layer owns the
 //! item-shaped queries, while callers provide only the origin-to-store routing policy.
 
+use rg_ir_model::items::{FieldKey, FieldList, GenericParams};
 use rg_ir_model::{
     ConstRef, DefMapRef, EnumVariantRef, FieldRef, FunctionRef, ImplRef, ItemOwner, LocalDefRef,
     SemanticItemRef, StaticRef, TargetRef, TraitRef, TypeAliasRef, TypeDefId, TypeDefRef,
@@ -11,7 +12,6 @@ use rg_ir_model::{
         TraitData, TypeAliasData,
     },
 };
-use rg_item_tree::{FieldKey, FieldList, GenericParams};
 
 use super::ItemStoreSource;
 use crate::{ItemStore, SemanticItemView, TypePathContext};

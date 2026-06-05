@@ -1,5 +1,5 @@
+use rg_ir_model::items::{GenericParams, TypeRef};
 use rg_ir_model::{TypeDefRef, TypePathResolution};
-use rg_item_tree::{GenericParams, TypeRef};
 use rg_memsize::Shrink;
 use rg_text::Name;
 

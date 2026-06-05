@@ -21,6 +21,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
+      - uses: ./.github/actions/cargo-cache
+        with:
+          scope: codspeed
+          target-dir: target
+          dependency-key: ${{ hashFiles('Cargo.lock', 'Cargo.toml', 'crates/**/Cargo.toml', 'rust-toolchain.toml') }}
+
       - name: Install cargo-codspeed
         uses: taiki-e/install-action@50b4a718b59c718df4ef27a3b445f86cd57b9f00 # v2.80.0
         with:

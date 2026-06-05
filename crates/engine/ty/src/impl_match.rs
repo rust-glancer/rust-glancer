@@ -5,13 +5,13 @@
 //! substitutions that make associated signatures readable in the receiver context.
 
 use crate::{GenericArg, ItemPathQuery, NominalTy, Ty, TypeSubst};
+use rg_ir_model::items::{GenericArg as ItemGenericArg, GenericParams, TypeRef};
 use rg_ir_model::{
     FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef, hir::items::ImplData,
 };
 use rg_ir_storage::{
     DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext,
 };
-use rg_item_tree::{GenericArg as ItemGenericArg, GenericParams, TypeRef};
 use rg_text::Name;
 
 /// Result of matching one trait impl header against a receiver type.

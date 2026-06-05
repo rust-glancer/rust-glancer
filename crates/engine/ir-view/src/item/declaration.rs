@@ -1,11 +1,11 @@
 //! Source-level declaration lookup shared by editor queries.
 
+use rg_ir_model::items::TypeRef;
 use rg_ir_model::{
     BodyBindingRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, LocalDefRef, ModuleRef,
     SemanticItemKind, SemanticItemRef, TargetRef, identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery, ModuleOrigin};
-use rg_item_tree::TypeRef;
 use rg_parse::{FileId, Span};
 
 use crate::{IndexedViewDb, SymbolKind};

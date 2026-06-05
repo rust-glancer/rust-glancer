@@ -23,10 +23,11 @@ use rg_tt::{
 
 use super::{
     BuiltinMacroItem, CfgExpr, CfgSelectArmItem, ConstItem, Documentation, EnumItem,
-    ExternCrateItem, FileTree, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeId,
-    MacroCallItem, MacroDefinitionItem, MacroUseAttr, ModuleItem, ModuleSource, Package,
-    StaticItem, StructItem, TargetRoot, TraitItem, TypeAliasItem, UnionItem, UseItem,
-    VisibilityLevel,
+    ExternCrateItem, FileTree, FromAst, FunctionItem, ImplItem, ImplItemContext, InnerDocs,
+    ItemKind, ItemNode, ItemTreeId, MacroCallContext, MacroCallItem, MacroDefAst, MacroDefContext,
+    MacroDefinitionItem, MacroRulesAst, MacroRulesContext, MacroUseAttr, MaybeFromAst, ModuleItem,
+    ModuleSource, Package, StaticItem, StructItem, TargetRoot, TraitItem, TraitItemContext,
+    TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
 
 /// Lowers all known files for one parsed package and records target entrypoints into them.
@@ -119,7 +120,7 @@ impl<'db> PackageLowering<'db> {
             })?;
             (
                 syntax.items().collect::<Vec<_>>(),
-                Documentation::inner_from_ast(&syntax),
+                <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(&syntax, InnerDocs),
                 parsed_file.line_index()?.clone(),
                 ModuleFileContext::from_definition_file(parsed_file.path()),
             )
@@ -213,19 +214,21 @@ impl<'db> PackageLowering<'db> {
             ast::Item::Const(item) => Some(builder.alloc_documented_item(
                 ItemKind::Const(ConstItem::from_ast(
                     &item,
-                    builder.line_index,
-                    self.interner,
+                    (builder.line_index, &mut *self.interner),
                 )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(item.visibility()),
+                VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::Item::Enum(item) => Some(builder.alloc_documented_item(
-                ItemKind::Enum(EnumItem::from_ast(&item, builder.line_index, self.interner)),
+                ItemKind::Enum(EnumItem::from_ast(
+                    &item,
+                    (builder.line_index, &mut *self.interner),
+                )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(item.visibility()),
+                VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::Item::ExternBlock(item) => Some(builder.alloc_item(
@@ -237,23 +240,22 @@ impl<'db> PackageLowering<'db> {
             )),
             ast::Item::ExternCrate(item) => Some(
                 builder.alloc_documented_item(
-                    ItemKind::ExternCrate(ExternCrateItem::from_ast(&item, self.interner)),
+                    ItemKind::ExternCrate(ExternCrateItem::from_ast(&item, &mut *self.interner)),
                     self.intern_ast_name_ref(item.name_ref()),
                     item.name_ref()
                         .map(|name_ref| name_ref.syntax().text_range()),
-                    VisibilityLevel::from_ast(item.visibility()),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
                     &item,
                 ),
             ),
             ast::Item::Fn(item) => Some(builder.alloc_documented_item(
                 ItemKind::Function(FunctionItem::from_ast(
                     &item,
-                    builder.line_index,
-                    self.interner,
+                    (builder.line_index, &mut *self.interner),
                 )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(item.visibility()),
+                VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::Item::Impl(item) => {
@@ -264,7 +266,7 @@ impl<'db> PackageLowering<'db> {
                     ItemKind::Impl(impl_item),
                     None,
                     None,
-                    VisibilityLevel::from_ast(item.visibility()),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
                     &item,
                 ))
             }
@@ -274,11 +276,13 @@ impl<'db> PackageLowering<'db> {
                     .context("while attempting to lower builtin macro payload")?;
                 let mut span_for_range = |range| builder.tt_span_for_range(range, macro_edition);
                 Some(builder.alloc_documented_item(
-                    ItemKind::MacroCall(MacroCallItem::from_ast_with_span(
+                    ItemKind::MacroCall(MacroCallItem::from_ast(
                         &item,
-                        self.interner,
-                        builtin,
-                        &mut span_for_range,
+                        MacroCallContext {
+                            interner: &mut *self.interner,
+                            builtin,
+                            span_for_range: &mut span_for_range,
+                        },
                     )),
                     None,
                     None,
@@ -289,26 +293,34 @@ impl<'db> PackageLowering<'db> {
             ast::Item::MacroDef(item) => {
                 let mut span_for_range = |range| builder.tt_span_for_range(range, macro_edition);
                 Some(builder.alloc_documented_item(
-                    ItemKind::MacroDefinition(MacroDefinitionItem::from_macro_def_with_span(
-                        &item,
-                        &mut span_for_range,
-                    )),
+                    ItemKind::MacroDefinition(
+                        <MacroDefinitionItem as FromAst<MacroDefAst>>::from_ast(
+                            &item,
+                            MacroDefContext {
+                                span_for_range: &mut span_for_range,
+                            },
+                        ),
+                    ),
                     self.intern_ast_name(item.name()),
                     item.name().map(|name| name.syntax().text_range()),
-                    VisibilityLevel::from_ast(item.visibility()),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
                     &item,
                 ))
             }
             ast::Item::MacroRules(item) => {
                 let mut span_for_range = |range| builder.tt_span_for_range(range, macro_edition);
                 Some(builder.alloc_documented_item(
-                    ItemKind::MacroDefinition(MacroDefinitionItem::from_macro_rules_with_span(
-                        &item,
-                        &mut span_for_range,
-                    )),
+                    ItemKind::MacroDefinition(
+                        <MacroDefinitionItem as FromAst<MacroRulesAst>>::from_ast(
+                            &item,
+                            MacroRulesContext {
+                                span_for_range: &mut span_for_range,
+                            },
+                        ),
+                    ),
                     self.intern_ast_name(item.name()),
                     item.name().map(|name| name.syntax().text_range()),
-                    VisibilityLevel::from_ast(item.visibility()),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
                     &item,
                 ))
             }
@@ -330,30 +342,28 @@ impl<'db> PackageLowering<'db> {
                     ItemKind::Module(module_item),
                     module_name,
                     module_name_range,
-                    VisibilityLevel::from_ast(item.visibility()),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
                     &item,
                 ))
             }
             ast::Item::Static(item) => Some(builder.alloc_documented_item(
                 ItemKind::Static(StaticItem::from_ast(
                     &item,
-                    builder.line_index,
-                    self.interner,
+                    (builder.line_index, &mut *self.interner),
                 )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(item.visibility()),
+                VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::Item::Struct(item) => Some(builder.alloc_documented_item(
                 ItemKind::Struct(StructItem::from_ast(
                     &item,
-                    builder.line_index,
-                    self.interner,
+                    (builder.line_index, &mut *self.interner),
                 )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(item.visibility()),
+                VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::Item::Trait(item) => {
@@ -364,37 +374,35 @@ impl<'db> PackageLowering<'db> {
                     ItemKind::Trait(trait_item),
                     self.intern_ast_name(item.name()),
                     item.name().map(|name| name.syntax().text_range()),
-                    VisibilityLevel::from_ast(item.visibility()),
+                    VisibilityLevel::from_ast(&item.visibility(), ()),
                     &item,
                 ))
             }
             ast::Item::TypeAlias(item) => Some(builder.alloc_documented_item(
                 ItemKind::TypeAlias(TypeAliasItem::from_ast(
                     &item,
-                    builder.line_index,
-                    self.interner,
+                    (builder.line_index, &mut *self.interner),
                 )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(item.visibility()),
+                VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::Item::Union(item) => Some(builder.alloc_documented_item(
                 ItemKind::Union(UnionItem::from_ast(
                     &item,
-                    builder.line_index,
-                    self.interner,
+                    (builder.line_index, &mut *self.interner),
                 )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(item.visibility()),
+                VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::Item::Use(item) => Some(builder.alloc_documented_item(
-                ItemKind::Use(UseItem::from_ast(&item, self.interner)),
+                ItemKind::Use(UseItem::from_ast(&item, &mut *self.interner)),
                 normalized_use_name(&item).map(|name| self.intern_name(name)),
                 None,
-                VisibilityLevel::from_ast(item.visibility()),
+                VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
         };
@@ -533,8 +541,10 @@ impl<'db> PackageLowering<'db> {
                 .collect_items(builder, inline_items, &inline_module_context)
                 .context("while attempting to collect inline module items")?;
             return Ok(ModuleItem {
-                inner_docs: Documentation::inner_from_ast(item),
-                macro_use: MacroUseAttr::from_attrs(item, self.interner),
+                inner_docs: <Documentation as MaybeFromAst<InnerDocs>>::maybe_from_ast(
+                    item, InnerDocs,
+                ),
+                macro_use: MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
                 source: ModuleSource::Inline { items },
             });
         }
@@ -542,7 +552,7 @@ impl<'db> PackageLowering<'db> {
         let Some(module_file_path) = module_file_context.resolve_module_file(item) else {
             return Ok(ModuleItem {
                 inner_docs: None,
-                macro_use: MacroUseAttr::from_attrs(item, self.interner),
+                macro_use: MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
                 source: ModuleSource::OutOfLine {
                     definition_file: None,
                 },
@@ -569,7 +579,7 @@ impl<'db> PackageLowering<'db> {
 
         Ok(ModuleItem {
             inner_docs: None,
-            macro_use: MacroUseAttr::from_attrs(item, self.interner),
+            macro_use: MacroUseAttr::maybe_from_ast(item, &mut *self.interner),
             source: ModuleSource::OutOfLine {
                 definition_file: Some(module_file_id),
             },
@@ -591,9 +601,11 @@ impl<'db> PackageLowering<'db> {
 
         Ok(TraitItem::from_ast(
             item,
-            items,
-            builder.line_index,
-            self.interner,
+            TraitItemContext {
+                items,
+                line_index: builder.line_index,
+                interner: &mut *self.interner,
+            },
         ))
     }
 
@@ -611,9 +623,11 @@ impl<'db> PackageLowering<'db> {
             .context("while attempting to lower impl associated items")?;
         Ok(ImplItem::from_ast(
             item,
-            items,
-            builder.line_index,
-            self.interner,
+            ImplItemContext {
+                items,
+                line_index: builder.line_index,
+                interner: &mut *self.interner,
+            },
         ))
     }
 
@@ -642,35 +656,32 @@ impl<'db> PackageLowering<'db> {
             ast::AssocItem::Const(item) => Some(builder.alloc_documented_item(
                 ItemKind::Const(ConstItem::from_ast(
                     &item,
-                    builder.line_index,
-                    self.interner,
+                    (builder.line_index, &mut *self.interner),
                 )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(item.visibility()),
+                VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::AssocItem::Fn(item) => Some(builder.alloc_documented_item(
                 ItemKind::Function(FunctionItem::from_ast(
                     &item,
-                    builder.line_index,
-                    self.interner,
+                    (builder.line_index, &mut *self.interner),
                 )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(item.visibility()),
+                VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
             ast::AssocItem::MacroCall(_) => None,
             ast::AssocItem::TypeAlias(item) => Some(builder.alloc_documented_item(
                 ItemKind::TypeAlias(TypeAliasItem::from_ast(
                     &item,
-                    builder.line_index,
-                    self.interner,
+                    (builder.line_index, &mut *self.interner),
                 )),
                 self.intern_ast_name(item.name()),
                 item.name().map(|name| name.syntax().text_range()),
-                VisibilityLevel::from_ast(item.visibility()),
+                VisibilityLevel::from_ast(&item.visibility(), ()),
                 &item,
             )),
         };
@@ -748,14 +759,17 @@ impl<'a> FileTreeBuilder<'a> {
         item: &T,
     ) -> ItemTreeId
     where
-        T: HasDocComments,
+        T: HasDocComments + 'static,
     {
         let item_id = self.alloc_item_with_docs(
             kind,
             name,
             name_range,
             visibility,
-            Documentation::from_ast(item),
+            <Documentation as MaybeFromAst<super::OuterDocs>>::maybe_from_ast(
+                item,
+                super::OuterDocs,
+            ),
             item.syntax().text_range(),
         );
         self.items[item_id].cfg = CfgExpr::from_attrs(item);

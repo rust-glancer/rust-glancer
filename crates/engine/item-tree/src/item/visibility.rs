@@ -1,34 +1,13 @@
+use rg_ir_model::items::VisibilityLevel;
 use rg_syntax::{AstNode as _, ast};
 
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-pub enum VisibilityLevel {
-    #[display("private")]
-    Private,
-    #[display("pub")]
-    Public,
-    #[display("pub")]
-    Crate,
-    #[display("pub(super)")]
-    Super,
-    #[display("pub(self)")]
-    Self_,
-    #[display("pub(in {_0})")]
-    Restricted(String),
-    #[display("{_0}")]
-    Unknown(String),
-}
+use super::FromAst;
 
-impl VisibilityLevel {
-    pub fn from_ast(visibility: Option<ast::Visibility>) -> Self {
+impl FromAst for VisibilityLevel {
+    type AstNode = Option<ast::Visibility>;
+    type Context<'a> = ();
+
+    fn from_ast(visibility: &Self::AstNode, _ctx: Self::Context<'_>) -> Self {
         let Some(visibility) = visibility else {
             return Self::Private;
         };
@@ -51,13 +30,6 @@ impl VisibilityLevel {
             "super" => Self::Super,
             "self" => Self::Self_,
             _ => Self::Unknown(visibility.syntax().text().to_string()),
-        }
-    }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Restricted(path) | Self::Unknown(path) => path.shrink_to_fit(),
-            Self::Private | Self::Public | Self::Crate | Self::Super | Self::Self_ => {}
         }
     }
 }

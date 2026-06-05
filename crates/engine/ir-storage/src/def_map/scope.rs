@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
+use rg_ir_model::items::VisibilityLevel;
 use rg_ir_model::{DefId, ModuleRef};
-use rg_item_tree::VisibilityLevel;
 use rg_text::Name;
 
 /// Frozen module scope optimized for retained query data.
@@ -314,8 +314,8 @@ pub enum Namespace {
 
 #[cfg(test)]
 mod tests {
+    use rg_ir_model::items::VisibilityLevel;
     use rg_ir_model::{DefId, ModuleId, ModuleRef, TargetRef};
-    use rg_item_tree::VisibilityLevel;
     use rg_parse::TargetId;
     use rg_workspace::PackageSlot;
 

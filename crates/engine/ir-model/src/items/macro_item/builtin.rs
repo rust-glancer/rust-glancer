@@ -21,7 +21,7 @@ pub enum BuiltinMacroItem {
 }
 
 impl BuiltinMacroItem {
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         match self {
             Self::Include { .. } => {}
             Self::CfgSelect { arms } => {
@@ -44,21 +44,21 @@ pub struct CfgSelectArmItem {
 }
 
 impl CfgSelectArmItem {
-    pub(crate) fn lowered(predicate: CfgPredicate, items: Vec<ItemTreeId>) -> Self {
+    pub fn lowered(predicate: CfgPredicate, items: Vec<ItemTreeId>) -> Self {
         Self {
             predicate,
             payload: CfgSelectArmPayload::Items(items),
         }
     }
 
-    pub(crate) fn lowering_failed(predicate: CfgPredicate) -> Self {
+    pub fn lowering_failed(predicate: CfgPredicate) -> Self {
         Self {
             predicate,
             payload: CfgSelectArmPayload::LoweringFailed,
         }
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.predicate.shrink_to_fit();
         self.payload.shrink_to_fit();
     }
@@ -76,7 +76,7 @@ pub enum CfgSelectArmPayload {
 }
 
 impl CfgSelectArmPayload {
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         match self {
             Self::Items(items) => items.shrink_to_fit(),
             Self::LoweringFailed => {}
