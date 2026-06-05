@@ -13,7 +13,7 @@ pub enum VisibilityLevel {
     Private,
     #[display("pub")]
     Public,
-    #[display("pub")]
+    #[display("pub(crate)")]
     Crate,
     #[display("pub(super)")]
     Super,

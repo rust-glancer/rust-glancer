@@ -114,7 +114,7 @@ impl FromAst for TypePath {
             .first_segment()
             .is_some_and(|segment| segment.coloncolon_token().is_some());
         let mut segments = Vec::new();
-        collect_segments(&path, line_index, interner, &mut segments);
+        collect_segments(path, line_index, interner, &mut segments);
 
         Self {
             source_span,
