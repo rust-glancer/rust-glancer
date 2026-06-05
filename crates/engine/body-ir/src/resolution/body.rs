@@ -24,8 +24,8 @@ use crate::{
 };
 
 use super::{
-    BodyQuerySource, normalize::TyNormalizer, pat::PatternTypePropagator, push_unique,
-    type_path::BodyTypePathResolver,
+    BodyLocalItemQuery, BodyQuerySource, BodyReceiverFunctionQuery, normalize::TyNormalizer,
+    pat::PatternTypePropagator, push_unique, type_path::BodyTypePathResolver,
 };
 
 pub(crate) struct BodyResolver<'query, 'body, D, I> {
@@ -85,6 +85,12 @@ where
 
     fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, &D, &I>> {
         ItemStoreQuery::new(self.query_source())
+    }
+
+    fn receiver_functions<'source>(
+        &'source self,
+    ) -> BodyReceiverFunctionQuery<'source, &'source D, &'source I> {
+        BodyReceiverFunctionQuery::new(self.query_source(), Some(self.semantic_index))
     }
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
@@ -477,7 +483,10 @@ where
             current_depth = Some(candidate.depth());
 
             for nominal_ty in candidate.ty().as_nominals() {
-                for function_ref in self.semantic_functions_for_type(nominal_ty, method_name)? {
+                for function_ref in self
+                    .receiver_functions()
+                    .function_refs_for_receiver(nominal_ty, Some(method_name))?
+                {
                     let Some(function_data) = item_query.function_data(function_ref)? else {
                         continue;
                     };
@@ -546,86 +555,6 @@ where
         } else {
             Ty::Unknown
         })
-    }
-
-    fn semantic_functions_for_type(
-        &self,
-        ty: &NominalTy,
-        method_name: &str,
-    ) -> Result<Vec<FunctionRef>, PackageStoreError> {
-        let mut functions = Vec::new();
-        if ty.def.origin == DefMapRef::Body(self.body_ref) {
-            let source = self.query_source();
-            let item_query = self.item_query();
-            let target_items = TargetItemQuery::new(source, source, self.body_ref.target);
-            for function in target_items.inherent_functions_for_type(ty.def)? {
-                let Some(function_data) = item_query.function_data(function)? else {
-                    continue;
-                };
-                if function_data.name != method_name {
-                    continue;
-                }
-                if self.item_store_function_applies_to_receiver(
-                    function,
-                    function_data.owner,
-                    ty,
-                )? {
-                    functions.push(function);
-                }
-            }
-            return Ok(functions);
-        }
-
-        let source = self.query_source();
-        let item_paths = ItemPathQuery::new(source, source);
-        let target_items = TargetItemQuery::new(source, source, self.body_ref.target);
-        for function in self
-            .semantic_index
-            .inherent_functions_for_type_and_name(ty.def, method_name)
-            .to_vec()
-        {
-            if ImplMatcher::new(item_paths.clone(), target_items.clone())
-                .function_applies_to_receiver(function, ty)?
-            {
-                functions.push(function);
-            }
-        }
-
-        for (function, _) in ImplMatcher::new(item_paths, target_items)
-            .trait_function_candidates_for_receiver(
-                Some(self.semantic_index),
-                ty,
-                Some(method_name),
-            )?
-        {
-            push_unique(&mut functions, function);
-        }
-        Ok(functions)
-    }
-
-    fn item_store_function_applies_to_receiver(
-        &self,
-        function_ref: FunctionRef,
-        owner: ItemOwner,
-        receiver_ty: &NominalTy,
-    ) -> Result<bool, PackageStoreError> {
-        let ItemOwner::Impl(impl_id) = owner else {
-            return Ok(true);
-        };
-        let impl_ref = ImplRef {
-            origin: function_ref.origin,
-            id: impl_id,
-        };
-        let item_query = self.item_query();
-        let Some(impl_data) = item_query.impl_data(impl_ref)? else {
-            return Ok(false);
-        };
-        if impl_data.trait_ref.is_some() {
-            return Ok(false);
-        }
-
-        self.impl_matcher()
-            .impl_applies_to_receiver(impl_ref, impl_data, receiver_ty)
     }
 
     fn impl_self_subst_for_function(
@@ -828,6 +757,14 @@ where
 
     fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
         ItemStoreQuery::new(self.source)
+    }
+
+    fn body_local_items(&self) -> BodyLocalItemQuery<'query, D, I> {
+        BodyLocalItemQuery::new(self.source)
+    }
+
+    fn receiver_functions(&self) -> BodyReceiverFunctionQuery<'query, D, I> {
+        BodyReceiverFunctionQuery::new(self.source, self.semantic_index)
     }
 
     fn def_map_query(&self) -> DefMapQuery<BodyQuerySource<'query, D, I>> {
@@ -1149,9 +1086,6 @@ where
         }
 
         for nominal_ty in prefix_ty.as_nominals() {
-            if nominal_ty.def.origin != DefMapRef::Body(self.source.body_ref()) {
-                continue;
-            }
             if let Some((const_ref, ty)) =
                 self.semantic_associated_value_item_for_type(nominal_ty, last_segment)?
             {
@@ -1168,7 +1102,10 @@ where
         let mut functions = Vec::new();
         let item_query = self.item_query();
         for nominal_ty in prefix_ty.as_nominals() {
-            for function_ref in self.semantic_associated_functions_for_type(nominal_ty)? {
+            for function_ref in self
+                .receiver_functions()
+                .function_refs_for_receiver(nominal_ty, Some(last_segment))?
+            {
                 let Some(function_data) = item_query.function_data(function_ref)? else {
                     continue;
                 };
@@ -1184,63 +1121,40 @@ where
         )))
     }
 
-    fn semantic_associated_functions_for_type(
-        &self,
-        ty: &NominalTy,
-    ) -> Result<Vec<FunctionRef>, PackageStoreError> {
-        let mut functions = Vec::new();
-        if ty.def.origin == DefMapRef::Body(self.source.body_ref()) {
-            let source = self.source;
-            let item_query = self.item_query();
-            let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
-            for function in target_items.inherent_functions_for_type(ty.def)? {
-                let Some(function_data) = item_query.function_data(function)? else {
-                    continue;
-                };
-                if self.item_store_function_applies_to_receiver(
-                    function,
-                    function_data.owner,
-                    ty,
-                )? {
-                    functions.push(function);
-                }
-            }
-            return Ok(functions);
-        }
-
-        let source = self.source;
-        let item_paths = ItemPathQuery::new(source, source);
-        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
-        let inherent_functions = match self.semantic_index {
-            Some(index) => index.inherent_functions_for_type(item_paths.items(), ty.def)?,
-            None => target_items.inherent_functions_for_type(ty.def)?,
-        };
-
-        for function in inherent_functions {
-            if ImplMatcher::new(item_paths.clone(), target_items.clone())
-                .function_applies_to_receiver(function, ty)?
-            {
-                functions.push(function);
-            }
-        }
-
-        for (function, _) in ImplMatcher::new(item_paths, target_items)
-            .trait_function_candidates_for_receiver(self.semantic_index, ty, None)?
-        {
-            push_unique(&mut functions, function);
-        }
-        Ok(functions)
-    }
-
     fn semantic_associated_value_item_for_type(
         &self,
         ty: &NominalTy,
         name: &str,
     ) -> Result<Option<(ConstRef, Ty)>, PackageStoreError> {
+        if let Some(item) = self.associated_value_item_for_impls(
+            self.body_local_items().inherent_impls_for_type(ty.def)?,
+            ty,
+            name,
+        )? {
+            return Ok(Some(item));
+        }
+
+        if ty.def.origin == DefMapRef::Body(self.source.body_ref()) {
+            return Ok(None);
+        }
+
         let source = self.source;
-        let item_query = self.item_query();
         let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
-        for impl_ref in target_items.inherent_impls_for_type(ty.def)? {
+        self.associated_value_item_for_impls(
+            target_items.inherent_impls_for_type(ty.def)?,
+            ty,
+            name,
+        )
+    }
+
+    fn associated_value_item_for_impls(
+        &self,
+        impls: Vec<ImplRef>,
+        ty: &NominalTy,
+        name: &str,
+    ) -> Result<Option<(ConstRef, Ty)>, PackageStoreError> {
+        let item_query = self.item_query();
+        for impl_ref in impls {
             let Some(impl_data) = item_query.impl_data(impl_ref)? else {
                 continue;
             };
@@ -1317,31 +1231,6 @@ where
             self.type_path_resolver()
                 .resolve_type_ref_in_context_with_subst(ty, context, &subst)
         }
-    }
-
-    fn item_store_function_applies_to_receiver(
-        &self,
-        function_ref: FunctionRef,
-        owner: ItemOwner,
-        receiver_ty: &NominalTy,
-    ) -> Result<bool, PackageStoreError> {
-        let ItemOwner::Impl(impl_id) = owner else {
-            return Ok(true);
-        };
-        let impl_ref = ImplRef {
-            origin: function_ref.origin,
-            id: impl_id,
-        };
-        let item_query = self.item_query();
-        let Some(impl_data) = item_query.impl_data(impl_ref)? else {
-            return Ok(false);
-        };
-        if impl_data.trait_ref.is_some() {
-            return Ok(false);
-        }
-
-        self.impl_matcher()
-            .impl_applies_to_receiver(impl_ref, impl_data, receiver_ty)
     }
 
     fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {

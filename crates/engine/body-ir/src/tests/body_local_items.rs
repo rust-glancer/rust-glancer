@@ -302,6 +302,154 @@ pub fn use_it() {
 }
 
 #[test]
+fn resolves_body_local_impl_methods_for_target_types() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_local_target_impl_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+pub struct LocalId;
+
+pub fn use_it(id: GlobalId) {
+    impl GlobalId {
+        const DEFAULT: Self = missing();
+        type Alias = LocalId;
+
+        fn local(&self) -> LocalId {
+            missing()
+        }
+
+        fn again(&self) -> Self {
+            missing()
+        }
+    }
+
+    let local = id.local();
+    let again = id.again();
+    let default = GlobalId::DEFAULT;
+    let typed: GlobalId::Alias = LocalId;
+}
+"#,
+        expect![[r#"
+            package body_local_target_impl_fixture
+
+            body_local_target_impl_fixture [lib]
+            body b0 fn body_local_target_impl_fixture[lib]::crate::use_it @ 4:1-22:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v2, v3, v4; source_items i4
+            source_items
+            - i0 const DEFAULT @ 6:9-6:41
+            - i1 type_alias Alias @ 7:9-7:30
+            - i2 fn local @ 9:9-11:10
+            - i3 fn again @ 13:9-15:10
+            - i4 impl <unnamed> @ 5:5-16:6
+            bindings
+            - v0 param id `id`: GlobalId => nominal struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 4:15-4:17
+            - v1 let local `local` => nominal struct body_local_target_impl_fixture[lib]::crate::LocalId @ 18:9-18:14
+            - v2 let again `again` => nominal struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 19:9-19:14
+            - v3 let default `default` => nominal struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 20:9-20:16
+            - v4 let typed `typed`: GlobalId::Alias => nominal struct body_local_target_impl_fixture[lib]::crate::LocalId @ 21:9-21:14
+            body
+            expr e6 block s1 => () @ 4:29-22:2
+              stmt s0 source_item i4 @ 5:5-16:6
+              stmt s1 let v1 @ 18:5-18:28
+                initializer
+                  expr e1 method_call local -> fn impl GlobalId::local => nominal struct body_local_target_impl_fixture[lib]::crate::LocalId @ 18:17-18:27
+                    receiver
+                      expr e0 path id -> local v0 => nominal struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 18:17-18:19
+              stmt s2 let v2 @ 19:5-19:28
+                initializer
+                  expr e3 method_call again -> fn impl GlobalId::again => nominal struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 19:17-19:27
+                    receiver
+                      expr e2 path id -> local v0 => nominal struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 19:17-19:19
+              stmt s3 let v3 @ 20:5-20:37
+                initializer
+                  expr e4 path GlobalId::DEFAULT -> const impl GlobalId::DEFAULT => nominal struct body_local_target_impl_fixture[lib]::crate::GlobalId @ 20:19-20:36
+              stmt s4 let v4: GlobalId::Alias @ 21:5-21:42
+                initializer
+                  expr e5 path LocalId -> item struct body_local_target_impl_fixture[lib]::crate::LocalId => nominal struct body_local_target_impl_fixture[lib]::crate::LocalId @ 21:34-21:41
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_body_local_trait_impl_methods_for_target_types() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_local_trait_impl_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+pub struct Label;
+
+pub fn use_it(id: GlobalId) {
+    trait Named {
+        fn label(&self) -> Label;
+        fn make() -> Label;
+    }
+
+    impl Named for GlobalId {
+        fn label(&self) -> Label {
+            missing()
+        }
+
+        fn make() -> Label {
+            missing()
+        }
+    }
+
+    let label = id.label();
+    let made = GlobalId::make();
+}
+"#,
+        expect![[r#"
+            package body_local_trait_impl_fixture
+
+            body_local_trait_impl_fixture [lib]
+            body b0 fn body_local_trait_impl_fixture[lib]::crate::use_it @ 4:1-22:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v2; source_items i2, i5
+            source_items
+            - i0 fn label @ 6:9-6:34
+            - i1 fn make @ 7:9-7:28
+            - i2 trait Named @ 5:5-8:6
+            - i3 fn label @ 11:9-13:10
+            - i4 fn make @ 15:9-17:10
+            - i5 impl <unnamed> @ 10:5-18:6
+            bindings
+            - v0 param id `id`: GlobalId => nominal struct body_local_trait_impl_fixture[lib]::crate::GlobalId @ 4:15-4:17
+            - v1 let label `label` => nominal struct body_local_trait_impl_fixture[lib]::crate::Label @ 20:9-20:14
+            - v2 let made `made` => nominal struct body_local_trait_impl_fixture[lib]::crate::Label @ 21:9-21:13
+            body
+            expr e4 block s1 => () @ 4:29-22:2
+              stmt s0 source_item i2 @ 5:5-8:6
+              stmt s1 source_item i5 @ 10:5-18:6
+              stmt s2 let v1 @ 20:5-20:28
+                initializer
+                  expr e1 method_call label -> fn trait fn body_local_trait_impl_fixture[lib]::crate::use_it::Named::label => nominal struct body_local_trait_impl_fixture[lib]::crate::Label @ 20:17-20:27
+                    receiver
+                      expr e0 path id -> local v0 => nominal struct body_local_trait_impl_fixture[lib]::crate::GlobalId @ 20:17-20:19
+              stmt s3 let v2 @ 21:5-21:33
+                initializer
+                  expr e3 call => nominal struct body_local_trait_impl_fixture[lib]::crate::Label @ 21:16-21:32
+                    callee
+                      expr e2 path GlobalId::make -> fn trait fn body_local_trait_impl_fixture[lib]::crate::use_it::Named::make => <unknown> @ 21:16-21:30
+"#]],
+    );
+}
+
+#[test]
 fn lowers_more_body_local_item_kinds() {
     check_project_body_ir(
         r#"

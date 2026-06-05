@@ -114,6 +114,22 @@ impl<'a> MemberMethodCandidate<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum MemberUseSite {
+    Target(TargetRef),
+    Body(BodyRef),
+}
+
+impl MemberUseSite {
+    pub(crate) fn target(target: TargetRef) -> Self {
+        Self::Target(target)
+    }
+
+    pub(crate) fn body(body: BodyRef) -> Self {
+        Self::Body(body)
+    }
+}
+
 pub(crate) struct MemberView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -192,6 +208,17 @@ impl<'a, 'db> MemberView<'a, 'db> {
 
     pub(crate) fn method_candidates_for_ty<'view>(
         &'view self,
+        use_site: MemberUseSite,
+        ty: &Ty,
+    ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
+        match use_site {
+            MemberUseSite::Target(target) => self.target_method_candidates_for_ty(target, ty),
+            MemberUseSite::Body(body) => self.body_method_candidates_for_ty(body, ty),
+        }
+    }
+
+    fn target_method_candidates_for_ty<'view>(
+        &'view self,
         use_site: TargetRef,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
@@ -201,6 +228,27 @@ impl<'a, 'db> MemberView<'a, 'db> {
             TargetItemQuery::new(self.db, self.db, use_site),
         );
         for candidate in member_query.method_candidates_for_ty(ty)? {
+            let Some(function) = self.function(candidate.function())? else {
+                continue;
+            };
+            methods.push(Self::method_candidate(function, candidate));
+        }
+
+        Ok(methods)
+    }
+
+    fn body_method_candidates_for_ty<'view>(
+        &'view self,
+        body: BodyRef,
+        ty: &Ty,
+    ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
+        let Some(body_data) = self.db.body_data(body)? else {
+            return self.method_candidates_for_ty(MemberUseSite::target(body.target), ty);
+        };
+
+        let body_scope_query = BodyScopeQuery::new(self.db, self.db, body, body_data);
+        let mut methods = Vec::new();
+        for candidate in body_scope_query.method_candidates_for_ty(ty)? {
             let Some(function) = self.function(candidate.function())? else {
                 continue;
             };

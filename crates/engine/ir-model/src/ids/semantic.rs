@@ -199,6 +199,14 @@ impl TraitApplicability {
             (Self::Yes, Self::Yes) => Self::Yes,
         }
     }
+
+    pub fn or(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Yes, _) | (_, Self::Yes) => Self::Yes,
+            (Self::Maybe, _) | (_, Self::Maybe) => Self::Maybe,
+            (Self::No, Self::No) => Self::No,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]

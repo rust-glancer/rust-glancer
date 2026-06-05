@@ -17,14 +17,14 @@ pub struct MemberMethodCandidateRef {
 }
 
 impl MemberMethodCandidateRef {
-    fn inherent(function: FunctionRef) -> Self {
+    pub fn inherent(function: FunctionRef) -> Self {
         Self {
             function,
             origin: MemberMethodOrigin::Inherent,
         }
     }
 
-    fn trait_method(function: FunctionRef, applicability: TraitApplicability) -> Self {
+    pub fn trait_method(function: FunctionRef, applicability: TraitApplicability) -> Self {
         Self {
             function,
             origin: MemberMethodOrigin::Trait { applicability },

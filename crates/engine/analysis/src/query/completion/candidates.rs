@@ -23,7 +23,7 @@ use crate::{
         DotCompletionSite, PathCompletionSite, RecordFieldCompletionSite, UnqualifiedCompletionSite,
     },
     model::{CompletionApplicability, CompletionKind, CompletionTarget},
-    query::member::{MemberMethodCandidate, MemberMethodOrigin, MemberView},
+    query::member::{MemberMethodCandidate, MemberMethodOrigin, MemberUseSite, MemberView},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -382,7 +382,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
 
         let members = MemberView::new(self.db);
         let mut methods = Vec::new();
-        for method in members.method_candidates_for_ty(receiver.body_ir().target, &receiver_ty)? {
+        for method in members
+            .method_candidates_for_ty(MemberUseSite::body(receiver.body_ir()), &receiver_ty)?
+        {
             methods.push(Self::dot_method_candidate(method));
         }
 

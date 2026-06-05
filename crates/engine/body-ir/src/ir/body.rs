@@ -1,7 +1,7 @@
 use rg_arena::Arena;
 use rg_ir_model::{
-    BindingId, BodyId, ConstRef, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, StaticRef, StmtId,
-    identity::DeclarationRef,
+    BindingId, BodyId, BodyRef, ConstRef, DefMapRef, ExprId, FunctionRef, ModuleRef, PatId,
+    ScopeId, StaticRef, StmtId, identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMap, ItemStore};
 use rg_item_tree::{ItemNode, ItemTreeId};
@@ -274,6 +274,17 @@ impl BodyData {
 
     pub fn scope(&self, scope: ScopeId) -> Option<&ScopeData> {
         self.scopes.get(scope)
+    }
+
+    pub fn scope_for_module(&self, body_ref: BodyRef, module: ModuleRef) -> Option<ScopeId> {
+        if module.origin != DefMapRef::Body(body_ref) {
+            return None;
+        }
+
+        // Body DefMaps allocate synthetic scope modules first, in `ScopeId` order. Inline named
+        // modules may have ids after that prefix, so the arena lookup is the invariant check.
+        let scope = ScopeId(module.module.0);
+        self.scope(scope).map(|_| scope)
     }
 
     pub fn source_item(&self, item: ItemTreeId) -> Option<&ItemNode> {

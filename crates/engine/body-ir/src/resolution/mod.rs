@@ -4,20 +4,23 @@
 //! local-vs-item path resolution and simple types that are already present in signatures.
 
 mod body;
+mod body_items;
 mod normalize;
 mod pat;
 mod query_source;
+mod receiver_items;
 mod type_path;
 
 use rg_ir_model::{BodyRef, ScopeId, TypePathResolution};
 use rg_ir_storage::{DefMapSource, ItemStoreSource, Path};
 use rg_package_store::PackageStoreError;
-use rg_ty::Ty;
+use rg_ty::{MemberMethodCandidateRef, Ty};
 
 use crate::{BodyData, BodyResolution};
 
 pub(crate) use self::{
-    body::BodyResolver, body::BodyValuePathResolver, query_source::BodyQuerySource,
+    body::BodyResolver, body::BodyValuePathResolver, body_items::BodyLocalItemQuery,
+    query_source::BodyQuerySource, receiver_items::BodyReceiverFunctionQuery,
     type_path::BodyTypePathResolver,
 };
 
@@ -55,6 +58,13 @@ where
         path: &Path,
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
         BodyValuePathResolver::new(self.source, None).resolve_nonlocal_path_expr(scope, path)
+    }
+
+    pub fn method_candidates_for_ty(
+        &self,
+        ty: &Ty,
+    ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {
+        BodyReceiverFunctionQuery::new(self.source, None).method_candidates_for_ty(ty)
     }
 }
 

@@ -1,8 +1,8 @@
 //! Target-local mutable state used while Body IR resolution is assembled.
 
 use rg_def_map::DefMapReadTxn;
-use rg_ir_model::{BodyId, BodyRef, DefMapRef, ScopeId, TargetRef};
-use rg_ir_storage::{DefMap, ItemLookupIndex, ItemStore, TargetItemQuery};
+use rg_ir_model::{BodyId, BodyRef, DefMapRef, TargetRef, TypePathResolution};
+use rg_ir_storage::{DefMap, ItemLookupIndex, ItemStore, Path, TargetItemQuery};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
 
@@ -81,8 +81,8 @@ impl<'target> TargetBodyBuildState<'target> {
         }
     }
 
-    // After we collected body local items, we need to resolve each `impl` block's `Self`
-    // type to its nominal candidates.
+    // After body-local item collection, impl headers can be resolved against the body defmap and
+    // item store. Both inherent and trait lookups depend on these precomputed header facts.
     fn resolve_body_local_impl_headers(
         &mut self,
         def_map: &DefMapReadTxn<'_>,
@@ -100,7 +100,12 @@ impl<'target> TargetBodyBuildState<'target> {
                     .item_store
                     .impls_with_refs()
                     .map(|(impl_ref, impl_data)| {
-                        (impl_ref.id, impl_data.owner, impl_data.self_ty.clone())
+                        (
+                            impl_ref.id,
+                            impl_data.owner,
+                            impl_data.self_ty.clone(),
+                            impl_data.trait_ref.clone(),
+                        )
                     })
                     .collect::<Vec<_>>();
 
@@ -116,29 +121,30 @@ impl<'target> TargetBodyBuildState<'target> {
                     &source, &source, body_ref, body,
                 ));
                 let mut resolved_headers = Vec::new();
-                for (impl_id, owner, self_ty) in impl_headers {
+                for (impl_id, owner, self_ty, trait_ref) in impl_headers {
                     if owner.origin != DefMapRef::Body(body_ref) {
                         continue;
                     }
 
-                    // TODO: We should probably avoid such a direct conversion,
-                    // maybe implement a dedicated method at least. Right now, this is an
-                    // implicit invariant.
-                    // This works because we create synthetic modules as well, and these
-                    // are allocated in `ScopeId` order (so conversion is only safe if
-                    // `body.scope(scope).is_some()`). Better to make it explicit and
-                    // encapsulated.
-                    let scope = ScopeId(owner.module.0);
-                    if body.scope(scope).is_none() {
+                    let Some(scope) = body.scope_for_module(body_ref, owner) else {
                         continue;
-                    }
+                    };
 
                     let ty = resolver.resolve_type_ref_in_scope(&self_ty, scope)?;
                     let mut resolved_self_tys = Vec::new();
                     for nominal in ty.as_nominals() {
                         push_unique(&mut resolved_self_tys, nominal.def);
                     }
-                    resolved_headers.push((impl_id, resolved_self_tys));
+
+                    let mut resolved_trait_refs = Vec::new();
+                    if let Some(trait_ref) = trait_ref
+                        && let Some(path) = Path::from_type_ref(&trait_ref)
+                        && let TypePathResolution::Traits(traits) =
+                            resolver.resolve_in_scope(scope, &path)?
+                    {
+                        resolved_trait_refs = traits;
+                    }
+                    resolved_headers.push((impl_id, resolved_self_tys, resolved_trait_refs));
                 }
                 resolved_headers
             };
@@ -150,9 +156,10 @@ impl<'target> TargetBodyBuildState<'target> {
             else {
                 continue;
             };
-            for (impl_id, resolved_self_tys) in resolved_headers {
+            for (impl_id, resolved_self_tys, resolved_trait_refs) in resolved_headers {
                 if let Some(impl_data) = items.item_store.impls_mut().get_mut(impl_id) {
                     impl_data.resolved_self_tys = resolved_self_tys;
+                    impl_data.resolved_trait_refs = resolved_trait_refs;
                 }
             }
         }

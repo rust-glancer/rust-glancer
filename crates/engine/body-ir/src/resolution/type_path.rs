@@ -17,7 +17,7 @@ use rg_ty::{GenericArg, ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
 
 use crate::ir::BodyOwner;
 
-use super::{BodyQuerySource, push_unique};
+use super::{BodyLocalItemQuery, BodyQuerySource, push_unique};
 
 pub(crate) struct BodyTypePathResolver<'query, D, I> {
     source: BodyQuerySource<'query, D, I>,
@@ -43,6 +43,10 @@ where
 
     fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
         ItemStoreQuery::new(self.source)
+    }
+
+    fn body_local_items(&self) -> BodyLocalItemQuery<'query, D, I> {
+        BodyLocalItemQuery::new(self.source)
     }
 
     pub(crate) fn resolve_in_scope(
@@ -194,14 +198,12 @@ where
         module: ModuleRef,
         subst: &TypeSubst,
     ) -> Result<Ty, PackageStoreError> {
-        // Body DefMaps allocate synthetic scope modules first, in ScopeId order. Named inline
-        // modules may have ids outside that range, and the legacy body resolver did not model
-        // their expression scopes either.
-        if module.origin == DefMapRef::Body(self.source.body_ref()) {
-            let scope = ScopeId(module.module.0);
-            if self.source.body().scope(scope).is_some() {
-                return self.resolve_type_ref_in_scope_with_subst(ty, scope, subst);
-            }
+        if let Some(scope) = self
+            .source
+            .body()
+            .scope_for_module(self.source.body_ref(), module)
+        {
+            return self.resolve_type_ref_in_scope_with_subst(ty, scope, subst);
         }
 
         self.resolve_type_ref_in_context_with_subst(ty, TypePathContext::module(module), subst)
@@ -363,19 +365,19 @@ where
         }
     }
 
+    /// Attempts to find the type alias with given name for the provided type
+    /// in the body-local context.
     fn associated_type_alias_for_type(
         &self,
         ty: &NominalTy,
         name: &str,
     ) -> Result<Option<TypeAliasRef>, PackageStoreError> {
-        if ty.def.origin != DefMapRef::Body(self.source.body_ref()) {
-            return Ok(None);
-        }
+        // In order to find the associated type, we need to iterate through its impl
+        // blocks.
+        let impls = self.body_local_items().inherent_impls_for_type(ty.def)?;
 
         let item_query = self.item_query();
-        let source = self.source;
-        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
-        for impl_ref in target_items.inherent_impls_for_type(ty.def)? {
+        for impl_ref in impls {
             let Some(impl_data) = item_query.impl_data(impl_ref)? else {
                 continue;
             };
