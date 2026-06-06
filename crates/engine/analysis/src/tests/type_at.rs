@@ -1232,6 +1232,146 @@ pub fn use_it() {
 }
 
 #[test]
+fn infers_basic_generic_call_arguments() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_generic_call_arg_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub struct User;
+pub struct Project;
+
+pub struct Wrapper<T> {
+    value: T,
+}
+
+pub fn id<T>(value: T) -> T {
+    value
+}
+
+pub fn pair<T, U>(left: T, right: U) -> (T, U) {
+    missing()
+}
+
+pub fn same<T>(left: T, right: T) -> T {
+    missing()
+}
+
+pub struct Builder;
+
+impl Builder {
+    pub fn wrap<T>(value: T) -> Wrapper<T> {
+        missing()
+    }
+
+    pub fn echo<T>(&self, value: T) -> T {
+        value
+    }
+
+    pub fn clone_ref<T>(&self, value: &T) -> T {
+        missing()
+    }
+}
+
+pub fn use_it(builder: Builder, user: User, project: Project) {
+    let id_value = id(user)$type_id$;
+    let pair_value = pair(user, project)$type_pair$;
+    let wrapped = Builder::wrap(user)$type_wrap$;
+    let echoed = builder.echo(project)$type_method$;
+    let cloned = builder.clone_ref(&user)$type_ref$;
+    let conflict = same(user, project)$type_conflict$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("inferred free function return", "type_id"),
+            AnalysisQuery::ty("inferred multi-param return", "type_pair"),
+            AnalysisQuery::ty("inferred associated function return", "type_wrap"),
+            AnalysisQuery::ty("inferred method return", "type_method"),
+            AnalysisQuery::ty("inferred reference param return", "type_ref"),
+            AnalysisQuery::ty("conflicting inferred params", "type_conflict"),
+        ],
+        expect![[r#"
+            inferred free function return
+            - nominal struct analysis_generic_call_arg_inference[lib]::crate::User
+
+            inferred multi-param return
+            - (nominal struct analysis_generic_call_arg_inference[lib]::crate::User, nominal struct analysis_generic_call_arg_inference[lib]::crate::Project)
+
+            inferred associated function return
+            - nominal struct analysis_generic_call_arg_inference[lib]::crate::Wrapper<nominal struct analysis_generic_call_arg_inference[lib]::crate::User>
+
+            inferred method return
+            - nominal struct analysis_generic_call_arg_inference[lib]::crate::Project
+
+            inferred reference param return
+            - nominal struct analysis_generic_call_arg_inference[lib]::crate::User
+
+            conflicting inferred params
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn inferred_function_generics_shadow_impl_generics() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_generic_call_arg_shadowing"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub struct User;
+pub struct Project;
+
+pub struct Container<T> {
+    value: T,
+}
+
+impl<T> Container<T> {
+    pub fn current(&self) -> T {
+        missing()
+    }
+
+    pub fn replace<T>(&self, value: T) -> T {
+        value
+    }
+}
+
+pub fn use_it(container: Container<User>, project: Project) {
+    let current = container.current()$type_current$;
+    let replaced = container.replace(project)$type_replaced$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("impl generic method return", "type_current"),
+            AnalysisQuery::ty("shadowed method generic return", "type_replaced"),
+        ],
+        expect![[r#"
+            impl generic method return
+            - nominal struct analysis_generic_call_arg_shadowing[lib]::crate::User
+
+            shadowed method generic return
+            - nominal struct analysis_generic_call_arg_shadowing[lib]::crate::Project
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_lifetime_parameterized_receiver_method_types() {
     check_analysis_queries(
         r#"
