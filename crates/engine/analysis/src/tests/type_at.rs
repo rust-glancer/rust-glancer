@@ -33,6 +33,101 @@ pub fn use_it() {
 }
 
 #[test]
+fn returns_scalar_literal_and_operator_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_scalar_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(flag: bool, lhs: i32, rhs: i32) {
+    let bool_lit = true$type_bool$;
+    let char_lit = 'x'$type_char$;
+    let byte_lit = b'x'$type_byte$;
+    let int_default = 1$type_int$;
+    let int_suffix = 1usize$type_usize$;
+    let float_default = 1.0$type_float$;
+    let float_suffix = 1.0f32$type_f32$;
+    let string_lit = "text"$type_str$;
+    let not_flag = (!flag)$type_not$;
+    let neg_lhs = (-lhs)$type_neg$;
+    let sum = (lhs + rhs)$type_sum$;
+    let compare = (lhs < rhs)$type_compare$;
+    let logic = (flag && false)$type_logic$;
+    let bit = (lhs & rhs)$type_bit$;
+    let shift = (lhs << 1)$type_shift$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("bool literal", "type_bool"),
+            AnalysisQuery::ty("char literal", "type_char"),
+            AnalysisQuery::ty("byte literal", "type_byte"),
+            AnalysisQuery::ty("default int literal", "type_int"),
+            AnalysisQuery::ty("suffixed int literal", "type_usize"),
+            AnalysisQuery::ty("default float literal", "type_float"),
+            AnalysisQuery::ty("suffixed float literal", "type_f32"),
+            AnalysisQuery::ty("string literal", "type_str"),
+            AnalysisQuery::ty("not expression", "type_not"),
+            AnalysisQuery::ty("neg expression", "type_neg"),
+            AnalysisQuery::ty("sum expression", "type_sum"),
+            AnalysisQuery::ty("comparison expression", "type_compare"),
+            AnalysisQuery::ty("logic expression", "type_logic"),
+            AnalysisQuery::ty("bit expression", "type_bit"),
+            AnalysisQuery::ty("shift expression", "type_shift"),
+        ],
+        expect![[r#"
+            bool literal
+            - bool
+
+            char literal
+            - char
+
+            byte literal
+            - u8
+
+            default int literal
+            - i32
+
+            suffixed int literal
+            - usize
+
+            default float literal
+            - f64
+
+            suffixed float literal
+            - f32
+
+            string literal
+            - &str
+
+            not expression
+            - bool
+
+            neg expression
+            - i32
+
+            sum expression
+            - i32
+
+            comparison expression
+            - bool
+
+            logic expression
+            - bool
+
+            bit expression
+            - i32
+
+            shift expression
+            - i32
+        "#]],
+    );
+}
+
+#[test]
 fn returns_types_for_references_try_and_await_wrappers() {
     check_analysis_queries(
         r#"

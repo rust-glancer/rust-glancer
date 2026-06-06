@@ -319,6 +319,13 @@ where
             ItemGenericArg::Type(ty) => Ok(GenericArg::Type(Box::new(self.resolve(ty)?))),
             ItemGenericArg::Lifetime(lifetime) => Ok(GenericArg::Lifetime(lifetime.clone())),
             ItemGenericArg::Const(value) => Ok(GenericArg::Const(value.clone())),
+            ItemGenericArg::FnTraitArgs { params, ret } => Ok(GenericArg::FnTraitArgs {
+                params: params
+                    .iter()
+                    .map(|ty| self.resolve(ty))
+                    .collect::<Result<_, _>>()?,
+                ret: Box::new(self.resolve(ret)?),
+            }),
             ItemGenericArg::AssocType { name, ty } => Ok(GenericArg::AssocType {
                 name: name.clone(),
                 ty: ty

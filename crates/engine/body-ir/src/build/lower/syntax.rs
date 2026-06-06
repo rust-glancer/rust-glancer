@@ -8,6 +8,7 @@ use rg_syntax::{
 use rg_item_tree::{FromAst as _, GenericArg, TypePath, TypeRef};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
+use rg_ty::{PrimitiveTy, UnsignedIntTy};
 
 use crate::ir::{
     BodyPath, BodySource, ExprAssignOp, ExprBinaryOp, ExprRangeKind, ExprUnaryOp, LabelData,
@@ -22,9 +23,15 @@ impl LiteralKind {
         match literal.kind() {
             ast::LiteralKind::Bool(_) => Self::Bool,
             ast::LiteralKind::Char(_) => Self::Char,
-            ast::LiteralKind::Byte(_) => Self::Int,
-            ast::LiteralKind::FloatNumber(_) => Self::Float,
-            ast::LiteralKind::IntNumber(_) => Self::Int,
+            ast::LiteralKind::Byte(_) => Self::Int {
+                primitive_ty: Some(PrimitiveTy::UnsignedInt(UnsignedIntTy::U8)),
+            },
+            ast::LiteralKind::FloatNumber(number) => Self::Float {
+                primitive_ty: PrimitiveTy::from_float_suffix(number.suffix()),
+            },
+            ast::LiteralKind::IntNumber(number) => Self::Int {
+                primitive_ty: PrimitiveTy::from_integer_suffix(number.suffix()),
+            },
             ast::LiteralKind::String(_)
             | ast::LiteralKind::ByteString(_)
             | ast::LiteralKind::CString(_) => Self::String,
@@ -286,6 +293,7 @@ pub(super) fn source_for(file_id: FileId, syntax: &rg_syntax::SyntaxNode) -> Bod
 #[cfg(test)]
 mod tests {
     use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
+    use rg_ty::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy};
 
     use crate::ir::LiteralKind;
 
@@ -294,14 +302,54 @@ mod tests {
         let cases = [
             ("true", LiteralKind::Bool, "bool literal"),
             ("'x'", LiteralKind::Char, "char literal"),
-            ("b'x'", LiteralKind::Int, "byte literal"),
-            ("42", LiteralKind::Int, "integer literal"),
-            ("1.5", LiteralKind::Float, "decimal float literal"),
-            ("1e10", LiteralKind::Float, "exponent float literal"),
+            (
+                "b'x'",
+                LiteralKind::Int {
+                    primitive_ty: Some(PrimitiveTy::UnsignedInt(UnsignedIntTy::U8)),
+                },
+                "byte literal",
+            ),
+            (
+                "42",
+                LiteralKind::Int {
+                    primitive_ty: Some(PrimitiveTy::SignedInt(SignedIntTy::I32)),
+                },
+                "integer literal",
+            ),
+            (
+                "42usize",
+                LiteralKind::Int {
+                    primitive_ty: Some(PrimitiveTy::UnsignedInt(UnsignedIntTy::Usize)),
+                },
+                "suffixed integer literal",
+            ),
+            (
+                "1.5",
+                LiteralKind::Float {
+                    primitive_ty: Some(PrimitiveTy::Float(FloatTy::F64)),
+                },
+                "decimal float literal",
+            ),
+            (
+                "1e10",
+                LiteralKind::Float {
+                    primitive_ty: Some(PrimitiveTy::Float(FloatTy::F64)),
+                },
+                "exponent float literal",
+            ),
             (
                 "1E-10",
-                LiteralKind::Float,
+                LiteralKind::Float {
+                    primitive_ty: Some(PrimitiveTy::Float(FloatTy::F64)),
+                },
                 "negative exponent float literal",
+            ),
+            (
+                "1E-10f32",
+                LiteralKind::Float {
+                    primitive_ty: Some(PrimitiveTy::Float(FloatTy::F32)),
+                },
+                "suffixed float literal",
             ),
             (r#""text""#, LiteralKind::String, "string literal"),
             (r##"r#"text"#"##, LiteralKind::String, "raw string literal"),

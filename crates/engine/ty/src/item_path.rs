@@ -216,6 +216,18 @@ where
                 )?)),
                 ItemGenericArg::Lifetime(lifetime) => GenericArg::Lifetime(lifetime.clone()),
                 ItemGenericArg::Const(value) => GenericArg::Const(value.clone()),
+                ItemGenericArg::FnTraitArgs { params, ret } => GenericArg::FnTraitArgs {
+                    params: params
+                        .iter()
+                        .map(|ty| self.resolve_type_ref(ty, context, Ty::syntax(ty.clone()), subst))
+                        .collect::<Result<_, _>>()?,
+                    ret: Box::new(self.resolve_type_ref(
+                        ret,
+                        context,
+                        Ty::syntax((**ret).clone()),
+                        subst,
+                    )?),
+                },
                 ItemGenericArg::AssocType { name, ty } => GenericArg::AssocType {
                     name: name.clone(),
                     ty: match ty {

@@ -73,6 +73,22 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             GenericArg::Type(ty) => Ok(self.render(ty)?.unwrap_or_else(|| "_".to_string())),
             GenericArg::Lifetime(lifetime) => Ok(lifetime.clone()),
             GenericArg::Const(value) => Ok(value.clone()),
+            GenericArg::FnTraitArgs { params, ret } => {
+                let params = params
+                    .iter()
+                    .map(|ty| {
+                        self.render(ty)
+                            .map(|ty| ty.unwrap_or_else(|| "_".to_string()))
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?
+                    .join(", ");
+                let mut text = format!("({params})");
+                if !matches!(ret.as_ref(), Ty::Unit) {
+                    text.push_str(" -> ");
+                    text.push_str(&self.render(ret)?.unwrap_or_else(|| "_".to_string()));
+                }
+                Ok(text)
+            }
             GenericArg::AssocType { name, ty } => match ty {
                 Some(ty) => Ok(format!(
                     "{name} = {}",

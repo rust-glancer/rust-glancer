@@ -192,7 +192,7 @@ pub fn shadowed(ready: u8, value: u8) -> u8 {
                   scrutinee
                     expr e0 path value -> local v0 => u8 @ 8:11-8:16
                   arm s2
-                    expr e1 literal int `0` => <unknown> @ 9:18-9:19
+                    expr e1 literal int `0` => i32 @ 9:18-9:19
                   arm s3
                     expr e2 path other -> local v2 => u8 @ 10:18-10:23
               stmt s1 let v3 @ 13:5-13:28
@@ -221,7 +221,7 @@ pub fn shadowed(ready: u8, value: u8) -> u8 {
                   arm s2
                     expr e1 path ready -> local v2 => u8 @ 19:18-19:23
                   arm s3
-                    expr e2 literal int `0` => <unknown> @ 20:14-20:15
+                    expr e2 literal int `0` => i32 @ 20:14-20:15
 
 
             body b2 const body_pattern_resolution_fixture[lib]::crate::ready @ 1:1-1:25
@@ -229,7 +229,7 @@ pub fn shadowed(ready: u8, value: u8) -> u8 {
             - s0 parent <none>: <none>
             bindings
             body
-            expr e0 literal int `1` => <unknown> @ 1:23-1:24
+            expr e0 literal int `1` => i32 @ 1:23-1:24
         "#]],
     );
 }

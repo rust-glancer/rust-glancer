@@ -7,7 +7,7 @@ use rg_item_tree::{FieldKey, TypeRef};
 use rg_memsize::MemorySize;
 use rg_parse::Span;
 use rg_text::Name;
-use rg_ty::Ty;
+use rg_ty::{PrimitiveTy, RefMutability, Ty};
 
 use super::{RecordFieldSyntax, body::BodySource, path::BodyPath, resolved::BodyResolution};
 
@@ -370,6 +370,19 @@ pub enum ExprBinaryOp {
     BitAnd,
 }
 
+impl ExprBinaryOp {
+    pub fn is_logical(self) -> bool {
+        matches!(self, Self::LogicOr | Self::LogicAnd)
+    }
+
+    pub fn is_comparison(self) -> bool {
+        matches!(
+            self,
+            Self::Eq | Self::NotEq | Self::Less | Self::LessEq | Self::Greater | Self::GreaterEq
+        )
+    }
+}
+
 /// Assignment operator written between a target expression and a value expression.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
@@ -425,7 +438,7 @@ pub enum ExprWrapperKind {
     Paren,
     /// `&<expr>` or `&mut <expr>`.
     #[display("ref")]
-    Ref { mutability: rg_ty::RefMutability },
+    Ref { mutability: RefMutability },
     /// `<expr>.await`.
     #[display("await")]
     Await,
@@ -462,24 +475,43 @@ pub struct LabelData {
     pub span: Span,
 }
 
-/// Literal category used for display and future cheap inference.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
-)]
+/// Literal category plus the primitive type implied by suffix/default heuristics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub enum LiteralKind {
-    #[display("bool")]
     Bool,
-    #[display("char")]
     Char,
-    #[display("float")]
-    Float,
-    #[display("int")]
-    Int,
-    #[display("string")]
+    Float { primitive_ty: Option<PrimitiveTy> },
+    Int { primitive_ty: Option<PrimitiveTy> },
     String,
-    #[display("unknown")]
     Unknown,
+}
+
+impl LiteralKind {
+    pub fn ty(self) -> Ty {
+        match self {
+            Self::Bool => Ty::Primitive(PrimitiveTy::Bool),
+            Self::Char => Ty::Primitive(PrimitiveTy::Char),
+            Self::Float { primitive_ty } | Self::Int { primitive_ty } => {
+                primitive_ty.map(Ty::Primitive).unwrap_or(Ty::Unknown)
+            }
+            Self::String => Ty::reference(RefMutability::Shared, Ty::Primitive(PrimitiveTy::Str)),
+            Self::Unknown => Ty::Unknown,
+        }
+    }
+}
+
+impl fmt::Display for LiteralKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Bool => write!(f, "bool"),
+            Self::Char => write!(f, "char"),
+            Self::Float { .. } => write!(f, "float"),
+            Self::Int { .. } => write!(f, "int"),
+            Self::String => write!(f, "string"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
 }
 
 impl ExprKind {

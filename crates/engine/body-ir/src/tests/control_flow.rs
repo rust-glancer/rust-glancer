@@ -54,7 +54,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
               tail
                 expr e9 if => nominal struct body_if_let_fixture[lib]::crate::UserId @ 15:5-19:6
                   condition
-                    expr e4 binary && => <unknown> @ 15:8-15:52
+                    expr e4 binary && => bool @ 15:8-15:52
                       lhs
                         expr e1 let s2 v2 => <unknown> @ 15:8-15:35
                           initializer
@@ -80,9 +80,9 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
             bindings
             - v0 self_param self `&self` => &Self struct body_if_let_fixture[lib]::crate::UserId @ 4:21-4:26
             body
-            expr e1 block s1 => <unknown> @ 4:36-6:6
+            expr e1 block s1 => bool @ 4:36-6:6
               tail
-                expr e0 literal bool `true` => <unknown> @ 5:9-5:13
+                expr e0 literal bool `true` => bool @ 5:9-5:13
         "#]],
     );
 }
@@ -170,9 +170,9 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
             bindings
             - v0 self_param self `&self` => &Self struct body_let_else_guard_fixture[lib]::crate::UserId @ 4:21-4:26
             body
-            expr e1 block s1 => <unknown> @ 4:36-6:6
+            expr e1 block s1 => bool @ 4:36-6:6
               tail
-                expr e0 literal bool `true` => <unknown> @ 5:9-5:13
+                expr e0 literal bool `true` => bool @ 5:9-5:13
         "#]],
     );
 }

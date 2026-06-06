@@ -75,7 +75,7 @@ impl User {
                     callee
                       expr e1 path UserId -> item struct body_expr_fixture[lib]::crate::UserId => nominal struct body_expr_fixture[lib]::crate::UserId @ 14:29-14:35
                     arg
-                      expr e2 literal int `1` => <unknown> @ 14:36-14:37
+                      expr e2 literal int `1` => i32 @ 14:36-14:37
               stmt s2 let v4: UserId @ 15:9-15:43
                 initializer
                   expr e6 call => nominal struct body_expr_fixture[lib]::crate::UserId @ 15:30-15:42
@@ -107,6 +107,173 @@ impl User {
             expr e1 block s1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 20:43-22:6
               tail
                 expr e0 path id -> local v1 => nominal struct body_expr_fixture[lib]::crate::UserId @ 21:9-21:11
+        "#]],
+    );
+}
+
+#[test]
+fn renders_fn_trait_parenthesized_args_in_binding_annotations() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_fn_trait_args_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct AttrVec;
+
+pub fn configure(f: impl FnOnce(&mut AttrVec)) {
+    let _ = f;
+}
+"#,
+        expect![[r#"
+            package body_fn_trait_args_fixture
+
+            body_fn_trait_args_fixture [lib]
+            body b0 fn body_fn_trait_args_fixture[lib]::crate::configure @ 3:1-5:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 param f `f`: impl FnOnce(&mut AttrVec) => syntax impl FnOnce(&mut AttrVec) @ 3:18-3:19
+            body
+            expr e1 block s1 => () @ 3:48-5:2
+              stmt s0 let  @ 4:5-4:15
+                initializer
+                  expr e0 path f -> local v0 => syntax impl FnOnce(&mut AttrVec) @ 4:13-4:14
+        "#]],
+    );
+}
+
+#[test]
+fn infers_scalar_literals_and_builtin_operator_results() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_scalar_operator_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(flag: bool, lhs: i32, rhs: i32) {
+    let bool_lit = true;
+    let char_lit = 'x';
+    let byte_lit = b'x';
+    let int_default = 1;
+    let int_suffix = 1usize;
+    let float_default = 1.0;
+    let float_suffix = 1.0f32;
+    let not_flag = !flag;
+    let neg_lhs = -lhs;
+    let sum = lhs + rhs;
+    let compare = lhs < rhs;
+    let logic = flag && false;
+    let bit = lhs & rhs;
+    let shift = lhs << 1;
+    let string_lit = "text";
+}
+"#,
+        expect![[r#"
+            package body_scalar_operator_fixture
+
+            body_scalar_operator_fixture [lib]
+            body b0 fn body_scalar_operator_fixture[lib]::crate::use_it @ 1:1-17:2
+            scopes
+            - s0 parent <none>: v0, v1, v2
+            - s1 parent s0: v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17
+            bindings
+            - v0 param flag `flag`: bool => bool @ 1:15-1:19
+            - v1 param lhs `lhs`: i32 => i32 @ 1:27-1:30
+            - v2 param rhs `rhs`: i32 => i32 @ 1:37-1:40
+            - v3 let bool_lit `bool_lit` => bool @ 2:9-2:17
+            - v4 let char_lit `char_lit` => char @ 3:9-3:17
+            - v5 let byte_lit `byte_lit` => u8 @ 4:9-4:17
+            - v6 let int_default `int_default` => i32 @ 5:9-5:20
+            - v7 let int_suffix `int_suffix` => usize @ 6:9-6:19
+            - v8 let float_default `float_default` => f64 @ 7:9-7:22
+            - v9 let float_suffix `float_suffix` => f32 @ 8:9-8:21
+            - v10 let not_flag `not_flag` => bool @ 9:9-9:17
+            - v11 let neg_lhs `neg_lhs` => i32 @ 10:9-10:16
+            - v12 let sum `sum` => i32 @ 11:9-11:12
+            - v13 let compare `compare` => bool @ 12:9-12:16
+            - v14 let logic `logic` => bool @ 13:9-13:14
+            - v15 let bit `bit` => i32 @ 14:9-14:12
+            - v16 let shift `shift` => i32 @ 15:9-15:14
+            - v17 let string_lit `string_lit` => &str @ 16:9-16:19
+            body
+            expr e27 block s1 => () @ 1:47-17:2
+              stmt s0 let v3 @ 2:5-2:25
+                initializer
+                  expr e0 literal bool `true` => bool @ 2:20-2:24
+              stmt s1 let v4 @ 3:5-3:24
+                initializer
+                  expr e1 literal char `'x'` => char @ 3:20-3:23
+              stmt s2 let v5 @ 4:5-4:25
+                initializer
+                  expr e2 literal int `b'x'` => u8 @ 4:20-4:24
+              stmt s3 let v6 @ 5:5-5:25
+                initializer
+                  expr e3 literal int `1` => i32 @ 5:23-5:24
+              stmt s4 let v7 @ 6:5-6:29
+                initializer
+                  expr e4 literal int `1usize` => usize @ 6:22-6:28
+              stmt s5 let v8 @ 7:5-7:29
+                initializer
+                  expr e5 literal float `1.0` => f64 @ 7:25-7:28
+              stmt s6 let v9 @ 8:5-8:31
+                initializer
+                  expr e6 literal float `1.0f32` => f32 @ 8:24-8:30
+              stmt s7 let v10 @ 9:5-9:26
+                initializer
+                  expr e8 unary ! => bool @ 9:20-9:25
+                    inner
+                      expr e7 path flag -> local v0 => bool @ 9:21-9:25
+              stmt s8 let v11 @ 10:5-10:24
+                initializer
+                  expr e10 unary - => i32 @ 10:19-10:23
+                    inner
+                      expr e9 path lhs -> local v1 => i32 @ 10:20-10:23
+              stmt s9 let v12 @ 11:5-11:25
+                initializer
+                  expr e13 binary + => i32 @ 11:15-11:24
+                    lhs
+                      expr e11 path lhs -> local v1 => i32 @ 11:15-11:18
+                    rhs
+                      expr e12 path rhs -> local v2 => i32 @ 11:21-11:24
+              stmt s10 let v13 @ 12:5-12:29
+                initializer
+                  expr e16 binary < => bool @ 12:19-12:28
+                    lhs
+                      expr e14 path lhs -> local v1 => i32 @ 12:19-12:22
+                    rhs
+                      expr e15 path rhs -> local v2 => i32 @ 12:25-12:28
+              stmt s11 let v14 @ 13:5-13:31
+                initializer
+                  expr e19 binary && => bool @ 13:17-13:30
+                    lhs
+                      expr e17 path flag -> local v0 => bool @ 13:17-13:21
+                    rhs
+                      expr e18 literal bool `false` => bool @ 13:25-13:30
+              stmt s12 let v15 @ 14:5-14:25
+                initializer
+                  expr e22 binary & => i32 @ 14:15-14:24
+                    lhs
+                      expr e20 path lhs -> local v1 => i32 @ 14:15-14:18
+                    rhs
+                      expr e21 path rhs -> local v2 => i32 @ 14:21-14:24
+              stmt s13 let v16 @ 15:5-15:26
+                initializer
+                  expr e25 binary << => i32 @ 15:17-15:25
+                    lhs
+                      expr e23 path lhs -> local v1 => i32 @ 15:17-15:20
+                    rhs
+                      expr e24 literal int `1` => i32 @ 15:24-15:25
+              stmt s14 let v17 @ 16:5-16:29
+                initializer
+                  expr e26 literal string `"text"` => &str @ 16:22-16:28
         "#]],
     );
 }
@@ -159,12 +326,12 @@ pub fn use_it(id: u8, name: u8) -> User {
                 initializer
                   expr e4 record User -> item struct body_record_expr_fixture[lib]::crate::User => nominal struct body_record_expr_fixture[lib]::crate::User @ 8:20-8:38
                     field id
-                      expr e3 literal int `2` => <unknown> @ 8:31-8:32
+                      expr e3 literal int `2` => i32 @ 8:31-8:32
                     spread @ 8:34-8:36
               tail
                 expr e7 record User -> item struct body_record_expr_fixture[lib]::crate::User => nominal struct body_record_expr_fixture[lib]::crate::User @ 9:5-9:27
                   field id
-                    expr e5 literal int `1` => <unknown> @ 9:16-9:17
+                    expr e5 literal int `1` => i32 @ 9:16-9:17
                   spread @ 9:19-9:25
                     expr e6 path base -> local v2 => nominal struct body_record_expr_fixture[lib]::crate::User @ 9:21-9:25
         "#]],
@@ -365,7 +532,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
             - v11 let casted `casted` => nominal struct body_common_expr_fixture[lib]::crate::User @ 17:9-17:15
             - v12 let field_after_cast `field_after_cast` => u8 @ 18:9-18:25
             - v13 let unary `unary` => <unknown> @ 19:9-19:14
-            - v14 let binary `binary` => <unknown> @ 20:9-20:15
+            - v14 let binary `binary` => bool @ 20:9-20:15
             - v15 let hole `hole` => <unknown> @ 23:9-23:13
             body
             expr e66 block s1 => () @ 9:78-27:2
@@ -384,28 +551,28 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                     element
                       expr e4 path value -> local v2 => u8 @ 11:18-11:23
                     element
-                      expr e5 literal int `1` => <unknown> @ 11:25-11:26
+                      expr e5 literal int `1` => i32 @ 11:25-11:26
                     element
-                      expr e6 literal int `2` => <unknown> @ 11:28-11:29
+                      expr e6 literal int `2` => i32 @ 11:28-11:29
               stmt s2 let v6 @ 12:5-12:29
                 initializer
                   expr e10 repeat_array => <unknown> @ 12:18-12:28
                     initializer
                       expr e8 path value -> local v2 => u8 @ 12:19-12:24
                     repeat
-                      expr e9 literal int `3` => <unknown> @ 12:26-12:27
+                      expr e9 literal int `3` => i32 @ 12:26-12:27
               stmt s3 let v7 @ 13:5-13:28
                 initializer
                   expr e13 index => <unknown> @ 13:19-13:27
                     base
                       expr e11 path slots -> local v1 => syntax [u8; 3] @ 13:19-13:24
                     index
-                      expr e12 literal int `0` => <unknown> @ 13:25-13:26
+                      expr e12 literal int `0` => i32 @ 13:25-13:26
               stmt s4 let v8 @ 14:5-14:30
                 initializer
                   expr e16 range .. => <unknown> @ 14:21-14:29
                     start
-                      expr e14 literal int `1` => <unknown> @ 14:21-14:22
+                      expr e14 literal int `1` => i32 @ 14:21-14:22
                     end
                       expr e15 path value -> local v2 => u8 @ 14:24-14:29
               stmt s5 let v9 @ 15:5-15:35
@@ -436,13 +603,13 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                 initializer
                   expr e34 tuple => <unknown> @ 19:17-19:38
                     field
-                      expr e28 unary ! => <unknown> @ 19:18-19:24
+                      expr e28 unary ! => bool @ 19:18-19:24
                         inner
-                          expr e27 literal bool `false` => <unknown> @ 19:19-19:24
+                          expr e27 literal bool `false` => bool @ 19:19-19:24
                     field
-                      expr e30 unary - => <unknown> @ 19:26-19:28
+                      expr e30 unary - => i32 @ 19:26-19:28
                         inner
-                          expr e29 literal int `1` => <unknown> @ 19:27-19:28
+                          expr e29 literal int `1` => i32 @ 19:27-19:28
                     field
                       expr e33 unary * => u8 @ 19:30-19:37
                         inner
@@ -451,23 +618,23 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                               expr e31 path value -> local v2 => u8 @ 19:32-19:37
               stmt s10 let v14 @ 20:5-20:50
                 initializer
-                  expr e43 binary || => <unknown> @ 20:18-20:49
+                  expr e43 binary || => bool @ 20:18-20:49
                     lhs
-                      expr e41 binary && => <unknown> @ 20:18-20:41
+                      expr e41 binary && => bool @ 20:18-20:41
                         lhs
-                          expr e39 binary == => <unknown> @ 20:18-20:32
+                          expr e39 binary == => bool @ 20:18-20:32
                             lhs
                               expr e37 binary + => <unknown> @ 20:18-20:27
                                 lhs
                                   expr e35 path value -> local v2 => u8 @ 20:18-20:23
                                 rhs
-                                  expr e36 literal int `1` => <unknown> @ 20:26-20:27
+                                  expr e36 literal int `1` => i32 @ 20:26-20:27
                             rhs
-                              expr e38 literal int `2` => <unknown> @ 20:31-20:32
+                              expr e38 literal int `2` => i32 @ 20:31-20:32
                         rhs
-                          expr e40 literal bool `false` => <unknown> @ 20:36-20:41
+                          expr e40 literal bool `false` => bool @ 20:36-20:41
                     rhs
-                      expr e42 literal bool `true` => <unknown> @ 20:45-20:49
+                      expr e42 literal bool `true` => bool @ 20:45-20:49
               stmt s11 expr; @ 21:5-21:31
                 expr e52 assign = => () @ 21:5-21:30
                   target
@@ -483,9 +650,9 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                   value
                     expr e51 tuple => <unknown> @ 21:24-21:30
                       field
-                        expr e49 literal int `1` => <unknown> @ 21:25-21:26
+                        expr e49 literal int `1` => i32 @ 21:25-21:26
                       field
-                        expr e50 literal int `2` => <unknown> @ 21:28-21:29
+                        expr e50 literal int `2` => i32 @ 21:28-21:29
               stmt s12 expr; @ 22:5-22:23
                 expr e57 assign += => () @ 22:5-22:22
                   target
@@ -493,7 +660,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                       base
                         expr e53 path slots -> local v1 => syntax [u8; 3] @ 22:5-22:10
                       index
-                        expr e54 literal int `0` => <unknown> @ 22:11-22:12
+                        expr e54 literal int `0` => i32 @ 22:11-22:12
                   value
                     expr e56 path value -> local v2 => u8 @ 22:17-22:22
               stmt s13 let v15 @ 23:5-23:18
@@ -746,7 +913,7 @@ pub static CURRENT: u32 = LIMIT;
             - s0 parent <none>: <none>
             bindings
             body
-            expr e0 literal int `3` => <unknown> @ 1:24-1:25
+            expr e0 literal int `3` => i32 @ 1:24-1:25
 
 
             body b1 static body_item_initializer_fixture[lib]::crate::CURRENT @ 2:1-2:33

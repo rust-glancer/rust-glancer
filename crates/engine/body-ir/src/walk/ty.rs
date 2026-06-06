@@ -13,6 +13,12 @@ pub(crate) fn walk_type_ref_paths<'ty>(ty: &'ty TypeRef, visit: &mut impl FnMut(
                 for arg in &segment.args {
                     match arg {
                         GenericArg::Type(ty) => walk_type_ref_paths(ty, visit),
+                        GenericArg::FnTraitArgs { params, ret } => {
+                            for param in params {
+                                walk_type_ref_paths(param, visit);
+                            }
+                            walk_type_ref_paths(ret, visit);
+                        }
                         GenericArg::AssocType { ty: Some(ty), .. } => {
                             walk_type_ref_paths(ty, visit);
                         }

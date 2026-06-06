@@ -1152,6 +1152,19 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             GenericArg::Type(ty) => self.render_ty(ty),
             GenericArg::Lifetime(lifetime) => lifetime.clone(),
             GenericArg::Const(value) => value.clone(),
+            GenericArg::FnTraitArgs { params, ret } => {
+                let params = params
+                    .iter()
+                    .map(|ty| self.render_ty(ty))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let mut text = format!("({params})");
+                if !matches!(ret.as_ref(), Ty::Unit) {
+                    text.push_str(" -> ");
+                    text.push_str(&self.render_ty(ret));
+                }
+                text
+            }
             GenericArg::AssocType { name, ty } => match ty {
                 Some(ty) => format!("{name} = {}", self.render_ty(ty)),
                 None => name.to_string(),

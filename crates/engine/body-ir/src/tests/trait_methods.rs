@@ -226,9 +226,9 @@ impl OtherExt for Maybe {
             bindings
             - v0 self_param self `&self` => &Self struct shared[lib]::crate::Maybe @ 8:17-8:22
             body
-            expr e1 block s1 => <unknown> @ 8:32-10:6
+            expr e1 block s1 => bool @ 8:32-10:6
               tail
-                expr e0 literal bool `true` => <unknown> @ 9:9-9:13
+                expr e0 literal bool `true` => bool @ 9:9-9:13
 
 
             package shared
@@ -241,9 +241,9 @@ impl OtherExt for Maybe {
             bindings
             - v0 self_param self `&self` => &Self struct shared[lib]::crate::Maybe @ 4:20-4:25
             body
-            expr e1 block s1 => <unknown> @ 4:35-6:6
+            expr e1 block s1 => bool @ 4:35-6:6
               tail
-                expr e0 literal bool `true` => <unknown> @ 5:9-5:13
+                expr e0 literal bool `true` => bool @ 5:9-5:13
         "#]],
     );
 }

@@ -367,7 +367,9 @@ where
                 };
                 Ok(impl_const_params.contains(&impl_arg.as_str()) || impl_arg == receiver_arg)
             }
-            ItemGenericArg::AssocType { .. } | ItemGenericArg::Unsupported(_) => Ok(false),
+            ItemGenericArg::FnTraitArgs { .. }
+            | ItemGenericArg::AssocType { .. }
+            | ItemGenericArg::Unsupported(_) => Ok(false),
         }
     }
 

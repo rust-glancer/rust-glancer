@@ -18,6 +18,6 @@ rg_cfg_eval.workspace = true
 rg_memsize.workspace = true
 rg_parse.workspace = true
 rg_workspace.workspace = true
-rg_text.workspace = true
+rg_text = { workspace = true, features = ["memsize"] }
 rg_tt.workspace = true
 rg_wincode_utils.workspace = true

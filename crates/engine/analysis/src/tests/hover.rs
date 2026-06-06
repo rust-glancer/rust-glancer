@@ -84,6 +84,38 @@ fn hovers_over_documented_items_and_usages() {
 }
 
 #[test]
+fn hovers_over_impl_fn_trait_parenthesized_args() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_hover_fn_trait_args"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct AttrVec;
+
+pub fn configure(f$fn_once_hover$: impl FnOnce(&mut AttrVec)) {
+    let _ = f;
+}
+"#,
+        &[AnalysisQuery::hover(
+            "hover impl FnOnce parenthesized args",
+            "fn_once_hover",
+        )],
+        expect![[r#"
+            hover impl FnOnce parenthesized args
+            - range: 3:18-3:19
+            - block:
+              kind: variable
+              signature:
+                let f: impl FnOnce(&mut AttrVec)
+        "#]],
+    );
+}
+
+#[test]
 fn hovers_over_enum_variants_and_body_local_items() {
     check_analysis_queries(
         r#"

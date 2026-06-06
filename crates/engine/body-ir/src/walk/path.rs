@@ -48,6 +48,12 @@ fn walk_segment_args_type_refs<'path>(
     for arg in args {
         match arg {
             GenericArg::Type(ty) => visit(ty),
+            GenericArg::FnTraitArgs { params, ret } => {
+                for param in params {
+                    visit(param);
+                }
+                visit(ret);
+            }
             GenericArg::AssocType { ty: Some(ty), .. } => visit(ty),
             GenericArg::Lifetime(_)
             | GenericArg::Const(_)

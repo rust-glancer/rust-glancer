@@ -163,9 +163,24 @@ fn type_path_segment_from_ast(
     }
 
     if let Some(parenthesized_args) = segment.parenthesized_arg_list() {
-        args.push(GenericArg::Unsupported(normalized_syntax(
-            &parenthesized_args,
-        )));
+        let params = parenthesized_args
+            .type_args()
+            .map(|arg| {
+                arg.ty()
+                    .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)))
+                    .unwrap_or_else(|| TypeRef::unknown_from_text(normalized_syntax(&arg)))
+            })
+            .collect();
+        let ret = segment
+            .ret_type()
+            .and_then(|ret_ty| ret_ty.ty())
+            .map(|ty| TypeRef::from_ast(&ty, (line_index, &mut *interner)))
+            .unwrap_or(TypeRef::Unit);
+
+        args.push(GenericArg::FnTraitArgs {
+            params,
+            ret: Box::new(ret),
+        });
     }
 
     TypePathSegment {
