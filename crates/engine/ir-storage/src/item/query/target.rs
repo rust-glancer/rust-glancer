@@ -77,6 +77,19 @@ where
         Ok(impls)
     }
 
+    /// Searches all visible inherent impls, including impls whose `Self` type is structural.
+    pub fn inherent_impls(&self) -> Result<Vec<ImplRef>, I::Error> {
+        let mut impls = Vec::new();
+        for store in self.visible_stores()? {
+            for (impl_ref, data) in store.impls_with_refs() {
+                if data.trait_ref.is_none() {
+                    push_unique(&mut impls, impl_ref);
+                }
+            }
+        }
+        Ok(impls)
+    }
+
     /// Collects inherent functions for callers that care about callable members, not impl blocks.
     pub fn inherent_functions_for_type(
         &self,

@@ -613,6 +613,33 @@ where
                     );
                 }
             }
+
+            // Structural receivers such as `[T]` do not have a named type definition, so they
+            // cannot use the nominal `TypeDefRef` impl index above. They still may have visible
+            // inherent impls, for example `impl<T> [T]`, and those impls carry substitutions that
+            // are needed to render returns like `&T` in the receiver context.
+            for structural in self
+                .receiver_functions()
+                .structural_function_candidates_for_receiver(candidate.ty(), Some(method_name))?
+            {
+                let function_ref = structural.function();
+                let Some(function_data) = item_query.function_data(function_ref)? else {
+                    continue;
+                };
+                if function_data.name != method_name || !function_data.has_self_receiver() {
+                    continue;
+                }
+
+                push_unique(&mut functions, function_ref);
+                push_unique(
+                    &mut return_tys,
+                    self.semantic_function_return_ty_with_subst(
+                        function_ref,
+                        Some(structural.receiver_ty().clone()),
+                        structural.subst().clone(),
+                    )?,
+                );
+            }
         }
 
         if !functions.is_empty() {
@@ -778,21 +805,9 @@ where
         function_ref: FunctionRef,
         receiver_ty: Option<&NominalTy>,
     ) -> Result<Ty, PackageStoreError> {
-        let item_query = self.item_query();
-        let Some(function_data) = item_query.function_data(function_ref)? else {
+        let Some(function_data) = self.item_query().function_data(function_ref)? else {
             return Ok(Ty::Unknown);
         };
-        let Some(ret_ty) = function_data.signature.ret_ty() else {
-            return Ok(Ty::Unit);
-        };
-
-        if receiver_ty.is_some() && ret_ty.is_self_type() {
-            return Ok(receiver_ty
-                .cloned()
-                .map(|ty| Ty::nominal(vec![ty]))
-                .unwrap_or(Ty::Unknown));
-        }
-
         let subst = receiver_ty
             .map(|ty| {
                 // Receiver type args and impl self args both contribute substitutions. For
@@ -807,6 +822,37 @@ where
             })
             .transpose()?
             .unwrap_or_default();
+        self.semantic_function_return_ty_with_subst(
+            function_ref,
+            receiver_ty.cloned().map(|ty| Ty::nominal(vec![ty])),
+            subst,
+        )
+    }
+
+    fn semantic_function_return_ty_with_subst(
+        &self,
+        function_ref: FunctionRef,
+        self_ty: Option<Ty>,
+        subst: TypeSubst,
+    ) -> Result<Ty, PackageStoreError> {
+        let item_query = self.item_query();
+        let Some(function_data) = item_query.function_data(function_ref)? else {
+            return Ok(Ty::Unknown);
+        };
+        let Some(ret_ty) = function_data.signature.ret_ty() else {
+            return Ok(Ty::Unit);
+        };
+
+        if ret_ty.is_self_type() {
+            return Ok(match self_ty {
+                Some(self_ty) => self_ty,
+                None => Ty::self_ty(
+                    self.type_path_resolver()
+                        .self_nominal_tys_for_function(function_ref)?,
+                ),
+            });
+        }
+
         self.type_path_resolver()
             .type_ref(TypeRefUseSite::Function(function_ref))
             .with_subst(&subst)

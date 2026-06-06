@@ -820,6 +820,63 @@ pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
 }
 
 #[test]
+fn resolves_structural_slice_inherent_method_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+impl<T> [T] {
+    pub fn first_ref(&self) -> &T {
+        missing()
+    }
+
+    pub fn len(&self) -> usize {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct Package;
+
+pub fn use_it(packages: &[Package]) {
+    let first = packages.first$type_first$_ref();
+    let count = packages.le$type_len$n();
+}
+"#,
+        &[
+            AnalysisQuery::ty("slice generic method return", "type_first").in_lib("app"),
+            AnalysisQuery::ty("slice len method return", "type_len").in_lib("app"),
+        ],
+        expect![[r#"
+            slice generic method return
+            - &nominal struct app[lib]::crate::Package
+
+            slice len method return
+            - usize
+        "#]],
+    );
+}
+
+#[test]
 fn primitive_type_paths_respect_type_namespace_shadowing() {
     check_analysis_queries(
         r#"

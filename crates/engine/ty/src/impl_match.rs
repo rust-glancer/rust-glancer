@@ -4,8 +4,8 @@
 //! items. They compare explicit impl self types against known receiver types and produce the
 //! substitutions that make associated signatures readable in the receiver context.
 
-use crate::{GenericArg, ItemPathQuery, NominalTy, Ty, TypeSubst};
-use rg_ir_model::items::{GenericArg as ItemGenericArg, GenericParams, TypeRef};
+use crate::{GenericArg, ItemPathQuery, NominalTy, RefMutability, Ty, TypeSubst};
+use rg_ir_model::items::{GenericArg as ItemGenericArg, GenericParams, Mutability, TypeRef};
 use rg_ir_model::{
     FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef, hir::items::ImplData,
 };
@@ -105,6 +105,43 @@ where
         }
 
         self.impl_self_args_match_receiver(impl_ref, impl_data, receiver_ty)
+    }
+
+    /// Matches an inherent impl whose `Self` type is structural rather than nominal.
+    ///
+    /// This covers impl headers such as `impl<T> [T]`, which cannot participate in the
+    /// `TypeDefRef`-keyed receiver index used for nominal impls. The match is deliberately strict:
+    /// only already-modeled structural types and direct type-parameter substitutions are accepted.
+    pub fn structural_inherent_impl_subst(
+        &self,
+        impl_ref: ImplRef,
+        impl_data: &ImplData,
+        receiver_ty: &Ty,
+    ) -> Result<Option<TypeSubst>, D::Error> {
+        // Structural impl lookup is a precise receiver adjustment, not an optimistic completion
+        // heuristic. Once generic constraints appear, a real solver would be needed to know
+        // whether the impl applies.
+        if impl_data.trait_ref.is_some()
+            || !Self::impl_header_has_only_plain_type_params(impl_data)
+            || !Self::type_ref_uses_structural_receiver_lookup(&impl_data.self_ty)
+        {
+            return Ok(None);
+        }
+
+        let impl_type_params = Self::impl_type_param_names(&impl_data.generics);
+        let mut subst = TypeSubst::new();
+        if self.structural_type_ref_matches_ty(
+            impl_ref,
+            impl_data,
+            &impl_data.self_ty,
+            receiver_ty,
+            &impl_type_params,
+            &mut subst,
+        )? {
+            Ok(Some(subst))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Matches one trait impl against a receiver.
@@ -542,6 +579,139 @@ where
                     .then_some((name, receiver_arg))
             })
             .collect()
+    }
+
+    /// Recursively matches a structural impl `Self` type against an adjusted receiver type.
+    fn structural_type_ref_matches_ty(
+        &self,
+        impl_ref: ImplRef,
+        impl_data: &ImplData,
+        impl_ty: &TypeRef,
+        receiver_ty: &Ty,
+        impl_type_params: &[&str],
+        subst: &mut TypeSubst,
+    ) -> Result<bool, D::Error> {
+        // A bare impl type param is the only unification-like operation this matcher performs:
+        // `impl<T> [T]` matched with `[Package]` records `T -> Package`.
+        if let Some(name) = impl_ty.type_param_name()
+            && impl_type_params.contains(&name.as_str())
+        {
+            return Ok(Self::push_structural_subst(
+                subst,
+                name,
+                receiver_ty.clone(),
+            ));
+        }
+
+        Ok(match (impl_ty, receiver_ty) {
+            (TypeRef::Tuple(impl_fields), Ty::Tuple(receiver_fields)) => {
+                if impl_fields.len() != receiver_fields.len() {
+                    return Ok(false);
+                }
+
+                for (impl_field, receiver_field) in impl_fields.iter().zip(receiver_fields) {
+                    if !self.structural_type_ref_matches_ty(
+                        impl_ref,
+                        impl_data,
+                        impl_field,
+                        receiver_field,
+                        impl_type_params,
+                        subst,
+                    )? {
+                        return Ok(false);
+                    }
+                }
+                true
+            }
+            (TypeRef::Slice(impl_inner), Ty::Slice(receiver_inner)) => self
+                .structural_type_ref_matches_ty(
+                    impl_ref,
+                    impl_data,
+                    impl_inner,
+                    receiver_inner,
+                    impl_type_params,
+                    subst,
+                )?,
+            (
+                TypeRef::Array {
+                    inner: impl_inner,
+                    len: impl_len,
+                },
+                Ty::Array {
+                    inner: receiver_inner,
+                    len: receiver_len,
+                },
+            ) if impl_len == receiver_len => self.structural_type_ref_matches_ty(
+                impl_ref,
+                impl_data,
+                impl_inner,
+                receiver_inner,
+                impl_type_params,
+                subst,
+            )?,
+            (
+                TypeRef::Reference {
+                    mutability: impl_mutability,
+                    inner: impl_inner,
+                    ..
+                },
+                Ty::Reference {
+                    mutability: receiver_mutability,
+                    inner: receiver_inner,
+                },
+            ) if Self::ref_mutability_matches(*impl_mutability, *receiver_mutability) => self
+                .structural_type_ref_matches_ty(
+                    impl_ref,
+                    impl_data,
+                    impl_inner,
+                    receiver_inner,
+                    impl_type_params,
+                    subst,
+                )?,
+            _ => {
+                // If a structural shape contains a nested generic pattern we do not understand,
+                // reject it instead of guessing. Concrete nested types can still be resolved and
+                // compared directly below.
+                if impl_ty.mentions_type_param(impl_type_params) {
+                    return Ok(false);
+                }
+
+                let context = TypePathContext {
+                    module: impl_data.owner,
+                    impl_ref: Some(impl_ref),
+                };
+                let impl_ty = self.item_paths.resolve_type_ref(
+                    impl_ty,
+                    context,
+                    Ty::syntax(impl_ty.clone()),
+                    &TypeSubst::new(),
+                )?;
+                !Self::type_arg_comparison_is_uncertain(&impl_ty)
+                    && !Self::type_arg_comparison_is_uncertain(receiver_ty)
+                    && impl_ty == *receiver_ty
+            }
+        })
+    }
+
+    fn ref_mutability_matches(
+        impl_mutability: Mutability,
+        receiver_mutability: RefMutability,
+    ) -> bool {
+        matches!(
+            (impl_mutability, receiver_mutability),
+            (Mutability::Shared, RefMutability::Shared)
+                | (Mutability::Mutable, RefMutability::Mutable)
+        )
+    }
+
+    fn type_ref_uses_structural_receiver_lookup(ty: &TypeRef) -> bool {
+        matches!(
+            ty,
+            TypeRef::Tuple(_)
+                | TypeRef::Reference { .. }
+                | TypeRef::Slice(_)
+                | TypeRef::Array { .. }
+        )
     }
 
     /// Records a strict direct-param substitution, rejecting conflicting repeated params.

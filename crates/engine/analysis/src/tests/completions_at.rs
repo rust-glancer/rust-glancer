@@ -1735,6 +1735,57 @@ pub fn use_it(wrapper: Wrapper<User>) {
 }
 
 #[test]
+fn completes_structural_slice_inherent_methods() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+impl<T> [T] {
+    pub fn first_ref(&self) -> &T {
+        missing()
+    }
+
+    pub fn len(&self) -> usize {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct Package;
+
+pub fn use_it(packages: &[Package]) {
+    packages.$slice_methods$;
+}
+"#,
+        &[AnalysisQuery::complete("slice method completions", "slice_methods").in_lib("app")],
+        expect![[r#"
+            slice method completions
+            - inherent_method first_ref
+            - inherent_method len
+        "#]],
+    );
+}
+
+#[test]
 fn completes_body_local_impl_methods_at_dot() {
     check_analysis_queries(
         r#"
