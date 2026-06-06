@@ -1355,17 +1355,15 @@ pub fn use_it() {
         .targets()
         .first()
         .expect("fixture package should contain one target");
-    let body = db
-        .resident_body(BodyRef {
-            target: TargetRef {
-                package: PackageSlot(0),
-                target: target.id,
-            },
-            body: BodyId(0),
-        })
-        .expect("fixture should contain one lowered body");
-    let def_map = body
-        .body_def_map()
+    let body_ref = BodyRef {
+        target: TargetRef {
+            package: PackageSlot(0),
+            target: target.id,
+        },
+        body: BodyId(0),
+    };
+    let def_map = db
+        .resident_body_def_map(body_ref)
         .expect("lowered body should contain a finalized body-local defmap");
 
     let unresolved_imports = def_map

@@ -11,8 +11,8 @@ pub(crate) mod stmt;
 
 pub use self::{
     body::{
-        BodyData, BodyIrStats, BodyOwner, BodySource, PackageBodies, ScopeData, TargetBodies,
-        TargetBodiesStatus,
+        BodyData, BodyIrStats, BodyLocalItems, BodyOwner, BodySource, PackageBodies, ScopeData,
+        TargetBodies, TargetBodiesStatus,
     },
     body_map::BodySourceItems,
     expr::{

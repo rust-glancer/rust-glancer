@@ -177,7 +177,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             }
         }
 
-        if let Some(item_store) = body.body_item_store() {
+        if let Some(item_store) = self.body_ir.body_item_store(body_ref)? {
             // Body-local items live in the same source range as the body but are stored in a local
             // item store. Their names can be the best answer when the cursor is on a nested item
             // declaration or one of its fields/variants.
@@ -276,8 +276,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         match body.owner() {
             BodyOwner::Function(function) => {
                 if let DefMapRef::Body(parent_body_ref) = function.origin
-                    && let Some(parent_body) = self.body_ir.body_data(parent_body_ref)?
-                    && let Some(item_store) = parent_body.body_item_store()
+                    && let Some(item_store) = self.body_ir.body_item_store(parent_body_ref)?
                     && let Some(data) = item_store.function_data(function.id)
                 {
                     Ok(data
@@ -289,8 +288,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             }
             BodyOwner::Const(konst) => {
                 if let DefMapRef::Body(parent_body_ref) = konst.origin
-                    && let Some(parent_body) = self.body_ir.body_data(parent_body_ref)?
-                    && let Some(item_store) = parent_body.body_item_store()
+                    && let Some(item_store) = self.body_ir.body_item_store(parent_body_ref)?
                     && let Some(data) = item_store.const_data(konst.id)
                 {
                     Ok(data
@@ -302,8 +300,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             }
             BodyOwner::Static(static_ref) => {
                 if let DefMapRef::Body(parent_body_ref) = static_ref.origin
-                    && let Some(parent_body) = self.body_ir.body_data(parent_body_ref)?
-                    && let Some(item_store) = parent_body.body_item_store()
+                    && let Some(item_store) = self.body_ir.body_item_store(parent_body_ref)?
                     && let Some(data) = item_store.static_data(static_ref.id)
                 {
                     Ok(data

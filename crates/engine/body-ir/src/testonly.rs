@@ -79,7 +79,17 @@ impl BodyIrFixture {
     }
 
     pub fn resident_body_item_store(&self, body_ref: BodyRef) -> Option<&ItemStore> {
-        self.resident_body(body_ref)?.body_item_store()
+        self.body_ir
+            .resident_package(body_ref.target.package)?
+            .target(body_ref.target.target)?
+            .body_item_store(body_ref.body)
+    }
+
+    pub fn resident_body_def_map(&self, body_ref: BodyRef) -> Option<&DefMap> {
+        self.body_ir
+            .resident_package(body_ref.target.package)?
+            .target(body_ref.target.target)?
+            .body_def_map(body_ref.body)
     }
 
     pub fn resident_item_store(&self, origin: DefMapRef) -> Option<&ItemStore> {

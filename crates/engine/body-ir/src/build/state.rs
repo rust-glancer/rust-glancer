@@ -5,12 +5,12 @@ use rg_ir_model::{
     BodyId, BodyRef, ConstRef, DefMapRef, ItemOwner, ModuleRef, StaticRef, TargetRef,
     TypePathResolution,
 };
-use rg_ir_storage::{DefMap, ItemLookupIndex, ItemStore, Path, TargetItemQuery};
+use rg_ir_storage::{ItemLookupIndex, ItemStore, Path, TargetItemQuery};
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::NameInterner;
 
 use crate::{
-    BodyOwner, TargetBodies,
+    BodyLocalItems, BodyOwner, TargetBodies,
     ir::body_map::{BodyDefMapCollector, BodyItemStoreCollector},
     resolution::{
         BodyQuerySource, BodyResolver, BodyTypePathResolver, TypeRefUseSite, push_unique,
@@ -21,12 +21,6 @@ use super::{
     lower::{BodyLoweringTask, BodyTaskLowering},
     query_source::BodyBuildQuerySource,
 };
-
-/// Body-local item facts collected for one lowered body.
-pub(super) struct BodyLocalItems {
-    pub(super) def_map: DefMap,
-    pub(super) item_store: ItemStore,
-}
 
 /// Coordinates all body-local facts needed to resolve one target's bodies.
 pub(super) struct TargetBodyBuildState<'target> {
@@ -130,10 +124,7 @@ impl<'target> TargetBodyBuildState<'target> {
             .finalize(&source)?;
         let item_store = BodyItemStoreCollector::new(body, &def_map).collect();
 
-        Ok(BodyLocalItems {
-            def_map,
-            item_store,
-        })
+        Ok(BodyLocalItems::new(def_map, item_store))
     }
 
     fn nested_body_tasks(
@@ -325,18 +316,16 @@ impl<'target> TargetBodyBuildState<'target> {
     }
 
     fn finish(mut self) {
-        for (body_idx, body) in self.target_bodies.bodies_mut().iter_mut().enumerate() {
-            let Some(items) = self
+        let mut body_local_items = Vec::with_capacity(self.body_local_items.len());
+        for body_idx in 0..self.target_bodies.bodies().len() {
+            let items = self
                 .body_local_items
                 .get_mut(body_idx)
                 .and_then(Option::take)
-            else {
-                continue;
-            };
-
-            body.body_def_map = Some(items.def_map);
-            body.body_item_store = Some(items.item_store);
+                .expect("every built body should have collected body-local items");
+            body_local_items.push(items);
         }
+        self.target_bodies.set_body_local_items(body_local_items);
     }
 
     fn body_ref(&self, body_idx: usize) -> BodyRef {

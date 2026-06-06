@@ -1246,10 +1246,7 @@ impl TargetBodyIrSnapshot<'_> {
         let DefMapRef::Body(body_ref) = local_def.origin else {
             return String::new();
         };
-        let Some(body) = self.project.resident_body(body_ref) else {
-            return String::new();
-        };
-        let Some(def_map) = body.body_def_map() else {
+        let Some(def_map) = self.project.resident_body_def_map(body_ref) else {
             return String::new();
         };
         let Some(data) = def_map.local_def(local_def.local_def) else {
@@ -1404,7 +1401,7 @@ impl TargetBodyIrSnapshot<'_> {
         let Some(body) = self.project.resident_body(body_ref) else {
             return "<missing>".to_string();
         };
-        let Some(def_map) = body.body_def_map() else {
+        let Some(def_map) = self.project.resident_body_def_map(body_ref) else {
             return self.render_body_owner(body.owner());
         };
         let Some(module_data) = def_map.module(module) else {

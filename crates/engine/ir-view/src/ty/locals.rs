@@ -200,6 +200,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         let Some(body) = self.db.body_ir.body_data(scope.body)? else {
             return Ok(Vec::new());
         };
+        let body_item_store = self.db.body_ir.body_item_store(scope.body)?;
         let mut names = Vec::new();
         let mut seen_values = HashSet::<String>::new();
         let mut seen_types = HashSet::<String>::new();
@@ -238,7 +239,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 }
 
                 for item_id in scope_data.source_items.iter().rev().copied() {
-                    let Some(view) = body.body_item_store().and_then(|items| {
+                    let Some(view) = body_item_store.and_then(|items| {
                         items.semantic_items().find(|view| {
                             matches!(
                                 view.source().kind,
@@ -298,7 +299,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
 
             if matches!(scope.namespace, BodyNameNamespace::Types) {
                 for item_id in scope_data.source_items.iter().rev().copied() {
-                    let Some(view) = body.body_item_store().and_then(|items| {
+                    let Some(view) = body_item_store.and_then(|items| {
                         items.semantic_items().find(|view| {
                             matches!(
                                 view.source().kind,
@@ -421,11 +422,12 @@ impl<'a, 'db> BodyView<'a, 'db> {
         let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
+        let body_item_store = self.db.body_ir.body_item_store(body_ref)?;
         let mut declarations = Vec::new();
 
         for scope in body.scopes() {
             for item_id in &scope.source_items {
-                let Some(view) = body.body_item_store().and_then(|items| {
+                let Some(view) = body_item_store.and_then(|items| {
                     items.semantic_items().find(|view| {
                         matches!(
                             view.source().kind,

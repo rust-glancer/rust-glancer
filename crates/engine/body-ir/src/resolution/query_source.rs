@@ -6,12 +6,10 @@ use rg_package_store::PackageStoreError;
 
 use crate::ir::body::BodyData;
 
-/// Routes semantic-shaped queries to target storage or to body-local storage.
+/// Routes semantic-shaped queries while keeping the active body available for lexical lookup.
 ///
-/// The active body is still carried separately because lexical binding lookup needs its scopes and
-/// expressions. DefMap and item-store lookup first uses final body fields when they exist, then
-/// falls back to the routed provider so build-time resolution can see body-local stores before
-/// they are written back to frozen `BodyData`.
+/// DefMap and item-store storage is owned by the provider. During indexing that provider reads the
+/// build state; after indexing it reads frozen target body-local storage.
 #[derive(Clone, Copy)]
 pub(crate) struct BodyQuerySource<'a, D, I> {
     def_maps: D,
@@ -46,13 +44,6 @@ where
     type Error = PackageStoreError;
 
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
-        if let DefMapRef::Body(body_ref) = origin
-            && body_ref == self.body_ref
-            && let Some(def_map) = self.body.body_def_map()
-        {
-            return Ok(Some(def_map));
-        }
-
         self.def_maps.def_map_for_origin(origin)
     }
 
@@ -90,13 +81,6 @@ where
         &self,
         origin: DefMapRef,
     ) -> Result<Option<&'a ItemStore>, Self::Error> {
-        if let DefMapRef::Body(body_ref) = origin
-            && body_ref == self.body_ref
-            && let Some(item_store) = self.body.body_item_store()
-        {
-            return Ok(Some(item_store));
-        }
-
         self.item_stores.item_store_for_origin(origin)
     }
 

@@ -56,10 +56,7 @@ impl<'a, 'db> ItemStoreSource<'a> for &'a IndexedViewDb<'db> {
     ) -> Result<Option<&'a ItemStore>, PackageStoreError> {
         match origin {
             DefMapRef::Target(target) => self.semantic_ir.items(target),
-            DefMapRef::Body(body_ref) => Ok(self
-                .body_ir
-                .body_data(body_ref)?
-                .and_then(|body| body.body_item_store())),
+            DefMapRef::Body(body_ref) => self.body_ir.body_item_store(body_ref),
         }
     }
 
@@ -74,10 +71,7 @@ impl DefMapSource for &IndexedViewDb<'_> {
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
         match origin {
             DefMapRef::Target(target) => self.def_map.def_map(target),
-            DefMapRef::Body(body_ref) => Ok(self
-                .body_ir
-                .body_data(body_ref)?
-                .and_then(|body| body.body_def_map())),
+            DefMapRef::Body(body_ref) => self.body_ir.body_def_map(body_ref),
         }
     }
 

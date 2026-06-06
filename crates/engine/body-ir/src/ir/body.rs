@@ -78,6 +78,7 @@ impl PackageBodies {
 pub struct TargetBodies {
     pub(crate) status: TargetBodiesStatus,
     pub(crate) bodies: Arena<BodyId, BodyData>,
+    pub(crate) body_local_items: Arena<BodyId, BodyLocalItems>,
 }
 
 impl TargetBodies {
@@ -85,6 +86,7 @@ impl TargetBodies {
         Self {
             status: TargetBodiesStatus::Built,
             bodies: Arena::new(),
+            body_local_items: Arena::new(),
         }
     }
 
@@ -92,6 +94,7 @@ impl TargetBodies {
         Self {
             status: TargetBodiesStatus::Skipped,
             bodies: Arena::new(),
+            body_local_items: Arena::new(),
         }
     }
 
@@ -103,12 +106,33 @@ impl TargetBodies {
         self.bodies.get(body)
     }
 
+    pub fn body_local_items(&self, body: BodyId) -> Option<&BodyLocalItems> {
+        self.body_local_items.get(body)
+    }
+
+    pub fn body_def_map(&self, body: BodyId) -> Option<&DefMap> {
+        self.body_local_items(body).map(|items| &items.def_map)
+    }
+
+    pub fn body_item_store(&self, body: BodyId) -> Option<&ItemStore> {
+        self.body_local_items(body).map(|items| &items.item_store)
+    }
+
     pub fn bodies(&self) -> &[BodyData] {
         self.bodies.as_slice()
     }
 
     pub(crate) fn alloc_body(&mut self, data: BodyData) -> BodyId {
         self.bodies.alloc(data)
+    }
+
+    pub(crate) fn set_body_local_items(&mut self, items: Vec<BodyLocalItems>) {
+        debug_assert_eq!(
+            self.bodies.len(),
+            items.len(),
+            "every built body should have finalized body-local items"
+        );
+        self.body_local_items = Arena::from_vec(items);
     }
 
     pub(crate) fn bodies_mut(&mut self) -> &mut [BodyData] {
@@ -119,6 +143,10 @@ impl TargetBodies {
         self.bodies.shrink_to_fit();
         for body in self.bodies.iter_mut() {
             body.shrink_to_fit();
+        }
+        self.body_local_items.shrink_to_fit();
+        for items in self.body_local_items.iter_mut() {
+            items.shrink_to_fit();
         }
     }
 }
@@ -182,6 +210,37 @@ impl BodyOwner {
     }
 }
 
+/// Finalized body-local DefMap and semantic-shaped item facts for one body.
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
+pub struct BodyLocalItems {
+    pub(crate) def_map: DefMap,
+    pub(crate) item_store: ItemStore,
+}
+
+impl BodyLocalItems {
+    pub(crate) fn new(def_map: DefMap, item_store: ItemStore) -> Self {
+        Self {
+            def_map,
+            item_store,
+        }
+    }
+
+    pub fn def_map(&self) -> &DefMap {
+        &self.def_map
+    }
+
+    pub fn item_store(&self) -> &ItemStore {
+        &self.item_store
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.def_map.shrink_to_fit();
+        self.item_store.shrink_to_fit();
+    }
+}
+
 /// Lowered expression body for a function, const, or static initializer.
 #[derive(
     Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
@@ -192,8 +251,6 @@ pub struct BodyData {
     pub(crate) fallback_module: ModuleRef,
     pub(crate) source: BodySource,
     pub(crate) source_items: BodySourceItems,
-    pub(crate) body_def_map: Option<DefMap>,
-    pub(crate) body_item_store: Option<ItemStore>,
     pub(crate) param_scope: ScopeId,
     pub(crate) root_expr: ExprId,
     pub(crate) params: Vec<BindingId>,
@@ -228,14 +285,6 @@ impl BodyData {
 
     pub fn source_items(&self) -> &BodySourceItems {
         &self.source_items
-    }
-
-    pub fn body_def_map(&self) -> Option<&DefMap> {
-        self.body_def_map.as_ref()
-    }
-
-    pub fn body_item_store(&self) -> Option<&ItemStore> {
-        self.body_item_store.as_ref()
     }
 
     pub fn param_scope(&self) -> ScopeId {
@@ -321,8 +370,6 @@ impl BodyData {
             fallback_module,
             source,
             source_items: builder.source_items,
-            body_def_map: None,
-            body_item_store: None,
             param_scope,
             root_expr,
             params,
@@ -338,12 +385,6 @@ impl BodyData {
     fn shrink_to_fit(&mut self) {
         self.params.shrink_to_fit();
         self.source_items.shrink_to_fit();
-        if let Some(def_map) = &mut self.body_def_map {
-            def_map.shrink_to_fit();
-        }
-        if let Some(item_store) = &mut self.body_item_store {
-            item_store.shrink_to_fit();
-        }
         self.scopes.shrink_to_fit();
         for scope in self.scopes.iter_mut() {
             scope.shrink_to_fit();

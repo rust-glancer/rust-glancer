@@ -6,7 +6,7 @@ use rg_ir_storage::{DefMap, DefMapSource, ItemStore, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
 
-use super::state::BodyLocalItems;
+use crate::BodyLocalItems;
 
 /// Provides target semantic facts plus body-local facts collected during this target build.
 ///
