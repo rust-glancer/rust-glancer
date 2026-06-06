@@ -342,24 +342,52 @@ pub struct GlobalId;
 pub fn make() {
     struct Local;
     const SE$const_ref$ED: Local = Local;
-    static CURRENT: Local = SEED;
+    static CURRENT: Local = SE$static_initializer_use$ED;
 
     fn helper() -> Local {
         SEED
     }
 
-    const AGAIN: Local = SEED;
+    const AGAIN: Local = SE$const_initializer_use$ED;
     static LAST: Local = SEED;
     let _direct = SEED;
 }
 "#,
-        &[AnalysisQuery::references(
-            "parent body-local const references",
-            "const_ref",
-            ReferenceQuery::all(),
-        )],
+        &[
+            AnalysisQuery::references(
+                "parent body-local const references",
+                "const_ref",
+                ReferenceQuery::all(),
+            ),
+            AnalysisQuery::references(
+                "parent body-local const references from const initializer",
+                "const_initializer_use",
+                ReferenceQuery::all(),
+            ),
+            AnalysisQuery::references(
+                "parent body-local const references from static initializer",
+                "static_initializer_use",
+                ReferenceQuery::all(),
+            ),
+        ],
         expect![[r#"
             parent body-local const references
+            - `SEED` @ src/lib.rs:5:11-5:15
+            - `SEED` @ src/lib.rs:6:29-6:33
+            - `SEED` @ src/lib.rs:9:9-9:13
+            - `SEED` @ src/lib.rs:12:26-12:30
+            - `SEED` @ src/lib.rs:13:26-13:30
+            - `SEED` @ src/lib.rs:14:19-14:23
+
+            parent body-local const references from const initializer
+            - `SEED` @ src/lib.rs:5:11-5:15
+            - `SEED` @ src/lib.rs:6:29-6:33
+            - `SEED` @ src/lib.rs:9:9-9:13
+            - `SEED` @ src/lib.rs:12:26-12:30
+            - `SEED` @ src/lib.rs:13:26-13:30
+            - `SEED` @ src/lib.rs:14:19-14:23
+
+            parent body-local const references from static initializer
             - `SEED` @ src/lib.rs:5:11-5:15
             - `SEED` @ src/lib.rs:6:29-6:33
             - `SEED` @ src/lib.rs:9:9-9:13

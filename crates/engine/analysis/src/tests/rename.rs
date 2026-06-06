@@ -359,19 +359,47 @@ pub fn make() {
         SE$nested_const_use$ED
     }
 
-    const AGAIN: Local = SEED;
-    static LAST: Local = SEED;
+    const AGAIN: Local = SE$const_initializer_use$ED;
+    static LAST: Local = SE$static_initializer_use$ED;
     let _direct = SEED;
 }
 "#,
-        &[AnalysisQuery::rename(
-            "rename parent const from nested body",
-            "nested_const_use",
-            "FALLBACK",
-        )],
+        &[
+            AnalysisQuery::rename(
+                "rename parent const from nested body",
+                "nested_const_use",
+                "FALLBACK",
+            ),
+            AnalysisQuery::rename(
+                "rename parent const from nested const initializer",
+                "const_initializer_use",
+                "FALLBACK",
+            ),
+            AnalysisQuery::rename(
+                "rename parent const from nested static initializer",
+                "static_initializer_use",
+                "FALLBACK",
+            ),
+        ],
         expect![[r#"
             rename parent const from nested body
             - target `SEED` @ src/lib.rs:8:9-8:13
+            - `SEED` -> `FALLBACK` @ src/lib.rs:5:11-5:15
+            - `SEED` -> `FALLBACK` @ src/lib.rs:8:9-8:13
+            - `SEED` -> `FALLBACK` @ src/lib.rs:11:26-11:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:12:26-12:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:13:19-13:23
+
+            rename parent const from nested const initializer
+            - target `SEED` @ src/lib.rs:11:26-11:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:5:11-5:15
+            - `SEED` -> `FALLBACK` @ src/lib.rs:8:9-8:13
+            - `SEED` -> `FALLBACK` @ src/lib.rs:11:26-11:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:12:26-12:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:13:19-13:23
+
+            rename parent const from nested static initializer
+            - target `SEED` @ src/lib.rs:12:26-12:30
             - `SEED` -> `FALLBACK` @ src/lib.rs:5:11-5:15
             - `SEED` -> `FALLBACK` @ src/lib.rs:8:9-8:13
             - `SEED` -> `FALLBACK` @ src/lib.rs:11:26-11:30

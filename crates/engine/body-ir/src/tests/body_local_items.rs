@@ -777,6 +777,94 @@ pub fn use_it() {
 }
 
 #[test]
+fn resolves_body_local_bodies_discovered_inside_nested_bodies() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_in_body_in_body_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    fn outer() -> GlobalId {
+        const INNER: GlobalId = GlobalId;
+
+        fn deeper() -> GlobalId {
+            INNER
+        }
+
+        deeper()
+    }
+
+    let value: GlobalId = outer();
+}
+"#,
+        expect![[r#"
+            package body_in_body_in_body_fixture
+
+            body_in_body_in_body_fixture [lib]
+            body b0 fn body_in_body_in_body_fixture[lib]::crate::use_it @ 3:1-15:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0; source_items i0
+            source_items
+            - i0 fn outer @ 4:5-12:6
+            bindings
+            - v0 let value `value`: GlobalId => nominal struct body_in_body_in_body_fixture[lib]::crate::GlobalId @ 14:9-14:14
+            body
+            expr e2 block s1 => () @ 3:17-15:2
+              stmt s0 source_item i0 @ 4:5-12:6
+              stmt s1 let v0: GlobalId @ 14:5-14:35
+                initializer
+                  expr e1 call => nominal struct body_in_body_in_body_fixture[lib]::crate::GlobalId @ 14:27-14:34
+                    callee
+                      expr e0 path outer -> fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer => <unknown> @ 14:27-14:32
+
+
+            body b1 fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer @ 4:5-12:6
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>; source_items i0, i1
+            source_items
+            - i0 const INNER @ 5:9-5:42
+            - i1 fn deeper @ 7:9-9:10
+            bindings
+            body
+            expr e2 block s1 => nominal struct body_in_body_in_body_fixture[lib]::crate::GlobalId @ 4:28-12:6
+              stmt s0 source_item i0 @ 5:9-5:42
+              stmt s1 source_item i1 @ 7:9-9:10
+              tail
+                expr e1 call => nominal struct body_in_body_in_body_fixture[lib]::crate::GlobalId @ 11:9-11:17
+                  callee
+                    expr e0 path deeper -> fn fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::deeper => <unknown> @ 11:9-11:15
+
+
+            body b2 const fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::INNER @ 5:9-5:42
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 path GlobalId -> item struct body_in_body_in_body_fixture[lib]::crate::GlobalId => nominal struct body_in_body_in_body_fixture[lib]::crate::GlobalId @ 5:33-5:41
+
+
+            body b3 fn fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::deeper @ 7:9-9:10
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e1 block s1 => <unknown> @ 7:33-9:10
+              tail
+                expr e0 path INNER -> item const fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::INNER => <unknown> @ 8:13-8:18
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_nested_body_references_to_parent_body_impl_items() {
     check_project_body_ir(
         r#"

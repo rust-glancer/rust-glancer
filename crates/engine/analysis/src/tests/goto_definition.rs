@@ -908,7 +908,9 @@ pub fn make() {
     }
 
     const AGAIN: Local = CUR$goto_nested_static$RENT;
+    const FROM_CONST: Local = DEF$goto_nested_const_from_const$AULT;
     static LAST: Local = Lo$goto_nested_type$cal;
+    static FROM_STATIC: Local = DEF$goto_nested_const_from_static$AULT;
 }
 "#,
         &[
@@ -924,6 +926,14 @@ pub fn make() {
                 "goto parent type from nested static initializer",
                 "goto_nested_type",
             ),
+            AnalysisQuery::goto(
+                "goto parent const from nested const initializer",
+                "goto_nested_const_from_const",
+            ),
+            AnalysisQuery::goto(
+                "goto parent const from nested static initializer",
+                "goto_nested_const_from_static",
+            ),
         ],
         expect![[r#"
             goto parent const from nested function
@@ -934,6 +944,12 @@ pub fn make() {
 
             goto parent type from nested static initializer
             - struct Local @ 4:12-4:17
+
+            goto parent const from nested const initializer
+            - const DEFAULT @ 5:11-5:18
+
+            goto parent const from nested static initializer
+            - const DEFAULT @ 5:11-5:18
         "#]],
     );
 }
