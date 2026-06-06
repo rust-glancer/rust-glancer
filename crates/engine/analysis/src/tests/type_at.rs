@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries};
+use super::utils::{AnalysisQuery, check_analysis_queries, check_analysis_queries_with_sysroot};
 
 #[test]
 fn returns_body_expression_types() {
@@ -1062,6 +1062,210 @@ pub fn use_it(
 
             for item from opaque iterator return
             - nominal struct app[lib]::crate::UserId
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_for_loop_item_types_from_method_returned_slice() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+    }
+}
+
+impl<'a, T> iter::IntoIterator for &'a [T] {
+    type Item = &'a T;
+}
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+pub struct DefMapBuilder {
+    incomplete: DefMap,
+}
+
+impl DefMapBuilder {
+    pub fn as_incomplete_def_map(&self) -> &DefMap {
+        &self.incomplete
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use storage::{DefMap, DefMapBuilder};
+
+pub struct BuildState {
+    builder: DefMapBuilder,
+}
+
+pub fn use_it(def_map: &DefMap, state: &BuildState) {
+    for import in def_map.imports() {
+        let _import = imp$type_import$ort;
+    }
+
+    for chained in state.builder.as_incomplete_def_map().imports() {
+        let _chained = chai$type_chained$ned;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("for item from method returned slice", "type_import").in_lib("app"),
+            AnalysisQuery::ty(
+                "for item from chained method returned slice",
+                "type_chained",
+            )
+            .in_lib("app"),
+        ],
+        expect![[r#"
+            for item from method returned slice
+            - &nominal struct storage[lib]::crate::ImportData
+
+            for item from chained method returned slice
+            - &nominal struct storage[lib]::crate::ImportData
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_for_loop_item_types_from_sysroot_slice_iterator() {
+    check_analysis_queries_with_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["storage", "app"]
+resolver = "3"
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+pub struct DefMapBuilder {
+    incomplete: DefMap,
+}
+
+impl DefMapBuilder {
+    pub fn as_incomplete_def_map(&self) -> &DefMap {
+        &self.incomplete
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use storage::{DefMap, DefMapBuilder};
+
+pub struct BuildState {
+    builder: DefMapBuilder,
+}
+
+pub fn use_it(def_map: &DefMap, state: &BuildState) {
+    for import in def_map.imports() {
+        let _import = imp$type_import$ort;
+    }
+
+    for chained in state.builder.as_incomplete_def_map().imports() {
+        let _chained = chai$type_chained$ned;
+    }
+}
+
+//- /sysroot/library/core/src/lib.rs
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+        type IntoIter;
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+impl<'a, T> iter::IntoIterator for &'a [T] {
+    type Item = &'a T;
+    type IntoIter = slice::Iter<'a, T>;
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod prelude {
+    pub mod rust_2024 {}
+}
+"#,
+        &[
+            AnalysisQuery::ty("for item from sysroot method returned slice", "type_import")
+                .in_lib("app"),
+            AnalysisQuery::ty(
+                "for item from sysroot chained method returned slice",
+                "type_chained",
+            )
+            .in_lib("app"),
+        ],
+        expect![[r#"
+            for item from sysroot method returned slice
+            - &nominal struct storage[lib]::crate::ImportData
+
+            for item from sysroot chained method returned slice
+            - &nominal struct storage[lib]::crate::ImportData
         "#]],
     );
 }
