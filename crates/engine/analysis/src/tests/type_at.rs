@@ -857,20 +857,35 @@ core = { package = "fake_core", path = "../core" }
 //- /app/src/lib.rs
 pub struct Package;
 
-pub fn use_it(packages: &[Package]) {
+pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3]) {
     let first = packages.first$type_first$_ref();
     let count = packages.le$type_len$n();
+    let array_first = array.first$type_array_first$_ref();
+    let array_count = array.le$type_array_len$n();
+    let array_ref_count = array_ref.le$type_array_ref_len$n();
 }
 "#,
         &[
             AnalysisQuery::ty("slice generic method return", "type_first").in_lib("app"),
             AnalysisQuery::ty("slice len method return", "type_len").in_lib("app"),
+            AnalysisQuery::ty("array generic method return", "type_array_first").in_lib("app"),
+            AnalysisQuery::ty("array len method return", "type_array_len").in_lib("app"),
+            AnalysisQuery::ty("array ref len method return", "type_array_ref_len").in_lib("app"),
         ],
         expect![[r#"
             slice generic method return
             - &nominal struct app[lib]::crate::Package
 
             slice len method return
+            - usize
+
+            array generic method return
+            - &nominal struct app[lib]::crate::Package
+
+            array len method return
+            - usize
+
+            array ref len method return
             - usize
         "#]],
     );

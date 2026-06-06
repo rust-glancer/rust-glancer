@@ -1772,13 +1772,28 @@ core = { package = "fake_core", path = "../core" }
 //- /app/src/lib.rs
 pub struct Package;
 
-pub fn use_it(packages: &[Package]) {
+pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3]) {
     packages.$slice_methods$;
+    array.$array_methods$;
+    array_ref.$array_ref_methods$;
 }
 "#,
-        &[AnalysisQuery::complete("slice method completions", "slice_methods").in_lib("app")],
+        &[
+            AnalysisQuery::complete("slice method completions", "slice_methods").in_lib("app"),
+            AnalysisQuery::complete("array method completions", "array_methods").in_lib("app"),
+            AnalysisQuery::complete("array ref method completions", "array_ref_methods")
+                .in_lib("app"),
+        ],
         expect![[r#"
             slice method completions
+            - inherent_method first_ref
+            - inherent_method len
+
+            array method completions
+            - inherent_method first_ref
+            - inherent_method len
+
+            array ref method completions
             - inherent_method first_ref
             - inherent_method len
         "#]],
