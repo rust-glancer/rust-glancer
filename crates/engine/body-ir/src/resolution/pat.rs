@@ -6,7 +6,8 @@
 
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId, TypeDefId};
 use rg_ir_storage::{
-    DefMapSource, ItemStoreQuery, ItemStoreSource, Path, PathSegment, TargetItemQuery,
+    DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource, Path, PathSegment,
+    TargetItemQuery,
 };
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
@@ -25,6 +26,7 @@ use super::{BodyQuerySource, TypeRefUseSite, push_unique, type_path::BodyTypePat
 
 pub(super) struct PatternTypePropagator<'query, D, I> {
     source: BodyQuerySource<'query, D, I>,
+    semantic_index: &'query ItemLookupIndex,
 }
 
 impl<'query, D, I> PatternTypePropagator<'query, D, I>
@@ -32,8 +34,14 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(super) fn new(source: BodyQuerySource<'query, D, I>) -> Self {
-        Self { source }
+    pub(super) fn new(
+        source: BodyQuerySource<'query, D, I>,
+        semantic_index: &'query ItemLookupIndex,
+    ) -> Self {
+        Self {
+            source,
+            semantic_index,
+        }
     }
 
     pub(super) fn propagate(&self) -> Result<Vec<(BindingId, Ty)>, PackageStoreError> {
@@ -56,6 +64,7 @@ where
             self.propagate_pat(pat, &expected_ty, &mut updates)?;
         }
 
+        let iteration_items = self.iteration_items();
         for expr_idx in 0..self.source.body().exprs.len() {
             let expr = ExprId(expr_idx);
             match self.source.body().exprs[expr].kind.clone() {
@@ -85,9 +94,7 @@ where
                     ..
                 } => {
                     let iterable_ty = &self.source.body().exprs[iterable].ty;
-                    let item_ty = self
-                        .iteration_items()
-                        .into_iterator_item_for_ty(iterable_ty)?;
+                    let item_ty = iteration_items.into_iterator_item_for_ty(iterable_ty)?;
                     self.propagate_pat(pat, &item_ty, &mut updates)?;
                 }
                 ExprKind::Path { .. }
@@ -141,7 +148,7 @@ where
         let source = self.source;
         let item_paths = ItemPathQuery::new(source, source);
         let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
-        IterationItemResolver::new(item_paths, target_items)
+        IterationItemResolver::with_index(item_paths, target_items, self.semantic_index)
     }
 
     fn expected_ty_for_let(

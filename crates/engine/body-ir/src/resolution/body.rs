@@ -110,7 +110,8 @@ where
             for expr_idx in 0..self.body.exprs.len() {
                 changed |= self.resolve_expr(ExprId(expr_idx))?;
             }
-            let binding_updates = PatternTypePropagator::new(self.query_source()).propagate()?;
+            let binding_updates =
+                PatternTypePropagator::new(self.query_source(), self.semantic_index).propagate()?;
             changed |= self.apply_binding_type_updates(binding_updates);
 
             if !changed {

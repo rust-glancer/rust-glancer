@@ -18,7 +18,9 @@ pub struct ItemLookupIndex {
     // whose already-resolved `Self` type mentions that receiver, instead of re-scanning all impls.
     inherent_impls_by_type: HashMap<TypeDefRef, Vec<ImplRef>>,
     inherent_functions_by_type_and_name: HashMap<TypeDefRef, HashMap<Name, Vec<FunctionRef>>>,
+    structural_inherent_impls: Vec<ImplRef>,
     trait_impls_by_type: HashMap<TypeDefRef, Vec<TraitImplRef>>,
+    trait_impls_by_trait: HashMap<TraitRef, Vec<TraitImplRef>>,
     // Trait impl lookup produces trait identities first; this cache then expands each trait into
     // its associated function declarations without reopening the trait item every time.
     trait_functions_by_trait: HashMap<TraitRef, Vec<FunctionRef>>,
@@ -76,6 +78,13 @@ impl ItemLookupIndex {
             // resolved self type, and later applicability checks still decide whether candidates fit.
             for (impl_ref, impl_data) in store.impls_with_refs() {
                 if impl_data.trait_ref.is_none() {
+                    if impl_data.resolved_self_tys.is_empty() {
+                        // Inherent impls for shaped builtin types, such as `impl<T> [T]`, do not
+                        // have a nominal receiver key. Keep them in a small side list so structural
+                        // method lookup does not scan every visible impl.
+                        push_unique(&mut index.structural_inherent_impls, impl_ref);
+                    }
+
                     for self_ty in &impl_data.resolved_self_tys {
                         push_unique(
                             index.inherent_impls_by_type.entry(*self_ty).or_default(),
@@ -105,15 +114,24 @@ impl ItemLookupIndex {
                         }
                     }
                 } else {
-                    for self_ty in &impl_data.resolved_self_tys {
-                        let trait_impls = index.trait_impls_by_type.entry(*self_ty).or_default();
-                        for trait_ref in &impl_data.resolved_trait_refs {
+                    for trait_ref in &impl_data.resolved_trait_refs {
+                        let trait_impl = TraitImplRef {
+                            impl_ref,
+                            trait_ref: *trait_ref,
+                        };
+
+                        // Structural impls such as `impl<T> IntoIterator for &[T]` may not have a
+                        // nominal receiver key, but iterator-like queries can still start from the
+                        // canonical trait identity and ask which impls provide it.
+                        push_unique(
+                            index.trait_impls_by_trait.entry(*trait_ref).or_default(),
+                            trait_impl,
+                        );
+
+                        for self_ty in &impl_data.resolved_self_tys {
                             push_unique(
-                                trait_impls,
-                                TraitImplRef {
-                                    impl_ref,
-                                    trait_ref: *trait_ref,
-                                },
+                                index.trait_impls_by_type.entry(*self_ty).or_default(),
+                                trait_impl,
                             );
                         }
                     }
@@ -176,12 +194,30 @@ impl ItemLookupIndex {
             .unwrap_or(&[])
     }
 
+    /// Returns inherent impls whose `Self` type needs structural matching instead of a type key.
+    pub fn structural_inherent_impls(&self) -> &[ImplRef] {
+        &self.structural_inherent_impls
+    }
+
     /// Returns trait impl candidates indexed for a receiver type.
     pub fn trait_impls_for_type(&self, ty: TypeDefRef) -> &[TraitImplRef] {
         self.trait_impls_by_type
             .get(&ty)
             .map(Vec::as_slice)
             .unwrap_or(&[])
+    }
+
+    /// Returns trait impl candidates indexed by the implemented trait.
+    pub fn trait_impls_for_trait(&self, trait_ref: TraitRef) -> Option<&[TraitImplRef]> {
+        if let Some(trait_impls) = self.trait_impls_by_trait.get(&trait_ref) {
+            return Some(trait_impls);
+        }
+
+        // `Some(&[])` means the trait is visible and indexed, but no visible impl provides it.
+        // `None` means the caller may be looking across a context this index did not cover.
+        self.trait_functions_by_trait
+            .contains_key(&trait_ref)
+            .then_some(&[])
     }
 
     /// Returns trait-declared functions if the trait was visible when the index was built.

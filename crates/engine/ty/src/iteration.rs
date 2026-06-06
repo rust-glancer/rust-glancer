@@ -9,7 +9,8 @@ use rg_ir_model::{
     AssocItemId, ImplRef, TraitImplRef, TraitRef, TypeAliasRef, hir::items::ImplData,
 };
 use rg_ir_storage::{
-    DefMapSource, ItemStoreSource, Path, PathSegment, TargetItemQuery, TypePathContext,
+    DefMapSource, ItemLookupIndex, ItemStoreSource, Path, PathSegment, TargetItemQuery,
+    TypePathContext,
 };
 use rg_text::Name;
 
@@ -20,6 +21,7 @@ use crate::{ImplMatcher, ItemPathQuery, Ty, associated_type::AssociatedTypeProje
 pub struct IterationItemResolver<'query, D, I> {
     item_paths: ItemPathQuery<'query, D, I>,
     target_items: TargetItemQuery<'query, D, I>,
+    lookup_index: Option<&'query ItemLookupIndex>,
 }
 
 impl<'query, D, I> IterationItemResolver<'query, D, I>
@@ -34,6 +36,20 @@ where
         Self {
             item_paths,
             target_items,
+            lookup_index: None,
+        }
+    }
+
+    /// Creates an iteration resolver that can reuse a target-scoped item lookup index.
+    pub fn with_index(
+        item_paths: ItemPathQuery<'query, D, I>,
+        target_items: TargetItemQuery<'query, D, I>,
+        lookup_index: &'query ItemLookupIndex,
+    ) -> Self {
+        Self {
+            item_paths,
+            target_items,
+            lookup_index: Some(lookup_index),
         }
     }
 
@@ -58,10 +74,9 @@ where
 
         let projector = AssociatedTypeProjector::new(&self.item_paths, &self.target_items);
         let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
+        let canonical_traits = self.canonical_trait_refs_from_use_site(&projector, trait_kind)?;
         let mut candidates = Vec::new();
         if let Ty::Opaque { bounds } = ty {
-            let canonical_traits =
-                self.canonical_trait_refs_from_use_site(&projector, trait_kind)?;
             projector.push_associated_types_from_opaque_bounds(
                 &mut candidates,
                 bounds,
@@ -70,6 +85,69 @@ where
             );
         }
 
+        let item_query = self.item_paths.items();
+        for trait_impl in self.trait_impl_candidates(&projector, &canonical_traits, trait_kind)? {
+            let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
+                continue;
+            };
+
+            if matches!(trait_kind, CanonicalIteratorTrait::IntoIterator)
+                && let Some(item_ty) = self.blanket_into_iterator_item_for_ty(
+                    &projector,
+                    trait_impl.impl_ref,
+                    impl_data,
+                    ty,
+                )?
+            {
+                push_unique(&mut candidates, item_ty);
+                continue;
+            }
+
+            let Some(subst) =
+                matcher.trait_impl_projection_subst_for_ty(trait_impl, impl_data, ty)?
+            else {
+                continue;
+            };
+            let Some(item_ty) =
+                projector.associated_type_from_impl(trait_impl, impl_data, "Item", &subst)?
+            else {
+                continue;
+            };
+            push_unique(&mut candidates, item_ty);
+        }
+
+        Ok(Ty::one_or_unknown(candidates))
+    }
+
+    fn trait_impl_candidates(
+        &self,
+        projector: &AssociatedTypeProjector<'_, 'query, D, I>,
+        canonical_traits: &[TraitRef],
+        trait_kind: CanonicalIteratorTrait,
+    ) -> Result<Vec<TraitImplRef>, D::Error> {
+        let mut candidates = Vec::new();
+        for trait_ref in canonical_traits {
+            if let Some(indexed_impls) = self
+                .lookup_index
+                .and_then(|index| index.trait_impls_for_trait(*trait_ref))
+            {
+                for trait_impl in indexed_impls {
+                    push_unique(&mut candidates, *trait_impl);
+                }
+                continue;
+            }
+
+            for trait_impl in self.target_items.trait_impls_for_trait(*trait_ref)? {
+                push_unique(&mut candidates, trait_impl);
+            }
+        }
+
+        if !canonical_traits.is_empty() {
+            return Ok(candidates);
+        }
+
+        // Some fixture/core-like contexts cannot resolve `::core` from the use-site root. Keep the
+        // older impl-context scan as a rare fallback so the fast path does not narrow semantics.
         for store in self.target_items.visible_stores()? {
             for (impl_ref, impl_data) in store.impls_with_refs() {
                 if impl_data.trait_ref.is_none() {
@@ -87,31 +165,12 @@ where
                         continue;
                     }
 
-                    if matches!(trait_kind, CanonicalIteratorTrait::IntoIterator)
-                        && let Some(item_ty) = self.blanket_into_iterator_item_for_ty(
-                            &projector, impl_ref, impl_data, ty,
-                        )?
-                    {
-                        push_unique(&mut candidates, item_ty);
-                        continue;
-                    }
-
-                    let Some(subst) =
-                        matcher.trait_impl_projection_subst_for_ty(trait_impl, impl_data, ty)?
-                    else {
-                        continue;
-                    };
-                    let Some(item_ty) = projector
-                        .associated_type_from_impl(trait_impl, impl_data, "Item", &subst)?
-                    else {
-                        continue;
-                    };
-                    push_unique(&mut candidates, item_ty);
+                    push_unique(&mut candidates, trait_impl);
                 }
             }
         }
 
-        Ok(Ty::one_or_unknown(candidates))
+        Ok(candidates)
     }
 
     /// Checks whether this trait impl resolved to the canonical iterator trait path.

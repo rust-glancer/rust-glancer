@@ -70,6 +70,24 @@ where
         Ok(impls)
     }
 
+    /// Searches visible impls for a trait ref and returns the trait identity used by each impl.
+    pub fn trait_impls_for_trait(
+        &self,
+        trait_ref: TraitRef,
+    ) -> Result<Vec<TraitImplRef>, I::Error> {
+        let mut trait_impls = Vec::new();
+        for impl_ref in self.impls_for_trait(trait_ref)? {
+            push_unique(
+                &mut trait_impls,
+                TraitImplRef {
+                    impl_ref,
+                    trait_ref,
+                },
+            );
+        }
+        Ok(trait_impls)
+    }
+
     /// Narrows type impl lookup to inherent impls, which is the path used for method completion.
     pub fn inherent_impls_for_type(&self, ty: TypeDefRef) -> Result<Vec<ImplRef>, I::Error> {
         let mut impls = Vec::new();

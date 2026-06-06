@@ -186,7 +186,11 @@ where
         // Structural inherent impls model language/core-provided builtins such as `impl<T> [T]`.
         // Body-local impl lookup remains nominal-only because block-local impls are useful for
         // local structs, not for defining new inherent methods on builtin shaped types.
-        for impl_ref in target_items.inherent_impls()? {
+        let impl_refs = match self.semantic_index {
+            Some(index) => index.structural_inherent_impls().to_vec(),
+            None => target_items.inherent_impls()?,
+        };
+        for impl_ref in impl_refs {
             self.push_structural_inherent_functions_for_impl(
                 &item_query,
                 &matcher,
@@ -249,10 +253,7 @@ where
     }
 
     fn receiver_ty_uses_structural_impl_lookup(ty: &Ty) -> bool {
-        matches!(
-            ty,
-            Ty::Tuple(_) | Ty::Array { .. } | Ty::Slice(_) | Ty::Reference { .. }
-        )
+        matches!(ty, Ty::Tuple(_) | Ty::Array { .. } | Ty::Slice(_))
     }
 
     fn body_inherent_functions(
