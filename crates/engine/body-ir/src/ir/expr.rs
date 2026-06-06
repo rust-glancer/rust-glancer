@@ -159,6 +159,7 @@ pub enum ExprKind {
     RepeatArray {
         initializer: Option<ExprId>,
         repeat: Option<ExprId>,
+        len_text: Option<String>,
     },
     /// `<base>[<index>]`.
     Index {
@@ -608,8 +609,12 @@ impl ExprKind {
                     field.shrink_to_fit();
                 }
             }
-            Self::RepeatArray { .. }
-            | Self::Index { .. }
+            Self::RepeatArray { len_text, .. } => {
+                if let Some(len_text) = len_text {
+                    len_text.shrink_to_fit();
+                }
+            }
+            Self::Index { .. }
             | Self::Range { .. }
             | Self::Unary { .. }
             | Self::Binary { .. }

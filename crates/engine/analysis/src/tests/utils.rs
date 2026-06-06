@@ -1101,6 +1101,20 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             Ty::Unit => "()".to_string(),
             Ty::Never => "!".to_string(),
             Ty::Primitive(primitive) => primitive.label().to_string(),
+            Ty::Tuple(fields) => {
+                let fields = fields
+                    .iter()
+                    .map(|ty| self.render_ty(ty))
+                    .collect::<Vec<_>>();
+                let suffix = if fields.len() == 1 { "," } else { "" };
+                format!("({}{suffix})", fields.join(", "))
+            }
+            Ty::Array { inner, len } => format!(
+                "[{}; {}]",
+                self.render_ty(inner),
+                len.as_deref().unwrap_or("<unknown>")
+            ),
+            Ty::Slice(inner) => format!("[{}]", self.render_ty(inner)),
             Ty::Syntax(ty) => format!("syntax {ty}"),
             Ty::Reference { mutability, inner } => {
                 format!("{}{}", mutability.render_prefix(), self.render_ty(inner))

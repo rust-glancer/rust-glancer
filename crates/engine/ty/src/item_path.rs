@@ -82,6 +82,22 @@ where
             )),
             TypeRef::Unknown(_) | TypeRef::Infer => Ok(Ty::Unknown),
             TypeRef::Tuple(types) if types.is_empty() => Ok(Ty::Unit),
+            TypeRef::Tuple(types) => Ok(Ty::tuple(
+                types
+                    .iter()
+                    .map(|ty| self.resolve_type_ref(ty, context, Ty::syntax(ty.clone()), subst))
+                    .collect::<Result<_, _>>()?,
+            )),
+            TypeRef::Slice(inner) => Ok(Ty::slice(self.resolve_type_ref(
+                inner,
+                context,
+                Ty::syntax((**inner).clone()),
+                subst,
+            )?)),
+            TypeRef::Array { inner, len } => Ok(Ty::array(
+                self.resolve_type_ref(inner, context, Ty::syntax((**inner).clone()), subst)?,
+                len.clone(),
+            )),
             _ => Ok(Ty::syntax(ty.clone())),
         }
     }

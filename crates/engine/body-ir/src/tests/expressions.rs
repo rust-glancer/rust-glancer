@@ -148,6 +148,108 @@ pub fn configure(f: impl FnOnce(&mut AttrVec)) {
 }
 
 #[test]
+fn infers_structural_tuple_array_and_slice_types() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_structural_type_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
+    let annotated_tuple: (u8, bool) = pair;
+    let annotated_array: [u8; 3] = array;
+    let annotated_slice: &[u8] = slice;
+    let tuple_expr = (value, true);
+    let array_expr = [value, value];
+    let repeat_expr = [value; 3];
+    let tuple_field = pair.0;
+    let indexed = array[0];
+    let (left, right) = tuple_expr;
+    let [first, ..] = array_expr;
+}
+"#,
+        expect![[r#"
+            package body_structural_type_fixture
+
+            body_structural_type_fixture [lib]
+            body b0 fn body_structural_type_fixture[lib]::crate::use_it @ 1:1-12:2
+            scopes
+            - s0 parent <none>: v0, v1, v2, v3
+            - s1 parent s0: v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14
+            bindings
+            - v0 param pair `pair`: (u8, bool) => (u8, bool) @ 1:15-1:19
+            - v1 param array `array`: [u8; 3] => [u8; 3] @ 1:33-1:38
+            - v2 param slice `slice`: &[u8] => &[u8] @ 1:49-1:54
+            - v3 param value `value`: u8 => u8 @ 1:63-1:68
+            - v4 let annotated_tuple `annotated_tuple`: (u8, bool) => (u8, bool) @ 2:9-2:24
+            - v5 let annotated_array `annotated_array`: [u8; 3] => [u8; 3] @ 3:9-3:24
+            - v6 let annotated_slice `annotated_slice`: &[u8] => &[u8] @ 4:9-4:24
+            - v7 let tuple_expr `tuple_expr` => (u8, bool) @ 5:9-5:19
+            - v8 let array_expr `array_expr` => [u8; 2] @ 6:9-6:19
+            - v9 let repeat_expr `repeat_expr` => [u8; 3] @ 7:9-7:20
+            - v10 let tuple_field `tuple_field` => u8 @ 8:9-8:20
+            - v11 let indexed `indexed` => u8 @ 9:9-9:16
+            - v12 let left `left` => u8 @ 10:10-10:14
+            - v13 let right `right` => bool @ 10:16-10:21
+            - v14 let first `first` => u8 @ 11:10-11:15
+            body
+            expr e19 block s1 => () @ 1:74-12:2
+              stmt s0 let v4: (u8, bool) @ 2:5-2:44
+                initializer
+                  expr e0 path pair -> local v0 => (u8, bool) @ 2:39-2:43
+              stmt s1 let v5: [u8; 3] @ 3:5-3:42
+                initializer
+                  expr e1 path array -> local v1 => [u8; 3] @ 3:36-3:41
+              stmt s2 let v6: &[u8] @ 4:5-4:40
+                initializer
+                  expr e2 path slice -> local v2 => &[u8] @ 4:34-4:39
+              stmt s3 let v7 @ 5:5-5:36
+                initializer
+                  expr e5 tuple => (u8, bool) @ 5:22-5:35
+                    field
+                      expr e3 path value -> local v3 => u8 @ 5:23-5:28
+                    field
+                      expr e4 literal bool `true` => bool @ 5:30-5:34
+              stmt s4 let v8 @ 6:5-6:37
+                initializer
+                  expr e8 array => [u8; 2] @ 6:22-6:36
+                    element
+                      expr e6 path value -> local v3 => u8 @ 6:23-6:28
+                    element
+                      expr e7 path value -> local v3 => u8 @ 6:30-6:35
+              stmt s5 let v9 @ 7:5-7:34
+                initializer
+                  expr e11 repeat_array => [u8; 3] @ 7:23-7:33
+                    initializer
+                      expr e9 path value -> local v3 => u8 @ 7:24-7:29
+                    repeat
+                      expr e10 literal int `3` => i32 @ 7:31-7:32
+              stmt s6 let v10 @ 8:5-8:30
+                initializer
+                  expr e13 field 0 => u8 @ 8:23-8:29
+                    base
+                      expr e12 path pair -> local v0 => (u8, bool) @ 8:23-8:27
+              stmt s7 let v11 @ 9:5-9:28
+                initializer
+                  expr e16 index => u8 @ 9:19-9:27
+                    base
+                      expr e14 path array -> local v1 => [u8; 3] @ 9:19-9:24
+                    index
+                      expr e15 literal int `0` => i32 @ 9:25-9:26
+              stmt s8 let v12, v13 @ 10:5-10:36
+                initializer
+                  expr e17 path tuple_expr -> local v7 => (u8, bool) @ 10:25-10:35
+              stmt s9 let v14 @ 11:5-11:34
+                initializer
+                  expr e18 path array_expr -> local v8 => [u8; 2] @ 11:23-11:33
+        "#]],
+    );
+}
+
+#[test]
 fn infers_scalar_literals_and_builtin_operator_results() {
     check_project_body_ir(
         r#"
@@ -518,27 +620,27 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
             - s0 parent <none>: v0, v1, v2, v3
             - s1 parent s0: v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15
             bindings
-            - v0 param pair `mut pair`: (u8, u8) => syntax (u8, u8) @ 9:15-9:23
-            - v1 param slots `mut slots`: [u8; 3] => syntax [u8; 3] @ 9:35-9:44
+            - v0 param pair `mut pair`: (u8, u8) => (u8, u8) @ 9:15-9:23
+            - v1 param slots `mut slots`: [u8; 3] => [u8; 3] @ 9:35-9:44
             - v2 param value `value`: u8 => u8 @ 9:55-9:60
             - v3 param user `user`: User => nominal struct body_common_expr_fixture[lib]::crate::User @ 9:66-9:70
-            - v4 let tuple `tuple` => <unknown> @ 10:9-10:14
+            - v4 let tuple `tuple` => (u8, u8) @ 10:9-10:14
             - v5 let array `array` => <unknown> @ 11:9-11:14
-            - v6 let repeat `repeat` => <unknown> @ 12:9-12:15
-            - v7 let indexed `indexed` => <unknown> @ 13:9-13:16
+            - v6 let repeat `repeat` => [u8; 3] @ 12:9-12:15
+            - v7 let indexed `indexed` => u8 @ 13:9-13:16
             - v8 let exclusive `exclusive` => <unknown> @ 14:9-14:18
             - v9 let inclusive `inclusive` => <unknown> @ 15:9-15:18
             - v10 let full `full` => <unknown> @ 16:9-16:13
             - v11 let casted `casted` => nominal struct body_common_expr_fixture[lib]::crate::User @ 17:9-17:15
             - v12 let field_after_cast `field_after_cast` => u8 @ 18:9-18:25
-            - v13 let unary `unary` => <unknown> @ 19:9-19:14
+            - v13 let unary `unary` => (bool, i32, u8) @ 19:9-19:14
             - v14 let binary `binary` => bool @ 20:9-20:15
             - v15 let hole `hole` => <unknown> @ 23:9-23:13
             body
             expr e66 block s1 => () @ 9:78-27:2
               stmt s0 let v4 @ 10:5-10:34
                 initializer
-                  expr e3 tuple => <unknown> @ 10:17-10:33
+                  expr e3 tuple => (u8, u8) @ 10:17-10:33
                     field
                       expr e0 path value -> local v2 => u8 @ 10:18-10:23
                     field
@@ -556,16 +658,16 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                       expr e6 literal int `2` => i32 @ 11:28-11:29
               stmt s2 let v6 @ 12:5-12:29
                 initializer
-                  expr e10 repeat_array => <unknown> @ 12:18-12:28
+                  expr e10 repeat_array => [u8; 3] @ 12:18-12:28
                     initializer
                       expr e8 path value -> local v2 => u8 @ 12:19-12:24
                     repeat
                       expr e9 literal int `3` => i32 @ 12:26-12:27
               stmt s3 let v7 @ 13:5-13:28
                 initializer
-                  expr e13 index => <unknown> @ 13:19-13:27
+                  expr e13 index => u8 @ 13:19-13:27
                     base
-                      expr e11 path slots -> local v1 => syntax [u8; 3] @ 13:19-13:24
+                      expr e11 path slots -> local v1 => [u8; 3] @ 13:19-13:24
                     index
                       expr e12 literal int `0` => i32 @ 13:25-13:26
               stmt s4 let v8 @ 14:5-14:30
@@ -601,7 +703,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                               expr e23 path user -> local v3 => nominal struct body_common_expr_fixture[lib]::crate::User @ 18:29-18:33
               stmt s9 let v13 @ 19:5-19:39
                 initializer
-                  expr e34 tuple => <unknown> @ 19:17-19:38
+                  expr e34 tuple => (bool, i32, u8) @ 19:17-19:38
                     field
                       expr e28 unary ! => bool @ 19:18-19:24
                         inner
@@ -638,17 +740,17 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
               stmt s11 expr; @ 21:5-21:31
                 expr e52 assign = => () @ 21:5-21:30
                   target
-                    expr e48 tuple => <unknown> @ 21:5-21:21
+                    expr e48 tuple => (u8, u8) @ 21:5-21:21
                       field
-                        expr e45 field 0 => <unknown> @ 21:6-21:12
+                        expr e45 field 0 => u8 @ 21:6-21:12
                           base
-                            expr e44 path pair -> local v0 => syntax (u8, u8) @ 21:6-21:10
+                            expr e44 path pair -> local v0 => (u8, u8) @ 21:6-21:10
                       field
-                        expr e47 field 1 => <unknown> @ 21:14-21:20
+                        expr e47 field 1 => u8 @ 21:14-21:20
                           base
-                            expr e46 path pair -> local v0 => syntax (u8, u8) @ 21:14-21:18
+                            expr e46 path pair -> local v0 => (u8, u8) @ 21:14-21:18
                   value
-                    expr e51 tuple => <unknown> @ 21:24-21:30
+                    expr e51 tuple => (i32, i32) @ 21:24-21:30
                       field
                         expr e49 literal int `1` => i32 @ 21:25-21:26
                       field
@@ -656,9 +758,9 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
               stmt s12 expr; @ 22:5-22:23
                 expr e57 assign += => () @ 22:5-22:22
                   target
-                    expr e55 index => <unknown> @ 22:5-22:13
+                    expr e55 index => u8 @ 22:5-22:13
                       base
-                        expr e53 path slots -> local v1 => syntax [u8; 3] @ 22:5-22:10
+                        expr e53 path slots -> local v1 => [u8; 3] @ 22:5-22:10
                       index
                         expr e54 literal int `0` => i32 @ 22:11-22:12
                   value

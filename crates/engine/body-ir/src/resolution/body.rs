@@ -206,8 +206,22 @@ where
             ExprKind::Call { callee, .. } => {
                 self.body.exprs[expr].ty = self.call_ty(callee)?;
             }
-            ExprKind::Tuple { fields } if fields.is_empty() => {
-                self.body.exprs[expr].ty = Ty::Unit;
+            ExprKind::Tuple { fields } => {
+                self.body.exprs[expr].ty = self.tuple_expr_ty(&fields);
+            }
+            ExprKind::Array { elements } => {
+                self.body.exprs[expr].ty = self.array_expr_ty(&elements);
+            }
+            ExprKind::RepeatArray {
+                initializer,
+                len_text,
+                ..
+            } => {
+                self.body.exprs[expr].ty =
+                    self.repeat_array_expr_ty(initializer, len_text.as_deref());
+            }
+            ExprKind::Index { base, .. } => {
+                self.body.exprs[expr].ty = self.index_expr_ty(base);
             }
             ExprKind::Cast { ty: Some(ty), .. } => {
                 self.body.exprs[expr].ty = self
@@ -325,10 +339,6 @@ where
             ExprKind::Let { .. }
             | ExprKind::Closure { .. }
             | ExprKind::Loop { .. }
-            | ExprKind::Tuple { .. }
-            | ExprKind::Array { .. }
-            | ExprKind::RepeatArray { .. }
-            | ExprKind::Index { .. }
             | ExprKind::Range { .. }
             | ExprKind::Cast { ty: None, .. }
             | ExprKind::Unary { .. }
@@ -353,6 +363,63 @@ where
         let visible_bindings = self.body.exprs[expr].visible_bindings;
         BodyValuePathResolver::new(self.query_source(), Some(self.semantic_index))
             .resolve_path_expr(scope, path, Some(visible_bindings))
+    }
+
+    fn tuple_expr_ty(&self, fields: &[ExprId]) -> Ty {
+        Ty::tuple(
+            fields
+                .iter()
+                .map(|field| self.body.exprs[*field].ty.clone())
+                .collect(),
+        )
+    }
+
+    fn array_expr_ty(&self, elements: &[ExprId]) -> Ty {
+        if elements.is_empty() {
+            return Ty::Unknown;
+        }
+
+        let mut element_tys = Vec::new();
+        for element in elements {
+            let element_ty = self.body.exprs[*element].ty.clone();
+            if matches!(element_ty, Ty::Unknown) {
+                return Ty::Unknown;
+            }
+            push_unique(&mut element_tys, element_ty);
+        }
+
+        if element_tys.len() == 1 {
+            Ty::array(
+                element_tys
+                    .pop()
+                    .expect("one array element type should exist"),
+                Some(elements.len().to_string()),
+            )
+        } else {
+            Ty::Unknown
+        }
+    }
+
+    fn repeat_array_expr_ty(&self, initializer: Option<ExprId>, len_text: Option<&str>) -> Ty {
+        let Some(initializer) = initializer else {
+            return Ty::Unknown;
+        };
+
+        Ty::array(
+            self.body.exprs[initializer].ty.clone(),
+            len_text.map(str::to_owned),
+        )
+    }
+
+    fn index_expr_ty(&self, base: Option<ExprId>) -> Ty {
+        let Some(base) = base else {
+            return Ty::Unknown;
+        };
+
+        match &self.body.exprs[base].ty {
+            Ty::Array { inner, .. } | Ty::Slice(inner) => inner.as_ref().clone(),
+            _ => Ty::Unknown,
+        }
     }
 
     pub(super) fn resolve_nonlocal_path_expr(
@@ -419,20 +486,28 @@ where
             let candidate = candidate?;
             // Autoderef yields candidates by depth. Resolve only after the whole matching depth is
             // collected, so same-depth alternatives produce ambiguity instead of order dependence.
-            if current_depth.is_some_and(|depth| depth != candidate.depth()) && !fields.is_empty() {
+            if current_depth.is_some_and(|depth| depth != candidate.depth())
+                && (!fields.is_empty() || !field_tys.is_empty())
+            {
                 let ty = if field_tys.len() == 1 {
                     field_tys.pop().expect("one field type should exist")
                 } else {
                     Ty::Unknown
                 };
-                return Ok((
+                let resolution = if fields.is_empty() {
+                    BodyResolution::Unknown
+                } else {
                     BodyResolution::Declarations(
                         fields.into_iter().map(DeclarationRef::from).collect(),
-                    ),
-                    ty,
-                ));
+                    )
+                };
+                return Ok((resolution, ty));
             }
             current_depth = Some(candidate.depth());
+
+            if let Some(field_ty) = Self::structural_field_ty(candidate.ty(), field) {
+                push_unique(&mut field_tys, field_ty);
+            }
 
             for nominal_ty in candidate.ty().as_nominals() {
                 let Some(field_ref) = item_query.field_for_type(nominal_ty.def, field)? else {
@@ -453,21 +528,28 @@ where
             }
         }
 
-        if !fields.is_empty() {
+        if !fields.is_empty() || !field_tys.is_empty() {
             let ty = if field_tys.len() == 1 {
                 field_tys.pop().expect("one field type should exist")
             } else {
                 Ty::Unknown
             };
-            return Ok((
-                BodyResolution::Declarations(
-                    fields.into_iter().map(DeclarationRef::from).collect(),
-                ),
-                ty,
-            ));
+            let resolution = if fields.is_empty() {
+                BodyResolution::Unknown
+            } else {
+                BodyResolution::Declarations(fields.into_iter().map(DeclarationRef::from).collect())
+            };
+            return Ok((resolution, ty));
         }
 
         Ok((BodyResolution::Unknown, Ty::Unknown))
+    }
+
+    fn structural_field_ty(ty: &Ty, field: &FieldKey) -> Option<Ty> {
+        match (ty, field) {
+            (Ty::Tuple(fields), FieldKey::Tuple(index)) => fields.get(*index).cloned(),
+            _ => None,
+        }
     }
 
     fn resolve_method_call_expr(

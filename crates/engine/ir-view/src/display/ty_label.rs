@@ -21,6 +21,26 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             Ty::Unit => Ok(Some("()".to_string())),
             Ty::Never => Ok(Some("!".to_string())),
             Ty::Primitive(primitive) => Ok(Some(primitive.label().to_string())),
+            Ty::Tuple(fields) => {
+                let fields = fields
+                    .iter()
+                    .map(|ty| {
+                        self.render(ty)
+                            .map(|ty| ty.unwrap_or_else(|| "_".to_string()))
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let suffix = if fields.len() == 1 { "," } else { "" };
+                Ok(Some(format!("({}{suffix})", fields.join(", "))))
+            }
+            Ty::Array { inner, len } => Ok(Some(format!(
+                "[{}; {}]",
+                self.render(inner)?.unwrap_or_else(|| "_".to_string()),
+                len.as_deref().unwrap_or("<unknown>")
+            ))),
+            Ty::Slice(inner) => Ok(Some(format!(
+                "[{}]",
+                self.render(inner)?.unwrap_or_else(|| "_".to_string())
+            ))),
             Ty::Syntax(ty) => Ok(Some(ty.to_string())),
             Ty::Reference { mutability, inner } => Ok(self
                 .render(inner)?

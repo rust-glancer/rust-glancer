@@ -73,6 +73,13 @@ pub enum Ty {
     Unit,
     Never,
     Primitive(PrimitiveTy),
+    Tuple(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<Ty>>")] Vec<Ty>),
+    Array {
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")]
+        inner: Box<Ty>,
+        len: Option<String>,
+    },
+    Slice(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")] Box<Ty>),
     Reference {
         mutability: RefMutability,
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")]
@@ -111,6 +118,25 @@ impl NominalTy {
 }
 
 impl Ty {
+    pub fn tuple(fields: Vec<Self>) -> Self {
+        if fields.is_empty() {
+            return Self::Unit;
+        }
+
+        Self::Tuple(fields)
+    }
+
+    pub fn array(inner: Self, len: Option<String>) -> Self {
+        Self::Array {
+            inner: Box::new(inner),
+            len,
+        }
+    }
+
+    pub fn slice(inner: Self) -> Self {
+        Self::Slice(Box::new(inner))
+    }
+
     pub fn reference(mutability: RefMutability, inner: Self) -> Self {
         if matches!(inner, Self::Unknown) {
             return Self::Unknown;
@@ -180,6 +206,9 @@ impl Ty {
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
+            | Self::Tuple(_)
+            | Self::Array { .. }
+            | Self::Slice(_)
             | Self::Reference { .. }
             | Self::Syntax(_)
             | Self::Unknown => &[],
@@ -192,6 +221,9 @@ impl Ty {
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
+            | Self::Tuple(_)
+            | Self::Array { .. }
+            | Self::Slice(_)
             | Self::Syntax(_)
             | Self::Nominal(_)
             | Self::SelfTy(_)
@@ -209,6 +241,19 @@ impl Ty {
 
     pub fn shrink_to_fit(&mut self) {
         match self {
+            Self::Tuple(fields) => {
+                fields.shrink_to_fit();
+                for field in fields {
+                    field.shrink_to_fit();
+                }
+            }
+            Self::Array { inner, len } => {
+                inner.shrink_to_fit();
+                if let Some(len) = len {
+                    len.shrink_to_fit();
+                }
+            }
+            Self::Slice(inner) => inner.shrink_to_fit(),
             Self::Reference { inner, .. } => inner.shrink_to_fit(),
             Self::Syntax(ty) => ty.shrink_to_fit(),
             Self::Nominal(types) | Self::SelfTy(types) => {

@@ -195,6 +195,14 @@ where
             )),
             TypeRef::Unknown(_) | TypeRef::Infer => Ok(Ty::Unknown),
             TypeRef::Tuple(types) if types.is_empty() => Ok(Ty::Unit),
+            TypeRef::Tuple(types) => Ok(Ty::tuple(
+                types
+                    .iter()
+                    .map(|ty| self.resolve(ty))
+                    .collect::<Result<_, _>>()?,
+            )),
+            TypeRef::Slice(inner) => Ok(Ty::slice(self.resolve(inner)?)),
+            TypeRef::Array { inner, len } => Ok(Ty::array(self.resolve(inner)?, len.clone())),
             _ => Ok(Ty::syntax(ty.clone())),
         }
     }

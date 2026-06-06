@@ -722,6 +722,104 @@ pub fn use_it() {
 }
 
 #[test]
+fn returns_structural_tuple_array_and_slice_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_structural_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+const N: usize = 3;
+
+pub struct Holder;
+
+impl Holder {
+    const N: usize = 4;
+
+    pub fn use_self(value: u8) {
+        let self_repeat = [value; Self::N]$type_self_repeat$;
+    }
+}
+
+pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
+    let annotated_tuple$type_annotated_tuple$: (u8, bool) = pair;
+    let annotated_array$type_annotated_array$: [u8; 3] = array;
+    let annotated_slice$type_annotated_slice$: &[u8] = slice;
+    let tuple_expr = (value, true)$type_tuple_expr$;
+    let array_expr = [value, value]$type_array_expr$;
+    let repeat_expr = [value; 3]$type_repeat_expr$;
+    let named_repeat = [value; N]$type_named_repeat$;
+    let tuple_field = pair.$type_tuple_field$0;
+    let indexed = array[0]$type_indexed$;
+    let (left, right) = tuple_expr;
+    let _left = le$type_left$ft;
+    let _right = ri$type_right$ght;
+    let [first, ..] = array_expr;
+    let _first = fir$type_first$st;
+}
+"#,
+        &[
+            AnalysisQuery::ty("annotated tuple binding", "type_annotated_tuple"),
+            AnalysisQuery::ty("annotated array binding", "type_annotated_array"),
+            AnalysisQuery::ty("annotated slice binding", "type_annotated_slice"),
+            AnalysisQuery::ty("tuple expression", "type_tuple_expr"),
+            AnalysisQuery::ty("array expression", "type_array_expr"),
+            AnalysisQuery::ty("repeat array expression", "type_repeat_expr"),
+            AnalysisQuery::ty("named repeat array expression", "type_named_repeat"),
+            AnalysisQuery::ty("self repeat array expression", "type_self_repeat"),
+            AnalysisQuery::ty("tuple field", "type_tuple_field"),
+            AnalysisQuery::ty("array index", "type_indexed"),
+            AnalysisQuery::ty("tuple pattern left", "type_left"),
+            AnalysisQuery::ty("tuple pattern right", "type_right"),
+            AnalysisQuery::ty("slice pattern first", "type_first"),
+        ],
+        expect![[r#"
+            annotated tuple binding
+            - (u8, bool)
+
+            annotated array binding
+            - [u8; 3]
+
+            annotated slice binding
+            - &[u8]
+
+            tuple expression
+            - (u8, bool)
+
+            array expression
+            - [u8; 2]
+
+            repeat array expression
+            - [u8; 3]
+
+            named repeat array expression
+            - [u8; N]
+
+            self repeat array expression
+            - [u8; Self::N]
+
+            tuple field
+            - u8
+
+            array index
+            - u8
+
+            tuple pattern left
+            - u8
+
+            tuple pattern right
+            - bool
+
+            slice pattern first
+            - u8
+        "#]],
+    );
+}
+
+#[test]
 fn primitive_type_paths_respect_type_namespace_shadowing() {
     check_analysis_queries(
         r#"

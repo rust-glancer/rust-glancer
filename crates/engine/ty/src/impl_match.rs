@@ -638,6 +638,10 @@ where
     fn type_arg_comparison_is_uncertain(ty: &Ty) -> bool {
         match ty {
             Ty::Syntax(_) | Ty::Unknown => true,
+            Ty::Tuple(fields) => fields.iter().any(Self::type_arg_comparison_is_uncertain),
+            Ty::Array { inner, .. } | Ty::Slice(inner) => {
+                Self::type_arg_comparison_is_uncertain(inner)
+            }
             Ty::Reference { inner, .. } => Self::type_arg_comparison_is_uncertain(inner),
             Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Nominal(_) | Ty::SelfTy(_) => false,
         }

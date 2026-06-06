@@ -172,6 +172,8 @@ where
             PatKind::Record { path, fields, .. } => {
                 self.propagate_record_variant(path.as_ref(), &fields, expected_ty, updates)
             }
+            PatKind::Tuple { fields } => self.propagate_tuple_pat(&fields, expected_ty, updates),
+            PatKind::Slice { fields } => self.propagate_slice_pat(&fields, expected_ty, updates),
             PatKind::Or { pats } => {
                 for pat in pats {
                     self.propagate_pat(pat, expected_ty, updates)?;
@@ -181,9 +183,7 @@ where
             PatKind::Ref { pat, .. } | PatKind::Box { pat } => {
                 self.propagate_pat(pat, expected_ty, updates)
             }
-            PatKind::Tuple { .. }
-            | PatKind::Slice { .. }
-            | PatKind::Path { .. }
+            PatKind::Path { .. }
             | PatKind::Rest
             | PatKind::Literal { .. }
             | PatKind::Range { .. }
@@ -191,6 +191,50 @@ where
             | PatKind::Wildcard
             | PatKind::Unsupported => Ok(()),
         }
+    }
+
+    fn propagate_tuple_pat(
+        &self,
+        fields: &[PatId],
+        expected_ty: &Ty,
+        updates: &mut Vec<(BindingId, Ty)>,
+    ) -> Result<(), PackageStoreError> {
+        let Ty::Tuple(field_tys) = expected_ty else {
+            return Ok(());
+        };
+        if fields.len() != field_tys.len() {
+            return Ok(());
+        }
+
+        for (field_pat, field_ty) in fields.iter().zip(field_tys) {
+            self.propagate_pat(*field_pat, field_ty, updates)?;
+        }
+        Ok(())
+    }
+
+    fn propagate_slice_pat(
+        &self,
+        fields: &[PatId],
+        expected_ty: &Ty,
+        updates: &mut Vec<(BindingId, Ty)>,
+    ) -> Result<(), PackageStoreError> {
+        let element_ty = match expected_ty {
+            Ty::Array { inner, .. } | Ty::Slice(inner) => inner.as_ref(),
+            _ => return Ok(()),
+        };
+
+        for field in fields {
+            if self
+                .source
+                .body()
+                .pat(*field)
+                .is_some_and(|pat| matches!(&pat.kind, PatKind::Rest))
+            {
+                continue;
+            }
+            self.propagate_pat(*field, element_ty, updates)?;
+        }
+        Ok(())
     }
 
     fn propagate_tuple_variant(

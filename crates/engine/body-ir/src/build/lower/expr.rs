@@ -144,6 +144,17 @@ impl BodyLowering<'_> {
             } => {
                 let initializer =
                     initializer.map(|initializer| self.lower_expr(initializer, scope));
+                // Preserve the written const expression for display and shallow type equality. This
+                // deliberately does not evaluate the expression; it only mirrors array type syntax.
+                let len_text = repeat.as_ref().map(|repeat| {
+                    repeat
+                        .syntax()
+                        .text()
+                        .to_string()
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                });
                 let repeat = repeat.map(|repeat| self.lower_expr(repeat, scope));
                 self.alloc_expr(
                     array.syntax(),
@@ -151,6 +162,7 @@ impl BodyLowering<'_> {
                     ExprKind::RepeatArray {
                         initializer,
                         repeat,
+                        len_text,
                     },
                 )
             }
