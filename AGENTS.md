@@ -8,6 +8,8 @@
 - Do not edit the `docs/` folder unless prompted explicitly.
 - Avoid using `pub(in ...)`, prefer simpler granularity. Use private visibility if possible,
   `pub` for items that are a part of public API, and `pub(crate)` for everything else.
+- Unless adding a builder/arguments object will be actually meaningful, prefer
+  `#[allow(clippy::too_many_arguments)]` over adding bogus struct just to silence the lint.
 
 ## Design
 

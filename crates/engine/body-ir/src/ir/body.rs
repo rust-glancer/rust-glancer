@@ -325,6 +325,9 @@ impl BodyData {
         self.exprs.get(expr)
     }
 
+    // Lowering naturally produces these independent body facts at the same boundary. A wrapper
+    // object would only move the argument list elsewhere without making the invariant clearer.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         owner: BodyOwner,
         owner_module: ModuleRef,

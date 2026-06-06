@@ -122,7 +122,7 @@ impl<'target> TargetBodyBuildState<'target> {
             BodyBuildQuerySource::new(def_map, semantic_ir, self.target, &self.body_local_items);
         let def_map = BodyDefMapCollector::new(body_ref, body)
             .collect()
-            .finalize(&source)?;
+            .finalize(source)?;
         let item_store = BodyItemStoreCollector::new(body, &def_map).collect();
 
         Ok(BodyLocalItems::new(def_map, item_store))
