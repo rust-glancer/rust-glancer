@@ -314,7 +314,7 @@ pub fn use_it() {
               tail
                 expr e1 call => <unknown> @ 8:13-8:22
                   callee
-                    expr e0 path missing -> item <unresolved> => <unknown> @ 8:13-8:20
+                    expr e0 path missing => <unknown> @ 8:13-8:20
 
 
             body b2 fn impl User::again @ 11:9-13:10
@@ -328,7 +328,7 @@ pub fn use_it() {
               tail
                 expr e1 call => <unknown> @ 12:13-12:22
                   callee
-                    expr e0 path missing -> item <unresolved> => <unknown> @ 12:13-12:20
+                    expr e0 path missing => <unknown> @ 12:13-12:20
 
 
             body b3 fn impl User::associated @ 15:9-17:10
@@ -341,7 +341,7 @@ pub fn use_it() {
               tail
                 expr e1 call => <unknown> @ 16:13-16:22
                   callee
-                    expr e0 path missing -> item <unresolved> => <unknown> @ 16:13-16:20
+                    expr e0 path missing => <unknown> @ 16:13-16:20
         "#]],
     );
 }
@@ -428,7 +428,7 @@ pub fn use_it(id: GlobalId) {
             body
             expr e1 call => <unknown> @ 6:31-6:40
               callee
-                expr e0 path missing -> item <unresolved> => <unknown> @ 6:31-6:38
+                expr e0 path missing => <unknown> @ 6:31-6:38
 
 
             body b2 fn impl GlobalId::local @ 9:9-11:10
@@ -442,7 +442,7 @@ pub fn use_it(id: GlobalId) {
               tail
                 expr e1 call => <unknown> @ 10:13-10:22
                   callee
-                    expr e0 path missing -> item <unresolved> => <unknown> @ 10:13-10:20
+                    expr e0 path missing => <unknown> @ 10:13-10:20
 
 
             body b3 fn impl GlobalId::again @ 13:9-15:10
@@ -456,7 +456,7 @@ pub fn use_it(id: GlobalId) {
               tail
                 expr e1 call => <unknown> @ 14:13-14:22
                   callee
-                    expr e0 path missing -> item <unresolved> => <unknown> @ 14:13-14:20
+                    expr e0 path missing => <unknown> @ 14:13-14:20
         "#]],
     );
 }
@@ -541,7 +541,7 @@ pub fn use_it(id: GlobalId) {
               tail
                 expr e1 call => <unknown> @ 12:13-12:22
                   callee
-                    expr e0 path missing -> item <unresolved> => <unknown> @ 12:13-12:20
+                    expr e0 path missing => <unknown> @ 12:13-12:20
 
 
             body b2 fn impl Named for GlobalId::make @ 15:9-17:10
@@ -554,7 +554,7 @@ pub fn use_it(id: GlobalId) {
               tail
                 expr e1 call => <unknown> @ 16:13-16:22
                   callee
-                    expr e0 path missing -> item <unresolved> => <unknown> @ 16:13-16:20
+                    expr e0 path missing => <unknown> @ 16:13-16:20
         "#]],
     );
 }
@@ -1411,7 +1411,7 @@ pub fn use_it() {
             body
             expr e1 call => <unknown> @ 4:33-4:42
               callee
-                expr e0 path missing -> item <unresolved> => <unknown> @ 4:33-4:40
+                expr e0 path missing => <unknown> @ 4:33-4:40
         "#]],
     );
 }
@@ -1531,7 +1531,7 @@ pub fn use_it(id: GlobalId) {
               tail
                 expr e1 call => <unknown> @ 9:13-9:22
                   callee
-                    expr e0 path missing -> item <unresolved> => <unknown> @ 9:13-9:20
+                    expr e0 path missing => <unknown> @ 9:13-9:20
         "#]],
     );
 }

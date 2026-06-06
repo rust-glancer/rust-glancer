@@ -863,6 +863,9 @@ where
         }
 
         let result = self.resolve_path_from_owner_modules(path)?;
+        if result.resolved.is_empty() {
+            return Ok((BodyResolution::Unknown, Ty::Unknown));
+        }
         let ty = self.nominal_ty_from_defs(&result.resolved)?;
         Ok((
             BodyResolution::Declarations(
