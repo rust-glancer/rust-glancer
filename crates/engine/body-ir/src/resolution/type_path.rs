@@ -5,7 +5,7 @@
 
 use rg_ir_model::{
     AssocItemId, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef, ScopeId,
-    SemanticItemRef, TypeAliasRef, TypeDefRef, TypePathResolution,
+    SemanticItemRef, TypeAliasRef, TypePathResolution,
 };
 use rg_ir_storage::{
     DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, NameResolutionFilter, Path,
@@ -110,24 +110,53 @@ where
         )
     }
 
-    pub(super) fn self_tys_for_function(
+    pub(super) fn self_nominal_tys_for_function(
         &self,
         function: FunctionRef,
-    ) -> Result<Vec<TypeDefRef>, PackageStoreError> {
-        // `self` parameters and explicit `Self` annotations need the enclosing impl owner, not
-        // just the owner module. Semantic IR owns that function-to-owner mapping.
-        let Some(impl_ref) = self
-            .context_for_function(function, self.source.body().owner_module)?
-            .impl_ref
-        else {
+    ) -> Result<Vec<NominalTy>, PackageStoreError> {
+        let context = self.context_for_function(function, self.source.body().owner_module)?;
+        self.self_nominal_tys_for_context(context)
+    }
+
+    pub(super) fn self_nominal_tys_for_context(
+        &self,
+        context: TypePathContext,
+    ) -> Result<Vec<NominalTy>, PackageStoreError> {
+        let Some(impl_ref) = context.impl_ref else {
+            return Ok(Vec::new());
+        };
+        let item_query = self.item_query();
+        let Some(impl_data) = item_query.impl_data(impl_ref)? else {
             return Ok(Vec::new());
         };
 
-        Ok(self
-            .item_query()
-            .impl_data(impl_ref)?
-            .map(|impl_data| impl_data.resolved_self_tys.clone())
-            .unwrap_or_default())
+        let source = self.source;
+        let item_paths = ItemPathQuery::new(source, source);
+        let resolved = item_paths.resolve_type_ref(
+            &impl_data.self_ty,
+            context,
+            Ty::Unknown,
+            &TypeSubst::new(),
+        )?;
+
+        let mut self_tys = Vec::new();
+        for ty in resolved.as_nominals() {
+            if impl_data.resolved_self_tys.contains(&ty.def) {
+                push_unique(&mut self_tys, ty.clone());
+            }
+        }
+
+        if self_tys.is_empty() {
+            self_tys.extend(
+                impl_data
+                    .resolved_self_tys
+                    .iter()
+                    .copied()
+                    .map(NominalTy::bare),
+            );
+        }
+
+        Ok(self_tys)
     }
 
     pub(super) fn context_for_function(

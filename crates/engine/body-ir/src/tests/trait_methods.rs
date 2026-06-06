@@ -106,7 +106,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_trait_applicability_fixture[lib]::crate::Wrapper @ 23:16-23:21
+            - v0 self_param self `&self` => &Self struct body_trait_applicability_fixture[lib]::crate::Wrapper<syntax T> @ 23:16-23:21
             body
             expr e1 block s1 => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 23:31-25:6
               tail
@@ -118,7 +118,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_trait_applicability_fixture[lib]::crate::Wrapper @ 33:18-33:23
+            - v0 self_param self `&self` => &Self struct body_trait_applicability_fixture[lib]::crate::Wrapper<nominal struct body_trait_applicability_fixture[lib]::crate::User> @ 33:18-33:23
             body
             expr e1 block s1 => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 33:33-35:6
               tail

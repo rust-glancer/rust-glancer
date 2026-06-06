@@ -864,6 +864,84 @@ pub fn use_it() {
 }
 
 #[test]
+fn resolves_lifetime_parameterized_receiver_method_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_lifetime_receiver_method_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub struct Module;
+pub struct DebugStruct;
+
+pub struct TargetScopeCollector<'db> {
+    module: &'db Module,
+}
+
+impl<'db> TargetScopeCollector<'db> {
+    fn alloc_module(&mut self) -> Module {
+        missing()
+    }
+
+    fn collect_items(&mut self) -> Module {
+        self.alloc$type_self_alloc$_module()
+    }
+
+    fn collect(&mut self) -> Module {
+        self.collect$type_self_collect$_items()
+    }
+}
+
+pub mod fmt {
+    pub struct Formatter<'a> {
+        marker: &'a (),
+    }
+}
+
+impl<'a> fmt::Formatter<'a> {
+    fn debug_struct(&mut self) -> crate::DebugStruct {
+        crate::missing()
+    }
+}
+
+pub fn use_it<'db>(
+    collector: &mut TargetScopeCollector<'db>,
+    formatter: &mut fmt::Formatter<'_>,
+) {
+    let _items = collector.collect$type_collect$_items();
+    let _debug = formatter.debug$type_debug$_struct();
+}
+"#,
+        &[
+            AnalysisQuery::ty("self method in lifetime impl", "type_self_alloc"),
+            AnalysisQuery::ty("self sibling method in lifetime impl", "type_self_collect"),
+            AnalysisQuery::ty("external method on lifetime receiver", "type_collect"),
+            AnalysisQuery::ty("method on Formatter placeholder lifetime", "type_debug"),
+        ],
+        expect![[r#"
+            self method in lifetime impl
+            - nominal struct analysis_lifetime_receiver_method_type[lib]::crate::Module
+
+            self sibling method in lifetime impl
+            - nominal struct analysis_lifetime_receiver_method_type[lib]::crate::Module
+
+            external method on lifetime receiver
+            - nominal struct analysis_lifetime_receiver_method_type[lib]::crate::Module
+
+            method on Formatter placeholder lifetime
+            - nominal struct analysis_lifetime_receiver_method_type[lib]::crate::DebugStruct
+        "#]],
+    );
+}
+
+#[test]
 fn does_not_treat_concrete_impl_self_args_as_type_params() {
     check_analysis_queries(
         r#"

@@ -132,6 +132,11 @@ where
         if let Some(ty) = self.subst_for_single_segment(&path) {
             return Ok(ty);
         }
+        if path.is_self_type() {
+            let context = self.resolver.context_for_body_owner()?;
+            let self_tys = self.resolver.self_nominal_tys_for_context(context)?;
+            return Ok(Ty::self_ty(self_tys));
+        }
 
         let args = self.generic_args_from_type_path(type_path)?;
         if let Some(ty) = self.ty_from_local_associated_type_path(type_path, &path, scope, &args)? {
@@ -154,6 +159,10 @@ where
         let path = Path::from_type_path(type_path);
         if let Some(ty) = self.subst_for_single_segment(&path) {
             return Ok(ty);
+        }
+        if path.is_self_type() {
+            let self_tys = self.resolver.self_nominal_tys_for_context(context)?;
+            return Ok(Ty::self_ty(self_tys));
         }
 
         let args = self.generic_args_from_type_path(type_path)?;

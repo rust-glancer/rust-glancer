@@ -294,8 +294,9 @@ where
         impl_data: &ImplData,
         receiver_ty: &NominalTy,
     ) -> Result<bool, D::Error> {
-        // Type parameters in the impl self type act as wildcards. Concrete args such as
-        // `impl Wrapper<User>` must equal the receiver's known args.
+        // Type and const parameters in the impl self type act as wildcards. Concrete args such as
+        // `impl Wrapper<User>` or `impl Foo<1>` must equal the receiver's known args. Lifetimes do
+        // not select inherent impls, so they only need to line up as lifetime arguments.
         let TypeRef::Path(self_ty) = &impl_data.self_ty else {
             return Ok(true);
         };
@@ -303,42 +304,71 @@ where
             return Ok(true);
         };
 
-        let Some(impl_type_args) = Self::item_tree_type_args(&segment.args) else {
-            return Ok(false);
-        };
-        let Some(receiver_type_args) = Self::ty_args(&receiver_ty.args) else {
-            return Ok(false);
-        };
-        if impl_type_args.len() != receiver_type_args.len() {
+        if segment.args.len() != receiver_ty.args.len() {
             return Ok(false);
         }
 
         let impl_type_params = Self::impl_type_param_names(&impl_data.generics);
-        for (impl_arg, receiver_arg) in impl_type_args.into_iter().zip(receiver_type_args) {
-            if impl_arg
-                .type_param_name()
-                .as_deref()
-                .is_some_and(|name| impl_type_params.contains(&name))
-            {
-                continue;
-            }
-
-            let context = TypePathContext {
-                module: impl_data.owner,
-                impl_ref: Some(impl_ref),
-            };
-            let impl_arg_ty = self.item_paths.resolve_type_ref(
+        let impl_const_params = Self::impl_const_param_names(&impl_data.generics);
+        for (impl_arg, receiver_arg) in segment.args.iter().zip(&receiver_ty.args) {
+            if !self.impl_self_arg_matches_receiver(
+                impl_ref,
+                impl_data,
                 impl_arg,
-                context,
-                Ty::syntax(impl_arg.clone()),
-                &TypeSubst::new(),
-            )?;
-            if impl_arg_ty != receiver_arg {
+                receiver_arg,
+                &impl_type_params,
+                &impl_const_params,
+            )? {
                 return Ok(false);
             }
         }
 
         Ok(true)
+    }
+
+    fn impl_self_arg_matches_receiver(
+        &self,
+        impl_ref: ImplRef,
+        impl_data: &ImplData,
+        impl_arg: &ItemGenericArg,
+        receiver_arg: &GenericArg,
+        impl_type_params: &[&str],
+        impl_const_params: &[&str],
+    ) -> Result<bool, D::Error> {
+        match impl_arg {
+            ItemGenericArg::Type(impl_arg) => {
+                let Some(receiver_arg) = receiver_arg.as_ty().cloned() else {
+                    return Ok(false);
+                };
+                if impl_arg
+                    .type_param_name()
+                    .as_deref()
+                    .is_some_and(|name| impl_type_params.contains(&name))
+                {
+                    return Ok(true);
+                }
+
+                let context = TypePathContext {
+                    module: impl_data.owner,
+                    impl_ref: Some(impl_ref),
+                };
+                let impl_arg_ty = self.item_paths.resolve_type_ref(
+                    impl_arg,
+                    context,
+                    Ty::syntax(impl_arg.clone()),
+                    &TypeSubst::new(),
+                )?;
+                Ok(impl_arg_ty == receiver_arg)
+            }
+            ItemGenericArg::Lifetime(_) => Ok(matches!(receiver_arg, GenericArg::Lifetime(_))),
+            ItemGenericArg::Const(impl_arg) => {
+                let GenericArg::Const(receiver_arg) = receiver_arg else {
+                    return Ok(false);
+                };
+                Ok(impl_const_params.contains(&impl_arg.as_str()) || impl_arg == receiver_arg)
+            }
+            ItemGenericArg::AssocType { .. } | ItemGenericArg::Unsupported(_) => Ok(false),
+        }
     }
 
     /// Performs the trait-impl self-type argument check with uncertainty preserved.
@@ -526,6 +556,15 @@ where
     fn impl_type_param_names(generics: &GenericParams) -> Vec<&str> {
         generics
             .types
+            .iter()
+            .map(|param| param.name.as_str())
+            .collect()
+    }
+
+    /// Lists the const parameters declared by an impl header.
+    fn impl_const_param_names(generics: &GenericParams) -> Vec<&str> {
+        generics
+            .consts
             .iter()
             .map(|param| param.name.as_str())
             .collect()

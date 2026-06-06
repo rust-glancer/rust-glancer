@@ -131,6 +131,10 @@ impl Ty {
     }
 
     pub fn self_ty(types: Vec<NominalTy>) -> Self {
+        if types.is_empty() {
+            return Self::Unknown;
+        }
+
         Self::SelfTy(types)
     }
 

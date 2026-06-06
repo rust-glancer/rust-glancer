@@ -754,15 +754,15 @@ where
             && binding_data.name.as_deref() == Some("self")
             && let Some(function) = self.body.function_owner()
         {
-            let self_tys = self.type_path_resolver().self_tys_for_function(function)?;
-            if !self_tys.is_empty() {
-                let ty = Ty::self_ty(self_tys.into_iter().map(NominalTy::bare).collect());
-                return Ok(match kind {
-                    BodySelfParamKind::Value => ty,
-                    BodySelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),
-                    BodySelfParamKind::Explicit => Ty::Unknown,
-                });
-            }
+            let self_tys = self
+                .type_path_resolver()
+                .self_nominal_tys_for_function(function)?;
+            let ty = Ty::self_ty(self_tys);
+            return Ok(match kind {
+                BodySelfParamKind::Value => ty,
+                BodySelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),
+                BodySelfParamKind::Explicit => Ty::Unknown,
+            });
         }
 
         Ok(Ty::Unknown)
