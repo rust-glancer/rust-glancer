@@ -110,6 +110,17 @@ impl BodyPath {
         self.segments.len()
     }
 
+    /// Returns angle arguments written on the final path segment, such as `T` in `make::<T>`.
+    ///
+    /// For paths, turbofish arguments belong to the segment they follow; callers that resolve a
+    /// function path care about the final segment because that is the called item.
+    pub(crate) fn last_segment_angle_args(&self) -> Option<&[GenericArg]> {
+        self.segments
+            .last()
+            .and_then(|segment| segment.args.as_ref())
+            .and_then(BodyPathSegmentArgs::angle_args)
+    }
+
     pub(crate) fn shrink_to_fit(&mut self) {
         self.segments.shrink_to_fit();
         for segment in &mut self.segments {
@@ -164,6 +175,13 @@ impl BodyPathSegmentKind {
 }
 
 impl BodyPathSegmentArgs {
+    pub(crate) fn angle_args(&self) -> Option<&[GenericArg]> {
+        match self {
+            Self::Angle { args, .. } => Some(args),
+            Self::Parenthesized(_) => None,
+        }
+    }
+
     fn shrink_to_fit(&mut self) {
         match self {
             Self::Angle { args, .. } => {

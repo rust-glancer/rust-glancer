@@ -322,7 +322,10 @@ where
         Ok(generic_args)
     }
 
-    fn generic_arg(&self, arg: &ItemGenericArg) -> Result<GenericArg, PackageStoreError> {
+    pub(crate) fn generic_arg(
+        &self,
+        arg: &ItemGenericArg,
+    ) -> Result<GenericArg, PackageStoreError> {
         match arg {
             ItemGenericArg::Type(ty) => Ok(GenericArg::Type(Box::new(self.resolve(ty)?))),
             ItemGenericArg::Lifetime(lifetime) => Ok(GenericArg::Lifetime(lifetime.clone())),

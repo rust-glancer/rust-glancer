@@ -3,7 +3,7 @@ use std::fmt;
 use wincode::{SchemaRead, SchemaWrite};
 
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId};
-use rg_item_tree::{FieldKey, TypeRef};
+use rg_item_tree::{FieldKey, GenericArg, TypeRef};
 use rg_memsize::MemorySize;
 use rg_parse::Span;
 use rg_text::Name;
@@ -254,6 +254,10 @@ pub enum ExprKind {
         dot_span: Option<Span>,
         method_name: Name,
         method_name_span: Option<Span>,
+        /// Explicit method generic arguments written after the method name, such as
+        /// `receiver.get::<User>()`.
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
+        generic_args: Vec<GenericArg>,
         args: Vec<ExprId>,
     },
     /// `<base>.field` or `<base>.0`.
@@ -588,11 +592,16 @@ impl ExprKind {
             Self::MethodCall {
                 receiver,
                 method_name,
+                generic_args,
                 args,
                 ..
             } => {
                 let _ = receiver;
                 method_name.shrink_to_fit();
+                generic_args.shrink_to_fit();
+                for arg in generic_args {
+                    arg.shrink_to_fit();
+                }
                 args.shrink_to_fit();
             }
             Self::Field { field, .. } => {

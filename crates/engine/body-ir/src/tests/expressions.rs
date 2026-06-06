@@ -112,6 +112,60 @@ impl User {
 }
 
 #[test]
+fn preserves_method_call_generic_args() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_method_call_generic_args_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Builder;
+
+impl Builder {
+    pub fn get<T>(&self) -> T {}
+}
+
+pub fn use_it(builder: Builder) {
+    let user = builder.get::<User>();
+}
+"#,
+        expect![[r#"
+            package body_method_call_generic_args_fixture
+
+            body_method_call_generic_args_fixture [lib]
+            body b0 fn body_method_call_generic_args_fixture[lib]::crate::use_it @ 8:1-10:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1
+            bindings
+            - v0 param builder `builder`: Builder => nominal struct body_method_call_generic_args_fixture[lib]::crate::Builder @ 8:15-8:22
+            - v1 let user `user` => nominal struct body_method_call_generic_args_fixture[lib]::crate::User @ 9:9-9:13
+            body
+            expr e2 block s1 => () @ 8:33-10:2
+              stmt s0 let v1 @ 9:5-9:38
+                initializer
+                  expr e1 method_call get<User> -> fn impl Builder::get => nominal struct body_method_call_generic_args_fixture[lib]::crate::User @ 9:16-9:37
+                    receiver
+                      expr e0 path builder -> local v0 => nominal struct body_method_call_generic_args_fixture[lib]::crate::Builder @ 9:16-9:23
+
+
+            body b1 fn impl Builder::get @ 5:5-5:33
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `&self` => &Self struct body_method_call_generic_args_fixture[lib]::crate::Builder @ 5:19-5:24
+            body
+            expr e0 block s1 => () @ 5:31-5:33
+        "#]],
+    );
+}
+
+#[test]
 fn renders_fn_trait_parenthesized_args_in_binding_annotations() {
     check_project_body_ir(
         r#"

@@ -1129,6 +1129,109 @@ pub fn use_it() {
 }
 
 #[test]
+fn applies_explicit_generic_call_arguments_to_return_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_explicit_generic_call_args"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub struct User;
+pub struct Project;
+
+pub fn make<T>() -> T {
+    missing()
+}
+
+pub struct Builder;
+
+impl Builder {
+    pub fn build<T>() -> T {
+        missing()
+    }
+
+    pub fn get<T>(&self) -> T {
+        missing()
+    }
+
+    pub fn pair<T, U>(&self) -> (T, U) {
+        missing()
+    }
+}
+
+pub fn use_it(builder: Builder) {
+    let free = make::<User>()$type_free$;
+    let associated = Builder::build::<Project>()$type_associated$;
+    let method = builder.get::<User>()$type_method$;
+    let pair = builder.pair::<User, Project>()$type_pair$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("explicit free function return", "type_free"),
+            AnalysisQuery::ty("explicit associated function return", "type_associated"),
+            AnalysisQuery::ty("explicit method return", "type_method"),
+            AnalysisQuery::ty("explicit multi-param method return", "type_pair"),
+        ],
+        expect![[r#"
+            explicit free function return
+            - nominal struct analysis_explicit_generic_call_args[lib]::crate::User
+
+            explicit associated function return
+            - nominal struct analysis_explicit_generic_call_args[lib]::crate::Project
+
+            explicit method return
+            - nominal struct analysis_explicit_generic_call_args[lib]::crate::User
+
+            explicit multi-param method return
+            - (nominal struct analysis_explicit_generic_call_args[lib]::crate::User, nominal struct analysis_explicit_generic_call_args[lib]::crate::Project)
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_explicit_generic_call_arguments_from_body_scope() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_explicit_generic_call_body_scope"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub fn make<T>() -> T {
+    missing()
+}
+
+pub fn use_it() {
+    struct Local;
+
+    let local = make::<Local>()$type_local$;
+}
+"#,
+        &[AnalysisQuery::ty(
+            "explicit call arg from body scope",
+            "type_local",
+        )],
+        expect![[r#"
+            explicit call arg from body scope
+            - nominal struct fn analysis_explicit_generic_call_body_scope[lib]::crate::use_it::Local
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_lifetime_parameterized_receiver_method_types() {
     check_analysis_queries(
         r#"

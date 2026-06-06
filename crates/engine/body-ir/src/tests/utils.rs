@@ -928,8 +928,13 @@ impl TargetBodyIrSnapshot<'_> {
             ExprKind::Continue { label } => {
                 format!("continue{}", render_label_suffix(label.as_ref()))
             }
-            ExprKind::MethodCall { method_name, .. } => {
-                format!("method_call {method_name}")
+            ExprKind::MethodCall {
+                method_name,
+                generic_args,
+                ..
+            } => {
+                let generic_args = render_item_generic_args(generic_args);
+                format!("method_call {method_name}{generic_args}")
             }
             ExprKind::Field { field, .. } => {
                 let field = field
@@ -1522,6 +1527,20 @@ fn render_binding_list(bindings: &[BindingId]) -> String {
         .map(|binding| format!("v{}", binding.0))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn render_item_generic_args(args: &[rg_item_tree::GenericArg]) -> String {
+    if args.is_empty() {
+        return String::new();
+    }
+
+    format!(
+        "<{}>",
+        args.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn render_closure_param(param: &ClosureParamData) -> String {

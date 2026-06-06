@@ -6,13 +6,13 @@
 use rg_ir_model::{
     AssocItemId, BindingId, BodyRef, ConstRef, DefId, DefMapRef, ExprId, FunctionRef, ImplRef,
     ItemOwner, ModuleId, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TypeDefId,
-    TypePathResolution, identity::DeclarationRef,
+    TypePathResolution, identity::DeclarationRef, items::GenericParams,
 };
 use rg_ir_storage::{
     DefMapQuery, DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource,
     NameResolutionFilter, Path, PathSegment, ResolvePathResult, TargetItemQuery, TypePathContext,
 };
-use rg_item_tree::FieldKey;
+use rg_item_tree::{FieldKey, GenericArg as ItemGenericArg};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
     Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, NominalTy, PrimitiveTy, Ty, TypeSubst,
@@ -289,9 +289,15 @@ where
             ExprKind::MethodCall {
                 receiver,
                 method_name,
+                generic_args,
                 ..
             } => {
-                let (resolution, ty) = self.resolve_method_call_expr(receiver, &method_name)?;
+                let (resolution, ty) = self.resolve_method_call_expr(
+                    receiver,
+                    &method_name,
+                    &generic_args,
+                    self.body.exprs[expr].scope,
+                )?;
                 let data = &mut self.body.exprs[expr];
                 data.resolution = resolution;
                 data.ty = ty;
@@ -556,6 +562,8 @@ where
         &self,
         receiver: Option<ExprId>,
         method_name: &str,
+        explicit_args: &[ItemGenericArg],
+        call_scope: ScopeId,
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
         let Some(receiver) = receiver else {
             return Ok((BodyResolution::Unknown, Ty::Unknown));
@@ -609,7 +617,12 @@ where
                     push_unique(&mut functions, function_ref);
                     push_unique(
                         &mut return_tys,
-                        self.semantic_function_return_ty(function_ref, Some(nominal_ty))?,
+                        self.semantic_function_return_ty_with_call_args(
+                            function_ref,
+                            Some(nominal_ty),
+                            explicit_args,
+                            Some(call_scope),
+                        )?,
                     );
                 }
             }
@@ -633,10 +646,12 @@ where
                 push_unique(&mut functions, function_ref);
                 push_unique(
                     &mut return_tys,
-                    self.semantic_function_return_ty_with_subst(
+                    self.semantic_function_return_ty_with_subst_and_call_args(
                         function_ref,
                         Some(structural.receiver_ty().clone()),
                         structural.subst().clone(),
+                        explicit_args,
+                        Some(call_scope),
                     )?,
                 );
             }
@@ -800,15 +815,17 @@ where
             .unwrap_or_else(TypeSubst::new))
     }
 
-    fn semantic_function_return_ty(
+    fn semantic_function_return_ty_with_call_args(
         &self,
         function_ref: FunctionRef,
         receiver_ty: Option<&NominalTy>,
+        explicit_args: &[ItemGenericArg],
+        call_scope: Option<ScopeId>,
     ) -> Result<Ty, PackageStoreError> {
         let Some(function_data) = self.item_query().function_data(function_ref)? else {
             return Ok(Ty::Unknown);
         };
-        let subst = receiver_ty
+        let mut subst = receiver_ty
             .map(|ty| {
                 // Receiver type args and impl self args both contribute substitutions. For
                 // `impl<U> Wrapper<U>`, this maps `U` to the known receiver argument.
@@ -822,6 +839,13 @@ where
             })
             .transpose()?
             .unwrap_or_default();
+        if let Some(call_scope) = call_scope {
+            subst.extend(self.explicit_function_subst(
+                function_data.signature.generics(),
+                explicit_args,
+                call_scope,
+            )?);
+        }
         self.semantic_function_return_ty_with_subst(
             function_ref,
             receiver_ty.cloned().map(|ty| Ty::nominal(vec![ty])),
@@ -835,10 +859,34 @@ where
         self_ty: Option<Ty>,
         subst: TypeSubst,
     ) -> Result<Ty, PackageStoreError> {
+        self.semantic_function_return_ty_with_subst_and_call_args(
+            function_ref,
+            self_ty,
+            subst,
+            &[],
+            None,
+        )
+    }
+
+    fn semantic_function_return_ty_with_subst_and_call_args(
+        &self,
+        function_ref: FunctionRef,
+        self_ty: Option<Ty>,
+        mut subst: TypeSubst,
+        explicit_args: &[ItemGenericArg],
+        call_scope: Option<ScopeId>,
+    ) -> Result<Ty, PackageStoreError> {
         let item_query = self.item_query();
         let Some(function_data) = item_query.function_data(function_ref)? else {
             return Ok(Ty::Unknown);
         };
+        if let Some(call_scope) = call_scope {
+            subst.extend(self.explicit_function_subst(
+                function_data.signature.generics(),
+                explicit_args,
+                call_scope,
+            )?);
+        }
         let Some(ret_ty) = function_data.signature.ret_ty() else {
             return Ok(Ty::Unit);
         };
@@ -875,7 +923,12 @@ where
         match &callee_data.resolution {
             BodyResolution::Declarations(declarations) => {
                 for declaration in declarations {
-                    self.push_return_ty_for_declaration(*declaration, &mut return_tys)?;
+                    self.push_return_ty_for_declaration(
+                        *declaration,
+                        &mut return_tys,
+                        self.explicit_callee_generic_args(callee_data),
+                        callee_data.scope,
+                    )?;
                 }
             }
             BodyResolution::Binding(_) | BodyResolution::Unknown => {}
@@ -892,6 +945,8 @@ where
         &self,
         declaration: DeclarationRef,
         return_tys: &mut Vec<Ty>,
+        explicit_args: &[ItemGenericArg],
+        call_scope: ScopeId,
     ) -> Result<(), PackageStoreError> {
         match declaration {
             DeclarationRef::LocalDef(local_def) => {
@@ -900,13 +955,23 @@ where
                 };
                 push_unique(
                     return_tys,
-                    self.semantic_function_return_ty(function_ref, None)?,
+                    self.semantic_function_return_ty_with_call_args(
+                        function_ref,
+                        None,
+                        explicit_args,
+                        Some(call_scope),
+                    )?,
                 );
             }
             DeclarationRef::Item(SemanticItemRef::Function(function_ref)) => {
                 push_unique(
                     return_tys,
-                    self.semantic_function_return_ty(function_ref, None)?,
+                    self.semantic_function_return_ty_with_call_args(
+                        function_ref,
+                        None,
+                        explicit_args,
+                        Some(call_scope),
+                    )?,
                 );
             }
             DeclarationRef::Module(_)
@@ -924,6 +989,43 @@ where
         }
 
         Ok(())
+    }
+
+    fn explicit_callee_generic_args<'expr>(
+        &self,
+        callee_data: &'expr crate::ir::expr::ExprData,
+    ) -> &'expr [ItemGenericArg] {
+        // A normal call expression has a callee expression, so `make::<T>()` and
+        // `Type::build::<T>()` carry call generics on the final callee path segment. Method calls
+        // are a different ExprKind and store their method-name generics directly.
+        match &callee_data.kind {
+            ExprKind::Path { path } => path.last_segment_angle_args().unwrap_or(&[]),
+            _ => &[],
+        }
+    }
+
+    fn explicit_function_subst(
+        &self,
+        generics: Option<&GenericParams>,
+        explicit_args: &[ItemGenericArg],
+        scope: ScopeId,
+    ) -> Result<TypeSubst, PackageStoreError> {
+        let Some(generics) = generics else {
+            return Ok(TypeSubst::new());
+        };
+        if explicit_args.is_empty() {
+            return Ok(TypeSubst::new());
+        }
+
+        // Function turbofish arguments are supplied at the call site, so names inside them must
+        // resolve from the body scope where the call was written.
+        let type_resolver = self.type_path_resolver();
+        let arg_resolver = type_resolver.type_ref(TypeRefUseSite::Scope(scope));
+        let generic_args = explicit_args
+            .iter()
+            .map(|arg| arg_resolver.generic_arg(arg))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(TypeSubst::from_generics(generics, &generic_args))
     }
 
     fn function_ref_for_def(&self, def: DefId) -> Result<Option<FunctionRef>, PackageStoreError> {

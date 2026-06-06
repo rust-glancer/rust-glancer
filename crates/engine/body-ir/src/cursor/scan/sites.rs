@@ -15,8 +15,8 @@ use rg_parse::{FileId, Span};
 use crate::{
     BodyData, BodyPath, ExprKind, StmtKind,
     walk::{
-        PatWalkSite, walk_body_path_type_refs as walk_embedded_body_path_type_refs, walk_pat,
-        walk_type_ref_paths,
+        PatWalkSite, walk_body_path_type_refs as walk_embedded_body_path_type_refs,
+        walk_generic_args_type_refs, walk_pat, walk_type_ref_paths,
     },
 };
 
@@ -280,6 +280,16 @@ where
                         expr.visible_bindings,
                         expr.source.file_id,
                     );
+                }
+                ExprKind::MethodCall { generic_args, .. } => {
+                    let context = TypeRefContext {
+                        scope: expr.scope,
+                        visible_bindings: expr.visible_bindings,
+                        file_id: expr.source.file_id,
+                    };
+                    walk_generic_args_type_refs(generic_args, &mut |ty| {
+                        self.emit_type_ref(context, ty);
+                    });
                 }
                 _ => {}
             }

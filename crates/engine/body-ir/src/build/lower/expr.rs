@@ -3,13 +3,13 @@
 use rg_syntax::{
     AstNode as _,
     ast::{
-        self, ArrayExprKind, BinaryOp, ElseBranch, HasArgList as _, HasLoopBody as _, LogicOp,
-        RangeItem as _,
+        self, ArrayExprKind, BinaryOp, ElseBranch, HasArgList as _, HasGenericArgs as _,
+        HasLoopBody as _, LogicOp, RangeItem as _,
     },
 };
 
 use rg_ir_model::{ExprId, ScopeId};
-use rg_item_tree::{FieldKey, FromAst as _, TypeRef};
+use rg_item_tree::{FieldKey, FromAst as _, GenericArg, TypeRef};
 use rg_parse::{Span, TextSpan};
 use rg_ty::Ty;
 
@@ -553,6 +553,12 @@ impl BodyLowering<'_> {
         let method_name_span = name_ref
             .as_ref()
             .map(|name| self.source(name.syntax()).span);
+        let generic_args = method_call
+            .generic_arg_list()
+            .into_iter()
+            .flat_map(|args| args.generic_args())
+            .map(|arg| GenericArg::from_ast(&arg, (self.line_index, &mut *self.interner)))
+            .collect();
         let args = method_call
             .arg_list()
             .into_iter()
@@ -568,6 +574,7 @@ impl BodyLowering<'_> {
                 dot_span,
                 method_name,
                 method_name_span,
+                generic_args,
                 args,
             },
         )
