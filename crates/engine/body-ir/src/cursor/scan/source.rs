@@ -10,7 +10,7 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
-use crate::{BodyData, BodyIrReadTxn, ExprKind, PatKind};
+use crate::{BodyData, BodyIrReadTxn, BodyLocalItems, ExprKind, PatKind};
 
 use super::{
     super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
@@ -56,7 +56,9 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 body: BodyId(body_idx),
             };
 
-            self.push_declaration_candidates(body_ref, body, &mut candidates);
+            let body_local_items = target_bodies.body_local_items(body_ref.body);
+
+            self.push_declaration_candidates(body_ref, body, body_local_items, &mut candidates);
             self.push_member_reference_candidates(body_ref, body, &mut candidates);
             self.push_record_field_key_candidates(body_ref, body, &mut candidates);
 
@@ -87,6 +89,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         &self,
         body_ref: BodyRef,
         body: &BodyData,
+        body_local_items: Option<&BodyLocalItems>,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
         let record_shorthand_bindings = self.record_shorthand_bindings(body);
@@ -117,7 +120,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
             });
         }
 
-        let Some(item_store) = body.body_item_store() else {
+        let Some(item_store) = body_local_items.map(BodyLocalItems::item_store) else {
             return;
         };
         for item in item_store.semantic_items() {

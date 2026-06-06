@@ -137,6 +137,140 @@ pub fn destructure(
 }
 
 #[test]
+fn resolves_ambiguous_identifier_patterns_without_capitalization_heuristics() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_pattern_resolution_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub const ready: u8 = 1;
+
+pub struct User {
+    pub ID: u8,
+}
+
+pub fn use_it(value: u8, user: User) -> u8 {
+    match value {
+        ready => 0,
+        other => other,
+    }
+
+    let User { ID } = user;
+    ID
+}
+
+pub fn shadowed(ready: u8, value: u8) -> u8 {
+    match value {
+        ready => ready,
+        _ => 0,
+    }
+}
+"#,
+        expect![[r#"
+            package body_pattern_resolution_fixture
+
+            body_pattern_resolution_fixture [lib]
+            body b0 fn body_pattern_resolution_fixture[lib]::crate::use_it @ 7:1-15:2
+            scopes
+            - s0 parent <none>: v0, v1
+            - s1 parent s0: v3
+            - s2 parent s1: <none>
+            - s3 parent s1: v2
+            bindings
+            - v0 param value `value`: u8 => u8 @ 7:15-7:20
+            - v1 param user `user`: User => nominal struct body_pattern_resolution_fixture[lib]::crate::User @ 7:26-7:30
+            - v2 let other `other` => u8 @ 10:9-10:14
+            - v3 let ID `ID` => <unknown> @ 13:16-13:18
+            body
+            expr e6 block s1 => <unknown> @ 7:44-15:2
+              stmt s0 expr @ 8:5-11:6
+                expr e3 match => <unknown> @ 8:5-11:6
+                  scrutinee
+                    expr e0 path value -> local v0 => u8 @ 8:11-8:16
+                  arm s2
+                    expr e1 literal int `0` => <unknown> @ 9:18-9:19
+                  arm s3
+                    expr e2 path other -> local v2 => u8 @ 10:18-10:23
+              stmt s1 let v3 @ 13:5-13:28
+                initializer
+                  expr e4 path user -> local v1 => nominal struct body_pattern_resolution_fixture[lib]::crate::User @ 13:23-13:27
+              tail
+                expr e5 path ID -> local v3 => <unknown> @ 14:5-14:7
+
+
+            body b1 fn body_pattern_resolution_fixture[lib]::crate::shadowed @ 17:1-22:2
+            scopes
+            - s0 parent <none>: v0, v1
+            - s1 parent s0: <none>
+            - s2 parent s1: v2
+            - s3 parent s1: <none>
+            bindings
+            - v0 param ready `ready`: u8 => u8 @ 17:17-17:22
+            - v1 param value `value`: u8 => u8 @ 17:28-17:33
+            - v2 let ready `ready` => u8 @ 19:9-19:14
+            body
+            expr e4 block s1 => <unknown> @ 17:45-22:2
+              tail
+                expr e3 match => <unknown> @ 18:5-21:6
+                  scrutinee
+                    expr e0 path value -> local v1 => u8 @ 18:11-18:16
+                  arm s2
+                    expr e1 path ready -> local v2 => u8 @ 19:18-19:23
+                  arm s3
+                    expr e2 literal int `0` => <unknown> @ 20:14-20:15
+
+
+            body b2 const body_pattern_resolution_fixture[lib]::crate::ready @ 1:1-1:25
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 literal int `1` => <unknown> @ 1:23-1:24
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_lowercase_unit_variant_patterns_from_expected_type() {
+    check_project_body_ir_patterns(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_lowercase_unit_variant_pattern"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum State {
+    idle,
+    busy,
+}
+
+pub fn use_it(state: State) {
+    match state {
+        idle => {}
+        busy => {}
+    }
+}
+"#,
+        expect![[r#"
+            package body_lowercase_unit_variant_pattern
+
+            body_lowercase_unit_variant_pattern [lib]
+            body b0 fn body_lowercase_unit_variant_pattern[lib]::crate::use_it @ 6:1-11:2
+            patterns
+            - p0 binding move v0 path state `state` @ 6:15-6:20
+            - p1 binding move <none> path idle `idle` @ 8:9-8:13
+            - p2 binding move <none> path busy `busy` @ 9:9-9:13
+        "#]],
+    );
+}
+
+#[test]
 fn preserves_pattern_modes_rest_and_ambiguity() {
     check_project_body_ir_patterns(
         r#"
@@ -291,16 +425,6 @@ pub fn use_it(value: i32) {
             package body_literal_pattern_fixture
 
             body_literal_pattern_fixture [lib]
-            body b2 const body_literal_pattern_fixture[lib]::crate::max_value @ 2:1-2:31
-            patterns
-            <none>
-
-
-            body b1 const body_literal_pattern_fixture[lib]::crate::min_value @ 1:1-1:30
-            patterns
-            <none>
-
-
             body b0 fn body_literal_pattern_fixture[lib]::crate::use_it @ 4:1-10:2
             patterns
             - p0 binding move v0 path value `value` @ 4:15-4:20
@@ -314,6 +438,16 @@ pub fn use_it(value: i32) {
             - p8 binding move <none> path max_value `max_value` @ 7:21-7:30
             - p9 range p7 ..= p8 `min_value..=max_value` @ 7:9-7:30
             - p10 wildcard `_` @ 8:9-8:10
+
+
+            body b1 const body_literal_pattern_fixture[lib]::crate::min_value @ 1:1-1:30
+            patterns
+            <none>
+
+
+            body b2 const body_literal_pattern_fixture[lib]::crate::max_value @ 2:1-2:31
+            patterns
+            <none>
         "#]],
     );
 }

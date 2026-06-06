@@ -1,21 +1,24 @@
+use wincode::{SchemaRead, SchemaWrite};
+
 use rg_arena::Arena;
 use rg_ir_model::{
-    BindingId, BodyId, ConstRef, ExprId, FunctionRef, ModuleRef, PatId, ScopeId, StaticRef, StmtId,
-    identity::DeclarationRef,
+    BindingId, BodyId, BodyRef, ConstRef, DefMapRef, ExprId, FunctionRef, ModuleRef, PatId,
+    ScopeId, StaticRef, StmtId, identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMap, ItemStore};
 use rg_item_tree::{ItemNode, ItemTreeId};
+use rg_memsize::MemorySize;
 use rg_parse::{FileId, Span, TargetId};
 
 use super::{
-    body_map::BodySourceItems,
     expr::ExprData,
     pat::PatData,
-    stmt::{BindingData, StmtData},
+    source_items::BodySourceItems,
+    stmt::{BindingData, PendingBindingResolution, StmtData},
 };
 
 /// Coarse totals for reporting that the Body IR phase produced useful data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 pub struct BodyIrStats {
     pub target_count: usize,
     pub built_target_count: usize,
@@ -28,16 +31,7 @@ pub struct BodyIrStats {
 }
 
 /// Lowered bodies for all targets inside one parsed package.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
 pub struct PackageBodies {
     pub(crate) targets: Arena<TargetId, TargetBodies>,
 }
@@ -72,12 +66,11 @@ impl PackageBodies {
 }
 
 /// Lowered bodies for one target.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TargetBodies {
     pub(crate) status: TargetBodiesStatus,
     pub(crate) bodies: Arena<BodyId, BodyData>,
+    pub(crate) body_local_items: Arena<BodyId, BodyLocalItems>,
 }
 
 impl TargetBodies {
@@ -85,6 +78,7 @@ impl TargetBodies {
         Self {
             status: TargetBodiesStatus::Built,
             bodies: Arena::new(),
+            body_local_items: Arena::new(),
         }
     }
 
@@ -92,6 +86,7 @@ impl TargetBodies {
         Self {
             status: TargetBodiesStatus::Skipped,
             bodies: Arena::new(),
+            body_local_items: Arena::new(),
         }
     }
 
@@ -103,12 +98,33 @@ impl TargetBodies {
         self.bodies.get(body)
     }
 
+    pub fn body_local_items(&self, body: BodyId) -> Option<&BodyLocalItems> {
+        self.body_local_items.get(body)
+    }
+
+    pub fn body_def_map(&self, body: BodyId) -> Option<&DefMap> {
+        self.body_local_items(body).map(|items| &items.def_map)
+    }
+
+    pub fn body_item_store(&self, body: BodyId) -> Option<&ItemStore> {
+        self.body_local_items(body).map(|items| &items.item_store)
+    }
+
     pub fn bodies(&self) -> &[BodyData] {
         self.bodies.as_slice()
     }
 
-    pub(crate) fn alloc_body(&mut self, data: BodyData) {
-        self.bodies.alloc(data);
+    pub(crate) fn alloc_body(&mut self, data: BodyData) -> BodyId {
+        self.bodies.alloc(data)
+    }
+
+    pub(crate) fn set_body_local_items(&mut self, items: Vec<BodyLocalItems>) {
+        debug_assert_eq!(
+            self.bodies.len(),
+            items.len(),
+            "every built body should have finalized body-local items"
+        );
+        self.body_local_items = Arena::from_vec(items);
     }
 
     pub(crate) fn bodies_mut(&mut self) -> &mut [BodyData] {
@@ -120,20 +136,16 @@ impl TargetBodies {
         for body in self.bodies.iter_mut() {
             body.shrink_to_fit();
         }
+        self.body_local_items.shrink_to_fit();
+        for items in self.body_local_items.iter_mut() {
+            items.shrink_to_fit();
+        }
     }
 }
 
 /// Whether one target's bodies were eagerly lowered.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 #[memsize(leaf)]
 pub enum TargetBodiesStatus {
@@ -144,16 +156,7 @@ pub enum TargetBodiesStatus {
 }
 
 /// Semantic item that owns a lowered expression body.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum BodyOwner {
     /// Function body, such as `fn read() { value }`.
     Function(FunctionRef),
@@ -182,22 +185,49 @@ impl BodyOwner {
     }
 }
 
+/// Finalized body-local DefMap and semantic-shaped item facts for one body.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+pub struct BodyLocalItems {
+    pub(crate) def_map: DefMap,
+    pub(crate) item_store: ItemStore,
+}
+
+impl BodyLocalItems {
+    pub(crate) fn new(def_map: DefMap, item_store: ItemStore) -> Self {
+        Self {
+            def_map,
+            item_store,
+        }
+    }
+
+    pub fn def_map(&self) -> &DefMap {
+        &self.def_map
+    }
+
+    pub fn item_store(&self) -> &ItemStore {
+        &self.item_store
+    }
+
+    fn shrink_to_fit(&mut self) {
+        self.def_map.shrink_to_fit();
+        self.item_store.shrink_to_fit();
+    }
+}
+
 /// Lowered expression body for a function, const, or static initializer.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct BodyData {
     pub(crate) owner: BodyOwner,
     pub(crate) owner_module: ModuleRef,
+    pub(crate) fallback_module: ModuleRef,
     pub(crate) source: BodySource,
     pub(crate) source_items: BodySourceItems,
-    pub(crate) body_def_map: Option<DefMap>,
-    pub(crate) body_item_store: Option<ItemStore>,
     pub(crate) param_scope: ScopeId,
     pub(crate) root_expr: ExprId,
     pub(crate) params: Vec<BindingId>,
     pub(crate) scopes: Arena<ScopeId, ScopeData>,
     pub(crate) bindings: Arena<BindingId, BindingData>,
+    pub(crate) pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
     pub(crate) pats: Arena<PatId, PatData>,
     pub(crate) statements: Arena<StmtId, StmtData>,
     pub(crate) exprs: Arena<ExprId, ExprData>,
@@ -216,20 +246,16 @@ impl BodyData {
         self.owner_module
     }
 
+    pub fn fallback_module(&self) -> ModuleRef {
+        self.fallback_module
+    }
+
     pub fn source(&self) -> BodySource {
         self.source
     }
 
     pub fn source_items(&self) -> &BodySourceItems {
         &self.source_items
-    }
-
-    pub fn body_def_map(&self) -> Option<&DefMap> {
-        self.body_def_map.as_ref()
-    }
-
-    pub fn body_item_store(&self) -> Option<&ItemStore> {
-        self.body_item_store.as_ref()
     }
 
     pub fn param_scope(&self) -> ScopeId {
@@ -276,6 +302,17 @@ impl BodyData {
         self.scopes.get(scope)
     }
 
+    pub fn scope_for_module(&self, body_ref: BodyRef, module: ModuleRef) -> Option<ScopeId> {
+        if module.origin != DefMapRef::Body(body_ref) {
+            return None;
+        }
+
+        // Body DefMaps allocate synthetic scope modules first, in `ScopeId` order. Inline named
+        // modules may have ids after that prefix, so the arena lookup is the invariant check.
+        let scope = ScopeId(module.module.0);
+        self.scope(scope).map(|_| scope)
+    }
+
     pub fn source_item(&self, item: ItemTreeId) -> Option<&ItemNode> {
         self.source_items.item(item)
     }
@@ -288,9 +325,13 @@ impl BodyData {
         self.exprs.get(expr)
     }
 
+    // Lowering naturally produces these independent body facts at the same boundary. A wrapper
+    // object would only move the argument list elsewhere without making the invariant clearer.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         owner: BodyOwner,
         owner_module: ModuleRef,
+        fallback_module: ModuleRef,
         source: BodySource,
         param_scope: ScopeId,
         root_expr: ExprId,
@@ -300,15 +341,15 @@ impl BodyData {
         Self {
             owner,
             owner_module,
+            fallback_module,
             source,
             source_items: builder.source_items,
-            body_def_map: None,
-            body_item_store: None,
             param_scope,
             root_expr,
             params,
             scopes: builder.scopes,
             bindings: builder.bindings,
+            pending_binding_resolutions: builder.pending_binding_resolutions,
             pats: builder.pats,
             statements: builder.statements,
             exprs: builder.exprs,
@@ -318,12 +359,6 @@ impl BodyData {
     fn shrink_to_fit(&mut self) {
         self.params.shrink_to_fit();
         self.source_items.shrink_to_fit();
-        if let Some(def_map) = &mut self.body_def_map {
-            def_map.shrink_to_fit();
-        }
-        if let Some(item_store) = &mut self.body_item_store {
-            item_store.shrink_to_fit();
-        }
         self.scopes.shrink_to_fit();
         for scope in self.scopes.iter_mut() {
             scope.shrink_to_fit();
@@ -332,6 +367,7 @@ impl BodyData {
         for binding in self.bindings.iter_mut() {
             binding.shrink_to_fit();
         }
+        self.pending_binding_resolutions.shrink_to_fit();
         self.pats.shrink_to_fit();
         for pat in self.pats.iter_mut() {
             pat.shrink_to_fit();
@@ -353,6 +389,7 @@ pub(crate) struct BodyBuilder {
     pub(crate) source_items: BodySourceItems,
     pub(crate) scopes: Arena<ScopeId, ScopeData>,
     pub(crate) bindings: Arena<BindingId, BindingData>,
+    pub(crate) pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
     pub(crate) pats: Arena<PatId, PatData>,
     pub(crate) statements: Arena<StmtId, StmtData>,
     pub(crate) exprs: Arena<ExprId, ExprData>,
@@ -385,8 +422,21 @@ impl BodyBuilder {
     }
 
     pub(crate) fn alloc_binding(&mut self, data: BindingData) -> BindingId {
+        self.alloc_pending_binding(data, PendingBindingResolution::AlwaysBinding)
+    }
+
+    pub(crate) fn alloc_pending_binding(
+        &mut self,
+        data: BindingData,
+        resolution: PendingBindingResolution,
+    ) -> BindingId {
         let scope = data.scope;
         let binding = self.bindings.alloc(data);
+        let resolution_id = self.pending_binding_resolutions.alloc(resolution);
+        debug_assert_eq!(
+            binding, resolution_id,
+            "pending binding resolution should mirror binding slot ids"
+        );
         self.scopes
             .get_mut(scope)
             .expect("binding scope should exist while lowering body")
@@ -409,25 +459,14 @@ impl BodyBuilder {
 }
 
 /// Source location attached to every body node.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct BodySource {
     pub file_id: FileId,
     pub span: Span,
 }
 
 /// One lexical scope.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ScopeData {
     pub parent: Option<ScopeId>,
     pub source_items: Vec<ItemTreeId>,

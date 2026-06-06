@@ -6,10 +6,10 @@ use rg_package_store::PackageStoreError;
 
 use crate::ir::body::BodyData;
 
-/// Routes semantic-shaped queries to target storage or to the active body storage.
+/// Routes semantic-shaped queries while keeping the active body available for lexical lookup.
 ///
-/// Body resolution often needs DefMap lookup and item data together. Keeping both routes in one
-/// source makes those algorithms use the same query objects as target-level analysis.
+/// DefMap and item-store storage is owned by the provider. During indexing that provider reads the
+/// build state; after indexing it reads frozen target body-local storage.
 #[derive(Clone, Copy)]
 pub(crate) struct BodyQuerySource<'a, D, I> {
     def_maps: D,
@@ -44,11 +44,7 @@ where
     type Error = PackageStoreError;
 
     fn def_map_for_origin(&self, origin: DefMapRef) -> Result<Option<&DefMap>, PackageStoreError> {
-        match origin {
-            DefMapRef::Target(_) => self.def_maps.def_map_for_origin(origin),
-            DefMapRef::Body(body_ref) if body_ref == self.body_ref => Ok(self.body.body_def_map()),
-            DefMapRef::Body(_) => Ok(None),
-        }
+        self.def_maps.def_map_for_origin(origin)
     }
 
     fn extern_root(
@@ -85,13 +81,7 @@ where
         &self,
         origin: DefMapRef,
     ) -> Result<Option<&'a ItemStore>, Self::Error> {
-        match origin {
-            DefMapRef::Target(_) => self.item_stores.item_store_for_origin(origin),
-            DefMapRef::Body(body_ref) if body_ref == self.body_ref => {
-                Ok(self.body.body_item_store())
-            }
-            DefMapRef::Body(_) => Ok(None),
-        }
+        self.item_stores.item_store_for_origin(origin)
     }
 
     fn included_stores(&self) -> Result<Vec<&'a ItemStore>, Self::Error> {

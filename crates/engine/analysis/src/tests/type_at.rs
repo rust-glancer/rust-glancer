@@ -1197,6 +1197,41 @@ pub fn use_it() {
 }
 
 #[test]
+fn returns_body_local_imported_value_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_import_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    mod local {
+        pub struct User;
+        pub const VALUE: User = missing();
+    }
+
+    use local::User as LocalUser;
+    use local::*;
+
+    let _user: LocalUser;
+    let _value = VAL$type_value$UE;
+}
+"#,
+        &[AnalysisQuery::ty(
+            "type at body-local imported value",
+            "type_value",
+        )],
+        expect![[r#"
+            type at body-local imported value
+            - nominal struct fn analysis_body_local_import_type[lib]::crate::use_it::User
+        "#]],
+    );
+}
+
+#[test]
 fn returns_nested_body_local_impl_method_call_types() {
     check_analysis_queries(
         r#"
@@ -1676,6 +1711,53 @@ pub fn make() {
 
             type at associated type result
             - nominal struct analysis_body_local_assoc_type[lib]::crate::GlobalId
+        "#]],
+    );
+}
+
+#[test]
+fn returns_parent_body_local_associated_item_types_from_nested_body() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_nested_body_parent_assoc_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct User;
+
+    impl User {
+        const DEFAULT: GlobalId = GlobalId;
+        type Id = GlobalId;
+    }
+
+    fn helper() {
+        let default$type_nested_assoc_const$ = User::DEFAULT;
+        let typed$type_nested_assoc_type$: User::Id = GlobalId;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty(
+                "type at nested associated const result",
+                "type_nested_assoc_const",
+            ),
+            AnalysisQuery::ty(
+                "type at nested associated type result",
+                "type_nested_assoc_type",
+            ),
+        ],
+        expect![[r#"
+            type at nested associated const result
+            - nominal struct analysis_nested_body_parent_assoc_type[lib]::crate::GlobalId
+
+            type at nested associated type result
+            - nominal struct analysis_nested_body_parent_assoc_type[lib]::crate::GlobalId
         "#]],
     );
 }

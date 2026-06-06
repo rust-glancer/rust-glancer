@@ -1,14 +1,15 @@
+use wincode::{SchemaRead, SchemaWrite};
+
 use rg_ir_model::{BindingId, ExprId, PatId};
 use rg_item_tree::FieldKey;
+use rg_memsize::MemorySize;
 
 use crate::RecordFieldSyntax;
 
 use super::{body::BodySource, expr::LiteralKind, path::BodyPath};
 
 /// One lowered pattern node.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct PatData {
     pub source: BodySource,
     pub kind: PatKind,
@@ -21,9 +22,7 @@ impl PatData {
 }
 
 /// Pattern forms that matter for binding and enum-payload type propagation.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum PatKind {
     /// `name`, `ref mut name`, or `name @ <pat>`.
     Binding {
@@ -81,17 +80,7 @@ pub enum PatKind {
 }
 
 /// Binding mode written on an identifier pattern.
-#[derive(
-    Debug,
-    Default,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub struct PatBindingMode {
     pub by_ref: bool,
@@ -100,15 +89,7 @@ pub struct PatBindingMode {
 
 /// Mutability written on a reference pattern.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 #[memsize(leaf)]
 pub enum PatMutability {
@@ -122,15 +103,7 @@ pub enum PatMutability {
 
 /// Range operator written in a range pattern.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 #[memsize(leaf)]
 pub enum PatRangeKind {
@@ -143,9 +116,7 @@ pub enum PatRangeKind {
 }
 
 /// One field inside a record pattern.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct RecordPatField {
     pub key: FieldKey,
     pub key_span: rg_parse::Span,

@@ -4,13 +4,13 @@
 //! add any extra path-segment candidates visible at the same offset.
 
 use rg_ir_model::{
-    BindingId, BodyId, BodyRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TargetRef,
-    TypeDefId, hir::source::ItemSourceKind,
+    BindingId, BodyId, BodyRef, DefMapRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef,
+    TargetRef, TypeDefId, hir::source::ItemSourceKind,
 };
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
-use crate::{BodyData, BodyIrReadTxn, ExprData, ExprKind, PatKind};
+use crate::{BodyData, BodyIrReadTxn, BodyOwner, ExprData, ExprKind, PatKind};
 
 use super::{
     super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
@@ -52,7 +52,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         };
 
         let mut candidates = Vec::new();
-        candidates.push(self.candidate_at_body(body_ref, body));
+        candidates.push(self.candidate_at_body(body_ref, body)?);
         TypePathCursorScanner {
             body_ref,
             body,
@@ -100,13 +100,22 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     }
 
     /// Picks the most precise source node in one body, falling back to the body itself.
-    fn candidate_at_body(&self, body_ref: BodyRef, body: &BodyData) -> BodyCursorCandidate {
+    fn candidate_at_body(
+        &self,
+        body_ref: BodyRef,
+        body: &BodyData,
+    ) -> Result<BodyCursorCandidate, PackageStoreError> {
         let mut best = BestCursorCandidate::new(BodyCursorCandidate::Body {
             body: body_ref,
             span: body.source.span,
         });
         let record_shorthand_values = Self::record_expr_shorthand_values(body);
         let record_shorthand_bindings = self.record_shorthand_bindings(body);
+
+        // `body_at` chooses the innermost enclosing body. When the cursor is on a nested
+        // fn/const/static declaration name, that body owns the initializer/block, while the
+        // declaration item still lives in the parent body-local item store.
+        self.consider_body_owner_declaration(body, &mut best)?;
 
         // First look at expressions under the cursor: calls, paths, field accesses, literals, and
         // so on. Record shorthand values are skipped here because the key token has its own
@@ -168,7 +177,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             }
         }
 
-        if let Some(item_store) = body.body_item_store() {
+        if let Some(item_store) = self.body_ir.body_item_store(body_ref)? {
             // Body-local items live in the same source range as the body but are stored in a local
             // item store. Their names can be the best answer when the cursor is on a nested item
             // declaration or one of its fields/variants.
@@ -219,7 +228,89 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
             }
         }
 
-        best.finish()
+        Ok(best.finish())
+    }
+
+    /// Projects a nested body back to its body-local item declaration when the cursor is on the
+    /// owner name, so editor queries target the function/const/static item instead of the body.
+    fn consider_body_owner_declaration(
+        &self,
+        body: &BodyData,
+        best: &mut BestCursorCandidate,
+    ) -> Result<(), PackageStoreError> {
+        let Some((item, declaration_span)) = self.body_owner_declaration(body)? else {
+            return Ok(());
+        };
+        if !declaration_span.touches(self.offset) {
+            return Ok(());
+        }
+
+        match item {
+            SemanticItemRef::Function(function) => best.consider(
+                declaration_span,
+                BodyCursorCandidate::LocalFunction {
+                    function,
+                    span: declaration_span,
+                },
+            ),
+            SemanticItemRef::Const(_) | SemanticItemRef::Static(_) => best.consider(
+                declaration_span,
+                BodyCursorCandidate::LocalValueItem {
+                    item,
+                    span: declaration_span,
+                },
+            ),
+            SemanticItemRef::TypeDef(_)
+            | SemanticItemRef::Trait(_)
+            | SemanticItemRef::Impl(_)
+            | SemanticItemRef::TypeAlias(_) => {}
+        }
+
+        Ok(())
+    }
+
+    fn body_owner_declaration(
+        &self,
+        body: &BodyData,
+    ) -> Result<Option<(SemanticItemRef, Span)>, PackageStoreError> {
+        match body.owner() {
+            BodyOwner::Function(function) => {
+                if let DefMapRef::Body(parent_body_ref) = function.origin
+                    && let Some(item_store) = self.body_ir.body_item_store(parent_body_ref)?
+                    && let Some(data) = item_store.function_data(function.id)
+                {
+                    Ok(data
+                        .name_span
+                        .map(|span| (SemanticItemRef::from(function), span)))
+                } else {
+                    Ok(None)
+                }
+            }
+            BodyOwner::Const(konst) => {
+                if let DefMapRef::Body(parent_body_ref) = konst.origin
+                    && let Some(item_store) = self.body_ir.body_item_store(parent_body_ref)?
+                    && let Some(data) = item_store.const_data(konst.id)
+                {
+                    Ok(data
+                        .name_span
+                        .map(|span| (SemanticItemRef::from(konst), span)))
+                } else {
+                    Ok(None)
+                }
+            }
+            BodyOwner::Static(static_ref) => {
+                if let DefMapRef::Body(parent_body_ref) = static_ref.origin
+                    && let Some(item_store) = self.body_ir.body_item_store(parent_body_ref)?
+                    && let Some(data) = item_store.static_data(static_ref.id)
+                {
+                    Ok(data
+                        .name_span
+                        .map(|span| (SemanticItemRef::from(static_ref), span)))
+                } else {
+                    Ok(None)
+                }
+            }
+        }
     }
 
     fn record_shorthand_bindings(&self, body: &BodyData) -> Vec<RecordPatShorthandBinding> {

@@ -7,8 +7,8 @@ use std::collections::HashSet;
 
 use rg_body_ir::BindingKind;
 use rg_ir_model::{
-    BodyBindingRef, BodyRef, ExprId, ModuleRef, ScopeId, SemanticItemKind, SemanticItemRef,
-    TargetRef, hir::source::ItemSourceKind, identity::DeclarationRef,
+    BodyBindingRef, BodyRef, DefMapRef, ExprId, ModuleId, ModuleRef, ScopeId, SemanticItemKind,
+    SemanticItemRef, TargetRef, hir::source::ItemSourceKind, identity::DeclarationRef,
 };
 use rg_ir_storage::ItemStoreQuery;
 use rg_parse::{FileId, Span, TextSpan};
@@ -127,6 +127,57 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .map(|body| body.owner_module()))
     }
 
+    pub fn lexical_scope_modules(
+        &self,
+        body_ref: BodyRef,
+        scope: ScopeId,
+    ) -> anyhow::Result<Vec<(ScopeId, ModuleRef)>> {
+        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
+            return Ok(Vec::new());
+        };
+        let mut modules = Vec::new();
+        let mut scope_id = Some(scope);
+
+        while let Some(current_scope) = scope_id {
+            let Some(scope_data) = body.scope(current_scope) else {
+                break;
+            };
+            let module = ModuleRef {
+                origin: DefMapRef::Body(body_ref),
+                module: ModuleId(current_scope.0),
+            };
+            modules.push((current_scope, module));
+            scope_id = scope_data.parent;
+        }
+
+        Ok(modules)
+    }
+
+    pub fn direct_item_names(
+        &self,
+        body_ref: BodyRef,
+        scope: ScopeId,
+    ) -> anyhow::Result<HashSet<String>> {
+        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
+            return Ok(HashSet::new());
+        };
+        let Some(scope_data) = body.scope(scope) else {
+            return Ok(HashSet::new());
+        };
+
+        let mut names = HashSet::new();
+        for item_id in &scope_data.source_items {
+            let Some(item) = body.source_item(*item_id) else {
+                continue;
+            };
+            if let Some(name) = &item.name {
+                names.insert(name.to_string());
+            }
+        }
+
+        Ok(names)
+    }
+
     pub fn expr_ty(&self, body_ref: BodyRef, expr: ExprId) -> anyhow::Result<Option<Ty>> {
         Ok(self
             .db
@@ -149,6 +200,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         let Some(body) = self.db.body_ir.body_data(scope.body)? else {
             return Ok(Vec::new());
         };
+        let body_item_store = self.db.body_ir.body_item_store(scope.body)?;
         let mut names = Vec::new();
         let mut seen_values = HashSet::<String>::new();
         let mut seen_types = HashSet::<String>::new();
@@ -187,7 +239,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 }
 
                 for item_id in scope_data.source_items.iter().rev().copied() {
-                    let Some(view) = body.body_item_store().and_then(|items| {
+                    let Some(view) = body_item_store.and_then(|items| {
                         items.semantic_items().find(|view| {
                             matches!(
                                 view.source().kind,
@@ -247,7 +299,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
 
             if matches!(scope.namespace, BodyNameNamespace::Types) {
                 for item_id in scope_data.source_items.iter().rev().copied() {
-                    let Some(view) = body.body_item_store().and_then(|items| {
+                    let Some(view) = body_item_store.and_then(|items| {
                         items.semantic_items().find(|view| {
                             matches!(
                                 view.source().kind,
@@ -370,11 +422,12 @@ impl<'a, 'db> BodyView<'a, 'db> {
         let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
+        let body_item_store = self.db.body_ir.body_item_store(body_ref)?;
         let mut declarations = Vec::new();
 
         for scope in body.scopes() {
             for item_id in &scope.source_items {
-                let Some(view) = body.body_item_store().and_then(|items| {
+                let Some(view) = body_item_store.and_then(|items| {
                     items.semantic_items().find(|view| {
                         matches!(
                             view.source().kind,

@@ -23,7 +23,7 @@ use crate::{
         DotCompletionSite, PathCompletionSite, RecordFieldCompletionSite, UnqualifiedCompletionSite,
     },
     model::{CompletionApplicability, CompletionKind, CompletionTarget},
-    query::member::{MemberMethodCandidate, MemberMethodOrigin, MemberView},
+    query::member::{MemberMethodCandidate, MemberMethodOrigin, MemberUseSite, MemberView},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -235,16 +235,36 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
         &self,
         site: &UnqualifiedCompletionSite,
     ) -> anyhow::Result<Vec<ModuleCompletionCandidate>> {
-        let module = match site.source().scope() {
+        match site.source().scope() {
             IndexedUnqualifiedNameScope::Body { scope, .. } => {
-                let Some(module) = BodyView::new(self.db).owner_module(scope.body_ir())? else {
-                    return Ok(Vec::new());
-                };
-                module
+                let body_view = BodyView::new(self.db);
+                let mut candidates = Vec::new();
+
+                for (scope_id, module) in
+                    body_view.lexical_scope_modules(scope.body_ir(), scope.scope_id())?
+                {
+                    let direct_item_names =
+                        body_view.direct_item_names(scope.body_ir(), scope_id)?;
+                    candidates.extend(
+                        self.unqualified_module_candidates(module)?
+                            .into_iter()
+                            .filter(|candidate| {
+                                candidate.kind() == CompletionKind::Module
+                                    || !direct_item_names.contains(candidate.label())
+                            }),
+                    );
+                }
+
+                if let Some(module) = body_view.owner_module(scope.body_ir())? {
+                    candidates.extend(self.unqualified_module_candidates(module)?);
+                }
+
+                Ok(candidates)
             }
-            IndexedUnqualifiedNameScope::Import { module } => *module,
-        };
-        self.unqualified_module_candidates(module)
+            IndexedUnqualifiedNameScope::Import { module } => {
+                self.unqualified_module_candidates(*module)
+            }
+        }
     }
 
     pub(crate) fn lexical_candidates_for_unqualified(
@@ -382,7 +402,9 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
 
         let members = MemberView::new(self.db);
         let mut methods = Vec::new();
-        for method in members.method_candidates_for_ty(receiver.body_ir().target, &receiver_ty)? {
+        for method in members
+            .method_candidates_for_ty(MemberUseSite::body(receiver.body_ir()), &receiver_ty)?
+        {
             methods.push(Self::dot_method_candidate(method));
         }
 

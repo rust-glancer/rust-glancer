@@ -886,6 +886,75 @@ pub fn make() {
 }
 
 #[test]
+fn resolves_parent_body_local_items_from_nested_body_owners() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_nested_body_owner_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct Local;
+    const DEFAULT: Local = Local;
+    static CURRENT: Local = Local;
+
+    fn helper() -> Local {
+        DEF$goto_nested_const$AULT
+    }
+
+    const AGAIN: Local = CUR$goto_nested_static$RENT;
+    const FROM_CONST: Local = DEF$goto_nested_const_from_const$AULT;
+    static LAST: Local = Lo$goto_nested_type$cal;
+    static FROM_STATIC: Local = DEF$goto_nested_const_from_static$AULT;
+}
+"#,
+        &[
+            AnalysisQuery::goto(
+                "goto parent const from nested function",
+                "goto_nested_const",
+            ),
+            AnalysisQuery::goto(
+                "goto parent static from nested const initializer",
+                "goto_nested_static",
+            ),
+            AnalysisQuery::goto(
+                "goto parent type from nested static initializer",
+                "goto_nested_type",
+            ),
+            AnalysisQuery::goto(
+                "goto parent const from nested const initializer",
+                "goto_nested_const_from_const",
+            ),
+            AnalysisQuery::goto(
+                "goto parent const from nested static initializer",
+                "goto_nested_const_from_static",
+            ),
+        ],
+        expect![[r#"
+            goto parent const from nested function
+            - const DEFAULT @ 5:11-5:18
+
+            goto parent static from nested const initializer
+            - static CURRENT @ 6:12-6:19
+
+            goto parent type from nested static initializer
+            - struct Local @ 4:12-4:17
+
+            goto parent const from nested const initializer
+            - const DEFAULT @ 5:11-5:18
+
+            goto parent const from nested static initializer
+            - const DEFAULT @ 5:11-5:18
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_body_local_associated_consts_and_types() {
     check_analysis_queries(
         r#"
@@ -920,6 +989,48 @@ pub fn make() {
 
             goto associated type
             - type_alias Id @ 8:14-8:16
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_body_local_imported_paths_and_impl_headers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_import_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+pub struct LocalId;
+
+pub fn use_it(id: GlobalId) {
+    use crate::GlobalId as RootId;
+    use RootId as LocalAlias;
+
+    impl LocalAlias {
+        fn local(&self) -> LocalId {
+            missing()
+        }
+    }
+
+    let _typed: Local$goto_alias$Alias = id;
+    let _local = id.lo$goto_method$cal();
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto chained body-local import", "goto_alias"),
+            AnalysisQuery::goto("goto imported impl method", "goto_method"),
+        ],
+        expect![[r#"
+            goto chained body-local import
+            - struct GlobalId @ 1:12-1:20
+
+            goto imported impl method
+            - fn local @ 9:12-9:17
         "#]],
     );
 }

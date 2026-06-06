@@ -243,6 +243,7 @@ pub fn use_it() {
 
             body-local const references
             - `DEFAULT` @ src/lib.rs:5:11-5:18
+            - `DEFAULT` @ src/lib.rs:8:9-8:16
             - `DEFAULT` @ src/lib.rs:16:20-16:27
 
             body-local static references
@@ -326,6 +327,78 @@ pub fn make() {
 }
 
 #[test]
+fn finds_parent_body_local_references_from_nested_body_owners() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_nested_body_owner_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct Local;
+    const SE$const_ref$ED: Local = Local;
+    static CURRENT: Local = SE$static_initializer_use$ED;
+
+    fn helper() -> Local {
+        SEED
+    }
+
+    const AGAIN: Local = SE$const_initializer_use$ED;
+    static LAST: Local = SEED;
+    let _direct = SEED;
+}
+"#,
+        &[
+            AnalysisQuery::references(
+                "parent body-local const references",
+                "const_ref",
+                ReferenceQuery::all(),
+            ),
+            AnalysisQuery::references(
+                "parent body-local const references from const initializer",
+                "const_initializer_use",
+                ReferenceQuery::all(),
+            ),
+            AnalysisQuery::references(
+                "parent body-local const references from static initializer",
+                "static_initializer_use",
+                ReferenceQuery::all(),
+            ),
+        ],
+        expect![[r#"
+            parent body-local const references
+            - `SEED` @ src/lib.rs:5:11-5:15
+            - `SEED` @ src/lib.rs:6:29-6:33
+            - `SEED` @ src/lib.rs:9:9-9:13
+            - `SEED` @ src/lib.rs:12:26-12:30
+            - `SEED` @ src/lib.rs:13:26-13:30
+            - `SEED` @ src/lib.rs:14:19-14:23
+
+            parent body-local const references from const initializer
+            - `SEED` @ src/lib.rs:5:11-5:15
+            - `SEED` @ src/lib.rs:6:29-6:33
+            - `SEED` @ src/lib.rs:9:9-9:13
+            - `SEED` @ src/lib.rs:12:26-12:30
+            - `SEED` @ src/lib.rs:13:26-13:30
+            - `SEED` @ src/lib.rs:14:19-14:23
+
+            parent body-local const references from static initializer
+            - `SEED` @ src/lib.rs:5:11-5:15
+            - `SEED` @ src/lib.rs:6:29-6:33
+            - `SEED` @ src/lib.rs:9:9-9:13
+            - `SEED` @ src/lib.rs:12:26-12:30
+            - `SEED` @ src/lib.rs:13:26-13:30
+            - `SEED` @ src/lib.rs:14:19-14:23
+        "#]],
+    );
+}
+
+#[test]
 fn finds_body_local_associated_item_references() {
     check_analysis_queries(
         r#"
@@ -370,6 +443,93 @@ pub fn make() {
             body-local associated type references
             - `Id` @ src/lib.rs:8:14-8:16
             - `Id` @ src/lib.rs:12:23-12:25
+        "#]],
+    );
+}
+
+#[test]
+fn finds_parent_body_local_references_inside_associated_item_bodies() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_assoc_body_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    const SE$seed_ref$ED: GlobalId = GlobalId;
+
+    struct User;
+
+    trait Named {
+        const TRAIT_DEFAULT: GlobalId = SEED;
+
+        fn trait_make() -> GlobalId {
+            SEED
+        }
+    }
+
+    impl User {
+        const DEFAULT: GlobalId = SEED;
+
+        fn make() -> GlobalId {
+            SEED
+        }
+    }
+
+    let _default = User::DEFAULT;
+    let _made = User::make();
+}
+"#,
+        &[AnalysisQuery::references(
+            "parent body-local const references inside associated bodies",
+            "seed_ref",
+            ReferenceQuery::all(),
+        )],
+        expect![[r#"
+            parent body-local const references inside associated bodies
+            - `SEED` @ src/lib.rs:4:11-4:15
+            - `SEED` @ src/lib.rs:9:41-9:45
+            - `SEED` @ src/lib.rs:12:13-12:17
+            - `SEED` @ src/lib.rs:17:35-17:39
+            - `SEED` @ src/lib.rs:20:13-20:17
+        "#]],
+    );
+}
+
+#[test]
+fn finds_lowercase_const_references_from_ambiguous_patterns() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_ambiguous_pattern_const_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub const re$ready_ref$ady: u8 = 1;
+
+pub fn use_it(value: u8) {
+    match value {
+        ready => {}
+        _ => {}
+    }
+}
+"#,
+        &[AnalysisQuery::references(
+            "lowercase const references from ambiguous pattern",
+            "ready_ref",
+            ReferenceQuery::all(),
+        )],
+        expect![[r#"
+            lowercase const references from ambiguous pattern
+            - `ready` @ src/lib.rs:1:11-1:16
+            - `ready` @ src/lib.rs:5:9-5:14
         "#]],
     );
 }

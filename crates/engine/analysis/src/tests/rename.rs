@@ -339,6 +339,257 @@ pub fn make() -> Value {
 }
 
 #[test]
+fn renames_parent_body_local_const_from_nested_body_owners() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_rename_nested_body_owner_const"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    struct Local;
+    const SEED: Local = Local;
+
+    fn helper() -> Local {
+        SE$nested_const_use$ED
+    }
+
+    const AGAIN: Local = SE$const_initializer_use$ED;
+    static LAST: Local = SE$static_initializer_use$ED;
+    let _direct = SEED;
+}
+"#,
+        &[
+            AnalysisQuery::rename(
+                "rename parent const from nested body",
+                "nested_const_use",
+                "FALLBACK",
+            ),
+            AnalysisQuery::rename(
+                "rename parent const from nested const initializer",
+                "const_initializer_use",
+                "FALLBACK",
+            ),
+            AnalysisQuery::rename(
+                "rename parent const from nested static initializer",
+                "static_initializer_use",
+                "FALLBACK",
+            ),
+        ],
+        expect![[r#"
+            rename parent const from nested body
+            - target `SEED` @ src/lib.rs:8:9-8:13
+            - `SEED` -> `FALLBACK` @ src/lib.rs:5:11-5:15
+            - `SEED` -> `FALLBACK` @ src/lib.rs:8:9-8:13
+            - `SEED` -> `FALLBACK` @ src/lib.rs:11:26-11:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:12:26-12:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:13:19-13:23
+
+            rename parent const from nested const initializer
+            - target `SEED` @ src/lib.rs:11:26-11:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:5:11-5:15
+            - `SEED` -> `FALLBACK` @ src/lib.rs:8:9-8:13
+            - `SEED` -> `FALLBACK` @ src/lib.rs:11:26-11:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:12:26-12:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:13:19-13:23
+
+            rename parent const from nested static initializer
+            - target `SEED` @ src/lib.rs:12:26-12:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:5:11-5:15
+            - `SEED` -> `FALLBACK` @ src/lib.rs:8:9-8:13
+            - `SEED` -> `FALLBACK` @ src/lib.rs:11:26-11:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:12:26-12:30
+            - `SEED` -> `FALLBACK` @ src/lib.rs:13:19-13:23
+        "#]],
+    );
+}
+
+#[test]
+fn renames_target_items_from_body_local_initializers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_rename_target_items_from_local_initializers"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub const GLOBAL: GlobalId = GlobalId;
+pub static ACTIVE: GlobalId = GlobalId;
+
+pub fn make() -> GlobalId {
+    const SEED: GlobalId = GLO$const_initializer_global$BAL;
+    static LAST: GlobalId = AC$static_initializer_active$TIVE;
+
+    let _seed = SEED;
+    let _last = LAST;
+    let _global = GLOBAL;
+    ACTIVE
+}
+"#,
+        &[
+            AnalysisQuery::prepare_rename(
+                "prepare const from local initializer",
+                "const_initializer_global",
+            ),
+            AnalysisQuery::rename(
+                "rename const from local initializer",
+                "const_initializer_global",
+                "DEFAULT_GLOBAL",
+            ),
+            AnalysisQuery::prepare_rename(
+                "prepare static from local initializer",
+                "static_initializer_active",
+            ),
+            AnalysisQuery::rename(
+                "rename static from local initializer",
+                "static_initializer_active",
+                "CURRENT_GLOBAL",
+            ),
+        ],
+        expect![[r#"
+            prepare const from local initializer
+            - `GLOBAL` @ src/lib.rs:7:28-7:34
+
+            rename const from local initializer
+            - target `GLOBAL` @ src/lib.rs:7:28-7:34
+            - `GLOBAL` -> `DEFAULT_GLOBAL` @ src/lib.rs:3:11-3:17
+            - `GLOBAL` -> `DEFAULT_GLOBAL` @ src/lib.rs:7:28-7:34
+            - `GLOBAL` -> `DEFAULT_GLOBAL` @ src/lib.rs:12:19-12:25
+
+            prepare static from local initializer
+            - `ACTIVE` @ src/lib.rs:8:29-8:35
+
+            rename static from local initializer
+            - target `ACTIVE` @ src/lib.rs:8:29-8:35
+            - `ACTIVE` -> `CURRENT_GLOBAL` @ src/lib.rs:4:12-4:18
+            - `ACTIVE` -> `CURRENT_GLOBAL` @ src/lib.rs:8:29-8:35
+            - `ACTIVE` -> `CURRENT_GLOBAL` @ src/lib.rs:13:5-13:11
+        "#]],
+    );
+}
+
+#[test]
+fn renames_body_local_items_from_associated_bodies_and_initializers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_rename_body_local_item_nested_bodies"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn make() {
+    const SEED: GlobalId = GlobalId;
+    static CACHE: GlobalId = GlobalId;
+
+    struct User;
+
+    trait Named {
+        const TRAIT_DEFAULT: GlobalId = SE$trait_const_seed_use$ED;
+
+        fn trait_make() -> GlobalId {
+            SEED
+        }
+    }
+
+    impl User {
+        const DEFAULT: GlobalId = CA$impl_const_cache_use$CHE;
+
+        fn make() -> GlobalId {
+            CA$impl_fn_cache_use$CHE
+        }
+
+        type Id = GlobalId;
+    }
+
+    const AGAIN: GlobalId = CA$const_initializer_cache_use$CHE;
+    static LAST: GlobalId = CACHE;
+
+    let _seed = SEED;
+    let _cache = CACHE;
+    let _default = User::DE$assoc_const_use$FAULT;
+    let _typed: User::I$assoc_type_use$d = GlobalId;
+}
+"#,
+        &[
+            AnalysisQuery::rename(
+                "rename parent const from associated const body",
+                "trait_const_seed_use",
+                "FALLBACK",
+            ),
+            AnalysisQuery::rename(
+                "rename parent static from associated function body",
+                "impl_fn_cache_use",
+                "STORE",
+            ),
+            AnalysisQuery::rename(
+                "rename parent static from local const initializer",
+                "const_initializer_cache_use",
+                "STORE",
+            ),
+            AnalysisQuery::rename(
+                "rename body-local associated const",
+                "assoc_const_use",
+                "INITIAL",
+            ),
+            AnalysisQuery::rename(
+                "rename body-local associated type",
+                "assoc_type_use",
+                "Identity",
+            ),
+        ],
+        expect![[r#"
+            rename parent const from associated const body
+            - target `SEED` @ src/lib.rs:10:41-10:45
+            - `SEED` -> `FALLBACK` @ src/lib.rs:4:11-4:15
+            - `SEED` -> `FALLBACK` @ src/lib.rs:10:41-10:45
+            - `SEED` -> `FALLBACK` @ src/lib.rs:13:13-13:17
+            - `SEED` -> `FALLBACK` @ src/lib.rs:30:17-30:21
+
+            rename parent static from associated function body
+            - target `CACHE` @ src/lib.rs:21:13-21:18
+            - `CACHE` -> `STORE` @ src/lib.rs:5:12-5:17
+            - `CACHE` -> `STORE` @ src/lib.rs:18:35-18:40
+            - `CACHE` -> `STORE` @ src/lib.rs:21:13-21:18
+            - `CACHE` -> `STORE` @ src/lib.rs:27:29-27:34
+            - `CACHE` -> `STORE` @ src/lib.rs:28:29-28:34
+            - `CACHE` -> `STORE` @ src/lib.rs:31:18-31:23
+
+            rename parent static from local const initializer
+            - target `CACHE` @ src/lib.rs:27:29-27:34
+            - `CACHE` -> `STORE` @ src/lib.rs:5:12-5:17
+            - `CACHE` -> `STORE` @ src/lib.rs:18:35-18:40
+            - `CACHE` -> `STORE` @ src/lib.rs:21:13-21:18
+            - `CACHE` -> `STORE` @ src/lib.rs:27:29-27:34
+            - `CACHE` -> `STORE` @ src/lib.rs:28:29-28:34
+            - `CACHE` -> `STORE` @ src/lib.rs:31:18-31:23
+
+            rename body-local associated const
+            - target `DEFAULT` @ src/lib.rs:32:26-32:33
+            - `DEFAULT` -> `INITIAL` @ src/lib.rs:18:15-18:22
+            - `DEFAULT` -> `INITIAL` @ src/lib.rs:32:26-32:33
+
+            rename body-local associated type
+            - target `Id` @ src/lib.rs:33:23-33:25
+            - `Id` -> `Identity` @ src/lib.rs:24:14-24:16
+            - `Id` -> `Identity` @ src/lib.rs:33:23-33:25
+        "#]],
+    );
+}
+
+#[test]
 fn rename_field_in_record_literals_patterns_and_accesses() {
     check_analysis_queries(
         r#"

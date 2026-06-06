@@ -204,13 +204,26 @@ where
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
     ) -> Result<Vec<(FunctionRef, TraitApplicability)>, D::Error> {
-        let item_query = self.item_paths.items();
-        let mut functions = Vec::new();
         let trait_impls = match index {
             Some(index) => index.trait_impls_for_type(receiver_ty.def).to_vec(),
             None => self.target_items.trait_impls_for_type(receiver_ty.def)?,
         };
+        self.trait_function_candidates_from_impls(index, trait_impls, receiver_ty, method_name)
+    }
 
+    /// Expands already-collected trait impl candidates into trait function candidates.
+    ///
+    /// The caller owns visibility and overlay rules by deciding which trait impl refs to pass in;
+    /// this method owns only receiver applicability and trait-associated function expansion.
+    pub fn trait_function_candidates_from_impls(
+        &self,
+        index: Option<&ItemLookupIndex>,
+        trait_impls: Vec<TraitImplRef>,
+        receiver_ty: &NominalTy,
+        method_name: Option<&str>,
+    ) -> Result<Vec<(FunctionRef, TraitApplicability)>, D::Error> {
+        let item_query = self.item_paths.items();
+        let mut functions = Vec::new();
         for trait_impl in trait_impls {
             // For method calls, the name is known before we do any trait-impl compatibility work.
             // If the indexed trait has no function with that name, this impl cannot contribute a
@@ -545,24 +558,11 @@ where
             .iter_mut()
             .find(|(existing_function, _)| *existing_function == function)
         {
-            *existing = Self::best_applicability(*existing, applicability);
+            *existing = existing.or(applicability);
             return;
         }
 
         push_unique(functions, (function, applicability));
-    }
-
-    fn best_applicability(
-        left: TraitApplicability,
-        right: TraitApplicability,
-    ) -> TraitApplicability {
-        match (left, right) {
-            (TraitApplicability::Yes, _) | (_, TraitApplicability::Yes) => TraitApplicability::Yes,
-            (TraitApplicability::Maybe, _) | (_, TraitApplicability::Maybe) => {
-                TraitApplicability::Maybe
-            }
-            (TraitApplicability::No, TraitApplicability::No) => TraitApplicability::No,
-        }
     }
 
     /// Returns whether the impl header has no constraints that require solving.

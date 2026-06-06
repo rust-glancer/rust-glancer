@@ -773,6 +773,48 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_body_local_imported_items() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_import_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    mod local {
+        pub struct User;
+        pub const VALUE: User = missing();
+    }
+
+    use local::*;
+
+    let _typed: U$type$;
+    let _value = V$value$;
+}
+"#,
+        &[
+            AnalysisQuery::complete("body-local imported type completions", "type"),
+            AnalysisQuery::complete("body-local imported value completions", "value"),
+        ],
+        expect![[r#"
+            body-local imported type completions
+            - struct User
+            - module local
+
+            body-local imported value completions
+            - struct User
+            - const VALUE
+            - variable _typed
+            - module local
+            - fn use_it
+        "#]],
+    );
+}
+
+#[test]
 fn completes_unqualified_type_args_in_generic_type_paths() {
     check_analysis_queries_with_sysroot(
         r#"
@@ -1734,6 +1776,84 @@ pub fn use_it() {
 }
 
 #[test]
+fn completes_body_local_impl_methods_for_target_types_at_dot() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_target_impl_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it(id: GlobalId) {
+    impl GlobalId {
+        fn local(&self) -> GlobalId {
+            missing()
+        }
+    }
+
+    id.$0;
+}
+"#,
+        &[AnalysisQuery::complete(
+            "body-local target impl completions",
+            "0",
+        )],
+        expect![[r#"
+            body-local target impl completions
+            - inherent_method local
+        "#]],
+    );
+}
+
+#[test]
+fn completes_body_local_trait_impl_methods_for_target_types_at_dot() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_body_local_target_trait_impl_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+pub struct Label;
+
+pub fn use_it(id: GlobalId) {
+    trait Named {
+        fn label(&self) -> Label;
+        fn make() -> Label;
+    }
+
+    impl Named for GlobalId {
+        fn label(&self) -> Label {
+            missing()
+        }
+
+        fn make() -> Label {
+            missing()
+        }
+    }
+
+    id.$0;
+}
+"#,
+        &[AnalysisQuery::complete(
+            "body-local target trait impl completions",
+            "0",
+        )],
+        expect![[r#"
+            body-local target trait impl completions
+            - trait_method label
+        "#]],
+    );
+}
+
+#[test]
 fn completes_body_local_impl_methods_from_nested_blocks() {
     check_analysis_queries(
         r#"
@@ -1770,6 +1890,48 @@ pub fn use_it() {
         expect![[r#"
             nested body-local impl completions
             - field id
+            - inherent_method id
+        "#]],
+    );
+}
+
+#[test]
+fn completes_parent_body_local_impl_methods_from_nested_body() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_nested_body_parent_impl_completions"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    struct User;
+
+    impl User {
+        fn id(&self) -> GlobalId {
+            missing()
+        }
+
+        fn make() -> GlobalId {
+            missing()
+        }
+    }
+
+    fn helper(user: User) {
+        user.$0;
+    }
+}
+"#,
+        &[AnalysisQuery::complete(
+            "parent body-local impl completions from nested body",
+            "0",
+        )],
+        expect![[r#"
+            parent body-local impl completions from nested body
             - inherent_method id
         "#]],
     );
