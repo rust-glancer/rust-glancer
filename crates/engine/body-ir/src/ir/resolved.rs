@@ -1,16 +1,10 @@
+use wincode::{SchemaRead, SchemaWrite};
+
 use rg_ir_model::{BindingId, identity::DeclarationRef};
+use rg_memsize::MemorySize;
 
 /// Best-effort semantic resolution attached to body expressions.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
 pub enum BodyResolution {
     /// Lexical value binding introduced by a pattern or parameter.
     Binding(BindingId),

@@ -1,5 +1,7 @@
 //! Builds and rebuilds Body IR snapshots.
 
+mod body_def_map;
+mod body_item_store;
 mod lower;
 mod query_source;
 mod resolve;

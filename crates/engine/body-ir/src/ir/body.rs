@@ -1,3 +1,5 @@
+use wincode::{SchemaRead, SchemaWrite};
+
 use rg_arena::Arena;
 use rg_ir_model::{
     BindingId, BodyId, BodyRef, ConstRef, DefMapRef, ExprId, FunctionRef, ModuleRef, PatId,
@@ -5,17 +7,18 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMap, ItemStore};
 use rg_item_tree::{ItemNode, ItemTreeId};
+use rg_memsize::MemorySize;
 use rg_parse::{FileId, Span, TargetId};
 
 use super::{
-    body_map::BodySourceItems,
     expr::ExprData,
     pat::PatData,
+    source_items::BodySourceItems,
     stmt::{BindingData, PendingBindingResolution, StmtData},
 };
 
 /// Coarse totals for reporting that the Body IR phase produced useful data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 pub struct BodyIrStats {
     pub target_count: usize,
     pub built_target_count: usize,
@@ -28,16 +31,7 @@ pub struct BodyIrStats {
 }
 
 /// Lowered bodies for all targets inside one parsed package.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
 pub struct PackageBodies {
     pub(crate) targets: Arena<TargetId, TargetBodies>,
 }
@@ -72,9 +66,7 @@ impl PackageBodies {
 }
 
 /// Lowered bodies for one target.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TargetBodies {
     pub(crate) status: TargetBodiesStatus,
     pub(crate) bodies: Arena<BodyId, BodyData>,
@@ -153,15 +145,7 @@ impl TargetBodies {
 
 /// Whether one target's bodies were eagerly lowered.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 #[memsize(leaf)]
 pub enum TargetBodiesStatus {
@@ -172,16 +156,7 @@ pub enum TargetBodiesStatus {
 }
 
 /// Semantic item that owns a lowered expression body.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum BodyOwner {
     /// Function body, such as `fn read() { value }`.
     Function(FunctionRef),
@@ -211,9 +186,7 @@ impl BodyOwner {
 }
 
 /// Finalized body-local DefMap and semantic-shaped item facts for one body.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct BodyLocalItems {
     pub(crate) def_map: DefMap,
     pub(crate) item_store: ItemStore,
@@ -242,9 +215,7 @@ impl BodyLocalItems {
 }
 
 /// Lowered expression body for a function, const, or static initializer.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct BodyData {
     pub(crate) owner: BodyOwner,
     pub(crate) owner_module: ModuleRef,
@@ -485,25 +456,14 @@ impl BodyBuilder {
 }
 
 /// Source location attached to every body node.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct BodySource {
     pub file_id: FileId,
     pub span: Span,
 }
 
 /// One lexical scope.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ScopeData {
     pub parent: Option<ScopeId>,
     pub source_items: Vec<ItemTreeId>,

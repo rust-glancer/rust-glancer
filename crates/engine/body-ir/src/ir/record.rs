@@ -1,19 +1,14 @@
 //! Shared record-field IR vocabulary.
 
+use wincode::{SchemaRead, SchemaWrite};
+
+use rg_memsize::MemorySize;
+
 /// Whether a record field was written with `key: value` syntax or colonless shorthand.
 ///
 /// This is shared by record expressions and record patterns so later source queries can preserve
 /// the user's spelling without carrying inverted `explicit`/`shorthand` booleans.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub enum RecordFieldSyntax {
     /// `User { name: value }` or `User { name: ref binding }`.

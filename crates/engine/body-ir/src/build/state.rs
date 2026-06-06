@@ -11,13 +11,14 @@ use rg_text::NameInterner;
 
 use crate::{
     BodyLocalItems, BodyOwner, TargetBodies,
-    ir::body_map::{BodyDefMapCollector, BodyItemStoreCollector},
     resolution::{
         BodyQuerySource, BodyResolver, BodyTypePathResolver, TypeRefUseSite, push_unique,
     },
 };
 
 use super::{
+    body_def_map::BodyDefMapCollector,
+    body_item_store::BodyItemStoreCollector,
     lower::{BodyLoweringTask, BodyTaskLowering},
     query_source::BodyBuildQuerySource,
 };

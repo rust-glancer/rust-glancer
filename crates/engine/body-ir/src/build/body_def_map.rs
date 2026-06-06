@@ -1,57 +1,23 @@
-use anyhow::Context as _;
-use rg_arena::Arena;
+//! Collects and finalizes body-local DefMap facts.
+//!
+//! Body scopes become synthetic modules. Direct declarations are collected first, then imports are
+//! resolved in a fixed-point loop before the final DefMap is frozen.
+
 use rg_ir_model::{
     BodyRef, DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef,
-    hir::source::{BodyItemSourceRef, ItemSource, ItemSourceKind},
+    hir::source::{BodyItemSourceRef, ItemSource},
 };
 use rg_ir_storage::{
     DefMap, DefMapBuilder, DefMapSource, ImportBinding, ImportData, ImportKind, ImportPath,
-    ImportSourcePath, ItemStore, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData,
-    ModuleData, ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, PathResolver,
-    ScopeBinding, ScopeBindingOrigin, ScopeEntryRef, ScopeResolutionEnv, TargetResolutionEnv,
+    ImportSourcePath, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData,
+    ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, PathResolver, ScopeBinding,
+    ScopeBindingOrigin, ScopeEntryRef, ScopeResolutionEnv, TargetResolutionEnv,
 };
 use rg_item_tree::{Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource};
 use rg_package_store::PackageStoreError;
-use rg_semantic_ir::{ItemStoreLowerer, ItemStoreSourceReader};
 use rg_text::Name;
 
-use super::BodyData;
-
-/// Item-tree-shaped source payloads declared inside one function body.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-pub struct BodySourceItems {
-    pub(crate) items: Arena<ItemTreeId, ItemNode>,
-}
-
-impl BodySourceItems {
-    pub fn item(&self, item: ItemTreeId) -> Option<&ItemNode> {
-        self.items.get(item)
-    }
-
-    pub fn items(&self) -> &[ItemNode] {
-        self.items.as_slice()
-    }
-
-    pub(crate) fn alloc(&mut self, item: ItemNode) -> ItemTreeId {
-        self.items.alloc(item)
-    }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        for item in self.items.iter_mut() {
-            item.shrink_to_fit();
-        }
-        self.items.shrink_to_fit();
-    }
-}
+use crate::BodyData;
 
 pub(crate) struct BodyDefMapCollector<'body> {
     body_ref: BodyRef,
@@ -625,55 +591,5 @@ where
 
     fn root_module(&self, target: TargetRef) -> Result<Option<ModuleRef>, Self::Error> {
         self.def_maps.root_module(target)
-    }
-}
-
-pub(crate) struct BodyItemStoreCollector<'body> {
-    body: &'body BodyData,
-    def_map: &'body DefMap,
-}
-
-impl<'body> BodyItemStoreCollector<'body> {
-    pub fn new(body: &'body BodyData, def_map: &'body DefMap) -> Self {
-        Self { body, def_map }
-    }
-
-    /// Lowers body-local DefMap entries into semantic item-shaped shadow storage.
-    pub fn collect(self) -> ItemStore {
-        let reader = BodyItemStoreSourceReader {
-            body: self.body,
-            def_map: self.def_map,
-        };
-        ItemStoreLowerer::new(self.def_map, reader)
-            .lower()
-            .expect("body item store should lower from collected body source items")
-    }
-}
-
-// Allows to reuse the generic `ItemStoreLowerer` by providing an interface to read
-// item tree-like storage.
-struct BodyItemStoreSourceReader<'body> {
-    body: &'body BodyData,
-    def_map: &'body DefMap,
-}
-
-impl<'body> ItemStoreSourceReader<'body> for BodyItemStoreSourceReader<'body> {
-    fn item(&self, source: ItemSource) -> anyhow::Result<&'body ItemNode> {
-        let (DefMapRef::Body(body_ref), ItemSourceKind::Body(source)) =
-            (self.def_map.own_ref(), source.kind)
-        else {
-            anyhow::bail!("body item store source should point to body source item");
-        };
-
-        if source.body != body_ref {
-            anyhow::bail!("body item store source should belong to this body");
-        }
-
-        self.body.source_item(source.item).with_context(|| {
-            format!(
-                "while attempting to fetch body source item {:?}",
-                source.item
-            )
-        })
     }
 }

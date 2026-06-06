@@ -1,5 +1,8 @@
+use wincode::{SchemaRead, SchemaWrite};
+
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId};
 use rg_item_tree::{ItemTreeId, TypeRef};
+use rg_memsize::MemorySize;
 use rg_parse::Span;
 use rg_text::Name;
 use rg_ty::Ty;
@@ -7,9 +10,7 @@ use rg_ty::Ty;
 use super::body::BodySource;
 
 /// One local binding introduced by a parameter or `let`.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct BindingData {
     pub source: BodySource,
     pub name_span: Option<Span>,
@@ -24,16 +25,7 @@ pub struct BindingData {
 ///
 /// Pattern lowering records ambiguous identifiers as slots first. Body resolution then decides
 /// whether each slot becomes a real binding or remains a path-pattern use.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub(crate) enum PendingBindingResolution {
     AlwaysBinding,
@@ -54,15 +46,7 @@ impl BindingData {
 
 /// Local binding category.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 #[memsize(leaf)]
 pub enum BindingKind {
@@ -78,7 +62,7 @@ pub enum BindingKind {
 }
 
 /// Receiver form written by a function's self parameter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum BodySelfParamKind {
     Value,
     Reference { mutability: rg_ty::RefMutability },
@@ -86,9 +70,7 @@ pub enum BodySelfParamKind {
 }
 
 /// One lowered statement.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct StmtData {
     pub source: BodySource,
     pub kind: StmtKind,
@@ -101,9 +83,7 @@ impl StmtData {
 }
 
 /// Statement forms that matter for the first Body IR pass.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum StmtKind {
     /// `let <pat>: Type = <expr>;` or `let <pat> = <expr> else { ... };`.
     Let {
