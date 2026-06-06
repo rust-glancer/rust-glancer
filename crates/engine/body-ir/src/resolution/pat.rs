@@ -5,10 +5,14 @@
 //! not infer the scrutinee type by themselves.
 
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId, TypeDefId};
-use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource, Path, PathSegment};
+use rg_ir_storage::{
+    DefMapSource, ItemStoreQuery, ItemStoreSource, Path, PathSegment, TargetItemQuery,
+};
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
-use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
+use rg_ty::{
+    ItemPathQuery, IterationItemResolver, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst,
+};
 
 use crate::{
     ir::expr::ExprKind,
@@ -75,6 +79,17 @@ where
                     let expected_ty = self.expected_ty_for_let(scope, None, initializer)?;
                     self.propagate_pat(pat, &expected_ty, &mut updates)?;
                 }
+                ExprKind::For {
+                    pat: Some(pat),
+                    iterable: Some(iterable),
+                    ..
+                } => {
+                    let iterable_ty = &self.source.body().exprs[iterable].ty;
+                    let item_ty = self
+                        .iteration_items()
+                        .into_iterator_item_for_ty(iterable_ty)?;
+                    self.propagate_pat(pat, &item_ty, &mut updates)?;
+                }
                 ExprKind::Path { .. }
                 | ExprKind::Call { .. }
                 | ExprKind::Tuple { .. }
@@ -117,6 +132,16 @@ where
 
     fn type_path_resolver(&self) -> BodyTypePathResolver<'query, D, I> {
         BodyTypePathResolver::new(self.source)
+    }
+
+    fn iteration_items(
+        &self,
+    ) -> IterationItemResolver<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>>
+    {
+        let source = self.source;
+        let item_paths = ItemPathQuery::new(source, source);
+        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
+        IterationItemResolver::new(item_paths, target_items)
     }
 
     fn expected_ty_for_let(

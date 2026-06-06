@@ -1,5 +1,5 @@
 use rg_ir_model::items::{GenericParams, TypeRef};
-use rg_ir_model::{TypeDefRef, TypePathResolution};
+use rg_ir_model::{TraitRef, TypeDefRef, TypePathResolution};
 use rg_memsize::Shrink;
 use rg_text::Name;
 
@@ -85,6 +85,10 @@ pub enum Ty {
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")]
         inner: Box<Ty>,
     },
+    Opaque {
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<OpaqueTraitBound>>")]
+        bounds: Vec<OpaqueTraitBound>,
+    },
     Syntax(TypeRef),
     Nominal(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<NominalTy>>")] Vec<NominalTy>),
     SelfTy(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<NominalTy>>")] Vec<NominalTy>),
@@ -99,6 +103,25 @@ pub struct NominalTy {
     pub def: TypeDefRef,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
     pub args: Vec<GenericArg>,
+}
+
+/// Resolved trait bound preserved for opaque `impl Trait` types.
+#[derive(
+    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
+)]
+pub struct OpaqueTraitBound {
+    pub trait_ref: TraitRef,
+    #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
+    pub args: Vec<GenericArg>,
+}
+
+impl OpaqueTraitBound {
+    fn shrink_to_fit(&mut self) {
+        self.args.shrink_to_fit();
+        for arg in &mut self.args {
+            arg.shrink_to_fit();
+        }
+    }
 }
 
 impl NominalTy {
@@ -150,6 +173,14 @@ impl Ty {
 
     pub fn syntax(ty: TypeRef) -> Self {
         Self::Syntax(ty)
+    }
+
+    pub fn opaque(bounds: Vec<OpaqueTraitBound>) -> Self {
+        if bounds.is_empty() {
+            return Self::Unknown;
+        }
+
+        Self::Opaque { bounds }
     }
 
     pub fn nominal(types: Vec<NominalTy>) -> Self {
@@ -210,6 +241,7 @@ impl Ty {
             | Self::Array { .. }
             | Self::Slice(_)
             | Self::Reference { .. }
+            | Self::Opaque { .. }
             | Self::Syntax(_)
             | Self::Unknown => &[],
         }
@@ -224,6 +256,7 @@ impl Ty {
             | Self::Tuple(_)
             | Self::Array { .. }
             | Self::Slice(_)
+            | Self::Opaque { .. }
             | Self::Syntax(_)
             | Self::Nominal(_)
             | Self::SelfTy(_)
@@ -236,6 +269,21 @@ impl Ty {
             tys.pop().expect("one type should exist")
         } else {
             Self::Unknown
+        }
+    }
+
+    pub(crate) fn is_projectable(&self) -> bool {
+        match self {
+            Self::Unknown | Self::Syntax(_) => false,
+            Self::Tuple(fields) => fields.iter().all(Self::is_projectable),
+            Self::Array { inner, .. } | Self::Slice(inner) => inner.is_projectable(),
+            Self::Reference { inner, .. } => inner.is_projectable(),
+            Self::Opaque { bounds } => bounds
+                .iter()
+                .all(|bound| bound.args.iter().all(GenericArg::is_projectable)),
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Nominal(_) | Self::SelfTy(_) => {
+                true
+            }
         }
     }
 
@@ -255,6 +303,12 @@ impl Ty {
             }
             Self::Slice(inner) => inner.shrink_to_fit(),
             Self::Reference { inner, .. } => inner.shrink_to_fit(),
+            Self::Opaque { bounds } => {
+                bounds.shrink_to_fit();
+                for bound in bounds {
+                    bound.shrink_to_fit();
+                }
+            }
             Self::Syntax(ty) => ty.shrink_to_fit(),
             Self::Nominal(types) | Self::SelfTy(types) => {
                 types.shrink_to_fit();

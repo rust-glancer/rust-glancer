@@ -892,6 +892,181 @@ pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3
 }
 
 #[test]
+fn propagates_for_loop_item_types_from_into_iterator() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+    }
+
+    pub trait Iterator {
+        type Item;
+    }
+}
+
+impl<'a, T> iter::IntoIterator for &'a [T] {
+    type Item = &'a T;
+}
+
+impl<T, const N: usize> iter::IntoIterator for [T; N] {
+    type Item = T;
+}
+
+impl<I: iter::Iterator> iter::IntoIterator for I {
+    type Item = I::Item;
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct Package;
+pub struct UserId;
+pub struct Event;
+
+pub struct Bag<T> {
+    value: T,
+}
+
+impl<T> core::iter::IntoIterator for Bag<T> {
+    type Item = T;
+}
+
+pub struct Events;
+
+impl core::iter::Iterator for Events {
+    type Item = Event;
+}
+
+pub struct KeyStream<T> {
+    value: T,
+}
+
+impl<T> core::iter::Iterator for KeyStream<T> {
+    type Item = T;
+}
+
+pub struct KeyMap<T> {
+    value: T,
+}
+
+impl<T> KeyMap<T> {
+    pub fn concrete_keys(&self) -> KeyStream<T> {
+        missing()
+    }
+
+    pub fn opaque_keys(&self) -> impl core::iter::Iterator<Item = T> {
+        missing()
+    }
+}
+
+pub fn use_it(
+    packages: &[Package],
+    array: [Package; 3],
+    pairs: [(Package, UserId); 2],
+    bag: Bag<UserId>,
+    events: Events,
+    key_map: KeyMap<UserId>,
+) {
+    for borrowed in packages {
+        let _borrowed = borr$type_borrowed$owed;
+    }
+
+    for owned in array {
+        let _owned = ow$type_owned$ned;
+    }
+
+    for (package, user_id) in pairs {
+        let _package = pack$type_tuple_package$age;
+        let _user_id = user_$type_tuple_user_id$id;
+    }
+
+    for user_id in bag {
+        let _bag_user_id = user_$type_bag_user_id$id;
+    }
+
+    for event in events {
+        let _event = eve$type_event$nt;
+    }
+
+    let _opaque_keys = key_map.opaque_keys()$type_opaque_return$;
+
+    for concrete_key in key_map.concrete_keys() {
+        let _concrete_key = concrete_$type_concrete_key$key;
+    }
+
+    for opaque_key in key_map.opaque_keys() {
+        let _opaque_key = opaque_$type_opaque_key$key;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("for item from borrowed slice", "type_borrowed").in_lib("app"),
+            AnalysisQuery::ty("for item from array", "type_owned").in_lib("app"),
+            AnalysisQuery::ty("for tuple item first field", "type_tuple_package").in_lib("app"),
+            AnalysisQuery::ty("for tuple item second field", "type_tuple_user_id").in_lib("app"),
+            AnalysisQuery::ty("for item from nominal impl", "type_bag_user_id").in_lib("app"),
+            AnalysisQuery::ty("for item from iterator blanket impl", "type_event").in_lib("app"),
+            AnalysisQuery::ty("opaque iterator return", "type_opaque_return").in_lib("app"),
+            AnalysisQuery::ty(
+                "for item from concrete iterator return",
+                "type_concrete_key",
+            )
+            .in_lib("app"),
+            AnalysisQuery::ty("for item from opaque iterator return", "type_opaque_key")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            for item from borrowed slice
+            - &nominal struct app[lib]::crate::Package
+
+            for item from array
+            - nominal struct app[lib]::crate::Package
+
+            for tuple item first field
+            - nominal struct app[lib]::crate::Package
+
+            for tuple item second field
+            - nominal struct app[lib]::crate::UserId
+
+            for item from nominal impl
+            - nominal struct app[lib]::crate::UserId
+
+            for item from iterator blanket impl
+            - nominal struct app[lib]::crate::Event
+
+            opaque iterator return
+            - impl trait fake_core[lib]::crate::iter::Iterator<Item = nominal struct app[lib]::crate::UserId>
+
+            for item from concrete iterator return
+            - nominal struct app[lib]::crate::UserId
+
+            for item from opaque iterator return
+            - nominal struct app[lib]::crate::UserId
+        "#]],
+    );
+}
+
+#[test]
 fn primitive_type_paths_respect_type_namespace_shadowing() {
     check_analysis_queries(
         r#"

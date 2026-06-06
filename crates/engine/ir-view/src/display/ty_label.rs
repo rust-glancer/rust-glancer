@@ -5,9 +5,9 @@
 //! are useful while reading code.
 
 use rg_ir_storage::ItemStoreQuery;
-use rg_ty::{GenericArg, NominalTy, Ty};
+use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
 
-use crate::IndexedViewDb;
+use crate::{IndexedViewDb, item::path::PathView};
 
 pub struct TypeRenderer<'a, 'db>(&'a IndexedViewDb<'db>);
 
@@ -45,6 +45,13 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             Ty::Reference { mutability, inner } => Ok(self
                 .render(inner)?
                 .map(|inner| format!("{}{inner}", mutability.render_prefix()))),
+            Ty::Opaque { bounds } => {
+                let bounds = bounds
+                    .iter()
+                    .map(|bound| self.render_opaque_bound(bound))
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                Ok((!bounds.is_empty()).then(|| format!("impl {}", bounds.join(" + "))))
+            }
             Ty::Nominal(types) | Ty::SelfTy(types) => {
                 let mut labels = Vec::new();
                 for ty in types {
@@ -73,6 +80,16 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
             "{name}{}",
             self.render_generic_args(&ty.args)?
         )))
+    }
+
+    fn render_opaque_bound(&self, bound: &OpaqueTraitBound) -> anyhow::Result<String> {
+        let trait_path = PathView::new(self.0)
+            .trait_path(bound.trait_ref)?
+            .unwrap_or_else(|| "<trait>".to_string());
+        Ok(format!(
+            "{trait_path}{}",
+            self.render_generic_args(&bound.args)?
+        ))
     }
 
     fn render_generic_args(&self, args: &[GenericArg]) -> anyhow::Result<String> {

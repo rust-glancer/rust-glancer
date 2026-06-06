@@ -1,9 +1,11 @@
 //! Target-scoped item lookup.
 
-use rg_ir_model::{DefMapRef, FunctionRef, ImplRef, TargetRef, TraitImplRef, TraitRef, TypeDefRef};
+use rg_ir_model::{
+    DefMapRef, FunctionRef, ImplRef, ModuleRef, TargetRef, TraitImplRef, TraitRef, TypeDefRef,
+};
 
 use super::{ItemStoreQuery, ItemStoreSource};
-use crate::{DefMapQuery, DefMapSource, ItemStore, push_unique};
+use crate::{DefMapQuery, DefMapSource, ItemStore, TargetResolutionEnv, push_unique};
 
 /// Item queries that need a Rust language visibility context.
 ///
@@ -31,6 +33,11 @@ where
 
     pub fn items(&self) -> &ItemStoreQuery<'item, I> {
         &self.items
+    }
+
+    /// Returns the root module of the target where lookup is performed.
+    pub fn use_site_root_module(&self) -> Result<Option<ModuleRef>, I::Error> {
+        self.def_maps.root_module(self.use_site)
     }
 
     /// Returns stores visible from this query's use-site target.

@@ -16,7 +16,7 @@ use rg_ir_storage::ModuleOrigin;
 use rg_item_tree::FieldItem;
 use rg_package_store::PackageLoader;
 use rg_parse::{Package, ParseDb, Target};
-use rg_ty::{GenericArg, NominalTy, Ty};
+use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build(fixture);
@@ -1005,6 +1005,14 @@ impl TargetBodyIrSnapshot<'_> {
             Ty::Reference { mutability, inner } => {
                 format!("{}{}", mutability.render_prefix(), self.render_ty(inner))
             }
+            Ty::Opaque { bounds } => {
+                let mut bounds = bounds
+                    .iter()
+                    .map(|bound| self.render_opaque_bound(bound))
+                    .collect::<Vec<_>>();
+                bounds.sort();
+                format!("impl {}", bounds.join(" + "))
+            }
             Ty::Nominal(types) => {
                 let mut types = types
                     .iter()
@@ -1023,6 +1031,14 @@ impl TargetBodyIrSnapshot<'_> {
             }
             Ty::Unknown => "<unknown>".to_string(),
         }
+    }
+
+    fn render_opaque_bound(&self, bound: &OpaqueTraitBound) -> String {
+        format!(
+            "{}{}",
+            self.render_trait_ref(bound.trait_ref),
+            self.render_generic_args(&bound.args)
+        )
     }
 
     fn render_body_nominal_ty(&self, ty: &NominalTy) -> String {

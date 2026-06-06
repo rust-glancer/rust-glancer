@@ -36,6 +36,18 @@ impl GenericArg {
             | Self::Unsupported(_) => None,
         }
     }
+
+    pub(crate) fn is_projectable(&self) -> bool {
+        match self {
+            Self::Type(ty) => ty.is_projectable(),
+            Self::Lifetime(_) | Self::Const(_) => true,
+            Self::FnTraitArgs { params, ret } => {
+                params.iter().all(Ty::is_projectable) && ret.is_projectable()
+            }
+            Self::AssocType { ty, .. } => ty.as_deref().is_none_or(Ty::is_projectable),
+            Self::Unsupported(_) => false,
+        }
+    }
 }
 
 impl Shrink for GenericArg {

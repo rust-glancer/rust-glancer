@@ -3,17 +3,16 @@
 //! This module deliberately stays narrow: it recognizes `core::ops::Deref` impls for a known
 //! nominal receiver and resolves the impl's associated `Target` type with the receiver substitution.
 
-use rg_ir_model::items::TypeRef;
-use rg_ir_model::{
-    AssocItemId, TraitImplRef, TypeAliasRef, TypePathResolution, hir::items::ImplData,
-};
+use rg_ir_model::{TraitImplRef, hir::items::ImplData};
 use rg_ir_storage::{
     DefMapSource, ItemLookupIndex, ItemStoreSource, Path, PathSegment, TargetItemQuery,
     TypePathContext,
 };
 use rg_text::Name;
 
-use crate::{ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
+use crate::{
+    ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst, associated_type::AssociatedTypeProjector,
+};
 
 /// Resolves the associated `Target` type for applicable `core::ops::Deref` impls.
 #[derive(Clone)]
@@ -109,13 +108,8 @@ where
             impl_ref: Some(trait_impl.impl_ref),
         };
 
-        Ok(match self.item_paths.resolve_type_path(context, &path)? {
-            TypePathResolution::Traits(traits) => traits.contains(&trait_impl.trait_ref),
-            TypePathResolution::SelfType(_)
-            | TypePathResolution::TypeDefs(_)
-            | TypePathResolution::TypeAliases(_)
-            | TypePathResolution::Unknown => false,
-        })
+        AssociatedTypeProjector::new(&self.item_paths, &self.target_items)
+            .trait_impl_resolves_to_path(trait_impl, context, &path)
     }
 
     /// Resolves the `type Target = ...` item declared in a matching `Deref` impl.
@@ -125,49 +119,8 @@ where
         impl_data: &ImplData,
         subst: &TypeSubst,
     ) -> Result<Option<Ty>, D::Error> {
-        let item_query = self.item_paths.items();
-        for item in &impl_data.items {
-            let AssocItemId::TypeAlias(type_alias_id) = item else {
-                continue;
-            };
-            let type_alias_ref = TypeAliasRef {
-                origin: trait_impl.impl_ref.origin,
-                id: *type_alias_id,
-            };
-            let Some(type_alias_data) = item_query.type_alias_data(type_alias_ref)? else {
-                continue;
-            };
-            if type_alias_data.name.as_str() != "Target" {
-                continue;
-            }
-            let Some(target_ty) = type_alias_data.signature.aliased_ty() else {
-                continue;
-            };
-
-            let resolved = self.ty_from_target_type_ref(trait_impl, impl_data, target_ty, subst)?;
-            if matches!(resolved, Ty::Unknown | Ty::Syntax(_)) {
-                return Ok(None);
-            }
-            return Ok(Some(resolved));
-        }
-
-        Ok(None)
-    }
-
-    /// Converts the associated target type after applying impl substitutions.
-    fn ty_from_target_type_ref(
-        &self,
-        trait_impl: TraitImplRef,
-        impl_data: &ImplData,
-        target_ty: &TypeRef,
-        subst: &TypeSubst,
-    ) -> Result<Ty, D::Error> {
-        let context = TypePathContext {
-            module: impl_data.owner,
-            impl_ref: Some(trait_impl.impl_ref),
-        };
-        self.item_paths
-            .resolve_type_ref(target_ty, context, Ty::syntax(target_ty.clone()), subst)
+        AssociatedTypeProjector::new(&self.item_paths, &self.target_items)
+            .associated_type_from_impl(trait_impl, impl_data, "Target", subst)
     }
 }
 

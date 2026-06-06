@@ -265,6 +265,123 @@ pub fn walk(input: Maybe, items: Items) {
 }
 
 #[test]
+fn propagates_for_loop_items_from_into_iterator() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+    }
+}
+
+impl<'a, T> iter::IntoIterator for &'a [T] {
+    type Item = &'a T;
+}
+
+impl<T, const N: usize> iter::IntoIterator for [T; N] {
+    type Item = T;
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct Package;
+pub struct UserId;
+
+pub fn use_it(packages: &[Package], array: [Package; 3], pairs: [(Package, UserId); 2]) {
+    for borrowed in packages {
+        borrowed;
+    }
+
+    for owned in array {
+        owned;
+    }
+
+    for (package, user_id) in pairs {
+        package;
+        user_id;
+    }
+}
+"#,
+        expect![[r#"
+            package app
+
+            app [lib]
+            body b0 fn app[lib]::crate::use_it @ 4:1-17:2
+            scopes
+            - s0 parent <none>: v0, v1, v2
+            - s1 parent s0: <none>
+            - s2 parent s1: v3
+            - s3 parent s2: <none>
+            - s4 parent s1: v4
+            - s5 parent s4: <none>
+            - s6 parent s1: v5, v6
+            - s7 parent s6: <none>
+            bindings
+            - v0 param packages `packages`: &[Package] => &[nominal struct app[lib]::crate::Package] @ 4:15-4:23
+            - v1 param array `array`: [Package; 3] => [nominal struct app[lib]::crate::Package; 3] @ 4:37-4:42
+            - v2 param pairs `pairs`: [(Package, UserId); 2] => [(nominal struct app[lib]::crate::Package, nominal struct app[lib]::crate::UserId); 2] @ 4:58-4:63
+            - v3 let borrowed `borrowed` => &nominal struct app[lib]::crate::Package @ 5:9-5:17
+            - v4 let owned `owned` => nominal struct app[lib]::crate::Package @ 9:9-9:14
+            - v5 let package `package` => nominal struct app[lib]::crate::Package @ 13:10-13:17
+            - v6 let user_id `user_id` => nominal struct app[lib]::crate::UserId @ 13:19-13:26
+            body
+            expr e13 block s1 => () @ 4:89-17:2
+              stmt s1 expr @ 5:5-7:6
+                expr e3 for s2 v3 => () @ 5:5-7:6
+                  iterable
+                    expr e0 path packages -> local v0 => &[nominal struct app[lib]::crate::Package] @ 5:21-5:29
+                  body
+                    expr e2 block s3 => () @ 5:30-7:6
+                      stmt s0 expr; @ 6:9-6:18
+                        expr e1 path borrowed -> local v3 => &nominal struct app[lib]::crate::Package @ 6:9-6:17
+              stmt s3 expr @ 9:5-11:6
+                expr e7 for s4 v4 => () @ 9:5-11:6
+                  iterable
+                    expr e4 path array -> local v1 => [nominal struct app[lib]::crate::Package; 3] @ 9:18-9:23
+                  body
+                    expr e6 block s5 => () @ 9:24-11:6
+                      stmt s2 expr; @ 10:9-10:15
+                        expr e5 path owned -> local v4 => nominal struct app[lib]::crate::Package @ 10:9-10:14
+              tail
+                expr e12 for s6 v5, v6 => () @ 13:5-16:6
+                  iterable
+                    expr e8 path pairs -> local v2 => [(nominal struct app[lib]::crate::Package, nominal struct app[lib]::crate::UserId); 2] @ 13:31-13:36
+                  body
+                    expr e11 block s7 => () @ 13:37-16:6
+                      stmt s4 expr; @ 14:9-14:17
+                        expr e9 path package -> local v5 => nominal struct app[lib]::crate::Package @ 14:9-14:16
+                      stmt s5 expr; @ 15:9-15:17
+                        expr e10 path user_id -> local v6 => nominal struct app[lib]::crate::UserId @ 15:9-15:16
+
+
+            package fake_core
+
+            fake_core [lib]
+        "#]],
+    );
+}
+
+#[test]
 fn lowers_labeled_block_control_flow() {
     check_project_body_ir(
         r#"

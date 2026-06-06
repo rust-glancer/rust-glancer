@@ -19,7 +19,7 @@ use rg_ir_view::IndexedViewDb;
 use rg_package_store::PackageLoader;
 use rg_parse::{FileId, ParseDb, Span};
 use rg_semantic_ir::{SemanticIrReadTxn, testonly::SemanticIrFixture};
-use rg_ty::{GenericArg, NominalTy, Ty};
+use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
 use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers};
 
@@ -1119,6 +1119,14 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             Ty::Reference { mutability, inner } => {
                 format!("{}{}", mutability.render_prefix(), self.render_ty(inner))
             }
+            Ty::Opaque { bounds } => {
+                let mut bounds = bounds
+                    .iter()
+                    .map(|bound| self.render_opaque_bound(bound))
+                    .collect::<Vec<_>>();
+                bounds.sort();
+                format!("impl {}", bounds.join(" + "))
+            }
             Ty::Nominal(types) => {
                 let mut types = types
                     .iter()
@@ -1137,6 +1145,14 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             }
             Ty::Unknown => "<unknown>".to_string(),
         }
+    }
+
+    fn render_opaque_bound(&self, bound: &OpaqueTraitBound) -> String {
+        format!(
+            "{}{}",
+            self.render_trait_ref(bound.trait_ref),
+            self.render_generic_args(&bound.args)
+        )
     }
 
     fn render_body_nominal_ty(&self, ty: &NominalTy) -> String {
@@ -1227,6 +1243,28 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 )
             }
         }
+    }
+
+    fn render_trait_ref(&self, trait_ref: TraitRef) -> String {
+        let items = match trait_ref.origin {
+            DefMapRef::Target(target) => self
+                .db
+                .resident_target_ir(target)
+                .expect("target semantic IR should exist while rendering analysis trait"),
+            DefMapRef::Body(body) => self
+                .db
+                .resident_body_item_store(body)
+                .expect("body item store should exist while rendering analysis trait"),
+        };
+
+        let data = items
+            .trait_data(trait_ref.id)
+            .expect("trait id should exist while rendering analysis type");
+        format!(
+            "trait {}::{}",
+            self.render_module_ref(data.owner),
+            data.name
+        )
     }
 
     fn render_function_ref(&self, function_ref: FunctionRef) -> String {
