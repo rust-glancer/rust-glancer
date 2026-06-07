@@ -16,7 +16,8 @@ use rg_ty::{
 };
 
 use crate::{
-    ir::expr::{ExprBinaryOp, ExprKind, ExprUnaryOp, ExprWrapperKind},
+    ExprBinaryOp, ExprUnaryOp,
+    ir::expr::{ExprKind, ExprWrapperKind},
     ir::resolved::BodyResolution,
 };
 

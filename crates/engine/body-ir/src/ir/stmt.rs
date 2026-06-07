@@ -1,13 +1,11 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_ir_model::{BindingId, ExprId, PatId, ScopeId};
+use rg_ir_model::{BindingId, BodySource, ExprId, PatId, ScopeId};
 use rg_item_tree::{ItemTreeId, TypeRef};
 use rg_memsize::MemorySize;
 use rg_parse::Span;
 use rg_text::Name;
 use rg_ty::Ty;
-
-use super::body::BodySource;
 
 /// One local binding introduced by a parameter or `let`.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]

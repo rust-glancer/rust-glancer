@@ -6,7 +6,7 @@ use rg_syntax::{
 };
 
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId};
-use rg_item_tree::{FieldKey, TypeRef};
+use rg_item_tree::{FieldKey, FromAst as _, RecordPatFieldAst, TypeRef};
 use rg_text::Name;
 use rg_ty::Ty;
 
@@ -126,10 +126,7 @@ impl BodyLowering<'_> {
                 };
                 let name_span = self.source(name_ast.syntax()).span;
                 let name = self.intern_ast_name(name_ast);
-                let mode = PatBindingMode {
-                    by_ref: pat.ref_token().is_some(),
-                    mutable: pat.mut_token().is_some(),
-                };
+                let mode = PatBindingMode::from_ast(&pat, ());
                 let ambiguous_path = pat.is_simple_ident().then(|| {
                     BodyPath::new(
                         name_span,
@@ -213,7 +210,9 @@ impl BodyLowering<'_> {
                         let name = self.intern_ast_name_or_name_ref(field_name);
                         let key = FieldKey::Named(name.clone());
                         let source_span = self.source(field.syntax()).span;
-                        let syntax = RecordFieldSyntax::from(&field);
+                        let syntax = <RecordFieldSyntax as rg_item_tree::FromAst<
+                            RecordPatFieldAst,
+                        >>::from_ast(&field, RecordPatFieldAst);
                         let pat = if syntax.is_explicit() {
                             match field.pat() {
                                 Some(inner) => self.lower_pat_inner(
@@ -274,11 +273,7 @@ impl BodyLowering<'_> {
                     return self.alloc_unsupported_pat(pat.syntax());
                 };
                 PatKind::Ref {
-                    mutability: if pat.mut_token().is_some() {
-                        PatMutability::Mut
-                    } else {
-                        PatMutability::Shared
-                    },
+                    mutability: PatMutability::from_ast(&pat, ()),
                     pat: self.lower_pat_inner(inner, scope, kind, None, alloc_bindings, bindings),
                 }
             }
@@ -331,10 +326,7 @@ impl BodyLowering<'_> {
                 end: pat
                     .end()
                     .map(|end| self.lower_pat_inner(end, scope, kind, None, false, bindings)),
-                kind: pat.op_kind().map(|kind| match kind {
-                    ast::RangeOp::Exclusive => PatRangeKind::Exclusive,
-                    ast::RangeOp::Inclusive => PatRangeKind::Inclusive,
-                }),
+                kind: pat.op_kind().map(|kind| PatRangeKind::from_ast(&kind, ())),
             },
             ast::Pat::ConstBlockPat(pat) => PatKind::ConstBlock {
                 expr: pat
@@ -433,15 +425,5 @@ impl BodyLowering<'_> {
             source: self.source(syntax),
             kind: PatKind::Unsupported,
         })
-    }
-}
-
-impl From<&ast::RecordPatField> for RecordFieldSyntax {
-    fn from(field: &ast::RecordPatField) -> Self {
-        if field.colon_token().is_some() {
-            Self::Explicit
-        } else {
-            Self::Shorthand
-        }
     }
 }

@@ -10,7 +10,9 @@ use rg_syntax::{
 };
 
 use rg_ir_model::{ExprId, ScopeId};
-use rg_item_tree::{FieldKey, FromAst as _, GenericArg, TypeRef};
+use rg_item_tree::{
+    FieldKey, FromAst as _, GenericArg, MaybeFromAst as _, RecordExprFieldAst, TypeRef,
+};
 use rg_parse::{Span, TextSpan};
 use rg_ty::Ty;
 
@@ -21,16 +23,6 @@ use crate::ir::{
 };
 
 use super::body::BodyLowering;
-
-impl From<&ast::RecordExprField> for RecordFieldSyntax {
-    fn from(field: &ast::RecordExprField) -> Self {
-        if field.colon_token().is_some() {
-            Self::Explicit
-        } else {
-            Self::Shorthand
-        }
-    }
-}
 
 impl BodyLowering<'_> {
     pub(super) fn lower_expr(&mut self, expr: ast::Expr, scope: ScopeId) -> ExprId {
@@ -179,7 +171,7 @@ impl BodyLowering<'_> {
     fn lower_range_expr(&mut self, range: ast::RangeExpr, scope: ScopeId) -> ExprId {
         let start = range.start().map(|start| self.lower_expr(start, scope));
         let end = range.end().map(|end| self.lower_expr(end, scope));
-        let kind = range.op_kind().map(ExprRangeKind::from_ast);
+        let kind = range.op_kind().map(|op| ExprRangeKind::from_ast(&op, ()));
 
         self.alloc_expr(range.syntax(), scope, ExprKind::Range { start, end, kind })
     }
@@ -194,7 +186,7 @@ impl BodyLowering<'_> {
     }
 
     fn lower_unary_expr(&mut self, prefix: ast::PrefixExpr, scope: ScopeId) -> ExprId {
-        let op = prefix.op_kind().map(ExprUnaryOp::from_ast);
+        let op = prefix.op_kind().map(|op| ExprUnaryOp::from_ast(&op, ()));
         let expr = prefix.expr().map(|expr| self.lower_expr(expr, scope));
 
         self.alloc_expr(prefix.syntax(), scope, ExprKind::Unary { op, expr })
@@ -218,7 +210,7 @@ impl BodyLowering<'_> {
         op: Option<BinaryOp>,
         rhs: Option<ExprId>,
     ) -> ExprId {
-        if let Some(assign_op) = op.and_then(ExprAssignOp::from_ast) {
+        if let Some(assign_op) = op.and_then(|op| ExprAssignOp::maybe_from_ast(&op, ())) {
             return self.alloc_expr(
                 syntax,
                 scope,
@@ -235,7 +227,7 @@ impl BodyLowering<'_> {
             scope,
             ExprKind::Binary {
                 lhs,
-                op: op.and_then(ExprBinaryOp::from_ast),
+                op: op.and_then(|op| ExprBinaryOp::maybe_from_ast(&op, ())),
                 rhs,
             },
         )
@@ -268,16 +260,8 @@ impl BodyLowering<'_> {
         let body = closure
             .body()
             .map(|body| self.lower_expr(body, closure_scope));
-        let capture = if closure.move_token().is_some() {
-            ClosureCapture::Move
-        } else {
-            ClosureCapture::Inferred
-        };
-        let kind = if closure.async_token().is_some() {
-            ClosureKind::Async
-        } else {
-            ClosureKind::Normal
-        };
+        let capture = ClosureCapture::from_ast(&closure, ());
+        let kind = ClosureKind::from_ast(&closure, ());
 
         self.alloc_expr(
             closure.syntax(),
@@ -645,7 +629,10 @@ impl BodyLowering<'_> {
         let key_span = self.source(field_name.syntax()).span;
         let key = FieldKey::Named(self.intern_ast_name_ref(field_name));
         let source_span = self.source(field.syntax()).span;
-        let syntax = RecordFieldSyntax::from(&field);
+        let syntax = <RecordFieldSyntax as rg_item_tree::FromAst<RecordExprFieldAst>>::from_ast(
+            &field,
+            RecordExprFieldAst,
+        );
         let value = field.expr().map(|expr| self.lower_expr(expr, scope));
 
         Some(RecordExprField {

@@ -1,5 +1,3 @@
-//! Shared record-field IR vocabulary.
-
 use wincode::{SchemaRead, SchemaWrite};
 
 use rg_memsize::MemorySize;

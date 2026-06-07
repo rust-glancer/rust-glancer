@@ -11,8 +11,7 @@ use rg_text::Name;
 use rg_ty::{PrimitiveTy, UnsignedIntTy};
 
 use crate::ir::{
-    BodyPath, BodySource, ExprAssignOp, ExprBinaryOp, ExprRangeKind, ExprUnaryOp, LabelData,
-    LiteralKind,
+    BodyPath, BodySource, LabelData, LiteralKind,
     path::{BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind},
 };
 
@@ -35,90 +34,6 @@ impl LiteralKind {
             ast::LiteralKind::String(_)
             | ast::LiteralKind::ByteString(_)
             | ast::LiteralKind::CString(_) => Self::String,
-        }
-    }
-}
-
-impl ExprUnaryOp {
-    pub(super) fn from_ast(op: ast::UnaryOp) -> Self {
-        match op {
-            ast::UnaryOp::Deref => Self::Deref,
-            ast::UnaryOp::Not => Self::Not,
-            ast::UnaryOp::Neg => Self::Neg,
-        }
-    }
-}
-
-impl ExprBinaryOp {
-    pub(super) fn from_ast(op: ast::BinaryOp) -> Option<Self> {
-        Some(match op {
-            ast::BinaryOp::LogicOp(ast::LogicOp::Or) => Self::LogicOr,
-            ast::BinaryOp::LogicOp(ast::LogicOp::And) => Self::LogicAnd,
-            ast::BinaryOp::CmpOp(ast::CmpOp::Eq { negated: false }) => Self::Eq,
-            ast::BinaryOp::CmpOp(ast::CmpOp::Eq { negated: true }) => Self::NotEq,
-            ast::BinaryOp::CmpOp(ast::CmpOp::Ord {
-                ordering: ast::Ordering::Less,
-                strict: true,
-            }) => Self::Less,
-            ast::BinaryOp::CmpOp(ast::CmpOp::Ord {
-                ordering: ast::Ordering::Less,
-                strict: false,
-            }) => Self::LessEq,
-            ast::BinaryOp::CmpOp(ast::CmpOp::Ord {
-                ordering: ast::Ordering::Greater,
-                strict: true,
-            }) => Self::Greater,
-            ast::BinaryOp::CmpOp(ast::CmpOp::Ord {
-                ordering: ast::Ordering::Greater,
-                strict: false,
-            }) => Self::GreaterEq,
-            ast::BinaryOp::ArithOp(op) => Self::from_arith_op(op),
-            ast::BinaryOp::Assignment { .. } => return None,
-        })
-    }
-
-    fn from_arith_op(op: ast::ArithOp) -> Self {
-        match op {
-            ast::ArithOp::Add => Self::Add,
-            ast::ArithOp::Mul => Self::Mul,
-            ast::ArithOp::Sub => Self::Sub,
-            ast::ArithOp::Div => Self::Div,
-            ast::ArithOp::Rem => Self::Rem,
-            ast::ArithOp::Shl => Self::Shl,
-            ast::ArithOp::Shr => Self::Shr,
-            ast::ArithOp::BitXor => Self::BitXor,
-            ast::ArithOp::BitOr => Self::BitOr,
-            ast::ArithOp::BitAnd => Self::BitAnd,
-        }
-    }
-}
-
-impl ExprAssignOp {
-    pub(super) fn from_ast(op: ast::BinaryOp) -> Option<Self> {
-        match op {
-            ast::BinaryOp::Assignment { op } => Some(match op {
-                None => Self::Assign,
-                Some(ast::ArithOp::Add) => Self::Add,
-                Some(ast::ArithOp::Mul) => Self::Mul,
-                Some(ast::ArithOp::Sub) => Self::Sub,
-                Some(ast::ArithOp::Div) => Self::Div,
-                Some(ast::ArithOp::Rem) => Self::Rem,
-                Some(ast::ArithOp::Shl) => Self::Shl,
-                Some(ast::ArithOp::Shr) => Self::Shr,
-                Some(ast::ArithOp::BitXor) => Self::BitXor,
-                Some(ast::ArithOp::BitOr) => Self::BitOr,
-                Some(ast::ArithOp::BitAnd) => Self::BitAnd,
-            }),
-            ast::BinaryOp::LogicOp(_) | ast::BinaryOp::ArithOp(_) | ast::BinaryOp::CmpOp(_) => None,
-        }
-    }
-}
-
-impl ExprRangeKind {
-    pub(super) fn from_ast(op: ast::RangeOp) -> Self {
-        match op {
-            ast::RangeOp::Exclusive => Self::Exclusive,
-            ast::RangeOp::Inclusive => Self::Inclusive,
         }
     }
 }

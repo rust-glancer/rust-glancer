@@ -1,3 +1,4 @@
+mod body;
 mod db;
 mod item;
 mod lower;
@@ -10,6 +11,7 @@ pub mod testonly;
 mod tests;
 
 pub use self::{
+    body::{RecordExprFieldAst, RecordPatFieldAst},
     db::ItemTreeDb,
     item::{
         BuiltinMacroItem, CfgAttrMacroUse, CfgSelectArmItem, CfgSelectArmPayload, ConstItem,

@@ -1,12 +1,14 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_ir_model::{BindingId, ExprId, PatId};
+use rg_ir_model::{
+    BindingId, BodySource, ExprId, PatBindingMode, PatId, PatMutability, PatRangeKind,
+};
 use rg_item_tree::FieldKey;
 use rg_memsize::MemorySize;
 
 use crate::RecordFieldSyntax;
 
-use super::{body::BodySource, expr::LiteralKind, path::BodyPath};
+use super::{expr::LiteralKind, path::BodyPath};
 
 /// One lowered pattern node.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
@@ -77,42 +79,6 @@ pub enum PatKind {
     Wildcard,
     /// Pattern syntax that Body IR does not model directly.
     Unsupported,
-}
-
-/// Binding mode written on an identifier pattern.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
-#[memsize(leaf)]
-pub struct PatBindingMode {
-    pub by_ref: bool,
-    pub mutable: bool,
-}
-
-/// Mutability written on a reference pattern.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
-)]
-#[memsize(leaf)]
-pub enum PatMutability {
-    /// `&<pat>`.
-    #[display("shared")]
-    Shared,
-    /// `&mut <pat>`.
-    #[display("mut")]
-    Mut,
-}
-
-/// Range operator written in a range pattern.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
-)]
-#[memsize(leaf)]
-pub enum PatRangeKind {
-    /// `..`.
-    #[display("..")]
-    Exclusive,
-    /// `..=`.
-    #[display("..=")]
-    Inclusive,
 }
 
 /// One field inside a record pattern.

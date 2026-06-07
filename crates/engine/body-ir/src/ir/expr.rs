@@ -2,14 +2,17 @@ use std::fmt;
 
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId};
+use rg_ir_model::{
+    BindingId, BodySource, ClosureCapture, ClosureKind, ExprAssignOp, ExprBinaryOp, ExprId,
+    ExprRangeKind, ExprUnaryOp, LabelData, PatId, ScopeId, StmtId,
+};
 use rg_item_tree::{FieldKey, GenericArg, TypeRef};
 use rg_memsize::MemorySize;
 use rg_parse::Span;
 use rg_text::Name;
 use rg_ty::{PrimitiveTy, RefMutability, Ty};
 
-use super::{RecordFieldSyntax, body::BodySource, path::BodyPath, resolved::BodyResolution};
+use super::{RecordFieldSyntax, path::BodyPath, resolved::BodyResolution};
 
 /// One lowered expression.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
@@ -293,145 +296,6 @@ pub enum ExprKind {
     Unknown { children: Vec<ExprId> },
 }
 
-/// Closure capture mode written before the closure parameter list.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
-)]
-#[memsize(leaf)]
-pub enum ClosureCapture {
-    #[display("inferred")]
-    Inferred,
-    #[display("move")]
-    Move,
-}
-
-/// Closure-level execution modifier that affects how its body is interpreted.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
-)]
-#[memsize(leaf)]
-pub enum ClosureKind {
-    #[display("normal")]
-    Normal,
-    #[display("async")]
-    Async,
-}
-
-/// Unary operator written before an expression.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
-)]
-#[memsize(leaf)]
-pub enum ExprUnaryOp {
-    #[display("*")]
-    Deref,
-    #[display("!")]
-    Not,
-    #[display("-")]
-    Neg,
-}
-
-/// Non-assignment binary operator written between two expressions.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
-)]
-#[memsize(leaf)]
-pub enum ExprBinaryOp {
-    #[display("||")]
-    LogicOr,
-    #[display("&&")]
-    LogicAnd,
-    #[display("==")]
-    Eq,
-    #[display("!=")]
-    NotEq,
-    #[display("<")]
-    Less,
-    #[display("<=")]
-    LessEq,
-    #[display(">")]
-    Greater,
-    #[display(">=")]
-    GreaterEq,
-    #[display("+")]
-    Add,
-    #[display("*")]
-    Mul,
-    #[display("-")]
-    Sub,
-    #[display("/")]
-    Div,
-    #[display("%")]
-    Rem,
-    #[display("<<")]
-    Shl,
-    #[display(">>")]
-    Shr,
-    #[display("^")]
-    BitXor,
-    #[display("|")]
-    BitOr,
-    #[display("&")]
-    BitAnd,
-}
-
-impl ExprBinaryOp {
-    pub fn is_logical(self) -> bool {
-        matches!(self, Self::LogicOr | Self::LogicAnd)
-    }
-
-    pub fn is_comparison(self) -> bool {
-        matches!(
-            self,
-            Self::Eq | Self::NotEq | Self::Less | Self::LessEq | Self::Greater | Self::GreaterEq
-        )
-    }
-}
-
-/// Assignment operator written between a target expression and a value expression.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
-)]
-#[memsize(leaf)]
-pub enum ExprAssignOp {
-    #[display("=")]
-    Assign,
-    #[display("+=")]
-    Add,
-    #[display("*=")]
-    Mul,
-    #[display("-=")]
-    Sub,
-    #[display("/=")]
-    Div,
-    #[display("%=")]
-    Rem,
-    #[display("<<=")]
-    Shl,
-    #[display(">>=")]
-    Shr,
-    #[display("^=")]
-    BitXor,
-    #[display("|=")]
-    BitOr,
-    #[display("&=")]
-    BitAnd,
-}
-
-/// Range operator written between optional range bounds.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
-)]
-#[memsize(leaf)]
-pub enum ExprRangeKind {
-    /// `..`.
-    #[display("..")]
-    Exclusive,
-    /// `..=`.
-    #[display("..=")]
-    Inclusive,
-}
-
 /// Transparent or nearly-transparent expression wrapper understood by cheap type normalization.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
@@ -471,13 +335,6 @@ pub struct ClosureParamData {
     pub pat: Option<PatId>,
     pub bindings: Vec<BindingId>,
     pub annotation: Option<TypeRef>,
-}
-
-/// A loop label written on loop-like syntax or referenced from a jump expression.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
-pub struct LabelData {
-    pub name: Name,
-    pub span: Span,
 }
 
 /// Literal category plus the primitive type implied by suffix/default heuristics.
@@ -651,11 +508,5 @@ impl ClosureParamData {
         if let Some(annotation) = &mut self.annotation {
             annotation.shrink_to_fit();
         }
-    }
-}
-
-impl LabelData {
-    fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
     }
 }
