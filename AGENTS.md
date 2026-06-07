@@ -10,6 +10,10 @@
   `pub` for items that are a part of public API, and `pub(crate)` for everything else.
 - Unless adding a builder/arguments object will be actually meaningful, prefer
   `#[allow(clippy::too_many_arguments)]` over adding bogus struct just to silence the lint.
+- Follow the vocabulary described in `docs/VOCABULARY.md` when you introduce new entities.
+  Do not invent new conventions unless the assigning new entity to an existing vocabulary
+  family will be a stretch / misleading. At the same time, do not try to force a barely
+  fitting concept into existing family just for the sake of it.
 
 ## Design
 
