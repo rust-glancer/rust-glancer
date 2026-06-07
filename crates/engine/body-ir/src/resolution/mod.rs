@@ -13,6 +13,7 @@ mod query_source;
 mod receiver_items;
 mod type_path;
 mod type_ref;
+mod value_path;
 
 use rg_ir_model::{BodyRef, Path, ScopeId, TypePathResolution};
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
@@ -22,9 +23,9 @@ use rg_ty::{MemberMethodCandidateRef, Ty};
 use crate::{BodyResolution, ResolvedBodyData};
 
 pub(crate) use self::{
-    body::BodyResolver, body::BodyValuePathResolver, body_items::BodyLocalItemQuery,
-    query_source::BodyQuerySource, receiver_items::BodyReceiverFunctionQuery,
-    type_path::BodyTypePathResolver, type_ref::TypeRefUseSite,
+    body::BodyResolver, body_items::BodyLocalItemQuery, query_source::BodyQuerySource,
+    receiver_items::BodyReceiverFunctionQuery, type_path::BodyTypePathResolver,
+    type_ref::TypeRefUseSite, value_path::BodyValuePathResolver,
 };
 
 /// Query-time lookup from one body-local lexical scope.

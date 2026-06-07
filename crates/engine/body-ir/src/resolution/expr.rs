@@ -23,10 +23,7 @@ use crate::{
 };
 
 use super::{
-    TypeRefUseSite,
-    body::{BodyResolver, BodyValuePathResolver},
-    normalize::TyNormalizer,
-    push_unique,
+    BodyValuePathResolver, TypeRefUseSite, body::BodyResolver, normalize::TyNormalizer, push_unique,
 };
 
 pub(super) struct ExprResolver<'pass, 'query, 'body, D, I> {
