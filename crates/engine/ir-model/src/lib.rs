@@ -11,8 +11,9 @@ pub mod path;
 mod resolution;
 
 pub use self::hir::body::{
-    BodyOwner, BodySource, ClosureCapture, ClosureKind, ExprAssignOp, ExprBinaryOp, ExprRangeKind,
-    ExprUnaryOp, LabelData, PatBindingMode, PatMutability, PatRangeKind, RecordFieldSyntax,
+    BodyOwner, BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodySource,
+    ClosureCapture, ClosureKind, ExprAssignOp, ExprBinaryOp, ExprRangeKind, ExprUnaryOp, LabelData,
+    PatBindingMode, PatMutability, PatRangeKind, RecordFieldSyntax,
 };
 pub use self::ids::{
     body::{BindingId, BodyBindingRef, BodyId, BodyRef, ExprId, PatId, ScopeId, StmtId},

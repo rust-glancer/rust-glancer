@@ -5,15 +5,15 @@ use rg_syntax::{
     ast::{self, HasGenericArgs as _, PathSegmentKind},
 };
 
-use rg_ir_model::items::{PrimitiveTy, UnsignedIntTy};
+use rg_ir_model::{
+    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind,
+    items::{PrimitiveTy, UnsignedIntTy},
+};
 use rg_item_tree::{FromAst as _, GenericArg, TypePath, TypeRef};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
-use crate::ir::{
-    BodyPath, BodySource, LabelData, LiteralKind,
-    path::{BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind},
-};
+use crate::ir::{BodySource, LabelData, LiteralKind};
 
 use super::body::BodyLowering;
 

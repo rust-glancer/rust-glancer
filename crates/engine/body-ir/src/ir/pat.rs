@@ -1,14 +1,14 @@
 use wincode::{SchemaRead, SchemaWrite};
 
 use rg_ir_model::{
-    BindingId, BodySource, ExprId, PatBindingMode, PatId, PatMutability, PatRangeKind,
+    BindingId, BodyPath, BodySource, ExprId, PatBindingMode, PatId, PatMutability, PatRangeKind,
 };
 use rg_item_tree::FieldKey;
 use rg_memsize::MemorySize;
 
 use crate::RecordFieldSyntax;
 
-use super::{expr::LiteralKind, path::BodyPath};
+use super::expr::LiteralKind;
 
 /// One lowered pattern node.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]

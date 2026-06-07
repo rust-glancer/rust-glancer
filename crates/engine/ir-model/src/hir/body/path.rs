@@ -1,34 +1,36 @@
 use std::fmt;
 
-use wincode::{SchemaRead, SchemaWrite};
-
-use rg_ir_model::{Path, PathSegment};
-use rg_item_tree::{GenericArg, TypeRef};
 use rg_memsize::MemorySize;
 use rg_parse::Span;
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
+
+use crate::{
+    Path, PathSegment,
+    items::{GenericArg, TypeRef},
+};
 
 /// Body expression/pattern path together with body-specific syntax details.
 ///
-/// DefMap paths intentionally keep only the semantic shape. Body IR keeps the richer source shape
-/// and exposes a DefMap projection so existing resolution can keep using DefMap paths.
+/// DefMap paths intentionally keep only the semantic shape. Body paths keep the richer source shape
+/// and expose a DefMap projection so existing resolution can keep using DefMap paths.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct BodyPath {
     /// Full source range of the path expression or pattern.
     pub source_span: Span,
-    pub(crate) absolute: bool,
-    pub(crate) segments: Vec<BodyPathSegment>,
+    absolute: bool,
+    segments: Vec<BodyPathSegment>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
-pub(crate) struct BodyPathSegment {
-    pub(crate) kind: BodyPathSegmentKind,
-    pub(crate) span: Span,
-    pub(crate) args: Option<BodyPathSegmentArgs>,
+pub struct BodyPathSegment {
+    kind: BodyPathSegmentKind,
+    span: Span,
+    args: Option<BodyPathSegmentArgs>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
-pub(crate) enum BodyPathSegmentKind {
+pub enum BodyPathSegmentKind {
     /// `name` in `module::name`.
     Name(Name),
     /// `Self` in type position.
@@ -50,7 +52,7 @@ pub(crate) enum BodyPathSegmentKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
-pub(crate) enum BodyPathSegmentArgs {
+pub enum BodyPathSegmentArgs {
     /// `<T>` or `::<T>`.
     Angle {
         colon_colon: bool,
@@ -62,7 +64,7 @@ pub(crate) enum BodyPathSegmentArgs {
 }
 
 impl BodyPath {
-    pub(crate) fn new(source_span: Span, absolute: bool, segments: Vec<BodyPathSegment>) -> Self {
+    pub fn new(source_span: Span, absolute: bool, segments: Vec<BodyPathSegment>) -> Self {
         Self {
             source_span,
             absolute,
@@ -81,6 +83,10 @@ impl BodyPath {
 
     pub fn is_absolute(&self) -> bool {
         self.absolute
+    }
+
+    pub fn segments(&self) -> &[BodyPathSegment] {
+        &self.segments
     }
 
     /// Returns the DefMap path prefix ending at `segment_idx`.
@@ -103,7 +109,7 @@ impl BodyPath {
     }
 
     pub fn segment_span(&self, segment_idx: usize) -> Option<Span> {
-        self.segments.get(segment_idx).map(|segment| segment.span)
+        self.segments.get(segment_idx).map(BodyPathSegment::span)
     }
 
     pub fn segment_count(&self) -> usize {
@@ -114,14 +120,14 @@ impl BodyPath {
     ///
     /// For paths, turbofish arguments belong to the segment they follow; callers that resolve a
     /// function path care about the final segment because that is the called item.
-    pub(crate) fn last_segment_angle_args(&self) -> Option<&[GenericArg]> {
+    pub fn last_segment_angle_args(&self) -> Option<&[GenericArg]> {
         self.segments
             .last()
-            .and_then(|segment| segment.args.as_ref())
+            .and_then(BodyPathSegment::args)
             .and_then(BodyPathSegmentArgs::angle_args)
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         self.segments.shrink_to_fit();
         for segment in &mut self.segments {
             segment.shrink_to_fit();
@@ -130,12 +136,20 @@ impl BodyPath {
 }
 
 impl BodyPathSegment {
-    pub(crate) fn new(
-        kind: BodyPathSegmentKind,
-        span: Span,
-        args: Option<BodyPathSegmentArgs>,
-    ) -> Self {
+    pub fn new(kind: BodyPathSegmentKind, span: Span, args: Option<BodyPathSegmentArgs>) -> Self {
         Self { kind, span, args }
+    }
+
+    pub fn kind(&self) -> &BodyPathSegmentKind {
+        &self.kind
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    pub fn args(&self) -> Option<&BodyPathSegmentArgs> {
+        self.args.as_ref()
     }
 
     fn as_def_map_segment(&self) -> Option<PathSegment> {
@@ -175,7 +189,7 @@ impl BodyPathSegmentKind {
 }
 
 impl BodyPathSegmentArgs {
-    pub(crate) fn angle_args(&self) -> Option<&[GenericArg]> {
+    pub fn angle_args(&self) -> Option<&[GenericArg]> {
         match self {
             Self::Angle { args, .. } => Some(args),
             Self::Parenthesized(_) => None,

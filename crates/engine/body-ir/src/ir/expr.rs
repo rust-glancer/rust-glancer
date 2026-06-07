@@ -3,8 +3,8 @@ use std::fmt;
 use wincode::{SchemaRead, SchemaWrite};
 
 use rg_ir_model::{
-    BindingId, BodySource, ClosureCapture, ClosureKind, ExprAssignOp, ExprBinaryOp, ExprId,
-    ExprRangeKind, ExprUnaryOp, LabelData, PatId, ScopeId, StmtId,
+    BindingId, BodyPath, BodySource, ClosureCapture, ClosureKind, ExprAssignOp, ExprBinaryOp,
+    ExprId, ExprRangeKind, ExprUnaryOp, LabelData, PatId, ScopeId, StmtId,
     items::{Mutability, PrimitiveTy},
 };
 use rg_item_tree::{FieldKey, GenericArg, TypeRef};
@@ -12,7 +12,7 @@ use rg_memsize::MemorySize;
 use rg_parse::Span;
 use rg_text::Name;
 
-use super::{RecordFieldSyntax, path::BodyPath};
+use super::RecordFieldSyntax;
 
 /// One lowered expression.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]

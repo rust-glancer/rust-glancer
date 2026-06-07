@@ -7,6 +7,7 @@ pub mod expr;
 pub mod label;
 pub mod owner;
 pub mod pat;
+pub mod path;
 pub mod record;
 pub mod source;
 
@@ -15,6 +16,7 @@ pub use self::{
     label::LabelData,
     owner::BodyOwner,
     pat::{PatBindingMode, PatMutability, PatRangeKind},
+    path::{BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind},
     record::RecordFieldSyntax,
     source::BodySource,
 };

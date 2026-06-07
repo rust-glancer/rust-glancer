@@ -3,14 +3,14 @@
 pub(crate) mod body;
 pub(crate) mod expr;
 pub(crate) mod pat;
-pub(crate) mod path;
 pub(crate) mod resolved;
 pub(crate) mod source_items;
 pub(crate) mod stmt;
 
 pub use rg_ir_model::{
-    BodyOwner, BodySource, ClosureCapture, ClosureKind, ExprAssignOp, ExprBinaryOp, ExprRangeKind,
-    ExprUnaryOp, LabelData, PatBindingMode, PatMutability, PatRangeKind, RecordFieldSyntax,
+    BodyOwner, BodyPath, BodySource, ClosureCapture, ClosureKind, ExprAssignOp, ExprBinaryOp,
+    ExprRangeKind, ExprUnaryOp, LabelData, PatBindingMode, PatMutability, PatRangeKind,
+    RecordFieldSyntax,
 };
 
 pub use self::{
@@ -20,7 +20,6 @@ pub use self::{
         MatchArmData, RecordExprField, RecordExprSpread,
     },
     pat::{PatData, PatKind, RecordPatField},
-    path::BodyPath,
     resolved::{BindingFacts, BodyResolution, ExprFacts},
     source_items::BodySourceItems,
     stmt::{BindingData, BindingKind, BodySelfParamKind, StmtData, StmtKind},

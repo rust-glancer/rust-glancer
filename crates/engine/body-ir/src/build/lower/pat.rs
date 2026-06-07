@@ -5,15 +5,15 @@ use rg_syntax::{
     ast::{self, HasName as _, RangeItem as _},
 };
 
-use rg_ir_model::{BindingId, ExprId, PatId, ScopeId};
+use rg_ir_model::{
+    BindingId, BodyPath, BodyPathSegment, BodyPathSegmentKind, ExprId, PatId, ScopeId,
+};
 use rg_item_tree::{FieldKey, FromAst as _, RecordPatFieldAst, TypeRef};
 use rg_text::Name;
 
 use crate::ir::{
-    BindingData, BindingKind, BodyPath, LiteralKind, PatBindingMode, PatData, PatKind,
-    PatMutability, PatRangeKind, RecordFieldSyntax, RecordPatField,
-    path::{BodyPathSegment, BodyPathSegmentKind},
-    stmt::PendingBindingResolution,
+    BindingData, BindingKind, LiteralKind, PatBindingMode, PatData, PatKind, PatMutability,
+    PatRangeKind, RecordFieldSyntax, RecordPatField, stmt::PendingBindingResolution,
 };
 
 use super::body::BodyLowering;
