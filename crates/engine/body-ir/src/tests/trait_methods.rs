@@ -247,3 +247,71 @@ impl OtherExt for Maybe {
         "#]],
     );
 }
+
+#[test]
+fn resolves_trait_associated_consts_for_qualified_value_paths() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_trait_assoc_const_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum StmtKind {
+    Let,
+}
+
+pub struct Stmt;
+
+pub trait HasAttrs {
+    const SUPPORTS_CUSTOM_INNER_ATTRS: bool;
+}
+
+impl HasAttrs for StmtKind {
+    const SUPPORTS_CUSTOM_INNER_ATTRS: bool = true;
+}
+
+impl HasAttrs for Stmt {
+    const SUPPORTS_CUSTOM_INNER_ATTRS: bool = StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS;
+}
+
+pub fn use_it() {
+    let supports = StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS;
+}
+"#,
+        expect![[r#"
+            package body_trait_assoc_const_fixture
+
+            body_trait_assoc_const_fixture [lib]
+            body b0 fn body_trait_assoc_const_fixture[lib]::crate::use_it @ 19:1-21:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0
+            bindings
+            - v0 let supports `supports` => bool @ 20:9-20:17
+            body
+            expr e1 block s1 => () @ 19:17-21:2
+              stmt s0 let v0 @ 20:5-20:58
+                initializer
+                  expr e0 path StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS -> const impl HasAttrs for StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS => bool @ 20:20-20:57
+
+
+            body b1 const impl HasAttrs for StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS @ 12:5-12:52
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 literal bool `true` => bool @ 12:47-12:51
+
+
+            body b2 const impl HasAttrs for Stmt::SUPPORTS_CUSTOM_INNER_ATTRS @ 16:5-16:85
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 path StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS -> const impl HasAttrs for StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS => bool @ 16:47-16:84
+        "#]],
+    );
+}

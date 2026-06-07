@@ -1137,6 +1137,69 @@ pub fn use_it() {
 }
 
 #[test]
+fn resolves_body_local_trait_associated_consts() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_local_trait_assoc_const_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+pub fn use_it() {
+    struct Local;
+
+    trait Tagged {
+        const DEFAULT: GlobalId;
+    }
+
+    impl Tagged for Local {
+        const DEFAULT: GlobalId = GlobalId;
+    }
+
+    let default = Local::DEFAULT;
+}
+"#,
+        expect![[r#"
+            package body_local_trait_assoc_const_fixture
+
+            body_local_trait_assoc_const_fixture [lib]
+            body b0 fn body_local_trait_assoc_const_fixture[lib]::crate::use_it @ 3:1-15:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0; source_items i0, i2, i4
+            source_items
+            - i0 struct Local @ 4:5-4:18
+            - i1 const DEFAULT @ 7:9-7:33
+            - i2 trait Tagged @ 6:5-8:6
+            - i3 const DEFAULT @ 11:9-11:44
+            - i4 impl <unnamed> @ 10:5-12:6
+            bindings
+            - v0 let default `default` => nominal struct body_local_trait_assoc_const_fixture[lib]::crate::GlobalId @ 14:9-14:16
+            body
+            expr e1 block s1 => () @ 3:17-15:2
+              stmt s0 source_item i0 @ 4:5-4:18
+              stmt s1 source_item i2 @ 6:5-8:6
+              stmt s2 source_item i4 @ 10:5-12:6
+              stmt s3 let v0 @ 14:5-14:34
+                initializer
+                  expr e0 path Local::DEFAULT -> const impl Tagged for Local::DEFAULT => nominal struct body_local_trait_assoc_const_fixture[lib]::crate::GlobalId @ 14:19-14:33
+
+
+            body b1 const impl Tagged for Local::DEFAULT @ 11:9-11:44
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 path GlobalId -> item struct body_local_trait_assoc_const_fixture[lib]::crate::GlobalId => nominal struct body_local_trait_assoc_const_fixture[lib]::crate::GlobalId @ 11:35-11:43
+        "#]],
+    );
+}
+
+#[test]
 fn lowers_body_local_associated_function_and_const_bodies() {
     check_project_body_ir(
         r#"

@@ -1078,6 +1078,50 @@ pub fn make() {
 }
 
 #[test]
+fn resolves_trait_associated_const_qualified_value_paths() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_trait_assoc_const_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum StmtKind {
+    Let,
+}
+
+pub struct Stmt;
+
+pub trait HasAttrs {
+    const SUPPORTS_CUSTOM_INNER_ATTRS: bool;
+}
+
+impl HasAttrs for StmtKind {
+    const SUPPORTS_CUSTOM_INNER_ATTRS: bool = true;
+}
+
+impl HasAttrs for Stmt {
+    const SUPPORTS_CUSTOM_INNER_ATTRS: bool =
+        StmtKind::SUPPORTS$goto_trait_assoc_const$_CUSTOM_INNER_ATTRS$type_trait_assoc_const$;
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto trait associated const", "goto_trait_assoc_const"),
+            AnalysisQuery::ty("type at trait associated const", "type_trait_assoc_const"),
+        ],
+        expect![[r#"
+            goto trait associated const
+            - const SUPPORTS_CUSTOM_INNER_ATTRS @ 12:11-12:38
+
+            type at trait associated const
+            - bool
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_body_local_imported_paths_and_impl_headers() {
     check_analysis_queries(
         r#"

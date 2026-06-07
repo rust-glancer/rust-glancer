@@ -5,7 +5,7 @@
 
 use rg_ir_model::{
     AssocItemId, BindingId, BodyRef, ConstRef, DefId, DefMapRef, ExprId, FunctionRef, ImplRef,
-    ItemOwner, ModuleId, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TypeDefId,
+    ItemOwner, ModuleId, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TraitImplRef, TypeDefId,
     TypePathResolution, identity::DeclarationRef, items::GenericParams,
 };
 use rg_ir_storage::{
@@ -1477,6 +1477,30 @@ where
             }
         }
 
+        // Trait associated const lookup is still receiver-driven: `Type::CONST` first proves that
+        // `Type` has a visible trait impl, then reads the matching const item from that impl or
+        // falls back to the trait declaration. This mirrors trait method lookup without pretending
+        // to be a full trait solver.
+        let mut trait_consts = Vec::new();
+        let mut trait_const_tys = Vec::new();
+        for nominal_ty in prefix_ty.as_nominals() {
+            for (const_ref, ty) in
+                self.semantic_associated_trait_value_items_for_type(nominal_ty, last_segment)?
+            {
+                push_unique(&mut trait_consts, const_ref);
+                push_unique(&mut trait_const_tys, ty);
+            }
+        }
+
+        if !trait_consts.is_empty() {
+            return Ok(Some((
+                BodyResolution::Declarations(
+                    trait_consts.into_iter().map(DeclarationRef::from).collect(),
+                ),
+                unique_ty_or_unknown(trait_const_tys),
+            )));
+        }
+
         // Inherent associated functions are exact candidates. Trait-associated functions are kept
         // deliberately optimistic, following the same "prefer useful candidates over false
         // negatives" policy as dot completion.
@@ -1528,6 +1552,92 @@ where
         )
     }
 
+    fn semantic_associated_trait_value_items_for_type(
+        &self,
+        ty: &NominalTy,
+        name: &str,
+    ) -> Result<Vec<(ConstRef, Ty)>, PackageStoreError> {
+        let mut items = Vec::new();
+
+        self.push_associated_trait_value_items_for_impls(
+            &mut items,
+            self.body_local_items().trait_impls_for_type(ty.def)?,
+            ty,
+            name,
+        )?;
+
+        if ty.def.origin == DefMapRef::Body(self.source.body_ref()) {
+            return Ok(items);
+        }
+
+        let source = self.source;
+        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
+        let semantic_trait_impls = match self.semantic_index {
+            Some(index) => index.trait_impls_for_type(ty.def).to_vec(),
+            None => target_items.trait_impls_for_type(ty.def)?,
+        };
+        self.push_associated_trait_value_items_for_impls(
+            &mut items,
+            semantic_trait_impls,
+            ty,
+            name,
+        )?;
+
+        Ok(items)
+    }
+
+    fn push_associated_trait_value_items_for_impls(
+        &self,
+        items: &mut Vec<(ConstRef, Ty)>,
+        trait_impls: Vec<TraitImplRef>,
+        ty: &NominalTy,
+        name: &str,
+    ) -> Result<(), PackageStoreError> {
+        let item_query = self.item_query();
+        let matcher = self.impl_matcher();
+        for trait_impl in trait_impls {
+            if !matcher
+                .trait_impl_applicability(trait_impl, ty)?
+                .is_applicable()
+            {
+                continue;
+            }
+
+            let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
+                continue;
+            };
+
+            // Impl consts are the concrete declaration for `Type::CONST`. When the impl omits the
+            // item, use the trait declaration as a best-effort source for defaulted or incomplete
+            // code; const signatures do not preserve whether a default body was written.
+            let mut candidate = self.associated_const_from_items(
+                trait_impl.impl_ref.origin,
+                &impl_data.items,
+                ty,
+                name,
+            )?;
+            if candidate.is_none()
+                && let Some(trait_data) = item_query.trait_data(trait_impl.trait_ref)?
+            {
+                candidate = self.associated_const_from_items(
+                    trait_impl.trait_ref.origin,
+                    &trait_data.items,
+                    ty,
+                    name,
+                )?;
+            }
+
+            let Some(candidate) = candidate else {
+                continue;
+            };
+            if !items.iter().any(|(existing, _)| *existing == candidate.0) {
+                items.push(candidate);
+            }
+        }
+
+        Ok(())
+    }
+
     fn associated_value_item_for_impls(
         &self,
         impls: Vec<ImplRef>,
@@ -1546,23 +1656,37 @@ where
                 continue;
             }
 
-            for item in &impl_data.items {
-                let AssocItemId::Const(id) = item else {
-                    continue;
-                };
-                let const_ref = ConstRef {
-                    origin: impl_ref.origin,
-                    id: *id,
-                };
-                let Some(const_data) = item_query.const_data(const_ref)? else {
-                    continue;
-                };
-                if const_data.name == name {
-                    return Ok(Some((
-                        const_ref,
-                        self.semantic_const_ty_for_receiver(const_ref, const_data.owner, ty)?,
-                    )));
-                }
+            if let Some(item) =
+                self.associated_const_from_items(impl_ref.origin, &impl_data.items, ty, name)?
+            {
+                return Ok(Some(item));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn associated_const_from_items(
+        &self,
+        origin: DefMapRef,
+        assoc_items: &[AssocItemId],
+        receiver_ty: &NominalTy,
+        name: &str,
+    ) -> Result<Option<(ConstRef, Ty)>, PackageStoreError> {
+        let item_query = self.item_query();
+        for item in assoc_items {
+            let AssocItemId::Const(id) = item else {
+                continue;
+            };
+            let const_ref = ConstRef { origin, id: *id };
+            let Some(const_data) = item_query.const_data(const_ref)? else {
+                continue;
+            };
+            if const_data.name == name {
+                return Ok(Some((
+                    const_ref,
+                    self.semantic_const_ty_for_receiver(const_ref, const_data.owner, receiver_ty)?,
+                )));
             }
         }
 
