@@ -1650,8 +1650,11 @@ pub fn use_it(state: &TargetState) {
 }
 "#,
         &[
-            AnalysisQuery::hover("hover item from project-style slice iter", "hover_iter_import")
-                .in_lib("app"),
+            AnalysisQuery::hover(
+                "hover item from project-style slice iter",
+                "hover_iter_import",
+            )
+            .in_lib("app"),
             AnalysisQuery::ty("use item from project-style slice iter", "type_iter_import")
                 .in_lib("app"),
             AnalysisQuery::hover(

@@ -506,10 +506,7 @@ fn select_preludes(
                     interner,
                 )),
                 (workspace_package.name == "core").then(|| {
-                    ImportPath::crate_relative_standard_prelude(
-                        workspace_package.edition,
-                        interner,
-                    )
+                    ImportPath::crate_relative_standard_prelude(workspace_package.edition, interner)
                 }),
             ];
 

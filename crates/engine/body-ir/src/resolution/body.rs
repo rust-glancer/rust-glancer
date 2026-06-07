@@ -869,6 +869,7 @@ where
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn semantic_function_return_ty_with_subst_and_call_args(
         &self,
         function_ref: FunctionRef,

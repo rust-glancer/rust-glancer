@@ -160,7 +160,7 @@ where
                         trait_ref: *trait_ref,
                     };
                     if !self
-                        .is_canonical_trait_impl(&projector, trait_impl, impl_data, trait_kind)?
+                        .is_canonical_trait_impl(projector, trait_impl, impl_data, trait_kind)?
                     {
                         continue;
                     }
