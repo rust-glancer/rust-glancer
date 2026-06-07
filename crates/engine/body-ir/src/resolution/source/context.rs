@@ -13,9 +13,11 @@ use rg_ty::{Autoderef, ImplMatcher, ItemPathQuery, IterationItemResolver};
 
 use crate::ir::body::ResolvedBodyData;
 
-use super::{
-    BodyLocalItemQuery, BodyQuerySource, BodyReceiverFunctionQuery, type_path::BodyTypePathResolver,
+use crate::resolution::query::{
+    BodyLocalItemQuery, BodyReceiverFunctionQuery, BodyTypePathResolver,
 };
+
+use super::BodyQuerySource;
 
 #[derive(Clone, Copy)]
 pub(crate) struct BodyResolutionContext<'a, D, I> {

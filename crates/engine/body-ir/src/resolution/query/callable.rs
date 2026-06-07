@@ -15,11 +15,10 @@ use rg_ty::{
     CallArgInference, CallArgMapping, NominalTy, Ty, TypeSubst, function_generic_shadow_subst,
 };
 
+use crate::resolution::{BodyResolutionContext, TypeRefUseSite, support::push_unique};
 use crate::{ir::ExprKind, ir::resolved::BodyResolution};
 
-use super::{BodyResolutionContext, TypeRefUseSite, push_unique};
-
-pub(super) struct CallableReturnResolver<'query, D, I> {
+pub(crate) struct CallableReturnResolver<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
@@ -28,11 +27,11 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(super) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
+    pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
     }
 
-    pub(super) fn call_expr_ty(
+    pub(crate) fn call_expr_ty(
         &self,
         callee: Option<ExprId>,
         args: &[ExprId],
@@ -72,7 +71,7 @@ where
         }
     }
 
-    pub(super) fn return_ty_with_call_args(
+    pub(crate) fn return_ty_with_call_args(
         &self,
         function_ref: FunctionRef,
         receiver_ty: Option<&NominalTy>,
@@ -110,7 +109,7 @@ where
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) fn return_ty_with_subst_and_call_args(
+    pub(crate) fn return_ty_with_subst_and_call_args(
         &self,
         function_ref: FunctionRef,
         self_ty: Option<Ty>,

@@ -30,7 +30,9 @@ use crate::{
     },
 };
 
-use super::{BodyResolutionContext, BodyValuePathResolver, TypeRefUseSite, push_unique};
+use crate::resolution::{
+    BodyResolutionContext, BodyValuePathResolver, TypeRefUseSite, support::push_unique,
+};
 
 /// Resolves lowered binding candidates into the final body binding arena.
 ///

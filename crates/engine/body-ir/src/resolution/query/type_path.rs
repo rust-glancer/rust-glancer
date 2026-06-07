@@ -17,8 +17,10 @@ use rg_ty::{GenericArg, ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
 
 use crate::ir::BodyOwner;
 
+use crate::resolution::{source::BodyQuerySource, support::push_unique};
+
 use super::{
-    BodyLocalItemQuery, BodyQuerySource, push_unique,
+    BodyLocalItemQuery,
     type_ref::{TypeRefResolutionQuery, TypeRefUseSite},
 };
 
@@ -110,7 +112,7 @@ where
         )
     }
 
-    pub(super) fn self_nominal_tys_for_function(
+    pub(crate) fn self_nominal_tys_for_function(
         &self,
         function: FunctionRef,
     ) -> Result<Vec<NominalTy>, PackageStoreError> {

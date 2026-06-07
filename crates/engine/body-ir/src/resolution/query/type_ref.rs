@@ -13,10 +13,9 @@ use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_ty::{GenericArg, ItemPathQuery, RefMutability, Ty, TypeSubst};
 
-use super::{
-    push_unique,
-    type_path::{BodyTypePathResolver, prefix_type_ref, split_associated_path},
-};
+use crate::resolution::support::push_unique;
+
+use super::type_path::{BodyTypePathResolver, prefix_type_ref, split_associated_path};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TypeRefUseSite {

@@ -9,7 +9,7 @@ use rg_ir_model::{AssocItemId, DefMapRef, FunctionRef, ImplRef, TraitImplRef, Ty
 use rg_ir_storage::{ItemStore, ItemStoreQuery, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 
-use super::{BodyQuerySource, push_unique};
+use crate::resolution::{source::BodyQuerySource, support::push_unique};
 
 pub(crate) struct BodyLocalItemQuery<'query, D, I> {
     source: BodyQuerySource<'query, D, I>,
@@ -20,7 +20,7 @@ where
     D: Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(super) fn new(source: BodyQuerySource<'query, D, I>) -> Self {
+    pub(crate) fn new(source: BodyQuerySource<'query, D, I>) -> Self {
         Self { source }
     }
 

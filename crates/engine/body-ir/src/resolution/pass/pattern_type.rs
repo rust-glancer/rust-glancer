@@ -13,8 +13,7 @@ use rg_package_store::PackageStoreError;
 use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
 use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
-
-use super::{BodyResolutionContext, TypeRefUseSite, push_unique};
+use crate::resolution::{BodyResolutionContext, TypeRefUseSite, support::push_unique};
 
 pub(super) struct PatternTypePropagator<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,

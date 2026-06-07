@@ -21,10 +21,13 @@ use crate::{
     ir::{ExprKind, ExprWrapperKind},
 };
 
-use super::{
-    BodyValuePathResolver, TypeRefUseSite, body::BodyResolver, callable::CallableReturnResolver,
-    normalize::TyNormalizer, push_unique,
+use crate::resolution::{
+    BodyValuePathResolver, TypeRefUseSite,
+    query::CallableReturnResolver,
+    support::{TyNormalizer, push_unique},
 };
+
+use super::body::BodyResolver;
 
 pub(super) struct ExprResolver<'pass, 'query, 'body, D, I> {
     pass: &'pass mut BodyResolver<'query, 'body, D, I>,

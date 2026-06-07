@@ -16,8 +16,9 @@ use rg_package_store::PackageStoreError;
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::ir::resolved::BodyResolution;
+use crate::resolution::{BodyResolutionContext, TypeRefUseSite, support::push_unique};
 
-use super::{BodyResolutionContext, TypeRefUseSite, push_unique, type_path::split_associated_path};
+use super::type_path::split_associated_path;
 
 /// Resolves body value paths without mutating the body.
 ///
@@ -56,7 +57,7 @@ where
         self.resolve_path_expr(scope, path, None)
     }
 
-    pub(super) fn resolve_path_expr(
+    pub(crate) fn resolve_path_expr(
         &self,
         scope: ScopeId,
         path: &Path,

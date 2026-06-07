@@ -14,7 +14,9 @@ use rg_ty::{
     MemberMethodOrigin, NominalTy, Ty, TypeSubst,
 };
 
-use super::{BodyLocalItemQuery, BodyQuerySource, push_unique};
+use crate::resolution::{source::BodyQuerySource, support::push_unique};
+
+use super::BodyLocalItemQuery;
 
 pub(crate) struct BodyReceiverFunctionQuery<'query, D, I> {
     source: BodyQuerySource<'query, D, I>,
@@ -26,22 +28,22 @@ pub(crate) struct BodyReceiverFunctionQuery<'query, D, I> {
 /// The candidate carries the adjusted receiver type and substitutions because structural impls
 /// cannot recover that context from a nominal type definition later.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct BodyStructuralReceiverFunctionCandidate {
+pub(crate) struct BodyStructuralReceiverFunctionCandidate {
     function: FunctionRef,
     receiver_ty: Ty,
     subst: TypeSubst,
 }
 
 impl BodyStructuralReceiverFunctionCandidate {
-    pub(super) fn function(&self) -> FunctionRef {
+    pub(crate) fn function(&self) -> FunctionRef {
         self.function
     }
 
-    pub(super) fn receiver_ty(&self) -> &Ty {
+    pub(crate) fn receiver_ty(&self) -> &Ty {
         &self.receiver_ty
     }
 
-    pub(super) fn subst(&self) -> &TypeSubst {
+    pub(crate) fn subst(&self) -> &TypeSubst {
         &self.subst
     }
 }
@@ -51,7 +53,7 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(super) fn new(
+    pub(crate) fn new(
         source: BodyQuerySource<'query, D, I>,
         semantic_index: Option<&'query ItemLookupIndex>,
     ) -> Self {
@@ -92,7 +94,7 @@ where
         Ok(candidates)
     }
 
-    pub(super) fn function_refs_for_receiver(
+    pub(crate) fn function_refs_for_receiver(
         &self,
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
@@ -165,7 +167,7 @@ where
         Ok(candidates)
     }
 
-    pub(super) fn structural_function_candidates_for_receiver(
+    pub(crate) fn structural_function_candidates_for_receiver(
         &self,
         receiver_ty: &Ty,
         method_name: Option<&str>,

@@ -13,9 +13,11 @@ use crate::{
     ir::{BindingKind, BodySelfParamKind},
 };
 
+use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+
 use super::{
-    BodyResolutionContext, TypeRefUseSite, expr::ExprResolver, pat::PatternTypePropagator,
-    pat_binding::PatternBindingMaterializer,
+    expr::ExprResolver, pattern_binding::PatternBindingMaterializer,
+    pattern_type::PatternTypePropagator,
 };
 
 /// Shared state for the body-resolution fixed-point pass.

@@ -11,9 +11,11 @@ use crate::ir::ExprWrapperKind;
 
 use rg_package_store::PackageStoreError;
 
-use super::{BodyQuerySource, push_unique};
+use crate::resolution::source::BodyQuerySource;
 
-pub(super) struct TyNormalizer<'a, D, I> {
+use super::push_unique;
+
+pub(crate) struct TyNormalizer<'a, D, I> {
     source: BodyQuerySource<'a, D, I>,
 }
 
@@ -22,11 +24,11 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
 {
-    pub(super) fn new(source: BodyQuerySource<'a, D, I>) -> Self {
+    pub(crate) fn new(source: BodyQuerySource<'a, D, I>) -> Self {
         Self { source }
     }
 
-    pub(super) fn ty_for_wrapper(&self, kind: ExprWrapperKind, inner_ty: Ty) -> Ty {
+    pub(crate) fn ty_for_wrapper(&self, kind: ExprWrapperKind, inner_ty: Ty) -> Ty {
         match kind {
             ExprWrapperKind::Paren => inner_ty,
             ExprWrapperKind::Ref { mutability } => Ty::reference(mutability, inner_ty),
