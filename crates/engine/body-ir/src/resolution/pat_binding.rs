@@ -318,7 +318,7 @@ where
                 // wrappers keeps common cases useful without trying to type-check the expression.
                 self.pending_expr_ty(*inner, active, pending_tys)
             }
-            _ => Ok(self.body.exprs[expr].ty.clone()),
+            _ => Ok(self.body.expr_ty_unchecked(expr).clone()),
         }
     }
 

@@ -23,9 +23,9 @@ pub use self::{
         ValueReferenceSurface,
     },
     ir::{
-        BindingData, BindingKind, BodyData, BodyIrStats, BodyLocalItems, BodyOwner, BodyPath,
-        BodySelfParamKind, BodySource, BodySourceItems, ClosureCapture, ClosureKind,
-        ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprKind,
+        BindingData, BindingFacts, BindingKind, BodyData, BodyIrStats, BodyLocalItems, BodyOwner,
+        BodyPath, BodySelfParamKind, BodySource, BodySourceItems, ClosureCapture, ClosureKind,
+        ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprFacts, ExprKind,
         ExprRangeKind, ExprUnaryOp, LabelData, LiteralKind, PackageBodies, PatBindingMode, PatData,
         PatKind, PatMutability, PatRangeKind, RecordExprField, RecordExprSpread, RecordFieldSyntax,
         RecordPatField, ScopeData, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,

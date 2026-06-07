@@ -72,7 +72,7 @@ where
                     let Some(scrutinee) = scrutinee else {
                         continue;
                     };
-                    let expected_ty = self.source.body().exprs[scrutinee].ty.clone();
+                    let expected_ty = self.source.body().expr_ty_unchecked(scrutinee).clone();
                     for arm in arms {
                         if let Some(pat) = arm.pat {
                             self.propagate_pat(pat, &expected_ty, &mut updates)?;
@@ -93,7 +93,7 @@ where
                     iterable: Some(iterable),
                     ..
                 } => {
-                    let iterable_ty = &self.source.body().exprs[iterable].ty;
+                    let iterable_ty = self.source.body().expr_ty_unchecked(iterable);
                     let item_ty = iteration_items.into_iterator_item_for_ty(iterable_ty)?;
                     self.propagate_pat(pat, &item_ty, &mut updates)?;
                 }
@@ -168,7 +168,7 @@ where
         }
 
         Ok(initializer
-            .map(|expr| self.source.body().exprs[expr].ty.clone())
+            .map(|expr| self.source.body().expr_ty_unchecked(expr).clone())
             .unwrap_or(Ty::Unknown))
     }
 
@@ -388,10 +388,13 @@ where
             return;
         }
 
-        let Some(binding_data) = self.source.body().bindings.get(binding) else {
+        if self.source.body().bindings.get(binding).is_none() {
             return;
-        };
-        if !matches!(binding_data.ty, Ty::Unknown) {
+        }
+        if !matches!(
+            self.source.body().binding_ty_unchecked(binding),
+            Ty::Unknown
+        ) {
             return;
         }
 

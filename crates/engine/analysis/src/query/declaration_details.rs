@@ -65,7 +65,11 @@ impl<'a, 'db> DeclarationDetailsResolver<'a, 'db> {
         Ok(Some(DeclarationDetails {
             kind: SymbolKind::Variable,
             path: None,
-            signature: Some(SignatureRenderer::binding_signature(self.db, binding_data)?),
+            signature: Some(SignatureRenderer::binding_signature(
+                self.db,
+                binding_data,
+                body.binding_ty(binding_ref.binding),
+            )?),
             docs: None,
         }))
     }

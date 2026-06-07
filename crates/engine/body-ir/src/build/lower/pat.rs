@@ -8,7 +8,6 @@ use rg_syntax::{
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId};
 use rg_item_tree::{FieldKey, FromAst as _, RecordPatFieldAst, TypeRef};
 use rg_text::Name;
-use rg_ty::Ty;
 
 use crate::ir::{
     BindingData, BindingKind, BodyPath, LiteralKind, PatBindingMode, PatData, PatKind,
@@ -379,7 +378,6 @@ impl BodyLowering<'_> {
                 kind,
                 name: Some(name),
                 annotation,
-                ty: Ty::Unknown,
             },
             resolution,
         );

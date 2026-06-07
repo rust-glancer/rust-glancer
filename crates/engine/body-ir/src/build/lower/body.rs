@@ -5,9 +5,8 @@ use rg_syntax::ast;
 use rg_ir_model::{ExprId, ModuleRef, ScopeId};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
-use rg_ty::Ty;
 
-use crate::ir::{BodyBuilder, BodyData, BodyOwner, BodyResolution, BodySource, ExprData, ExprKind};
+use crate::ir::{BodyBuilder, BodyData, BodyOwner, BodySource, ExprData, ExprKind};
 
 use super::syntax::source_for;
 
@@ -95,8 +94,6 @@ impl BodyLowering<'_> {
             scope,
             visible_bindings,
             kind,
-            resolution: BodyResolution::Unknown,
-            ty: Ty::Unknown,
         })
     }
 

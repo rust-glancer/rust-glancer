@@ -308,7 +308,7 @@ impl TargetBodyIrSnapshot<'_> {
             name,
             self.render_source_text(binding.source),
             annotation,
-            self.render_ty(&binding.ty),
+            self.render_ty(body.binding_ty_unchecked(id)),
             self.render_source(binding.source),
             name_span,
         )
@@ -517,14 +517,17 @@ impl TargetBodyIrSnapshot<'_> {
         let data = body
             .expr(expr)
             .expect("expr id should exist while rendering body IR");
+        let facts = body
+            .expr_fact(expr)
+            .expect("expr facts should exist while rendering body IR");
         writeln!(
             dump,
             "{}expr e{} {}{} => {} @ {}",
             indent(depth),
             expr.0,
             self.render_expr_head(data),
-            self.render_resolution(&data.resolution),
-            self.render_ty(&data.ty),
+            self.render_resolution(&facts.resolution),
+            self.render_ty(&facts.ty),
             self.render_source(data.source),
         )
         .expect("string writes should not fail");

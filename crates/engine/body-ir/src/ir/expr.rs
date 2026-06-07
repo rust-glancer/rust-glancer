@@ -12,7 +12,7 @@ use rg_parse::Span;
 use rg_text::Name;
 use rg_ty::{PrimitiveTy, RefMutability, Ty};
 
-use super::{RecordFieldSyntax, path::BodyPath, resolved::BodyResolution};
+use super::{RecordFieldSyntax, path::BodyPath};
 
 /// One lowered expression.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
@@ -25,15 +25,11 @@ pub struct ExprData {
     /// later `let x` shadow an earlier use of `x`.
     pub visible_bindings: usize,
     pub kind: ExprKind,
-    pub resolution: BodyResolution,
-    pub ty: Ty,
 }
 
 impl ExprData {
     pub(crate) fn shrink_to_fit(&mut self) {
         self.kind.shrink_to_fit();
-        self.resolution.shrink_to_fit();
-        self.ty.shrink_to_fit();
     }
 }
 

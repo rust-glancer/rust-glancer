@@ -14,7 +14,6 @@ use rg_item_tree::{
     FieldKey, FromAst as _, GenericArg, MaybeFromAst as _, RecordExprFieldAst, TypeRef,
 };
 use rg_parse::{Span, TextSpan};
-use rg_ty::Ty;
 
 use crate::ir::{
     BindingData, BindingKind, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
@@ -293,7 +292,6 @@ impl BodyLowering<'_> {
                     kind: BindingKind::Param,
                     name: None,
                     annotation: annotation.clone(),
-                    ty: Ty::Unknown,
                 });
                 (None, vec![binding])
             }

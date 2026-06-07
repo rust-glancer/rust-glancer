@@ -7,8 +7,9 @@ use std::collections::HashSet;
 
 use rg_body_ir::BindingKind;
 use rg_ir_model::{
-    BodyBindingRef, BodyRef, DefMapRef, ExprId, ModuleId, ModuleRef, ScopeId, SemanticItemKind,
-    SemanticItemRef, TargetRef, hir::source::ItemSourceKind, identity::DeclarationRef,
+    BindingId, BodyBindingRef, BodyRef, DefMapRef, ExprId, ModuleId, ModuleRef, ScopeId,
+    SemanticItemKind, SemanticItemRef, TargetRef, hir::source::ItemSourceKind,
+    identity::DeclarationRef,
 };
 use rg_ir_storage::ItemStoreQuery;
 use rg_parse::{FileId, Span, TextSpan};
@@ -183,8 +184,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .db
             .body_ir
             .body_data(body_ref)?
-            .and_then(|body| body.expr(expr))
-            .map(|expr| expr.ty.clone()))
+            .and_then(|body| body.expr_ty(expr).cloned()))
     }
 
     pub fn binding_ty(&self, binding: BodyBindingRef) -> anyhow::Result<Option<Ty>> {
@@ -192,8 +192,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .db
             .body_ir
             .body_data(binding.body)?
-            .and_then(|body| body.binding(binding.binding))
-            .map(|binding| binding.ty.clone()))
+            .and_then(|body| body.binding_ty(binding.binding).cloned()))
     }
 
     pub fn lexical_names(&self, scope: BodyNameScope) -> anyhow::Result<Vec<BodyLexicalName>> {
@@ -359,7 +358,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
 
         let mut bindings = Vec::new();
         for body in target_bodies.bodies() {
-            for binding in body.bindings() {
+            for (binding_idx, binding) in body.bindings().iter().enumerate() {
                 if binding.source.file_id != file_id {
                     continue;
                 }
@@ -369,7 +368,11 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 if binding.name.is_none() || binding.annotation.is_some() {
                     continue;
                 }
-                if matches!(binding.ty, Ty::Unknown) {
+                let ty = body
+                    .binding_ty(BindingId(binding_idx))
+                    .cloned()
+                    .unwrap_or(Ty::Unknown);
+                if matches!(ty, Ty::Unknown) {
                     continue;
                 }
                 if range.is_some_and(|range| !range.touches(binding.source.span.text.end)) {
@@ -379,7 +382,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 bindings.push(InferredBindingTy {
                     file_id: binding.source.file_id,
                     span: binding.source.span,
-                    ty: binding.ty.clone(),
+                    ty,
                 });
             }
         }

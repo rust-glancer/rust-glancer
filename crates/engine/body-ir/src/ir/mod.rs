@@ -24,7 +24,7 @@ pub use self::{
     },
     pat::{PatData, PatKind, RecordPatField},
     path::BodyPath,
-    resolved::BodyResolution,
+    resolved::{BindingFacts, BodyResolution, ExprFacts},
     source_items::BodySourceItems,
     stmt::{BindingData, BindingKind, BodySelfParamKind, StmtData, StmtKind},
 };

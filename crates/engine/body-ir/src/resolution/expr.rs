@@ -44,8 +44,8 @@ where
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
 {
     pub(super) fn resolve_expr(&mut self, expr: ExprId) -> Result<bool, PackageStoreError> {
-        let old_resolution = self.pass.body.exprs[expr].resolution.clone();
-        let old_ty = self.pass.body.exprs[expr].ty.clone();
+        let old_resolution = self.pass.body.expr_resolution(expr).clone();
+        let old_ty = self.pass.body.expr_ty_unchecked(expr).clone();
         let kind = self.pass.body.exprs[expr].kind.clone();
 
         match kind {
@@ -54,67 +54,71 @@ where
                     Some(path) => self.resolve_path_expr(expr, &path)?,
                     None => (BodyResolution::Unknown, Ty::Unknown),
                 };
-                let data = &mut self.pass.body.exprs[expr];
-                data.resolution = resolution;
-                data.ty = ty;
+                self.pass.body.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::Call { callee, args } => {
-                self.pass.body.exprs[expr].ty = self.call_ty(callee, &args)?;
+                let ty = self.call_ty(callee, &args)?;
+                self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Tuple { fields } => {
-                self.pass.body.exprs[expr].ty = self.tuple_expr_ty(&fields);
+                let ty = self.tuple_expr_ty(&fields);
+                self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Array { elements } => {
-                self.pass.body.exprs[expr].ty = self.array_expr_ty(&elements);
+                let ty = self.array_expr_ty(&elements);
+                self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::RepeatArray {
                 initializer,
                 len_text,
                 ..
             } => {
-                self.pass.body.exprs[expr].ty =
-                    self.repeat_array_expr_ty(initializer, len_text.as_deref());
+                let ty = self.repeat_array_expr_ty(initializer, len_text.as_deref());
+                self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Index { base, .. } => {
-                self.pass.body.exprs[expr].ty = self.index_expr_ty(base);
+                let ty = self.index_expr_ty(base);
+                self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Cast { ty: Some(ty), .. } => {
-                self.pass.body.exprs[expr].ty = self
+                let ty = self
                     .pass
                     .type_path_resolver()
                     .type_ref(TypeRefUseSite::Scope(self.pass.body.exprs[expr].scope))
                     .resolve(&ty)?;
+                self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Match { arms, .. } => {
                 let mut arm_tys = Vec::new();
                 for arm in arms {
                     if let Some(expr) = arm.expr {
-                        push_unique(&mut arm_tys, self.pass.body.exprs[expr].ty.clone());
+                        push_unique(&mut arm_tys, self.pass.body.expr_ty_unchecked(expr).clone());
                     }
                 }
-                self.pass.body.exprs[expr].ty = if arm_tys.len() == 1 {
+                let ty = if arm_tys.len() == 1 {
                     arm_tys.pop().expect("one arm type should exist")
                 } else {
                     Ty::Unknown
                 };
+                self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::If {
                 then_branch,
                 else_branch,
                 ..
             } => {
-                self.pass.body.exprs[expr].ty = match else_branch {
+                let ty = match else_branch {
                     Some(else_branch) => {
                         let mut branch_tys = Vec::new();
                         if let Some(then_branch) = then_branch {
                             push_unique(
                                 &mut branch_tys,
-                                self.pass.body.exprs[then_branch].ty.clone(),
+                                self.pass.body.expr_ty_unchecked(then_branch).clone(),
                             );
                         }
                         push_unique(
                             &mut branch_tys,
-                            self.pass.body.exprs[else_branch].ty.clone(),
+                            self.pass.body.expr_ty_unchecked(else_branch).clone(),
                         );
 
                         if branch_tys.len() == 1 {
@@ -125,17 +129,17 @@ where
                     }
                     None => Ty::Unit,
                 };
+                self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Block { tail, .. } => {
-                self.pass.body.exprs[expr].ty = tail
-                    .map(|tail| self.pass.body.exprs[tail].ty.clone())
+                let ty = tail
+                    .map(|tail| self.pass.body.expr_ty_unchecked(tail).clone())
                     .unwrap_or(Ty::Unit);
+                self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Field { base, field, .. } => {
                 let (resolution, ty) = self.resolve_field_expr(base, field.as_ref())?;
-                let data = &mut self.pass.body.exprs[expr];
-                data.resolution = resolution;
-                data.ty = ty;
+                self.pass.body.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::Record { path, .. } => {
                 let (resolution, ty) = match path.as_ref().and_then(|path| path.as_def_map_path()) {
@@ -144,9 +148,7 @@ where
                     }
                     None => (BodyResolution::Unknown, Ty::Unknown),
                 };
-                let data = &mut self.pass.body.exprs[expr];
-                data.resolution = resolution;
-                data.ty = ty;
+                self.pass.body.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::MethodCall {
                 receiver,
@@ -162,49 +164,48 @@ where
                     &args,
                     self.pass.body.exprs[expr].scope,
                 )?;
-                let data = &mut self.pass.body.exprs[expr];
-                data.resolution = resolution;
-                data.ty = ty;
+                self.pass.body.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::Wrapper { kind, inner } => {
                 let (resolution, ty) = self.resolve_wrapper_expr(kind, inner);
-                let data = &mut self.pass.body.exprs[expr];
-                data.resolution = resolution;
-                data.ty = ty;
+                self.pass.body.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::Unary {
                 op: Some(ExprUnaryOp::Deref),
                 expr: Some(inner),
             } => {
-                self.pass.body.exprs[expr].ty = self.explicit_deref_ty(inner)?;
+                let ty = self.explicit_deref_ty(inner)?;
+                self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Unary {
                 op: Some(op),
                 expr: Some(inner),
             } => {
-                self.pass.body.exprs[expr].ty = self.unary_ty(op, inner);
+                let ty = self.unary_ty(op, inner);
+                self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Binary {
                 lhs: Some(lhs),
                 rhs: Some(rhs),
                 op: Some(op),
             } => {
-                self.pass.body.exprs[expr].ty = self.binary_ty(op, lhs, rhs);
+                let ty = self.binary_ty(op, lhs, rhs);
+                self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Literal { kind } => {
-                self.pass.body.exprs[expr].ty = kind.ty();
+                self.pass.body.set_expr_ty(expr, kind.ty());
             }
             ExprKind::While { .. } | ExprKind::For { .. } => {
-                self.pass.body.exprs[expr].ty = Ty::Unit;
+                self.pass.body.set_expr_ty(expr, Ty::Unit);
             }
             ExprKind::Assign { .. } => {
-                self.pass.body.exprs[expr].ty = Ty::Unit;
+                self.pass.body.set_expr_ty(expr, Ty::Unit);
             }
             ExprKind::Break { .. } | ExprKind::Continue { .. } => {
-                self.pass.body.exprs[expr].ty = Ty::Never;
+                self.pass.body.set_expr_ty(expr, Ty::Never);
             }
             ExprKind::Yeet { .. } | ExprKind::Become { .. } => {
-                self.pass.body.exprs[expr].ty = Ty::Never;
+                self.pass.body.set_expr_ty(expr, Ty::Never);
             }
             ExprKind::Let { .. }
             | ExprKind::Closure { .. }
@@ -218,8 +219,8 @@ where
             | ExprKind::Unknown { .. } => {}
         }
 
-        Ok(self.pass.body.exprs[expr].resolution != old_resolution
-            || self.pass.body.exprs[expr].ty != old_ty)
+        Ok(self.pass.body.expr_resolution(expr) != &old_resolution
+            || self.pass.body.expr_ty_unchecked(expr) != &old_ty)
     }
 
     fn resolve_path_expr(
@@ -237,7 +238,7 @@ where
         Ty::tuple(
             fields
                 .iter()
-                .map(|field| self.pass.body.exprs[*field].ty.clone())
+                .map(|field| self.pass.body.expr_ty_unchecked(*field).clone())
                 .collect(),
         )
     }
@@ -249,7 +250,7 @@ where
 
         let mut element_tys = Vec::new();
         for element in elements {
-            let element_ty = self.pass.body.exprs[*element].ty.clone();
+            let element_ty = self.pass.body.expr_ty_unchecked(*element).clone();
             if matches!(element_ty, Ty::Unknown) {
                 return Ty::Unknown;
             }
@@ -274,7 +275,7 @@ where
         };
 
         Ty::array(
-            self.pass.body.exprs[initializer].ty.clone(),
+            self.pass.body.expr_ty_unchecked(initializer).clone(),
             len_text.map(str::to_owned),
         )
     }
@@ -287,7 +288,7 @@ where
         // Indexing is reference-transparent for the structural array/slice cases we model here:
         // `&[T]` and `&[T; N]` should behave like their inner container. Keep this deliberately
         // narrower than method lookup: no trait deref, no `Index` trait, and no container coercions.
-        for candidate in ReferencePeelingCandidates::new(&self.pass.body.exprs[base].ty) {
+        for candidate in ReferencePeelingCandidates::new(self.pass.body.expr_ty_unchecked(base)) {
             match candidate.ty() {
                 Ty::Array { inner, .. } | Ty::Slice(inner) => return inner.as_ref().clone(),
                 _ => {}
@@ -358,11 +359,10 @@ where
         let mut fields = Vec::new();
         let mut field_tys = Vec::new();
 
-        for candidate in self
-            .pass
-            .autoderef()
-            .candidates(AutoderefMode::FieldLookup, &self.pass.body.exprs[base].ty)
-        {
+        for candidate in self.pass.autoderef().candidates(
+            AutoderefMode::FieldLookup,
+            self.pass.body.expr_ty_unchecked(base),
+        ) {
             let candidate = candidate?;
             // Autoderef yields candidates by depth. Resolve only after the whole matching depth is
             // collected, so same-depth alternatives produce ambiguity instead of order dependence.
@@ -445,7 +445,7 @@ where
             return Ok((BodyResolution::Unknown, Ty::Unknown));
         };
 
-        let receiver_ty = &self.pass.body.exprs[receiver].ty;
+        let receiver_ty = self.pass.body.expr_ty_unchecked(receiver);
         let item_query = self.pass.item_query();
 
         // Method lookup is intentionally shallow: nominal type plus lightweight impl-argument
@@ -565,11 +565,10 @@ where
         let Some(inner) = inner else {
             return (BodyResolution::Unknown, Ty::Unknown);
         };
-        let inner_data = &self.pass.body.exprs[inner];
-        let ty =
-            TyNormalizer::new(self.pass.query_source()).ty_for_wrapper(kind, inner_data.ty.clone());
+        let ty = TyNormalizer::new(self.pass.query_source())
+            .ty_for_wrapper(kind, self.pass.body.expr_ty_unchecked(inner).clone());
         let resolution = if matches!(kind, ExprWrapperKind::Paren) {
-            inner_data.resolution.clone()
+            self.pass.body.expr_resolution(inner).clone()
         } else {
             BodyResolution::Unknown
         };
@@ -581,7 +580,7 @@ where
         let mut candidates = Vec::new();
         for candidate in self.pass.autoderef().candidates(
             AutoderefMode::ExplicitDeref,
-            &self.pass.body.exprs[inner].ty,
+            self.pass.body.expr_ty_unchecked(inner),
         ) {
             push_unique(&mut candidates, candidate?.ty().clone());
         }
@@ -596,7 +595,7 @@ where
     }
 
     fn unary_ty(&self, op: ExprUnaryOp, inner: ExprId) -> Ty {
-        let ty = &self.pass.body.exprs[inner].ty;
+        let ty = self.pass.body.expr_ty_unchecked(inner);
         match op {
             ExprUnaryOp::Not => match ty {
                 Ty::Primitive(primitive) if primitive.is_bool() || primitive.is_integral() => {
@@ -615,8 +614,8 @@ where
     }
 
     fn binary_ty(&self, op: ExprBinaryOp, lhs: ExprId, rhs: ExprId) -> Ty {
-        let lhs_ty = &self.pass.body.exprs[lhs].ty;
-        let rhs_ty = &self.pass.body.exprs[rhs].ty;
+        let lhs_ty = self.pass.body.expr_ty_unchecked(lhs);
+        let rhs_ty = self.pass.body.expr_ty_unchecked(rhs);
 
         if op.is_logical() || op.is_comparison() {
             return Ty::Primitive(PrimitiveTy::Bool);
@@ -767,7 +766,7 @@ where
         }
         let arg_tys = args
             .iter()
-            .map(|arg| self.pass.body.exprs[*arg].ty.clone())
+            .map(|arg| self.pass.body.expr_ty_unchecked(*arg).clone())
             .collect::<Vec<_>>();
         let inferred_subst = CallArgInference::new(
             function_data.signature.generics(),
@@ -818,15 +817,16 @@ where
             return Ok(Ty::Unknown);
         };
         let callee_data = &self.pass.body.exprs[callee];
+        let callee_ty = self.pass.body.expr_ty_unchecked(callee);
 
-        if matches!(callee_data.ty, Ty::Nominal(_) | Ty::SelfTy(_)) {
-            return Ok(callee_data.ty.clone());
+        if matches!(callee_ty, Ty::Nominal(_) | Ty::SelfTy(_)) {
+            return Ok(callee_ty.clone());
         }
 
         // Ordinary calls use declared return types plus a deliberately-small substitution model:
         // explicit turbofish args and direct argument-to-parameter type inference.
         let mut return_tys = Vec::new();
-        match &callee_data.resolution {
+        match self.pass.body.expr_resolution(callee) {
             BodyResolution::Declarations(declarations) => {
                 for declaration in declarations {
                     self.push_return_ty_for_declaration(

@@ -5,7 +5,6 @@ use rg_item_tree::{ItemTreeId, TypeRef};
 use rg_memsize::MemorySize;
 use rg_parse::Span;
 use rg_text::Name;
-use rg_ty::Ty;
 
 /// One local binding introduced by a parameter or `let`.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
@@ -16,7 +15,6 @@ pub struct BindingData {
     pub kind: BindingKind,
     pub name: Option<Name>,
     pub annotation: Option<TypeRef>,
-    pub ty: Ty,
 }
 
 /// How a lowered binding slot should be treated before final binding materialization.
@@ -38,7 +36,6 @@ impl BindingData {
         if let Some(annotation) = &mut self.annotation {
             annotation.shrink_to_fit();
         }
-        self.ty.shrink_to_fit();
     }
 }
 

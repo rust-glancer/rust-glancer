@@ -84,7 +84,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
         else {
             return Ok(None);
         };
-        let receiver_ty = body_data.expr(*receiver).map(|data| &data.ty);
+        let receiver_ty = body_data.expr_ty(*receiver);
         let declarations = rg_ir_view::lookup::resolution::ResolutionView::new(self.0.view_db())
             .declarations_for_expr(expr)?;
         if declarations.is_empty() {
@@ -159,12 +159,12 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
                 let Some(body) = self.0.view_db().body_data(binding.body)? else {
                     return Ok(implementations);
                 };
-                let Some(binding_data) = body.binding(binding.binding) else {
+                let Some(binding_ty) = body.binding_ty(binding.binding) else {
                     return Ok(implementations);
                 };
                 Self::extend_impl_refs(
                     &mut implementations,
-                    implementation_query.impls_for_ty(&binding_data.ty)?,
+                    implementation_query.impls_for_ty(binding_ty)?,
                 );
             }
             DeclarationRef::Module(_)

@@ -144,7 +144,7 @@ where
         for binding_idx in 0..self.body.bindings.len() {
             let binding = BindingId(binding_idx);
             let ty = self.binding_ty(binding)?;
-            self.body.bindings[binding].ty = ty;
+            self.body.set_binding_ty(binding, ty);
         }
         Ok(())
     }
@@ -156,14 +156,14 @@ where
                 continue;
             }
 
-            let Some(binding_data) = self.body.bindings.get_mut(binding) else {
+            if self.body.bindings.get(binding).is_none() {
                 continue;
             };
-            if !matches!(binding_data.ty, Ty::Unknown) {
+            if !matches!(self.body.binding_ty_unchecked(binding), Ty::Unknown) {
                 continue;
             }
 
-            binding_data.ty = ty;
+            self.body.set_binding_ty(binding, ty);
             changed = true;
         }
 
@@ -477,7 +477,7 @@ where
     ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
         match value_name {
             BodyValueName::Binding(binding) => {
-                let ty = self.source.body().bindings[binding].ty.clone();
+                let ty = self.source.body().binding_ty_unchecked(binding).clone();
                 Ok(Some((BodyResolution::Binding(binding), ty)))
             }
             BodyValueName::SemanticItems(items) => {

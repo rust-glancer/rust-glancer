@@ -13,6 +13,7 @@ use rg_parse::TargetId;
 use super::{
     expr::ExprData,
     pat::PatData,
+    resolved::{BindingFacts, BodyResolution, ExprFacts},
     source_items::BodySourceItems,
     stmt::{BindingData, PendingBindingResolution, StmtData},
 };
@@ -197,10 +198,12 @@ pub struct BodyData {
     pub(crate) params: Vec<BindingId>,
     pub(crate) scopes: Arena<ScopeId, ScopeData>,
     pub(crate) bindings: Arena<BindingId, BindingData>,
+    pub(crate) binding_facts: Arena<BindingId, BindingFacts>,
     pub(crate) pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
     pub(crate) pats: Arena<PatId, PatData>,
     pub(crate) statements: Arena<StmtId, StmtData>,
     pub(crate) exprs: Arena<ExprId, ExprData>,
+    pub(crate) expr_facts: Arena<ExprId, ExprFacts>,
 }
 
 impl BodyData {
@@ -248,6 +251,10 @@ impl BodyData {
         self.bindings.as_slice()
     }
 
+    pub fn binding_facts(&self) -> &[BindingFacts] {
+        self.binding_facts.as_slice()
+    }
+
     pub fn pats(&self) -> &[PatData] {
         self.pats.as_slice()
     }
@@ -260,8 +267,16 @@ impl BodyData {
         self.exprs.as_slice()
     }
 
+    pub fn expr_facts(&self) -> &[ExprFacts] {
+        self.expr_facts.as_slice()
+    }
+
     pub fn binding(&self, binding: BindingId) -> Option<&BindingData> {
         self.bindings.get(binding)
+    }
+
+    pub fn binding_fact(&self, binding: BindingId) -> Option<&BindingFacts> {
+        self.binding_facts.get(binding)
     }
 
     pub fn pat(&self, pat: PatId) -> Option<&PatData> {
@@ -295,6 +310,49 @@ impl BodyData {
         self.exprs.get(expr)
     }
 
+    pub fn expr_fact(&self, expr: ExprId) -> Option<&ExprFacts> {
+        self.expr_facts.get(expr)
+    }
+
+    pub fn expr_ty(&self, expr: ExprId) -> Option<&rg_ty::Ty> {
+        self.expr_fact(expr).map(|facts| &facts.ty)
+    }
+
+    pub(crate) fn expr_ty_unchecked(&self, expr: ExprId) -> &rg_ty::Ty {
+        &self.expr_facts[expr].ty
+    }
+
+    pub(crate) fn set_expr_ty(&mut self, expr: ExprId, ty: rg_ty::Ty) {
+        self.expr_facts[expr].ty = ty;
+    }
+
+    pub(crate) fn expr_resolution(&self, expr: ExprId) -> &BodyResolution {
+        &self.expr_facts[expr].resolution
+    }
+
+    pub(crate) fn set_expr_facts(
+        &mut self,
+        expr: ExprId,
+        resolution: BodyResolution,
+        ty: rg_ty::Ty,
+    ) {
+        let facts = &mut self.expr_facts[expr];
+        facts.resolution = resolution;
+        facts.ty = ty;
+    }
+
+    pub fn binding_ty(&self, binding: BindingId) -> Option<&rg_ty::Ty> {
+        self.binding_fact(binding).map(|facts| &facts.ty)
+    }
+
+    pub(crate) fn binding_ty_unchecked(&self, binding: BindingId) -> &rg_ty::Ty {
+        &self.binding_facts[binding].ty
+    }
+
+    pub(crate) fn set_binding_ty(&mut self, binding: BindingId, ty: rg_ty::Ty) {
+        self.binding_facts[binding].ty = ty;
+    }
+
     // Lowering naturally produces these independent body facts at the same boundary. A wrapper
     // object would only move the argument list elsewhere without making the invariant clearer.
     #[allow(clippy::too_many_arguments)]
@@ -319,10 +377,12 @@ impl BodyData {
             params,
             scopes: builder.scopes,
             bindings: builder.bindings,
+            binding_facts: builder.binding_facts,
             pending_binding_resolutions: builder.pending_binding_resolutions,
             pats: builder.pats,
             statements: builder.statements,
             exprs: builder.exprs,
+            expr_facts: builder.expr_facts,
         }
     }
 
@@ -337,6 +397,10 @@ impl BodyData {
         for binding in self.bindings.iter_mut() {
             binding.shrink_to_fit();
         }
+        self.binding_facts.shrink_to_fit();
+        for facts in self.binding_facts.iter_mut() {
+            facts.shrink_to_fit();
+        }
         self.pending_binding_resolutions.shrink_to_fit();
         self.pats.shrink_to_fit();
         for pat in self.pats.iter_mut() {
@@ -350,6 +414,10 @@ impl BodyData {
         for expr in self.exprs.iter_mut() {
             expr.shrink_to_fit();
         }
+        self.expr_facts.shrink_to_fit();
+        for facts in self.expr_facts.iter_mut() {
+            facts.shrink_to_fit();
+        }
     }
 }
 
@@ -359,10 +427,12 @@ pub(crate) struct BodyBuilder {
     pub(crate) source_items: BodySourceItems,
     pub(crate) scopes: Arena<ScopeId, ScopeData>,
     pub(crate) bindings: Arena<BindingId, BindingData>,
+    pub(crate) binding_facts: Arena<BindingId, BindingFacts>,
     pub(crate) pending_binding_resolutions: Arena<BindingId, PendingBindingResolution>,
     pub(crate) pats: Arena<PatId, PatData>,
     pub(crate) statements: Arena<StmtId, StmtData>,
     pub(crate) exprs: Arena<ExprId, ExprData>,
+    pub(crate) expr_facts: Arena<ExprId, ExprFacts>,
 }
 
 impl BodyBuilder {
@@ -402,6 +472,11 @@ impl BodyBuilder {
     ) -> BindingId {
         let scope = data.scope;
         let binding = self.bindings.alloc(data);
+        let facts = self.binding_facts.alloc(BindingFacts::default());
+        debug_assert_eq!(
+            binding, facts,
+            "binding facts should mirror binding slot ids"
+        );
         let resolution_id = self.pending_binding_resolutions.alloc(resolution);
         debug_assert_eq!(
             binding, resolution_id,
@@ -424,7 +499,13 @@ impl BodyBuilder {
     }
 
     pub(crate) fn alloc_expr(&mut self, data: ExprData) -> ExprId {
-        self.exprs.alloc(data)
+        let expr = self.exprs.alloc(data);
+        let facts = self.expr_facts.alloc(ExprFacts::default());
+        debug_assert_eq!(
+            expr, facts,
+            "expression facts should mirror expression slot ids"
+        );
+        expr
     }
 }
 

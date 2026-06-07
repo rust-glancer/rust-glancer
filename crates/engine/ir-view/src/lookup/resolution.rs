@@ -59,10 +59,10 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let Some(body) = self.0.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
-        let Some(expr_data) = body.expr(expr.expr_id()) else {
+        let Some(expr_facts) = body.expr_fact(expr.expr_id()) else {
             return Ok(Vec::new());
         };
-        self.declarations_for_body_resolution(Some(body_ref), &expr_data.resolution)
+        self.declarations_for_body_resolution(Some(body_ref), &expr_facts.resolution)
     }
 
     fn fallback_name_def(&self, local_def: LocalDefRef) -> DeclarationRef {
