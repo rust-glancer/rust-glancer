@@ -5,19 +5,21 @@
 
 use rg_ir_model::{
     DefId, DefMapRef, ExprId, FunctionRef, ImplRef, ItemOwner, ScopeId, SemanticItemRef,
-    TypePathResolution, identity::DeclarationRef, items::GenericParams,
+    TypePathResolution,
+    identity::DeclarationRef,
+    items::{GenericParams, PrimitiveTy},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, Path};
 use rg_item_tree::{FieldKey, GenericArg as ItemGenericArg};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
-    AutoderefMode, CallArgInference, CallArgMapping, NominalTy, PrimitiveTy,
+    AutoderefMode, CallArgInference, CallArgMapping, NominalTy, RefMutability,
     ReferencePeelingCandidates, Ty, TypeSubst, function_generic_shadow_subst,
 };
 
 use crate::{
     ExprBinaryOp, ExprUnaryOp,
-    ir::expr::{ExprKind, ExprWrapperKind},
+    ir::expr::{ExprKind, ExprWrapperKind, LiteralKind},
     ir::resolved::BodyResolution,
 };
 
@@ -197,7 +199,7 @@ where
                 self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Literal { kind } => {
-                self.pass.body.set_expr_ty(expr, kind.ty());
+                self.pass.body.set_expr_ty(expr, Self::literal_ty(kind));
             }
             ExprKind::While { .. } | ExprKind::For { .. } => {
                 self.pass.body.set_expr_ty(expr, Ty::Unit);
@@ -597,6 +599,20 @@ where
         } else {
             Ty::Unknown
         })
+    }
+
+    fn literal_ty(kind: LiteralKind) -> Ty {
+        match kind {
+            LiteralKind::Bool => Ty::Primitive(PrimitiveTy::Bool),
+            LiteralKind::Char => Ty::Primitive(PrimitiveTy::Char),
+            LiteralKind::Float { primitive_ty } | LiteralKind::Int { primitive_ty } => {
+                primitive_ty.map(Ty::Primitive).unwrap_or(Ty::Unknown)
+            }
+            LiteralKind::String => {
+                Ty::reference(RefMutability::Shared, Ty::Primitive(PrimitiveTy::Str))
+            }
+            LiteralKind::Unknown => Ty::Unknown,
+        }
     }
 
     fn unary_ty(&self, op: ExprUnaryOp, inner: ExprId) -> Ty {

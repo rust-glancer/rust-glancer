@@ -5,7 +5,7 @@ use rg_syntax::{
     ast::{self, HasModuleItem as _, HasName as _, HasVisibility as _},
 };
 
-use rg_ir_model::{BindingId, ExprId, ScopeId, StmtId};
+use rg_ir_model::{BindingId, ExprId, ScopeId, StmtId, items::Mutability};
 use rg_item_tree::{
     ConstItem, Documentation, EnumItem, ExternCrateItem, FromAst as _, FunctionItem, ImplItem,
     ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroUseAttr, MaybeFromAst,
@@ -54,7 +54,7 @@ impl BodyLowering<'_> {
             BodySelfParamKind::Explicit
         } else if param.amp_token().is_some() {
             BodySelfParamKind::Reference {
-                mutability: rg_ty::RefMutability::from_mut_token(param.mut_token().is_some()),
+                mutability: Mutability::from_mut_token(param.mut_token().is_some()),
             }
         } else {
             BodySelfParamKind::Value

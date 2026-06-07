@@ -1,19 +1,13 @@
 use std::fmt;
 
+use wincode::{SchemaRead, SchemaWrite};
+
+use rg_memsize::{MemorySize, Shrink};
 use rg_parse::Span;
 use rg_text::Name;
 
 /// Syntax-level mutability marker used by lowered declarations and type refs.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub enum Mutability {
     Shared,
@@ -23,6 +17,13 @@ pub enum Mutability {
 impl Mutability {
     pub fn from_mut_token(is_mut: bool) -> Self {
         if is_mut { Self::Mutable } else { Self::Shared }
+    }
+
+    pub fn render_prefix(self) -> &'static str {
+        match self {
+            Self::Shared => "&",
+            Self::Mutable => "&mut ",
+        }
     }
 }
 
@@ -39,9 +40,7 @@ impl fmt::Display for Mutability {
 ///
 /// This intentionally stops before semantic resolution. `TypeRef` represents what the user wrote
 /// in an item declaration; resolving paths to definitions belongs to later IR layers.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum TypeRef {
     Unknown(String),
     Never,
@@ -185,7 +184,7 @@ impl TypeRef {
     }
 }
 
-impl rg_memsize::Shrink for TypeRef {
+impl Shrink for TypeRef {
     fn shrink_to_fit(&mut self) {
         TypeRef::shrink_to_fit(self);
     }
@@ -260,9 +259,7 @@ impl fmt::Display for TypeRef {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TypePath {
     /// Full source range of the path syntax, including separators around segments.
     pub source_span: Span,
@@ -311,9 +308,7 @@ impl fmt::Display for TypePath {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TypePathSegment {
     pub name: Name,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
@@ -353,9 +348,7 @@ impl fmt::Display for TypePathSegment {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum GenericArg {
     Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
     Lifetime(String),
@@ -464,9 +457,7 @@ fn write_fn_trait_args(
     Ok(())
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum TypeBound {
     Trait(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
     Lifetime(String),

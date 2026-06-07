@@ -5,7 +5,9 @@
 //! and a field type starts from its declaring module. Keeping that anchor as data prevents the
 //! resolver API from growing one method per caller shape.
 
-use rg_ir_model::{DefMapRef, FunctionRef, ModuleRef, ScopeId, TypePathResolution};
+use rg_ir_model::{
+    DefMapRef, FunctionRef, ModuleRef, ScopeId, TypePathResolution, items::PrimitiveTy,
+};
 use rg_ir_storage::{DefMapSource, ItemStoreSource, Path, TypePathContext};
 use rg_item_tree::{GenericArg as ItemGenericArg, Mutability, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
@@ -297,7 +299,7 @@ where
             Ty::from_type_path_resolution(resolution, args).unwrap_or_else(|| {
                 if is_unknown {
                     path.single_name()
-                        .and_then(rg_ty::PrimitiveTy::from_name)
+                        .and_then(PrimitiveTy::from_name)
                         .map(Ty::Primitive)
                         .unwrap_or_else(|| Ty::syntax(original_ty.clone()))
                 } else {

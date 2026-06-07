@@ -20,6 +20,7 @@ pub use self::{
         MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
     },
     module::{ModuleItem, ModuleSource},
+    primitive::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy},
     type_ref::{GenericArg, Mutability, TypeBound, TypePath, TypePathSegment, TypeRef},
     visibility::VisibilityLevel,
 };
@@ -30,6 +31,7 @@ mod import;
 mod kind;
 mod macro_item;
 mod module;
+mod primitive;
 mod type_ref;
 mod visibility;
 

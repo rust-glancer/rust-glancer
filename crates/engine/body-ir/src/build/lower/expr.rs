@@ -9,7 +9,7 @@ use rg_syntax::{
     utils::normalized_syntax_text,
 };
 
-use rg_ir_model::{ExprId, ScopeId};
+use rg_ir_model::{ExprId, ScopeId, items::Mutability};
 use rg_item_tree::{
     FieldKey, FromAst as _, GenericArg, MaybeFromAst as _, RecordExprFieldAst, TypeRef,
 };
@@ -74,9 +74,7 @@ impl BodyLowering<'_> {
             ast::Expr::PrefixExpr(prefix) => self.lower_unary_expr(prefix, scope),
             ast::Expr::RefExpr(ref_expr) => {
                 let kind = ExprWrapperKind::Ref {
-                    mutability: rg_ty::RefMutability::from_mut_token(
-                        ref_expr.mut_token().is_some(),
-                    ),
+                    mutability: Mutability::from_mut_token(ref_expr.mut_token().is_some()),
                 };
                 self.lower_wrapper_expr(ref_expr.syntax(), ref_expr.expr(), scope, kind)
             }

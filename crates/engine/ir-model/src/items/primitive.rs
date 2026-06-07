@@ -1,34 +1,9 @@
-use std::fmt;
+use wincode::{SchemaRead, SchemaWrite};
 
-/// Mutability carried by a reference type.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
-#[memsize(leaf)]
-pub enum RefMutability {
-    Shared,
-    Mutable,
-}
+use rg_memsize::MemorySize;
 
 /// Rust primitive type known without resolving a module-scope definition.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub enum PrimitiveTy {
     Bool,
@@ -40,17 +15,7 @@ pub enum PrimitiveTy {
 }
 
 /// Signed integer primitive width.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub enum SignedIntTy {
     I8,
@@ -62,17 +27,7 @@ pub enum SignedIntTy {
 }
 
 /// Unsigned integer primitive width.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub enum UnsignedIntTy {
     U8,
@@ -84,17 +39,7 @@ pub enum UnsignedIntTy {
 }
 
 /// Floating-point primitive width.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub enum FloatTy {
     F32,
@@ -190,28 +135,6 @@ impl PrimitiveTy {
             Self::SignedInt(kind) => kind.label(),
             Self::UnsignedInt(kind) => kind.label(),
             Self::Float(kind) => kind.label(),
-        }
-    }
-}
-
-impl RefMutability {
-    pub fn from_mut_token(is_mut: bool) -> Self {
-        if is_mut { Self::Mutable } else { Self::Shared }
-    }
-
-    pub fn render_prefix(self) -> &'static str {
-        match self {
-            Self::Shared => "&",
-            Self::Mutable => "&mut ",
-        }
-    }
-}
-
-impl fmt::Display for RefMutability {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Shared => f.write_str("shared"),
-            Self::Mutable => f.write_str("mut"),
         }
     }
 }

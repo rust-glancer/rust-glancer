@@ -1,6 +1,6 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_ir_model::{BindingId, BodySource, ExprId, PatId, ScopeId};
+use rg_ir_model::{BindingId, BodySource, ExprId, PatId, ScopeId, items::Mutability};
 use rg_item_tree::{ItemTreeId, TypeRef};
 use rg_memsize::MemorySize;
 use rg_parse::Span;
@@ -60,7 +60,7 @@ pub enum BindingKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum BodySelfParamKind {
     Value,
-    Reference { mutability: rg_ty::RefMutability },
+    Reference { mutability: Mutability },
     Explicit,
 }
 

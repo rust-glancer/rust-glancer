@@ -10,8 +10,11 @@ mod implementation;
 mod item_path;
 mod iteration;
 mod member;
-mod primitive;
 mod ty;
+
+pub use rg_ir_model::items::{
+    FloatTy, Mutability as RefMutability, PrimitiveTy, SignedIntTy, UnsignedIntTy,
+};
 
 pub use self::{
     autoderef::{
@@ -25,6 +28,5 @@ pub use self::{
     item_path::ItemPathQuery,
     iteration::IterationItemResolver,
     member::{MemberMethodCandidateRef, MemberMethodOrigin, MemberQuery},
-    primitive::{FloatTy, PrimitiveTy, RefMutability, SignedIntTy, UnsignedIntTy},
     ty::{NominalTy, OpaqueTraitBound, Ty, TypeSubst},
 };

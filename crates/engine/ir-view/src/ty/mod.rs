@@ -8,7 +8,7 @@ pub mod locals;
 use rg_body_ir::BodyScopeQuery;
 use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticItemRef, TypePathResolution,
-    identity::DeclarationRef, identity::ExprRef,
+    identity::DeclarationRef, identity::ExprRef, items::PrimitiveTy,
 };
 use rg_ir_storage::{ItemStoreQuery, Path, TypePathContext};
 use rg_ty::{ItemPathQuery, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
@@ -72,7 +72,7 @@ impl<'a, 'db> TyView<'a, 'db> {
     pub fn ty_for_type_path(&self, context: TypePathContext, path: &Path) -> anyhow::Result<Ty> {
         let resolution = ItemPathQuery::new(self.db, self.db).resolve_type_path(context, path)?;
         if matches!(resolution, TypePathResolution::Unknown)
-            && let Some(primitive) = path.single_name().and_then(rg_ty::PrimitiveTy::from_name)
+            && let Some(primitive) = path.single_name().and_then(PrimitiveTy::from_name)
         {
             return Ok(Ty::Primitive(primitive));
         }
@@ -92,7 +92,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         let resolution = BodyScopeQuery::new(self.db, self.db, body_ref, body)
             .resolve_type_path_in_scope(scope, path)?;
         if matches!(resolution, TypePathResolution::Unknown)
-            && let Some(primitive) = path.single_name().and_then(rg_ty::PrimitiveTy::from_name)
+            && let Some(primitive) = path.single_name().and_then(PrimitiveTy::from_name)
         {
             return Ok(Ty::Primitive(primitive));
         }

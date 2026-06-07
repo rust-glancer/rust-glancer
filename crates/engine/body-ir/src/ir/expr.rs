@@ -5,12 +5,12 @@ use wincode::{SchemaRead, SchemaWrite};
 use rg_ir_model::{
     BindingId, BodySource, ClosureCapture, ClosureKind, ExprAssignOp, ExprBinaryOp, ExprId,
     ExprRangeKind, ExprUnaryOp, LabelData, PatId, ScopeId, StmtId,
+    items::{Mutability, PrimitiveTy},
 };
 use rg_item_tree::{FieldKey, GenericArg, TypeRef};
 use rg_memsize::MemorySize;
 use rg_parse::Span;
 use rg_text::Name;
-use rg_ty::{PrimitiveTy, RefMutability, Ty};
 
 use super::{RecordFieldSyntax, path::BodyPath};
 
@@ -303,7 +303,7 @@ pub enum ExprWrapperKind {
     Paren,
     /// `&<expr>` or `&mut <expr>`.
     #[display("ref")]
-    Ref { mutability: RefMutability },
+    Ref { mutability: Mutability },
     /// `<expr>.await`.
     #[display("await")]
     Await,
@@ -343,20 +343,6 @@ pub enum LiteralKind {
     Int { primitive_ty: Option<PrimitiveTy> },
     String,
     Unknown,
-}
-
-impl LiteralKind {
-    pub fn ty(self) -> Ty {
-        match self {
-            Self::Bool => Ty::Primitive(PrimitiveTy::Bool),
-            Self::Char => Ty::Primitive(PrimitiveTy::Char),
-            Self::Float { primitive_ty } | Self::Int { primitive_ty } => {
-                primitive_ty.map(Ty::Primitive).unwrap_or(Ty::Unknown)
-            }
-            Self::String => Ty::reference(RefMutability::Shared, Ty::Primitive(PrimitiveTy::Str)),
-            Self::Unknown => Ty::Unknown,
-        }
-    }
 }
 
 impl fmt::Display for LiteralKind {

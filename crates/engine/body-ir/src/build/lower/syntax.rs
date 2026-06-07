@@ -5,10 +5,10 @@ use rg_syntax::{
     ast::{self, HasGenericArgs as _, PathSegmentKind},
 };
 
+use rg_ir_model::items::{PrimitiveTy, UnsignedIntTy};
 use rg_item_tree::{FromAst as _, GenericArg, TypePath, TypeRef};
 use rg_parse::{FileId, Span};
 use rg_text::Name;
-use rg_ty::{PrimitiveTy, UnsignedIntTy};
 
 use crate::ir::{
     BodyPath, BodySource, LabelData, LiteralKind,
@@ -207,8 +207,8 @@ pub(super) fn source_for(file_id: FileId, syntax: &rg_syntax::SyntaxNode) -> Bod
 
 #[cfg(test)]
 mod tests {
+    use rg_ir_model::items::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy};
     use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
-    use rg_ty::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy};
 
     use crate::ir::LiteralKind;
 
