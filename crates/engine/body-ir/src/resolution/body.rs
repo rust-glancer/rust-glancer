@@ -732,7 +732,9 @@ where
         let ty = &self.body.exprs[inner].ty;
         match op {
             ExprUnaryOp::Not => match ty {
-                Ty::Primitive(primitive) if primitive.is_bool() => Ty::Primitive(*primitive),
+                Ty::Primitive(primitive) if primitive.is_bool() || primitive.is_integral() => {
+                    Ty::Primitive(*primitive)
+                }
                 _ => Ty::Unknown,
             },
             ExprUnaryOp::Neg => match ty {

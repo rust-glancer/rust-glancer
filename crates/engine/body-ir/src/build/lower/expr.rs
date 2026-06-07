@@ -6,6 +6,7 @@ use rg_syntax::{
         self, ArrayExprKind, BinaryOp, ElseBranch, HasArgList as _, HasGenericArgs as _,
         HasLoopBody as _, LogicOp, RangeItem as _,
     },
+    utils::normalized_syntax_text,
 };
 
 use rg_ir_model::{ExprId, ScopeId};
@@ -146,15 +147,7 @@ impl BodyLowering<'_> {
                     initializer.map(|initializer| self.lower_expr(initializer, scope));
                 // Preserve the written const expression for display and shallow type equality. This
                 // deliberately does not evaluate the expression; it only mirrors array type syntax.
-                let len_text = repeat.as_ref().map(|repeat| {
-                    repeat
-                        .syntax()
-                        .text()
-                        .to_string()
-                        .split_whitespace()
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                });
+                let len_text = repeat.as_ref().map(normalized_syntax_text);
                 let repeat = repeat.map(|repeat| self.lower_expr(repeat, scope));
                 self.alloc_expr(
                     array.syntax(),

@@ -360,6 +360,7 @@ pub enum GenericArg {
     Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
     Lifetime(String),
     Const(String),
+    /// Parenthesized argument syntax on function-trait paths, such as `FnOnce(T) -> R`.
     FnTraitArgs {
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypeRef>>")]
         params: Vec<TypeRef>,

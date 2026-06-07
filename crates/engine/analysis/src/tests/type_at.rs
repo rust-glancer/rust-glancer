@@ -43,7 +43,7 @@ version = "0.1.0"
 edition = "2024"
 
 //- /src/lib.rs
-pub fn use_it(flag: bool, lhs: i32, rhs: i32) {
+pub fn use_it(flag: bool, byte: u8, lhs: i32, rhs: i32) {
     let bool_lit = true$type_bool$;
     let char_lit = 'x'$type_char$;
     let byte_lit = b'x'$type_byte$;
@@ -53,6 +53,7 @@ pub fn use_it(flag: bool, lhs: i32, rhs: i32) {
     let float_suffix = 1.0f32$type_f32$;
     let string_lit = "text"$type_str$;
     let not_flag = (!flag)$type_not$;
+    let not_byte = (!byte)$type_not_byte$;
     let neg_lhs = (-lhs)$type_neg$;
     let sum = (lhs + rhs)$type_sum$;
     let compare = (lhs < rhs)$type_compare$;
@@ -71,6 +72,7 @@ pub fn use_it(flag: bool, lhs: i32, rhs: i32) {
             AnalysisQuery::ty("suffixed float literal", "type_f32"),
             AnalysisQuery::ty("string literal", "type_str"),
             AnalysisQuery::ty("not expression", "type_not"),
+            AnalysisQuery::ty("integer not expression", "type_not_byte"),
             AnalysisQuery::ty("neg expression", "type_neg"),
             AnalysisQuery::ty("sum expression", "type_sum"),
             AnalysisQuery::ty("comparison expression", "type_compare"),
@@ -105,6 +107,9 @@ pub fn use_it(flag: bool, lhs: i32, rhs: i32) {
 
             not expression
             - bool
+
+            integer not expression
+            - u8
 
             neg expression
             - i32
@@ -752,6 +757,8 @@ pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
     let array_expr = [value, value]$type_array_expr$;
     let repeat_expr = [value; 3]$type_repeat_expr$;
     let named_repeat = [value; N]$type_named_repeat$;
+    let spaced_repeat = [value; "a  b".len()
+        + 1]$type_spaced_repeat$;
     let tuple_field = pair.$type_tuple_field$0;
     let indexed = array[0]$type_indexed$;
     let (left, right) = tuple_expr;
@@ -769,6 +776,7 @@ pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
             AnalysisQuery::ty("array expression", "type_array_expr"),
             AnalysisQuery::ty("repeat array expression", "type_repeat_expr"),
             AnalysisQuery::ty("named repeat array expression", "type_named_repeat"),
+            AnalysisQuery::ty("spaced repeat array expression", "type_spaced_repeat"),
             AnalysisQuery::ty("self repeat array expression", "type_self_repeat"),
             AnalysisQuery::ty("tuple field", "type_tuple_field"),
             AnalysisQuery::ty("array index", "type_indexed"),
@@ -797,6 +805,9 @@ pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
 
             named repeat array expression
             - [u8; N]
+
+            spaced repeat array expression
+            - [u8; "a  b".len() + 1]
 
             self repeat array expression
             - [u8; Self::N]
