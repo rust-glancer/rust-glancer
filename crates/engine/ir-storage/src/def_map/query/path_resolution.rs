@@ -9,12 +9,10 @@
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
 use rg_ir_model::items::VisibilityLevel;
-use rg_ir_model::{DefId, DefMapRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment, TargetRef};
 use rg_text::Name;
 
-use super::super::{
-    ImportPath, ModuleOrigin, ModuleScopeBuilder, Namespace, Path, PathSegment, ScopeBinding,
-};
+use super::super::{ImportPath, ModuleOrigin, ModuleScopeBuilder, Namespace, ScopeBinding};
 
 use super::resolution_env::{ScopeResolutionEnv, TargetResolutionEnv};
 

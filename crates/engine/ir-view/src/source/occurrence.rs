@@ -8,12 +8,13 @@ use rg_body_ir::{
     ValueReferenceSurface,
 };
 use rg_def_map::DefMapCursorCandidate;
+use rg_ir_model::Path;
 use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
     BodyBindingRef, ModuleRef, TargetRef,
     identity::{DeclarationRef, ExprRef, FunctionBodyRef, LexicalScopeRef},
 };
-use rg_ir_storage::{Path, TypePathContext};
+use rg_ir_storage::TypePathContext;
 use rg_parse::{FileId, Span};
 use rg_semantic_ir::SemanticCursorCandidate;
 

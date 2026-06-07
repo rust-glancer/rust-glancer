@@ -4,12 +4,12 @@
 //! expressions. The parent resolver still drives pass ordering and binding propagation.
 
 use rg_ir_model::{
-    DefId, DefMapRef, ExprId, FunctionRef, ImplRef, ItemOwner, ScopeId, SemanticItemRef,
+    DefId, DefMapRef, ExprId, FunctionRef, ImplRef, ItemOwner, Path, ScopeId, SemanticItemRef,
     TypePathResolution,
     identity::DeclarationRef,
     items::{GenericParams, PrimitiveTy},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, Path};
+use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_item_tree::{FieldKey, GenericArg as ItemGenericArg};
 use rg_package_store::PackageStoreError;
 use rg_ty::{

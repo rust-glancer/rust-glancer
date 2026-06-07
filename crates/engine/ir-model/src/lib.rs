@@ -7,6 +7,7 @@
 pub mod hir;
 mod ids;
 pub mod items;
+pub mod path;
 mod resolution;
 
 pub use self::hir::body::{
@@ -27,6 +28,7 @@ pub use self::ids::{
         TypeDefId, TypeDefRef, UnionId,
     },
 };
+pub use self::path::{Path, PathSegment, last_segment_name};
 pub use self::resolution::TypePathResolution;
 
 // We have a lot of arenas, and each has to have a unique ID.

@@ -4,10 +4,9 @@
 //! bindings. Enum variants are matched against a known enum scrutinee/annotation type; patterns do
 //! not infer the scrutinee type by themselves.
 
-use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId, TypeDefId};
+use rg_ir_model::{BindingId, ExprId, PatId, Path, PathSegment, ScopeId, StmtId, TypeDefId};
 use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource, Path, PathSegment,
-    TargetItemQuery,
+    DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource, TargetItemQuery,
 };
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;

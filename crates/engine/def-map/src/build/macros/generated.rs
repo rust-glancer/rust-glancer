@@ -7,13 +7,13 @@
 use anyhow::{Context as _, Result};
 
 use rg_ir_model::{
-    DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef,
+    DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, PathSegment, TargetRef,
     hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource},
 };
 use rg_ir_storage::{
     ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
     LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope,
-    Namespace, PathSegment, ScopeBinding, ScopeBindingOrigin,
+    Namespace, ScopeBinding, ScopeBindingOrigin,
 };
 use rg_item_tree::{
     Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ItemTreeRef, MacroCallItem,

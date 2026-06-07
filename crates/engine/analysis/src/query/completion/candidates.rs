@@ -6,9 +6,9 @@
 
 use rg_ir_model::items::{FieldKey, PrimitiveTy};
 use rg_ir_model::{
-    EnumVariantRef, FieldRef, FunctionRef, ModuleRef, TypeDefId, identity::DeclarationRef,
+    EnumVariantRef, FieldRef, FunctionRef, ModuleRef, Path, TypeDefId, identity::DeclarationRef,
 };
-use rg_ir_storage::{ItemStoreQuery, Path};
+use rg_ir_storage::ItemStoreQuery;
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     lookup::name::{ModuleScopeName, NameLookupView, NameNamespace, NameOrigin},

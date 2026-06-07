@@ -14,8 +14,8 @@ mod receiver_items;
 mod type_path;
 mod type_ref;
 
-use rg_ir_model::{BodyRef, ScopeId, TypePathResolution};
-use rg_ir_storage::{DefMapSource, ItemStoreSource, Path};
+use rg_ir_model::{BodyRef, Path, ScopeId, TypePathResolution};
+use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_ty::{MemberMethodCandidateRef, Ty};
 

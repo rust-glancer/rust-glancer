@@ -9,11 +9,11 @@ use rg_ir_model::items::{
     GenericArg as ItemGenericArg, GenericParams, Mutability, TypePath, TypeRef,
 };
 use rg_ir_model::{
-    FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef, TypePathResolution,
+    FunctionRef, ImplRef, ItemOwner, Path, TraitApplicability, TraitImplRef, TypePathResolution,
     hir::items::ImplData,
 };
 use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemStoreSource, Path, TargetItemQuery, TypePathContext,
+    DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext,
 };
 use rg_text::Name;
 

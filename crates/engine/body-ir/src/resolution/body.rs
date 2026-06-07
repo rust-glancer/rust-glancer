@@ -5,12 +5,12 @@
 
 use rg_ir_model::{
     AssocItemId, BindingId, BodyRef, ConstRef, DefId, DefMapRef, ExprId, ImplRef, ItemOwner,
-    ModuleId, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TraitImplRef, TypeDefId,
-    TypePathResolution, identity::DeclarationRef,
+    ModuleId, ModuleRef, Path, PathSegment, ScopeId, SemanticItemRef, StaticRef, TraitImplRef,
+    TypeDefId, TypePathResolution, identity::DeclarationRef,
 };
 use rg_ir_storage::{
     DefMapQuery, DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource,
-    NameResolutionFilter, Path, PathSegment, ResolvePathResult, TargetItemQuery, TypePathContext,
+    NameResolutionFilter, ResolvePathResult, TargetItemQuery, TypePathContext,
 };
 use rg_package_store::PackageStoreError;
 use rg_ty::{Autoderef, ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};

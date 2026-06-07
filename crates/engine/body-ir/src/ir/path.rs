@@ -2,7 +2,7 @@ use std::fmt;
 
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_ir_storage::{Path, PathSegment};
+use rg_ir_model::{Path, PathSegment};
 use rg_item_tree::{GenericArg, TypeRef};
 use rg_memsize::MemorySize;
 use rg_parse::Span;

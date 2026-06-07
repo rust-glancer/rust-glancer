@@ -2,10 +2,10 @@
 
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
-    BodyId, BodyRef, ConstRef, DefMapRef, ItemOwner, ModuleRef, StaticRef, TargetRef,
+    BodyId, BodyRef, ConstRef, DefMapRef, ItemOwner, ModuleRef, Path, StaticRef, TargetRef,
     TypePathResolution,
 };
-use rg_ir_storage::{ItemLookupIndex, ItemStore, Path, TargetItemQuery};
+use rg_ir_storage::{ItemLookupIndex, ItemStore, TargetItemQuery};
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::NameInterner;
 

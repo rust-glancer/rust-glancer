@@ -4,7 +4,8 @@ use expect_test::Expect;
 
 use crate::{SemanticIrReadTxn, testonly::SemanticIrFixture};
 use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef, TypeAliasId};
-use rg_ir_storage::{ItemStore, ItemStoreQuery, Path, PathSegment, TargetItemQuery};
+use rg_ir_model::{Path, PathSegment};
+use rg_ir_storage::{ItemStore, ItemStoreQuery, TargetItemQuery};
 use rg_item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel};
 use rg_package_store::PackageLoader;
 use rg_parse::{Package, ParseDb, Target};

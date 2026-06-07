@@ -5,9 +5,10 @@
 //! with the substitutions supplied by `ImplMatcher`.
 
 use rg_ir_model::{
-    AssocItemId, TraitImplRef, TraitRef, TypeAliasRef, TypePathResolution, hir::items::ImplData,
+    AssocItemId, Path, TraitImplRef, TraitRef, TypeAliasRef, TypePathResolution,
+    hir::items::ImplData,
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource, Path, TargetItemQuery, TypePathContext};
+use rg_ir_storage::{DefMapSource, ItemStoreSource, TargetItemQuery, TypePathContext};
 
 use crate::{GenericArg, ItemPathQuery, OpaqueTraitBound, Ty, TypeSubst};
 

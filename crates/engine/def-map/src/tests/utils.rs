@@ -2,12 +2,10 @@ use expect_test::Expect;
 
 use crate::{DefMapDb, DefMapFinalizationStats, testonly::DefMapFixture};
 use rg_ir_model::{
-    DefId, DefMapRef, ModuleId, ModuleRef, TargetRef,
+    DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment, TargetRef,
     hir::source::{ItemSource, ItemSourceKind},
 };
-use rg_ir_storage::{
-    DefMap, ImportData, ImportKind, Path, PathSegment, ResolvePathResult, ScopeBinding, ScopeEntry,
-};
+use rg_ir_storage::{DefMap, ImportData, ImportKind, ResolvePathResult, ScopeBinding, ScopeEntry};
 use rg_item_tree::VisibilityLevel;
 use rg_package_store::PackageLoader;
 use rg_parse::{FileId, Package, ParseDb, Target};

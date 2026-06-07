@@ -5,10 +5,10 @@
 //! query to stay independent from the concrete target/body storage that provided those answers.
 
 use rg_ir_model::items::{GenericArg as ItemGenericArg, Mutability, TypeBound, TypePath, TypeRef};
-use rg_ir_model::{DefId, ModuleRef, SemanticItemRef, TraitRef, TypeDefRef, TypePathResolution};
-use rg_ir_storage::{
-    DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, Path, TypePathContext,
+use rg_ir_model::{
+    DefId, ModuleRef, Path, SemanticItemRef, TraitRef, TypeDefRef, TypePathResolution,
 };
+use rg_ir_storage::{DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, TypePathContext};
 
 use crate::{GenericArg, OpaqueTraitBound, PrimitiveTy, RefMutability, Ty, TypeSubst};
 

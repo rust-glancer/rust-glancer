@@ -7,10 +7,10 @@ pub mod locals;
 
 use rg_body_ir::BodyScopeQuery;
 use rg_ir_model::{
-    BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticItemRef, TypePathResolution,
+    BodyRef, EnumVariantRef, FieldRef, Path, ScopeId, SemanticItemRef, TypePathResolution,
     identity::DeclarationRef, identity::ExprRef, items::PrimitiveTy,
 };
-use rg_ir_storage::{ItemStoreQuery, Path, TypePathContext};
+use rg_ir_storage::{ItemStoreQuery, TypePathContext};
 use rg_ty::{ItemPathQuery, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
 use crate::{IndexedViewDb, ty::locals::BodyView};

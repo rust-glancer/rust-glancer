@@ -11,12 +11,12 @@
 //! 3. Rewrite every binding reference from pending slot ids to final binding ids.
 
 use rg_ir_model::{
-    BindingId, BodyRef, DefId, DefMapRef, ExprId, ModuleId, ModuleRef, ScopeId, SemanticItemRef,
-    TypeDefId, identity::DeclarationRef,
+    BindingId, BodyRef, DefId, DefMapRef, ExprId, ModuleId, ModuleRef, Path, PathSegment, ScopeId,
+    SemanticItemRef, TypeDefId, identity::DeclarationRef,
 };
 use rg_ir_storage::{
     DefMapQuery, DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource,
-    NameResolutionFilter, Path, PathSegment,
+    NameResolutionFilter,
 };
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;

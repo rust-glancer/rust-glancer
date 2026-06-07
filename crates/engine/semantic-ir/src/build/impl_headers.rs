@@ -1,8 +1,9 @@
 //! Resolves impl headers after semantic item identities are available.
 
 use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
+use rg_ir_model::Path;
 use rg_ir_model::{ImplRef, ModuleRef, TargetRef, TraitRef, TypeDefRef};
-use rg_ir_storage::{ItemStoreQuery, Path};
+use rg_ir_storage::ItemStoreQuery;
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;

@@ -4,12 +4,13 @@
 //! docs, and display paths, so this module keeps that projection close to the analysis features.
 
 use rg_body_ir::BodyScopeQuery;
+use rg_ir_model::Path;
 use rg_ir_model::items::{Documentation, FieldKey, ParamItem};
 use rg_ir_model::{
     BodyRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TargetRef, TypePathResolution,
     hir::items::{FieldData, FunctionData},
 };
-use rg_ir_storage::{ItemStoreQuery, Path, TargetItemQuery};
+use rg_ir_storage::{ItemStoreQuery, TargetItemQuery};
 use rg_ir_view::{IndexedViewDb, item::path::PathView};
 pub(crate) use rg_ty::MemberMethodOrigin;
 use rg_ty::{ItemPathQuery, MemberMethodCandidateRef, MemberQuery, Ty};

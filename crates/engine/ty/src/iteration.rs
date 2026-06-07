@@ -6,11 +6,11 @@
 
 use rg_ir_model::items::{TypeBound, TypeRef};
 use rg_ir_model::{
-    AssocItemId, ImplRef, TraitImplRef, TraitRef, TypeAliasRef, hir::items::ImplData,
+    AssocItemId, ImplRef, Path, PathSegment, TraitImplRef, TraitRef, TypeAliasRef,
+    hir::items::ImplData,
 };
 use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemStoreSource, Path, PathSegment, TargetItemQuery,
-    TypePathContext,
+    DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext,
 };
 use rg_text::Name;
 

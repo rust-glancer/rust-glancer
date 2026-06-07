@@ -1,13 +1,17 @@
 use std::fmt;
 
-use rg_ir_model::TargetRef;
-use rg_ir_model::items::{TypePath, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind};
+use wincode::{SchemaRead, SchemaWrite};
+
+use rg_memsize::MemorySize;
 use rg_text::Name;
 
+use crate::{
+    TargetRef,
+    items::{TypePath, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind},
+};
+
 /// Structured path used by def-map path resolution queries.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct Path {
     pub absolute: bool,
     pub segments: Vec<PathSegment>,
@@ -131,14 +135,7 @@ impl fmt::Display for Path {
 
 /// One structured path segment.
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 pub enum PathSegment {
     #[display("{_0}")]
@@ -173,14 +170,14 @@ impl PathSegment {
         }
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {
+    pub fn shrink_to_fit(&mut self) {
         if let Self::Name(name) = self {
             name.shrink_to_fit();
         }
     }
 }
 
-pub(crate) fn last_segment_name(segments: &[PathSegment]) -> Option<Name> {
+pub fn last_segment_name(segments: &[PathSegment]) -> Option<Name> {
     match segments.last()? {
         PathSegment::Name(name) => Some(name.clone()),
         PathSegment::SelfKw => Some(Name::new("self")),
@@ -192,7 +189,7 @@ pub(crate) fn last_segment_name(segments: &[PathSegment]) -> Option<Name> {
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::items::{
+    use crate::items::{
         TypePath, TypePathSegment, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind,
     };
     use rg_parse::{Span, TextSpan};
