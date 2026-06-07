@@ -484,16 +484,46 @@ fn select_preludes(
         let interner = interners.package_mut(package_slot).with_context(|| {
             format!("while attempting to fetch name interner for package {package_slot}")
         })?;
-        let prelude_path = ImportPath::standard_prelude(workspace_package.edition, interner);
-
         // Each target resolves its edition prelude from its own crate root. Targets without a root
         // module are malformed enough that later phases will simply see no prelude.
         for (target_slot, state) in package_states.iter().enumerate() {
-            let Some(prelude_module) = PathResolver::new(&env)
-                .import_modules(state.target, state.root_module, &prelude_path)?
-                .into_iter()
-                .next()
-            else {
+            let mut prelude_module = None;
+
+            // Normal crates use `std` when available. No-std-shaped crates still need the same
+            // edition prelude, but rooted at `core`. The core crate itself has a crate-local
+            // `prelude` module, so resolve that shape relatively during this early pass.
+            // TODO: Parse crate-level `#![no_std]` and use it to select `core` prelude directly
+            // and avoid exposing `std` as an automatic extern root for that crate.
+            let prelude_paths = [
+                Some(ImportPath::standard_prelude(
+                    "std",
+                    workspace_package.edition,
+                    interner,
+                )),
+                Some(ImportPath::standard_prelude(
+                    "core",
+                    workspace_package.edition,
+                    interner,
+                )),
+                (workspace_package.name == "core").then(|| {
+                    ImportPath::crate_relative_standard_prelude(
+                        workspace_package.edition,
+                        interner,
+                    )
+                }),
+            ];
+
+            for prelude_path in prelude_paths.into_iter().flatten() {
+                prelude_module = PathResolver::new(&env)
+                    .import_modules(state.target, state.root_module, &prelude_path)?
+                    .into_iter()
+                    .next();
+                if prelude_module.is_some() {
+                    break;
+                }
+            }
+
+            let Some(prelude_module) = prelude_module else {
                 continue;
             };
 

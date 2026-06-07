@@ -34,6 +34,17 @@ pub(super) fn check_project_semantic_queries(
     expect.assert_eq(&actual);
 }
 
+pub(super) fn check_project_semantic_queries_with_sysroot(
+    fixture: &str,
+    queries: &[SemanticQuery],
+    expect: Expect,
+) {
+    let db = SemanticIrFixtureDb::build_with_sysroot(fixture);
+    let actual = ProjectSemanticQuerySnapshot::new(&db, queries).render();
+    let actual = format!("{}\n", actual.trim_end());
+    expect.assert_eq(&actual);
+}
+
 pub(super) struct SemanticQuery {
     package_name: &'static str,
     target_kind: TargetKind,

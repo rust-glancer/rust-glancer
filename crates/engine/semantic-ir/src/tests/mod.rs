@@ -2,7 +2,10 @@ mod utils;
 
 use expect_test::expect;
 
-use self::utils::{SemanticQuery, check_project_semantic_ir, check_project_semantic_queries};
+use self::utils::{
+    SemanticQuery, check_project_semantic_ir, check_project_semantic_queries,
+    check_project_semantic_queries_with_sysroot,
+};
 
 #[test]
 fn dumps_semantic_ir_signatures() {
@@ -220,6 +223,126 @@ impl ImportedTrait for Local {
             - fn trait dep[lib]::crate::ExternalTrait::required
             trait impl functions
             - fn impl ImportedTrait for Local::required
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_core_prelude_trait_impl_headers() {
+    check_project_semantic_queries_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct App;
+
+//- /sysroot/library/core/src/lib.rs
+extern crate self as core;
+
+pub mod marker {
+    pub trait Marker {
+        fn mark(&self);
+    }
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::marker::Marker;
+    }
+}
+
+pub struct CoreType;
+
+impl Marker for CoreType {
+    fn mark(&self) {}
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod prelude {
+    pub mod rust_2024 {}
+}
+"#,
+        &[SemanticQuery::lib("core", "CoreType")],
+        expect![[r#"
+            query core [lib] crate resolves CoreType -> struct core[lib]::crate::CoreType
+            impls
+            - impl Marker for CoreType
+            trait impls
+            - impl Marker for CoreType => trait core[lib]::crate::marker::Marker
+            traits
+            - trait core[lib]::crate::marker::Marker
+            inherent functions
+            - <none>
+            trait functions
+            - fn trait core[lib]::crate::marker::Marker::mark
+            trait impl functions
+            - fn impl Marker for CoreType::mark
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_alloc_impl_headers_through_core_prelude() {
+    check_project_semantic_queries_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct App;
+
+//- /sysroot/library/core/src/lib.rs
+extern crate self as core;
+
+pub mod marker {
+    pub trait Marker {
+        fn mark(&self);
+    }
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::marker::Marker;
+    }
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct AllocType;
+
+impl Marker for AllocType {
+    fn mark(&self) {}
+}
+
+//- /sysroot/library/std/src/lib.rs
+pub mod prelude {
+    pub mod rust_2024 {}
+}
+"#,
+        &[SemanticQuery::lib("alloc", "AllocType")],
+        expect![[r#"
+            query alloc [lib] crate resolves AllocType -> struct alloc[lib]::crate::AllocType
+            impls
+            - impl Marker for AllocType
+            trait impls
+            - impl Marker for AllocType => trait core[lib]::crate::marker::Marker
+            traits
+            - trait core[lib]::crate::marker::Marker
+            inherent functions
+            - <none>
+            trait functions
+            - fn trait core[lib]::crate::marker::Marker::mark
+            trait impl functions
+            - fn impl Marker for AllocType::mark
         "#]],
     );
 }

@@ -1227,6 +1227,8 @@ pub fn use_it(def_map: &DefMap, state: &BuildState) {
 }
 
 //- /sysroot/library/core/src/lib.rs
+extern crate self as core;
+
 pub mod iter {
     pub trait IntoIterator {
         type Item;
@@ -1234,11 +1236,17 @@ pub mod iter {
     }
 }
 
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::iter::IntoIterator;
+    }
+}
+
 pub mod slice {
     pub struct Iter<'a, T>(&'a T);
 }
 
-impl<'a, T> iter::IntoIterator for &'a [T] {
+impl<'a, T> IntoIterator for &'a [T] {
     type Item = &'a T;
     type IntoIter = slice::Iter<'a, T>;
 }
@@ -1265,6 +1273,402 @@ pub mod prelude {
             - &nominal struct storage[lib]::crate::ImportData
 
             for item from sysroot chained method returned slice
+            - &nominal struct storage[lib]::crate::ImportData
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_for_loop_item_types_from_slice_iter_method() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "storage", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+    }
+
+    pub trait Iterator {
+        type Item;
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+impl<I: iter::Iterator> iter::IntoIterator for I {
+    type Item = I::Item;
+}
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use storage::DefMap;
+
+pub fn use_it(def_map: &DefMap) {
+    let iter = def_map.imports().it$type_iter$er();
+
+    for imp$hover_import$ort in def_map.imports().iter() {
+        let _import = imp$type_import$ort;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("slice iter method return", "type_iter").in_lib("app"),
+            AnalysisQuery::ty("for item from slice iter method", "type_import").in_lib("app"),
+            AnalysisQuery::hover("hover for item from slice iter method", "hover_import")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            slice iter method return
+            - nominal struct fake_core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData>
+
+            for item from slice iter method
+            - &nominal struct storage[lib]::crate::ImportData
+
+            hover for item from slice iter method
+            - range: 6:9-6:15
+            - block:
+              kind: variable
+              signature:
+                let import: &ImportData
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_for_loop_item_types_from_sysroot_slice_iter_method() {
+    check_analysis_queries_with_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["storage", "app"]
+resolver = "3"
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use storage::DefMap;
+
+pub fn use_it(def_map: &DefMap) {
+    let iter = def_map.imports().it$type_iter$er();
+
+    for imp$hover_import$ort in def_map.imports().iter() {
+        let _import = imp$type_import$ort;
+    }
+}
+
+//- /sysroot/library/core/src/lib.rs
+extern crate self as core;
+
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+    }
+
+    pub trait Iterator {
+        type Item;
+    }
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::iter::{IntoIterator, Iterator};
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T: 'a>(&'a T);
+}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+impl<I: Iterator> IntoIterator for I {
+    type Item = I::Item;
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod prelude {
+    pub mod rust_2024 {}
+}
+"#,
+        &[
+            AnalysisQuery::ty("sysroot slice iter method return", "type_iter").in_lib("app"),
+            AnalysisQuery::ty("for item from sysroot slice iter method", "type_import")
+                .in_lib("app"),
+            AnalysisQuery::hover(
+                "hover for item from sysroot slice iter method",
+                "hover_import",
+            )
+            .in_lib("app"),
+        ],
+        expect![[r#"
+            sysroot slice iter method return
+            - nominal struct core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData>
+
+            for item from sysroot slice iter method
+            - &nominal struct storage[lib]::crate::ImportData
+
+            hover for item from sysroot slice iter method
+            - range: 6:9-6:15
+            - block:
+              kind: variable
+              signature:
+                let import: &ImportData
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_for_loop_items_from_project_style_import_helpers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "storage", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+    }
+
+    pub trait Iterator {
+        type Item;
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+impl<I: iter::Iterator> iter::IntoIterator for I {
+    type Item = I::Item;
+}
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /storage/src/lib.rs
+use core::iter;
+
+pub struct ImportId;
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+
+    pub fn imports_with_ids(&self) -> impl iter::Iterator<Item = (ImportId, &ImportData)> {
+        missing()
+    }
+}
+
+pub struct DefMapBuilder {
+    pub incomplete: DefMap,
+}
+
+impl DefMapBuilder {
+    pub fn as_incomplete_def_map(&self) -> &DefMap {
+        &self.incomplete
+    }
+}
+
+pub struct TargetState {
+    pub def_map_builder: DefMapBuilder,
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use storage::TargetState;
+
+pub fn use_it(state: &TargetState) {
+    for imp$hover_iter_import$ort in state.def_map_builder.as_incomplete_def_map().imports().iter() {
+        let _import = imp$type_iter_import$ort;
+    }
+
+    for (import_$hover_import_id$id, imp$hover_ids_import$ort) in state
+        .def_map_builder
+        .as_incomplete_def_map()
+        .imports_with_ids()
+    {
+        let _import_id = import$type_import_id$_id;
+        let _import = imp$type_ids_import$ort;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::hover("hover item from project-style slice iter", "hover_iter_import")
+                .in_lib("app"),
+            AnalysisQuery::ty("use item from project-style slice iter", "type_iter_import")
+                .in_lib("app"),
+            AnalysisQuery::hover(
+                "hover import id from project-style opaque iterator",
+                "hover_import_id",
+            )
+            .in_lib("app"),
+            AnalysisQuery::ty(
+                "use import id from project-style opaque iterator",
+                "type_import_id",
+            )
+            .in_lib("app"),
+            AnalysisQuery::hover(
+                "hover item from project-style opaque iterator",
+                "hover_ids_import",
+            )
+            .in_lib("app"),
+            AnalysisQuery::ty(
+                "use item from project-style opaque iterator",
+                "type_ids_import",
+            )
+            .in_lib("app"),
+        ],
+        expect![[r#"
+            hover item from project-style slice iter
+            - range: 4:9-4:15
+            - block:
+              kind: variable
+              signature:
+                let import: &ImportData
+
+            use item from project-style slice iter
+            - &nominal struct storage[lib]::crate::ImportData
+
+            hover import id from project-style opaque iterator
+            - range: 8:10-8:19
+            - block:
+              kind: variable
+              signature:
+                let import_id: ImportId
+
+            use import id from project-style opaque iterator
+            - nominal struct storage[lib]::crate::ImportId
+
+            hover item from project-style opaque iterator
+            - range: 8:21-8:27
+            - block:
+              kind: variable
+              signature:
+                let import: &ImportData
+
+            use item from project-style opaque iterator
             - &nominal struct storage[lib]::crate::ImportData
         "#]],
     );
