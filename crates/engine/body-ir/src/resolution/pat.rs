@@ -8,21 +8,16 @@ use rg_ir_model::{
     BindingId, BodyPath, ExprId, PatId, Path, PathSegment, ScopeId, StmtId, TypeDefId,
     items::{FieldItem, FieldKey, FieldList, TypeRef},
 };
-use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource, TargetItemQuery,
-};
+use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{
-    ItemPathQuery, IterationItemResolver, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst,
-};
+use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
 use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
 
-use super::{BodyQuerySource, TypeRefUseSite, push_unique, type_path::BodyTypePathResolver};
+use super::{BodyResolutionContext, TypeRefUseSite, push_unique};
 
 pub(super) struct PatternTypePropagator<'query, D, I> {
-    source: BodyQuerySource<'query, D, I>,
-    semantic_index: &'query ItemLookupIndex,
+    context: BodyResolutionContext<'query, D, I>,
 }
 
 impl<'query, D, I> PatternTypePropagator<'query, D, I>
@@ -30,20 +25,14 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(super) fn new(
-        source: BodyQuerySource<'query, D, I>,
-        semantic_index: &'query ItemLookupIndex,
-    ) -> Self {
-        Self {
-            source,
-            semantic_index,
-        }
+    pub(super) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
+        Self { context }
     }
 
     pub(super) fn propagate(&self) -> Result<Vec<(BindingId, Ty)>, PackageStoreError> {
         let mut updates = Vec::new();
 
-        for statement_idx in 0..self.source.body().statements().len() {
+        for statement_idx in 0..self.context.body().statements().len() {
             let statement = StmtId(statement_idx);
             let StmtKind::Let {
                 scope,
@@ -52,7 +41,7 @@ where
                 initializer,
                 ..
             } = self
-                .source
+                .context
                 .body()
                 .statement_unchecked(statement)
                 .kind
@@ -65,15 +54,15 @@ where
             self.propagate_pat(pat, &expected_ty, &mut updates)?;
         }
 
-        let iteration_items = self.iteration_items();
-        for expr_idx in 0..self.source.body().exprs().len() {
+        let iteration_items = self.context.iteration_items();
+        for expr_idx in 0..self.context.body().exprs().len() {
             let expr = ExprId(expr_idx);
-            match self.source.body().expr_unchecked(expr).kind.clone() {
+            match self.context.body().expr_unchecked(expr).kind.clone() {
                 ExprKind::Match { scrutinee, arms } => {
                     let Some(scrutinee) = scrutinee else {
                         continue;
                     };
-                    let expected_ty = self.source.body().expr_ty_unchecked(scrutinee).clone();
+                    let expected_ty = self.context.body().expr_ty_unchecked(scrutinee).clone();
                     for arm in arms {
                         if let Some(pat) = arm.pat {
                             self.propagate_pat(pat, &expected_ty, &mut updates)?;
@@ -94,7 +83,7 @@ where
                     iterable: Some(iterable),
                     ..
                 } => {
-                    let iterable_ty = self.source.body().expr_ty_unchecked(iterable);
+                    let iterable_ty = self.context.body().expr_ty_unchecked(iterable);
                     let item_ty = iteration_items.into_iterator_item_for_ty(iterable_ty)?;
                     self.propagate_pat(pat, &item_ty, &mut updates)?;
                 }
@@ -134,24 +123,6 @@ where
         Ok(updates)
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
-        ItemStoreQuery::new(self.source)
-    }
-
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'query, D, I> {
-        BodyTypePathResolver::new(self.source)
-    }
-
-    fn iteration_items(
-        &self,
-    ) -> IterationItemResolver<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>>
-    {
-        let source = self.source;
-        let item_paths = ItemPathQuery::new(source, source);
-        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
-        IterationItemResolver::with_index(item_paths, target_items, self.semantic_index)
-    }
-
     fn expected_ty_for_let(
         &self,
         scope: ScopeId,
@@ -160,6 +131,7 @@ where
     ) -> Result<Ty, PackageStoreError> {
         if let Some(annotation) = annotation {
             let ty = self
+                .context
                 .type_path_resolver()
                 .type_ref(TypeRefUseSite::Scope(scope))
                 .resolve(annotation)?;
@@ -169,7 +141,7 @@ where
         }
 
         Ok(initializer
-            .map(|expr| self.source.body().expr_ty_unchecked(expr).clone())
+            .map(|expr| self.context.body().expr_ty_unchecked(expr).clone())
             .unwrap_or(Ty::Unknown))
     }
 
@@ -183,7 +155,7 @@ where
             return Ok(());
         }
 
-        let Some(data) = self.source.body().pat(pat).cloned() else {
+        let Some(data) = self.context.body().pat(pat).cloned() else {
             return Ok(());
         };
 
@@ -258,7 +230,7 @@ where
 
         for field in fields {
             if self
-                .source
+                .context
                 .body()
                 .pat(*field)
                 .is_some_and(|pat| matches!(&pat.kind, PatKind::Rest))
@@ -354,12 +326,13 @@ where
         }
 
         let Some(variant_ref) = self
+            .context
             .item_query()
             .enum_variant_ref_for_type_def(enum_ty.def, variant_name)?
         else {
             return Ok(None);
         };
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         let Some(variant_data) = item_query.enum_variant_data(variant_ref)? else {
             return Ok(None);
         };
@@ -372,7 +345,8 @@ where
             .unwrap_or_else(TypeSubst::new);
 
         Ok(Some(
-            self.type_path_resolver()
+            self.context
+                .type_path_resolver()
                 .type_ref(TypeRefUseSite::Module(variant_data.owner_module))
                 .with_subst(&subst)
                 .resolve(&field.ty)?,
@@ -389,11 +363,11 @@ where
             return;
         }
 
-        if self.source.body().binding(binding).is_none() {
+        if self.context.body().binding(binding).is_none() {
             return;
         }
         if !matches!(
-            self.source.body().binding_ty_unchecked(binding),
+            self.context.body().binding_ty_unchecked(binding),
             Ty::Unknown
         ) {
             return;

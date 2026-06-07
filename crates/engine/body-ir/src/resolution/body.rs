@@ -4,11 +4,9 @@
 //! Specialized helpers live in sibling modules so this file can read like the pass itself.
 
 use rg_ir_model::{BindingId, BodyRef, ExprId};
-use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource, TargetItemQuery,
-};
+use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{Autoderef, ImplMatcher, ItemPathQuery, Ty};
+use rg_ty::Ty;
 
 use crate::{
     ir::body::ResolvedBodyData,
@@ -16,9 +14,8 @@ use crate::{
 };
 
 use super::{
-    BodyQuerySource, BodyReceiverFunctionQuery, TypeRefUseSite, expr::ExprResolver,
-    pat::PatternTypePropagator, pat_binding::PatternBindingMaterializer,
-    type_path::BodyTypePathResolver,
+    BodyResolutionContext, TypeRefUseSite, expr::ExprResolver, pat::PatternTypePropagator,
+    pat_binding::PatternBindingMaterializer,
 };
 
 /// Shared state for the body-resolution fixed-point pass.
@@ -54,44 +51,16 @@ where
         }
     }
 
-    pub(super) fn type_path_resolver<'source>(
+    pub(super) fn context<'source>(
         &'source self,
-    ) -> BodyTypePathResolver<'source, &'source D, &'source I> {
-        BodyTypePathResolver::new(self.query_source())
-    }
-
-    pub(super) fn query_source<'source>(
-        &'source self,
-    ) -> BodyQuerySource<'source, &'source D, &'source I> {
-        BodyQuerySource::new(self.def_maps, self.item_stores, self.body_ref, self.body)
-    }
-
-    pub(super) fn autoderef(
-        &self,
-    ) -> Autoderef<'_, BodyQuerySource<'_, &D, &I>, BodyQuerySource<'_, &D, &I>> {
-        let source = self.query_source();
-        let item_paths = ItemPathQuery::new(source, source);
-        let target_items = TargetItemQuery::new(source, source, self.body_ref.target);
-        Autoderef::with_index(item_paths, target_items, self.semantic_index)
-    }
-
-    pub(super) fn impl_matcher(
-        &self,
-    ) -> ImplMatcher<'_, BodyQuerySource<'_, &D, &I>, BodyQuerySource<'_, &D, &I>> {
-        let source = self.query_source();
-        let item_paths = ItemPathQuery::new(source, source);
-        let target_items = TargetItemQuery::new(source, source, self.body_ref.target);
-        ImplMatcher::new(item_paths, target_items)
-    }
-
-    pub(super) fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, &D, &I>> {
-        ItemStoreQuery::new(self.query_source())
-    }
-
-    pub(super) fn receiver_functions<'source>(
-        &'source self,
-    ) -> BodyReceiverFunctionQuery<'source, &'source D, &'source I> {
-        BodyReceiverFunctionQuery::new(self.query_source(), Some(self.semantic_index))
+    ) -> BodyResolutionContext<'source, &'source D, &'source I> {
+        BodyResolutionContext::new(
+            self.def_maps,
+            self.item_stores,
+            self.body_ref,
+            self.body,
+            Some(self.semantic_index),
+        )
     }
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
@@ -111,8 +80,7 @@ where
                     changed |= expr_resolver.resolve_expr(ExprId(expr_idx))?;
                 }
             }
-            let binding_updates =
-                PatternTypePropagator::new(self.query_source(), self.semantic_index).propagate()?;
+            let binding_updates = PatternTypePropagator::new(self.context()).propagate()?;
             changed |= self.apply_binding_type_updates(binding_updates);
 
             if !changed {
@@ -168,6 +136,7 @@ where
         let binding_data = self.body.binding_unchecked(binding);
         if let Some(annotation) = &binding_data.annotation {
             return self
+                .context()
                 .type_path_resolver()
                 .type_ref(TypeRefUseSite::Scope(binding_data.scope))
                 .resolve(annotation);
@@ -178,6 +147,7 @@ where
             && let Some(function) = self.body.function_owner()
         {
             let self_tys = self
+                .context()
                 .type_path_resolver()
                 .self_nominal_tys_for_function(function)?;
             let ty = Ty::self_ty(self_tys);

@@ -82,6 +82,7 @@ where
             ExprKind::Cast { ty: Some(ty), .. } => {
                 let ty = self
                     .pass
+                    .context()
                     .type_path_resolver()
                     .type_ref(TypeRefUseSite::Scope(
                         self.pass.body.expr_unchecked(expr).scope,
@@ -237,8 +238,11 @@ where
         let expr_data = self.pass.body.expr_unchecked(expr);
         let scope = expr_data.scope;
         let visible_bindings = expr_data.visible_bindings;
-        BodyValuePathResolver::new(self.pass.query_source(), Some(self.pass.semantic_index))
-            .resolve_path_expr(scope, path, Some(visible_bindings))
+        BodyValuePathResolver::new(self.pass.context()).resolve_path_expr(
+            scope,
+            path,
+            Some(visible_bindings),
+        )
     }
 
     fn tuple_expr_ty(&self, fields: &[ExprId]) -> Ty {
@@ -310,8 +314,7 @@ where
         scope: ScopeId,
         path: &Path,
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
-        BodyValuePathResolver::new(self.pass.query_source(), Some(self.pass.semantic_index))
-            .resolve_nonlocal_path_expr(scope, path)
+        BodyValuePathResolver::new(self.pass.context()).resolve_nonlocal_path_expr(scope, path)
     }
 
     fn resolve_record_expr_path(
@@ -321,6 +324,7 @@ where
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
         match self
             .pass
+            .context()
             .type_path_resolver()
             .resolve_in_scope(scope, path)?
         {
@@ -361,12 +365,12 @@ where
             return Ok((BodyResolution::Unknown, Ty::Unknown));
         };
 
-        let item_query = self.pass.item_query();
+        let item_query = self.pass.context().item_query();
         let mut current_depth = None;
         let mut fields = Vec::new();
         let mut field_tys = Vec::new();
 
-        for candidate in self.pass.autoderef().candidates(
+        for candidate in self.pass.context().autoderef().candidates(
             AutoderefMode::FieldLookup,
             self.pass.body.expr_ty_unchecked(base),
         ) {
@@ -408,6 +412,7 @@ where
                 let subst = self.semantic_type_subst(nominal_ty)?;
                 let field_ty = self
                     .pass
+                    .context()
                     .type_path_resolver()
                     .type_ref(TypeRefUseSite::Module(field_data.owner_module))
                     .with_subst(&subst)
@@ -453,7 +458,7 @@ where
         };
 
         let receiver_ty = self.pass.body.expr_ty_unchecked(receiver);
-        let item_query = self.pass.item_query();
+        let item_query = self.pass.context().item_query();
 
         // Method lookup is intentionally shallow: nominal type plus lightweight impl-argument
         // matching gives useful candidates without modeling the full trait solver.
@@ -463,6 +468,7 @@ where
 
         for candidate in self
             .pass
+            .context()
             .autoderef()
             .candidates(AutoderefMode::MethodReceiver, receiver_ty)
         {
@@ -489,6 +495,7 @@ where
             for nominal_ty in candidate.ty().as_nominals() {
                 for function_ref in self
                     .pass
+                    .context()
                     .receiver_functions()
                     .function_refs_for_receiver(nominal_ty, Some(method_name))?
                 {
@@ -520,6 +527,7 @@ where
             // are needed to render returns like `&T` in the receiver context.
             for structural in self
                 .pass
+                .context()
                 .receiver_functions()
                 .structural_function_candidates_for_receiver(candidate.ty(), Some(method_name))?
             {
@@ -572,7 +580,7 @@ where
         let Some(inner) = inner else {
             return (BodyResolution::Unknown, Ty::Unknown);
         };
-        let ty = TyNormalizer::new(self.pass.query_source())
+        let ty = TyNormalizer::new(self.pass.context().query_source())
             .ty_for_wrapper(kind, self.pass.body.expr_ty_unchecked(inner).clone());
         let resolution = if matches!(kind, ExprWrapperKind::Paren) {
             self.pass.body.expr_resolution(inner).clone()
@@ -585,7 +593,7 @@ where
 
     fn explicit_deref_ty(&self, inner: ExprId) -> Result<Ty, PackageStoreError> {
         let mut candidates = Vec::new();
-        for candidate in self.pass.autoderef().candidates(
+        for candidate in self.pass.context().autoderef().candidates(
             AutoderefMode::ExplicitDeref,
             self.pass.body.expr_ty_unchecked(inner),
         ) {
@@ -610,7 +618,7 @@ where
         let ItemOwner::Impl(impl_id) = owner else {
             return Ok(TypeSubst::new());
         };
-        let item_query = self.pass.item_query();
+        let item_query = self.pass.context().item_query();
         let Some(impl_data) = item_query.impl_data(ImplRef {
             origin: function_ref.origin,
             id: impl_id,
@@ -621,6 +629,7 @@ where
 
         Ok(self
             .pass
+            .context()
             .impl_matcher()
             .impl_self_subst_for_impl(impl_data, receiver_ty))
     }
@@ -628,6 +637,7 @@ where
     fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {
         Ok(self
             .pass
+            .context()
             .item_query()
             .generic_params_for_type_def(ty.def)?
             .map(|generics| TypeSubst::from_generics(generics, &ty.args))
@@ -643,7 +653,12 @@ where
         arg_mapping: CallArgMapping,
         call_scope: Option<ScopeId>,
     ) -> Result<Ty, PackageStoreError> {
-        let Some(function_data) = self.pass.item_query().function_data(function_ref)? else {
+        let Some(function_data) = self
+            .pass
+            .context()
+            .item_query()
+            .function_data(function_ref)?
+        else {
             return Ok(Ty::Unknown);
         };
         let subst = receiver_ty
@@ -682,7 +697,7 @@ where
         arg_mapping: CallArgMapping,
         call_scope: Option<ScopeId>,
     ) -> Result<Ty, PackageStoreError> {
-        let item_query = self.pass.item_query();
+        let item_query = self.pass.context().item_query();
         let Some(function_data) = item_query.function_data(function_ref)? else {
             return Ok(Ty::Unknown);
         };
@@ -718,7 +733,7 @@ where
         self_ty: Option<Ty>,
         subst: TypeSubst,
     ) -> Result<Ty, PackageStoreError> {
-        let item_query = self.pass.item_query();
+        let item_query = self.pass.context().item_query();
         let Some(function_data) = item_query.function_data(function_ref)? else {
             return Ok(Ty::Unknown);
         };
@@ -731,6 +746,7 @@ where
                 Some(self_ty) => self_ty,
                 None => Ty::self_ty(
                     self.pass
+                        .context()
                         .type_path_resolver()
                         .self_nominal_tys_for_function(function_ref)?,
                 ),
@@ -738,6 +754,7 @@ where
         }
 
         self.pass
+            .context()
             .type_path_resolver()
             .type_ref(TypeRefUseSite::Function(function_ref))
             .with_subst(&subst)
@@ -863,7 +880,7 @@ where
 
         // Function turbofish arguments are supplied at the call site, so names inside them must
         // resolve from the body scope where the call was written.
-        let type_resolver = self.pass.type_path_resolver();
+        let type_resolver = self.pass.context().type_path_resolver();
         let arg_resolver = type_resolver.type_ref(TypeRefUseSite::Scope(scope));
         let generic_args = explicit_args
             .iter()
@@ -879,6 +896,7 @@ where
         Ok(
             match self
                 .pass
+                .context()
                 .item_query()
                 .semantic_item_for_local_def(local_def)?
             {

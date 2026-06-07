@@ -5,6 +5,7 @@
 
 mod body;
 mod body_items;
+mod context;
 mod expr;
 mod normalize;
 mod pat;
@@ -23,9 +24,9 @@ use rg_ty::{MemberMethodCandidateRef, Ty};
 use crate::{BodyResolution, ResolvedBodyData};
 
 pub(crate) use self::{
-    body::BodyResolver, body_items::BodyLocalItemQuery, query_source::BodyQuerySource,
-    receiver_items::BodyReceiverFunctionQuery, type_path::BodyTypePathResolver,
-    type_ref::TypeRefUseSite, value_path::BodyValuePathResolver,
+    body::BodyResolver, body_items::BodyLocalItemQuery, context::BodyResolutionContext,
+    query_source::BodyQuerySource, receiver_items::BodyReceiverFunctionQuery,
+    type_path::BodyTypePathResolver, type_ref::TypeRefUseSite, value_path::BodyValuePathResolver,
 };
 
 /// Query-time lookup from one body-local lexical scope.
@@ -34,7 +35,7 @@ pub(crate) use self::{
 /// DefMap storage they consult comes from providers that route semantic-shaped refs.
 #[derive(Clone, Copy)]
 pub struct BodyScopeQuery<'a, D, I> {
-    source: BodyQuerySource<'a, D, I>,
+    context: BodyResolutionContext<'a, D, I>,
 }
 
 impl<'a, D, I> BodyScopeQuery<'a, D, I>
@@ -44,7 +45,7 @@ where
 {
     pub fn new(def_maps: D, item_stores: I, body_ref: BodyRef, body: &'a ResolvedBodyData) -> Self {
         Self {
-            source: BodyQuerySource::new(def_maps, item_stores, body_ref, body),
+            context: BodyResolutionContext::new(def_maps, item_stores, body_ref, body, None),
         }
     }
 
@@ -53,7 +54,9 @@ where
         scope: ScopeId,
         path: &Path,
     ) -> Result<TypePathResolution, PackageStoreError> {
-        BodyTypePathResolver::new(self.source).resolve_in_scope(scope, path)
+        self.context
+            .type_path_resolver()
+            .resolve_in_scope(scope, path)
     }
 
     pub fn resolve_value_path_in_scope(
@@ -61,14 +64,16 @@ where
         scope: ScopeId,
         path: &Path,
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
-        BodyValuePathResolver::new(self.source, None).resolve_nonlocal_path_expr(scope, path)
+        BodyValuePathResolver::new(self.context).resolve_nonlocal_path_expr(scope, path)
     }
 
     pub fn method_candidates_for_ty(
         &self,
         ty: &Ty,
     ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {
-        BodyReceiverFunctionQuery::new(self.source, None).method_candidates_for_ty(ty)
+        self.context
+            .receiver_functions()
+            .method_candidates_for_ty(ty)
     }
 }
 

@@ -10,18 +10,14 @@ use rg_ir_model::{
     identity::DeclarationRef,
 };
 use rg_ir_storage::{
-    DefMapQuery, DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource,
-    NameResolutionFilter, ResolvePathResult, TargetItemQuery, TypePathContext,
+    DefMapSource, ItemStoreSource, NameResolutionFilter, ResolvePathResult, TypePathContext,
 };
 use rg_package_store::PackageStoreError;
-use rg_ty::{ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
+use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::ir::resolved::BodyResolution;
 
-use super::{
-    BodyLocalItemQuery, BodyQuerySource, BodyReceiverFunctionQuery, TypeRefUseSite, push_unique,
-    type_path::{BodyTypePathResolver, split_associated_path},
-};
+use super::{BodyResolutionContext, TypeRefUseSite, push_unique, type_path::split_associated_path};
 
 /// Resolves body value paths without mutating the body.
 ///
@@ -29,8 +25,7 @@ use super::{
 /// queries over path prefixes. Keeping it read-only avoids cloning bodies just to answer
 /// goto-definition/type-at for `Type::assoc` or `Enum::Variant` segments.
 pub(crate) struct BodyValuePathResolver<'query, D, I> {
-    source: BodyQuerySource<'query, D, I>,
-    semantic_index: Option<&'query ItemLookupIndex>,
+    context: BodyResolutionContext<'query, D, I>,
 }
 
 /// One declaration that can satisfy an unqualified value path inside a body scope.
@@ -49,43 +44,8 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(crate) fn new(
-        source: BodyQuerySource<'query, D, I>,
-        semantic_index: Option<&'query ItemLookupIndex>,
-    ) -> Self {
-        Self {
-            source,
-            semantic_index,
-        }
-    }
-
-    fn type_path_resolver(&self) -> BodyTypePathResolver<'query, D, I> {
-        BodyTypePathResolver::new(self.source)
-    }
-
-    fn impl_matcher(
-        &self,
-    ) -> ImplMatcher<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>> {
-        let source = self.source;
-        let item_paths = ItemPathQuery::new(source, source);
-        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
-        ImplMatcher::new(item_paths, target_items)
-    }
-
-    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
-        ItemStoreQuery::new(self.source)
-    }
-
-    fn body_local_items(&self) -> BodyLocalItemQuery<'query, D, I> {
-        BodyLocalItemQuery::new(self.source)
-    }
-
-    fn receiver_functions(&self) -> BodyReceiverFunctionQuery<'query, D, I> {
-        BodyReceiverFunctionQuery::new(self.source, self.semantic_index)
-    }
-
-    fn def_map_query(&self) -> DefMapQuery<BodyQuerySource<'query, D, I>> {
-        DefMapQuery::new(self.source)
+    pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
+        Self { context }
     }
 
     pub(crate) fn resolve_nonlocal_path_expr(
@@ -113,7 +73,11 @@ where
         // Value paths can start with type-like names: tuple/unit struct constructors, `Self`, and
         // the prefix of associated paths all need type resolution before falling back to ordinary
         // module/DefMap lookup.
-        match self.type_path_resolver().resolve_in_scope(scope, path)? {
+        match self
+            .context
+            .type_path_resolver()
+            .resolve_in_scope(scope, path)?
+        {
             TypePathResolution::SelfType(types) => {
                 return Ok((
                     BodyResolution::Unknown,
@@ -124,9 +88,13 @@ where
                 let mut constructors = Vec::new();
                 for type_def in types
                     .into_iter()
-                    .filter(|ty| ty.origin == DefMapRef::Body(self.source.body_ref()))
+                    .filter(|ty| ty.origin == DefMapRef::Body(self.context.body_ref()))
                 {
-                    if self.item_query().type_def_has_value_constructor(type_def)? {
+                    if self
+                        .context
+                        .item_query()
+                        .type_def_has_value_constructor(type_def)?
+                    {
                         push_unique(&mut constructors, type_def);
                     }
                 }
@@ -190,12 +158,12 @@ where
         // Value lookup is scope-ordered: an inner const/function shadows an outer binding just as
         // surely as an inner binding shadows an outer item.
         let from = ModuleRef {
-            origin: DefMapRef::Body(self.source.body_ref()),
+            origin: DefMapRef::Body(self.context.body_ref()),
             module: ModuleId(start_scope.0),
         };
         let mut scope = Some(start_scope);
         while let Some(scope_id) = scope {
-            let Some(scope_data) = self.source.body().scope(scope_id) else {
+            let Some(scope_data) = self.context.body().scope(scope_id) else {
                 return Ok(None);
             };
 
@@ -205,7 +173,7 @@ where
                         continue;
                     }
 
-                    let Some(binding_data) = self.source.body().binding(*binding) else {
+                    let Some(binding_data) = self.context.body().binding(*binding) else {
                         continue;
                     };
                     if binding_data.name.as_deref() == Some(name) {
@@ -215,15 +183,18 @@ where
             }
 
             let module = ModuleRef {
-                origin: DefMapRef::Body(self.source.body_ref()),
+                origin: DefMapRef::Body(self.context.body_ref()),
                 module: ModuleId(scope_id.0),
             };
-            let defs = self.def_map_query().resolve_lexical_name_in_module(
-                from,
-                module,
-                name,
-                NameResolutionFilter::ValuesOnly,
-            )?;
+            let defs = self
+                .context
+                .def_map_query()
+                .resolve_lexical_name_in_module(
+                    from,
+                    module,
+                    name,
+                    NameResolutionFilter::ValuesOnly,
+                )?;
             let value_name = BodyValueName::SemanticItems(self.semantic_items_for_defs(defs)?);
             if let Some(resolution) = self.value_name_resolution(value_name)? {
                 return Ok(Some(resolution));
@@ -239,18 +210,23 @@ where
         &self,
         path: &Path,
     ) -> Result<ResolvePathResult, PackageStoreError> {
-        let owner_module = self.source.body().owner_module();
-        let result = self.def_map_query().resolve_path(owner_module, path)?;
+        let owner_module = self.context.body().owner_module();
+        let result = self
+            .context
+            .def_map_query()
+            .resolve_path(owner_module, path)?;
         if !result.resolved.is_empty() {
             return Ok(result);
         }
 
-        let fallback_module = self.source.body().fallback_module();
+        let fallback_module = self.context.body().fallback_module();
         if fallback_module == owner_module {
             return Ok(result);
         }
 
-        self.def_map_query().resolve_path(fallback_module, path)
+        self.context
+            .def_map_query()
+            .resolve_path(fallback_module, path)
     }
 
     fn resolve_body_value_path_from_def_map(
@@ -259,10 +235,11 @@ where
         path: &Path,
     ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
         let from = ModuleRef {
-            origin: DefMapRef::Body(self.source.body_ref()),
+            origin: DefMapRef::Body(self.context.body_ref()),
             module: ModuleId(scope.0),
         };
         let defs = self
+            .context
             .def_map_query()
             .resolve_lexical_path(from, path, NameResolutionFilter::ValuesOnly)?
             .resolved;
@@ -280,7 +257,11 @@ where
             let DefId::Local(local_def) = def else {
                 continue;
             };
-            let Some(item) = self.item_query().semantic_item_for_local_def(local_def)? else {
+            let Some(item) = self
+                .context
+                .item_query()
+                .semantic_item_for_local_def(local_def)?
+            else {
                 continue;
             };
             if matches!(
@@ -302,7 +283,7 @@ where
     ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
         match value_name {
             BodyValueName::Binding(binding) => {
-                let ty = self.source.body().binding_ty_unchecked(binding).clone();
+                let ty = self.context.body().binding_ty_unchecked(binding).clone();
                 Ok(Some((BodyResolution::Binding(binding), ty)))
             }
             BodyValueName::SemanticItems(items) => {
@@ -346,7 +327,7 @@ where
     }
 
     fn semantic_const_ty(&self, const_ref: ConstRef) -> Result<Ty, PackageStoreError> {
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         let Some(const_data) = item_query.const_data(const_ref)? else {
             return Ok(Ty::Unknown);
         };
@@ -356,14 +337,15 @@ where
 
         let context = item_query
             .type_path_context_for_owner(const_ref.origin, const_data.owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module()));
-        self.type_path_resolver()
+            .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
+        self.context
+            .type_path_resolver()
             .type_ref(TypeRefUseSite::OwnerContext(context))
             .resolve(ty)
     }
 
     fn semantic_static_ty(&self, static_ref: StaticRef) -> Result<Ty, PackageStoreError> {
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         let Some(static_data) = item_query.static_data(static_ref)? else {
             return Ok(Ty::Unknown);
         };
@@ -371,7 +353,8 @@ where
             return Ok(Ty::Unknown);
         };
 
-        self.type_path_resolver()
+        self.context
+            .type_path_resolver()
             .type_ref(TypeRefUseSite::Module(static_data.owner))
             .resolve(ty)
     }
@@ -385,7 +368,10 @@ where
         // Associated value paths are resolved as "type prefix + value member". This keeps
         // `Action::Start` distinct from a module path while also handling `Widget::new` through
         // the same type-substitution rules used by method calls.
-        let prefix_resolution = self.type_path_resolver().resolve_in_scope(scope, prefix)?;
+        let prefix_resolution = self
+            .context
+            .type_path_resolver()
+            .resolve_in_scope(scope, prefix)?;
         let prefix_ty =
             Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
 
@@ -399,6 +385,7 @@ where
                 continue;
             }
             let Some(variant_ref) = self
+                .context
                 .item_query()
                 .enum_variant_ref_for_type_def(nominal_ty.def, last_segment)?
             else {
@@ -457,9 +444,10 @@ where
         // deliberately optimistic, following the same "prefer useful candidates over false
         // negatives" policy as dot completion.
         let mut functions = Vec::new();
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         for nominal_ty in prefix_ty.as_nominals() {
             for function_ref in self
+                .context
                 .receiver_functions()
                 .function_refs_for_receiver(nominal_ty, Some(last_segment))?
             {
@@ -484,21 +472,23 @@ where
         name: &str,
     ) -> Result<Option<(ConstRef, Ty)>, PackageStoreError> {
         if let Some(item) = self.associated_value_item_for_impls(
-            self.body_local_items().inherent_impls_for_type(ty.def)?,
+            self.context
+                .body_local_items()
+                .inherent_impls_for_type(ty.def)?,
             ty,
             name,
         )? {
             return Ok(Some(item));
         }
 
-        if ty.def.origin == DefMapRef::Body(self.source.body_ref()) {
+        if ty.def.origin == DefMapRef::Body(self.context.body_ref()) {
             return Ok(None);
         }
 
-        let source = self.source;
-        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
         self.associated_value_item_for_impls(
-            target_items.inherent_impls_for_type(ty.def)?,
+            self.context
+                .target_items()
+                .inherent_impls_for_type(ty.def)?,
             ty,
             name,
         )
@@ -513,18 +503,19 @@ where
 
         self.push_associated_trait_value_items_for_impls(
             &mut items,
-            self.body_local_items().trait_impls_for_type(ty.def)?,
+            self.context
+                .body_local_items()
+                .trait_impls_for_type(ty.def)?,
             ty,
             name,
         )?;
 
-        if ty.def.origin == DefMapRef::Body(self.source.body_ref()) {
+        if ty.def.origin == DefMapRef::Body(self.context.body_ref()) {
             return Ok(items);
         }
 
-        let source = self.source;
-        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
-        let semantic_trait_impls = match self.semantic_index {
+        let target_items = self.context.target_items();
+        let semantic_trait_impls = match self.context.semantic_index() {
             Some(index) => index.trait_impls_for_type(ty.def).to_vec(),
             None => target_items.trait_impls_for_type(ty.def)?,
         };
@@ -545,8 +536,8 @@ where
         ty: &NominalTy,
         name: &str,
     ) -> Result<(), PackageStoreError> {
-        let item_query = self.item_query();
-        let matcher = self.impl_matcher();
+        let item_query = self.context.item_query();
+        let matcher = self.context.impl_matcher();
         for trait_impl in trait_impls {
             if !matcher
                 .trait_impl_applicability(trait_impl, ty)?
@@ -596,12 +587,13 @@ where
         ty: &NominalTy,
         name: &str,
     ) -> Result<Option<(ConstRef, Ty)>, PackageStoreError> {
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         for impl_ref in impls {
             let Some(impl_data) = item_query.impl_data(impl_ref)? else {
                 continue;
             };
             if !self
+                .context
                 .impl_matcher()
                 .impl_applies_to_receiver(impl_ref, impl_data, ty)?
             {
@@ -625,7 +617,7 @@ where
         receiver_ty: &NominalTy,
         name: &str,
     ) -> Result<Option<(ConstRef, Ty)>, PackageStoreError> {
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         for item in assoc_items {
             let AssocItemId::Const(id) = item else {
                 continue;
@@ -651,7 +643,7 @@ where
         owner: ItemOwner,
         receiver_ty: &NominalTy,
     ) -> Result<Ty, PackageStoreError> {
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         let Some(const_data) = item_query.const_data(const_ref)? else {
             return Ok(Ty::Unknown);
         };
@@ -671,17 +663,20 @@ where
             };
             if let Some(impl_data) = item_query.impl_data(impl_ref)? {
                 subst.extend(
-                    self.impl_matcher()
+                    self.context
+                        .impl_matcher()
                         .impl_self_subst_for_impl(impl_data, receiver_ty),
                 );
             }
         }
 
         let context = self
+            .context
             .item_query()
             .type_path_context_for_owner(const_ref.origin, owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module()));
-        self.type_path_resolver()
+            .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
+        self.context
+            .type_path_resolver()
             .type_ref(TypeRefUseSite::OwnerContext(context))
             .with_subst(&subst)
             .resolve(ty)
@@ -689,6 +684,7 @@ where
 
     fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {
         Ok(self
+            .context
             .item_query()
             .generic_params_for_type_def(ty.def)?
             .map(|generics| TypeSubst::from_generics(generics, &ty.args))
@@ -701,8 +697,10 @@ where
             let DefId::Local(local_def) = def else {
                 continue;
             };
-            let Some(SemanticItemRef::TypeDef(type_def)) =
-                self.item_query().semantic_item_for_local_def(*local_def)?
+            let Some(SemanticItemRef::TypeDef(type_def)) = self
+                .context
+                .item_query()
+                .semantic_item_for_local_def(*local_def)?
             else {
                 continue;
             };

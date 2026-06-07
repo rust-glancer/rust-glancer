@@ -16,10 +16,7 @@ use rg_ir_model::{
     identity::DeclarationRef,
     items::{FieldItem, FieldKey, FieldList, TypeRef},
 };
-use rg_ir_storage::{
-    DefMapQuery, DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource,
-    NameResolutionFilter,
-};
+use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, NameResolutionFilter};
 use rg_package_store::PackageStoreError;
 use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
@@ -33,9 +30,7 @@ use crate::{
     },
 };
 
-use super::{
-    BodyQuerySource, BodyTypePathResolver, BodyValuePathResolver, TypeRefUseSite, push_unique,
-};
+use super::{BodyResolutionContext, BodyValuePathResolver, TypeRefUseSite, push_unique};
 
 /// Resolves lowered binding candidates into the final body binding arena.
 ///
@@ -71,18 +66,14 @@ where
         }
     }
 
-    fn type_path_resolver<'source>(
-        &'source self,
-    ) -> BodyTypePathResolver<'source, &'source D, &'source I> {
-        BodyTypePathResolver::new(self.query_source())
-    }
-
-    fn query_source<'source>(&'source self) -> BodyQuerySource<'source, &'source D, &'source I> {
-        BodyQuerySource::new(self.def_maps, self.item_stores, self.body_ref, &*self.body)
-    }
-
-    fn item_query(&self) -> ItemStoreQuery<'_, BodyQuerySource<'_, &D, &I>> {
-        ItemStoreQuery::new(self.query_source())
+    fn context<'source>(&'source self) -> BodyResolutionContext<'source, &'source D, &'source I> {
+        BodyResolutionContext::new(
+            self.def_maps,
+            self.item_stores,
+            self.body_ref,
+            &*self.body,
+            Some(self.semantic_index),
+        )
     }
 
     /// Materializes all pending binding candidates, leaving the body in its final binding shape.
@@ -208,6 +199,7 @@ where
     ) -> Result<Ty, PackageStoreError> {
         if let Some(annotation) = annotation {
             let ty = self
+                .context()
                 .type_path_resolver()
                 .type_ref(TypeRefUseSite::Scope(scope))
                 .resolve(annotation)?;
@@ -444,7 +436,7 @@ where
         ty: &NominalTy,
         field_key: &FieldKey,
     ) -> Result<Option<Ty>, PackageStoreError> {
-        let item_query = self.item_query();
+        let item_query = self.context().item_query();
         let Some(field_ref) = item_query.field_for_type(ty.def, field_key)? else {
             return Ok(None);
         };
@@ -453,7 +445,8 @@ where
         };
 
         Ok(Some(
-            self.type_path_resolver()
+            self.context()
+                .type_path_resolver()
                 .type_ref(TypeRefUseSite::Module(field_data.owner_module))
                 .with_subst(&self.semantic_type_subst(ty)?)
                 .resolve(&field_data.field.ty)?,
@@ -466,7 +459,7 @@ where
         variant_name: &str,
         field_key: &FieldKey,
     ) -> Result<Option<Ty>, PackageStoreError> {
-        let item_query = self.item_query();
+        let item_query = self.context().item_query();
         let Some(variant_ref) =
             item_query.enum_variant_ref_for_type_def(enum_ty.def, variant_name)?
         else {
@@ -480,7 +473,8 @@ where
         };
 
         Ok(Some(
-            self.type_path_resolver()
+            self.context()
+                .type_path_resolver()
                 .type_ref(TypeRefUseSite::Module(variant_data.owner_module))
                 .with_subst(&self.semantic_type_subst(enum_ty)?)
                 .resolve(&field.ty)?,
@@ -507,12 +501,15 @@ where
                 .filter(|ty| matches!(ty.def.id, TypeDefId::Enum(_)))
             {
                 let Some(variant_ref) = self
+                    .context()
                     .item_query()
                     .enum_variant_ref_for_type_def(enum_ty.def, variant_name)?
                 else {
                     continue;
                 };
-                let Some(variant_data) = self.item_query().enum_variant_data(variant_ref)? else {
+                let Some(variant_data) =
+                    self.context().item_query().enum_variant_data(variant_ref)?
+                else {
                     continue;
                 };
                 if matches!(variant_data.variant.fields, FieldList::Unit) {
@@ -548,9 +545,8 @@ where
             return Ok(true);
         }
 
-        let (resolution, _) =
-            BodyValuePathResolver::new(self.query_source(), Some(self.semantic_index))
-                .resolve_nonlocal_path_expr(binding_data.scope, &path)?;
+        let (resolution, _) = BodyValuePathResolver::new(self.context())
+            .resolve_nonlocal_path_expr(binding_data.scope, &path)?;
 
         Ok(matches!(
             resolution,
@@ -570,7 +566,7 @@ where
             origin: DefMapRef::Body(self.body_ref),
             module: ModuleId(scope.0),
         };
-        let def_maps = DefMapQuery::new(self.query_source());
+        let def_maps = self.context().def_map_query();
         let body_defs = def_maps
             .resolve_lexical_path(from, path, NameResolutionFilter::ValuesOnly)?
             .resolved;
@@ -597,7 +593,7 @@ where
         &self,
         defs: Vec<DefId>,
     ) -> Result<bool, PackageStoreError> {
-        let item_query = self.item_query();
+        let item_query = self.context().item_query();
         for def in defs {
             let DefId::Local(local_def) = def else {
                 continue;
@@ -664,6 +660,7 @@ where
         let binding_data = self.body.binding_unchecked(binding);
         if let Some(annotation) = &binding_data.annotation {
             return self
+                .context()
                 .type_path_resolver()
                 .type_ref(TypeRefUseSite::Scope(binding_data.scope))
                 .resolve(annotation);
@@ -674,6 +671,7 @@ where
             && let Some(function) = self.body.function_owner()
         {
             let self_tys = self
+                .context()
                 .type_path_resolver()
                 .self_nominal_tys_for_function(function)?;
             let ty = Ty::self_ty(self_tys);
@@ -689,6 +687,7 @@ where
 
     fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {
         Ok(self
+            .context()
             .item_query()
             .generic_params_for_type_def(ty.def)?
             .map(|generics| TypeSubst::from_generics(generics, &ty.args))
