@@ -44,7 +44,7 @@ impl<'a> TargetLowering<'a> {
     /// Converts target semantic items into the same task shape used by nested body discovery.
     ///
     /// Body IDs are assigned in lowering order, not from Semantic IR item IDs. Resolve a body by
-    /// inspecting `BodyData::owner`; never cast item IDs to `BodyId`.
+    /// inspecting `ResolvedBodyData::owner`; never cast item IDs to `BodyId`.
     fn selected_body_tasks(&self) -> anyhow::Result<Vec<BodyLoweringTask>> {
         let mut tasks = Vec::new();
 

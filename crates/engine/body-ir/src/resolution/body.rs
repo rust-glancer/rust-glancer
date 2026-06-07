@@ -16,7 +16,7 @@ use rg_package_store::PackageStoreError;
 use rg_ty::{Autoderef, ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
 
 use crate::{
-    ir::body::BodyData,
+    ir::body::ResolvedBodyData,
     ir::resolved::BodyResolution,
     ir::stmt::{BindingKind, BodySelfParamKind},
 };
@@ -36,7 +36,7 @@ pub(crate) struct BodyResolver<'query, 'body, D, I> {
     pub(super) item_stores: &'query I,
     pub(super) semantic_index: &'query ItemLookupIndex,
     pub(super) body_ref: BodyRef,
-    pub(super) body: &'body mut BodyData,
+    pub(super) body: &'body mut ResolvedBodyData,
 }
 
 impl<'query, 'body, D, I> BodyResolver<'query, 'body, D, I>
@@ -49,7 +49,7 @@ where
         item_stores: &'query I,
         semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
-        body: &'body mut BodyData,
+        body: &'body mut ResolvedBodyData,
     ) -> Self {
         Self {
             def_maps,
@@ -107,10 +107,10 @@ where
         // Pattern propagation can unlock later expression types, and those expressions can then
         // unlock more patterns. Every successful pass should discover at least one new binding or
         // expression fact, so a body-sized cap is enough to avoid a hidden magic constant.
-        let max_passes = self.body.exprs.len() + self.body.bindings.len() + 1;
+        let max_passes = self.body.exprs().len() + self.body.bindings().len() + 1;
         for _ in 0..max_passes {
             let mut changed = false;
-            let expr_count = self.body.exprs.len();
+            let expr_count = self.body.exprs().len();
             {
                 let mut expr_resolver = ExprResolver::new(self);
                 for expr_idx in 0..expr_count {
@@ -141,7 +141,7 @@ where
     }
 
     fn resolve_bindings(&mut self) -> Result<(), PackageStoreError> {
-        for binding_idx in 0..self.body.bindings.len() {
+        for binding_idx in 0..self.body.bindings().len() {
             let binding = BindingId(binding_idx);
             let ty = self.binding_ty(binding)?;
             self.body.set_binding_ty(binding, ty);
@@ -156,7 +156,7 @@ where
                 continue;
             }
 
-            if self.body.bindings.get(binding).is_none() {
+            if self.body.binding(binding).is_none() {
                 continue;
             };
             if !matches!(self.body.binding_ty_unchecked(binding), Ty::Unknown) {
@@ -171,7 +171,7 @@ where
     }
 
     fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {
-        let binding_data = &self.body.bindings[binding];
+        let binding_data = self.body.binding_unchecked(binding);
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .type_path_resolver()
@@ -531,7 +531,7 @@ where
 
         let context = item_query
             .type_path_context_for_owner(const_ref.origin, const_data.owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
+            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module()));
         self.type_path_resolver()
             .type_ref(TypeRefUseSite::OwnerContext(context))
             .resolve(ty)
@@ -855,7 +855,7 @@ where
         let context = self
             .item_query()
             .type_path_context_for_owner(const_ref.origin, owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
+            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module()));
         self.type_path_resolver()
             .type_ref(TypeRefUseSite::OwnerContext(context))
             .with_subst(&subst)

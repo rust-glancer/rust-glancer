@@ -4,7 +4,7 @@ use rg_ir_model::{BodyRef, DefMapRef, ModuleRef, TargetRef};
 use rg_ir_storage::{DefMap, DefMapSource, ItemStore, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 
-use crate::ir::body::BodyData;
+use crate::ir::body::ResolvedBodyData;
 
 /// Routes semantic-shaped queries while keeping the active body available for lexical lookup.
 ///
@@ -15,11 +15,16 @@ pub(crate) struct BodyQuerySource<'a, D, I> {
     def_maps: D,
     item_stores: I,
     body_ref: BodyRef,
-    body: &'a BodyData,
+    body: &'a ResolvedBodyData,
 }
 
 impl<'a, D, I> BodyQuerySource<'a, D, I> {
-    pub(crate) fn new(def_maps: D, item_stores: I, body_ref: BodyRef, body: &'a BodyData) -> Self {
+    pub(crate) fn new(
+        def_maps: D,
+        item_stores: I,
+        body_ref: BodyRef,
+        body: &'a ResolvedBodyData,
+    ) -> Self {
         Self {
             def_maps,
             item_stores,
@@ -32,7 +37,7 @@ impl<'a, D, I> BodyQuerySource<'a, D, I> {
         self.body_ref
     }
 
-    pub(crate) fn body(&self) -> &'a BodyData {
+    pub(crate) fn body(&self) -> &'a ResolvedBodyData {
         self.body
     }
 }

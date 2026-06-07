@@ -18,7 +18,7 @@ use crate::ir::{BodyOwner, TargetBodies};
 
 use super::{body::BodyLowering, syntax::source_for};
 
-/// A function body or item initializer that should become a `BodyData`.
+/// A function body or item initializer that should become a `ResolvedBodyData`.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct BodyLoweringTask {
     pub(crate) owner: BodyOwner,

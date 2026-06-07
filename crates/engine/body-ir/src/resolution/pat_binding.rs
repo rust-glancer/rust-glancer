@@ -10,7 +10,6 @@
 //! 2. Use known pattern input types to catch unit variants such as `None`.
 //! 3. Rewrite every binding reference from pending slot ids to final binding ids.
 
-use rg_arena::Arena;
 use rg_ir_model::{
     BindingId, BodyRef, DefId, DefMapRef, ExprId, ModuleId, ModuleRef, ScopeId, SemanticItemRef,
     TypeDefId, identity::DeclarationRef,
@@ -25,7 +24,7 @@ use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
 use crate::{
     BodyPath,
-    ir::body::BodyData,
+    ir::body::ResolvedBodyData,
     ir::expr::ExprKind,
     ir::pat::{PatKind, RecordPatField},
     ir::resolved::BodyResolution,
@@ -46,7 +45,7 @@ pub(super) struct PatternBindingMaterializer<'query, 'body, D, I> {
     item_stores: &'query I,
     semantic_index: &'query ItemLookupIndex,
     body_ref: BodyRef,
-    body: &'body mut BodyData,
+    body: &'body mut ResolvedBodyData,
 }
 
 impl<'query, 'body, D, I> PatternBindingMaterializer<'query, 'body, D, I>
@@ -59,7 +58,7 @@ where
         item_stores: &'query I,
         semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
-        body: &'body mut BodyData,
+        body: &'body mut ResolvedBodyData,
     ) -> Self {
         Self {
             def_maps,
@@ -92,7 +91,7 @@ where
 
         // `active` is indexed by the original pending binding ids. We keep this temporary view
         // while lookup still needs source-order visibility against the lowered scope lists.
-        let pending_count = self.body.bindings.len();
+        let pending_count = self.body.bindings().len();
         let mut active = Vec::with_capacity(pending_count);
         for binding_idx in 0..pending_count {
             let binding = BindingId(binding_idx);
@@ -109,83 +108,14 @@ where
         // pattern input, so run that pass after the first active binding set exists.
         let pending_tys = self.pending_binding_tys(&active)?;
         self.deactivate_unit_variant_pattern_bindings(&mut active, &pending_tys)?;
-        self.compact_bindings(active);
+        self.body.compact_bindings(active);
         Ok(())
-    }
-
-    /// Rebuilds the binding arena with only active slots and rewrites all stored binding ids.
-    fn compact_bindings(&mut self, active: Vec<bool>) {
-        let pending_count = self.body.bindings.len();
-        let mut old_to_new = vec![None; pending_count];
-        let mut new_bindings =
-            Arena::with_capacity(active.iter().filter(|&&active| active).count());
-        for (binding_idx, binding_data) in self.body.bindings.iter().cloned().enumerate() {
-            if !active[binding_idx] {
-                continue;
-            }
-
-            let new_binding = new_bindings.alloc(binding_data);
-            old_to_new[binding_idx] = Some(new_binding);
-        }
-
-        // `visible_bindings` stores a count, not an id. The boundary map translates an old pending
-        // count into the number of real bindings that remain visible at the same source point.
-        let mut boundary_map = Vec::with_capacity(pending_count + 1);
-        let mut visible = 0;
-        boundary_map.push(visible);
-        for is_active in &active {
-            if *is_active {
-                visible += 1;
-            }
-            boundary_map.push(visible);
-        }
-
-        // Lowering stored pending ids in many places: scope binding lists, pattern-owned binding
-        // lists, and expression visibility boundaries. They all have to move together or later
-        // path lookup will see a different scope than the pattern tree describes.
-        Self::rewrite_binding_list(&mut self.body.params, &old_to_new);
-        for scope in self.body.scopes.iter_mut() {
-            Self::rewrite_binding_list(&mut scope.bindings, &old_to_new);
-        }
-        for statement in self.body.statements.iter_mut() {
-            if let StmtKind::Let { bindings, .. } = &mut statement.kind {
-                Self::rewrite_binding_list(bindings, &old_to_new);
-            }
-        }
-        for expr in self.body.exprs.iter_mut() {
-            expr.visible_bindings = boundary_map
-                .get(expr.visible_bindings)
-                .copied()
-                .unwrap_or(visible);
-
-            match &mut expr.kind {
-                ExprKind::Let { bindings, .. } | ExprKind::For { bindings, .. } => {
-                    Self::rewrite_binding_list(bindings, &old_to_new);
-                }
-                ExprKind::Closure { params, .. } => {
-                    for param in params {
-                        Self::rewrite_binding_list(&mut param.bindings, &old_to_new);
-                    }
-                }
-                _ => {}
-            }
-        }
-        for pat in self.body.pats.iter_mut() {
-            if let PatKind::Binding { binding, .. } = &mut pat.kind
-                && let Some(old_binding) = *binding
-            {
-                *binding = old_to_new.get(old_binding.0).copied().flatten();
-            }
-        }
-
-        self.body.bindings = new_bindings;
-        self.body.pending_binding_resolutions.clear();
     }
 
     /// Returns binding types in the pending-id space used during materialization.
     fn pending_binding_tys(&self, active: &[bool]) -> Result<Vec<Ty>, PackageStoreError> {
-        let mut tys = Vec::with_capacity(self.body.bindings.len());
-        for binding_idx in 0..self.body.bindings.len() {
+        let mut tys = Vec::with_capacity(self.body.bindings().len());
+        for binding_idx in 0..self.body.bindings().len() {
             let binding = BindingId(binding_idx);
             if active.get(binding_idx).copied().unwrap_or(false) {
                 tys.push(self.binding_ty(binding)?);
@@ -204,7 +134,7 @@ where
         // A bare `None` cannot be recognized from value lookup alone unless it is written as a
         // full path. The input type of `match value` or `let pat: Ty = ...` gives enough context to
         // interpret single-segment unit variants without returning to capitalization heuristics.
-        for statement in self.body.statements.iter() {
+        for statement in self.body.statements().iter() {
             let StmtKind::Let {
                 scope,
                 pat: Some(pat),
@@ -226,9 +156,9 @@ where
             self.deactivate_unit_variant_bindings_in_pat(*pat, &expected_ty, active)?;
         }
 
-        for expr_idx in 0..self.body.exprs.len() {
+        for expr_idx in 0..self.body.exprs().len() {
             let expr = ExprId(expr_idx);
-            match &self.body.exprs[expr].kind {
+            match &self.body.expr_unchecked(expr).kind {
                 ExprKind::Match { scrutinee, arms } => {
                     let expected_ty = scrutinee
                         .map(|scrutinee| self.pending_expr_ty(scrutinee, active, pending_tys))
@@ -296,15 +226,15 @@ where
         active: &[bool],
         pending_tys: &[Ty],
     ) -> Result<Ty, PackageStoreError> {
-        match &self.body.exprs[expr].kind {
+        match &self.body.expr_unchecked(expr).kind {
             ExprKind::Path { path } => {
                 let Some(path) = path.as_def_map_path() else {
                     return Ok(Ty::Unknown);
                 };
                 Ok(self
                     .pending_binding_ty_for_path(
-                        self.body.exprs[expr].scope,
-                        self.body.exprs[expr].visible_bindings,
+                        self.body.expr_unchecked(expr).scope,
+                        self.body.expr_unchecked(expr).visible_bindings,
                         &path,
                         active,
                         pending_tys,
@@ -592,26 +522,13 @@ where
         Ok(false)
     }
 
-    fn rewrite_binding_list(bindings: &mut Vec<BindingId>, old_to_new: &[Option<BindingId>]) {
-        let mut rewritten = Vec::with_capacity(bindings.len());
-        for binding in bindings.iter().copied() {
-            let Some(Some(new_binding)) = old_to_new.get(binding.0) else {
-                continue;
-            };
-            if !rewritten.contains(new_binding) {
-                rewritten.push(*new_binding);
-            }
-        }
-        *bindings = rewritten;
-    }
-
     /// Returns true when an ambiguous identifier pattern should stay a value path.
     fn ambiguous_pattern_binding_resolves_as_value(
         &self,
         binding: BindingId,
         active: &[bool],
     ) -> Result<bool, PackageStoreError> {
-        let Some(binding_data) = self.body.bindings.get(binding) else {
+        let Some(binding_data) = self.body.binding(binding) else {
             return Ok(false);
         };
         let Some(name) = binding_data.name.as_deref() else {
@@ -742,7 +659,7 @@ where
     }
 
     fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {
-        let binding_data = &self.body.bindings[binding];
+        let binding_data = self.body.binding_unchecked(binding);
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .type_path_resolver()

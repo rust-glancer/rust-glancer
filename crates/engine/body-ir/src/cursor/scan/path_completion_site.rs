@@ -9,7 +9,7 @@ use rg_item_tree::TypePath;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{BodyData, BodyIrReadTxn, BodyPath, ExprKind, PatData};
+use crate::{BodyIrReadTxn, BodyPath, ExprKind, PatData, ResolvedBodyData};
 
 use super::{
     super::{PathCompletionNamespace, PathCompletionSite},
@@ -48,7 +48,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
             // Body spans are a cheap first filter before scanning every expression and statement.
-            if body.source.file_id != self.file_id || !body.source.span.contains(self.offset) {
+            if body.source().file_id != self.file_id || !body.source().span.contains(self.offset) {
                 continue;
             }
 
@@ -67,7 +67,7 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     fn scan_type_paths(
         &self,
         body_ref: BodyRef,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         best: &mut Option<(PathCompletionSite, u32)>,
     ) {
         let sites = BodyScanSites::new(body);
@@ -83,10 +83,10 @@ impl<'txn, 'db> PathCompletionSiteScanner<'txn, 'db> {
     fn scan_value_paths(
         &self,
         body_ref: BodyRef,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         best: &mut Option<(PathCompletionSite, u32)>,
     ) {
-        for (_expr, expr_data) in body.exprs.iter_with_ids() {
+        for (_expr, expr_data) in body.exprs_with_ids() {
             if expr_data.source.file_id != self.file_id {
                 continue;
             }

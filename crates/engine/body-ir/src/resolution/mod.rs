@@ -19,7 +19,7 @@ use rg_ir_storage::{DefMapSource, ItemStoreSource, Path};
 use rg_package_store::PackageStoreError;
 use rg_ty::{MemberMethodCandidateRef, Ty};
 
-use crate::{BodyData, BodyResolution};
+use crate::{BodyResolution, ResolvedBodyData};
 
 pub(crate) use self::{
     body::BodyResolver, body::BodyValuePathResolver, body_items::BodyLocalItemQuery,
@@ -41,7 +41,7 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
 {
-    pub fn new(def_maps: D, item_stores: I, body_ref: BodyRef, body: &'a BodyData) -> Self {
+    pub fn new(def_maps: D, item_stores: I, body_ref: BodyRef, body: &'a ResolvedBodyData) -> Self {
         Self {
             source: BodyQuerySource::new(def_maps, item_stores, body_ref, body),
         }

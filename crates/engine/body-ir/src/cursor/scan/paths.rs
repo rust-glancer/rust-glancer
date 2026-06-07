@@ -8,7 +8,7 @@ use rg_ir_storage::Path;
 use rg_item_tree::{FieldKey, TypePath};
 use rg_parse::{FileId, Span};
 
-use crate::{BodyData, BodyPath, ExprKind, PatData};
+use crate::{BodyPath, ExprKind, PatData, ResolvedBodyData};
 
 use super::{
     super::{BodyCursorCandidate, ValueReferenceSource, ValueReferenceSurface},
@@ -18,7 +18,7 @@ use super::{
 /// Adds type-namespace path candidates from body-local type annotations.
 pub(super) struct TypePathCursorScanner<'a> {
     pub(super) body_ref: BodyRef,
-    pub(super) body: &'a BodyData,
+    pub(super) body: &'a ResolvedBodyData,
     pub(super) file_id: Option<FileId>,
     pub(super) offset: Option<u32>,
     pub(super) candidates: &'a mut Vec<BodyCursorCandidate>,
@@ -56,7 +56,7 @@ impl TypePathCursorScanner<'_> {
 /// Adds value-namespace path candidates from body-local expressions and patterns.
 pub(super) struct ValuePathCursorScanner<'a> {
     pub(super) body_ref: BodyRef,
-    pub(super) body: &'a BodyData,
+    pub(super) body: &'a ResolvedBodyData,
     pub(super) file_id: Option<FileId>,
     pub(super) offset: Option<u32>,
     pub(super) include_single_segment: bool,
@@ -69,7 +69,7 @@ impl ValuePathCursorScanner<'_> {
         // Expression source-node lookup deliberately picks one smallest AST-ish node. Qualified
         // paths need finer granularity: in `Action::Start()`, `Action` and `Start` should produce
         // different symbols even though they belong to the same lowered expression.
-        for (_expr, expr_data) in self.body.exprs.iter_with_ids() {
+        for (_expr, expr_data) in self.body.exprs_with_ids() {
             if !self.file_matches(expr_data.source.file_id) {
                 continue;
             }

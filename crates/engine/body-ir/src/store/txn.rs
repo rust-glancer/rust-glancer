@@ -5,7 +5,7 @@ use rg_ir_model::{BodyRef, TargetRef};
 use rg_ir_storage::{DefMap, ItemStore};
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 
-use crate::{BodyData, BodyLocalItems, PackageBodies, TargetBodies};
+use crate::{BodyLocalItems, PackageBodies, ResolvedBodyData, TargetBodies};
 
 /// Read-only Body IR access for one query transaction.
 #[derive(Debug, Clone)]
@@ -31,7 +31,10 @@ impl<'db> BodyIrReadTxn<'db> {
     }
 
     /// Returns one body by project-wide body reference.
-    pub fn body_data(&self, body_ref: BodyRef) -> Result<Option<&BodyData>, PackageStoreError> {
+    pub fn body_data(
+        &self,
+        body_ref: BodyRef,
+    ) -> Result<Option<&ResolvedBodyData>, PackageStoreError> {
         Ok(self
             .target_bodies(body_ref.target)?
             .and_then(|target_bodies| target_bodies.body(body_ref.body)))

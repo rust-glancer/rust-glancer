@@ -84,10 +84,10 @@ impl BodyIrDb {
                 }
                 stats.body_count += target.bodies().len();
                 for body in target.bodies() {
-                    stats.scope_count += body.scopes.len();
-                    stats.binding_count += body.bindings.len();
-                    stats.statement_count += body.statements.len();
-                    stats.expression_count += body.exprs.len();
+                    stats.scope_count += body.scopes().len();
+                    stats.binding_count += body.bindings().len();
+                    stats.statement_count += body.statements().len();
+                    stats.expression_count += body.exprs().len();
                 }
             }
         }

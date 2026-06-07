@@ -1,8 +1,29 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_ir_model::{BindingId, identity::DeclarationRef};
+use rg_arena::Arena;
+use rg_ir_model::{BindingId, ExprId, identity::DeclarationRef};
 use rg_memsize::MemorySize;
 use rg_ty::Ty;
+
+/// Pass-derived facts for one resolved body.
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
+pub struct BodyFacts {
+    pub(crate) bindings: Arena<BindingId, BindingFacts>,
+    pub(crate) exprs: Arena<ExprId, ExprFacts>,
+}
+
+impl BodyFacts {
+    pub(crate) fn shrink_to_fit(&mut self) {
+        self.bindings.shrink_to_fit();
+        for facts in self.bindings.iter_mut() {
+            facts.shrink_to_fit();
+        }
+        self.exprs.shrink_to_fit();
+        for facts in self.exprs.iter_mut() {
+            facts.shrink_to_fit();
+        }
+    }
+}
 
 /// Resolved facts derived for one expression during body resolution.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]

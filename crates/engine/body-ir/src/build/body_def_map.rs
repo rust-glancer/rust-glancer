@@ -17,11 +17,11 @@ use rg_item_tree::{Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, M
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
 
-use crate::BodyData;
+use crate::ResolvedBodyData;
 
 pub(crate) struct BodyDefMapCollector<'body> {
     body_ref: BodyRef,
-    body: &'body BodyData,
+    body: &'body ResolvedBodyData,
     builder: DefMapBuilder,
     /// There might be more modules than scopes, so we need a mapping.
     /// Keys here are scope IDs, values are corresponding modules.
@@ -30,25 +30,25 @@ pub(crate) struct BodyDefMapCollector<'body> {
 }
 
 impl<'body> BodyDefMapCollector<'body> {
-    pub fn new(body_ref: BodyRef, body: &'body BodyData) -> Self {
+    pub fn new(body_ref: BodyRef, body: &'body ResolvedBodyData) -> Self {
         Self {
             body_ref,
             body,
             builder: DefMapBuilder::new_body(body_ref),
-            modules_by_scope: Vec::with_capacity(body.scopes.len()),
-            base_scopes: Vec::with_capacity(body.scopes.len()),
+            modules_by_scope: Vec::with_capacity(body.scopes().len()),
+            base_scopes: Vec::with_capacity(body.scopes().len()),
         }
     }
 
     /// Collects direct body-local scope facts. Imports are finalized in a separate fixed-point step.
     pub fn collect(mut self) -> BodyDefMapBuildState {
         // First, go through all the scopes and allocate synthetic modules.
-        for (_, scope) in self.body.scopes.iter_with_ids() {
+        for (_, scope) in self.body.scopes_with_ids() {
             // Body scopes are synthetic modules. They carry lexical scope data, but they do not
             // correspond to Rust module declarations and lookup must treat them differently.
             let origin = ModuleOrigin::Synthetic {
-                file_id: self.body.source.file_id,
-                span: self.body.source.span,
+                file_id: self.body.source().file_id,
+                span: self.body.source().span,
             };
 
             // Note: we're going through scopes in order, so we process all the parents first.
@@ -72,7 +72,7 @@ impl<'body> BodyDefMapCollector<'body> {
         // Second, go through all the items in each scope and collect them too.
         // Note that we are collecting _items_ from scopes, but here we do not
         // recurse: even if an item has a body, we do not start to analyze it.
-        for (scope_id, scope) in self.body.scopes.iter_with_ids() {
+        for (scope_id, scope) in self.body.scopes_with_ids() {
             let module = *self
                 .modules_by_scope
                 .get(scope_id.0)

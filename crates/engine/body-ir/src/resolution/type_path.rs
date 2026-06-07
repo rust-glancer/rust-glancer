@@ -114,7 +114,7 @@ where
         &self,
         function: FunctionRef,
     ) -> Result<Vec<NominalTy>, PackageStoreError> {
-        let context = self.context_for_function(function, self.source.body().owner_module)?;
+        let context = self.context_for_function(function, self.source.body().owner_module())?;
         self.self_nominal_tys_for_context(context)
     }
 
@@ -320,7 +320,7 @@ where
 
         let context = item_query
             .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
+            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module()));
         self.type_ref(TypeRefUseSite::OwnerContext(context))
             .with_subst(&alias_subst)
             .resolve(aliased_ty)
@@ -405,7 +405,7 @@ where
 
         let context = item_query
             .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module));
+            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module()));
         self.type_ref(TypeRefUseSite::OwnerContext(context))
             .with_subst(&alias_subst)
             .resolve(aliased_ty)

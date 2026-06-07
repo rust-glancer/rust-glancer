@@ -8,7 +8,7 @@ use rg_ir_model::{BodyId, BodyRef, ExprId, TargetRef};
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
-use crate::{BodyData, BodyIrReadTxn, ExprData, ExprKind};
+use crate::{BodyIrReadTxn, ExprData, ExprKind, ResolvedBodyData};
 
 use super::super::DotCompletionSite;
 
@@ -44,7 +44,7 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
             // First narrow the search to bodies that can contain this completion offset.
-            if body.source.file_id != self.file_id || !body.source.span.contains(self.offset) {
+            if body.source().file_id != self.file_id || !body.source().span.contains(self.offset) {
                 continue;
             }
 
@@ -52,7 +52,7 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
                 target: self.target,
                 body: BodyId(body_idx),
             };
-            for expr in body.exprs.iter() {
+            for expr in body.exprs().iter() {
                 if expr.source.file_id != self.file_id {
                     continue;
                 }
@@ -89,7 +89,7 @@ impl<'txn, 'db> DotCompletionSiteScanner<'txn, 'db> {
     /// Returns the already-typed member prefix when `offset` is in this dot expression.
     fn member_prefix_span_for_dot_expr(
         expr: &ExprData,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         offset: u32,
     ) -> Option<Span> {
         // A completion site needs both the receiver and the dot; incomplete or unrelated

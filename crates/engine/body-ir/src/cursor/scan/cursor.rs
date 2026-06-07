@@ -10,7 +10,7 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 
-use crate::{BodyData, BodyIrReadTxn, BodyOwner, ExprData, ExprKind, PatKind};
+use crate::{BodyIrReadTxn, BodyOwner, ExprData, ExprKind, PatKind, ResolvedBodyData};
 
 use super::{
     super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
@@ -82,7 +82,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         let mut best: Option<(BodyRef, u32)> = None;
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            if body.source.file_id != self.file_id || !body.source.span.contains(self.offset) {
+            if body.source().file_id != self.file_id || !body.source().span.contains(self.offset) {
                 continue;
             }
 
@@ -90,7 +90,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                 target: self.target,
                 body: BodyId(body_idx),
             };
-            let body_len = body.source.span.len();
+            let body_len = body.source().span.len();
             if best.is_none_or(|(_, best_len)| body_len < best_len) {
                 best = Some((body_ref, body_len));
             }
@@ -103,11 +103,11 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     fn candidate_at_body(
         &self,
         body_ref: BodyRef,
-        body: &BodyData,
+        body: &ResolvedBodyData,
     ) -> Result<BodyCursorCandidate, PackageStoreError> {
         let mut best = BestCursorCandidate::new(BodyCursorCandidate::Body {
             body: body_ref,
-            span: body.source.span,
+            span: body.source().span,
         });
         let record_shorthand_values = Self::record_expr_shorthand_values(body);
         let record_shorthand_bindings = self.record_shorthand_bindings(body);
@@ -120,7 +120,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         // First look at expressions under the cursor: calls, paths, field accesses, literals, and
         // so on. Record shorthand values are skipped here because the key token has its own
         // source-level candidate.
-        for (expr_idx, expr) in body.exprs.iter().enumerate() {
+        for (expr_idx, expr) in body.exprs().iter().enumerate() {
             if expr.source.file_id == self.file_id && expr.source.span.touches(self.offset) {
                 if record_shorthand_values.contains(&ExprId(expr_idx)) {
                     continue;
@@ -148,7 +148,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
         // Then look for local bindings introduced by params, lets, closures, and patterns. For
         // shorthand record patterns, keep enough surface information for rename to expand the field.
-        for (binding_idx, binding) in body.bindings.iter().enumerate() {
+        for (binding_idx, binding) in body.bindings().iter().enumerate() {
             let binding_span = binding.name_span.unwrap_or(binding.source.span);
             if binding.source.file_id == self.file_id && binding_span.touches(self.offset) {
                 let binding_id = BindingId(binding_idx);
@@ -189,8 +189,8 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
                     ItemSourceKind::Body(source) if source.body == body_ref => body
                         .source_item(source.item)
                         .and_then(|item| item.name_span)
-                        .unwrap_or_else(|| item.span().unwrap_or(body.source.span)),
-                    _ => item.span().unwrap_or(body.source.span),
+                        .unwrap_or_else(|| item.span().unwrap_or(body.source().span)),
+                    _ => item.span().unwrap_or(body.source().span),
                 };
                 if declaration_span.touches(self.offset) {
                     match item.item() {
@@ -235,7 +235,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     /// owner name, so editor queries target the function/const/static item instead of the body.
     fn consider_body_owner_declaration(
         &self,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         best: &mut BestCursorCandidate,
     ) -> Result<(), PackageStoreError> {
         let Some((item, declaration_span)) = self.body_owner_declaration(body)? else {
@@ -271,7 +271,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
 
     fn body_owner_declaration(
         &self,
-        body: &BodyData,
+        body: &ResolvedBodyData,
     ) -> Result<Option<(SemanticItemRef, Span)>, PackageStoreError> {
         match body.owner() {
             BodyOwner::Function(function) => {
@@ -313,7 +313,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         }
     }
 
-    fn record_shorthand_bindings(&self, body: &BodyData) -> Vec<RecordPatShorthandBinding> {
+    fn record_shorthand_bindings(&self, body: &ResolvedBodyData) -> Vec<RecordPatShorthandBinding> {
         let mut bindings = Vec::new();
         let sites = BodyScanSites::new(body);
         sites.walk_pats(Some(self.file_id), Some(self.offset), |site| {
@@ -337,9 +337,9 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
         bindings
     }
 
-    fn record_expr_shorthand_values(body: &BodyData) -> Vec<ExprId> {
+    fn record_expr_shorthand_values(body: &ResolvedBodyData) -> Vec<ExprId> {
         let mut values = Vec::new();
-        for expr in body.exprs.iter() {
+        for expr in body.exprs().iter() {
             let ExprKind::Record { fields, .. } = &expr.kind else {
                 continue;
             };
@@ -395,7 +395,7 @@ impl<'txn, 'db> BodyCursorScanner<'txn, 'db> {
     fn consider_record_pat_fields(
         &self,
         body_ref: BodyRef,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         best: &mut BestCursorCandidate,
     ) {
         let sites = BodyScanSites::new(body);

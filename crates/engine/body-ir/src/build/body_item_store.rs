@@ -12,15 +12,15 @@ use rg_ir_storage::{DefMap, ItemStore};
 use rg_item_tree::ItemNode;
 use rg_semantic_ir::{ItemStoreLowerer, ItemStoreSourceReader};
 
-use crate::BodyData;
+use crate::ResolvedBodyData;
 
 pub(crate) struct BodyItemStoreCollector<'body> {
-    body: &'body BodyData,
+    body: &'body ResolvedBodyData,
     def_map: &'body DefMap,
 }
 
 impl<'body> BodyItemStoreCollector<'body> {
-    pub fn new(body: &'body BodyData, def_map: &'body DefMap) -> Self {
+    pub fn new(body: &'body ResolvedBodyData, def_map: &'body DefMap) -> Self {
         Self { body, def_map }
     }
 
@@ -38,7 +38,7 @@ impl<'body> BodyItemStoreCollector<'body> {
 
 // Adapts body-local source item storage to the generic semantic item-store lowerer.
 struct BodyItemStoreSourceReader<'body> {
-    body: &'body BodyData,
+    body: &'body ResolvedBodyData,
     def_map: &'body DefMap,
 }
 

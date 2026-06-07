@@ -15,7 +15,7 @@ pub use rg_ir_model::{
 
 pub use self::{
     body::{
-        BodyData, BodyIrStats, BodyLocalItems, PackageBodies, ScopeData, TargetBodies,
+        BodyIrStats, BodyLocalItems, PackageBodies, ResolvedBodyData, ScopeData, TargetBodies,
         TargetBodiesStatus,
     },
     expr::{

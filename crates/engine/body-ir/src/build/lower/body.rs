@@ -6,7 +6,7 @@ use rg_ir_model::{ExprId, ModuleRef, ScopeId};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
 
-use crate::ir::{BodyBuilder, BodyData, BodyOwner, BodySource, ExprData, ExprKind};
+use crate::ir::{BodyBuilder, BodyOwner, BodySource, ExprData, ExprKind, ResolvedBodyData};
 
 use super::syntax::source_for;
 
@@ -40,14 +40,18 @@ impl<'a> BodyLowering<'a> {
         }
     }
 
-    pub(super) fn lower_function(mut self, function: ast::Fn, body: ast::BlockExpr) -> BodyData {
+    pub(super) fn lower_function(
+        mut self,
+        function: ast::Fn,
+        body: ast::BlockExpr,
+    ) -> ResolvedBodyData {
         // Parameters live in the function's outer lexical scope. The body block gets a child scope
         // so locals do not appear before the function boundary.
         let param_scope = self.builder.alloc_scope(None);
         let params = self.lower_params(function.param_list(), param_scope);
         let root_expr = self.lower_block_expr(body, param_scope);
 
-        BodyData::new(
+        ResolvedBodyData::new(
             self.owner,
             self.owner_module,
             self.fallback_module,
@@ -59,14 +63,14 @@ impl<'a> BodyLowering<'a> {
         )
     }
 
-    pub(super) fn lower_initializer(mut self, expr: ast::Expr) -> BodyData {
+    pub(super) fn lower_initializer(mut self, expr: ast::Expr) -> ResolvedBodyData {
         // Item initializers are expression bodies without parameters. They still need a root scope
         // so ordinary body path resolution, type paths, and source scans can use the same pipeline
         // as function bodies.
         let root_scope = self.builder.alloc_scope(None);
         let root_expr = self.lower_expr(expr, root_scope);
 
-        BodyData::new(
+        ResolvedBodyData::new(
             self.owner,
             self.owner_module,
             self.fallback_module,

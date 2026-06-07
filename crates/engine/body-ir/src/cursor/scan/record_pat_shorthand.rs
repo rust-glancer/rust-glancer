@@ -4,7 +4,7 @@ use rg_ir_model::{BindingId, PatId};
 use rg_item_tree::FieldKey;
 use rg_parse::Span;
 
-use crate::{BodyData, PatKind, RecordPatField};
+use crate::{PatKind, RecordPatField, ResolvedBodyData};
 
 /// Binding metadata recovered from a colonless record pattern field.
 ///
@@ -21,7 +21,7 @@ pub(super) struct RecordPatShorthandBinding {
 }
 
 impl RecordPatShorthandBinding {
-    pub(super) fn from_field(body: &BodyData, field: &RecordPatField) -> Option<Self> {
+    pub(super) fn from_field(body: &ResolvedBodyData, field: &RecordPatField) -> Option<Self> {
         if field.syntax.is_explicit() {
             return None;
         }
@@ -37,7 +37,7 @@ impl RecordPatShorthandBinding {
         })
     }
 
-    fn binding_in_pat(body: &BodyData, pat: PatId) -> Option<BindingId> {
+    fn binding_in_pat(body: &ResolvedBodyData, pat: PatId) -> Option<BindingId> {
         let pat = body.pat(pat)?;
         match &pat.kind {
             PatKind::Binding {

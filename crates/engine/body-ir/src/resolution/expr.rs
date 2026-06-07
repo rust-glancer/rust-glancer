@@ -46,7 +46,8 @@ where
     pub(super) fn resolve_expr(&mut self, expr: ExprId) -> Result<bool, PackageStoreError> {
         let old_resolution = self.pass.body.expr_resolution(expr).clone();
         let old_ty = self.pass.body.expr_ty_unchecked(expr).clone();
-        let kind = self.pass.body.exprs[expr].kind.clone();
+        let expr_data = self.pass.body.expr_unchecked(expr);
+        let kind = expr_data.kind.clone();
 
         match kind {
             ExprKind::Path { path } => {
@@ -84,7 +85,9 @@ where
                 let ty = self
                     .pass
                     .type_path_resolver()
-                    .type_ref(TypeRefUseSite::Scope(self.pass.body.exprs[expr].scope))
+                    .type_ref(TypeRefUseSite::Scope(
+                        self.pass.body.expr_unchecked(expr).scope,
+                    ))
                     .resolve(&ty)?;
                 self.pass.body.set_expr_ty(expr, ty);
             }
@@ -143,9 +146,10 @@ where
             }
             ExprKind::Record { path, .. } => {
                 let (resolution, ty) = match path.as_ref().and_then(|path| path.as_def_map_path()) {
-                    Some(path) => {
-                        self.resolve_record_expr_path(self.pass.body.exprs[expr].scope, &path)?
-                    }
+                    Some(path) => self.resolve_record_expr_path(
+                        self.pass.body.expr_unchecked(expr).scope,
+                        &path,
+                    )?,
                     None => (BodyResolution::Unknown, Ty::Unknown),
                 };
                 self.pass.body.set_expr_facts(expr, resolution, ty);
@@ -162,7 +166,7 @@ where
                     &method_name,
                     &generic_args,
                     &args,
-                    self.pass.body.exprs[expr].scope,
+                    self.pass.body.expr_unchecked(expr).scope,
                 )?;
                 self.pass.body.set_expr_facts(expr, resolution, ty);
             }
@@ -228,8 +232,9 @@ where
         expr: ExprId,
         path: &Path,
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
-        let scope = self.pass.body.exprs[expr].scope;
-        let visible_bindings = self.pass.body.exprs[expr].visible_bindings;
+        let expr_data = self.pass.body.expr_unchecked(expr);
+        let scope = expr_data.scope;
+        let visible_bindings = expr_data.visible_bindings;
         BodyValuePathResolver::new(self.pass.query_source(), Some(self.pass.semantic_index))
             .resolve_path_expr(scope, path, Some(visible_bindings))
     }
@@ -816,7 +821,7 @@ where
         let Some(callee) = callee else {
             return Ok(Ty::Unknown);
         };
-        let callee_data = &self.pass.body.exprs[callee];
+        let callee_data = self.pass.body.expr_unchecked(callee);
         let callee_ty = self.pass.body.expr_ty_unchecked(callee);
 
         if matches!(callee_ty, Ty::Nominal(_) | Ty::SelfTy(_)) {

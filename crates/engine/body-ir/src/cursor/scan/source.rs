@@ -10,7 +10,7 @@ use rg_ir_model::{
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
-use crate::{BodyData, BodyIrReadTxn, BodyLocalItems, ExprKind, PatKind};
+use crate::{BodyIrReadTxn, BodyLocalItems, ExprKind, PatKind, ResolvedBodyData};
 
 use super::{
     super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},
@@ -47,7 +47,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
 
         let mut candidates = Vec::new();
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            if !self.file_matches(body.source.file_id) {
+            if !self.file_matches(body.source().file_id) {
                 continue;
             }
 
@@ -88,7 +88,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     fn push_declaration_candidates(
         &self,
         body_ref: BodyRef,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         body_local_items: Option<&BodyLocalItems>,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
@@ -135,8 +135,8 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
                 ItemSourceKind::Body(source) if source.body == body_ref => body
                     .source_item(source.item)
                     .and_then(|item| item.name_span)
-                    .unwrap_or_else(|| item.span().unwrap_or(body.source.span)),
-                _ => item.span().unwrap_or(body.source.span),
+                    .unwrap_or_else(|| item.span().unwrap_or(body.source().span)),
+                _ => item.span().unwrap_or(body.source().span),
             };
 
             match item.item() {
@@ -171,7 +171,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
     }
 
-    fn record_shorthand_bindings(&self, body: &BodyData) -> Vec<RecordPatShorthandBinding> {
+    fn record_shorthand_bindings(&self, body: &ResolvedBodyData) -> Vec<RecordPatShorthandBinding> {
         let mut bindings = Vec::new();
         let sites = BodyScanSites::new(body);
         sites.walk_pats(self.file_id, None, |site| {
@@ -265,7 +265,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     fn push_member_reference_candidates(
         &self,
         body_ref: BodyRef,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
         let record_shorthand_values = Self::record_expr_shorthand_values(body);
@@ -303,7 +303,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
         }
     }
 
-    fn record_expr_shorthand_values(body: &BodyData) -> Vec<ExprId> {
+    fn record_expr_shorthand_values(body: &ResolvedBodyData) -> Vec<ExprId> {
         let mut values = Vec::new();
         for expr in body.exprs().iter() {
             let ExprKind::Record { fields, .. } = &expr.kind else {
@@ -325,7 +325,7 @@ impl<'txn, 'db> BodySourceScanner<'txn, 'db> {
     fn push_record_field_key_candidates(
         &self,
         body_ref: BodyRef,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         candidates: &mut Vec<BodyCursorCandidate>,
     ) {
         for expr in body.exprs().iter() {

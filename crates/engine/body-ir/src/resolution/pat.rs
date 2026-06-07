@@ -47,7 +47,7 @@ where
     pub(super) fn propagate(&self) -> Result<Vec<(BindingId, Ty)>, PackageStoreError> {
         let mut updates = Vec::new();
 
-        for statement_idx in 0..self.source.body().statements.len() {
+        for statement_idx in 0..self.source.body().statements().len() {
             let statement = StmtId(statement_idx);
             let StmtKind::Let {
                 scope,
@@ -55,7 +55,12 @@ where
                 annotation,
                 initializer,
                 ..
-            } = self.source.body().statements[statement].kind.clone()
+            } = self
+                .source
+                .body()
+                .statement_unchecked(statement)
+                .kind
+                .clone()
             else {
                 continue;
             };
@@ -65,9 +70,9 @@ where
         }
 
         let iteration_items = self.iteration_items();
-        for expr_idx in 0..self.source.body().exprs.len() {
+        for expr_idx in 0..self.source.body().exprs().len() {
             let expr = ExprId(expr_idx);
-            match self.source.body().exprs[expr].kind.clone() {
+            match self.source.body().expr_unchecked(expr).kind.clone() {
                 ExprKind::Match { scrutinee, arms } => {
                     let Some(scrutinee) = scrutinee else {
                         continue;
@@ -388,7 +393,7 @@ where
             return;
         }
 
-        if self.source.body().bindings.get(binding).is_none() {
+        if self.source.body().binding(binding).is_none() {
             return;
         }
         if !matches!(
