@@ -2,11 +2,9 @@
 
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{BodyRef, DefMapRef, ModuleRef, TargetRef};
-use rg_ir_storage::{DefMap, DefMapSource, ItemStore, ItemStoreSource};
+use rg_ir_storage::{BodyLocalItems, DefMap, DefMapSource, ItemStore, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_semantic_ir::SemanticIrReadTxn;
-
-use crate::BodyLocalItems;
 
 /// Provides target semantic facts plus body-local facts collected during this target build.
 ///
@@ -53,7 +51,7 @@ impl DefMapSource for BodyBuildQuerySource<'_, '_> {
             DefMapRef::Target(target) => self.def_map.def_map(target),
             DefMapRef::Body(body_ref) => Ok((*self)
                 .body_local_items(body_ref)
-                .map(|items| &items.def_map)),
+                .map(BodyLocalItems::def_map)),
         }
     }
 
@@ -92,7 +90,7 @@ impl<'source, 'db> ItemStoreSource<'source> for &'source BodyBuildQuerySource<'_
             DefMapRef::Target(target) => self.semantic_ir.items(target),
             DefMapRef::Body(body_ref) => Ok(self
                 .body_local_items(body_ref)
-                .map(|items| &items.item_store)),
+                .map(BodyLocalItems::item_store)),
         }
     }
 

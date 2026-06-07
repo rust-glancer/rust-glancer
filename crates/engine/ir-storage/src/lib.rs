@@ -1,7 +1,9 @@
+mod body;
 mod def_map;
 mod item;
 
 pub use self::{
+    body::BodyLocalItems,
     def_map::{
         DefMap, DefMapBuilder, DefMapQuery, DefMapSource, ImportBinding, ImportData, ImportKind,
         ImportPath, ImportSourcePath, LocalDefData, LocalDefKind, LocalImplData,

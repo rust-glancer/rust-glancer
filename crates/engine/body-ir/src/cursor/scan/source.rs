@@ -7,10 +7,11 @@ use rg_ir_model::{
     BindingId, BodyId, BodyRef, EnumVariantRef, ExprId, FieldRef, SemanticItemRef, TargetRef,
     TypeDefId, hir::source::ItemSourceKind,
 };
+use rg_ir_storage::BodyLocalItems;
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
-use crate::{BodyIrReadTxn, BodyLocalItems, ExprKind, PatKind, ResolvedBodyData};
+use crate::{BodyIrReadTxn, ExprKind, PatKind, ResolvedBodyData};
 
 use super::{
     super::{BindingSurface, BodyCursorCandidate, RecordFieldKeySurface},

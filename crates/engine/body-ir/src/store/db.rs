@@ -6,10 +6,21 @@ use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_semantic_ir::PackageIr;
 use rg_text::PackageNameInterners;
 
-use crate::{
-    BodyIrReadTxn, BodyIrStats, PackageBodies, TargetBodiesStatus,
-    build::{BodyIrDbBuilder, BodyIrDbPackageRebuilder},
-};
+use super::{BodyIrReadTxn, PackageBodies, TargetBodiesStatus};
+use crate::build::{BodyIrDbBuilder, BodyIrDbPackageRebuilder};
+
+/// Coarse totals for reporting that the Body IR phase produced useful data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+pub struct BodyIrStats {
+    pub target_count: usize,
+    pub built_target_count: usize,
+    pub skipped_target_count: usize,
+    pub body_count: usize,
+    pub scope_count: usize,
+    pub binding_count: usize,
+    pub statement_count: usize,
+    pub expression_count: usize,
+}
 
 /// Body-level IR for all analyzed packages and targets.
 #[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]

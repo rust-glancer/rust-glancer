@@ -8,7 +8,7 @@ use rg_parse::TargetId;
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
 
-use crate::ir::{PackageBodies, TargetBodiesStatus};
+use crate::{PackageBodies, TargetBodiesStatus};
 
 use super::{local_thread_pool, state::TargetBodyBuildState};
 

@@ -13,7 +13,7 @@ use rg_parse::{FileId, Span};
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::NameInterner;
 
-use crate::ir::{BodyOwner, TargetBodies};
+use crate::{BodyOwner, TargetBodies};
 
 use super::{BodyIrLoweringScope, task::BodyLoweringTask, task::BodyTaskLowering};
 

@@ -14,10 +14,7 @@ pub use rg_ir_model::{
 };
 
 pub use self::{
-    body::{
-        BodyIrStats, BodyLocalItems, PackageBodies, ResolvedBodyData, ScopeData, TargetBodies,
-        TargetBodiesStatus,
-    },
+    body::{ResolvedBodyData, ScopeData},
     expr::{
         ClosureParamData, ExprBlockKind, ExprData, ExprKind, ExprWrapperKind, LiteralKind,
         MatchArmData, RecordExprField, RecordExprSpread,

@@ -2,10 +2,10 @@
 
 use rg_def_map::PackageSlot;
 use rg_ir_model::{BodyRef, TargetRef};
-use rg_ir_storage::{DefMap, ItemStore};
+use rg_ir_storage::{BodyLocalItems, DefMap, ItemStore};
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
 
-use crate::{BodyLocalItems, PackageBodies, ResolvedBodyData, TargetBodies};
+use crate::{PackageBodies, ResolvedBodyData, TargetBodies};
 
 /// Read-only Body IR access for one query transaction.
 #[derive(Debug, Clone)]

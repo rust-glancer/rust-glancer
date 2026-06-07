@@ -5,12 +5,12 @@ use rg_ir_model::{
     BodyId, BodyRef, ConstRef, DefMapRef, ItemOwner, ModuleRef, Path, StaticRef, TargetRef,
     TypePathResolution,
 };
-use rg_ir_storage::{ItemLookupIndex, ItemStore, TargetItemQuery};
+use rg_ir_storage::{BodyLocalItems, ItemLookupIndex, ItemStore, TargetItemQuery};
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::NameInterner;
 
 use crate::{
-    BodyLocalItems, BodyOwner, TargetBodies,
+    BodyOwner, TargetBodies,
     resolution::{
         BodyQuerySource, BodyResolver, BodyTypePathResolver, TypeRefUseSite, push_unique,
     },
@@ -94,7 +94,7 @@ impl<'target> TargetBodyBuildState<'target> {
             let items = self.collect_body_local_items(body_idx, def_map, semantic_ir)?;
             let fallback_module = self.target_bodies.bodies()[body_idx].fallback_module();
             let nested_tasks =
-                Self::nested_body_tasks(body_ref, fallback_module, &items.item_store);
+                Self::nested_body_tasks(body_ref, fallback_module, items.item_store());
             self.body_local_items.push(Some(items));
 
             if !nested_tasks.is_empty() {
@@ -218,7 +218,7 @@ impl<'target> TargetBodyBuildState<'target> {
                     continue;
                 };
                 let impl_headers = items
-                    .item_store
+                    .item_store()
                     .impls_with_refs()
                     .map(|(impl_ref, impl_data)| {
                         (
@@ -280,7 +280,7 @@ impl<'target> TargetBodyBuildState<'target> {
                 continue;
             };
             for (impl_id, resolved_self_tys, resolved_trait_refs) in resolved_headers {
-                if let Some(impl_data) = items.item_store.impls_mut().get_mut(impl_id) {
+                if let Some(impl_data) = items.item_store_mut().impls_mut().get_mut(impl_id) {
                     impl_data.resolved_self_tys = resolved_self_tys;
                     impl_data.resolved_trait_refs = resolved_trait_refs;
                 }

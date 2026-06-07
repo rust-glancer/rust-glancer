@@ -14,7 +14,7 @@ use rg_ir_model::{BodyId, ModuleRef};
 use rg_parse::{FileId, Span};
 use rg_text::NameInterner;
 
-use crate::ir::{BodyOwner, TargetBodies};
+use crate::{BodyOwner, TargetBodies};
 
 use super::{body::BodyLowering, syntax::source_for};
 

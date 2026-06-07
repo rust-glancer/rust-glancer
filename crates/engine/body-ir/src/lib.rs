@@ -23,16 +23,17 @@ pub use self::{
         ValueReferenceSurface,
     },
     ir::{
-        BindingData, BindingFacts, BindingKind, BodyIrStats, BodyLocalItems, BodyOwner, BodyPath,
-        BodySelfParamKind, BodySource, BodySourceItems, ClosureCapture, ClosureKind,
-        ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprFacts, ExprKind,
-        ExprRangeKind, ExprUnaryOp, LabelData, LiteralKind, PackageBodies, PatBindingMode, PatData,
-        PatKind, PatMutability, PatRangeKind, RecordExprField, RecordExprSpread, RecordFieldSyntax,
-        RecordPatField, ResolvedBodyData, ScopeData, StmtData, StmtKind, TargetBodies,
-        TargetBodiesStatus,
+        BindingData, BindingFacts, BindingKind, BodyOwner, BodyPath, BodySelfParamKind, BodySource,
+        BodySourceItems, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp,
+        ExprBlockKind, ExprData, ExprFacts, ExprKind, ExprRangeKind, ExprUnaryOp, LabelData,
+        LiteralKind, PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind,
+        RecordExprField, RecordExprSpread, RecordFieldSyntax, RecordPatField, ResolvedBodyData,
+        ScopeData, StmtData, StmtKind,
     },
     resolution::BodyScopeQuery,
-    store::{BodyIrDb, BodyIrReadTxn},
+    store::{
+        BodyIrDb, BodyIrReadTxn, BodyIrStats, PackageBodies, TargetBodies, TargetBodiesStatus,
+    },
 };
 
 // TODO: Shouldn't be exposed normally; remove after analysis owns resolver projection.

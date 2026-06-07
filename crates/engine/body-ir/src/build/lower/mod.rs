@@ -20,10 +20,7 @@ use rg_parse::{FileId, ParseDb, TargetId};
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
 
-use crate::{
-    BodyIrBuildPolicy, BodyIrFile,
-    ir::{PackageBodies, TargetBodies},
-};
+use crate::{BodyIrBuildPolicy, BodyIrFile, PackageBodies, TargetBodies};
 
 use self::target::TargetLowering;
 pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering};
