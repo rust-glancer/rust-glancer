@@ -4,26 +4,26 @@
 //! expressions. The parent resolver still drives pass ordering and binding propagation.
 
 use rg_ir_model::{
-    DefId, DefMapRef, ExprId, FunctionRef, ImplRef, ItemOwner, Path, ScopeId, SemanticItemRef,
-    TypePathResolution,
+    DefMapRef, ExprId, Path, ScopeId, TypePathResolution,
     identity::DeclarationRef,
-    items::{FieldKey, GenericArg as ItemGenericArg, GenericParams},
+    items::{FieldKey, GenericArg as ItemGenericArg},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
-    AutoderefMode, CallArgInference, CallArgMapping, NominalTy, ReferencePeelingCandidates, Ty,
-    TypeSubst, function_generic_shadow_subst, ty_for_binary, ty_for_literal, ty_for_unary,
+    AutoderefMode, CallArgMapping, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst,
+    ty_for_binary, ty_for_literal, ty_for_unary,
 };
 
 use crate::{
-    ExprData, ExprUnaryOp,
+    ExprUnaryOp,
     ir::resolved::BodyResolution,
     ir::{ExprKind, ExprWrapperKind},
 };
 
 use super::{
-    BodyValuePathResolver, TypeRefUseSite, body::BodyResolver, normalize::TyNormalizer, push_unique,
+    BodyValuePathResolver, TypeRefUseSite, body::BodyResolver, callable::CallableReturnResolver,
+    normalize::TyNormalizer, push_unique,
 };
 
 pub(super) struct ExprResolver<'pass, 'query, 'body, D, I> {
@@ -56,7 +56,8 @@ where
                 self.pass.body.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::Call { callee, args } => {
-                let ty = self.call_ty(callee, &args)?;
+                let ty =
+                    CallableReturnResolver::new(self.pass.context()).call_expr_ty(callee, &args)?;
                 self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Tuple { fields } => {
@@ -459,6 +460,7 @@ where
 
         let receiver_ty = self.pass.body.expr_ty_unchecked(receiver);
         let item_query = self.pass.context().item_query();
+        let callable_returns = CallableReturnResolver::new(self.pass.context());
 
         // Method lookup is intentionally shallow: nominal type plus lightweight impl-argument
         // matching gives useful candidates without modeling the full trait solver.
@@ -509,7 +511,7 @@ where
                     push_unique(&mut functions, function_ref);
                     push_unique(
                         &mut return_tys,
-                        self.semantic_function_return_ty_with_call_args(
+                        callable_returns.return_ty_with_call_args(
                             function_ref,
                             Some(nominal_ty),
                             explicit_args,
@@ -542,7 +544,7 @@ where
                 push_unique(&mut functions, function_ref);
                 push_unique(
                     &mut return_tys,
-                    self.semantic_function_return_ty_with_subst_and_call_args(
+                    callable_returns.return_ty_with_subst_and_call_args(
                         function_ref,
                         Some(structural.receiver_ty().clone()),
                         structural.subst().clone(),
@@ -609,31 +611,6 @@ where
         })
     }
 
-    fn impl_self_subst_for_function(
-        &self,
-        function_ref: FunctionRef,
-        owner: ItemOwner,
-        receiver_ty: &NominalTy,
-    ) -> Result<TypeSubst, PackageStoreError> {
-        let ItemOwner::Impl(impl_id) = owner else {
-            return Ok(TypeSubst::new());
-        };
-        let item_query = self.pass.context().item_query();
-        let Some(impl_data) = item_query.impl_data(ImplRef {
-            origin: function_ref.origin,
-            id: impl_id,
-        })?
-        else {
-            return Ok(TypeSubst::new());
-        };
-
-        Ok(self
-            .pass
-            .context()
-            .impl_matcher()
-            .impl_self_subst_for_impl(impl_data, receiver_ty))
-    }
-
     fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {
         Ok(self
             .pass
@@ -642,267 +619,5 @@ where
             .generic_params_for_type_def(ty.def)?
             .map(|generics| TypeSubst::from_generics(generics, &ty.args))
             .unwrap_or_else(TypeSubst::new))
-    }
-
-    fn semantic_function_return_ty_with_call_args(
-        &self,
-        function_ref: FunctionRef,
-        receiver_ty: Option<&NominalTy>,
-        explicit_args: &[ItemGenericArg],
-        args: &[ExprId],
-        arg_mapping: CallArgMapping,
-        call_scope: Option<ScopeId>,
-    ) -> Result<Ty, PackageStoreError> {
-        let Some(function_data) = self
-            .pass
-            .context()
-            .item_query()
-            .function_data(function_ref)?
-        else {
-            return Ok(Ty::Unknown);
-        };
-        let subst = receiver_ty
-            .map(|ty| {
-                // Receiver type args and impl self args both contribute substitutions. For
-                // `impl<U> Wrapper<U>`, this maps `U` to the known receiver argument.
-                let mut subst = self.semantic_type_subst(ty)?;
-                subst.extend(self.impl_self_subst_for_function(
-                    function_ref,
-                    function_data.owner,
-                    ty,
-                )?);
-                Ok(subst)
-            })
-            .transpose()?
-            .unwrap_or_default();
-        self.semantic_function_return_ty_with_subst_and_call_args(
-            function_ref,
-            receiver_ty.cloned().map(|ty| Ty::nominal(vec![ty])),
-            subst,
-            explicit_args,
-            args,
-            arg_mapping,
-            call_scope,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn semantic_function_return_ty_with_subst_and_call_args(
-        &self,
-        function_ref: FunctionRef,
-        self_ty: Option<Ty>,
-        mut subst: TypeSubst,
-        explicit_args: &[ItemGenericArg],
-        args: &[ExprId],
-        arg_mapping: CallArgMapping,
-        call_scope: Option<ScopeId>,
-    ) -> Result<Ty, PackageStoreError> {
-        let item_query = self.pass.context().item_query();
-        let Some(function_data) = item_query.function_data(function_ref)? else {
-            return Ok(Ty::Unknown);
-        };
-        subst.extend(function_generic_shadow_subst(
-            function_data.signature.generics(),
-        ));
-        if let Some(call_scope) = call_scope {
-            subst.extend(self.explicit_function_subst(
-                function_data.signature.generics(),
-                explicit_args,
-                call_scope,
-            )?);
-        }
-        let arg_tys = args
-            .iter()
-            .map(|arg| self.pass.body.expr_ty_unchecked(*arg).clone())
-            .collect::<Vec<_>>();
-        let inferred_subst = CallArgInference::new(
-            function_data.signature.generics(),
-            function_data.signature.params(),
-            &arg_tys,
-            arg_mapping,
-            &subst,
-        )
-        .infer();
-        subst.extend(inferred_subst);
-        self.semantic_function_return_ty_with_resolved_subst(function_ref, self_ty, subst)
-    }
-
-    fn semantic_function_return_ty_with_resolved_subst(
-        &self,
-        function_ref: FunctionRef,
-        self_ty: Option<Ty>,
-        subst: TypeSubst,
-    ) -> Result<Ty, PackageStoreError> {
-        let item_query = self.pass.context().item_query();
-        let Some(function_data) = item_query.function_data(function_ref)? else {
-            return Ok(Ty::Unknown);
-        };
-        let Some(ret_ty) = function_data.signature.ret_ty() else {
-            return Ok(Ty::Unit);
-        };
-
-        if ret_ty.is_self_type() {
-            return Ok(match self_ty {
-                Some(self_ty) => self_ty,
-                None => Ty::self_ty(
-                    self.pass
-                        .context()
-                        .type_path_resolver()
-                        .self_nominal_tys_for_function(function_ref)?,
-                ),
-            });
-        }
-
-        self.pass
-            .context()
-            .type_path_resolver()
-            .type_ref(TypeRefUseSite::Function(function_ref))
-            .with_subst(&subst)
-            .resolve(ret_ty)
-    }
-
-    fn call_ty(&self, callee: Option<ExprId>, args: &[ExprId]) -> Result<Ty, PackageStoreError> {
-        let Some(callee) = callee else {
-            return Ok(Ty::Unknown);
-        };
-        let callee_data = self.pass.body.expr_unchecked(callee);
-        let callee_ty = self.pass.body.expr_ty_unchecked(callee);
-
-        if matches!(callee_ty, Ty::Nominal(_) | Ty::SelfTy(_)) {
-            return Ok(callee_ty.clone());
-        }
-
-        // Ordinary calls use declared return types plus a deliberately-small substitution model:
-        // explicit turbofish args and direct argument-to-parameter type inference.
-        let mut return_tys = Vec::new();
-        match self.pass.body.expr_resolution(callee) {
-            BodyResolution::Declarations(declarations) => {
-                for declaration in declarations {
-                    self.push_return_ty_for_declaration(
-                        *declaration,
-                        &mut return_tys,
-                        self.explicit_callee_generic_args(callee_data),
-                        callee_data.scope,
-                        args,
-                    )?;
-                }
-            }
-            BodyResolution::Binding(_) | BodyResolution::Unknown => {}
-        }
-
-        if return_tys.len() == 1 {
-            Ok(return_tys.pop().expect("one return type should exist"))
-        } else {
-            Ok(Ty::Unknown)
-        }
-    }
-
-    fn push_return_ty_for_declaration(
-        &self,
-        declaration: DeclarationRef,
-        return_tys: &mut Vec<Ty>,
-        explicit_args: &[ItemGenericArg],
-        call_scope: ScopeId,
-        args: &[ExprId],
-    ) -> Result<(), PackageStoreError> {
-        match declaration {
-            DeclarationRef::LocalDef(local_def) => {
-                let Some(function_ref) = self.function_ref_for_def(DefId::Local(local_def))? else {
-                    return Ok(());
-                };
-                push_unique(
-                    return_tys,
-                    self.semantic_function_return_ty_with_call_args(
-                        function_ref,
-                        None,
-                        explicit_args,
-                        args,
-                        CallArgMapping::FunctionCall,
-                        Some(call_scope),
-                    )?,
-                );
-            }
-            DeclarationRef::Item(SemanticItemRef::Function(function_ref)) => {
-                push_unique(
-                    return_tys,
-                    self.semantic_function_return_ty_with_call_args(
-                        function_ref,
-                        None,
-                        explicit_args,
-                        args,
-                        CallArgMapping::FunctionCall,
-                        Some(call_scope),
-                    )?,
-                );
-            }
-            DeclarationRef::Module(_)
-            | DeclarationRef::Item(
-                SemanticItemRef::TypeDef(_)
-                | SemanticItemRef::Trait(_)
-                | SemanticItemRef::Impl(_)
-                | SemanticItemRef::TypeAlias(_)
-                | SemanticItemRef::Const(_)
-                | SemanticItemRef::Static(_),
-            )
-            | DeclarationRef::Field(_)
-            | DeclarationRef::EnumVariant(_)
-            | DeclarationRef::BodyBinding(_) => {}
-        }
-
-        Ok(())
-    }
-
-    fn explicit_callee_generic_args<'expr>(
-        &self,
-        callee_data: &'expr ExprData,
-    ) -> &'expr [ItemGenericArg] {
-        // A normal call expression has a callee expression, so `make::<T>()` and
-        // `Type::build::<T>()` carry call generics on the final callee path segment. Method calls
-        // are a different ExprKind and store their method-name generics directly.
-        match &callee_data.kind {
-            ExprKind::Path { path } => path.last_segment_angle_args().unwrap_or(&[]),
-            _ => &[],
-        }
-    }
-
-    fn explicit_function_subst(
-        &self,
-        generics: Option<&GenericParams>,
-        explicit_args: &[ItemGenericArg],
-        scope: ScopeId,
-    ) -> Result<TypeSubst, PackageStoreError> {
-        let Some(generics) = generics else {
-            return Ok(TypeSubst::new());
-        };
-        if explicit_args.is_empty() {
-            return Ok(TypeSubst::new());
-        }
-
-        // Function turbofish arguments are supplied at the call site, so names inside them must
-        // resolve from the body scope where the call was written.
-        let type_resolver = self.pass.context().type_path_resolver();
-        let arg_resolver = type_resolver.type_ref(TypeRefUseSite::Scope(scope));
-        let generic_args = explicit_args
-            .iter()
-            .map(|arg| arg_resolver.generic_arg(arg))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(TypeSubst::from_generics(generics, &generic_args))
-    }
-
-    fn function_ref_for_def(&self, def: DefId) -> Result<Option<FunctionRef>, PackageStoreError> {
-        let DefId::Local(local_def) = def else {
-            return Ok(None);
-        };
-        Ok(
-            match self
-                .pass
-                .context()
-                .item_query()
-                .semantic_item_for_local_def(local_def)?
-            {
-                Some(SemanticItemRef::Function(function)) => Some(function),
-                Some(_) | None => None,
-            },
-        )
     }
 }
