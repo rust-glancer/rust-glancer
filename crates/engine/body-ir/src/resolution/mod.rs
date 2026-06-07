@@ -5,6 +5,7 @@
 
 mod body;
 mod body_items;
+mod expr;
 mod normalize;
 mod pat;
 mod pat_binding;
