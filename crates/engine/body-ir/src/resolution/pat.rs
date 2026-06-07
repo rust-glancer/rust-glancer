@@ -6,21 +6,17 @@
 
 use rg_ir_model::{
     BindingId, BodyPath, ExprId, PatId, Path, PathSegment, ScopeId, StmtId, TypeDefId,
+    items::{FieldItem, FieldKey, FieldList, TypeRef},
 };
 use rg_ir_storage::{
     DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource, TargetItemQuery,
 };
-use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
     ItemPathQuery, IterationItemResolver, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst,
 };
 
-use crate::{
-    ir::expr::ExprKind,
-    ir::pat::{PatKind, RecordPatField},
-    ir::stmt::StmtKind,
-};
+use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
 
 use super::{BodyQuerySource, TypeRefUseSite, push_unique, type_path::BodyTypePathResolver};
 
@@ -159,7 +155,7 @@ where
     fn expected_ty_for_let(
         &self,
         scope: ScopeId,
-        annotation: Option<&rg_item_tree::TypeRef>,
+        annotation: Option<&TypeRef>,
         initializer: Option<ExprId>,
     ) -> Result<Ty, PackageStoreError> {
         if let Some(annotation) = annotation {

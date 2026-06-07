@@ -7,7 +7,7 @@
 use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource};
 use rg_ty::{GenericArg, Ty};
 
-use crate::ir::expr::ExprWrapperKind;
+use crate::ir::ExprWrapperKind;
 
 use rg_package_store::PackageStoreError;
 

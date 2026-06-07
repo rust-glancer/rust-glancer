@@ -2,18 +2,16 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
 use rg_ir_model::{
-    BindingId, BodyOwner, BodyRef, BodySource, DefMapRef, ExprId, FunctionRef, ModuleRef, PatId,
-    ScopeId, StmtId,
+    BindingData, BindingId, BodyOwner, BodyRef, BodySource, DefMapRef, ExprData, ExprId, ExprKind,
+    FunctionRef, ModuleRef, PatData, PatId, PatKind, ScopeData, ScopeId, StmtData, StmtId,
+    StmtKind,
+    items::{ItemNode, ItemTreeId},
 };
-use rg_item_tree::{ItemNode, ItemTreeId};
 use rg_memsize::MemorySize;
 
 use super::{
-    expr::{ExprData, ExprKind},
-    pat::{PatData, PatKind},
     resolved::{BindingFacts, BodyFacts, BodyResolution, ExprFacts},
     source_items::BodySourceItems,
-    stmt::{BindingData, PendingBindingResolution, StmtData, StmtKind},
 };
 
 /// Model-shaped expression body for a function, const, or static initializer.
@@ -392,6 +390,17 @@ fn rewrite_binding_list(bindings: &mut Vec<BindingId>, old_to_new: &[Option<Bind
     *bindings = rewritten;
 }
 
+/// How a lowered binding slot should be treated before final binding materialization.
+///
+/// Pattern lowering records ambiguous identifiers as slots first. Body resolution then decides
+/// whether each slot becomes a real binding or remains a path-pattern use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[memsize(leaf)]
+pub(crate) enum PendingBindingResolution {
+    AlwaysBinding,
+    AmbiguousPattern,
+}
+
 /// Mutable store used while one body is being lowered.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct BodyBuilder {
@@ -476,20 +485,5 @@ impl BodyBuilder {
             "expression facts should mirror expression slot ids"
         );
         expr
-    }
-}
-
-/// One lexical scope.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
-pub struct ScopeData {
-    pub parent: Option<ScopeId>,
-    pub source_items: Vec<ItemTreeId>,
-    pub bindings: Vec<BindingId>,
-}
-
-impl ScopeData {
-    fn shrink_to_fit(&mut self) {
-        self.source_items.shrink_to_fit();
-        self.bindings.shrink_to_fit();
     }
 }

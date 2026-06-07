@@ -3,6 +3,9 @@
 //! Body scopes become synthetic modules. Direct declarations are collected first, then imports are
 //! resolved in a fixed-point loop before the final DefMap is frozen.
 
+use rg_ir_model::items::{
+    Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource,
+};
 use rg_ir_model::{
     BodyRef, DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef,
     hir::source::{BodyItemSourceRef, ItemSource},
@@ -13,7 +16,6 @@ use rg_ir_storage::{
     ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, PathResolver, ScopeBinding,
     ScopeBindingOrigin, ScopeEntryRef, ScopeResolutionEnv, TargetResolutionEnv,
 };
-use rg_item_tree::{Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource};
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
 

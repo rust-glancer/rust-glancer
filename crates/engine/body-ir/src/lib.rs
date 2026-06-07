@@ -10,7 +10,7 @@ mod walk;
 use rg_def_map::PackageSlot;
 use rg_parse::FileId;
 
-pub use rg_item_tree::FieldKey;
+pub use rg_ir_model::items::FieldKey;
 
 #[cfg(test)]
 mod tests;

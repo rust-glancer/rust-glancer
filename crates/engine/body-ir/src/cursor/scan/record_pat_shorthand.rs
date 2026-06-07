@@ -1,7 +1,7 @@
 //! Shared helpers for colonless record pattern fields.
 
+use rg_ir_model::items::FieldKey;
 use rg_ir_model::{BindingId, PatId};
-use rg_item_tree::FieldKey;
 use rg_parse::Span;
 
 use crate::{PatKind, RecordPatField, ResolvedBodyData};

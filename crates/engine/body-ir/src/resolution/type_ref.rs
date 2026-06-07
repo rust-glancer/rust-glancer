@@ -6,10 +6,10 @@
 //! resolver API from growing one method per caller shape.
 
 use rg_ir_model::{
-    DefMapRef, FunctionRef, ModuleRef, Path, ScopeId, TypePathResolution, items::PrimitiveTy,
+    DefMapRef, FunctionRef, ModuleRef, Path, ScopeId, TypePathResolution,
+    items::{GenericArg as ItemGenericArg, Mutability, PrimitiveTy, TypePath, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
-use rg_item_tree::{GenericArg as ItemGenericArg, Mutability, TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_ty::{GenericArg, ItemPathQuery, RefMutability, Ty, TypeSubst};
 

@@ -12,23 +12,25 @@
 
 use rg_ir_model::{
     BindingId, BodyRef, DefId, DefMapRef, ExprId, ModuleId, ModuleRef, Path, PathSegment, ScopeId,
-    SemanticItemRef, TypeDefId, identity::DeclarationRef,
+    SemanticItemRef, TypeDefId,
+    identity::DeclarationRef,
+    items::{FieldItem, FieldKey, FieldList, TypeRef},
 };
 use rg_ir_storage::{
     DefMapQuery, DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource,
     NameResolutionFilter,
 };
-use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
 use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
 use crate::{
     BodyPath,
     ir::body::ResolvedBodyData,
-    ir::expr::ExprKind,
-    ir::pat::{PatKind, RecordPatField},
     ir::resolved::BodyResolution,
-    ir::stmt::{BindingKind, BodySelfParamKind, PendingBindingResolution, StmtKind},
+    ir::{
+        BindingKind, BodySelfParamKind, ExprKind, PatKind, PendingBindingResolution,
+        RecordPatField, StmtKind,
+    },
 };
 
 use super::{
@@ -199,7 +201,7 @@ where
     fn pending_expected_ty_for_let(
         &self,
         scope: ScopeId,
-        annotation: Option<&rg_item_tree::TypeRef>,
+        annotation: Option<&TypeRef>,
         initializer: Option<ExprId>,
         active: &[bool],
         pending_tys: &[Ty],

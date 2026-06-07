@@ -18,7 +18,7 @@ use rg_ty::{Autoderef, ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
 use crate::{
     ir::body::ResolvedBodyData,
     ir::resolved::BodyResolution,
-    ir::stmt::{BindingKind, BodySelfParamKind},
+    ir::{BindingKind, BodySelfParamKind},
 };
 
 use super::{

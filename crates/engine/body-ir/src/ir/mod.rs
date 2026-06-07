@@ -1,28 +1,21 @@
 //! Body IR domain model.
 
 pub(crate) mod body;
-pub(crate) mod expr;
-pub(crate) mod pat;
 pub(crate) mod resolved;
 pub(crate) mod source_items;
-pub(crate) mod stmt;
 
 pub use rg_ir_model::{
-    BodyOwner, BodyPath, BodySource, ClosureCapture, ClosureKind, ExprAssignOp, ExprBinaryOp,
-    ExprRangeKind, ExprUnaryOp, LabelData, PatBindingMode, PatMutability, PatRangeKind,
-    RecordFieldSyntax,
+    BindingData, BindingKind, BodyOwner, BodyPath, BodySelfParamKind, BodySource, ClosureCapture,
+    ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprKind,
+    ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LabelData, LiteralKind, MatchArmData,
+    PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordExprField,
+    RecordExprSpread, RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
 };
 
 pub use self::{
-    body::{ResolvedBodyData, ScopeData},
-    expr::{
-        ClosureParamData, ExprBlockKind, ExprData, ExprKind, ExprWrapperKind, LiteralKind,
-        MatchArmData, RecordExprField, RecordExprSpread,
-    },
-    pat::{PatData, PatKind, RecordPatField},
+    body::ResolvedBodyData,
     resolved::{BindingFacts, BodyResolution, ExprFacts},
     source_items::BodySourceItems,
-    stmt::{BindingData, BindingKind, BodySelfParamKind, StmtData, StmtKind},
 };
 
-pub(crate) use self::body::BodyBuilder;
+pub(crate) use self::body::{BodyBuilder, PendingBindingResolution};

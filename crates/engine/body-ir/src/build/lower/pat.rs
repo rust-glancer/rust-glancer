@@ -7,13 +7,14 @@ use rg_syntax::{
 
 use rg_ir_model::{
     BindingId, BodyPath, BodyPathSegment, BodyPathSegmentKind, ExprId, PatId, ScopeId,
+    items::{FieldKey, TypeRef},
 };
-use rg_item_tree::{FieldKey, FromAst as _, RecordPatFieldAst, TypeRef};
+use rg_item_tree::{FromAst as _, RecordPatFieldAst};
 use rg_text::Name;
 
 use crate::ir::{
     BindingData, BindingKind, LiteralKind, PatBindingMode, PatData, PatKind, PatMutability,
-    PatRangeKind, RecordFieldSyntax, RecordPatField, stmt::PendingBindingResolution,
+    PatRangeKind, PendingBindingResolution, RecordFieldSyntax, RecordPatField,
 };
 
 use super::body::BodyLowering;
@@ -314,7 +315,7 @@ impl BodyLowering<'_> {
                 kind: pat
                     .literal()
                     .as_ref()
-                    .map(LiteralKind::from_ast)
+                    .map(Self::literal_kind_from_ast)
                     .unwrap_or(LiteralKind::Unknown),
                 negated: pat.minus_token().is_some(),
             },

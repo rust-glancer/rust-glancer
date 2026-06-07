@@ -9,15 +9,16 @@ use rg_syntax::{
     utils::normalized_syntax_text,
 };
 
-use rg_ir_model::{ExprId, ScopeId, items::Mutability};
-use rg_item_tree::{
-    FieldKey, FromAst as _, GenericArg, MaybeFromAst as _, RecordExprFieldAst, TypeRef,
+use rg_ir_model::{
+    ExprId, ScopeId,
+    items::{FieldKey, GenericArg, Mutability, TypeRef},
 };
+use rg_item_tree::{FromAst as _, MaybeFromAst as _, RecordExprFieldAst};
 use rg_parse::{Span, TextSpan};
 
 use crate::ir::{
     BindingData, BindingKind, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
-    ExprBinaryOp, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LiteralKind, MatchArmData,
+    ExprBinaryOp, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, MatchArmData,
     RecordExprField, RecordExprSpread, RecordFieldSyntax,
 };
 
@@ -668,7 +669,7 @@ impl BodyLowering<'_> {
     }
 
     fn lower_literal(&mut self, literal: ast::Literal, scope: ScopeId) -> ExprId {
-        let kind = LiteralKind::from_ast(&literal);
+        let kind = Self::literal_kind_from_ast(&literal);
 
         self.alloc_expr(literal.syntax(), scope, ExprKind::Literal { kind })
     }

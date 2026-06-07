@@ -7,9 +7,9 @@ use rg_syntax::{
 
 use rg_ir_model::{
     BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind,
-    items::{PrimitiveTy, UnsignedIntTy},
+    items::{GenericArg, PrimitiveTy, TypePath, TypeRef, UnsignedIntTy},
 };
-use rg_item_tree::{FromAst as _, GenericArg, TypePath, TypeRef};
+use rg_item_tree::FromAst as _;
 use rg_parse::{FileId, Span};
 use rg_text::Name;
 
@@ -17,23 +17,23 @@ use crate::ir::{BodySource, LabelData, LiteralKind};
 
 use super::body::BodyLowering;
 
-impl LiteralKind {
-    pub(super) fn from_ast(literal: &ast::Literal) -> Self {
+impl BodyLowering<'_> {
+    pub(super) fn literal_kind_from_ast(literal: &ast::Literal) -> LiteralKind {
         match literal.kind() {
-            ast::LiteralKind::Bool(_) => Self::Bool,
-            ast::LiteralKind::Char(_) => Self::Char,
-            ast::LiteralKind::Byte(_) => Self::Int {
+            ast::LiteralKind::Bool(_) => LiteralKind::Bool,
+            ast::LiteralKind::Char(_) => LiteralKind::Char,
+            ast::LiteralKind::Byte(_) => LiteralKind::Int {
                 primitive_ty: Some(PrimitiveTy::UnsignedInt(UnsignedIntTy::U8)),
             },
-            ast::LiteralKind::FloatNumber(number) => Self::Float {
+            ast::LiteralKind::FloatNumber(number) => LiteralKind::Float {
                 primitive_ty: PrimitiveTy::from_float_suffix(number.suffix()),
             },
-            ast::LiteralKind::IntNumber(number) => Self::Int {
+            ast::LiteralKind::IntNumber(number) => LiteralKind::Int {
                 primitive_ty: PrimitiveTy::from_integer_suffix(number.suffix()),
             },
             ast::LiteralKind::String(_)
             | ast::LiteralKind::ByteString(_)
-            | ast::LiteralKind::CString(_) => Self::String,
+            | ast::LiteralKind::CString(_) => LiteralKind::String,
         }
     }
 }
@@ -212,6 +212,8 @@ mod tests {
 
     use crate::ir::LiteralKind;
 
+    use super::BodyLowering;
+
     #[test]
     fn classifies_rust_literal_tokens() {
         let cases = [
@@ -287,7 +289,11 @@ mod tests {
                 .find_map(ast::Literal::cast)
                 .expect("fixture should contain a literal expression");
 
-            assert_eq!(LiteralKind::from_ast(&literal), expected, "{label}");
+            assert_eq!(
+                BodyLowering::literal_kind_from_ast(&literal),
+                expected,
+                "{label}"
+            );
         }
     }
 }

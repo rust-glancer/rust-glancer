@@ -7,10 +7,9 @@ use rg_ir_model::{
     DefId, DefMapRef, ExprId, FunctionRef, ImplRef, ItemOwner, Path, ScopeId, SemanticItemRef,
     TypePathResolution,
     identity::DeclarationRef,
-    items::{GenericParams, PrimitiveTy},
+    items::{FieldKey, GenericArg as ItemGenericArg, GenericParams, PrimitiveTy},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
-use rg_item_tree::{FieldKey, GenericArg as ItemGenericArg};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
     AutoderefMode, CallArgInference, CallArgMapping, NominalTy, RefMutability,
@@ -18,9 +17,9 @@ use rg_ty::{
 };
 
 use crate::{
-    ExprBinaryOp, ExprUnaryOp,
-    ir::expr::{ExprKind, ExprWrapperKind, LiteralKind},
+    ExprBinaryOp, ExprData, ExprUnaryOp,
     ir::resolved::BodyResolution,
+    ir::{ExprKind, ExprWrapperKind, LiteralKind},
 };
 
 use super::{
@@ -926,7 +925,7 @@ where
 
     fn explicit_callee_generic_args<'expr>(
         &self,
-        callee_data: &'expr crate::ir::expr::ExprData,
+        callee_data: &'expr ExprData,
     ) -> &'expr [ItemGenericArg] {
         // A normal call expression has a callee expression, so `make::<T>()` and
         // `Type::build::<T>()` carry call generics on the final callee path segment. Method calls

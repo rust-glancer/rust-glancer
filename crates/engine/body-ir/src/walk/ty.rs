@@ -1,4 +1,4 @@
-use rg_item_tree::{GenericArg, TypeBound, TypePath, TypeRef};
+use rg_ir_model::items::{GenericArg, TypeBound, TypePath, TypeRef};
 
 /// Walks every path node nested inside a type reference.
 ///

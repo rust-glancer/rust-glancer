@@ -6,11 +6,11 @@
 
 mod scan;
 
+use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
     BindingId, BodyRef, EnumVariantRef, ExprId, FieldRef, FunctionRef, Path, ScopeId,
     SemanticItemRef, TargetRef,
 };
-use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span};
 

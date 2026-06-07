@@ -8,13 +8,13 @@ use crate::{
     PatBindingMode, PatData, PatKind, ResolvedBodyData, StmtKind, TargetBodiesStatus,
     testonly::BodyIrFixture,
 };
+use rg_ir_model::items::FieldItem;
 use rg_ir_model::{
     BindingId, BodyId, BodyRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef, FunctionRef,
     ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef, PatId, SemanticItemRef, StmtId,
     TargetRef, TraitRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_ir_storage::ModuleOrigin;
-use rg_item_tree::FieldItem;
 use rg_package_store::PackageLoader;
 use rg_parse::{Package, ParseDb, Target};
 use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
@@ -256,7 +256,12 @@ impl TargetBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_source_item(&self, id: usize, item: &rg_item_tree::ItemNode, dump: &mut String) {
+    fn render_source_item(
+        &self,
+        id: usize,
+        item: &rg_ir_model::items::ItemNode,
+        dump: &mut String,
+    ) {
         let name = item.name.as_deref().unwrap_or("<unnamed>");
         writeln!(
             dump,
@@ -1549,7 +1554,7 @@ fn render_binding_list(bindings: &[BindingId]) -> String {
         .join(", ")
 }
 
-fn render_item_generic_args(args: &[rg_item_tree::GenericArg]) -> String {
+fn render_item_generic_args(args: &[rg_ir_model::items::GenericArg]) -> String {
     if args.is_empty() {
         return String::new();
     }

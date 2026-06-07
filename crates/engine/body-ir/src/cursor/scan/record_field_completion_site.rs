@@ -3,8 +3,8 @@
 //! Record-field sites are the field-name slots inside struct literals and record patterns, such
 //! as `User { na$0 }` or `let User { na$0 } = user`.
 
+use rg_ir_model::items::FieldKey;
 use rg_ir_model::{BodyId, BodyRef, ScopeId, TargetRef};
-use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 

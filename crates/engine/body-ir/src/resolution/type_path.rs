@@ -6,12 +6,12 @@
 use rg_ir_model::{
     AssocItemId, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef, Path,
     PathSegment, ScopeId, SemanticItemRef, TypeAliasRef, TypePathResolution,
+    items::{TypePath, TypeRef},
 };
 use rg_ir_storage::{
     DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, NameResolutionFilter,
     TargetItemQuery, TypePathContext,
 };
-use rg_item_tree::{TypePath, TypeRef};
 use rg_package_store::PackageStoreError;
 use rg_ty::{GenericArg, ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
 
