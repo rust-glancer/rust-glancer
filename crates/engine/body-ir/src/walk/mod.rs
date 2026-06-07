@@ -10,6 +10,6 @@ mod ty;
 
 pub(crate) use self::{
     pat::{PatWalkSite, walk_pat},
-    path::walk_body_path_type_refs,
+    path::{walk_body_path_type_refs, walk_generic_args_type_refs},
     ty::walk_type_ref_paths,
 };

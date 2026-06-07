@@ -199,6 +199,90 @@ pub fn use_it() {
 }
 
 #[test]
+fn resolves_lifetime_parameterized_receiver_method_calls() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_lifetime_receiver_method_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub struct Module;
+pub struct DebugStruct;
+
+pub struct TargetScopeCollector<'db> {
+    module: &'db Module,
+}
+
+impl<'db> TargetScopeCollector<'db> {
+    fn all$goto_alloc_decl$oc_module(&mut self) -> Module {
+        missing()
+    }
+
+    fn col$goto_collect_decl$lect_items(&mut self) -> Module {
+        self.all$goto_self_alloc$oc_module()
+    }
+
+    fn collect(&mut self) -> Module {
+        self.col$goto_self_collect$lect_items()
+    }
+}
+
+pub mod fmt {
+    pub struct Formatter<'a> {
+        marker: &'a (),
+    }
+}
+
+impl<'a> fmt::Formatter<'a> {
+    fn de$goto_debug_decl$bug_struct(&mut self) -> crate::DebugStruct {
+        crate::missing()
+    }
+}
+
+pub fn use_it<'db>(
+    collector: &mut TargetScopeCollector<'db>,
+    formatter: &mut fmt::Formatter<'_>,
+) {
+    let _items = collector.col$goto_collect$lect_items();
+    let _debug = formatter.de$goto_debug$bug_struct();
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto self method in lifetime impl", "goto_self_alloc"),
+            AnalysisQuery::goto(
+                "goto self sibling method in lifetime impl",
+                "goto_self_collect",
+            ),
+            AnalysisQuery::goto("goto external method on lifetime receiver", "goto_collect"),
+            AnalysisQuery::goto(
+                "goto method on Formatter placeholder lifetime",
+                "goto_debug",
+            ),
+        ],
+        expect![[r#"
+            goto self method in lifetime impl
+            - fn alloc_module @ 13:8-13:20
+
+            goto self sibling method in lifetime impl
+            - fn collect_items @ 17:8-17:21
+
+            goto external method on lifetime receiver
+            - fn collect_items @ 17:8-17:21
+
+            goto method on Formatter placeholder lifetime
+            - fn debug_struct @ 33:8-33:20
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_associated_functions_and_enum_variants_in_body_paths() {
     check_analysis_queries(
         r#"
@@ -989,6 +1073,50 @@ pub fn make() {
 
             goto associated type
             - type_alias Id @ 8:14-8:16
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_trait_associated_const_qualified_value_paths() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_trait_assoc_const_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum StmtKind {
+    Let,
+}
+
+pub struct Stmt;
+
+pub trait HasAttrs {
+    const SUPPORTS_CUSTOM_INNER_ATTRS: bool;
+}
+
+impl HasAttrs for StmtKind {
+    const SUPPORTS_CUSTOM_INNER_ATTRS: bool = true;
+}
+
+impl HasAttrs for Stmt {
+    const SUPPORTS_CUSTOM_INNER_ATTRS: bool =
+        StmtKind::SUPPORTS$goto_trait_assoc_const$_CUSTOM_INNER_ATTRS$type_trait_assoc_const$;
+}
+"#,
+        &[
+            AnalysisQuery::goto("goto trait associated const", "goto_trait_assoc_const"),
+            AnalysisQuery::ty("type at trait associated const", "type_trait_assoc_const"),
+        ],
+        expect![[r#"
+            goto trait associated const
+            - const SUPPORTS_CUSTOM_INNER_ATTRS @ 12:11-12:38
+
+            type at trait associated const
+            - bool
         "#]],
     );
 }

@@ -10,7 +10,12 @@ use rayon::prelude::*;
 use stdx::format_to_acc;
 use test_utils::{bench, bench_fixture, project_root};
 
-use crate::{AstNode, SourceFile, SyntaxError, ast, fuzz};
+use crate::{
+    AstNode, SourceFile, SyntaxError,
+    ast::{self, ArrayExprKind},
+    fuzz,
+    utils::normalized_syntax_text,
+};
 
 #[test]
 fn parse_smoke_test() {
@@ -23,6 +28,31 @@ fn main() {
     let parse = SourceFile::parse(code, Edition::CURRENT);
     // eprintln!("{:#?}", parse.syntax_node());
     assert!(parse.ok().is_ok());
+}
+
+#[test]
+fn normalized_syntax_text_preserves_non_trivia_tokens() {
+    let source = r#"
+fn main() {
+    let _ = [0; "a  b".len()
+        + 1];
+}
+    "#;
+    let file = SourceFile::parse(source, Edition::CURRENT).tree();
+    let array = file
+        .syntax()
+        .descendants()
+        .find_map(ast::ArrayExpr::cast)
+        .expect("fixture should contain a repeat array expression");
+    let ArrayExprKind::Repeat {
+        repeat: Some(repeat),
+        ..
+    } = array.kind()
+    else {
+        panic!("fixture array should use repeat syntax");
+    };
+
+    assert_eq!(normalized_syntax_text(&repeat), r#""a  b".len() + 1"#);
 }
 
 #[test]

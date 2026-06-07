@@ -16,7 +16,7 @@ use rg_ir_storage::ModuleOrigin;
 use rg_item_tree::FieldItem;
 use rg_package_store::PackageLoader;
 use rg_parse::{Package, ParseDb, Target};
-use rg_ty::{GenericArg, NominalTy, Ty};
+use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
 
 pub(super) fn check_project_body_ir(fixture: &str, expect: Expect) {
     let db = BodyIrFixtureDb::build(fixture);
@@ -571,6 +571,7 @@ impl TargetBodyIrSnapshot<'_> {
             ExprKind::RepeatArray {
                 initializer,
                 repeat,
+                ..
             } => {
                 if let Some(initializer) = initializer {
                     writeln!(dump, "{}initializer", indent(depth + 1))
@@ -927,8 +928,13 @@ impl TargetBodyIrSnapshot<'_> {
             ExprKind::Continue { label } => {
                 format!("continue{}", render_label_suffix(label.as_ref()))
             }
-            ExprKind::MethodCall { method_name, .. } => {
-                format!("method_call {method_name}")
+            ExprKind::MethodCall {
+                method_name,
+                generic_args,
+                ..
+            } => {
+                let generic_args = render_item_generic_args(generic_args);
+                format!("method_call {method_name}{generic_args}")
             }
             ExprKind::Field { field, .. } => {
                 let field = field
@@ -981,9 +987,31 @@ impl TargetBodyIrSnapshot<'_> {
             Ty::Unit => "()".to_string(),
             Ty::Never => "!".to_string(),
             Ty::Primitive(primitive) => primitive.label().to_string(),
+            Ty::Tuple(fields) => {
+                let fields = fields
+                    .iter()
+                    .map(|ty| self.render_ty(ty))
+                    .collect::<Vec<_>>();
+                let suffix = if fields.len() == 1 { "," } else { "" };
+                format!("({}{suffix})", fields.join(", "))
+            }
+            Ty::Array { inner, len } => format!(
+                "[{}; {}]",
+                self.render_ty(inner),
+                len.as_deref().unwrap_or("<unknown>")
+            ),
+            Ty::Slice(inner) => format!("[{}]", self.render_ty(inner)),
             Ty::Syntax(ty) => format!("syntax {ty}"),
             Ty::Reference { mutability, inner } => {
                 format!("{}{}", mutability.render_prefix(), self.render_ty(inner))
+            }
+            Ty::Opaque { bounds } => {
+                let mut bounds = bounds
+                    .iter()
+                    .map(|bound| self.render_opaque_bound(bound))
+                    .collect::<Vec<_>>();
+                bounds.sort();
+                format!("impl {}", bounds.join(" + "))
             }
             Ty::Nominal(types) => {
                 let mut types = types
@@ -1003,6 +1031,14 @@ impl TargetBodyIrSnapshot<'_> {
             }
             Ty::Unknown => "<unknown>".to_string(),
         }
+    }
+
+    fn render_opaque_bound(&self, bound: &OpaqueTraitBound) -> String {
+        format!(
+            "{}{}",
+            self.render_trait_ref(bound.trait_ref),
+            self.render_generic_args(&bound.args)
+        )
     }
 
     fn render_body_nominal_ty(&self, ty: &NominalTy) -> String {
@@ -1032,6 +1068,19 @@ impl TargetBodyIrSnapshot<'_> {
             GenericArg::Type(ty) => self.render_ty(ty),
             GenericArg::Lifetime(lifetime) => lifetime.clone(),
             GenericArg::Const(value) => value.clone(),
+            GenericArg::FnTraitArgs { params, ret } => {
+                let params = params
+                    .iter()
+                    .map(|ty| self.render_ty(ty))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let mut text = format!("({params})");
+                if !matches!(ret.as_ref(), Ty::Unit) {
+                    text.push_str(" -> ");
+                    text.push_str(&self.render_ty(ret));
+                }
+                text
+            }
             GenericArg::AssocType { name, ty } => match ty {
                 Some(ty) => format!("{name} = {}", self.render_ty(ty)),
                 None => name.to_string(),
@@ -1494,6 +1543,20 @@ fn render_binding_list(bindings: &[BindingId]) -> String {
         .map(|binding| format!("v{}", binding.0))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+fn render_item_generic_args(args: &[rg_item_tree::GenericArg]) -> String {
+    if args.is_empty() {
+        return String::new();
+    }
+
+    format!(
+        "<{}>",
+        args.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
 }
 
 fn render_closure_param(param: &ClosureParamData) -> String {

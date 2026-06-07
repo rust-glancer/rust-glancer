@@ -110,6 +110,10 @@ impl AutoderefMode {
     fn allows_trait_deref(self) -> bool {
         matches!(self, Self::FieldLookup | Self::MethodReceiver)
     }
+
+    fn allows_array_to_slice_adjustment(self) -> bool {
+        matches!(self, Self::MethodReceiver)
+    }
 }
 
 /// One adjusted candidate type produced by `Autoderef`.
@@ -195,6 +199,15 @@ impl<'ty> PendingAutoderefTy<'ty> {
             Self::Owned(_) => None,
         }
     }
+
+    fn array_to_slice_adjustment(&self) -> Option<Self> {
+        match self.as_ref() {
+            // Array-to-slice is a builtin receiver adjustment, not a trait-backed deref. Returning
+            // an owned slice candidate lets method lookup reuse ordinary `impl<T> [T]` handling.
+            Ty::Array { inner, .. } => Some(Self::Owned(Ty::slice((**inner).clone()))),
+            _ => None,
+        }
+    }
 }
 
 impl<'query, 'ty, D, I> Iterator for AutoderefCandidates<'query, 'ty, D, I>
@@ -215,6 +228,14 @@ where
                             ty: inner,
                             depth: candidate.depth + 1,
                             mutability: Some(mutability),
+                        });
+                    } else if mode.allows_array_to_slice_adjustment()
+                        && let Some(slice) = candidate.ty.array_to_slice_adjustment()
+                    {
+                        pending.push_back(PendingAutoderefCandidate {
+                            ty: slice,
+                            depth: candidate.depth + 1,
+                            mutability: candidate.mutability,
                         });
                     } else if mode.allows_trait_deref() {
                         match self.autoderef.deref_targets(candidate.ty.as_ref()) {

@@ -34,10 +34,6 @@ pub trait MaybeFromAst<Mode = ()> {
 }
 
 fn normalized_syntax(node: &impl rg_syntax::AstNode) -> String {
-    node.syntax()
-        .text()
-        .to_string()
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    // TODO: Either remove completely or at least re-export instead.
+    rg_syntax::utils::normalized_syntax_text(node)
 }

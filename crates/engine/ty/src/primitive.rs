@@ -102,6 +102,9 @@ pub enum FloatTy {
 }
 
 impl PrimitiveTy {
+    pub const DEFAULT_INT: Self = Self::SignedInt(SignedIntTy::I32);
+    pub const DEFAULT_FLOAT: Self = Self::Float(FloatTy::F64);
+
     pub const ALL: &'static [Self] = &[
         Self::Bool,
         Self::Char,
@@ -143,6 +146,40 @@ impl PrimitiveTy {
             "f64" => Self::Float(FloatTy::F64),
             _ => return None,
         })
+    }
+
+    pub fn from_integer_suffix(suffix: Option<&str>) -> Option<Self> {
+        match suffix {
+            Some(suffix) => Self::from_name(suffix).filter(|ty| ty.is_integral()),
+            None => Some(Self::DEFAULT_INT),
+        }
+    }
+
+    pub fn from_float_suffix(suffix: Option<&str>) -> Option<Self> {
+        match suffix {
+            Some(suffix) => Self::from_name(suffix).filter(|ty| ty.is_float()),
+            None => Some(Self::DEFAULT_FLOAT),
+        }
+    }
+
+    pub fn is_bool(self) -> bool {
+        matches!(self, Self::Bool)
+    }
+
+    pub fn is_integral(self) -> bool {
+        matches!(self, Self::SignedInt(_) | Self::UnsignedInt(_))
+    }
+
+    pub fn is_float(self) -> bool {
+        matches!(self, Self::Float(_))
+    }
+
+    pub fn is_numeric(self) -> bool {
+        self.is_integral() || self.is_float()
+    }
+
+    pub fn is_signed_numeric(self) -> bool {
+        matches!(self, Self::SignedInt(_) | Self::Float(_))
     }
 
     pub fn label(self) -> &'static str {

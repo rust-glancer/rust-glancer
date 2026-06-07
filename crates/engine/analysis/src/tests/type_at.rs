@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::{AnalysisQuery, check_analysis_queries};
+use super::utils::{AnalysisQuery, check_analysis_queries, check_analysis_queries_with_sysroot};
 
 #[test]
 fn returns_body_expression_types() {
@@ -28,6 +28,106 @@ pub fn use_it() {
         expect![[r#"
             type at local
             - nominal struct analysis_type_at[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
+fn returns_scalar_literal_and_operator_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_scalar_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(flag: bool, byte: u8, lhs: i32, rhs: i32) {
+    let bool_lit = true$type_bool$;
+    let char_lit = 'x'$type_char$;
+    let byte_lit = b'x'$type_byte$;
+    let int_default = 1$type_int$;
+    let int_suffix = 1usize$type_usize$;
+    let float_default = 1.0$type_float$;
+    let float_suffix = 1.0f32$type_f32$;
+    let string_lit = "text"$type_str$;
+    let not_flag = (!flag)$type_not$;
+    let not_byte = (!byte)$type_not_byte$;
+    let neg_lhs = (-lhs)$type_neg$;
+    let sum = (lhs + rhs)$type_sum$;
+    let compare = (lhs < rhs)$type_compare$;
+    let logic = (flag && false)$type_logic$;
+    let bit = (lhs & rhs)$type_bit$;
+    let shift = (lhs << 1)$type_shift$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("bool literal", "type_bool"),
+            AnalysisQuery::ty("char literal", "type_char"),
+            AnalysisQuery::ty("byte literal", "type_byte"),
+            AnalysisQuery::ty("default int literal", "type_int"),
+            AnalysisQuery::ty("suffixed int literal", "type_usize"),
+            AnalysisQuery::ty("default float literal", "type_float"),
+            AnalysisQuery::ty("suffixed float literal", "type_f32"),
+            AnalysisQuery::ty("string literal", "type_str"),
+            AnalysisQuery::ty("not expression", "type_not"),
+            AnalysisQuery::ty("integer not expression", "type_not_byte"),
+            AnalysisQuery::ty("neg expression", "type_neg"),
+            AnalysisQuery::ty("sum expression", "type_sum"),
+            AnalysisQuery::ty("comparison expression", "type_compare"),
+            AnalysisQuery::ty("logic expression", "type_logic"),
+            AnalysisQuery::ty("bit expression", "type_bit"),
+            AnalysisQuery::ty("shift expression", "type_shift"),
+        ],
+        expect![[r#"
+            bool literal
+            - bool
+
+            char literal
+            - char
+
+            byte literal
+            - u8
+
+            default int literal
+            - i32
+
+            suffixed int literal
+            - usize
+
+            default float literal
+            - f64
+
+            suffixed float literal
+            - f32
+
+            string literal
+            - &str
+
+            not expression
+            - bool
+
+            integer not expression
+            - u8
+
+            neg expression
+            - i32
+
+            sum expression
+            - i32
+
+            comparison expression
+            - bool
+
+            logic expression
+            - bool
+
+            bit expression
+            - i32
+
+            shift expression
+            - i32
         "#]],
     );
 }
@@ -627,6 +727,1003 @@ pub fn use_it() {
 }
 
 #[test]
+fn returns_structural_tuple_array_and_slice_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_structural_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+const N: usize = 3;
+
+pub struct Holder;
+
+impl Holder {
+    const N: usize = 4;
+
+    pub fn use_self(value: u8) {
+        let self_repeat = [value; Self::N]$type_self_repeat$;
+    }
+}
+
+pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
+    let annotated_tuple$type_annotated_tuple$: (u8, bool) = pair;
+    let annotated_array$type_annotated_array$: [u8; 3] = array;
+    let annotated_slice$type_annotated_slice$: &[u8] = slice;
+    let tuple_expr = (value, true)$type_tuple_expr$;
+    let array_expr = [value, value]$type_array_expr$;
+    let repeat_expr = [value; 3]$type_repeat_expr$;
+    let named_repeat = [value; N]$type_named_repeat$;
+    let spaced_repeat = [value; "a  b".len()
+        + 1]$type_spaced_repeat$;
+    let tuple_field = pair.$type_tuple_field$0;
+    let indexed = array[0]$type_indexed$;
+    let (left, right) = tuple_expr;
+    let _left = le$type_left$ft;
+    let _right = ri$type_right$ght;
+    let [first, ..] = array_expr;
+    let _first = fir$type_first$st;
+}
+"#,
+        &[
+            AnalysisQuery::ty("annotated tuple binding", "type_annotated_tuple"),
+            AnalysisQuery::ty("annotated array binding", "type_annotated_array"),
+            AnalysisQuery::ty("annotated slice binding", "type_annotated_slice"),
+            AnalysisQuery::ty("tuple expression", "type_tuple_expr"),
+            AnalysisQuery::ty("array expression", "type_array_expr"),
+            AnalysisQuery::ty("repeat array expression", "type_repeat_expr"),
+            AnalysisQuery::ty("named repeat array expression", "type_named_repeat"),
+            AnalysisQuery::ty("spaced repeat array expression", "type_spaced_repeat"),
+            AnalysisQuery::ty("self repeat array expression", "type_self_repeat"),
+            AnalysisQuery::ty("tuple field", "type_tuple_field"),
+            AnalysisQuery::ty("array index", "type_indexed"),
+            AnalysisQuery::ty("tuple pattern left", "type_left"),
+            AnalysisQuery::ty("tuple pattern right", "type_right"),
+            AnalysisQuery::ty("slice pattern first", "type_first"),
+        ],
+        expect![[r#"
+            annotated tuple binding
+            - (u8, bool)
+
+            annotated array binding
+            - [u8; 3]
+
+            annotated slice binding
+            - &[u8]
+
+            tuple expression
+            - (u8, bool)
+
+            array expression
+            - [u8; 2]
+
+            repeat array expression
+            - [u8; 3]
+
+            named repeat array expression
+            - [u8; N]
+
+            spaced repeat array expression
+            - [u8; "a  b".len() + 1]
+
+            self repeat array expression
+            - [u8; Self::N]
+
+            tuple field
+            - u8
+
+            array index
+            - u8
+
+            tuple pattern left
+            - u8
+
+            tuple pattern right
+            - bool
+
+            slice pattern first
+            - u8
+        "#]],
+    );
+}
+
+#[test]
+fn returns_index_types_through_references() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_ref_index_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(slice: &[u8], array_ref: &[bool; 3], nested_slice: &&[u16]) {
+    let slice_item = slice[0]$type_slice_item$;
+    let array_item = array_ref[0]$type_array_item$;
+    let nested_item = nested_slice[0]$type_nested_item$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("slice reference index", "type_slice_item"),
+            AnalysisQuery::ty("array reference index", "type_array_item"),
+            AnalysisQuery::ty("nested slice reference index", "type_nested_item"),
+        ],
+        expect![[r#"
+            slice reference index
+            - u8
+
+            array reference index
+            - bool
+
+            nested slice reference index
+            - u16
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_structural_slice_inherent_method_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+impl<T> [T] {
+    pub fn first_ref(&self) -> &T {
+        missing()
+    }
+
+    pub fn len(&self) -> usize {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct Package;
+
+pub fn use_it(packages: &[Package], array: [Package; 3], array_ref: &[Package; 3]) {
+    let first = packages.first$type_first$_ref();
+    let count = packages.le$type_len$n();
+    let array_first = array.first$type_array_first$_ref();
+    let array_count = array.le$type_array_len$n();
+    let array_ref_count = array_ref.le$type_array_ref_len$n();
+}
+"#,
+        &[
+            AnalysisQuery::ty("slice generic method return", "type_first").in_lib("app"),
+            AnalysisQuery::ty("slice len method return", "type_len").in_lib("app"),
+            AnalysisQuery::ty("array generic method return", "type_array_first").in_lib("app"),
+            AnalysisQuery::ty("array len method return", "type_array_len").in_lib("app"),
+            AnalysisQuery::ty("array ref len method return", "type_array_ref_len").in_lib("app"),
+        ],
+        expect![[r#"
+            slice generic method return
+            - &nominal struct app[lib]::crate::Package
+
+            slice len method return
+            - usize
+
+            array generic method return
+            - &nominal struct app[lib]::crate::Package
+
+            array len method return
+            - usize
+
+            array ref len method return
+            - usize
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_for_loop_item_types_from_into_iterator() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+    }
+
+    pub trait Iterator {
+        type Item;
+    }
+}
+
+impl<'a, T> iter::IntoIterator for &'a [T] {
+    type Item = &'a T;
+}
+
+impl<T, const N: usize> iter::IntoIterator for [T; N] {
+    type Item = T;
+}
+
+impl<I: iter::Iterator> iter::IntoIterator for I {
+    type Item = I::Item;
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct Package;
+pub struct UserId;
+pub struct Event;
+
+pub struct Bag<T> {
+    value: T,
+}
+
+impl<T> core::iter::IntoIterator for Bag<T> {
+    type Item = T;
+}
+
+pub struct Events;
+
+impl core::iter::Iterator for Events {
+    type Item = Event;
+}
+
+pub struct KeyStream<T> {
+    value: T,
+}
+
+impl<T> core::iter::Iterator for KeyStream<T> {
+    type Item = T;
+}
+
+pub struct KeyMap<T> {
+    value: T,
+}
+
+impl<T> KeyMap<T> {
+    pub fn concrete_keys(&self) -> KeyStream<T> {
+        missing()
+    }
+
+    pub fn opaque_keys(&self) -> impl core::iter::Iterator<Item = T> {
+        missing()
+    }
+}
+
+pub fn use_it(
+    packages: &[Package],
+    array: [Package; 3],
+    pairs: [(Package, UserId); 2],
+    bag: Bag<UserId>,
+    events: Events,
+    key_map: KeyMap<UserId>,
+) {
+    for borrowed in packages {
+        let _borrowed = borr$type_borrowed$owed;
+    }
+
+    for owned in array {
+        let _owned = ow$type_owned$ned;
+    }
+
+    for (package, user_id) in pairs {
+        let _package = pack$type_tuple_package$age;
+        let _user_id = user_$type_tuple_user_id$id;
+    }
+
+    for user_id in bag {
+        let _bag_user_id = user_$type_bag_user_id$id;
+    }
+
+    for event in events {
+        let _event = eve$type_event$nt;
+    }
+
+    let _opaque_keys = key_map.opaque_keys()$type_opaque_return$;
+
+    for concrete_key in key_map.concrete_keys() {
+        let _concrete_key = concrete_$type_concrete_key$key;
+    }
+
+    for opaque_key in key_map.opaque_keys() {
+        let _opaque_key = opaque_$type_opaque_key$key;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("for item from borrowed slice", "type_borrowed").in_lib("app"),
+            AnalysisQuery::ty("for item from array", "type_owned").in_lib("app"),
+            AnalysisQuery::ty("for tuple item first field", "type_tuple_package").in_lib("app"),
+            AnalysisQuery::ty("for tuple item second field", "type_tuple_user_id").in_lib("app"),
+            AnalysisQuery::ty("for item from nominal impl", "type_bag_user_id").in_lib("app"),
+            AnalysisQuery::ty("for item from iterator blanket impl", "type_event").in_lib("app"),
+            AnalysisQuery::ty("opaque iterator return", "type_opaque_return").in_lib("app"),
+            AnalysisQuery::ty(
+                "for item from concrete iterator return",
+                "type_concrete_key",
+            )
+            .in_lib("app"),
+            AnalysisQuery::ty("for item from opaque iterator return", "type_opaque_key")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            for item from borrowed slice
+            - &nominal struct app[lib]::crate::Package
+
+            for item from array
+            - nominal struct app[lib]::crate::Package
+
+            for tuple item first field
+            - nominal struct app[lib]::crate::Package
+
+            for tuple item second field
+            - nominal struct app[lib]::crate::UserId
+
+            for item from nominal impl
+            - nominal struct app[lib]::crate::UserId
+
+            for item from iterator blanket impl
+            - nominal struct app[lib]::crate::Event
+
+            opaque iterator return
+            - impl trait fake_core[lib]::crate::iter::Iterator<Item = nominal struct app[lib]::crate::UserId>
+
+            for item from concrete iterator return
+            - nominal struct app[lib]::crate::UserId
+
+            for item from opaque iterator return
+            - nominal struct app[lib]::crate::UserId
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_for_loop_item_types_from_method_returned_slice() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+    }
+}
+
+impl<'a, T> iter::IntoIterator for &'a [T] {
+    type Item = &'a T;
+}
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+pub struct DefMapBuilder {
+    incomplete: DefMap,
+}
+
+impl DefMapBuilder {
+    pub fn as_incomplete_def_map(&self) -> &DefMap {
+        &self.incomplete
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use storage::{DefMap, DefMapBuilder};
+
+pub struct BuildState {
+    builder: DefMapBuilder,
+}
+
+pub fn use_it(def_map: &DefMap, state: &BuildState) {
+    for import in def_map.imports() {
+        let _import = imp$type_import$ort;
+    }
+
+    for chained in state.builder.as_incomplete_def_map().imports() {
+        let _chained = chai$type_chained$ned;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("for item from method returned slice", "type_import").in_lib("app"),
+            AnalysisQuery::ty(
+                "for item from chained method returned slice",
+                "type_chained",
+            )
+            .in_lib("app"),
+        ],
+        expect![[r#"
+            for item from method returned slice
+            - &nominal struct storage[lib]::crate::ImportData
+
+            for item from chained method returned slice
+            - &nominal struct storage[lib]::crate::ImportData
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_for_loop_item_types_from_sysroot_slice_iterator() {
+    check_analysis_queries_with_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["storage", "app"]
+resolver = "3"
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+pub struct DefMapBuilder {
+    incomplete: DefMap,
+}
+
+impl DefMapBuilder {
+    pub fn as_incomplete_def_map(&self) -> &DefMap {
+        &self.incomplete
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use storage::{DefMap, DefMapBuilder};
+
+pub struct BuildState {
+    builder: DefMapBuilder,
+}
+
+pub fn use_it(def_map: &DefMap, state: &BuildState) {
+    for import in def_map.imports() {
+        let _import = imp$type_import$ort;
+    }
+
+    for chained in state.builder.as_incomplete_def_map().imports() {
+        let _chained = chai$type_chained$ned;
+    }
+}
+
+//- /sysroot/library/core/src/lib.rs
+extern crate self as core;
+
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+        type IntoIter;
+    }
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::iter::IntoIterator;
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+impl<'a, T> IntoIterator for &'a [T] {
+    type Item = &'a T;
+    type IntoIter = slice::Iter<'a, T>;
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod prelude {
+    pub mod rust_2024 {}
+}
+"#,
+        &[
+            AnalysisQuery::ty("for item from sysroot method returned slice", "type_import")
+                .in_lib("app"),
+            AnalysisQuery::ty(
+                "for item from sysroot chained method returned slice",
+                "type_chained",
+            )
+            .in_lib("app"),
+        ],
+        expect![[r#"
+            for item from sysroot method returned slice
+            - &nominal struct storage[lib]::crate::ImportData
+
+            for item from sysroot chained method returned slice
+            - &nominal struct storage[lib]::crate::ImportData
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_for_loop_item_types_from_slice_iter_method() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "storage", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+    }
+
+    pub trait Iterator {
+        type Item;
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+impl<I: iter::Iterator> iter::IntoIterator for I {
+    type Item = I::Item;
+}
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use storage::DefMap;
+
+pub fn use_it(def_map: &DefMap) {
+    let iter = def_map.imports().it$type_iter$er();
+
+    for imp$hover_import$ort in def_map.imports().iter() {
+        let _import = imp$type_import$ort;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::ty("slice iter method return", "type_iter").in_lib("app"),
+            AnalysisQuery::ty("for item from slice iter method", "type_import").in_lib("app"),
+            AnalysisQuery::hover("hover for item from slice iter method", "hover_import")
+                .in_lib("app"),
+        ],
+        expect![[r#"
+            slice iter method return
+            - nominal struct fake_core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData>
+
+            for item from slice iter method
+            - &nominal struct storage[lib]::crate::ImportData
+
+            hover for item from slice iter method
+            - range: 6:9-6:15
+            - block:
+              kind: variable
+              signature:
+                let import: &ImportData
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_for_loop_item_types_from_sysroot_slice_iter_method() {
+    check_analysis_queries_with_sysroot(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["storage", "app"]
+resolver = "3"
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use storage::DefMap;
+
+pub fn use_it(def_map: &DefMap) {
+    let iter = def_map.imports().it$type_iter$er();
+
+    for imp$hover_import$ort in def_map.imports().iter() {
+        let _import = imp$type_import$ort;
+    }
+}
+
+//- /sysroot/library/core/src/lib.rs
+extern crate self as core;
+
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+    }
+
+    pub trait Iterator {
+        type Item;
+    }
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::iter::{IntoIterator, Iterator};
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T: 'a>(&'a T);
+}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+impl<I: Iterator> IntoIterator for I {
+    type Item = I::Item;
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod prelude {
+    pub mod rust_2024 {}
+}
+"#,
+        &[
+            AnalysisQuery::ty("sysroot slice iter method return", "type_iter").in_lib("app"),
+            AnalysisQuery::ty("for item from sysroot slice iter method", "type_import")
+                .in_lib("app"),
+            AnalysisQuery::hover(
+                "hover for item from sysroot slice iter method",
+                "hover_import",
+            )
+            .in_lib("app"),
+        ],
+        expect![[r#"
+            sysroot slice iter method return
+            - nominal struct core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData>
+
+            for item from sysroot slice iter method
+            - &nominal struct storage[lib]::crate::ImportData
+
+            hover for item from sysroot slice iter method
+            - range: 6:9-6:15
+            - block:
+              kind: variable
+              signature:
+                let import: &ImportData
+        "#]],
+    );
+}
+
+#[test]
+fn propagates_for_loop_items_from_project_style_import_helpers() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "storage", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+    }
+
+    pub trait Iterator {
+        type Item;
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+impl<I: iter::Iterator> iter::IntoIterator for I {
+    type Item = I::Item;
+}
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /storage/src/lib.rs
+use core::iter;
+
+pub struct ImportId;
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+
+    pub fn imports_with_ids(&self) -> impl iter::Iterator<Item = (ImportId, &ImportData)> {
+        missing()
+    }
+}
+
+pub struct DefMapBuilder {
+    pub incomplete: DefMap,
+}
+
+impl DefMapBuilder {
+    pub fn as_incomplete_def_map(&self) -> &DefMap {
+        &self.incomplete
+    }
+}
+
+pub struct TargetState {
+    pub def_map_builder: DefMapBuilder,
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use storage::TargetState;
+
+pub fn use_it(state: &TargetState) {
+    for imp$hover_iter_import$ort in state.def_map_builder.as_incomplete_def_map().imports().iter() {
+        let _import = imp$type_iter_import$ort;
+    }
+
+    for (import_$hover_import_id$id, imp$hover_ids_import$ort) in state
+        .def_map_builder
+        .as_incomplete_def_map()
+        .imports_with_ids()
+    {
+        let _import_id = import$type_import_id$_id;
+        let _import = imp$type_ids_import$ort;
+    }
+}
+"#,
+        &[
+            AnalysisQuery::hover(
+                "hover item from project-style slice iter",
+                "hover_iter_import",
+            )
+            .in_lib("app"),
+            AnalysisQuery::ty("use item from project-style slice iter", "type_iter_import")
+                .in_lib("app"),
+            AnalysisQuery::hover(
+                "hover import id from project-style opaque iterator",
+                "hover_import_id",
+            )
+            .in_lib("app"),
+            AnalysisQuery::ty(
+                "use import id from project-style opaque iterator",
+                "type_import_id",
+            )
+            .in_lib("app"),
+            AnalysisQuery::hover(
+                "hover item from project-style opaque iterator",
+                "hover_ids_import",
+            )
+            .in_lib("app"),
+            AnalysisQuery::ty(
+                "use item from project-style opaque iterator",
+                "type_ids_import",
+            )
+            .in_lib("app"),
+        ],
+        expect![[r#"
+            hover item from project-style slice iter
+            - range: 4:9-4:15
+            - block:
+              kind: variable
+              signature:
+                let import: &ImportData
+
+            use item from project-style slice iter
+            - &nominal struct storage[lib]::crate::ImportData
+
+            hover import id from project-style opaque iterator
+            - range: 8:10-8:19
+            - block:
+              kind: variable
+              signature:
+                let import_id: ImportId
+
+            use import id from project-style opaque iterator
+            - nominal struct storage[lib]::crate::ImportId
+
+            hover item from project-style opaque iterator
+            - range: 8:21-8:27
+            - block:
+              kind: variable
+              signature:
+                let import: &ImportData
+
+            use item from project-style opaque iterator
+            - &nominal struct storage[lib]::crate::ImportData
+        "#]],
+    );
+}
+
+#[test]
 fn primitive_type_paths_respect_type_namespace_shadowing() {
     check_analysis_queries(
         r#"
@@ -859,6 +1956,327 @@ pub fn use_it() {
 
             generic method return
             - nominal struct analysis_generic_type_at[lib]::crate::Result<nominal struct analysis_generic_type_at[lib]::crate::Vec<nominal struct analysis_generic_type_at[lib]::crate::Option<nominal struct analysis_generic_type_at[lib]::crate::User>>, nominal struct analysis_generic_type_at[lib]::crate::Error>
+        "#]],
+    );
+}
+
+#[test]
+fn applies_explicit_generic_call_arguments_to_return_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_explicit_generic_call_args"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub struct User;
+pub struct Project;
+
+pub fn make<T>() -> T {
+    missing()
+}
+
+pub struct Builder;
+
+impl Builder {
+    pub fn build<T>() -> T {
+        missing()
+    }
+
+    pub fn get<T>(&self) -> T {
+        missing()
+    }
+
+    pub fn pair<T, U>(&self) -> (T, U) {
+        missing()
+    }
+}
+
+pub fn use_it(builder: Builder) {
+    let free = make::<User>()$type_free$;
+    let associated = Builder::build::<Project>()$type_associated$;
+    let method = builder.get::<User>()$type_method$;
+    let pair = builder.pair::<User, Project>()$type_pair$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("explicit free function return", "type_free"),
+            AnalysisQuery::ty("explicit associated function return", "type_associated"),
+            AnalysisQuery::ty("explicit method return", "type_method"),
+            AnalysisQuery::ty("explicit multi-param method return", "type_pair"),
+        ],
+        expect![[r#"
+            explicit free function return
+            - nominal struct analysis_explicit_generic_call_args[lib]::crate::User
+
+            explicit associated function return
+            - nominal struct analysis_explicit_generic_call_args[lib]::crate::Project
+
+            explicit method return
+            - nominal struct analysis_explicit_generic_call_args[lib]::crate::User
+
+            explicit multi-param method return
+            - (nominal struct analysis_explicit_generic_call_args[lib]::crate::User, nominal struct analysis_explicit_generic_call_args[lib]::crate::Project)
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_explicit_generic_call_arguments_from_body_scope() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_explicit_generic_call_body_scope"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub fn make<T>() -> T {
+    missing()
+}
+
+pub fn use_it() {
+    struct Local;
+
+    let local = make::<Local>()$type_local$;
+}
+"#,
+        &[AnalysisQuery::ty(
+            "explicit call arg from body scope",
+            "type_local",
+        )],
+        expect![[r#"
+            explicit call arg from body scope
+            - nominal struct fn analysis_explicit_generic_call_body_scope[lib]::crate::use_it::Local
+        "#]],
+    );
+}
+
+#[test]
+fn infers_basic_generic_call_arguments() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_generic_call_arg_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub struct User;
+pub struct Project;
+
+pub struct Wrapper<T> {
+    value: T,
+}
+
+pub fn id<T>(value: T) -> T {
+    value
+}
+
+pub fn pair<T, U>(left: T, right: U) -> (T, U) {
+    missing()
+}
+
+pub fn same<T>(left: T, right: T) -> T {
+    missing()
+}
+
+pub struct Builder;
+
+impl Builder {
+    pub fn wrap<T>(value: T) -> Wrapper<T> {
+        missing()
+    }
+
+    pub fn echo<T>(&self, value: T) -> T {
+        value
+    }
+
+    pub fn clone_ref<T>(&self, value: &T) -> T {
+        missing()
+    }
+}
+
+pub fn use_it(builder: Builder, user: User, project: Project) {
+    let id_value = id(user)$type_id$;
+    let pair_value = pair(user, project)$type_pair$;
+    let wrapped = Builder::wrap(user)$type_wrap$;
+    let echoed = builder.echo(project)$type_method$;
+    let cloned = builder.clone_ref(&user)$type_ref$;
+    let conflict = same(user, project)$type_conflict$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("inferred free function return", "type_id"),
+            AnalysisQuery::ty("inferred multi-param return", "type_pair"),
+            AnalysisQuery::ty("inferred associated function return", "type_wrap"),
+            AnalysisQuery::ty("inferred method return", "type_method"),
+            AnalysisQuery::ty("inferred reference param return", "type_ref"),
+            AnalysisQuery::ty("conflicting inferred params", "type_conflict"),
+        ],
+        expect![[r#"
+            inferred free function return
+            - nominal struct analysis_generic_call_arg_inference[lib]::crate::User
+
+            inferred multi-param return
+            - (nominal struct analysis_generic_call_arg_inference[lib]::crate::User, nominal struct analysis_generic_call_arg_inference[lib]::crate::Project)
+
+            inferred associated function return
+            - nominal struct analysis_generic_call_arg_inference[lib]::crate::Wrapper<nominal struct analysis_generic_call_arg_inference[lib]::crate::User>
+
+            inferred method return
+            - nominal struct analysis_generic_call_arg_inference[lib]::crate::Project
+
+            inferred reference param return
+            - nominal struct analysis_generic_call_arg_inference[lib]::crate::User
+
+            conflicting inferred params
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
+fn inferred_function_generics_shadow_impl_generics() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_generic_call_arg_shadowing"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub struct User;
+pub struct Project;
+
+pub struct Container<T> {
+    value: T,
+}
+
+impl<T> Container<T> {
+    pub fn current(&self) -> T {
+        missing()
+    }
+
+    pub fn replace<T>(&self, value: T) -> T {
+        value
+    }
+}
+
+pub fn use_it(container: Container<User>, project: Project) {
+    let current = container.current()$type_current$;
+    let replaced = container.replace(project)$type_replaced$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("impl generic method return", "type_current"),
+            AnalysisQuery::ty("shadowed method generic return", "type_replaced"),
+        ],
+        expect![[r#"
+            impl generic method return
+            - nominal struct analysis_generic_call_arg_shadowing[lib]::crate::User
+
+            shadowed method generic return
+            - nominal struct analysis_generic_call_arg_shadowing[lib]::crate::Project
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_lifetime_parameterized_receiver_method_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_lifetime_receiver_method_type"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+fn missing<T>() -> T {
+    loop {}
+}
+
+pub struct Module;
+pub struct DebugStruct;
+
+pub struct TargetScopeCollector<'db> {
+    module: &'db Module,
+}
+
+impl<'db> TargetScopeCollector<'db> {
+    fn alloc_module(&mut self) -> Module {
+        missing()
+    }
+
+    fn collect_items(&mut self) -> Module {
+        self.alloc$type_self_alloc$_module()
+    }
+
+    fn collect(&mut self) -> Module {
+        self.collect$type_self_collect$_items()
+    }
+}
+
+pub mod fmt {
+    pub struct Formatter<'a> {
+        marker: &'a (),
+    }
+}
+
+impl<'a> fmt::Formatter<'a> {
+    fn debug_struct(&mut self) -> crate::DebugStruct {
+        crate::missing()
+    }
+}
+
+pub fn use_it<'db>(
+    collector: &mut TargetScopeCollector<'db>,
+    formatter: &mut fmt::Formatter<'_>,
+) {
+    let _items = collector.collect$type_collect$_items();
+    let _debug = formatter.debug$type_debug$_struct();
+}
+"#,
+        &[
+            AnalysisQuery::ty("self method in lifetime impl", "type_self_alloc"),
+            AnalysisQuery::ty("self sibling method in lifetime impl", "type_self_collect"),
+            AnalysisQuery::ty("external method on lifetime receiver", "type_collect"),
+            AnalysisQuery::ty("method on Formatter placeholder lifetime", "type_debug"),
+        ],
+        expect![[r#"
+            self method in lifetime impl
+            - nominal struct analysis_lifetime_receiver_method_type[lib]::crate::Module
+
+            self sibling method in lifetime impl
+            - nominal struct analysis_lifetime_receiver_method_type[lib]::crate::Module
+
+            external method on lifetime receiver
+            - nominal struct analysis_lifetime_receiver_method_type[lib]::crate::Module
+
+            method on Formatter placeholder lifetime
+            - nominal struct analysis_lifetime_receiver_method_type[lib]::crate::DebugStruct
         "#]],
     );
 }

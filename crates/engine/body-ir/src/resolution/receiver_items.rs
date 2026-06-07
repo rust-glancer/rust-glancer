@@ -4,14 +4,14 @@
 //! overlay. Method lookup should not care which layer produced an impl candidate after visibility
 //! has been decided, so this query merges both layers before returning ref-level candidates.
 
-use rg_ir_model::FunctionRef;
+use rg_ir_model::{AssocItemId, FunctionRef, ImplRef};
 use rg_ir_storage::{
     DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource, TargetItemQuery,
 };
 use rg_package_store::PackageStoreError;
 use rg_ty::{
     Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, MemberMethodCandidateRef,
-    MemberMethodOrigin, NominalTy, Ty,
+    MemberMethodOrigin, NominalTy, Ty, TypeSubst,
 };
 
 use super::{BodyLocalItemQuery, BodyQuerySource, push_unique};
@@ -19,6 +19,31 @@ use super::{BodyLocalItemQuery, BodyQuerySource, push_unique};
 pub(crate) struct BodyReceiverFunctionQuery<'query, D, I> {
     source: BodyQuerySource<'query, D, I>,
     semantic_index: Option<&'query ItemLookupIndex>,
+}
+
+/// Inherent function found by matching an impl whose `Self` type is structural.
+///
+/// The candidate carries the adjusted receiver type and substitutions because structural impls
+/// cannot recover that context from a nominal type definition later.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct BodyStructuralReceiverFunctionCandidate {
+    function: FunctionRef,
+    receiver_ty: Ty,
+    subst: TypeSubst,
+}
+
+impl BodyStructuralReceiverFunctionCandidate {
+    pub(super) fn function(&self) -> FunctionRef {
+        self.function
+    }
+
+    pub(super) fn receiver_ty(&self) -> &Ty {
+        &self.receiver_ty
+    }
+
+    pub(super) fn subst(&self) -> &TypeSubst {
+        &self.subst
+    }
 }
 
 impl<'query, D, I> BodyReceiverFunctionQuery<'query, D, I>
@@ -55,6 +80,12 @@ where
                 for method in self.function_candidates_for_receiver(receiver_ty, None)? {
                     Self::push_candidate(&mut candidates, method);
                 }
+            }
+            for method in self.structural_function_candidates_for_receiver(candidate.ty(), None)? {
+                Self::push_candidate(
+                    &mut candidates,
+                    MemberMethodCandidateRef::inherent(method.function()),
+                );
             }
         }
 
@@ -134,6 +165,97 @@ where
         Ok(candidates)
     }
 
+    pub(super) fn structural_function_candidates_for_receiver(
+        &self,
+        receiver_ty: &Ty,
+        method_name: Option<&str>,
+    ) -> Result<Vec<BodyStructuralReceiverFunctionCandidate>, PackageStoreError> {
+        // Nominal receivers are handled by the indexed path. Scanning visible impls is reserved
+        // for shaped builtin types such as `[T]`, where there is no `TypeDefRef` key to query.
+        if !Self::receiver_ty_uses_structural_impl_lookup(receiver_ty) {
+            return Ok(Vec::new());
+        }
+
+        let source = self.source;
+        let item_paths = ItemPathQuery::new(source, source);
+        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
+        let matcher = ImplMatcher::new(item_paths, target_items.clone());
+        let item_query = ItemStoreQuery::new(source);
+        let mut candidates = Vec::new();
+
+        // Structural inherent impls model language/core-provided builtins such as `impl<T> [T]`.
+        // Body-local impl lookup remains nominal-only because block-local impls are useful for
+        // local structs, not for defining new inherent methods on builtin shaped types.
+        let impl_refs = match self.semantic_index {
+            Some(index) => index.structural_inherent_impls().to_vec(),
+            None => target_items.inherent_impls()?,
+        };
+        for impl_ref in impl_refs {
+            self.push_structural_inherent_functions_for_impl(
+                &item_query,
+                &matcher,
+                impl_ref,
+                receiver_ty,
+                method_name,
+                &mut candidates,
+            )?;
+        }
+
+        Ok(candidates)
+    }
+
+    fn push_structural_inherent_functions_for_impl(
+        &self,
+        item_query: &ItemStoreQuery<'query, BodyQuerySource<'query, D, I>>,
+        matcher: &ImplMatcher<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>>,
+        impl_ref: ImplRef,
+        receiver_ty: &Ty,
+        method_name: Option<&str>,
+        candidates: &mut Vec<BodyStructuralReceiverFunctionCandidate>,
+    ) -> Result<(), PackageStoreError> {
+        let Some(impl_data) = item_query.impl_data(impl_ref)? else {
+            return Ok(());
+        };
+        let Some(subst) =
+            matcher.structural_inherent_impl_subst(impl_ref, impl_data, receiver_ty)?
+        else {
+            return Ok(());
+        };
+
+        for item in &impl_data.items {
+            let AssocItemId::Function(id) = item else {
+                continue;
+            };
+            let function = FunctionRef {
+                origin: impl_ref.origin,
+                id: *id,
+            };
+            let Some(function_data) = item_query.function_data(function)? else {
+                continue;
+            };
+            if !function_data.has_self_receiver() {
+                continue;
+            }
+            if method_name.is_some_and(|name| function_data.name != name) {
+                continue;
+            }
+            Self::push_structural_candidate(
+                candidates,
+                BodyStructuralReceiverFunctionCandidate {
+                    function,
+                    receiver_ty: receiver_ty.clone(),
+                    subst: subst.clone(),
+                },
+            );
+        }
+
+        Ok(())
+    }
+
+    fn receiver_ty_uses_structural_impl_lookup(ty: &Ty) -> bool {
+        matches!(ty, Ty::Tuple(_) | Ty::Array { .. } | Ty::Slice(_))
+    }
+
     fn body_inherent_functions(
         &self,
         body_items: &BodyLocalItemQuery<'query, D, I>,
@@ -204,6 +326,17 @@ where
         };
 
         *existing = Self::merge_candidates(*existing, candidate);
+    }
+
+    fn push_structural_candidate(
+        candidates: &mut Vec<BodyStructuralReceiverFunctionCandidate>,
+        candidate: BodyStructuralReceiverFunctionCandidate,
+    ) {
+        if !candidates.iter().any(|existing| {
+            existing.function == candidate.function && existing.subst == candidate.subst
+        }) {
+            candidates.push(candidate);
+        }
     }
 
     fn merge_candidates(

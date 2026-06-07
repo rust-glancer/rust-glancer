@@ -106,7 +106,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_trait_applicability_fixture[lib]::crate::Wrapper @ 23:16-23:21
+            - v0 self_param self `&self` => &Self struct body_trait_applicability_fixture[lib]::crate::Wrapper<syntax T> @ 23:16-23:21
             body
             expr e1 block s1 => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 23:31-25:6
               tail
@@ -118,7 +118,7 @@ pub fn use_it(user: User, wrapper: Wrapper<Error>) {
             - s0 parent <none>: v0
             - s1 parent s0: <none>
             bindings
-            - v0 self_param self `&self` => &Self struct body_trait_applicability_fixture[lib]::crate::Wrapper @ 33:18-33:23
+            - v0 self_param self `&self` => &Self struct body_trait_applicability_fixture[lib]::crate::Wrapper<nominal struct body_trait_applicability_fixture[lib]::crate::User> @ 33:18-33:23
             body
             expr e1 block s1 => nominal struct body_trait_applicability_fixture[lib]::crate::User @ 33:33-35:6
               tail
@@ -226,9 +226,9 @@ impl OtherExt for Maybe {
             bindings
             - v0 self_param self `&self` => &Self struct shared[lib]::crate::Maybe @ 8:17-8:22
             body
-            expr e1 block s1 => <unknown> @ 8:32-10:6
+            expr e1 block s1 => bool @ 8:32-10:6
               tail
-                expr e0 literal bool `true` => <unknown> @ 9:9-9:13
+                expr e0 literal bool `true` => bool @ 9:9-9:13
 
 
             package shared
@@ -241,9 +241,77 @@ impl OtherExt for Maybe {
             bindings
             - v0 self_param self `&self` => &Self struct shared[lib]::crate::Maybe @ 4:20-4:25
             body
-            expr e1 block s1 => <unknown> @ 4:35-6:6
+            expr e1 block s1 => bool @ 4:35-6:6
               tail
-                expr e0 literal bool `true` => <unknown> @ 5:9-5:13
+                expr e0 literal bool `true` => bool @ 5:9-5:13
+        "#]],
+    );
+}
+
+#[test]
+fn resolves_trait_associated_consts_for_qualified_value_paths() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_trait_assoc_const_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum StmtKind {
+    Let,
+}
+
+pub struct Stmt;
+
+pub trait HasAttrs {
+    const SUPPORTS_CUSTOM_INNER_ATTRS: bool;
+}
+
+impl HasAttrs for StmtKind {
+    const SUPPORTS_CUSTOM_INNER_ATTRS: bool = true;
+}
+
+impl HasAttrs for Stmt {
+    const SUPPORTS_CUSTOM_INNER_ATTRS: bool = StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS;
+}
+
+pub fn use_it() {
+    let supports = StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS;
+}
+"#,
+        expect![[r#"
+            package body_trait_assoc_const_fixture
+
+            body_trait_assoc_const_fixture [lib]
+            body b0 fn body_trait_assoc_const_fixture[lib]::crate::use_it @ 19:1-21:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0
+            bindings
+            - v0 let supports `supports` => bool @ 20:9-20:17
+            body
+            expr e1 block s1 => () @ 19:17-21:2
+              stmt s0 let v0 @ 20:5-20:58
+                initializer
+                  expr e0 path StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS -> const impl HasAttrs for StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS => bool @ 20:20-20:57
+
+
+            body b1 const impl HasAttrs for StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS @ 12:5-12:52
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 literal bool `true` => bool @ 12:47-12:51
+
+
+            body b2 const impl HasAttrs for Stmt::SUPPORTS_CUSTOM_INNER_ATTRS @ 16:5-16:85
+            scopes
+            - s0 parent <none>: <none>
+            bindings
+            body
+            expr e0 path StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS -> const impl HasAttrs for StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS => bool @ 16:47-16:84
         "#]],
     );
 }

@@ -132,6 +132,11 @@ where
         if let Some(ty) = self.subst_for_single_segment(&path) {
             return Ok(ty);
         }
+        if path.is_self_type() {
+            let context = self.resolver.context_for_body_owner()?;
+            let self_tys = self.resolver.self_nominal_tys_for_context(context)?;
+            return Ok(Ty::self_ty(self_tys));
+        }
 
         let args = self.generic_args_from_type_path(type_path)?;
         if let Some(ty) = self.ty_from_local_associated_type_path(type_path, &path, scope, &args)? {
@@ -154,6 +159,10 @@ where
         let path = Path::from_type_path(type_path);
         if let Some(ty) = self.subst_for_single_segment(&path) {
             return Ok(ty);
+        }
+        if path.is_self_type() {
+            let self_tys = self.resolver.self_nominal_tys_for_context(context)?;
+            return Ok(Ty::self_ty(self_tys));
         }
 
         let args = self.generic_args_from_type_path(type_path)?;
@@ -186,6 +195,14 @@ where
             )),
             TypeRef::Unknown(_) | TypeRef::Infer => Ok(Ty::Unknown),
             TypeRef::Tuple(types) if types.is_empty() => Ok(Ty::Unit),
+            TypeRef::Tuple(types) => Ok(Ty::tuple(
+                types
+                    .iter()
+                    .map(|ty| self.resolve(ty))
+                    .collect::<Result<_, _>>()?,
+            )),
+            TypeRef::Slice(inner) => Ok(Ty::slice(self.resolve(inner)?)),
+            TypeRef::Array { inner, len } => Ok(Ty::array(self.resolve(inner)?, len.clone())),
             _ => Ok(Ty::syntax(ty.clone())),
         }
     }
@@ -305,11 +322,21 @@ where
         Ok(generic_args)
     }
 
-    fn generic_arg(&self, arg: &ItemGenericArg) -> Result<GenericArg, PackageStoreError> {
+    pub(crate) fn generic_arg(
+        &self,
+        arg: &ItemGenericArg,
+    ) -> Result<GenericArg, PackageStoreError> {
         match arg {
             ItemGenericArg::Type(ty) => Ok(GenericArg::Type(Box::new(self.resolve(ty)?))),
             ItemGenericArg::Lifetime(lifetime) => Ok(GenericArg::Lifetime(lifetime.clone())),
             ItemGenericArg::Const(value) => Ok(GenericArg::Const(value.clone())),
+            ItemGenericArg::FnTraitArgs { params, ret } => Ok(GenericArg::FnTraitArgs {
+                params: params
+                    .iter()
+                    .map(|ty| self.resolve(ty))
+                    .collect::<Result<_, _>>()?,
+                ret: Box::new(self.resolve(ret)?),
+            }),
             ItemGenericArg::AssocType { name, ty } => Ok(GenericArg::AssocType {
                 name: name.clone(),
                 ty: ty

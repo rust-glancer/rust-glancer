@@ -133,11 +133,28 @@ impl ImportPath {
         }
     }
 
-    pub fn standard_prelude(edition: RustEdition, interner: &mut NameInterner) -> Self {
+    pub fn standard_prelude(
+        crate_name: &'static str,
+        edition: RustEdition,
+        interner: &mut NameInterner,
+    ) -> Self {
         Self {
             absolute: true,
             segments: vec![
-                PathSegment::Name(interner.intern("std")),
+                PathSegment::Name(interner.intern(crate_name)),
+                PathSegment::Name(interner.intern("prelude")),
+                PathSegment::Name(interner.intern(edition.prelude_module())),
+            ],
+        }
+    }
+
+    pub fn crate_relative_standard_prelude(
+        edition: RustEdition,
+        interner: &mut NameInterner,
+    ) -> Self {
+        Self {
+            absolute: false,
+            segments: vec![
                 PathSegment::Name(interner.intern("prelude")),
                 PathSegment::Name(interner.intern(edition.prelude_module())),
             ],

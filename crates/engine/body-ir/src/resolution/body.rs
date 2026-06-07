@@ -5,20 +5,24 @@
 
 use rg_ir_model::{
     AssocItemId, BindingId, BodyRef, ConstRef, DefId, DefMapRef, ExprId, FunctionRef, ImplRef,
-    ItemOwner, ModuleId, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TypeDefId,
-    TypePathResolution, identity::DeclarationRef,
+    ItemOwner, ModuleId, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TraitImplRef, TypeDefId,
+    TypePathResolution, identity::DeclarationRef, items::GenericParams,
 };
 use rg_ir_storage::{
     DefMapQuery, DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource,
     NameResolutionFilter, Path, PathSegment, ResolvePathResult, TargetItemQuery, TypePathContext,
 };
-use rg_item_tree::FieldKey;
+use rg_item_tree::{FieldKey, GenericArg as ItemGenericArg};
 use rg_package_store::PackageStoreError;
-use rg_ty::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
+use rg_ty::{
+    Autoderef, AutoderefMode, CallArgInference, CallArgMapping, ImplMatcher, ItemPathQuery,
+    NominalTy, PrimitiveTy, ReferencePeelingCandidates, Ty, TypeSubst,
+    function_generic_shadow_subst,
+};
 
 use crate::{
     ir::body::BodyData,
-    ir::expr::{ExprKind, ExprUnaryOp, ExprWrapperKind},
+    ir::expr::{ExprBinaryOp, ExprKind, ExprUnaryOp, ExprWrapperKind},
     ir::resolved::BodyResolution,
     ir::stmt::{BindingKind, BodySelfParamKind},
 };
@@ -107,7 +111,8 @@ where
             for expr_idx in 0..self.body.exprs.len() {
                 changed |= self.resolve_expr(ExprId(expr_idx))?;
             }
-            let binding_updates = PatternTypePropagator::new(self.query_source()).propagate()?;
+            let binding_updates =
+                PatternTypePropagator::new(self.query_source(), self.semantic_index).propagate()?;
             changed |= self.apply_binding_type_updates(binding_updates);
 
             if !changed {
@@ -172,15 +177,15 @@ where
             && binding_data.name.as_deref() == Some("self")
             && let Some(function) = self.body.function_owner()
         {
-            let self_tys = self.type_path_resolver().self_tys_for_function(function)?;
-            if !self_tys.is_empty() {
-                let ty = Ty::self_ty(self_tys.into_iter().map(NominalTy::bare).collect());
-                return Ok(match kind {
-                    BodySelfParamKind::Value => ty,
-                    BodySelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),
-                    BodySelfParamKind::Explicit => Ty::Unknown,
-                });
-            }
+            let self_tys = self
+                .type_path_resolver()
+                .self_nominal_tys_for_function(function)?;
+            let ty = Ty::self_ty(self_tys);
+            return Ok(match kind {
+                BodySelfParamKind::Value => ty,
+                BodySelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),
+                BodySelfParamKind::Explicit => Ty::Unknown,
+            });
         }
 
         Ok(Ty::Unknown)
@@ -201,11 +206,25 @@ where
                 data.resolution = resolution;
                 data.ty = ty;
             }
-            ExprKind::Call { callee, .. } => {
-                self.body.exprs[expr].ty = self.call_ty(callee)?;
+            ExprKind::Call { callee, args } => {
+                self.body.exprs[expr].ty = self.call_ty(callee, &args)?;
             }
-            ExprKind::Tuple { fields } if fields.is_empty() => {
-                self.body.exprs[expr].ty = Ty::Unit;
+            ExprKind::Tuple { fields } => {
+                self.body.exprs[expr].ty = self.tuple_expr_ty(&fields);
+            }
+            ExprKind::Array { elements } => {
+                self.body.exprs[expr].ty = self.array_expr_ty(&elements);
+            }
+            ExprKind::RepeatArray {
+                initializer,
+                len_text,
+                ..
+            } => {
+                self.body.exprs[expr].ty =
+                    self.repeat_array_expr_ty(initializer, len_text.as_deref());
+            }
+            ExprKind::Index { base, .. } => {
+                self.body.exprs[expr].ty = self.index_expr_ty(base);
             }
             ExprKind::Cast { ty: Some(ty), .. } => {
                 self.body.exprs[expr].ty = self
@@ -273,9 +292,17 @@ where
             ExprKind::MethodCall {
                 receiver,
                 method_name,
+                generic_args,
+                args,
                 ..
             } => {
-                let (resolution, ty) = self.resolve_method_call_expr(receiver, &method_name)?;
+                let (resolution, ty) = self.resolve_method_call_expr(
+                    receiver,
+                    &method_name,
+                    &generic_args,
+                    &args,
+                    self.body.exprs[expr].scope,
+                )?;
                 let data = &mut self.body.exprs[expr];
                 data.resolution = resolution;
                 data.ty = ty;
@@ -292,6 +319,22 @@ where
             } => {
                 self.body.exprs[expr].ty = self.explicit_deref_ty(inner)?;
             }
+            ExprKind::Unary {
+                op: Some(op),
+                expr: Some(inner),
+            } => {
+                self.body.exprs[expr].ty = self.unary_ty(op, inner);
+            }
+            ExprKind::Binary {
+                lhs: Some(lhs),
+                rhs: Some(rhs),
+                op: Some(op),
+            } => {
+                self.body.exprs[expr].ty = self.binary_ty(op, lhs, rhs);
+            }
+            ExprKind::Literal { kind } => {
+                self.body.exprs[expr].ty = kind.ty();
+            }
             ExprKind::While { .. } | ExprKind::For { .. } => {
                 self.body.exprs[expr].ty = Ty::Unit;
             }
@@ -307,15 +350,10 @@ where
             ExprKind::Let { .. }
             | ExprKind::Closure { .. }
             | ExprKind::Loop { .. }
-            | ExprKind::Tuple { .. }
-            | ExprKind::Array { .. }
-            | ExprKind::RepeatArray { .. }
-            | ExprKind::Index { .. }
             | ExprKind::Range { .. }
             | ExprKind::Cast { ty: None, .. }
             | ExprKind::Unary { .. }
             | ExprKind::Binary { .. }
-            | ExprKind::Literal { .. }
             | ExprKind::Underscore
             | ExprKind::Yield { .. }
             | ExprKind::Unknown { .. } => {}
@@ -336,6 +374,70 @@ where
         let visible_bindings = self.body.exprs[expr].visible_bindings;
         BodyValuePathResolver::new(self.query_source(), Some(self.semantic_index))
             .resolve_path_expr(scope, path, Some(visible_bindings))
+    }
+
+    fn tuple_expr_ty(&self, fields: &[ExprId]) -> Ty {
+        Ty::tuple(
+            fields
+                .iter()
+                .map(|field| self.body.exprs[*field].ty.clone())
+                .collect(),
+        )
+    }
+
+    fn array_expr_ty(&self, elements: &[ExprId]) -> Ty {
+        if elements.is_empty() {
+            return Ty::Unknown;
+        }
+
+        let mut element_tys = Vec::new();
+        for element in elements {
+            let element_ty = self.body.exprs[*element].ty.clone();
+            if matches!(element_ty, Ty::Unknown) {
+                return Ty::Unknown;
+            }
+            push_unique(&mut element_tys, element_ty);
+        }
+
+        if element_tys.len() == 1 {
+            Ty::array(
+                element_tys
+                    .pop()
+                    .expect("one array element type should exist"),
+                Some(elements.len().to_string()),
+            )
+        } else {
+            Ty::Unknown
+        }
+    }
+
+    fn repeat_array_expr_ty(&self, initializer: Option<ExprId>, len_text: Option<&str>) -> Ty {
+        let Some(initializer) = initializer else {
+            return Ty::Unknown;
+        };
+
+        Ty::array(
+            self.body.exprs[initializer].ty.clone(),
+            len_text.map(str::to_owned),
+        )
+    }
+
+    fn index_expr_ty(&self, base: Option<ExprId>) -> Ty {
+        let Some(base) = base else {
+            return Ty::Unknown;
+        };
+
+        // Indexing is reference-transparent for the structural array/slice cases we model here:
+        // `&[T]` and `&[T; N]` should behave like their inner container. Keep this deliberately
+        // narrower than method lookup: no trait deref, no `Index` trait, and no container coercions.
+        for candidate in ReferencePeelingCandidates::new(&self.body.exprs[base].ty) {
+            match candidate.ty() {
+                Ty::Array { inner, .. } | Ty::Slice(inner) => return inner.as_ref().clone(),
+                _ => {}
+            }
+        }
+
+        Ty::Unknown
     }
 
     pub(super) fn resolve_nonlocal_path_expr(
@@ -402,20 +504,28 @@ where
             let candidate = candidate?;
             // Autoderef yields candidates by depth. Resolve only after the whole matching depth is
             // collected, so same-depth alternatives produce ambiguity instead of order dependence.
-            if current_depth.is_some_and(|depth| depth != candidate.depth()) && !fields.is_empty() {
+            if current_depth.is_some_and(|depth| depth != candidate.depth())
+                && (!fields.is_empty() || !field_tys.is_empty())
+            {
                 let ty = if field_tys.len() == 1 {
                     field_tys.pop().expect("one field type should exist")
                 } else {
                     Ty::Unknown
                 };
-                return Ok((
+                let resolution = if fields.is_empty() {
+                    BodyResolution::Unknown
+                } else {
                     BodyResolution::Declarations(
                         fields.into_iter().map(DeclarationRef::from).collect(),
-                    ),
-                    ty,
-                ));
+                    )
+                };
+                return Ok((resolution, ty));
             }
             current_depth = Some(candidate.depth());
+
+            if let Some(field_ty) = Self::structural_field_ty(candidate.ty(), field) {
+                push_unique(&mut field_tys, field_ty);
+            }
 
             for nominal_ty in candidate.ty().as_nominals() {
                 let Some(field_ref) = item_query.field_for_type(nominal_ty.def, field)? else {
@@ -436,27 +546,37 @@ where
             }
         }
 
-        if !fields.is_empty() {
+        if !fields.is_empty() || !field_tys.is_empty() {
             let ty = if field_tys.len() == 1 {
                 field_tys.pop().expect("one field type should exist")
             } else {
                 Ty::Unknown
             };
-            return Ok((
-                BodyResolution::Declarations(
-                    fields.into_iter().map(DeclarationRef::from).collect(),
-                ),
-                ty,
-            ));
+            let resolution = if fields.is_empty() {
+                BodyResolution::Unknown
+            } else {
+                BodyResolution::Declarations(fields.into_iter().map(DeclarationRef::from).collect())
+            };
+            return Ok((resolution, ty));
         }
 
         Ok((BodyResolution::Unknown, Ty::Unknown))
+    }
+
+    fn structural_field_ty(ty: &Ty, field: &FieldKey) -> Option<Ty> {
+        match (ty, field) {
+            (Ty::Tuple(fields), FieldKey::Tuple(index)) => fields.get(*index).cloned(),
+            _ => None,
+        }
     }
 
     fn resolve_method_call_expr(
         &self,
         receiver: Option<ExprId>,
         method_name: &str,
+        explicit_args: &[ItemGenericArg],
+        args: &[ExprId],
+        call_scope: ScopeId,
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
         let Some(receiver) = receiver else {
             return Ok((BodyResolution::Unknown, Ty::Unknown));
@@ -510,9 +630,47 @@ where
                     push_unique(&mut functions, function_ref);
                     push_unique(
                         &mut return_tys,
-                        self.semantic_function_return_ty(function_ref, Some(nominal_ty))?,
+                        self.semantic_function_return_ty_with_call_args(
+                            function_ref,
+                            Some(nominal_ty),
+                            explicit_args,
+                            args,
+                            CallArgMapping::MethodCall,
+                            Some(call_scope),
+                        )?,
                     );
                 }
+            }
+
+            // Structural receivers such as `[T]` do not have a named type definition, so they
+            // cannot use the nominal `TypeDefRef` impl index above. They still may have visible
+            // inherent impls, for example `impl<T> [T]`, and those impls carry substitutions that
+            // are needed to render returns like `&T` in the receiver context.
+            for structural in self
+                .receiver_functions()
+                .structural_function_candidates_for_receiver(candidate.ty(), Some(method_name))?
+            {
+                let function_ref = structural.function();
+                let Some(function_data) = item_query.function_data(function_ref)? else {
+                    continue;
+                };
+                if function_data.name != method_name || !function_data.has_self_receiver() {
+                    continue;
+                }
+
+                push_unique(&mut functions, function_ref);
+                push_unique(
+                    &mut return_tys,
+                    self.semantic_function_return_ty_with_subst_and_call_args(
+                        function_ref,
+                        Some(structural.receiver_ty().clone()),
+                        structural.subst().clone(),
+                        explicit_args,
+                        args,
+                        CallArgMapping::MethodCall,
+                        Some(call_scope),
+                    )?,
+                );
             }
         }
 
@@ -570,6 +728,81 @@ where
         })
     }
 
+    fn unary_ty(&self, op: ExprUnaryOp, inner: ExprId) -> Ty {
+        let ty = &self.body.exprs[inner].ty;
+        match op {
+            ExprUnaryOp::Not => match ty {
+                Ty::Primitive(primitive) if primitive.is_bool() || primitive.is_integral() => {
+                    Ty::Primitive(*primitive)
+                }
+                _ => Ty::Unknown,
+            },
+            ExprUnaryOp::Neg => match ty {
+                Ty::Primitive(primitive) if primitive.is_signed_numeric() => {
+                    Ty::Primitive(*primitive)
+                }
+                _ => Ty::Unknown,
+            },
+            ExprUnaryOp::Deref => Ty::Unknown,
+        }
+    }
+
+    fn binary_ty(&self, op: ExprBinaryOp, lhs: ExprId, rhs: ExprId) -> Ty {
+        let lhs_ty = &self.body.exprs[lhs].ty;
+        let rhs_ty = &self.body.exprs[rhs].ty;
+
+        if op.is_logical() || op.is_comparison() {
+            return Ty::Primitive(PrimitiveTy::Bool);
+        }
+
+        match op {
+            ExprBinaryOp::Add
+            | ExprBinaryOp::Sub
+            | ExprBinaryOp::Mul
+            | ExprBinaryOp::Div
+            | ExprBinaryOp::Rem => {
+                self.symmetric_primitive_op_ty(lhs_ty, rhs_ty, |ty| ty.is_numeric())
+            }
+            ExprBinaryOp::BitAnd | ExprBinaryOp::BitOr | ExprBinaryOp::BitXor => self
+                .symmetric_primitive_op_ty(lhs_ty, rhs_ty, |ty| ty.is_integral() || ty.is_bool()),
+            ExprBinaryOp::Shl | ExprBinaryOp::Shr => self.shift_op_ty(lhs_ty, rhs_ty),
+            ExprBinaryOp::LogicOr
+            | ExprBinaryOp::LogicAnd
+            | ExprBinaryOp::Eq
+            | ExprBinaryOp::NotEq
+            | ExprBinaryOp::Less
+            | ExprBinaryOp::LessEq
+            | ExprBinaryOp::Greater
+            | ExprBinaryOp::GreaterEq => Ty::Primitive(PrimitiveTy::Bool),
+        }
+    }
+
+    fn symmetric_primitive_op_ty(
+        &self,
+        lhs_ty: &Ty,
+        rhs_ty: &Ty,
+        accepts: impl Fn(PrimitiveTy) -> bool,
+    ) -> Ty {
+        match (lhs_ty, rhs_ty) {
+            (Ty::Primitive(lhs), Ty::Primitive(rhs)) if lhs == rhs && accepts(*lhs) => {
+                Ty::Primitive(*lhs)
+            }
+            (Ty::Primitive(lhs), Ty::Unknown) if accepts(*lhs) => Ty::Primitive(*lhs),
+            (Ty::Unknown, Ty::Primitive(rhs)) if accepts(*rhs) => Ty::Primitive(*rhs),
+            _ => Ty::Unknown,
+        }
+    }
+
+    fn shift_op_ty(&self, lhs_ty: &Ty, rhs_ty: &Ty) -> Ty {
+        match (lhs_ty, rhs_ty) {
+            (Ty::Primitive(lhs), Ty::Primitive(rhs)) if lhs.is_integral() && rhs.is_integral() => {
+                Ty::Primitive(*lhs)
+            }
+            (Ty::Primitive(lhs), Ty::Unknown) if lhs.is_integral() => Ty::Primitive(*lhs),
+            _ => Ty::Unknown,
+        }
+    }
+
     fn impl_self_subst_for_function(
         &self,
         function_ref: FunctionRef,
@@ -601,26 +834,18 @@ where
             .unwrap_or_else(TypeSubst::new))
     }
 
-    fn semantic_function_return_ty(
+    fn semantic_function_return_ty_with_call_args(
         &self,
         function_ref: FunctionRef,
         receiver_ty: Option<&NominalTy>,
+        explicit_args: &[ItemGenericArg],
+        args: &[ExprId],
+        arg_mapping: CallArgMapping,
+        call_scope: Option<ScopeId>,
     ) -> Result<Ty, PackageStoreError> {
-        let item_query = self.item_query();
-        let Some(function_data) = item_query.function_data(function_ref)? else {
+        let Some(function_data) = self.item_query().function_data(function_ref)? else {
             return Ok(Ty::Unknown);
         };
-        let Some(ret_ty) = function_data.signature.ret_ty() else {
-            return Ok(Ty::Unit);
-        };
-
-        if receiver_ty.is_some() && ret_ty.is_self_type() {
-            return Ok(receiver_ty
-                .cloned()
-                .map(|ty| Ty::nominal(vec![ty]))
-                .unwrap_or(Ty::Unknown));
-        }
-
         let subst = receiver_ty
             .map(|ty| {
                 // Receiver type args and impl self args both contribute substitutions. For
@@ -635,13 +860,89 @@ where
             })
             .transpose()?
             .unwrap_or_default();
+        self.semantic_function_return_ty_with_subst_and_call_args(
+            function_ref,
+            receiver_ty.cloned().map(|ty| Ty::nominal(vec![ty])),
+            subst,
+            explicit_args,
+            args,
+            arg_mapping,
+            call_scope,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn semantic_function_return_ty_with_subst_and_call_args(
+        &self,
+        function_ref: FunctionRef,
+        self_ty: Option<Ty>,
+        mut subst: TypeSubst,
+        explicit_args: &[ItemGenericArg],
+        args: &[ExprId],
+        arg_mapping: CallArgMapping,
+        call_scope: Option<ScopeId>,
+    ) -> Result<Ty, PackageStoreError> {
+        let item_query = self.item_query();
+        let Some(function_data) = item_query.function_data(function_ref)? else {
+            return Ok(Ty::Unknown);
+        };
+        subst.extend(function_generic_shadow_subst(
+            function_data.signature.generics(),
+        ));
+        if let Some(call_scope) = call_scope {
+            subst.extend(self.explicit_function_subst(
+                function_data.signature.generics(),
+                explicit_args,
+                call_scope,
+            )?);
+        }
+        let arg_tys = args
+            .iter()
+            .map(|arg| self.body.exprs[*arg].ty.clone())
+            .collect::<Vec<_>>();
+        let inferred_subst = CallArgInference::new(
+            function_data.signature.generics(),
+            function_data.signature.params(),
+            &arg_tys,
+            arg_mapping,
+            &subst,
+        )
+        .infer();
+        subst.extend(inferred_subst);
+        self.semantic_function_return_ty_with_resolved_subst(function_ref, self_ty, subst)
+    }
+
+    fn semantic_function_return_ty_with_resolved_subst(
+        &self,
+        function_ref: FunctionRef,
+        self_ty: Option<Ty>,
+        subst: TypeSubst,
+    ) -> Result<Ty, PackageStoreError> {
+        let item_query = self.item_query();
+        let Some(function_data) = item_query.function_data(function_ref)? else {
+            return Ok(Ty::Unknown);
+        };
+        let Some(ret_ty) = function_data.signature.ret_ty() else {
+            return Ok(Ty::Unit);
+        };
+
+        if ret_ty.is_self_type() {
+            return Ok(match self_ty {
+                Some(self_ty) => self_ty,
+                None => Ty::self_ty(
+                    self.type_path_resolver()
+                        .self_nominal_tys_for_function(function_ref)?,
+                ),
+            });
+        }
+
         self.type_path_resolver()
             .type_ref(TypeRefUseSite::Function(function_ref))
             .with_subst(&subst)
             .resolve(ret_ty)
     }
 
-    fn call_ty(&self, callee: Option<ExprId>) -> Result<Ty, PackageStoreError> {
+    fn call_ty(&self, callee: Option<ExprId>, args: &[ExprId]) -> Result<Ty, PackageStoreError> {
         let Some(callee) = callee else {
             return Ok(Ty::Unknown);
         };
@@ -651,13 +952,19 @@ where
             return Ok(callee_data.ty.clone());
         }
 
-        // Ordinary calls use explicit return types only. Generic function inference remains
-        // outside the current intentionally-small Body IR model.
+        // Ordinary calls use declared return types plus a deliberately-small substitution model:
+        // explicit turbofish args and direct argument-to-parameter type inference.
         let mut return_tys = Vec::new();
         match &callee_data.resolution {
             BodyResolution::Declarations(declarations) => {
                 for declaration in declarations {
-                    self.push_return_ty_for_declaration(*declaration, &mut return_tys)?;
+                    self.push_return_ty_for_declaration(
+                        *declaration,
+                        &mut return_tys,
+                        self.explicit_callee_generic_args(callee_data),
+                        callee_data.scope,
+                        args,
+                    )?;
                 }
             }
             BodyResolution::Binding(_) | BodyResolution::Unknown => {}
@@ -674,6 +981,9 @@ where
         &self,
         declaration: DeclarationRef,
         return_tys: &mut Vec<Ty>,
+        explicit_args: &[ItemGenericArg],
+        call_scope: ScopeId,
+        args: &[ExprId],
     ) -> Result<(), PackageStoreError> {
         match declaration {
             DeclarationRef::LocalDef(local_def) => {
@@ -682,13 +992,27 @@ where
                 };
                 push_unique(
                     return_tys,
-                    self.semantic_function_return_ty(function_ref, None)?,
+                    self.semantic_function_return_ty_with_call_args(
+                        function_ref,
+                        None,
+                        explicit_args,
+                        args,
+                        CallArgMapping::FunctionCall,
+                        Some(call_scope),
+                    )?,
                 );
             }
             DeclarationRef::Item(SemanticItemRef::Function(function_ref)) => {
                 push_unique(
                     return_tys,
-                    self.semantic_function_return_ty(function_ref, None)?,
+                    self.semantic_function_return_ty_with_call_args(
+                        function_ref,
+                        None,
+                        explicit_args,
+                        args,
+                        CallArgMapping::FunctionCall,
+                        Some(call_scope),
+                    )?,
                 );
             }
             DeclarationRef::Module(_)
@@ -706,6 +1030,43 @@ where
         }
 
         Ok(())
+    }
+
+    fn explicit_callee_generic_args<'expr>(
+        &self,
+        callee_data: &'expr crate::ir::expr::ExprData,
+    ) -> &'expr [ItemGenericArg] {
+        // A normal call expression has a callee expression, so `make::<T>()` and
+        // `Type::build::<T>()` carry call generics on the final callee path segment. Method calls
+        // are a different ExprKind and store their method-name generics directly.
+        match &callee_data.kind {
+            ExprKind::Path { path } => path.last_segment_angle_args().unwrap_or(&[]),
+            _ => &[],
+        }
+    }
+
+    fn explicit_function_subst(
+        &self,
+        generics: Option<&GenericParams>,
+        explicit_args: &[ItemGenericArg],
+        scope: ScopeId,
+    ) -> Result<TypeSubst, PackageStoreError> {
+        let Some(generics) = generics else {
+            return Ok(TypeSubst::new());
+        };
+        if explicit_args.is_empty() {
+            return Ok(TypeSubst::new());
+        }
+
+        // Function turbofish arguments are supplied at the call site, so names inside them must
+        // resolve from the body scope where the call was written.
+        let type_resolver = self.type_path_resolver();
+        let arg_resolver = type_resolver.type_ref(TypeRefUseSite::Scope(scope));
+        let generic_args = explicit_args
+            .iter()
+            .map(|arg| arg_resolver.generic_arg(arg))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(TypeSubst::from_generics(generics, &generic_args))
     }
 
     fn function_ref_for_def(&self, def: DefId) -> Result<Option<FunctionRef>, PackageStoreError> {
@@ -1127,6 +1488,30 @@ where
             }
         }
 
+        // Trait associated const lookup is still receiver-driven: `Type::CONST` first proves that
+        // `Type` has a visible trait impl, then reads the matching const item from that impl or
+        // falls back to the trait declaration. This mirrors trait method lookup without pretending
+        // to be a full trait solver.
+        let mut trait_consts = Vec::new();
+        let mut trait_const_tys = Vec::new();
+        for nominal_ty in prefix_ty.as_nominals() {
+            for (const_ref, ty) in
+                self.semantic_associated_trait_value_items_for_type(nominal_ty, last_segment)?
+            {
+                push_unique(&mut trait_consts, const_ref);
+                push_unique(&mut trait_const_tys, ty);
+            }
+        }
+
+        if !trait_consts.is_empty() {
+            return Ok(Some((
+                BodyResolution::Declarations(
+                    trait_consts.into_iter().map(DeclarationRef::from).collect(),
+                ),
+                unique_ty_or_unknown(trait_const_tys),
+            )));
+        }
+
         // Inherent associated functions are exact candidates. Trait-associated functions are kept
         // deliberately optimistic, following the same "prefer useful candidates over false
         // negatives" policy as dot completion.
@@ -1178,6 +1563,92 @@ where
         )
     }
 
+    fn semantic_associated_trait_value_items_for_type(
+        &self,
+        ty: &NominalTy,
+        name: &str,
+    ) -> Result<Vec<(ConstRef, Ty)>, PackageStoreError> {
+        let mut items = Vec::new();
+
+        self.push_associated_trait_value_items_for_impls(
+            &mut items,
+            self.body_local_items().trait_impls_for_type(ty.def)?,
+            ty,
+            name,
+        )?;
+
+        if ty.def.origin == DefMapRef::Body(self.source.body_ref()) {
+            return Ok(items);
+        }
+
+        let source = self.source;
+        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
+        let semantic_trait_impls = match self.semantic_index {
+            Some(index) => index.trait_impls_for_type(ty.def).to_vec(),
+            None => target_items.trait_impls_for_type(ty.def)?,
+        };
+        self.push_associated_trait_value_items_for_impls(
+            &mut items,
+            semantic_trait_impls,
+            ty,
+            name,
+        )?;
+
+        Ok(items)
+    }
+
+    fn push_associated_trait_value_items_for_impls(
+        &self,
+        items: &mut Vec<(ConstRef, Ty)>,
+        trait_impls: Vec<TraitImplRef>,
+        ty: &NominalTy,
+        name: &str,
+    ) -> Result<(), PackageStoreError> {
+        let item_query = self.item_query();
+        let matcher = self.impl_matcher();
+        for trait_impl in trait_impls {
+            if !matcher
+                .trait_impl_applicability(trait_impl, ty)?
+                .is_applicable()
+            {
+                continue;
+            }
+
+            let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
+                continue;
+            };
+
+            // Impl consts are the concrete declaration for `Type::CONST`. When the impl omits the
+            // item, use the trait declaration as a best-effort source for defaulted or incomplete
+            // code; const signatures do not preserve whether a default body was written.
+            let mut candidate = self.associated_const_from_items(
+                trait_impl.impl_ref.origin,
+                &impl_data.items,
+                ty,
+                name,
+            )?;
+            if candidate.is_none()
+                && let Some(trait_data) = item_query.trait_data(trait_impl.trait_ref)?
+            {
+                candidate = self.associated_const_from_items(
+                    trait_impl.trait_ref.origin,
+                    &trait_data.items,
+                    ty,
+                    name,
+                )?;
+            }
+
+            let Some(candidate) = candidate else {
+                continue;
+            };
+            if !items.iter().any(|(existing, _)| *existing == candidate.0) {
+                items.push(candidate);
+            }
+        }
+
+        Ok(())
+    }
+
     fn associated_value_item_for_impls(
         &self,
         impls: Vec<ImplRef>,
@@ -1196,23 +1667,37 @@ where
                 continue;
             }
 
-            for item in &impl_data.items {
-                let AssocItemId::Const(id) = item else {
-                    continue;
-                };
-                let const_ref = ConstRef {
-                    origin: impl_ref.origin,
-                    id: *id,
-                };
-                let Some(const_data) = item_query.const_data(const_ref)? else {
-                    continue;
-                };
-                if const_data.name == name {
-                    return Ok(Some((
-                        const_ref,
-                        self.semantic_const_ty_for_receiver(const_ref, const_data.owner, ty)?,
-                    )));
-                }
+            if let Some(item) =
+                self.associated_const_from_items(impl_ref.origin, &impl_data.items, ty, name)?
+            {
+                return Ok(Some(item));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn associated_const_from_items(
+        &self,
+        origin: DefMapRef,
+        assoc_items: &[AssocItemId],
+        receiver_ty: &NominalTy,
+        name: &str,
+    ) -> Result<Option<(ConstRef, Ty)>, PackageStoreError> {
+        let item_query = self.item_query();
+        for item in assoc_items {
+            let AssocItemId::Const(id) = item else {
+                continue;
+            };
+            let const_ref = ConstRef { origin, id: *id };
+            let Some(const_data) = item_query.const_data(const_ref)? else {
+                continue;
+            };
+            if const_data.name == name {
+                return Ok(Some((
+                    const_ref,
+                    self.semantic_const_ty_for_receiver(const_ref, const_data.owner, receiver_ty)?,
+                )));
             }
         }
 

@@ -271,6 +271,55 @@ pub mod prelude {
 }
 
 #[test]
+fn falls_back_to_core_prelude_when_std_is_unavailable() {
+    utils::check_project_path_resolution_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct App;
+
+//- /sysroot/library/core/src/lib.rs
+extern crate self as core;
+
+pub mod marker {
+    pub struct CorePrelude;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::marker::CorePrelude;
+    }
+}
+
+pub mod child {
+    pub struct Child;
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod prelude {
+    pub mod rust_2024 {}
+}
+"#,
+        &[PathResolutionQuery::lib(
+            "core",
+            "crate::child",
+            "CorePrelude",
+        )],
+        expect![[r#"
+            core [lib] crate::child resolves CorePrelude -> struct core[lib]::crate::marker::CorePrelude
+        "#]],
+    );
+}
+
+#[test]
 fn falls_back_to_extern_roots_when_wrong_namespace_bindings_match_first_segment() {
     utils::check_project_path_resolution(
         r#"

@@ -5,10 +5,15 @@
 //! not infer the scrutinee type by themselves.
 
 use rg_ir_model::{BindingId, ExprId, PatId, ScopeId, StmtId, TypeDefId};
-use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource, Path, PathSegment};
+use rg_ir_storage::{
+    DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource, Path, PathSegment,
+    TargetItemQuery,
+};
 use rg_item_tree::{FieldItem, FieldKey, FieldList};
 use rg_package_store::PackageStoreError;
-use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
+use rg_ty::{
+    ItemPathQuery, IterationItemResolver, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst,
+};
 
 use crate::{
     ir::expr::ExprKind,
@@ -21,6 +26,7 @@ use super::{BodyQuerySource, TypeRefUseSite, push_unique, type_path::BodyTypePat
 
 pub(super) struct PatternTypePropagator<'query, D, I> {
     source: BodyQuerySource<'query, D, I>,
+    semantic_index: &'query ItemLookupIndex,
 }
 
 impl<'query, D, I> PatternTypePropagator<'query, D, I>
@@ -28,8 +34,14 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(super) fn new(source: BodyQuerySource<'query, D, I>) -> Self {
-        Self { source }
+    pub(super) fn new(
+        source: BodyQuerySource<'query, D, I>,
+        semantic_index: &'query ItemLookupIndex,
+    ) -> Self {
+        Self {
+            source,
+            semantic_index,
+        }
     }
 
     pub(super) fn propagate(&self) -> Result<Vec<(BindingId, Ty)>, PackageStoreError> {
@@ -52,6 +64,7 @@ where
             self.propagate_pat(pat, &expected_ty, &mut updates)?;
         }
 
+        let iteration_items = self.iteration_items();
         for expr_idx in 0..self.source.body().exprs.len() {
             let expr = ExprId(expr_idx);
             match self.source.body().exprs[expr].kind.clone() {
@@ -74,6 +87,15 @@ where
                 } => {
                     let expected_ty = self.expected_ty_for_let(scope, None, initializer)?;
                     self.propagate_pat(pat, &expected_ty, &mut updates)?;
+                }
+                ExprKind::For {
+                    pat: Some(pat),
+                    iterable: Some(iterable),
+                    ..
+                } => {
+                    let iterable_ty = &self.source.body().exprs[iterable].ty;
+                    let item_ty = iteration_items.into_iterator_item_for_ty(iterable_ty)?;
+                    self.propagate_pat(pat, &item_ty, &mut updates)?;
                 }
                 ExprKind::Path { .. }
                 | ExprKind::Call { .. }
@@ -117,6 +139,16 @@ where
 
     fn type_path_resolver(&self) -> BodyTypePathResolver<'query, D, I> {
         BodyTypePathResolver::new(self.source)
+    }
+
+    fn iteration_items(
+        &self,
+    ) -> IterationItemResolver<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>>
+    {
+        let source = self.source;
+        let item_paths = ItemPathQuery::new(source, source);
+        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
+        IterationItemResolver::with_index(item_paths, target_items, self.semantic_index)
     }
 
     fn expected_ty_for_let(
@@ -172,6 +204,8 @@ where
             PatKind::Record { path, fields, .. } => {
                 self.propagate_record_variant(path.as_ref(), &fields, expected_ty, updates)
             }
+            PatKind::Tuple { fields } => self.propagate_tuple_pat(&fields, expected_ty, updates),
+            PatKind::Slice { fields } => self.propagate_slice_pat(&fields, expected_ty, updates),
             PatKind::Or { pats } => {
                 for pat in pats {
                     self.propagate_pat(pat, expected_ty, updates)?;
@@ -181,9 +215,7 @@ where
             PatKind::Ref { pat, .. } | PatKind::Box { pat } => {
                 self.propagate_pat(pat, expected_ty, updates)
             }
-            PatKind::Tuple { .. }
-            | PatKind::Slice { .. }
-            | PatKind::Path { .. }
+            PatKind::Path { .. }
             | PatKind::Rest
             | PatKind::Literal { .. }
             | PatKind::Range { .. }
@@ -191,6 +223,50 @@ where
             | PatKind::Wildcard
             | PatKind::Unsupported => Ok(()),
         }
+    }
+
+    fn propagate_tuple_pat(
+        &self,
+        fields: &[PatId],
+        expected_ty: &Ty,
+        updates: &mut Vec<(BindingId, Ty)>,
+    ) -> Result<(), PackageStoreError> {
+        let Ty::Tuple(field_tys) = expected_ty else {
+            return Ok(());
+        };
+        if fields.len() != field_tys.len() {
+            return Ok(());
+        }
+
+        for (field_pat, field_ty) in fields.iter().zip(field_tys) {
+            self.propagate_pat(*field_pat, field_ty, updates)?;
+        }
+        Ok(())
+    }
+
+    fn propagate_slice_pat(
+        &self,
+        fields: &[PatId],
+        expected_ty: &Ty,
+        updates: &mut Vec<(BindingId, Ty)>,
+    ) -> Result<(), PackageStoreError> {
+        let element_ty = match expected_ty {
+            Ty::Array { inner, .. } | Ty::Slice(inner) => inner.as_ref(),
+            _ => return Ok(()),
+        };
+
+        for field in fields {
+            if self
+                .source
+                .body()
+                .pat(*field)
+                .is_some_and(|pat| matches!(&pat.kind, PatKind::Rest))
+            {
+                continue;
+            }
+            self.propagate_pat(*field, element_ty, updates)?;
+        }
+        Ok(())
     }
 
     fn propagate_tuple_variant(

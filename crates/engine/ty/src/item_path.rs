@@ -4,13 +4,13 @@
 //! answers "which semantic item does this local definition lower to?". Type algorithms use this
 //! query to stay independent from the concrete target/body storage that provided those answers.
 
-use rg_ir_model::items::{GenericArg as ItemGenericArg, Mutability, TypePath, TypeRef};
+use rg_ir_model::items::{GenericArg as ItemGenericArg, Mutability, TypeBound, TypePath, TypeRef};
 use rg_ir_model::{DefId, ModuleRef, SemanticItemRef, TraitRef, TypeDefRef, TypePathResolution};
 use rg_ir_storage::{
     DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, Path, TypePathContext,
 };
 
-use crate::{GenericArg, PrimitiveTy, RefMutability, Ty, TypeSubst};
+use crate::{GenericArg, OpaqueTraitBound, PrimitiveTy, RefMutability, Ty, TypeSubst};
 
 /// Resolves paths into semantic-shaped item refs using independent DefMap and ItemStore sources.
 #[derive(Clone)]
@@ -82,6 +82,30 @@ where
             )),
             TypeRef::Unknown(_) | TypeRef::Infer => Ok(Ty::Unknown),
             TypeRef::Tuple(types) if types.is_empty() => Ok(Ty::Unit),
+            TypeRef::Tuple(types) => Ok(Ty::tuple(
+                types
+                    .iter()
+                    .map(|ty| self.resolve_type_ref(ty, context, Ty::syntax(ty.clone()), subst))
+                    .collect::<Result<_, _>>()?,
+            )),
+            TypeRef::Slice(inner) => Ok(Ty::slice(self.resolve_type_ref(
+                inner,
+                context,
+                Ty::syntax((**inner).clone()),
+                subst,
+            )?)),
+            TypeRef::Array { inner, len } => Ok(Ty::array(
+                self.resolve_type_ref(inner, context, Ty::syntax((**inner).clone()), subst)?,
+                len.clone(),
+            )),
+            TypeRef::ImplTrait(bounds) => {
+                let opaque_bounds = self.opaque_trait_bounds(bounds, context, subst)?;
+                Ok(if opaque_bounds.is_empty() {
+                    Ty::syntax(ty.clone())
+                } else {
+                    Ty::opaque(opaque_bounds)
+                })
+            }
             _ => Ok(Ty::syntax(ty.clone())),
         }
     }
@@ -216,6 +240,18 @@ where
                 )?)),
                 ItemGenericArg::Lifetime(lifetime) => GenericArg::Lifetime(lifetime.clone()),
                 ItemGenericArg::Const(value) => GenericArg::Const(value.clone()),
+                ItemGenericArg::FnTraitArgs { params, ret } => GenericArg::FnTraitArgs {
+                    params: params
+                        .iter()
+                        .map(|ty| self.resolve_type_ref(ty, context, Ty::syntax(ty.clone()), subst))
+                        .collect::<Result<_, _>>()?,
+                    ret: Box::new(self.resolve_type_ref(
+                        ret,
+                        context,
+                        Ty::syntax((**ret).clone()),
+                        subst,
+                    )?),
+                },
                 ItemGenericArg::AssocType { name, ty } => GenericArg::AssocType {
                     name: name.clone(),
                     ty: match ty {
@@ -234,6 +270,40 @@ where
             generic_args.push(generic_arg);
         }
         Ok(generic_args)
+    }
+
+    fn opaque_trait_bounds(
+        &self,
+        bounds: &[TypeBound],
+        context: TypePathContext,
+        subst: &TypeSubst,
+    ) -> Result<Vec<OpaqueTraitBound>, D::Error> {
+        let mut opaque_bounds = Vec::new();
+
+        for bound in bounds {
+            match bound {
+                TypeBound::Trait(TypeRef::Path(bound_path)) => {
+                    let TypePathResolution::Traits(traits) =
+                        self.resolve_type_path(context, &Path::from_type_path(bound_path))?
+                    else {
+                        continue;
+                    };
+                    let args = self.generic_args_from_type_path(bound_path, context, subst)?;
+                    for trait_ref in traits {
+                        push_unique(
+                            &mut opaque_bounds,
+                            OpaqueTraitBound {
+                                trait_ref,
+                                args: args.clone(),
+                            },
+                        );
+                    }
+                }
+                TypeBound::Trait(_) | TypeBound::Lifetime(_) | TypeBound::Unsupported(_) => {}
+            }
+        }
+
+        Ok(opaque_bounds)
     }
 }
 

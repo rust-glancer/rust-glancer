@@ -45,14 +45,34 @@ fn walk_segment_args_type_refs<'path>(
         return;
     };
 
+    walk_generic_args_type_refs(args, visit);
+}
+
+pub(crate) fn walk_generic_args_type_refs<'path>(
+    args: &'path [GenericArg],
+    visit: &mut impl FnMut(&'path TypeRef),
+) {
     for arg in args {
-        match arg {
-            GenericArg::Type(ty) => visit(ty),
-            GenericArg::AssocType { ty: Some(ty), .. } => visit(ty),
-            GenericArg::Lifetime(_)
-            | GenericArg::Const(_)
-            | GenericArg::AssocType { ty: None, .. }
-            | GenericArg::Unsupported(_) => {}
+        walk_generic_arg_type_refs(arg, visit);
+    }
+}
+
+fn walk_generic_arg_type_refs<'path>(
+    arg: &'path GenericArg,
+    visit: &mut impl FnMut(&'path TypeRef),
+) {
+    match arg {
+        GenericArg::Type(ty) => visit(ty),
+        GenericArg::FnTraitArgs { params, ret } => {
+            for param in params {
+                visit(param);
+            }
+            visit(ret);
         }
+        GenericArg::AssocType { ty: Some(ty), .. } => visit(ty),
+        GenericArg::Lifetime(_)
+        | GenericArg::Const(_)
+        | GenericArg::AssocType { ty: None, .. }
+        | GenericArg::Unsupported(_) => {}
     }
 }

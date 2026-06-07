@@ -1,9 +1,11 @@
 //! Target-scoped item lookup.
 
-use rg_ir_model::{DefMapRef, FunctionRef, ImplRef, TargetRef, TraitImplRef, TraitRef, TypeDefRef};
+use rg_ir_model::{
+    DefMapRef, FunctionRef, ImplRef, ModuleRef, TargetRef, TraitImplRef, TraitRef, TypeDefRef,
+};
 
 use super::{ItemStoreQuery, ItemStoreSource};
-use crate::{DefMapQuery, DefMapSource, ItemStore, push_unique};
+use crate::{DefMapQuery, DefMapSource, ItemStore, TargetResolutionEnv, push_unique};
 
 /// Item queries that need a Rust language visibility context.
 ///
@@ -31,6 +33,11 @@ where
 
     pub fn items(&self) -> &ItemStoreQuery<'item, I> {
         &self.items
+    }
+
+    /// Returns the root module of the target where lookup is performed.
+    pub fn use_site_root_module(&self) -> Result<Option<ModuleRef>, I::Error> {
+        self.def_maps.root_module(self.use_site)
     }
 
     /// Returns stores visible from this query's use-site target.
@@ -63,6 +70,24 @@ where
         Ok(impls)
     }
 
+    /// Searches visible impls for a trait ref and returns the trait identity used by each impl.
+    pub fn trait_impls_for_trait(
+        &self,
+        trait_ref: TraitRef,
+    ) -> Result<Vec<TraitImplRef>, I::Error> {
+        let mut trait_impls = Vec::new();
+        for impl_ref in self.impls_for_trait(trait_ref)? {
+            push_unique(
+                &mut trait_impls,
+                TraitImplRef {
+                    impl_ref,
+                    trait_ref,
+                },
+            );
+        }
+        Ok(trait_impls)
+    }
+
     /// Narrows type impl lookup to inherent impls, which is the path used for method completion.
     pub fn inherent_impls_for_type(&self, ty: TypeDefRef) -> Result<Vec<ImplRef>, I::Error> {
         let mut impls = Vec::new();
@@ -72,6 +97,19 @@ where
             };
             if data.trait_ref.is_none() {
                 impls.push(impl_ref);
+            }
+        }
+        Ok(impls)
+    }
+
+    /// Searches all visible inherent impls, including impls whose `Self` type is structural.
+    pub fn inherent_impls(&self) -> Result<Vec<ImplRef>, I::Error> {
+        let mut impls = Vec::new();
+        for store in self.visible_stores()? {
+            for (impl_ref, data) in store.impls_with_refs() {
+                if data.trait_ref.is_none() {
+                    push_unique(&mut impls, impl_ref);
+                }
             }
         }
         Ok(impls)

@@ -471,6 +471,12 @@ impl SignatureCursorScanner<'_, '_> {
     fn push_generic_arg(&mut self, context: TypePathContext, arg: &GenericArg, file_id: FileId) {
         match arg {
             GenericArg::Type(ty) => self.push_type_ref(context, ty, file_id),
+            GenericArg::FnTraitArgs { params, ret } => {
+                for param in params {
+                    self.push_type_ref(context, param, file_id);
+                }
+                self.push_type_ref(context, ret, file_id);
+            }
             GenericArg::AssocType { ty: Some(ty), .. } => {
                 self.push_type_ref(context, ty, file_id);
             }

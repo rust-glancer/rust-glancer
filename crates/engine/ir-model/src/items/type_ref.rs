@@ -334,6 +334,11 @@ impl TypePathSegment {
 impl fmt::Display for TypePathSegment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.name)?;
+        if let [GenericArg::FnTraitArgs { params, ret }] = self.args.as_slice() {
+            write_fn_trait_args(f, params, ret)?;
+            return Ok(());
+        }
+
         if !self.args.is_empty() {
             write!(f, "<")?;
             for (idx, arg) in self.args.iter().enumerate() {
@@ -355,6 +360,13 @@ pub enum GenericArg {
     Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
     Lifetime(String),
     Const(String),
+    /// Parenthesized argument syntax on function-trait paths, such as `FnOnce(T) -> R`.
+    FnTraitArgs {
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypeRef>>")]
+        params: Vec<TypeRef>,
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<TypeRef>>")]
+        ret: Box<TypeRef>,
+    },
     AssocType {
         name: Name,
         #[wincode(with = "rg_wincode_utils::WincodeDynamic<Option<TypeRef>>")]
@@ -368,9 +380,11 @@ impl GenericArg {
     pub fn type_ref(&self) -> Option<&TypeRef> {
         match self {
             Self::Type(ty) => Some(ty),
-            Self::Lifetime(_) | Self::Const(_) | Self::AssocType { .. } | Self::Unsupported(_) => {
-                None
-            }
+            Self::Lifetime(_)
+            | Self::Const(_)
+            | Self::FnTraitArgs { .. }
+            | Self::AssocType { .. }
+            | Self::Unsupported(_) => None,
         }
     }
 
@@ -381,6 +395,13 @@ impl GenericArg {
             Self::AssocType { ty, .. } => {
                 ty.as_ref().is_some_and(|ty| ty.mentions_type_param(params))
             }
+            Self::FnTraitArgs {
+                params: fn_params,
+                ret,
+            } => {
+                fn_params.iter().any(|ty| ty.mentions_type_param(params))
+                    || ret.mentions_type_param(params)
+            }
             Self::Lifetime(_) | Self::Const(_) | Self::Unsupported(_) => false,
         }
     }
@@ -390,6 +411,13 @@ impl GenericArg {
             Self::Type(ty) => ty.shrink_to_fit(),
             Self::Lifetime(lifetime) | Self::Const(lifetime) | Self::Unsupported(lifetime) => {
                 lifetime.shrink_to_fit();
+            }
+            Self::FnTraitArgs { params, ret } => {
+                params.shrink_to_fit();
+                for param in params {
+                    param.shrink_to_fit();
+                }
+                ret.shrink_to_fit();
             }
             Self::AssocType { name, ty } => {
                 name.shrink_to_fit();
@@ -411,9 +439,29 @@ impl fmt::Display for GenericArg {
                 Some(ty) => write!(f, "{name} = {ty}"),
                 None => write!(f, "{name}"),
             },
+            Self::FnTraitArgs { params, ret } => write_fn_trait_args(f, params, ret),
             Self::Unsupported(text) => write!(f, "<unsupported:{text}>"),
         }
     }
+}
+
+fn write_fn_trait_args(
+    f: &mut fmt::Formatter<'_>,
+    params: &[TypeRef],
+    ret: &TypeRef,
+) -> fmt::Result {
+    write!(f, "(")?;
+    for (idx, param) in params.iter().enumerate() {
+        if idx > 0 {
+            write!(f, ", ")?;
+        }
+        write!(f, "{param}")?;
+    }
+    write!(f, ")")?;
+    if !matches!(ret, TypeRef::Unit) {
+        write!(f, " -> {ret}")?;
+    }
+    Ok(())
 }
 
 #[derive(
