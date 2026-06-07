@@ -2,95 +2,13 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
 use rg_ir_model::{
-    BindingData, BindingId, BodyOwner, BodyRef, BodySource, DefMapRef, ExprData, ExprId, ExprKind,
-    FunctionRef, ModuleRef, PatData, PatId, PatKind, ScopeData, ScopeId, StmtData, StmtId,
-    StmtKind,
+    BindingData, BindingId, BodyData, BodyOwner, BodyRef, BodySource, BodySourceItems, ExprData,
+    ExprId, FunctionRef, ModuleRef, PatData, PatId, ScopeData, ScopeId, StmtData, StmtId,
     items::{ItemNode, ItemTreeId},
 };
 use rg_memsize::MemorySize;
 
-use super::{
-    resolved::{BindingFacts, BodyFacts, BodyResolution, ExprFacts},
-    source_items::BodySourceItems,
-};
-
-/// Model-shaped expression body for a function, const, or static initializer.
-///
-/// This is the pure body shape: source identity, lexical scopes, and lowered node arenas.
-/// Resolution keeps derived facts in separate sidecars owned by `ResolvedBodyData`.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
-pub(crate) struct BodyData {
-    pub(crate) owner: BodyOwner,
-    pub(crate) owner_module: ModuleRef,
-    pub(crate) fallback_module: ModuleRef,
-    pub(crate) source: BodySource,
-    pub(crate) source_items: BodySourceItems,
-    pub(crate) param_scope: ScopeId,
-    pub(crate) root_expr: ExprId,
-    pub(crate) params: Vec<BindingId>,
-    pub(crate) scopes: Arena<ScopeId, ScopeData>,
-    pub(crate) bindings: Arena<BindingId, BindingData>,
-    pub(crate) pats: Arena<PatId, PatData>,
-    pub(crate) statements: Arena<StmtId, StmtData>,
-    pub(crate) exprs: Arena<ExprId, ExprData>,
-}
-
-impl BodyData {
-    // Lowering naturally produces these independent body fields at the same boundary. A wrapper
-    // object would only move the argument list elsewhere without making the invariant clearer.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        owner: BodyOwner,
-        owner_module: ModuleRef,
-        fallback_module: ModuleRef,
-        source: BodySource,
-        param_scope: ScopeId,
-        root_expr: ExprId,
-        params: Vec<BindingId>,
-        builder: &mut BodyBuilder,
-    ) -> Self {
-        Self {
-            owner,
-            owner_module,
-            fallback_module,
-            source,
-            source_items: std::mem::take(&mut builder.source_items),
-            param_scope,
-            root_expr,
-            params,
-            scopes: std::mem::take(&mut builder.scopes),
-            bindings: std::mem::take(&mut builder.bindings),
-            pats: std::mem::take(&mut builder.pats),
-            statements: std::mem::take(&mut builder.statements),
-            exprs: std::mem::take(&mut builder.exprs),
-        }
-    }
-
-    fn shrink_to_fit(&mut self) {
-        self.params.shrink_to_fit();
-        self.source_items.shrink_to_fit();
-        self.scopes.shrink_to_fit();
-        for scope in self.scopes.iter_mut() {
-            scope.shrink_to_fit();
-        }
-        self.bindings.shrink_to_fit();
-        for binding in self.bindings.iter_mut() {
-            binding.shrink_to_fit();
-        }
-        self.pats.shrink_to_fit();
-        for pat in self.pats.iter_mut() {
-            pat.shrink_to_fit();
-        }
-        self.statements.shrink_to_fit();
-        for statement in self.statements.iter_mut() {
-            statement.shrink_to_fit();
-        }
-        self.exprs.shrink_to_fit();
-        for expr in self.exprs.iter_mut() {
-            expr.shrink_to_fit();
-        }
-    }
-}
+use super::resolved::{BindingFacts, BodyFacts, BodyResolution, ExprFacts};
 
 /// Body storage with model-shaped body data plus pass-derived resolution facts.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
@@ -102,7 +20,7 @@ pub struct ResolvedBodyData {
 
 impl ResolvedBodyData {
     pub fn owner(&self) -> BodyOwner {
-        self.body.owner
+        self.body.owner()
     }
 
     pub fn function_owner(&self) -> Option<FunctionRef> {
@@ -110,39 +28,39 @@ impl ResolvedBodyData {
     }
 
     pub fn owner_module(&self) -> ModuleRef {
-        self.body.owner_module
+        self.body.owner_module()
     }
 
     pub fn fallback_module(&self) -> ModuleRef {
-        self.body.fallback_module
+        self.body.fallback_module()
     }
 
     pub fn source(&self) -> BodySource {
-        self.body.source
+        self.body.source()
     }
 
     pub fn source_items(&self) -> &BodySourceItems {
-        &self.body.source_items
+        self.body.source_items()
     }
 
     pub fn param_scope(&self) -> ScopeId {
-        self.body.param_scope
+        self.body.param_scope()
     }
 
     pub fn root_expr(&self) -> ExprId {
-        self.body.root_expr
+        self.body.root_expr()
     }
 
     pub fn params(&self) -> &[BindingId] {
-        &self.body.params
+        self.body.params()
     }
 
     pub fn scopes(&self) -> &[ScopeData] {
-        self.body.scopes.as_slice()
+        self.body.scopes()
     }
 
     pub fn bindings(&self) -> &[BindingData] {
-        self.body.bindings.as_slice()
+        self.body.bindings()
     }
 
     pub fn binding_facts(&self) -> &[BindingFacts] {
@@ -150,23 +68,23 @@ impl ResolvedBodyData {
     }
 
     pub fn pats(&self) -> &[PatData] {
-        self.body.pats.as_slice()
+        self.body.pats()
     }
 
     pub fn statements(&self) -> &[StmtData] {
-        self.body.statements.as_slice()
+        self.body.statements()
     }
 
     pub fn exprs(&self) -> &[ExprData] {
-        self.body.exprs.as_slice()
+        self.body.exprs()
     }
 
     pub(crate) fn scopes_with_ids(&self) -> impl Iterator<Item = (ScopeId, &ScopeData)> {
-        self.body.scopes.iter_with_ids()
+        self.body.scopes_with_ids()
     }
 
     pub(crate) fn exprs_with_ids(&self) -> impl Iterator<Item = (ExprId, &ExprData)> {
-        self.body.exprs.iter_with_ids()
+        self.body.exprs_with_ids()
     }
 
     pub fn expr_facts(&self) -> &[ExprFacts] {
@@ -174,11 +92,11 @@ impl ResolvedBodyData {
     }
 
     pub fn binding(&self, binding: BindingId) -> Option<&BindingData> {
-        self.body.bindings.get(binding)
+        self.body.binding(binding)
     }
 
     pub(crate) fn binding_unchecked(&self, binding: BindingId) -> &BindingData {
-        &self.body.bindings[binding]
+        self.body.binding_unchecked(binding)
     }
 
     pub fn binding_fact(&self, binding: BindingId) -> Option<&BindingFacts> {
@@ -186,42 +104,35 @@ impl ResolvedBodyData {
     }
 
     pub fn pat(&self, pat: PatId) -> Option<&PatData> {
-        self.body.pats.get(pat)
+        self.body.pat(pat)
     }
 
     pub fn scope(&self, scope: ScopeId) -> Option<&ScopeData> {
-        self.body.scopes.get(scope)
+        self.body.scope(scope)
     }
 
     pub fn scope_for_module(&self, body_ref: BodyRef, module: ModuleRef) -> Option<ScopeId> {
-        if module.origin != DefMapRef::Body(body_ref) {
-            return None;
-        }
-
-        // Body DefMaps allocate synthetic scope modules first, in `ScopeId` order. Inline named
-        // modules may have ids after that prefix, so the arena lookup is the invariant check.
-        let scope = ScopeId(module.module.0);
-        self.scope(scope).map(|_| scope)
+        self.body.scope_for_module(body_ref, module)
     }
 
     pub fn source_item(&self, item: ItemTreeId) -> Option<&ItemNode> {
-        self.body.source_items.item(item)
+        self.body.source_item(item)
     }
 
     pub fn statement(&self, statement: StmtId) -> Option<&StmtData> {
-        self.body.statements.get(statement)
+        self.body.statement(statement)
     }
 
     pub(crate) fn statement_unchecked(&self, statement: StmtId) -> &StmtData {
-        &self.body.statements[statement]
+        self.body.statement_unchecked(statement)
     }
 
     pub fn expr(&self, expr: ExprId) -> Option<&ExprData> {
-        self.body.exprs.get(expr)
+        self.body.expr(expr)
     }
 
     pub(crate) fn expr_unchecked(&self, expr: ExprId) -> &ExprData {
-        &self.body.exprs[expr]
+        self.body.expr_unchecked(expr)
     }
 
     pub fn expr_fact(&self, expr: ExprId) -> Option<&ExprFacts> {
@@ -269,77 +180,18 @@ impl ResolvedBodyData {
 
     /// Resolves pending binding slots into final bindings and rewrites every dependent reference.
     pub(crate) fn compact_bindings(&mut self, active: Vec<bool>) {
-        let pending_count = self.body.bindings.len();
-        let mut old_to_new = vec![None; pending_count];
-        let mut new_bindings =
-            Arena::with_capacity(active.iter().filter(|&&active| active).count());
-        let mut new_binding_facts =
-            Arena::with_capacity(active.iter().filter(|&&active| active).count());
-        for (binding_idx, binding_data) in self.body.bindings.iter().cloned().enumerate() {
-            if !active[binding_idx] {
-                continue;
-            }
+        self.body.compact_bindings(&active);
 
-            let new_binding = new_bindings.alloc(binding_data);
+        let mut new_binding_facts = Arena::with_capacity(self.body.bindings().len());
+        for (binding_idx, _) in self.body.bindings().iter().enumerate() {
             let new_facts = new_binding_facts.alloc(BindingFacts::default());
             debug_assert_eq!(
-                new_binding, new_facts,
+                BindingId(binding_idx),
+                new_facts,
                 "binding facts should mirror materialized binding ids",
             );
-            old_to_new[binding_idx] = Some(new_binding);
         }
 
-        // `visible_bindings` stores a count, not an id. The boundary map translates an old pending
-        // count into the number of real bindings that remain visible at the same source point.
-        let mut boundary_map = Vec::with_capacity(pending_count + 1);
-        let mut visible = 0;
-        boundary_map.push(visible);
-        for is_active in &active {
-            if *is_active {
-                visible += 1;
-            }
-            boundary_map.push(visible);
-        }
-
-        // Lowering stored pending ids in many places: scope binding lists, pattern-owned binding
-        // lists, and expression visibility boundaries. They all have to move together or later
-        // path lookup will see a different scope than the pattern tree describes.
-        rewrite_binding_list(&mut self.body.params, &old_to_new);
-        for scope in self.body.scopes.iter_mut() {
-            rewrite_binding_list(&mut scope.bindings, &old_to_new);
-        }
-        for statement in self.body.statements.iter_mut() {
-            if let StmtKind::Let { bindings, .. } = &mut statement.kind {
-                rewrite_binding_list(bindings, &old_to_new);
-            }
-        }
-        for expr in self.body.exprs.iter_mut() {
-            expr.visible_bindings = boundary_map
-                .get(expr.visible_bindings)
-                .copied()
-                .unwrap_or(visible);
-
-            match &mut expr.kind {
-                ExprKind::Let { bindings, .. } | ExprKind::For { bindings, .. } => {
-                    rewrite_binding_list(bindings, &old_to_new);
-                }
-                ExprKind::Closure { params, .. } => {
-                    for param in params {
-                        rewrite_binding_list(&mut param.bindings, &old_to_new);
-                    }
-                }
-                _ => {}
-            }
-        }
-        for pat in self.body.pats.iter_mut() {
-            if let PatKind::Binding { binding, .. } = &mut pat.kind
-                && let Some(old_binding) = *binding
-            {
-                *binding = old_to_new.get(old_binding.0).copied().flatten();
-            }
-        }
-
-        self.body.bindings = new_bindings;
         self.facts.bindings = new_binding_facts;
         self.pending_binding_resolutions.clear();
     }
@@ -352,21 +204,22 @@ impl ResolvedBodyData {
         param_scope: ScopeId,
         root_expr: ExprId,
         params: Vec<BindingId>,
-        mut builder: BodyBuilder,
+        builder: BodyBuilder,
     ) -> Self {
+        let (body, facts, pending_binding_resolutions) = builder.into_body_data(
+            owner,
+            owner_module,
+            fallback_module,
+            source,
+            param_scope,
+            root_expr,
+            params,
+        );
+
         Self {
-            body: BodyData::new(
-                owner,
-                owner_module,
-                fallback_module,
-                source,
-                param_scope,
-                root_expr,
-                params,
-                &mut builder,
-            ),
-            facts: builder.facts,
-            pending_binding_resolutions: builder.pending_binding_resolutions,
+            body,
+            facts,
+            pending_binding_resolutions,
         }
     }
 
@@ -375,19 +228,6 @@ impl ResolvedBodyData {
         self.facts.shrink_to_fit();
         self.pending_binding_resolutions.shrink_to_fit();
     }
-}
-
-fn rewrite_binding_list(bindings: &mut Vec<BindingId>, old_to_new: &[Option<BindingId>]) {
-    let mut rewritten = Vec::with_capacity(bindings.len());
-    for binding in bindings.iter().copied() {
-        let Some(Some(new_binding)) = old_to_new.get(binding.0) else {
-            continue;
-        };
-        if !rewritten.contains(new_binding) {
-            rewritten.push(*new_binding);
-        }
-    }
-    *bindings = rewritten;
 }
 
 /// How a lowered binding slot should be treated before final binding materialization.
@@ -415,6 +255,53 @@ pub(crate) struct BodyBuilder {
 }
 
 impl BodyBuilder {
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn into_body_data(
+        self,
+        owner: BodyOwner,
+        owner_module: ModuleRef,
+        fallback_module: ModuleRef,
+        source: BodySource,
+        param_scope: ScopeId,
+        root_expr: ExprId,
+        params: Vec<BindingId>,
+    ) -> (
+        BodyData,
+        BodyFacts,
+        Arena<BindingId, PendingBindingResolution>,
+    ) {
+        let Self {
+            source_items,
+            scopes,
+            bindings,
+            facts,
+            pending_binding_resolutions,
+            pats,
+            statements,
+            exprs,
+        } = self;
+
+        (
+            BodyData::new(
+                owner,
+                owner_module,
+                fallback_module,
+                source,
+                source_items,
+                param_scope,
+                root_expr,
+                params,
+                scopes,
+                bindings,
+                pats,
+                statements,
+                exprs,
+            ),
+            facts,
+            pending_binding_resolutions,
+        )
+    }
+
     pub(crate) fn alloc_scope(&mut self, parent: Option<ScopeId>) -> ScopeId {
         self.scopes.alloc(ScopeData {
             parent,
