@@ -7,19 +7,19 @@ use rg_ir_model::{
     DefId, DefMapRef, ExprId, FunctionRef, ImplRef, ItemOwner, Path, ScopeId, SemanticItemRef,
     TypePathResolution,
     identity::DeclarationRef,
-    items::{FieldKey, GenericArg as ItemGenericArg, GenericParams, PrimitiveTy},
+    items::{FieldKey, GenericArg as ItemGenericArg, GenericParams},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
-    AutoderefMode, CallArgInference, CallArgMapping, NominalTy, RefMutability,
-    ReferencePeelingCandidates, Ty, TypeSubst, function_generic_shadow_subst,
+    AutoderefMode, CallArgInference, CallArgMapping, NominalTy, ReferencePeelingCandidates, Ty,
+    TypeSubst, function_generic_shadow_subst, ty_for_binary, ty_for_literal, ty_for_unary,
 };
 
 use crate::{
-    ExprBinaryOp, ExprData, ExprUnaryOp,
+    ExprData, ExprUnaryOp,
     ir::resolved::BodyResolution,
-    ir::{ExprKind, ExprWrapperKind, LiteralKind},
+    ir::{ExprKind, ExprWrapperKind},
 };
 
 use super::{
@@ -186,7 +186,7 @@ where
                 op: Some(op),
                 expr: Some(inner),
             } => {
-                let ty = self.unary_ty(op, inner);
+                let ty = ty_for_unary(op, self.pass.body.expr_ty_unchecked(inner));
                 self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Binary {
@@ -194,11 +194,15 @@ where
                 rhs: Some(rhs),
                 op: Some(op),
             } => {
-                let ty = self.binary_ty(op, lhs, rhs);
+                let ty = ty_for_binary(
+                    op,
+                    self.pass.body.expr_ty_unchecked(lhs),
+                    self.pass.body.expr_ty_unchecked(rhs),
+                );
                 self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Literal { kind } => {
-                self.pass.body.set_expr_ty(expr, Self::literal_ty(kind));
+                self.pass.body.set_expr_ty(expr, ty_for_literal(kind));
             }
             ExprKind::While { .. } | ExprKind::For { .. } => {
                 self.pass.body.set_expr_ty(expr, Ty::Unit);
@@ -598,95 +602,6 @@ where
         } else {
             Ty::Unknown
         })
-    }
-
-    fn literal_ty(kind: LiteralKind) -> Ty {
-        match kind {
-            LiteralKind::Bool => Ty::Primitive(PrimitiveTy::Bool),
-            LiteralKind::Char => Ty::Primitive(PrimitiveTy::Char),
-            LiteralKind::Float { primitive_ty } | LiteralKind::Int { primitive_ty } => {
-                primitive_ty.map(Ty::Primitive).unwrap_or(Ty::Unknown)
-            }
-            LiteralKind::String => {
-                Ty::reference(RefMutability::Shared, Ty::Primitive(PrimitiveTy::Str))
-            }
-            LiteralKind::Unknown => Ty::Unknown,
-        }
-    }
-
-    fn unary_ty(&self, op: ExprUnaryOp, inner: ExprId) -> Ty {
-        let ty = self.pass.body.expr_ty_unchecked(inner);
-        match op {
-            ExprUnaryOp::Not => match ty {
-                Ty::Primitive(primitive) if primitive.is_bool() || primitive.is_integral() => {
-                    Ty::Primitive(*primitive)
-                }
-                _ => Ty::Unknown,
-            },
-            ExprUnaryOp::Neg => match ty {
-                Ty::Primitive(primitive) if primitive.is_signed_numeric() => {
-                    Ty::Primitive(*primitive)
-                }
-                _ => Ty::Unknown,
-            },
-            ExprUnaryOp::Deref => Ty::Unknown,
-        }
-    }
-
-    fn binary_ty(&self, op: ExprBinaryOp, lhs: ExprId, rhs: ExprId) -> Ty {
-        let lhs_ty = self.pass.body.expr_ty_unchecked(lhs);
-        let rhs_ty = self.pass.body.expr_ty_unchecked(rhs);
-
-        if op.is_logical() || op.is_comparison() {
-            return Ty::Primitive(PrimitiveTy::Bool);
-        }
-
-        match op {
-            ExprBinaryOp::Add
-            | ExprBinaryOp::Sub
-            | ExprBinaryOp::Mul
-            | ExprBinaryOp::Div
-            | ExprBinaryOp::Rem => {
-                self.symmetric_primitive_op_ty(lhs_ty, rhs_ty, |ty| ty.is_numeric())
-            }
-            ExprBinaryOp::BitAnd | ExprBinaryOp::BitOr | ExprBinaryOp::BitXor => self
-                .symmetric_primitive_op_ty(lhs_ty, rhs_ty, |ty| ty.is_integral() || ty.is_bool()),
-            ExprBinaryOp::Shl | ExprBinaryOp::Shr => self.shift_op_ty(lhs_ty, rhs_ty),
-            ExprBinaryOp::LogicOr
-            | ExprBinaryOp::LogicAnd
-            | ExprBinaryOp::Eq
-            | ExprBinaryOp::NotEq
-            | ExprBinaryOp::Less
-            | ExprBinaryOp::LessEq
-            | ExprBinaryOp::Greater
-            | ExprBinaryOp::GreaterEq => Ty::Primitive(PrimitiveTy::Bool),
-        }
-    }
-
-    fn symmetric_primitive_op_ty(
-        &self,
-        lhs_ty: &Ty,
-        rhs_ty: &Ty,
-        accepts: impl Fn(PrimitiveTy) -> bool,
-    ) -> Ty {
-        match (lhs_ty, rhs_ty) {
-            (Ty::Primitive(lhs), Ty::Primitive(rhs)) if lhs == rhs && accepts(*lhs) => {
-                Ty::Primitive(*lhs)
-            }
-            (Ty::Primitive(lhs), Ty::Unknown) if accepts(*lhs) => Ty::Primitive(*lhs),
-            (Ty::Unknown, Ty::Primitive(rhs)) if accepts(*rhs) => Ty::Primitive(*rhs),
-            _ => Ty::Unknown,
-        }
-    }
-
-    fn shift_op_ty(&self, lhs_ty: &Ty, rhs_ty: &Ty) -> Ty {
-        match (lhs_ty, rhs_ty) {
-            (Ty::Primitive(lhs), Ty::Primitive(rhs)) if lhs.is_integral() && rhs.is_integral() => {
-                Ty::Primitive(*lhs)
-            }
-            (Ty::Primitive(lhs), Ty::Unknown) if lhs.is_integral() => Ty::Primitive(*lhs),
-            _ => Ty::Unknown,
-        }
     }
 
     fn impl_self_subst_for_function(

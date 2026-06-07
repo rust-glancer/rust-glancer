@@ -10,6 +10,7 @@ mod implementation;
 mod item_path;
 mod iteration;
 mod member;
+mod primitive_expr;
 mod ty;
 
 pub use rg_ir_model::items::{
@@ -28,5 +29,6 @@ pub use self::{
     item_path::ItemPathQuery,
     iteration::IterationItemResolver,
     member::{MemberMethodCandidateRef, MemberMethodOrigin, MemberQuery},
+    primitive_expr::{ty_for_binary, ty_for_literal, ty_for_unary},
     ty::{NominalTy, OpaqueTraitBound, Ty, TypeSubst},
 };
