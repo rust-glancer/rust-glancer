@@ -11,12 +11,12 @@
 //! 3. Rewrite every binding reference from pending slot ids to final binding ids.
 
 use rg_ir_model::{
-    BindingId, BodyRef, DefId, DefMapRef, ExprId, ModuleId, ModuleRef, Path, PathSegment, ScopeId,
+    BindingId, DefId, DefMapRef, ExprId, ModuleId, ModuleRef, Path, PathSegment, ScopeId,
     SemanticItemRef, TypeDefId,
     identity::DeclarationRef,
     items::{FieldItem, FieldKey, FieldList, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, NameResolutionFilter};
+use rg_ir_storage::{DefMapSource, ItemStoreSource, NameResolutionFilter};
 use rg_package_store::PackageStoreError;
 use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
@@ -31,7 +31,8 @@ use crate::{
 };
 
 use crate::resolution::{
-    BodyResolutionContext, BodyValuePathResolver, TypeRefUseSite, support::push_unique,
+    BodyResolutionContext, BodyResolutionProviders, BodyValuePathResolver, TypeRefUseSite,
+    support::push_unique,
 };
 
 /// Resolves lowered binding candidates into the final body binding arena.
@@ -40,10 +41,7 @@ use crate::resolution::{
 /// that resolved as consts/statics/unit variants remain visible through their pattern path, not as
 /// fake local bindings.
 pub(super) struct PatternBindingMaterializer<'query, 'body, D, I> {
-    def_maps: &'query D,
-    item_stores: &'query I,
-    semantic_index: &'query ItemLookupIndex,
-    body_ref: BodyRef,
+    providers: BodyResolutionProviders<'query, D, I>,
     body: &'body mut ResolvedBodyData,
 }
 
@@ -53,29 +51,14 @@ where
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
 {
     pub(super) fn new(
-        def_maps: &'query D,
-        item_stores: &'query I,
-        semantic_index: &'query ItemLookupIndex,
-        body_ref: BodyRef,
+        providers: BodyResolutionProviders<'query, D, I>,
         body: &'body mut ResolvedBodyData,
     ) -> Self {
-        Self {
-            def_maps,
-            item_stores,
-            semantic_index,
-            body_ref,
-            body,
-        }
+        Self { providers, body }
     }
 
     fn context<'source>(&'source self) -> BodyResolutionContext<'source, &'source D, &'source I> {
-        BodyResolutionContext::new(
-            self.def_maps,
-            self.item_stores,
-            self.body_ref,
-            &*self.body,
-            Some(self.semantic_index),
-        )
+        self.providers.context(&*self.body)
     }
 
     /// Materializes all pending binding candidates, leaving the body in its final binding shape.
@@ -565,7 +548,7 @@ where
         // Check the body-local lexical module first, then the owner/fallback modules used by
         // ordinary body lookup. This keeps body-local consts visible without losing target items.
         let from = ModuleRef {
-            origin: DefMapRef::Body(self.body_ref),
+            origin: DefMapRef::Body(self.providers.body_ref()),
             module: ModuleId(scope.0),
         };
         let def_maps = self.context().def_map_query();

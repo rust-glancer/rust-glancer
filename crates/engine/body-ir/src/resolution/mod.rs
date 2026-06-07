@@ -11,7 +11,7 @@ mod support;
 pub(crate) use self::{
     pass::BodyResolver,
     query::{BodyTypePathResolver, BodyValuePathResolver, TypeRefUseSite},
-    source::{BodyQuerySource, BodyResolutionContext},
+    source::{BodyQuerySource, BodyResolutionContext, BodyResolutionProviders},
     support::push_unique,
 };
 

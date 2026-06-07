@@ -13,7 +13,7 @@ use crate::{
     ir::{BindingKind, BodySelfParamKind},
 };
 
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
+use crate::resolution::{BodyResolutionContext, BodyResolutionProviders, TypeRefUseSite};
 
 use super::{
     expr::ExprResolver, pattern_binding::PatternBindingMaterializer,
@@ -25,10 +25,7 @@ use super::{
 /// Sibling resolver modules keep their logic in separate files while operating on the same body
 /// facts, so the fields are scoped to `resolution` rather than hidden inside this file.
 pub(crate) struct BodyResolver<'query, 'body, D, I> {
-    pub(super) def_maps: &'query D,
-    pub(super) item_stores: &'query I,
-    pub(super) semantic_index: &'query ItemLookupIndex,
-    pub(super) body_ref: BodyRef,
+    pub(super) providers: BodyResolutionProviders<'query, D, I>,
     pub(super) body: &'body mut ResolvedBodyData,
 }
 
@@ -45,10 +42,12 @@ where
         body: &'body mut ResolvedBodyData,
     ) -> Self {
         Self {
-            def_maps,
-            item_stores,
-            semantic_index,
-            body_ref,
+            providers: BodyResolutionProviders::new(
+                def_maps,
+                item_stores,
+                semantic_index,
+                body_ref,
+            ),
             body,
         }
     }
@@ -56,13 +55,7 @@ where
     pub(super) fn context<'source>(
         &'source self,
     ) -> BodyResolutionContext<'source, &'source D, &'source I> {
-        BodyResolutionContext::new(
-            self.def_maps,
-            self.item_stores,
-            self.body_ref,
-            self.body,
-            Some(self.semantic_index),
-        )
+        self.providers.context(self.body)
     }
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
@@ -94,14 +87,7 @@ where
     }
 
     fn materialize_pattern_bindings(&mut self) -> Result<(), PackageStoreError> {
-        PatternBindingMaterializer::new(
-            self.def_maps,
-            self.item_stores,
-            self.semantic_index,
-            self.body_ref,
-            self.body,
-        )
-        .materialize()
+        PatternBindingMaterializer::new(self.providers, self.body).materialize()
     }
 
     fn resolve_bindings(&mut self) -> Result<(), PackageStoreError> {

@@ -341,7 +341,7 @@ where
             TypePathResolution::TypeDefs(types) => {
                 let types = types
                     .into_iter()
-                    .filter(|ty| ty.origin == DefMapRef::Body(self.pass.body_ref))
+                    .filter(|ty| ty.origin == DefMapRef::Body(self.pass.providers.body_ref()))
                     .collect::<Vec<_>>();
                 if !types.is_empty() {
                     return Ok((
