@@ -304,6 +304,65 @@ pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
 }
 
 #[test]
+fn infers_indexing_through_references() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_ref_index_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(slice: &[u8], array_ref: &[bool; 3], nested_slice: &&[u16]) {
+    let slice_item = slice[0];
+    let array_item = array_ref[0];
+    let nested_item = nested_slice[0];
+}
+"#,
+        expect![[r#"
+            package body_ref_index_fixture
+
+            body_ref_index_fixture [lib]
+            body b0 fn body_ref_index_fixture[lib]::crate::use_it @ 1:1-5:2
+            scopes
+            - s0 parent <none>: v0, v1, v2
+            - s1 parent s0: v3, v4, v5
+            bindings
+            - v0 param slice `slice`: &[u8] => &[u8] @ 1:15-1:20
+            - v1 param array_ref `array_ref`: &[bool; 3] => &[bool; 3] @ 1:29-1:38
+            - v2 param nested_slice `nested_slice`: &&[u16] => &&[u16] @ 1:52-1:64
+            - v3 let slice_item `slice_item` => u8 @ 2:9-2:19
+            - v4 let array_item `array_item` => bool @ 3:9-3:19
+            - v5 let nested_item `nested_item` => u16 @ 4:9-4:20
+            body
+            expr e9 block s1 => () @ 1:75-5:2
+              stmt s0 let v3 @ 2:5-2:31
+                initializer
+                  expr e2 index => u8 @ 2:22-2:30
+                    base
+                      expr e0 path slice -> local v0 => &[u8] @ 2:22-2:27
+                    index
+                      expr e1 literal int `0` => i32 @ 2:28-2:29
+              stmt s1 let v4 @ 3:5-3:35
+                initializer
+                  expr e5 index => bool @ 3:22-3:34
+                    base
+                      expr e3 path array_ref -> local v1 => &[bool; 3] @ 3:22-3:31
+                    index
+                      expr e4 literal int `0` => i32 @ 3:32-3:33
+              stmt s2 let v5 @ 4:5-4:39
+                initializer
+                  expr e8 index => u16 @ 4:23-4:38
+                    base
+                      expr e6 path nested_slice -> local v2 => &&[u16] @ 4:23-4:35
+                    index
+                      expr e7 literal int `0` => i32 @ 4:36-4:37
+        "#]],
+    );
+}
+
+#[test]
 fn infers_scalar_literals_and_builtin_operator_results() {
     check_project_body_ir(
         r#"

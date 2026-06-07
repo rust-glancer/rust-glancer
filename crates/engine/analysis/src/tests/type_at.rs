@@ -820,6 +820,41 @@ pub fn use_it(pair: (u8, bool), array: [u8; 3], slice: &[u8], value: u8) {
 }
 
 #[test]
+fn returns_index_types_through_references() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_ref_index_type_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(slice: &[u8], array_ref: &[bool; 3], nested_slice: &&[u16]) {
+    let slice_item = slice[0]$type_slice_item$;
+    let array_item = array_ref[0]$type_array_item$;
+    let nested_item = nested_slice[0]$type_nested_item$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("slice reference index", "type_slice_item"),
+            AnalysisQuery::ty("array reference index", "type_array_item"),
+            AnalysisQuery::ty("nested slice reference index", "type_nested_item"),
+        ],
+        expect![[r#"
+            slice reference index
+            - u8
+
+            array reference index
+            - bool
+
+            nested slice reference index
+            - u16
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_structural_slice_inherent_method_types() {
     check_analysis_queries(
         r#"

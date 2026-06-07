@@ -16,7 +16,8 @@ use rg_item_tree::{FieldKey, GenericArg as ItemGenericArg};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
     Autoderef, AutoderefMode, CallArgInference, CallArgMapping, ImplMatcher, ItemPathQuery,
-    NominalTy, PrimitiveTy, Ty, TypeSubst, function_generic_shadow_subst,
+    NominalTy, PrimitiveTy, ReferencePeelingCandidates, Ty, TypeSubst,
+    function_generic_shadow_subst,
 };
 
 use crate::{
@@ -426,10 +427,17 @@ where
             return Ty::Unknown;
         };
 
-        match &self.body.exprs[base].ty {
-            Ty::Array { inner, .. } | Ty::Slice(inner) => inner.as_ref().clone(),
-            _ => Ty::Unknown,
+        // Indexing is reference-transparent for the structural array/slice cases we model here:
+        // `&[T]` and `&[T; N]` should behave like their inner container. Keep this deliberately
+        // narrower than method lookup: no trait deref, no `Index` trait, and no container coercions.
+        for candidate in ReferencePeelingCandidates::new(&self.body.exprs[base].ty) {
+            match candidate.ty() {
+                Ty::Array { inner, .. } | Ty::Slice(inner) => return inner.as_ref().clone(),
+                _ => {}
+            }
         }
+
+        Ty::Unknown
     }
 
     pub(super) fn resolve_nonlocal_path_expr(
