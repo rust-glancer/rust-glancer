@@ -6,7 +6,7 @@ use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
 use rg_def_map::{DefMapDb, DefMapFinalizationStats, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_memsize::MemoryRecorder;
-use rg_package_store::{PackageEntry, PackageStore};
+use rg_package_store::{PackageEntry, PackageStore, PackageSubset};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
 use rg_text::PackageNameInterners;
@@ -22,6 +22,11 @@ use crate::{
 
 use super::cache_probe::StartupCacheProbe;
 
+/// Phase payloads built for one project snapshot.
+///
+/// `ParseDb` keeps package slots, file ids, source paths, and line indexes resident for every
+/// package. The heavier retained phases may keep a package resident or leave it offloaded, but
+/// DefMap, Semantic IR, and Body IR must agree on that package slot's backing artifact.
 pub(super) struct BuiltPhases {
     pub(super) package_source_fingerprints: Vec<Option<Fingerprint>>,
     pub(super) names: PackageNameInterners,
@@ -147,7 +152,7 @@ pub(super) fn build(
     profiler.record_cache_probe(build_plan.cache_probe.clone());
     let process_memory = profiler.sample_process_memory();
     let parse_bytes = profiler.measure(&parse);
-    let build_plan_bytes = profiler.measure(&build_plan.packages);
+    let build_plan_bytes = profiler.measure(&build_plan.source_packages);
     profiler.record(
         "after cache probe",
         build_plan_bytes,
@@ -156,12 +161,12 @@ pub(super) fn build(
     );
     stage_memory = stage_memory
         .parse(&parse)
-        .build_plan(&build_plan.packages)
+        .build_plan(&build_plan.source_packages)
         .capture(profiler, BuildProfileStage::CacheProbe);
 
     let mut names = PackageNameInterners::new(parse.package_count());
 
-    let package_indices = build_plan.package_indices_to_build();
+    let package_indices = build_plan.source_package_indices();
     let item_tree = ItemTreeDb::build_packages(&mut parse, &package_indices, &mut names)
         .context("while attempting to build item tree db")?;
     let process_memory = profiler.sample_process_memory();
@@ -177,7 +182,7 @@ pub(super) fn build(
     stage_memory = stage_memory
         .names(&names)
         .parse(&parse)
-        .build_plan(&build_plan.packages)
+        .build_plan(&build_plan.source_packages)
         .item_tree(&item_tree)
         .capture(profiler, BuildProfileStage::ItemTree);
 
@@ -198,7 +203,7 @@ pub(super) fn build(
     stage_memory = stage_memory
         .names(&names)
         .parse(&parse)
-        .build_plan(&build_plan.packages)
+        .build_plan(&build_plan.source_packages)
         .item_tree(&item_tree)
         .capture(profiler, BuildProfileStage::ItemTreeSyntaxEviction);
 
@@ -222,7 +227,7 @@ pub(super) fn build(
     stage_memory = stage_memory
         .names(&names)
         .parse(&parse)
-        .build_plan(&build_plan.packages)
+        .build_plan(&build_plan.source_packages)
         .item_tree(&item_tree)
         .source_fingerprints(&package_source_fingerprints)
         .capture(profiler, BuildProfileStage::CacheSourceFingerprints);
@@ -232,8 +237,10 @@ pub(super) fn build(
         cache_store.clone(),
         package_source_fingerprints.clone(),
     );
-    let rebuild_subset =
-        subset::rebuild_packages_with_visible_dependencies(workspace, &build_plan.packages);
+    let rebuild_subset = build_plan.source_rebuild_subset(workspace);
+    // Each retained phase starts as an all-offloaded store. Source-built packages are then
+    // replaced in every phase DB; omitted packages remain cache-backed and are loaded lazily
+    // through the same package artifact whenever a dependency query needs them.
     let baseline_def_map =
         DefMapDb::from_package_store(offloaded_package_store(parse.package_count()));
     let old_def_map_txn =
@@ -243,7 +250,7 @@ pub(super) fn build(
         workspace,
         &parse,
         &item_tree,
-        &build_plan.packages,
+        &build_plan.source_packages,
         &mut names,
     );
     let def_map = match finalization_stats {
@@ -273,7 +280,7 @@ pub(super) fn build(
     stage_memory = stage_memory
         .names(&names)
         .parse(&parse)
-        .build_plan(&build_plan.packages)
+        .build_plan(&build_plan.source_packages)
         .item_tree(&item_tree)
         .source_fingerprints(&package_source_fingerprints)
         .def_map(&def_map)
@@ -285,7 +292,7 @@ pub(super) fn build(
         .package_rebuilder(
             &item_tree,
             &def_map,
-            &build_plan.packages,
+            &build_plan.source_packages,
             loaders.def_map.clone(),
             loaders.semantic_ir.clone(),
             &rebuild_subset,
@@ -312,7 +319,7 @@ pub(super) fn build(
     stage_memory = stage_memory
         .names(&names)
         .parse(&parse)
-        .build_plan(&build_plan.packages)
+        .build_plan(&build_plan.source_packages)
         .item_tree(&item_tree)
         .source_fingerprints(&package_source_fingerprints)
         .def_map(&def_map)
@@ -341,7 +348,7 @@ pub(super) fn build(
     stage_memory = stage_memory
         .names(&names)
         .parse(&parse)
-        .build_plan(&build_plan.packages)
+        .build_plan(&build_plan.source_packages)
         .source_fingerprints(&package_source_fingerprints)
         .def_map(&def_map)
         .semantic_ir(&semantic_ir)
@@ -354,7 +361,7 @@ pub(super) fn build(
             &parse,
             &def_map,
             &semantic_ir,
-            &build_plan.packages,
+            &build_plan.source_packages,
             &mut names,
             loaders.def_map,
             loaders.semantic_ir,
@@ -383,7 +390,7 @@ pub(super) fn build(
     stage_memory = stage_memory
         .names(&names)
         .parse(&parse)
-        .build_plan(&build_plan.packages)
+        .build_plan(&build_plan.source_packages)
         .source_fingerprints(&package_source_fingerprints)
         .def_map(&def_map)
         .semantic_ir(&semantic_ir)
@@ -431,10 +438,10 @@ pub(super) fn build(
 
 /// Source-build subset chosen after optional startup cache probing.
 ///
-/// Packages omitted from `packages` already have matching offloaded artifacts, so later build
-/// phases can read them lazily through package stores instead of lowering them from source.
+/// Packages omitted from `source_packages` already have matching offloaded artifacts, so later
+/// build phases can read them lazily through package stores instead of lowering them from source.
 struct PackageBuildPlan {
-    packages: Vec<PackageSlot>,
+    source_packages: Vec<PackageSlot>,
     cache_probe: Option<CacheProbeProfile>,
 }
 
@@ -456,12 +463,12 @@ impl PackageBuildPlan {
         let package_count = parse.package_count();
         if !startup_cache_load.is_enabled() {
             return Self {
-                packages: (0..package_count).map(PackageSlot).collect(),
+                source_packages: (0..package_count).map(PackageSlot).collect(),
                 cache_probe: None,
             };
         }
 
-        let mut packages = Vec::new();
+        let mut source_packages = Vec::new();
         let mut cache_probe = StartupCacheProbe::new(
             package_count,
             body_ir_policy,
@@ -475,21 +482,28 @@ impl PackageBuildPlan {
         for package_idx in 0..package_count {
             let package = PackageSlot(package_idx);
             if cache_probe.should_build_from_source(package) {
-                packages.push(package);
+                source_packages.push(package);
             }
         }
 
         Self {
-            packages,
+            source_packages,
             cache_probe: cache_probe.finish(),
         }
     }
 
-    fn package_indices_to_build(&self) -> Vec<usize> {
-        self.packages
+    fn source_package_indices(&self) -> Vec<usize> {
+        self.source_packages
             .iter()
             .map(|package| package.0)
             .collect::<Vec<_>>()
+    }
+
+    fn source_rebuild_subset(&self, workspace: &WorkspaceMetadata) -> PackageSubset {
+        // Source-built packages can resolve names through visible dependencies, including packages
+        // that were startup-cache hits. The subset tells lazy package stores which offloaded
+        // packages are valid reads during this coherent build.
+        subset::rebuild_packages_with_visible_dependencies(workspace, &self.source_packages)
     }
 }
 

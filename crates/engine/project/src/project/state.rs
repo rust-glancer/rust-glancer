@@ -18,6 +18,11 @@ use crate::{
 use super::{stats::ProjectStats, txn::ProjectReadTxn};
 
 /// Fully built project pipeline state.
+///
+/// Package slots are the coherence key across resident and offloaded phases. Parse metadata stays
+/// resident for every package so source locations remain addressable, while DefMap, Semantic IR,
+/// and Body IR may store a package either resident in memory or offloaded behind the same cache
+/// artifact.
 #[derive(Debug, Clone, rg_memsize::MemorySize)]
 pub(crate) struct ProjectState {
     pub(crate) workspace: WorkspaceMetadata,
