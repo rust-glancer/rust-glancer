@@ -13,7 +13,7 @@ pub use rg_ir_model::{
 
 pub use self::{
     body::ResolvedBodyData,
-    resolved::{BindingFacts, BodyResolution, ExprFacts},
+    resolved::{BindingFacts, ExprFacts},
 };
 
 pub(crate) use self::body::{BodyBuilder, PendingBindingResolution};

@@ -38,9 +38,6 @@ pub use self::{
     },
 };
 
-// TODO: Shouldn't be exposed normally; remove after analysis owns resolver projection.
-pub use self::ir::BodyResolution;
-
 /// One package-local source file whose function bodies should be lowered during a partial rebuild.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct BodyIrFile {

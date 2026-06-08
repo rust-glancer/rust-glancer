@@ -2,11 +2,11 @@ use std::fmt::Write as _;
 
 use expect_test::Expect;
 
+use crate::ir::resolved::BodyResolution;
 use crate::{
-    BindingData, BodyIrBuildPolicy, BodyIrReadTxn, BodyOwner, BodyResolution, BodySource,
-    ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData,
-    PatBindingMode, PatData, PatKind, ResolvedBodyData, StmtKind, TargetBodiesStatus,
-    testonly::BodyIrFixture,
+    BindingData, BodyIrBuildPolicy, BodyIrReadTxn, BodyOwner, BodySource, ClosureCapture,
+    ClosureKind, ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode,
+    PatData, PatKind, ResolvedBodyData, StmtKind, TargetBodiesStatus, testonly::BodyIrFixture,
 };
 use rg_ir_model::items::FieldItem;
 use rg_ir_model::{

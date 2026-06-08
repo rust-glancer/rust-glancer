@@ -112,9 +112,9 @@ impl<'a, 'db> TyView<'a, 'db> {
         let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(Ty::Unknown);
         };
-        let (_, ty) = BodyResolutionContext::new(self.db, self.db, body_ref, body)
+        let ty = BodyResolutionContext::new(self.db, self.db, body_ref, body)
             .value_paths()
-            .resolve_nonlocal_path_expr(scope, path)?;
+            .resolve_nonlocal_path_ty(scope, path)?;
         Ok(ty)
     }
 

@@ -51,7 +51,25 @@ where
         Self { context }
     }
 
-    pub fn resolve_nonlocal_path_expr(
+    pub fn resolve_nonlocal_path_declarations(
+        &self,
+        scope: ScopeId,
+        path: &Path,
+    ) -> Result<Vec<DeclarationRef>, PackageStoreError> {
+        let (resolution, _) = self.resolve_nonlocal_path_expr(scope, path)?;
+        Ok(resolution.declarations(self.context.body_ref()))
+    }
+
+    pub fn resolve_nonlocal_path_ty(
+        &self,
+        scope: ScopeId,
+        path: &Path,
+    ) -> Result<Ty, PackageStoreError> {
+        let (_, ty) = self.resolve_nonlocal_path_expr(scope, path)?;
+        Ok(ty)
+    }
+
+    pub(crate) fn resolve_nonlocal_path_expr(
         &self,
         scope: ScopeId,
         path: &Path,

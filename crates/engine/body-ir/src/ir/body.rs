@@ -4,6 +4,7 @@ use rg_arena::Arena;
 use rg_ir_model::{
     BindingData, BindingId, BodyData, BodyOwner, BodyRef, BodySource, BodySourceItems, ExprData,
     ExprId, FunctionRef, ModuleRef, PatData, PatId, ScopeData, ScopeId, StmtData, StmtId,
+    identity::DeclarationRef,
     items::{ItemNode, ItemTreeId},
 };
 use rg_memsize::MemorySize;
@@ -141,6 +142,12 @@ impl ResolvedBodyData {
 
     pub fn expr_ty(&self, expr: ExprId) -> Option<&rg_ty::Ty> {
         self.expr_fact(expr).map(|facts| &facts.ty)
+    }
+
+    pub fn expr_declarations(&self, body_ref: BodyRef, expr: ExprId) -> Vec<DeclarationRef> {
+        self.expr_fact(expr)
+            .map(|facts| facts.resolution.declarations(body_ref))
+            .unwrap_or_default()
     }
 
     pub(crate) fn expr_ty_unchecked(&self, expr: ExprId) -> &rg_ty::Ty {
