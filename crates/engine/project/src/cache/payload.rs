@@ -7,13 +7,13 @@ use rg_body_ir::PackageBodies;
 use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_parse::PackageParseSnapshot;
 use rg_semantic_ir::PackageIr;
+use rg_std::MemorySize;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::header::PackageCacheHeader;
 
 /// One package artifact containing every retained analysis phase we currently cache.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct PackageCacheArtifact {
     pub header: PackageCacheHeader,
     pub payload: PackageCachePayload,
@@ -26,9 +26,7 @@ impl PackageCacheArtifact {
 }
 
 /// Retained package data stored together to avoid mismatched phase fragments.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct PackageCachePayload {
     pub parse: PackageParseSnapshot,
     pub def_map: DefMapPackage,

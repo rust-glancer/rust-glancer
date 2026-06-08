@@ -9,13 +9,14 @@ use crate::{
     PackageIr, SemanticIrReadTxn, SemanticIrStats,
     build::{SemanticIrDbBuilder, SemanticIrDbPackageRebuilder},
 };
+use rg_std::MemorySize;
 
 /// Semantic item graph for all analyzed packages and targets.
 ///
 /// Semantic IR is the signature layer: it keeps named items, fields, impl headers, function
 /// signatures, and enough resolution metadata to answer LSP-shaped questions without parsing AST
 /// again. Bodies live in `rg_body_ir`; this layer intentionally stops at item/signature facts.
-#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct SemanticIrDb {
     packages: PackageStore<PackageIr>,
 }

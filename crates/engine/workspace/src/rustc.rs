@@ -1,10 +1,10 @@
 use std::process::Command;
 
 use rg_cfg_eval::CfgOptions;
-use rg_memsize::MemorySize;
 use serde::{Deserialize, Serialize};
 
 use crate::{WorkspaceMetadataError, WorkspaceMetadataResult};
+use rg_std::MemorySize;
 
 /// Concrete rustc target triple used for Cargo filtering and cfg probing.
 #[derive(

@@ -1,7 +1,7 @@
 use crate::items::{ItemNode, ItemTreeId, ItemTreeRef};
 use rg_arena::Arena;
-use rg_memsize::MemorySize;
 use rg_parse::{FileId, Span};
+use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::BodyRef;
@@ -113,9 +113,7 @@ impl From<ItemTreeRef> for ItemSource {
 }
 
 /// Item-tree-shaped payload retained for one declarative macro expansion.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct GeneratedSourceData {
     pub origin_file_id: FileId,
     pub origin_span: Span,

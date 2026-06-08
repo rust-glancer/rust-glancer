@@ -2,13 +2,13 @@ use std::fmt;
 
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_memsize::MemorySize;
 use rg_text::Name;
 
 use crate::{
     TargetRef,
     items::{TypePath, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind},
 };
+use rg_std::MemorySize;
 
 /// Structured path used by def-map path resolution queries.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]

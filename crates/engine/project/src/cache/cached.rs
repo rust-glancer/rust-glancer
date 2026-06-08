@@ -4,6 +4,7 @@
 //! the subset of workspace metadata that affects artifact selection instead of retaining
 //! Cargo/workspace transport types in the cache format.
 
+use rg_std::MemorySize;
 use std::path::Path;
 
 use rg_cfg_eval::CfgOptions;
@@ -14,17 +15,7 @@ use super::{Fingerprint, fingerprint};
 
 /// Snapshot-local package slot stored in cache metadata.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    SchemaRead,
-    SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, SchemaRead, SchemaWrite, MemorySize,
 )]
 #[memsize(leaf)]
 pub struct CachedPackageSlot(pub u64);
@@ -37,15 +28,7 @@ impl CachedPackageSlot {
 
 /// Stable Cargo package id text stored in cache metadata.
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    derive_more::Display,
-    SchemaRead,
-    SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 #[display("{_0}")]
 pub struct CachedPackageId(#[memsize(inline)] pub(crate) String);
@@ -58,15 +41,7 @@ impl CachedPackageId {
 
 /// UTF-8 path text stored in cache metadata.
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    derive_more::Display,
-    SchemaRead,
-    SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 #[display("{_0}")]
 pub struct CachedPath(#[memsize(inline)] pub(crate) String);
@@ -92,7 +67,7 @@ impl CachedPath {
     derive_more::Display,
     SchemaRead,
     SchemaWrite,
-    rg_memsize::MemorySize,
+    MemorySize,
 )]
 #[memsize(leaf)]
 pub enum CachedPackageSource {
@@ -140,7 +115,7 @@ impl From<PackageSource> for CachedPackageSource {
     derive_more::Display,
     SchemaRead,
     SchemaWrite,
-    rg_memsize::MemorySize,
+    MemorySize,
 )]
 #[memsize(leaf)]
 pub enum CachedRustEdition {
@@ -167,15 +142,7 @@ impl From<RustEdition> for CachedRustEdition {
 
 /// Target kind stored in cache metadata.
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    derive_more::Display,
-    SchemaRead,
-    SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 pub enum CachedTargetKind {
     #[display("lib")]
@@ -271,7 +238,7 @@ impl CachedCfgKeyValue {
 }
 
 /// Cached view of one package's artifact-selecting metadata.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct CachedPackage {
     pub package: CachedPackageSlot,
     pub package_id: CachedPackageId,
@@ -296,7 +263,7 @@ impl CachedPackage {
 }
 
 /// Target metadata that can affect package-local analysis artifacts.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct CachedTarget {
     pub name: String,
     pub kind: CachedTargetKind,
@@ -321,7 +288,7 @@ impl CachedTarget {
 }
 
 /// Dependency edge metadata that can affect package-local path resolution.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct CachedDependency {
     pub package_id: CachedPackageId,
     pub name: String,

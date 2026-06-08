@@ -9,6 +9,7 @@ use std::{
     ops::{Index, IndexMut},
     slice,
 };
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Stable typed index into an arena.
 ///
@@ -68,7 +69,7 @@ macro_rules! arena_id {
 }
 
 /// Mutable dense arena used while lowering/building a phase.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Arena<Id, T> {
     items: Vec<T>,
     _marker: PhantomData<fn(Id) -> Id>,
@@ -312,7 +313,7 @@ impl<'a, Id, T> IntoIterator for &'a FrozenArena<Id, T> {
 
 #[cfg(feature = "memsize")]
 mod memsize {
-    use rg_memsize::{MemoryRecorder, MemorySize};
+    use rg_std::{MemoryRecorder, MemorySize};
 
     use crate::{Arena, FrozenArena};
 
@@ -421,7 +422,7 @@ mod tests {
     fn records_arena_memory_without_losing_container_shape() {
         use std::mem;
 
-        use rg_memsize::{MemoryRecordKind, MemoryRecorder, MemorySize};
+        use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize};
 
         let mut arena = Arena::<ExprId, String>::with_capacity(2);
         arena.alloc("user".to_string());
@@ -459,7 +460,7 @@ mod tests {
     fn records_frozen_arena_without_spare_capacity() {
         use std::mem;
 
-        use rg_memsize::{MemoryRecordKind, MemoryRecorder, MemorySize};
+        use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize};
 
         let mut arena = Arena::<ExprId, String>::new();
         arena.alloc("user".to_string());

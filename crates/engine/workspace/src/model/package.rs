@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use rg_cfg_eval::CfgOptions;
-use rg_memsize::MemorySize;
 
 use crate::SysrootCrate;
+use rg_std::MemorySize;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::{dependency::PackageDependency, edition::RustEdition, target::Target};
 
@@ -23,17 +24,7 @@ impl PackageId {
 /// Slots are dense and snapshot-local. Rebuild code must rebuild the whole project when Cargo
 /// metadata changes package ordering or membership, so analysis IDs never cross metadata graphs.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    PartialOrd,
-    Ord,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    MemorySize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, SchemaRead, SchemaWrite, MemorySize,
 )]
 #[memsize(leaf)]
 pub struct PackageSlot(pub usize);

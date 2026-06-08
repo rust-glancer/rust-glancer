@@ -1,9 +1,9 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_memsize::MemorySize;
 use rg_parse::Span;
 
 use crate::{BindingId, ExprId, PatId, items::FieldKey};
+use rg_std::MemorySize;
 
 use super::{BodyPath, BodySource, LiteralKind, RecordFieldSyntax};
 

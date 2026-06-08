@@ -1,7 +1,8 @@
+use rg_std::MemorySize;
 use std::path::PathBuf;
 
 /// Normalized target metadata with one target kind per target.
-#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct Target {
     pub name: String,
     pub kind: TargetKind,
@@ -12,7 +13,7 @@ pub struct Target {
 ///
 /// Analysis recognizes a small set of target kinds directly. Unknown or less common kinds are kept
 /// as stable display strings instead of becoming special model variants.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, MemorySize)]
 pub enum TargetKind {
     #[display("lib")]
     Lib,

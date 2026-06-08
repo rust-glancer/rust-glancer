@@ -3,10 +3,10 @@ use wincode::{SchemaRead, SchemaWrite};
 use rg_arena::Arena;
 use rg_ir_model::BodyId;
 use rg_ir_storage::{BodyLocalItems, DefMap, ItemStore};
-use rg_memsize::MemorySize;
 use rg_parse::TargetId;
 
 use crate::ir::body::ResolvedBodyData;
+use rg_std::MemorySize;
 
 /// Lowered bodies for all targets inside one parsed package.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]

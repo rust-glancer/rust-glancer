@@ -1,12 +1,7 @@
+use rg_std::MemorySize;
+use wincode::{SchemaRead, SchemaWrite};
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 pub enum VisibilityLevel {
     #[display("private")]

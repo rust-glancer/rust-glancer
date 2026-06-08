@@ -1,11 +1,10 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_memsize::MemorySize;
-
 use crate::{
     BindingId, ExprId, PatId, ScopeId,
     items::{ItemTreeId, TypeRef},
 };
+use rg_std::MemorySize;
 
 use super::BodySource;
 

@@ -4,9 +4,9 @@ use std::{
 };
 
 use rg_cfg_eval::CfgOptions;
-use rg_memsize::MemorySize;
 
 use crate::{SysrootCrate, SysrootSources};
+use rg_std::MemorySize;
 
 use super::{
     dependency::PackageDependency,

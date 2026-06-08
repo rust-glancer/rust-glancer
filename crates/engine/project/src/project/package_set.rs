@@ -1,6 +1,7 @@
 use rg_body_ir::BodyIrFile;
 use rg_def_map::PackageSlot;
 use rg_package_store::PackageSubset;
+use rg_std::MemorySize;
 use rg_workspace::WorkspaceMetadata;
 
 use super::subset;
@@ -10,7 +11,7 @@ use super::subset;
 /// The durable phase stores move by package slot, while item-tree construction still wants raw
 /// package indices. Keeping both projections here prevents project lifecycle code from growing its
 /// own subtly different package-set plumbing.
-#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub(super) struct PhasePackageSet {
     packages: Vec<PackageSlot>,
 }

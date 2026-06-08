@@ -1,7 +1,7 @@
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{ConstRef, FunctionRef, StaticRef, identity::DeclarationRef};
-use rg_memsize::MemorySize;
+use rg_std::MemorySize;
 
 /// Semantic item that owns a lowered expression body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]

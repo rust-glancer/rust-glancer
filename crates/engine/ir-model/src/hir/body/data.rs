@@ -1,11 +1,11 @@
 use rg_arena::Arena;
-use rg_memsize::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     BindingId, BodyRef, DefMapRef, ExprId, ModuleRef, PatId, ScopeId, StmtId,
     items::{ItemNode, ItemTreeId},
 };
+use rg_std::MemorySize;
 
 use super::{
     BindingData, BodyOwner, BodySource, BodySourceItems, ExprData, ExprKind, PatData, PatKind,

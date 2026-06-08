@@ -1,12 +1,12 @@
-use rg_memsize::Shrink;
+use rg_std::Shrink;
 use rg_text::Name;
 
 use crate::Ty;
+use rg_std::MemorySize;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Generic argument as understood by the shared type vocabulary.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum GenericArg {
     Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")] Box<Ty>),
     Lifetime(String),

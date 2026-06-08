@@ -12,9 +12,10 @@ use crate::{
     DefMapReadTxn, PackageSlot,
     build::{DefMapDbBuilder, DefMapDbPackageRebuilder},
 };
+use rg_std::MemorySize;
 
 /// Frozen def maps for all parsed packages and targets.
-#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct DefMapDb {
     packages: PackageStore<PackageDefMaps>,
 }
@@ -166,7 +167,7 @@ impl DefMapDbMutator<'_> {
 }
 
 /// Coarse totals for reporting that the DefMap phase produced useful data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 pub struct DefMapStats {
     pub target_count: usize,
     pub module_count: usize,

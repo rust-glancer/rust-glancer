@@ -8,6 +8,8 @@ use rg_ir_model::{
         TypeAliasData, UnionData,
     },
 };
+use rg_std::MemorySize;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::{SemanticItemView, view::SemanticItemData};
 
@@ -80,9 +82,7 @@ impl ItemStoreBuilder {
 ///
 /// Semantic ids are dense indexes into these vectors. Keeping all item families in one store lets
 /// lowering allocate ids cheaply while the public query surface exposes stable typed references.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ItemStore {
     // DefMap this item store corresponds to.
     origin: DefMapRef,

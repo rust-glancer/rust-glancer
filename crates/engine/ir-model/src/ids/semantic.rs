@@ -1,9 +1,9 @@
-use rg_memsize::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::ModuleRef;
 use crate::declare_id;
 use crate::ids::def_map::DefMapRef;
+use rg_std::MemorySize;
 
 declare_id! {
     pub struct StructId;

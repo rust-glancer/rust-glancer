@@ -1,5 +1,5 @@
 [package]
-name = "rg_memsize"
+name = "rg_std"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,12 +12,12 @@ description.workspace = true
 
 [features]
 default = ["derive"]
-derive = ["dep:rg_memsize_derive"]
+derive = ["dep:rg_std_derive"]
 ls_types = ["dep:ls_types"]
 
 [dependencies]
 ls_types = { workspace = true, optional = true }
-rg_memsize_derive = { workspace = true, optional = true }
+rg_std_derive = { workspace = true, optional = true }
 
 [[test]]
 name = "derive"

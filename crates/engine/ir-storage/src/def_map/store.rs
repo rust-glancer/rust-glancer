@@ -1,4 +1,6 @@
+use rg_std::MemorySize;
 use std::collections::HashMap;
+use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
 use rg_ir_model::{
@@ -13,16 +15,7 @@ use super::{
     module::ModuleData,
 };
 
-#[derive(
-    Debug,
-    Default,
-    Clone,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 struct DefMapData {
     modules: Arena<ModuleId, ModuleData>,
     local_defs: Arena<LocalDefId, LocalDefData>,
@@ -179,7 +172,7 @@ impl<'a> PartialDefMap<'a> {
 /// each body function has its own defmap that tracks the body-local items.
 /// While functions are not really modules, they work similarly, and we model
 /// them as if each scope is a module.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct DefMap {
     /// Ref to this defmap, which can be used to emit correct refs.
     own_ref: DefMapRef,
@@ -294,10 +287,10 @@ impl DefMap {
     }
 }
 
-impl rg_memsize::MemorySize for DefMap {
-    fn record_memory_children(&self, recorder: &mut rg_memsize::MemoryRecorder) {
+impl MemorySize for DefMap {
+    fn record_memory_children(&self, recorder: &mut rg_std::MemoryRecorder) {
         recorder.scope("data", |recorder| {
-            rg_memsize::MemorySize::record_memory_children(&self.data, recorder);
+            MemorySize::record_memory_children(&self.data, recorder);
         });
     }
 }

@@ -1,8 +1,8 @@
 use std::{collections::BTreeMap, marker::PhantomData, mem};
 
-use rg_memsize::{MemoryRecordKind, MemoryRecorder, MemorySize};
+use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize};
 
-#[derive(rg_memsize::MemorySize)]
+#[derive(MemorySize)]
 #[allow(dead_code)]
 struct ProjectMemory {
     name: String,
@@ -29,7 +29,7 @@ fn derive_records_struct_fields_under_field_scopes() {
     assert!(!totals.keys().any(|path| path.contains("scratch")));
 }
 
-#[derive(rg_memsize::MemorySize)]
+#[derive(MemorySize)]
 enum Resolution {
     Local(String),
     Pair {
@@ -82,7 +82,7 @@ fn derive_supports_field_and_variant_scoping_overrides() {
     assert_eq!(totals.get("resolution.unknown.payload"), Some(&3));
 }
 
-#[derive(rg_memsize::MemorySize)]
+#[derive(MemorySize)]
 #[memsize(leaf)]
 #[allow(dead_code)]
 struct LeafId(String);
@@ -100,21 +100,21 @@ fn derive_leaf_records_no_children() {
     assert_eq!(recorder.total_bytes(), mem::size_of::<LeafId>());
 }
 
-#[derive(rg_memsize::MemorySize)]
+#[derive(MemorySize)]
 struct GenericRecord<T> {
     value: Option<T>,
     #[memsize(skip)]
     marker: PhantomData<T>,
 }
 
-#[derive(rg_memsize::MemorySize)]
+#[derive(MemorySize)]
 #[memsize(no_auto_bound)]
 struct CustomGenericRecord<T> {
     #[memsize(with = "record_custom_generic")]
     value: T,
 }
 
-#[derive(rg_memsize::MemorySize)]
+#[derive(MemorySize)]
 #[memsize(with = "record_whole_value")]
 struct WholeValueRecord {
     value: String,

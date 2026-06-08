@@ -12,8 +12,8 @@ description.workspace = true
 
 [features]
 default = []
-memsize = ["dep:rg_memsize"]
+memsize = ["dep:rg_std"]
 
 [dependencies]
 wincode.workspace = true
-rg_memsize = { workspace = true, optional = true }
+rg_std = { workspace = true, optional = true }

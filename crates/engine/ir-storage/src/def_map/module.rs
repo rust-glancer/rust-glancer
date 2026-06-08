@@ -1,14 +1,14 @@
 use rg_ir_model::items::Documentation;
 use rg_ir_model::{ImportId, LocalDefId, LocalImplId, ModuleId};
 use rg_parse::{FileId, Span};
+use rg_std::MemorySize;
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::scope::ModuleScope;
 
 /// One module in the frozen namespace graph.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ModuleData {
     pub name: Option<Name>,
     pub name_span: Option<Span>,
@@ -44,9 +44,7 @@ impl ModuleData {
 }
 
 /// Where a module-like scope came from.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum ModuleOrigin {
     /// Root module of the crate, it is nameless (corresponds to the `crate::` scope).
     Root { file_id: FileId },

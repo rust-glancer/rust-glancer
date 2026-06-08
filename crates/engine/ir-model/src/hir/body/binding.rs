@@ -1,6 +1,5 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_memsize::MemorySize;
 use rg_parse::Span;
 use rg_text::Name;
 
@@ -8,6 +7,7 @@ use crate::{
     ScopeId,
     items::{Mutability, TypeRef},
 };
+use rg_std::MemorySize;
 
 use super::BodySource;
 

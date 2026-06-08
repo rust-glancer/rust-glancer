@@ -1,8 +1,8 @@
-use rg_memsize::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::TargetRef;
 use crate::declare_id;
+use rg_std::MemorySize;
 
 declare_id! {
     /// Stable identifier for one lowered body inside a target.

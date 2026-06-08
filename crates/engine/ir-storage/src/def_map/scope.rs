@@ -1,4 +1,6 @@
+use rg_std::MemorySize;
 use std::collections::HashMap;
+use wincode::{SchemaRead, SchemaWrite};
 
 use rg_ir_model::items::VisibilityLevel;
 use rg_ir_model::{DefId, ModuleRef};
@@ -8,16 +10,7 @@ use rg_text::Name;
 ///
 /// Build-time import resolution uses `ModuleScopeBuilder`; once scopes stabilize, entries are
 /// sorted and boxed here so retained modules do not keep hash-table and `Vec` capacity overhead.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ModuleScope {
     pub(crate) entries: Box<[ScopeNameEntry]>,
 }
@@ -45,9 +38,7 @@ impl ModuleScope {
 }
 
 /// One sorted name entry inside a frozen module scope.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub(crate) struct ScopeNameEntry {
     pub(crate) name: Name,
     pub(crate) entry: ScopeEntry,
@@ -145,16 +136,7 @@ impl ModuleScopeBuilder {
 }
 
 /// Frozen namespace slots for one textual name.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ScopeEntry {
     pub(crate) types: Box<[ScopeBinding]>,
     pub(crate) values: Box<[ScopeBinding]>,
@@ -262,9 +244,7 @@ impl<'a> ScopeEntryRef<'a> {
 }
 
 /// One definition together with the visibility of the binding that introduced it.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ScopeBinding {
     pub def: DefId,
     pub visibility: VisibilityLevel,
@@ -288,16 +268,7 @@ impl ScopeBinding {
 }
 
 /// How a binding entered a module scope.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub enum ScopeBindingOrigin {
     Direct,

@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use rg_memsize::{MemoryRecord, MemoryRecorder, MemorySize};
+use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
 
 /// Build-time memory and timing report for the project pipeline.
 ///

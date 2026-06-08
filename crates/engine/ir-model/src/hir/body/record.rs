@@ -1,6 +1,5 @@
+use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
-
-use rg_memsize::MemorySize;
 
 /// Whether a record field was written with `key: value` syntax or colonless shorthand.
 ///

@@ -1,7 +1,8 @@
 use super::{package::PackageId, target::TargetKind};
+use rg_std::MemorySize;
 
 /// One dependency edge after Cargo resolution.
-#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct PackageDependency {
     package: PackageId,
     name: String,

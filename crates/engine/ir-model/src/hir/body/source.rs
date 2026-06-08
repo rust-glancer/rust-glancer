@@ -1,6 +1,6 @@
+use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_memsize::MemorySize;
 use rg_parse::{FileId, Span};
 
 /// Source location attached to every body node.

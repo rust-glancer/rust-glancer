@@ -1,3 +1,4 @@
+use rg_std::MemorySize;
 use std::path::Path;
 
 use anyhow::Context as _;
@@ -170,7 +171,7 @@ impl<'a> ProjectSnapshot<'a> {
     /// This is intended for observability, not correctness. Computing it walks the graph, so LSP
     /// callers should keep it behind explicit memory logging.
     pub fn retained_memory_bytes(&self) -> usize {
-        use rg_memsize::MemorySize as _;
+        use MemorySize as _;
 
         self.state.memory_size()
     }

@@ -3,7 +3,9 @@
 //! Fingerprints are built from explicit field tags and length-prefixed values. This keeps cache
 //! paths independent from Rust's `Hash`, debug formatting, and future serialization bytes.
 
+use rg_std::MemorySize;
 use std::{fmt, path::Path};
+use wincode::{SchemaRead, SchemaWrite};
 
 use anyhow::Context as _;
 
@@ -13,17 +15,7 @@ use super::{
 };
 
 /// Stable BLAKE3 fingerprint used by cache keys.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub struct Fingerprint([u8; 32]);
 

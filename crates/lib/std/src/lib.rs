@@ -15,7 +15,7 @@ mod tests;
 pub use self::shrink::Shrink;
 
 #[cfg(feature = "derive")]
-pub use rg_memsize_derive::MemorySize;
+pub use rg_std_derive::MemorySize;
 
 /// Records approximate retained memory for a value.
 ///
@@ -56,7 +56,7 @@ pub trait MemorySize {
 /// field when upstream structs expose legacy fields that still need to be counted.
 ///
 /// ```
-/// # use rg_memsize::{MemoryRecorder, MemorySize, record_memory_fields};
+/// # use rg_std::{MemoryRecorder, MemorySize, record_memory_fields};
 /// # struct Package { files: Vec<String>, target_roots: Vec<String> }
 /// # impl MemorySize for Package {
 /// #     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
@@ -85,7 +85,7 @@ macro_rules! record_memory_fields {
 /// intentionally omitted accounting.
 ///
 /// ```
-/// # use rg_memsize::{MemorySize, impl_memory_size_children};
+/// # use rg_std::{MemorySize, impl_memory_size_children};
 /// # struct Package { files: Vec<String>, target_roots: Vec<String> }
 /// # struct FileTree { file: String, docs: Vec<String>, items: Vec<String> }
 /// impl_memory_size_children! {

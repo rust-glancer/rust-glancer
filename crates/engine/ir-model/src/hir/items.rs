@@ -3,7 +3,9 @@ use crate::items::{
     TypeBound, TypeRef, VisibilityLevel,
 };
 use rg_parse::{FileId, Span};
+use rg_std::MemorySize;
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     AssocItemId, FunctionRef, ItemOwner, LocalDefRef, LocalImplRef, ModuleRef, TraitRef, TypeDefRef,
@@ -35,9 +37,7 @@ pub struct EnumVariantData<'a> {
 }
 
 /// Nominal struct lowered from a module item.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct StructData {
     pub local_def: LocalDefRef,
     pub source: ItemSource,
@@ -61,9 +61,7 @@ impl StructData {
 }
 
 /// Nominal union lowered from a module item.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct UnionData {
     pub local_def: LocalDefRef,
     pub source: ItemSource,
@@ -90,9 +88,7 @@ impl UnionData {
 }
 
 /// Enum definition together with variant payloads.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct EnumData {
     pub local_def: LocalDefRef,
     pub source: ItemSource,
@@ -119,9 +115,7 @@ impl EnumData {
 }
 
 /// Trait signature and associated items.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TraitData {
     pub local_def: LocalDefRef,
     pub source: ItemSource,
@@ -167,9 +161,7 @@ impl TraitData {
 ///
 /// `resolved_*` fields are intentionally lossy and optimistic: they record all type/trait targets
 /// that our current path resolver can identify, without attempting a real trait solver.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ImplData {
     pub local_impl: LocalImplRef,
     pub source: ItemSource,
@@ -210,9 +202,7 @@ impl ImplData {
 }
 
 /// Function signature and source identity.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct FunctionData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemSource,
@@ -243,9 +233,7 @@ impl FunctionData {
 }
 
 /// Type alias signature and optional aliased type.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TypeAliasData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemSource,
@@ -269,9 +257,7 @@ impl TypeAliasData {
 }
 
 /// Const signature and optional value body owner.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ConstData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemSource,
@@ -295,9 +281,7 @@ impl ConstData {
 }
 
 /// Module-level static item.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct StaticData {
     pub local_def: LocalDefRef,
     pub source: ItemSource,

@@ -1,6 +1,5 @@
+use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
-
-use rg_memsize::MemorySize;
 
 /// Rust edition used by a package.
 ///

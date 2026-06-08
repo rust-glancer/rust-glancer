@@ -2,9 +2,8 @@ use std::fmt;
 
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_memsize::MemorySize;
-
 use crate::items::PrimitiveTy;
+use rg_std::MemorySize;
 
 /// Literal category plus the primitive type implied by suffix/default heuristics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]

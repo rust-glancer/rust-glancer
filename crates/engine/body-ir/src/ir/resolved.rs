@@ -1,8 +1,8 @@
+use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
 use rg_ir_model::{BindingId, BodyBindingRef, BodyRef, ExprId, identity::DeclarationRef};
-use rg_memsize::MemorySize;
 use rg_ty::Ty;
 
 /// Pass-derived facts for one resolved body.

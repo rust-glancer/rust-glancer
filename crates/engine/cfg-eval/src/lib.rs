@@ -4,11 +4,12 @@
 //! about the same cfg language. This crate owns that small domain so those phases can share
 //! predicates and options without routing through item-tree or def-map internals.
 
-use rg_memsize::{MemoryRecorder, MemorySize};
+use rg_std::{MemoryRecorder, MemorySize};
 use rg_syntax::{
     SyntaxToken,
     ast::{self, HasAttrs},
 };
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Active cfg facts for one package under one Cargo target selection.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -133,7 +134,7 @@ fn cfg_value_from_rustc(value: &str) -> String {
 }
 
 /// Item-level cfg gates that later target-specific phases evaluate.
-#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite)]
 pub struct CfgExpr {
     pub gates: Vec<CfgGate>,
 }
@@ -189,7 +190,7 @@ impl CfgExpr {
 }
 
 /// One top-level gate that can make an item unavailable.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum CfgGate {
     /// A direct `#[cfg(...)]` item attribute.
     Direct(CfgPredicate),
@@ -213,7 +214,7 @@ impl CfgGate {
 }
 
 /// Lowered cfg predicate syntax used by target-specific evaluators.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub enum CfgPredicate {
     True,
     False,
@@ -371,7 +372,7 @@ impl<'a> CfgEvaluator<'a> {
     }
 }
 
-rg_memsize::impl_memory_size_children! {
+rg_std::impl_memory_size_children! {
     CfgOptions => atoms, key_values;
     CfgKeyValue => key, value;
     CfgExpr => gates;

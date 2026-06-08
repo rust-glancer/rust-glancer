@@ -1,16 +1,18 @@
 use rg_ir_model::items::{GenericParams, TypeRef};
 use rg_ir_model::{TraitRef, TypeDefRef, TypePathResolution};
-use rg_memsize::Shrink;
+use rg_std::Shrink;
 use rg_text::Name;
 
 use crate::{GenericArg, PrimitiveTy, RefMutability};
+use rg_std::MemorySize;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Ordered substitutions for type parameters visible at one use site.
 ///
 /// Substitutions are intentionally stack-like: later bindings shadow earlier bindings. Body
 /// resolution extends this set while walking through aliases, impl headers, and function
 /// signatures, so lookup must search from the end instead of treating the data as an unordered map.
-#[derive(Debug, Clone, Default, PartialEq, Eq, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, MemorySize)]
 pub struct TypeSubst(Vec<(Name, Ty)>);
 
 impl TypeSubst {
@@ -66,9 +68,7 @@ impl FromIterator<(Name, Ty)> for TypeSubst {
 }
 
 /// Small type vocabulary shared by IR layers.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum Ty {
     Unit,
     Never,
@@ -96,9 +96,7 @@ pub enum Ty {
 }
 
 /// Module-level nominal type together with the generic arguments visible at use site.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct NominalTy {
     pub def: TypeDefRef,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
@@ -106,9 +104,7 @@ pub struct NominalTy {
 }
 
 /// Resolved trait bound preserved for opaque `impl Trait` types.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct OpaqueTraitBound {
     pub trait_ref: TraitRef,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]

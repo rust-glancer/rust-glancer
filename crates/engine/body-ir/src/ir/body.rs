@@ -1,3 +1,4 @@
+use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
@@ -7,7 +8,6 @@ use rg_ir_model::{
     identity::DeclarationRef,
     items::{ItemNode, ItemTreeId},
 };
-use rg_memsize::MemorySize;
 
 use super::resolved::{BindingFacts, BodyFacts, BodyResolution, ExprFacts};
 
@@ -203,6 +203,7 @@ impl ResolvedBodyData {
         self.pending_binding_resolutions.clear();
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         owner: BodyOwner,
         owner_module: ModuleRef,

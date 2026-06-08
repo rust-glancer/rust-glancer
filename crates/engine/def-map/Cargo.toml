@@ -16,7 +16,7 @@ rayon.workspace = true
 rg_arena = { workspace = true, features = ["memsize"] }
 rg_cfg_eval.workspace = true
 rg_macro_expand.workspace = true
-rg_memsize.workspace = true
+rg_std.workspace = true
 rg_package_store.workspace = true
 rg_item_tree.workspace = true
 rg_ir_model.workspace = true

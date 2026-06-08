@@ -4,10 +4,10 @@
 //! body-local DefMap and ItemStore facts.
 
 use rg_arena::Arena;
-use rg_memsize::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::items::{ItemNode, ItemTreeId};
+use rg_std::MemorySize;
 
 /// Item-tree-shaped source payloads declared inside one lowered body.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]

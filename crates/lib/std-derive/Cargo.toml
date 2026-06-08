@@ -1,5 +1,5 @@
 [package]
-name = "rg_memsize_derive"
+name = "rg_std_derive"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

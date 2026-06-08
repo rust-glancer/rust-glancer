@@ -2,7 +2,6 @@ use std::fmt;
 
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_memsize::MemorySize;
 use rg_parse::Span;
 use rg_text::Name;
 
@@ -10,6 +9,7 @@ use crate::{
     BindingId, ExprId, PatId, ScopeId, StmtId,
     items::{FieldKey, GenericArg, Mutability, TypeRef},
 };
+use rg_std::MemorySize;
 
 use super::{BodyPath, BodySource, LabelData, LiteralKind, RecordFieldSyntax};
 

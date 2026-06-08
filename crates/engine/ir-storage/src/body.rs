@@ -1,11 +1,11 @@
 use rg_ir_model::{ImplId, TraitRef, TypeDefRef};
 
 use crate::{DefMap, ItemStore};
+use rg_std::MemorySize;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Finalized body-local DefMap and semantic-shaped item facts for one body.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct BodyLocalItems {
     def_map: DefMap,
     item_store: ItemStore,

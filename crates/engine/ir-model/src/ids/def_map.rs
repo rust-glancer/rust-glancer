@@ -1,9 +1,9 @@
-use rg_memsize::MemorySize;
 use rg_parse::TargetId;
 use rg_workspace::PackageSlot;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{BodyRef, declare_id};
+use rg_std::MemorySize;
 
 declare_id! {
     /// Stable identifier of one module inside a target map.

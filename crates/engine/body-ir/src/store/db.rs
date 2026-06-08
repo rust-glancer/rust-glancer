@@ -8,9 +8,10 @@ use rg_text::PackageNameInterners;
 
 use super::{BodyIrReadTxn, PackageBodies, TargetBodiesStatus};
 use crate::build::{BodyIrDbBuilder, BodyIrDbPackageRebuilder};
+use rg_std::MemorySize;
 
 /// Coarse totals for reporting that the Body IR phase produced useful data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 pub struct BodyIrStats {
     pub target_count: usize,
     pub built_target_count: usize,
@@ -23,7 +24,7 @@ pub struct BodyIrStats {
 }
 
 /// Body-level IR for all analyzed packages and targets.
-#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct BodyIrDb {
     packages: PackageStore<PackageBodies>,
 }

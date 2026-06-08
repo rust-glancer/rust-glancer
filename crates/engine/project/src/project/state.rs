@@ -14,6 +14,7 @@ use crate::{
     PackageResidencyPlan, PackageResidencyPolicy, ProjectMemoryHooks,
     cache::{Fingerprint, PackageCacheStore, WorkspaceCachePlan},
 };
+use rg_std::MemorySize;
 
 use super::{stats::ProjectStats, txn::ProjectReadTxn};
 
@@ -23,7 +24,7 @@ use super::{stats::ProjectStats, txn::ProjectReadTxn};
 /// resident for every package so source locations remain addressable, while DefMap, Semantic IR,
 /// and Body IR may store a package either resident in memory or offloaded behind the same cache
 /// artifact.
-#[derive(Debug, Clone, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, MemorySize)]
 pub(crate) struct ProjectState {
     pub(crate) workspace: WorkspaceMetadata,
     pub(crate) cargo_metadata_config: CargoMetadataConfig,

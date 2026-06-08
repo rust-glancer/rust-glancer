@@ -1,6 +1,5 @@
 use std::fmt;
 
-use rg_memsize::MemorySize;
 use rg_parse::Span;
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
@@ -9,6 +8,7 @@ use crate::{
     Path, PathSegment,
     items::{GenericArg, TypeRef},
 };
+use rg_std::MemorySize;
 
 /// Body expression/pattern path together with body-specific syntax details.
 ///

@@ -53,9 +53,9 @@ macro_rules! declare_id {
                 PartialEq,
                 Eq,
                 Hash,
-                wincode::SchemaRead,
-                wincode::SchemaWrite,
-                rg_memsize::MemorySize,
+                SchemaRead,
+                SchemaWrite,
+                MemorySize,
             )]
             #[memsize(leaf)]
             $vis struct $id(pub usize);

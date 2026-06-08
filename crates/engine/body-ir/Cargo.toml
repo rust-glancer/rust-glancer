@@ -17,7 +17,7 @@ rg_syntax.workspace = true
 rayon.workspace = true
 wincode.workspace = true
 rg_arena = { workspace = true, features = ["memsize"] }
-rg_memsize.workspace = true
+rg_std.workspace = true
 rg_package_store.workspace = true
 rg_def_map.workspace = true
 rg_ir_model.workspace = true

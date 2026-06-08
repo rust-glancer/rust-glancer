@@ -1,4 +1,6 @@
+use rg_std::MemorySize;
 use std::fmt;
+use wincode::{SchemaRead, SchemaWrite};
 
 use rg_parse::{Span, TextSpan};
 use rg_text::Name;
@@ -6,9 +8,7 @@ use rg_text::Name;
 use super::MacroUseAttr;
 
 /// Syntactic `extern crate` facts attached to `ItemKind::ExternCrate`.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ExternCrateItem {
     pub name: Option<Name>,
     pub alias: ImportAlias,
@@ -28,9 +28,7 @@ impl ExternCrateItem {
 }
 
 /// Syntactic `use` facts attached to `ItemKind::Use`.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct UseItem {
     pub imports: Vec<UseImport>,
 }
@@ -45,9 +43,7 @@ impl UseItem {
 }
 
 /// One leaf import produced by a potentially nested use tree.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct UseImport {
     pub kind: UseImportKind,
     pub path: UsePath,
@@ -63,15 +59,7 @@ impl UseImport {
 
 /// Import form before name resolution.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 #[memsize(leaf)]
 pub enum UseImportKind {
@@ -84,9 +72,7 @@ pub enum UseImportKind {
 }
 
 /// Explicit import alias, including `as _`.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum ImportAlias {
     Inferred,
     Explicit { name: Name, span: Span },
@@ -113,9 +99,7 @@ impl fmt::Display for ImportAlias {
 }
 
 /// Structured path used before semantic resolution.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct UsePath {
     pub source_span: Option<Span>,
     pub absolute: bool,
@@ -200,9 +184,7 @@ impl fmt::Display for UsePath {
 }
 
 /// One structured path segment.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct UsePathSegment {
     pub kind: UsePathSegmentKind,
     pub span: Span,
@@ -221,14 +203,7 @@ impl fmt::Display for UsePathSegment {
 }
 
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 pub enum UsePathSegmentKind {
     #[display("{_0}")]

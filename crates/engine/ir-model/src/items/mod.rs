@@ -1,6 +1,8 @@
 use rg_cfg_eval::CfgExpr;
 use rg_parse::{FileId, Span};
+use rg_std::MemorySize;
 use rg_text::Name;
+use wincode::{SchemaRead, SchemaWrite};
 
 pub use self::{
     decl::{
@@ -36,17 +38,7 @@ mod type_ref;
 mod visibility;
 
 /// Stable file-local identifier for one lowered item-tree node.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub struct ItemTreeId(pub usize);
 
@@ -61,26 +53,14 @@ impl rg_arena::ArenaId for ItemTreeId {
 }
 
 /// Stable project-local reference to one item-tree node.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ItemTreeRef {
     pub file_id: FileId,
     pub item: ItemTreeId,
 }
 
 /// AST-independent item-tree node used by later lowering stages.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ItemNode {
     pub kind: ItemKind,
     /// Name (when applicable), e.g. for functions or structs.

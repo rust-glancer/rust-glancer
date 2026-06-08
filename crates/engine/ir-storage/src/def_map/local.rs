@@ -1,16 +1,16 @@
 use rg_ir_model::items::{ItemTag, MacroDefinitionItem, VisibilityLevel};
 use rg_ir_model::{ModuleId, TargetRef, hir::source::ItemSource};
 use rg_parse::{FileId, Span};
+use rg_std::MemorySize;
 use rg_text::Name;
 use rg_tt::TopSubtree;
 use rg_workspace::RustEdition;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::scope::Namespace;
 
 /// One module-scope definition collected from source.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct LocalDefData {
     pub module: ModuleId,
     pub name: Name,
@@ -29,9 +29,7 @@ impl LocalDefData {
 }
 
 /// Declarative macro definition payload retained for expansion after def-map freezing.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct MacroDefinitionData {
     pub edition: RustEdition,
     /// Target that `$crate` inside this macro body should resolve to when expanded.
@@ -56,9 +54,7 @@ impl MacroDefinitionData {
 }
 
 /// Token-tree payload needed to compile a collected declarative macro.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum MacroDefinitionPayload {
     MacroRules {
         #[memsize(scope = "body")]
@@ -83,9 +79,7 @@ impl MacroDefinitionPayload {
 }
 
 /// One module-owned impl block collected from source.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct LocalImplData {
     pub module: ModuleId,
     pub source: ItemSource,
@@ -95,15 +89,7 @@ pub struct LocalImplData {
 
 /// Module-scope definition kind that participates in def-map namespaces.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 #[memsize(leaf)]
 pub enum LocalDefKind {

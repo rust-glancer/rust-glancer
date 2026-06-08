@@ -3,7 +3,9 @@
 //! These types preserve what the user wrote in signatures and item headers. Name resolution,
 //! type solving, and semantic ownership are left to later IR layers.
 
+use rg_std::MemorySize;
 use std::fmt;
+use wincode::{SchemaRead, SchemaWrite};
 
 use rg_parse::Span;
 use rg_text::Name;
@@ -11,16 +13,7 @@ use rg_text::Name;
 use super::{Documentation, ItemTreeId, Mutability, TypeBound, TypeRef, VisibilityLevel};
 
 /// Generic parameter data attached to an item declaration.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
 pub struct GenericParams {
     pub lifetimes: Vec<LifetimeParamData>,
     pub types: Vec<TypeParamData>,
@@ -110,9 +103,7 @@ impl fmt::Display for GenericParams {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct LifetimeParamData {
     pub name: Name,
     pub bounds: Vec<String>,
@@ -128,9 +119,7 @@ impl LifetimeParamData {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TypeParamData {
     pub name: Name,
     pub bounds: Vec<TypeBound>,
@@ -150,9 +139,7 @@ impl TypeParamData {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ConstParamData {
     pub name: Name,
     pub ty: Option<TypeRef>,
@@ -172,9 +159,7 @@ impl ConstParamData {
 }
 
 /// Where-clause predicate that can affect later signature resolution.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum WherePredicate {
     Type {
         ty: TypeRef,
@@ -221,9 +206,7 @@ impl fmt::Display for WherePredicate {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct FunctionItem {
     pub generics: GenericParams,
     pub params: Vec<ParamItem>,
@@ -244,26 +227,14 @@ impl FunctionItem {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
 pub struct FunctionQualifiers {
     pub is_async: bool,
     pub is_const: bool,
     pub is_unsafe: bool,
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ParamItem {
     pub pat: String,
     pub ty: Option<TypeRef>,
@@ -279,25 +250,14 @@ impl ParamItem {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub enum ParamKind {
     SelfParam,
     Normal,
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct StructItem {
     pub generics: GenericParams,
     pub fields: FieldList,
@@ -310,9 +270,7 @@ impl StructItem {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct UnionItem {
     pub generics: GenericParams,
     pub fields: Vec<FieldItem>,
@@ -328,9 +286,7 @@ impl UnionItem {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct EnumItem {
     pub generics: GenericParams,
     pub variants: Vec<EnumVariantItem>,
@@ -346,9 +302,7 @@ impl EnumItem {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct EnumVariantItem {
     pub name: Name,
     pub span: Span,
@@ -368,9 +322,7 @@ impl EnumVariantItem {
 }
 
 /// Field shape shared by structs and enum variants.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub enum FieldList {
     Named(Vec<FieldItem>),
     Tuple(Vec<FieldItem>),
@@ -398,9 +350,7 @@ impl FieldList {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct FieldItem {
     pub key: Option<FieldKey>,
     pub visibility: VisibilityLevel,
@@ -410,16 +360,7 @@ pub struct FieldItem {
 }
 
 /// User-visible field identity before semantic ownership is known.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub enum FieldKey {
     Named(Name),
     Tuple(usize),
@@ -466,9 +407,7 @@ impl FieldItem {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TraitItem {
     pub generics: GenericParams,
     pub super_traits: Vec<TypeBound>,
@@ -487,9 +426,7 @@ impl TraitItem {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ImplItem {
     pub generics: GenericParams,
     pub trait_ref: Option<TypeRef>,
@@ -509,9 +446,7 @@ impl ImplItem {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TypeAliasItem {
     pub generics: GenericParams,
     pub bounds: Vec<TypeBound>,
@@ -531,9 +466,7 @@ impl TypeAliasItem {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ConstItem {
     pub generics: GenericParams,
     pub ty: Option<TypeRef>,
@@ -548,9 +481,7 @@ impl ConstItem {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct StaticItem {
     pub ty: Option<TypeRef>,
     pub mutability: Mutability,

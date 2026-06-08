@@ -11,7 +11,7 @@ mod txn;
 
 use std::sync::Arc;
 
-use rg_memsize::{MemoryRecorder, MemorySize};
+use rg_std::{MemoryRecorder, MemorySize};
 use rg_workspace::PackageSlot;
 
 pub use self::{

@@ -1,8 +1,7 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_memsize::MemorySize;
-
 use crate::{BindingId, ScopeId, items::ItemTreeId};
+use rg_std::MemorySize;
 
 /// One lexical scope.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]

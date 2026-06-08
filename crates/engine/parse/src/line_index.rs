@@ -1,8 +1,10 @@
 use std::{mem, sync::Arc};
 
 use crate::span::Position;
+use rg_std::MemorySize;
+use wincode::{SchemaRead, SchemaWrite};
 
-#[derive(Debug, Clone, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, MemorySize)]
 pub struct LineIndex {
     pub(crate) lines: LineIndexStorage<LineInfo>,
     pub(crate) non_ascii_lines: LineIndexStorage<LineUtf16Metrics>,
@@ -225,17 +227,15 @@ impl LineIndex {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct LineIndexSnapshot {
     pub(crate) lines: Vec<LineInfo>,
     pub(crate) non_ascii_lines: Vec<LineUtf16Metrics>,
     pub(crate) non_ascii_ranges: Vec<LineCharRange>,
 }
 
-#[derive(Debug, Clone, rg_memsize::MemorySize)]
-#[memsize(with = "Self::record_memory", bound = "T: rg_memsize::MemorySize")]
+#[derive(Debug, Clone, MemorySize)]
+#[memsize(with = "Self::record_memory", bound = "T: MemorySize")]
 pub(crate) enum LineIndexStorage<T> {
     Owned(Vec<T>),
     Shared {
@@ -298,12 +298,12 @@ impl<T> LineIndexStorage<T> {
         }
     }
 
-    fn record_memory(storage: &Self, recorder: &mut rg_memsize::MemoryRecorder)
+    fn record_memory(storage: &Self, recorder: &mut rg_std::MemoryRecorder)
     where
-        T: rg_memsize::MemorySize,
+        T: MemorySize,
     {
         match storage {
-            Self::Owned(items) => rg_memsize::MemorySize::record_memory_children(items, recorder),
+            Self::Owned(items) => MemorySize::record_memory_children(items, recorder),
             Self::Shared { .. } => {
                 let items = storage.as_slice();
                 recorder.scope("items", |recorder| {
@@ -311,7 +311,7 @@ impl<T> LineIndexStorage<T> {
                     // package-level allocation that may be referenced by many files.
                     recorder.record_heap::<T>(items.len().saturating_mul(mem::size_of::<T>()));
                     for item in items {
-                        rg_memsize::MemorySize::record_memory_children(item, recorder);
+                        MemorySize::record_memory_children(item, recorder);
                     }
                 });
             }
@@ -339,32 +339,14 @@ struct PackedLineIndexRanges {
 }
 
 /// Per-line byte facts needed for offset conversion.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub(crate) struct LineInfo {
     pub(crate) start: u32,
     pub(crate) byte_len: u32,
 }
 
 /// Sparse per-line mapping between UTF-8 byte columns and UTF-16 code-unit columns.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub(crate) struct LineUtf16Metrics {
     pub(crate) line: u32,
     pub(crate) utf16_len: u32,
@@ -465,16 +447,7 @@ impl LineUtf16Metrics {
     }
 }
 
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub(crate) struct LineCharRange {
     pub(crate) byte_start: u32,
     pub(crate) byte_end: u32,

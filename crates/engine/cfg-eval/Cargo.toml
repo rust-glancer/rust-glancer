@@ -11,6 +11,6 @@ readme.workspace = true
 description = "Rust Glancer cfg predicate lowering and evaluation."
 
 [dependencies]
-rg_memsize.workspace = true
+rg_std.workspace = true
 rg_syntax.workspace = true
 wincode.workspace = true

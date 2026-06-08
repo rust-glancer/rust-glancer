@@ -1398,7 +1398,7 @@ dependencies = [
 name = "rg_arena"
 version = "0.1.0"
 dependencies = [
- "rg_memsize",
+ "rg_std",
  "wincode",
 ]
 
@@ -1415,10 +1415,10 @@ dependencies = [
  "rg_ir_model",
  "rg_ir_storage",
  "rg_item_tree",
- "rg_memsize",
  "rg_package_store",
  "rg_parse",
  "rg_semantic_ir",
+ "rg_std",
  "rg_syntax",
  "rg_text",
  "rg_ty",
@@ -1430,7 +1430,7 @@ dependencies = [
 name = "rg_cfg_eval"
 version = "0.1.0"
 dependencies = [
- "rg_memsize",
+ "rg_std",
  "rg_syntax",
  "wincode",
 ]
@@ -1462,9 +1462,9 @@ dependencies = [
  "rg_ir_storage",
  "rg_item_tree",
  "rg_macro_expand",
- "rg_memsize",
  "rg_package_store",
  "rg_parse",
+ "rg_std",
  "rg_syntax",
  "rg_text",
  "rg_tt",
@@ -1479,8 +1479,8 @@ dependencies = [
  "derive_more",
  "rg_arena",
  "rg_cfg_eval",
- "rg_memsize",
  "rg_parse",
+ "rg_std",
  "rg_text",
  "rg_tt",
  "rg_wincode_utils",
@@ -1495,8 +1495,8 @@ dependencies = [
  "derive_more",
  "rg_arena",
  "rg_ir_model",
- "rg_memsize",
  "rg_parse",
+ "rg_std",
  "rg_text",
  "rg_tt",
  "rg_workspace",
@@ -1531,8 +1531,8 @@ dependencies = [
  "rg_cfg_eval",
  "rg_ir_model",
  "rg_macro_expand",
- "rg_memsize",
  "rg_parse",
+ "rg_std",
  "rg_syntax",
  "rg_text",
  "rg_tt",
@@ -1608,27 +1608,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "rg_memsize"
-version = "0.1.0"
-dependencies = [
- "ls-types",
- "rg_memsize_derive",
-]
-
-[[package]]
-name = "rg_memsize_derive"
-version = "0.1.0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
 name = "rg_package_store"
 version = "0.1.0"
 dependencies = [
- "rg_memsize",
+ "rg_std",
  "rg_workspace",
  "thiserror",
 ]
@@ -1641,7 +1624,7 @@ dependencies = [
  "expect-test",
  "rg_arena",
  "rg_cfg_eval",
- "rg_memsize",
+ "rg_std",
  "rg_syntax",
  "rg_workspace",
  "test_fixture",
@@ -1682,10 +1665,10 @@ dependencies = [
  "rg_ir_storage",
  "rg_ir_view",
  "rg_item_tree",
- "rg_memsize",
  "rg_package_store",
  "rg_parse",
  "rg_semantic_ir",
+ "rg_std",
  "rg_text",
  "rg_ty",
  "rg_workspace",
@@ -1706,13 +1689,30 @@ dependencies = [
  "rg_ir_model",
  "rg_ir_storage",
  "rg_item_tree",
- "rg_memsize",
  "rg_package_store",
  "rg_parse",
+ "rg_std",
  "rg_text",
  "rg_ty",
  "rg_workspace",
  "wincode",
+]
+
+[[package]]
+name = "rg_std"
+version = "0.1.0"
+dependencies = [
+ "ls-types",
+ "rg_std_derive",
+]
+
+[[package]]
+name = "rg_std_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -1739,7 +1739,7 @@ dependencies = [
 name = "rg_text"
 version = "0.1.0"
 dependencies = [
- "rg_memsize",
+ "rg_std",
  "wincode",
 ]
 
@@ -1748,8 +1748,8 @@ name = "rg_tt"
 version = "0.1.0"
 dependencies = [
  "ra-ap-rustc_lexer",
- "rg_memsize",
  "rg_parser",
+ "rg_std",
  "rg_syntax",
  "smol_str",
  "stdx",
@@ -1763,7 +1763,7 @@ version = "0.1.0"
 dependencies = [
  "rg_ir_model",
  "rg_ir_storage",
- "rg_memsize",
+ "rg_std",
  "rg_text",
  "rg_wincode_utils",
  "wincode",
@@ -1784,7 +1784,7 @@ dependencies = [
  "derive_more",
  "expect-test",
  "rg_cfg_eval",
- "rg_memsize",
+ "rg_std",
  "serde",
  "test_fixture",
  "wincode",
@@ -1799,8 +1799,8 @@ dependencies = [
  "gungraun",
  "rg_lsp_engine",
  "rg_lsp_server",
- "rg_memsize",
  "rg_project",
+ "rg_std",
  "rg_workspace",
  "serde",
  "serde_json",

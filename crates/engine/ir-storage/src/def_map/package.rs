@@ -1,4 +1,6 @@
+use rg_std::MemorySize;
 use std::collections::HashMap;
+use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
 use rg_ir_model::{ModuleId, ModuleRef};
@@ -7,16 +9,7 @@ use rg_text::Name;
 
 use super::store::DefMap;
 
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
 pub struct TargetData {
     pub(super) root_module: Option<ModuleId>,
     // Implicit roots visible to this target, including sibling lib roots.
@@ -60,16 +53,7 @@ impl TargetData {
 }
 
 /// Def maps for all targets inside one parsed package.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
 pub struct PackageDefMaps {
     pub(crate) name: String,
     pub(crate) target_names: Arena<TargetId, String>,

@@ -7,20 +7,15 @@ use super::{
     macro_item::{MacroCallItem, MacroDefinitionItem},
     module::ModuleItem,
 };
+use rg_std::MemorySize;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Payload-bearing item kind.
 ///
 /// Unit variants are enough for plain local definitions. Structured payloads live inline in the
 /// file item arena so lowering avoids one heap allocation per payload-bearing item.
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 pub enum ItemKind {
     #[display("asm")]
@@ -103,15 +98,7 @@ impl ItemKind {
 
 /// Payload-independent item classification.
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
 )]
 #[memsize(leaf)]
 pub enum ItemTag {

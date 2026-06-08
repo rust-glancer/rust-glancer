@@ -73,7 +73,7 @@ impl ContainerAttrs {
     pub(crate) fn crate_path(&self) -> Path {
         self.crate_path
             .clone()
-            .unwrap_or_else(|| parse_quote!(::rg_memsize))
+            .unwrap_or_else(|| parse_quote!(::rg_std))
     }
 
     fn validate(&self) -> syn::Result<()> {

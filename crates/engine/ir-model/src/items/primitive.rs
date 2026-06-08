@@ -1,6 +1,5 @@
+use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
-
-use rg_memsize::MemorySize;
 
 /// Rust primitive type known without resolving a module-scope definition.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]

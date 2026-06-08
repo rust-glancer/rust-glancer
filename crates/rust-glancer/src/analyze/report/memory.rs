@@ -1,7 +1,7 @@
 use std::fmt;
 
-use rg_memsize::{MemoryRecord, MemoryRecorder, MemorySize};
 use rg_project::{BuildStageMemorySnapshot, Project};
+use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
 use serde::Serialize;
 
 use super::allocator::format_bytes;

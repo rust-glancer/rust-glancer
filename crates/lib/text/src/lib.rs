@@ -13,6 +13,7 @@ use std::{
     ops::Deref,
     sync::{Arc, Weak},
 };
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Shared short text, usually an identifier or path segment.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -80,22 +81,22 @@ impl From<String> for Name {
 
 // Encode names as plain strings. That keeps the runtime interner out of the cache format while
 // preserving the compact representation used by the rest of the schema.
-unsafe impl<C> wincode::SchemaWrite<C> for Name
+unsafe impl<C> SchemaWrite<C> for Name
 where
     C: wincode::config::Config,
 {
     type Src = Name;
 
     fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
-        <str as wincode::SchemaWrite<C>>::size_of(src.as_str())
+        <str as SchemaWrite<C>>::size_of(src.as_str())
     }
 
     fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
-        <str as wincode::SchemaWrite<C>>::write(writer, src.as_str())
+        <str as SchemaWrite<C>>::write(writer, src.as_str())
     }
 }
 
-unsafe impl<'de, C> wincode::SchemaRead<'de, C> for Name
+unsafe impl<'de, C> SchemaRead<'de, C> for Name
 where
     C: wincode::config::Config,
 {
@@ -105,7 +106,7 @@ where
         reader: impl wincode::io::Reader<'de>,
         dst: &mut std::mem::MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        let text = <String as wincode::SchemaRead<C>>::get(reader)?;
+        let text = <String as SchemaRead<C>>::get(reader)?;
         dst.write(Name::from(text));
         Ok(())
     }
@@ -241,7 +242,7 @@ impl PackageNameInterners {
 mod memsize {
     use std::{mem, sync::Weak};
 
-    use rg_memsize::{MemoryRecorder, MemorySize, Shrink};
+    use rg_std::{MemoryRecorder, MemorySize, Shrink};
 
     use crate::{Name, NameInterner, PackageNameInterners};
 
@@ -413,7 +414,7 @@ mod tests {
     #[cfg(feature = "memsize")]
     #[test]
     fn interner_records_unique_text_payload() {
-        use rg_memsize::{MemoryRecordKind, MemoryRecorder, MemorySize};
+        use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize};
 
         let mut interner = NameInterner::new();
         let user = interner.intern("User");

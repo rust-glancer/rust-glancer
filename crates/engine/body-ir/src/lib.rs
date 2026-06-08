@@ -1,3 +1,4 @@
+use rg_std::MemorySize;
 mod build;
 mod cursor;
 mod ir;
@@ -52,7 +53,7 @@ impl BodyIrFile {
 }
 
 /// Package-set selector for eager body lowering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 #[memsize(leaf)]
 enum BodyIrPackageScope {
     #[default]
@@ -61,7 +62,7 @@ enum BodyIrPackageScope {
 }
 
 /// Controls which packages get function-body lowering during eager Body IR construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 pub struct BodyIrBuildPolicy {
     package_scope: BodyIrPackageScope,
 }

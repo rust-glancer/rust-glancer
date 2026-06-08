@@ -2,8 +2,8 @@ use std::fmt;
 
 use wincode::{SchemaRead, SchemaWrite};
 
-use rg_memsize::{MemorySize, Shrink};
 use rg_parse::Span;
+use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 
 /// Syntax-level mutability marker used by lowered declarations and type refs.
