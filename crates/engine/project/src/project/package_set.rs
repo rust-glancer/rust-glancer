@@ -77,3 +77,64 @@ impl PhasePackageSet {
         subset::rebuild_packages_with_visible_dependencies(workspace, &self.packages)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use rg_parse::FileId;
+
+    use super::*;
+
+    #[test]
+    fn package_sets_project_to_package_indices() {
+        let cases = [
+            ("all packages", PhasePackageSet::all(3), vec![0, 1, 2]),
+            (
+                "explicit package order",
+                PhasePackageSet::from_packages(vec![
+                    PackageSlot(3),
+                    PackageSlot(1),
+                    PackageSlot(4),
+                ]),
+                vec![3, 1, 4],
+            ),
+        ];
+
+        for (case, set, expected_indices) in cases {
+            assert_eq!(set.package_indices(), expected_indices, "{case}");
+        }
+    }
+
+    #[test]
+    fn body_file_sets_are_sorted_and_deduplicated() {
+        let files = [
+            BodyIrFile::new(PackageSlot(2), FileId(0)),
+            BodyIrFile::new(PackageSlot(0), FileId(1)),
+            BodyIrFile::new(PackageSlot(2), FileId(2)),
+            BodyIrFile::new(PackageSlot(1), FileId(3)),
+        ];
+
+        let set = PhasePackageSet::from_body_files(&files);
+
+        assert_eq!(
+            set.as_slice(),
+            &[PackageSlot(0), PackageSlot(1), PackageSlot(2)]
+        );
+    }
+
+    #[test]
+    fn filtering_preserves_phase_package_order() {
+        let set = PhasePackageSet::from_packages(vec![
+            PackageSlot(3),
+            PackageSlot(1),
+            PackageSlot(4),
+            PackageSlot(1),
+        ]);
+
+        let filtered = set.filter(|package| package.0 % 2 == 1);
+
+        assert_eq!(
+            filtered.as_slice(),
+            &[PackageSlot(3), PackageSlot(1), PackageSlot(1)]
+        );
+    }
+}
