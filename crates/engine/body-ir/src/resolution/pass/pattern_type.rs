@@ -15,11 +15,11 @@ use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite, support::push_unique};
 
-pub(super) struct PatternTypePropagator<'query, D, I> {
+pub(super) struct PatternTypePropagationPass<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
-impl<'query, D, I> PatternTypePropagator<'query, D, I>
+impl<'query, D, I> PatternTypePropagationPass<'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
@@ -131,7 +131,7 @@ where
         if let Some(annotation) = annotation {
             let ty = self
                 .context
-                .type_path_resolver()
+                .type_path_query()
                 .type_ref(TypeRefUseSite::Scope(scope))
                 .resolve(annotation)?;
             if !matches!(ty, Ty::Unknown) {
@@ -345,7 +345,7 @@ where
 
         Ok(Some(
             self.context
-                .type_path_resolver()
+                .type_path_query()
                 .type_ref(TypeRefUseSite::Module(variant_data.owner_module))
                 .with_subst(&subst)
                 .resolve(&field.ty)?,

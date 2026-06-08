@@ -15,7 +15,7 @@ use rg_ty::{GenericArg, ItemPathQuery, RefMutability, Ty, TypeSubst};
 
 use crate::resolution::support::push_unique;
 
-use super::type_path::{BodyTypePathResolver, prefix_type_ref, split_associated_path};
+use super::type_path::{BodyTypePathQuery, prefix_type_ref, split_associated_path};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TypeRefUseSite {
@@ -27,7 +27,7 @@ pub(crate) enum TypeRefUseSite {
 }
 
 pub(crate) struct TypeRefResolutionQuery<'resolver, 'query, D, I> {
-    resolver: &'resolver BodyTypePathResolver<'query, D, I>,
+    resolver: &'resolver BodyTypePathQuery<'query, D, I>,
     use_site: TypeRefUseSite,
     subst: TypeSubst,
 }
@@ -38,7 +38,7 @@ where
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
     pub(super) fn new(
-        resolver: &'resolver BodyTypePathResolver<'query, D, I>,
+        resolver: &'resolver BodyTypePathQuery<'query, D, I>,
         use_site: TypeRefUseSite,
     ) -> Self {
         Self {

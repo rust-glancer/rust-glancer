@@ -31,7 +31,7 @@ use crate::{
 };
 
 use crate::resolution::{
-    BodyResolutionContext, BodyResolutionProviders, BodyValuePathResolver, TypeRefUseSite,
+    BodyResolutionContext, BodyResolutionProviders, BodyValuePathQuery, TypeRefUseSite,
     support::push_unique,
 };
 
@@ -40,12 +40,12 @@ use crate::resolution::{
 /// After this pass, consumers should see ordinary `BindingId`s only. Ambiguous pattern identifiers
 /// that resolved as consts/statics/unit variants remain visible through their pattern path, not as
 /// fake local bindings.
-pub(super) struct PatternBindingMaterializer<'query, 'body, D, I> {
+pub(super) struct PatternBindingMaterializationPass<'query, 'body, D, I> {
     providers: BodyResolutionProviders<'query, D, I>,
     body: &'body mut ResolvedBodyData,
 }
 
-impl<'query, 'body, D, I> PatternBindingMaterializer<'query, 'body, D, I>
+impl<'query, 'body, D, I> PatternBindingMaterializationPass<'query, 'body, D, I>
 where
     for<'source> &'source D: DefMapSource<Error = PackageStoreError>,
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
@@ -185,7 +185,7 @@ where
         if let Some(annotation) = annotation {
             let ty = self
                 .context()
-                .type_path_resolver()
+                .type_path_query()
                 .type_ref(TypeRefUseSite::Scope(scope))
                 .resolve(annotation)?;
             if !matches!(ty, Ty::Unknown) {
@@ -431,7 +431,7 @@ where
 
         Ok(Some(
             self.context()
-                .type_path_resolver()
+                .type_path_query()
                 .type_ref(TypeRefUseSite::Module(field_data.owner_module))
                 .with_subst(&self.semantic_type_subst(ty)?)
                 .resolve(&field_data.field.ty)?,
@@ -459,7 +459,7 @@ where
 
         Ok(Some(
             self.context()
-                .type_path_resolver()
+                .type_path_query()
                 .type_ref(TypeRefUseSite::Module(variant_data.owner_module))
                 .with_subst(&self.semantic_type_subst(enum_ty)?)
                 .resolve(&field.ty)?,
@@ -530,7 +530,7 @@ where
             return Ok(true);
         }
 
-        let (resolution, _) = BodyValuePathResolver::new(self.context())
+        let (resolution, _) = BodyValuePathQuery::new(self.context())
             .resolve_nonlocal_path_expr(binding_data.scope, &path)?;
 
         Ok(matches!(
@@ -646,7 +646,7 @@ where
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .context()
-                .type_path_resolver()
+                .type_path_query()
                 .type_ref(TypeRefUseSite::Scope(binding_data.scope))
                 .resolve(annotation);
         }
@@ -657,7 +657,7 @@ where
         {
             let self_tys = self
                 .context()
-                .type_path_resolver()
+                .type_path_query()
                 .self_nominal_tys_for_function(function)?;
             let ty = Ty::self_ty(self_tys);
             return Ok(match kind {

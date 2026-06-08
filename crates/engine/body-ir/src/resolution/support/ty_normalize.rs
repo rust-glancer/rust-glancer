@@ -4,19 +4,19 @@
 //! parentheses, `.await`, and `?`, but it does not try to implement borrow checking, autoderef, the
 //! `Try` trait, or `Future::Output` projection.
 
-use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource};
+use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_ty::{GenericArg, Ty};
 
 use crate::ir::ExprWrapperKind;
 
 use rg_package_store::PackageStoreError;
 
-use crate::resolution::source::BodyQuerySource;
+use crate::resolution::BodyResolutionContext;
 
 use super::push_unique;
 
 pub(crate) struct TyNormalizer<'a, D, I> {
-    source: BodyQuerySource<'a, D, I>,
+    context: BodyResolutionContext<'a, D, I>,
 }
 
 impl<'a, D, I> TyNormalizer<'a, D, I>
@@ -24,8 +24,8 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
 {
-    pub(crate) fn new(source: BodyQuerySource<'a, D, I>) -> Self {
-        Self { source }
+    pub(crate) fn new(context: BodyResolutionContext<'a, D, I>) -> Self {
+        Self { context }
     }
 
     pub(crate) fn ty_for_wrapper(&self, kind: ExprWrapperKind, inner_ty: Ty) -> Ty {
@@ -45,7 +45,7 @@ where
 
     fn try_output_ty(&self, ty: &Ty) -> Ty {
         let mut outputs = Vec::new();
-        let item_query = ItemStoreQuery::new(self.source);
+        let item_query = self.context.item_query();
 
         for nominal in ty.as_nominals() {
             let Ok(Some(name)) = item_query.type_def_name(nominal.def) else {

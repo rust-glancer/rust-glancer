@@ -9,8 +9,8 @@ mod source;
 mod support;
 
 pub(crate) use self::{
-    pass::BodyResolver,
-    query::{BodyTypePathResolver, BodyValuePathResolver, TypeRefUseSite},
+    pass::BodyResolutionPass,
+    query::{BodyTypePathQuery, BodyValuePathQuery, TypeRefUseSite},
     source::{BodyQuerySource, BodyResolutionContext, BodyResolutionProviders},
     support::push_unique,
 };

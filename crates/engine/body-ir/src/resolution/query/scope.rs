@@ -5,7 +5,7 @@ use rg_ty::{MemberMethodCandidateRef, Ty};
 
 use crate::{BodyResolution, ResolvedBodyData};
 
-use crate::resolution::{BodyResolutionContext, BodyValuePathResolver};
+use crate::resolution::{BodyResolutionContext, BodyValuePathQuery};
 
 /// Query-time lookup from one body-local lexical scope.
 ///
@@ -32,9 +32,7 @@ where
         scope: ScopeId,
         path: &Path,
     ) -> Result<TypePathResolution, PackageStoreError> {
-        self.context
-            .type_path_resolver()
-            .resolve_in_scope(scope, path)
+        self.context.type_path_query().resolve_in_scope(scope, path)
     }
 
     pub fn resolve_value_path_in_scope(
@@ -42,7 +40,7 @@ where
         scope: ScopeId,
         path: &Path,
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
-        BodyValuePathResolver::new(self.context).resolve_nonlocal_path_expr(scope, path)
+        BodyValuePathQuery::new(self.context).resolve_nonlocal_path_expr(scope, path)
     }
 
     pub fn method_candidates_for_ty(

@@ -12,7 +12,7 @@ use rg_text::NameInterner;
 use crate::{
     BodyOwner, TargetBodies,
     resolution::{
-        BodyQuerySource, BodyResolver, BodyTypePathResolver, TypeRefUseSite, push_unique,
+        BodyResolutionContext, BodyResolutionPass, BodyTypePathQuery, TypeRefUseSite, push_unique,
     },
 };
 
@@ -238,8 +238,8 @@ impl<'target> TargetBodyBuildState<'target> {
                     self.target,
                     &self.body_local_items,
                 );
-                let resolver = BodyTypePathResolver::new(BodyQuerySource::new(
-                    &source, &source, body_ref, body,
+                let type_paths = BodyTypePathQuery::new(BodyResolutionContext::new(
+                    &source, &source, body_ref, body, None,
                 ));
                 let mut resolved_headers = Vec::new();
                 for (impl_id, owner, self_ty, trait_ref) in impl_headers {
@@ -251,7 +251,7 @@ impl<'target> TargetBodyBuildState<'target> {
                         continue;
                     };
 
-                    let ty = resolver
+                    let ty = type_paths
                         .type_ref(TypeRefUseSite::Scope(scope))
                         .resolve(&self_ty)?;
                     let mut resolved_self_tys = Vec::new();
@@ -263,7 +263,7 @@ impl<'target> TargetBodyBuildState<'target> {
                     if let Some(trait_ref) = trait_ref
                         && let Some(path) = Path::from_type_ref(&trait_ref)
                         && let TypePathResolution::Traits(traits) =
-                            resolver.resolve_in_scope(scope, &path)?
+                            type_paths.resolve_in_scope(scope, &path)?
                     {
                         resolved_trait_refs = traits;
                     }
@@ -299,7 +299,7 @@ impl<'target> TargetBodyBuildState<'target> {
         semantic_ir: &SemanticIrReadTxn<'_>,
         semantic_index: &ItemLookupIndex,
     ) -> anyhow::Result<()> {
-        // Make the body resolver aware of body-local items.
+        // Make the body resolution pass aware of body-local items.
         let source =
             BodyBuildQuerySource::new(def_map, semantic_ir, self.target, &self.body_local_items);
         let target = self.target;
@@ -310,7 +310,7 @@ impl<'target> TargetBodyBuildState<'target> {
                 target,
                 body: BodyId(body_idx),
             };
-            BodyResolver::new(&source, &source, semantic_index, body_ref, body).resolve()?;
+            BodyResolutionPass::new(&source, &source, semantic_index, body_ref, body).resolve()?;
         }
 
         Ok(())

@@ -18,11 +18,11 @@ use rg_ty::{
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite, support::push_unique};
 use crate::{ir::ExprKind, ir::resolved::BodyResolution};
 
-pub(crate) struct CallableReturnResolver<'query, D, I> {
+pub(crate) struct CallableReturnQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
-impl<'query, D, I> CallableReturnResolver<'query, D, I>
+impl<'query, D, I> CallableReturnQuery<'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
@@ -168,14 +168,14 @@ where
                 Some(self_ty) => self_ty,
                 None => Ty::self_ty(
                     self.context
-                        .type_path_resolver()
+                        .type_path_query()
                         .self_nominal_tys_for_function(function_ref)?,
                 ),
             });
         }
 
         self.context
-            .type_path_resolver()
+            .type_path_query()
             .type_ref(TypeRefUseSite::Function(function_ref))
             .with_subst(&subst)
             .resolve(ret_ty)
@@ -261,8 +261,8 @@ where
 
         // Function turbofish arguments are supplied at the call site, so names inside them must
         // resolve from the body scope where the call was written.
-        let type_resolver = self.context.type_path_resolver();
-        let arg_resolver = type_resolver.type_ref(TypeRefUseSite::Scope(scope));
+        let type_paths = self.context.type_path_query();
+        let arg_resolver = type_paths.type_ref(TypeRefUseSite::Scope(scope));
         let generic_args = explicit_args
             .iter()
             .map(|arg| arg_resolver.generic_arg(arg))

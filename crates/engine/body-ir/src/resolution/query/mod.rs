@@ -8,9 +8,9 @@ mod value_path;
 
 pub(crate) use self::{
     body_items::BodyLocalItemQuery, receiver_items::BodyReceiverFunctionQuery,
-    type_path::BodyTypePathResolver, type_ref::TypeRefUseSite, value_path::BodyValuePathResolver,
+    type_path::BodyTypePathQuery, type_ref::TypeRefUseSite, value_path::BodyValuePathQuery,
 };
 
 pub use self::scope::BodyScopeQuery;
 
-pub(crate) use self::callable::CallableReturnResolver;
+pub(crate) use self::callable::CallableReturnQuery;

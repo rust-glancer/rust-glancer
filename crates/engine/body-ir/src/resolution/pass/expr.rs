@@ -1,7 +1,7 @@
 //! Expression resolution for the body-resolution fixed-point pass.
 //!
 //! This module owns expression-shaped traversal and the small type facts derived while walking
-//! expressions. The parent resolver still drives pass ordering and binding propagation.
+//! expressions. The parent pass still drives ordering and binding propagation.
 
 use rg_ir_model::{
     DefMapRef, ExprId, Path, ScopeId, TypePathResolution,
@@ -22,24 +22,24 @@ use crate::{
 };
 
 use crate::resolution::{
-    BodyValuePathResolver, TypeRefUseSite,
-    query::CallableReturnResolver,
+    BodyValuePathQuery, TypeRefUseSite,
+    query::CallableReturnQuery,
     support::{TyNormalizer, push_unique},
 };
 
-use super::body::BodyResolver;
+use super::body::BodyResolutionPass;
 
-pub(super) struct ExprResolver<'pass, 'query, 'body, D, I> {
-    pass: &'pass mut BodyResolver<'query, 'body, D, I>,
+pub(super) struct ExprResolutionPass<'pass, 'query, 'body, D, I> {
+    pass: &'pass mut BodyResolutionPass<'query, 'body, D, I>,
 }
 
-impl<'pass, 'query, 'body, D, I> ExprResolver<'pass, 'query, 'body, D, I> {
-    pub(super) fn new(pass: &'pass mut BodyResolver<'query, 'body, D, I>) -> Self {
+impl<'pass, 'query, 'body, D, I> ExprResolutionPass<'pass, 'query, 'body, D, I> {
+    pub(super) fn new(pass: &'pass mut BodyResolutionPass<'query, 'body, D, I>) -> Self {
         Self { pass }
     }
 }
 
-impl<'pass, 'query, 'body, D, I> ExprResolver<'pass, 'query, 'body, D, I>
+impl<'pass, 'query, 'body, D, I> ExprResolutionPass<'pass, 'query, 'body, D, I>
 where
     for<'source> &'source D: DefMapSource<Error = PackageStoreError>,
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
@@ -60,7 +60,7 @@ where
             }
             ExprKind::Call { callee, args } => {
                 let ty =
-                    CallableReturnResolver::new(self.pass.context()).call_expr_ty(callee, &args)?;
+                    CallableReturnQuery::new(self.pass.context()).call_expr_ty(callee, &args)?;
                 self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Tuple { fields } => {
@@ -87,7 +87,7 @@ where
                 let ty = self
                     .pass
                     .context()
-                    .type_path_resolver()
+                    .type_path_query()
                     .type_ref(TypeRefUseSite::Scope(
                         self.pass.body.expr_unchecked(expr).scope,
                     ))
@@ -242,7 +242,7 @@ where
         let expr_data = self.pass.body.expr_unchecked(expr);
         let scope = expr_data.scope;
         let visible_bindings = expr_data.visible_bindings;
-        BodyValuePathResolver::new(self.pass.context()).resolve_path_expr(
+        BodyValuePathQuery::new(self.pass.context()).resolve_path_expr(
             scope,
             path,
             Some(visible_bindings),
@@ -318,7 +318,7 @@ where
         scope: ScopeId,
         path: &Path,
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
-        BodyValuePathResolver::new(self.pass.context()).resolve_nonlocal_path_expr(scope, path)
+        BodyValuePathQuery::new(self.pass.context()).resolve_nonlocal_path_expr(scope, path)
     }
 
     fn resolve_record_expr_path(
@@ -329,7 +329,7 @@ where
         match self
             .pass
             .context()
-            .type_path_resolver()
+            .type_path_query()
             .resolve_in_scope(scope, path)?
         {
             TypePathResolution::SelfType(types) => {
@@ -417,7 +417,7 @@ where
                 let field_ty = self
                     .pass
                     .context()
-                    .type_path_resolver()
+                    .type_path_query()
                     .type_ref(TypeRefUseSite::Module(field_data.owner_module))
                     .with_subst(&subst)
                     .resolve(&field_data.field.ty)?;
@@ -463,7 +463,7 @@ where
 
         let receiver_ty = self.pass.body.expr_ty_unchecked(receiver);
         let item_query = self.pass.context().item_query();
-        let callable_returns = CallableReturnResolver::new(self.pass.context());
+        let callable_returns = CallableReturnQuery::new(self.pass.context());
 
         // Method lookup is intentionally shallow: nominal type plus lightweight impl-argument
         // matching gives useful candidates without modeling the full trait solver.
@@ -585,7 +585,7 @@ where
         let Some(inner) = inner else {
             return (BodyResolution::Unknown, Ty::Unknown);
         };
-        let ty = TyNormalizer::new(self.pass.context().query_source())
+        let ty = TyNormalizer::new(self.pass.context())
             .ty_for_wrapper(kind, self.pass.body.expr_ty_unchecked(inner).clone());
         let resolution = if matches!(kind, ExprWrapperKind::Paren) {
             self.pass.body.expr_resolution(inner).clone()

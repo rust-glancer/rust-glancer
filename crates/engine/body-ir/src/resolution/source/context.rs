@@ -1,6 +1,6 @@
 //! Shared provider construction for body resolution.
 //!
-//! Resolver components should not each remember how to wire DefMap, item-store, target, and body
+//! Resolution components should not each remember how to wire DefMap, item-store, target, and body
 //! lookup providers together. This context keeps that routing in one place while still exposing
 //! only read-only access to the active body.
 
@@ -13,9 +13,7 @@ use rg_ty::{Autoderef, ImplMatcher, ItemPathQuery, IterationItemResolver};
 
 use crate::ir::body::ResolvedBodyData;
 
-use crate::resolution::query::{
-    BodyLocalItemQuery, BodyReceiverFunctionQuery, BodyTypePathResolver,
-};
+use crate::resolution::query::{BodyLocalItemQuery, BodyReceiverFunctionQuery, BodyTypePathQuery};
 
 use super::BodyQuerySource;
 
@@ -83,16 +81,16 @@ where
         TargetItemQuery::new(source, source, self.source.body_ref().target)
     }
 
-    pub(crate) fn type_path_resolver(&self) -> BodyTypePathResolver<'a, D, I> {
-        BodyTypePathResolver::new(self.source)
+    pub(crate) fn type_path_query(&self) -> BodyTypePathQuery<'a, D, I> {
+        BodyTypePathQuery::new(*self)
     }
 
     pub(crate) fn body_local_items(&self) -> BodyLocalItemQuery<'a, D, I> {
-        BodyLocalItemQuery::new(self.source)
+        BodyLocalItemQuery::new(*self)
     }
 
     pub(crate) fn receiver_functions(&self) -> BodyReceiverFunctionQuery<'a, D, I> {
-        BodyReceiverFunctionQuery::new(self.source, self.semantic_index)
+        BodyReceiverFunctionQuery::new(*self)
     }
 
     pub(crate) fn impl_matcher(

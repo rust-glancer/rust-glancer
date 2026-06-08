@@ -1,7 +1,7 @@
 //! Type-path resolution with body-local scope awareness.
 //!
 //! Semantic IR can resolve module items, but body-local structs live in lexical scopes. This
-//! resolver checks those scopes first and then falls back to the semantic/def-map context.
+//! query checks those scopes first and then falls back to the semantic/def-map context.
 
 use rg_ir_model::{
     AssocItemId, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef, Path,
@@ -9,32 +9,31 @@ use rg_ir_model::{
     items::{TypePath, TypeRef},
 };
 use rg_ir_storage::{
-    DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, NameResolutionFilter,
-    TargetItemQuery, TypePathContext,
+    DefMapSource, ItemStoreQuery, ItemStoreSource, NameResolutionFilter, TypePathContext,
 };
 use rg_package_store::PackageStoreError;
-use rg_ty::{GenericArg, ImplMatcher, ItemPathQuery, NominalTy, Ty, TypeSubst};
+use rg_ty::{GenericArg, ImplMatcher, NominalTy, Ty, TypeSubst};
 
 use crate::ir::BodyOwner;
 
-use crate::resolution::{source::BodyQuerySource, support::push_unique};
+use crate::resolution::{BodyQuerySource, BodyResolutionContext, support::push_unique};
 
 use super::{
     BodyLocalItemQuery,
     type_ref::{TypeRefResolutionQuery, TypeRefUseSite},
 };
 
-pub(crate) struct BodyTypePathResolver<'query, D, I> {
-    source: BodyQuerySource<'query, D, I>,
+pub(crate) struct BodyTypePathQuery<'query, D, I> {
+    context: BodyResolutionContext<'query, D, I>,
 }
 
-impl<'query, D, I> BodyTypePathResolver<'query, D, I>
+impl<'query, D, I> BodyTypePathQuery<'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(crate) fn new(source: BodyQuerySource<'query, D, I>) -> Self {
-        Self { source }
+    pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
+        Self { context }
     }
 
     pub(crate) fn type_ref(
@@ -45,24 +44,21 @@ where
     }
 
     pub(super) fn source(&self) -> BodyQuerySource<'query, D, I> {
-        self.source
+        self.context.query_source()
     }
 
     fn impl_matcher(
         &self,
     ) -> ImplMatcher<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>> {
-        let source = self.source;
-        let item_paths = ItemPathQuery::new(source, source);
-        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
-        ImplMatcher::new(item_paths, target_items)
+        self.context.impl_matcher()
     }
 
     pub(super) fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
-        ItemStoreQuery::new(self.source)
+        self.context.item_query()
     }
 
     fn body_local_items(&self) -> BodyLocalItemQuery<'query, D, I> {
-        BodyLocalItemQuery::new(self.source)
+        self.context.body_local_items()
     }
 
     pub(crate) fn resolve_in_scope(
@@ -90,15 +86,14 @@ where
             return Ok(self.type_resolution_from_items(body_items));
         }
 
-        let source = self.source;
-        let item_paths = ItemPathQuery::new(source, source);
+        let item_paths = self.context.item_paths();
         let context = self.context_for_body_owner()?;
         let resolution = item_paths.resolve_type_path(context, path)?;
         if !matches!(resolution, TypePathResolution::Unknown) {
             return Ok(resolution);
         }
 
-        let fallback_module = self.source.body().fallback_module();
+        let fallback_module = self.context.body().fallback_module();
         if fallback_module == context.module {
             return Ok(resolution);
         }
@@ -116,7 +111,7 @@ where
         &self,
         function: FunctionRef,
     ) -> Result<Vec<NominalTy>, PackageStoreError> {
-        let context = self.context_for_function(function, self.source.body().owner_module())?;
+        let context = self.context_for_function(function, self.context.body().owner_module())?;
         self.self_nominal_tys_for_context(context)
     }
 
@@ -132,8 +127,7 @@ where
             return Ok(Vec::new());
         };
 
-        let source = self.source;
-        let item_paths = ItemPathQuery::new(source, source);
+        let item_paths = self.context.item_paths();
         let resolved = item_paths.resolve_type_ref(
             &impl_data.self_ty,
             context,
@@ -173,8 +167,8 @@ where
     }
 
     pub(super) fn context_for_body_owner(&self) -> Result<TypePathContext, PackageStoreError> {
-        let fallback_module = self.source.body().owner_module();
-        match self.source.body().owner() {
+        let fallback_module = self.context.body().owner_module();
+        match self.context.body().owner() {
             BodyOwner::Function(function) => self.context_for_function(function, fallback_module),
             BodyOwner::Const(const_ref) => {
                 let item_query = self.item_query();
@@ -195,10 +189,10 @@ where
         path: &Path,
     ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
         let from = ModuleRef {
-            origin: DefMapRef::Body(self.source.body_ref()),
+            origin: DefMapRef::Body(self.context.body_ref()),
             module: ModuleId(scope.0),
         };
-        let result = DefMapQuery::new(self.source).resolve_lexical_path(
+        let result = self.context.def_map_query().resolve_lexical_path(
             from,
             path,
             NameResolutionFilter::TypesOnly,
@@ -212,7 +206,7 @@ where
         module: ModuleRef,
         path: &Path,
     ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
-        let def_maps = DefMapQuery::new(self.source);
+        let def_maps = self.context.def_map_query();
         let result = def_maps.resolve_path_in_type_namespace(module, path)?;
         let items = self.semantic_items_for_defs(result.resolved)?;
         if !items.is_empty() {
@@ -221,7 +215,7 @@ where
 
         // A body-local module only carries the lexical body facts. The inherited fallback keeps
         // signatures on parent body-local items able to name ordinary surrounding module items.
-        let fallback_module = self.source.body().fallback_module();
+        let fallback_module = self.context.body().fallback_module();
         if fallback_module == module {
             return Ok(items);
         }
@@ -322,7 +316,7 @@ where
 
         let context = item_query
             .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module()));
+            .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
         self.type_ref(TypeRefUseSite::OwnerContext(context))
             .with_subst(&alias_subst)
             .resolve(aliased_ty)
@@ -407,7 +401,7 @@ where
 
         let context = item_query
             .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
-            .unwrap_or_else(|| TypePathContext::module(self.source.body().owner_module()));
+            .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
         self.type_ref(TypeRefUseSite::OwnerContext(context))
             .with_subst(&alias_subst)
             .resolve(aliased_ty)

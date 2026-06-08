@@ -6,22 +6,22 @@
 //! target-level semantic index.
 
 use rg_ir_model::{AssocItemId, DefMapRef, FunctionRef, ImplRef, TraitImplRef, TypeDefRef};
-use rg_ir_storage::{ItemStore, ItemStoreQuery, ItemStoreSource};
+use rg_ir_storage::{DefMapSource, ItemStore, ItemStoreQuery, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 
-use crate::resolution::{source::BodyQuerySource, support::push_unique};
+use crate::resolution::{BodyQuerySource, BodyResolutionContext, support::push_unique};
 
 pub(crate) struct BodyLocalItemQuery<'query, D, I> {
-    source: BodyQuerySource<'query, D, I>,
+    context: BodyResolutionContext<'query, D, I>,
 }
 
 impl<'query, D, I> BodyLocalItemQuery<'query, D, I>
 where
-    D: Copy,
+    D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(crate) fn new(source: BodyQuerySource<'query, D, I>) -> Self {
-        Self { source }
+    pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
+        Self { context }
     }
 
     pub(super) fn inherent_impls_for_type(
@@ -114,7 +114,7 @@ where
     }
 
     fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
-        ItemStoreQuery::new(self.source)
+        self.context.item_query()
     }
 
     fn body_lookup_stores(&self) -> Result<Vec<&'query ItemStore>, PackageStoreError> {
@@ -122,10 +122,10 @@ where
 
         // Check the active body first, then the body-local modules that own this declaration and
         // its fallback. Target modules are still handled by TargetItemQuery.
-        push_unique(&mut origins, DefMapRef::Body(self.source.body_ref()));
+        push_unique(&mut origins, DefMapRef::Body(self.context.body_ref()));
         for module in [
-            self.source.body().owner_module(),
-            self.source.body().fallback_module(),
+            self.context.body().owner_module(),
+            self.context.body().fallback_module(),
         ] {
             if let DefMapRef::Body(_) = module.origin {
                 push_unique(&mut origins, module.origin);

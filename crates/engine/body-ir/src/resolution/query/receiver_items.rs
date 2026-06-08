@@ -5,22 +5,16 @@
 //! has been decided, so this query merges both layers before returning ref-level candidates.
 
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef};
-use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemStoreQuery, ItemStoreSource, TargetItemQuery,
-};
+use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{
-    Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, MemberMethodCandidateRef,
-    MemberMethodOrigin, NominalTy, Ty, TypeSubst,
-};
+use rg_ty::{ImplMatcher, MemberMethodCandidateRef, MemberMethodOrigin, NominalTy, Ty, TypeSubst};
 
-use crate::resolution::{source::BodyQuerySource, support::push_unique};
+use crate::resolution::{BodyQuerySource, BodyResolutionContext, support::push_unique};
 
 use super::BodyLocalItemQuery;
 
 pub(crate) struct BodyReceiverFunctionQuery<'query, D, I> {
-    source: BodyQuerySource<'query, D, I>,
-    semantic_index: Option<&'query ItemLookupIndex>,
+    context: BodyResolutionContext<'query, D, I>,
 }
 
 /// Inherent function found by matching an impl whose `Self` type is structural.
@@ -53,30 +47,20 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(crate) fn new(
-        source: BodyQuerySource<'query, D, I>,
-        semantic_index: Option<&'query ItemLookupIndex>,
-    ) -> Self {
-        Self {
-            source,
-            semantic_index,
-        }
+    pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
+        Self { context }
     }
 
     pub(super) fn method_candidates_for_ty(
         &self,
         ty: &Ty,
     ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {
-        let source = self.source;
-        let item_paths = ItemPathQuery::new(source, source);
-        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
-        let autoderef = match self.semantic_index {
-            Some(index) => Autoderef::with_index(item_paths, target_items, index),
-            None => Autoderef::new(item_paths, target_items),
-        };
-
         let mut candidates = Vec::new();
-        for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, ty) {
+        for candidate in self
+            .context
+            .autoderef()
+            .candidates(rg_ty::AutoderefMode::MethodReceiver, ty)
+        {
             let candidate = candidate?;
             for receiver_ty in candidate.ty().as_nominals() {
                 for method in self.function_candidates_for_receiver(receiver_ty, None)? {
@@ -111,11 +95,8 @@ where
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
     ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {
-        let source = self.source;
-        let item_paths = ItemPathQuery::new(source, source);
-        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
-        let matcher = ImplMatcher::new(item_paths.clone(), target_items.clone());
-        let body_items = BodyLocalItemQuery::new(source);
+        let matcher = self.context.impl_matcher();
+        let body_items = self.context.body_local_items();
         let mut candidates = Vec::new();
 
         for function in self.body_inherent_functions(&body_items, receiver_ty, method_name)? {
@@ -140,7 +121,7 @@ where
 
         let body_trait_impls = body_items.trait_impls_for_type(receiver_ty.def)?;
         for (function, applicability) in matcher.trait_function_candidates_from_impls(
-            self.semantic_index,
+            self.context.semantic_index(),
             body_trait_impls,
             receiver_ty,
             method_name,
@@ -153,7 +134,7 @@ where
 
         if receiver_ty.def.origin.as_target_ref().is_some() {
             for (function, applicability) in matcher.trait_function_candidates_for_receiver(
-                self.semantic_index,
+                self.context.semantic_index(),
                 receiver_ty,
                 method_name,
             )? {
@@ -178,17 +159,15 @@ where
             return Ok(Vec::new());
         }
 
-        let source = self.source;
-        let item_paths = ItemPathQuery::new(source, source);
-        let target_items = TargetItemQuery::new(source, source, self.source.body_ref().target);
-        let matcher = ImplMatcher::new(item_paths, target_items.clone());
-        let item_query = ItemStoreQuery::new(source);
+        let target_items = self.context.target_items();
+        let matcher = self.context.impl_matcher();
+        let item_query = self.context.item_query();
         let mut candidates = Vec::new();
 
         // Structural inherent impls model language/core-provided builtins such as `impl<T> [T]`.
         // Body-local impl lookup remains nominal-only because block-local impls are useful for
         // local structs, not for defining new inherent methods on builtin shaped types.
-        let impl_refs = match self.semantic_index {
+        let impl_refs = match self.context.semantic_index() {
             Some(index) => index.structural_inherent_impls().to_vec(),
             None => target_items.inherent_impls()?,
         };
@@ -275,19 +254,19 @@ where
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
     ) -> Result<Vec<FunctionRef>, PackageStoreError> {
-        let source = self.source;
-        match (self.semantic_index, method_name) {
+        match (self.context.semantic_index(), method_name) {
             (Some(index), Some(name)) => Ok(index
                 .inherent_functions_for_type_and_name(receiver_ty.def, name)
                 .to_vec()),
             (Some(index), None) => {
-                let item_query = ItemStoreQuery::new(source);
+                let item_query = self.context.item_query();
                 index.inherent_functions_for_type(&item_query, receiver_ty.def)
             }
             (None, method_name) => {
-                let target_items =
-                    TargetItemQuery::new(source, source, self.source.body_ref().target);
-                let functions = target_items.inherent_functions_for_type(receiver_ty.def)?;
+                let functions = self
+                    .context
+                    .target_items()
+                    .inherent_functions_for_type(receiver_ty.def)?;
                 self.filter_functions_by_name(functions, method_name)
             }
         }
@@ -302,7 +281,7 @@ where
             return Ok(functions);
         };
 
-        let item_query = ItemStoreQuery::new(self.source);
+        let item_query = self.context.item_query();
         let mut retained = Vec::new();
         for function in functions {
             let Some(function_data) = item_query.function_data(function)? else {

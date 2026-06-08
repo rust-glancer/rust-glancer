@@ -16,20 +16,20 @@ use crate::{
 use crate::resolution::{BodyResolutionContext, BodyResolutionProviders, TypeRefUseSite};
 
 use super::{
-    expr::ExprResolver, pattern_binding::PatternBindingMaterializer,
-    pattern_type::PatternTypePropagator,
+    expr::ExprResolutionPass, pattern_binding::PatternBindingMaterializationPass,
+    pattern_type::PatternTypePropagationPass,
 };
 
 /// Shared state for the body-resolution fixed-point pass.
 ///
-/// Sibling resolver modules keep their logic in separate files while operating on the same body
+/// Sibling pass modules keep their logic in separate files while operating on the same body
 /// facts, so the fields are scoped to `resolution` rather than hidden inside this file.
-pub(crate) struct BodyResolver<'query, 'body, D, I> {
+pub(crate) struct BodyResolutionPass<'query, 'body, D, I> {
     pub(super) providers: BodyResolutionProviders<'query, D, I>,
     pub(super) body: &'body mut ResolvedBodyData,
 }
 
-impl<'query, 'body, D, I> BodyResolver<'query, 'body, D, I>
+impl<'query, 'body, D, I> BodyResolutionPass<'query, 'body, D, I>
 where
     for<'source> &'source D: DefMapSource<Error = PackageStoreError>,
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
@@ -70,12 +70,12 @@ where
             let mut changed = false;
             let expr_count = self.body.exprs().len();
             {
-                let mut expr_resolver = ExprResolver::new(self);
+                let mut expr_pass = ExprResolutionPass::new(self);
                 for expr_idx in 0..expr_count {
-                    changed |= expr_resolver.resolve_expr(ExprId(expr_idx))?;
+                    changed |= expr_pass.resolve_expr(ExprId(expr_idx))?;
                 }
             }
-            let binding_updates = PatternTypePropagator::new(self.context()).propagate()?;
+            let binding_updates = PatternTypePropagationPass::new(self.context()).propagate()?;
             changed |= self.apply_binding_type_updates(binding_updates);
 
             if !changed {
@@ -87,7 +87,7 @@ where
     }
 
     fn materialize_pattern_bindings(&mut self) -> Result<(), PackageStoreError> {
-        PatternBindingMaterializer::new(self.providers, self.body).materialize()
+        PatternBindingMaterializationPass::new(self.providers, self.body).materialize()
     }
 
     fn resolve_bindings(&mut self) -> Result<(), PackageStoreError> {
@@ -125,7 +125,7 @@ where
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .context()
-                .type_path_resolver()
+                .type_path_query()
                 .type_ref(TypeRefUseSite::Scope(binding_data.scope))
                 .resolve(annotation);
         }
@@ -136,7 +136,7 @@ where
         {
             let self_tys = self
                 .context()
-                .type_path_resolver()
+                .type_path_query()
                 .self_nominal_tys_for_function(function)?;
             let ty = Ty::self_ty(self_tys);
             return Ok(match kind {

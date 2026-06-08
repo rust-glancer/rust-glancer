@@ -22,10 +22,10 @@ use super::type_path::split_associated_path;
 
 /// Resolves body value paths without mutating the body.
 ///
-/// The main resolver uses this during the fixed-point pass, and analysis reuses it for cursor
+/// The main pass uses this during the fixed-point pass, and analysis reuses it for cursor
 /// queries over path prefixes. Keeping it read-only avoids cloning bodies just to answer
 /// goto-definition/type-at for `Type::assoc` or `Enum::Variant` segments.
-pub(crate) struct BodyValuePathResolver<'query, D, I> {
+pub(crate) struct BodyValuePathQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
@@ -40,7 +40,7 @@ enum BodyValueName {
     SemanticItems(Vec<SemanticItemRef>),
 }
 
-impl<'query, D, I> BodyValuePathResolver<'query, D, I>
+impl<'query, D, I> BodyValuePathQuery<'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
@@ -76,7 +76,7 @@ where
         // module/DefMap lookup.
         match self
             .context
-            .type_path_resolver()
+            .type_path_query()
             .resolve_in_scope(scope, path)?
         {
             TypePathResolution::SelfType(types) => {
@@ -340,7 +340,7 @@ where
             .type_path_context_for_owner(const_ref.origin, const_data.owner)?
             .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
         self.context
-            .type_path_resolver()
+            .type_path_query()
             .type_ref(TypeRefUseSite::OwnerContext(context))
             .resolve(ty)
     }
@@ -355,7 +355,7 @@ where
         };
 
         self.context
-            .type_path_resolver()
+            .type_path_query()
             .type_ref(TypeRefUseSite::Module(static_data.owner))
             .resolve(ty)
     }
@@ -371,7 +371,7 @@ where
         // the same type-substitution rules used by method calls.
         let prefix_resolution = self
             .context
-            .type_path_resolver()
+            .type_path_query()
             .resolve_in_scope(scope, prefix)?;
         let prefix_ty =
             Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
@@ -677,7 +677,7 @@ where
             .type_path_context_for_owner(const_ref.origin, owner)?
             .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
         self.context
-            .type_path_resolver()
+            .type_path_query()
             .type_ref(TypeRefUseSite::OwnerContext(context))
             .with_subst(&subst)
             .resolve(ty)
