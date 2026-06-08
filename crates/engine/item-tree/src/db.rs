@@ -48,11 +48,7 @@ impl ItemTreeDb {
             packages: vec![None; parse.package_count()],
         };
 
-        if package_slots.len() <= 1 {
-            Self::build_packages_serial(parse, &package_slots, interners, &mut trees)?;
-        } else {
-            Self::build_packages_parallel(parse, &package_slots, interners, &mut trees)?;
-        }
+        Self::build_packages_parallel(parse, &package_slots, interners, &mut trees)?;
         trees.shrink_to_fit();
 
         Ok(trees)
@@ -69,26 +65,6 @@ impl ItemTreeDb {
             package.shrink_to_fit();
         }
         self.packages.shrink_to_fit();
-    }
-
-    fn build_packages_serial(
-        parse: &mut ParseDb,
-        package_slots: &[usize],
-        interners: &mut PackageNameInterners,
-        trees: &mut Self,
-    ) -> anyhow::Result<()> {
-        for &package_slot in package_slots {
-            let interner = interners.package_mut(package_slot).with_context(|| {
-                format!("while attempting to fetch name interner for package {package_slot}")
-            })?;
-            let package = parse.package_mut(package_slot).with_context(|| {
-                format!("while attempting to fetch parsed package {package_slot}")
-            })?;
-            let lowered = Self::lower_package(package_slot, package, interner)?;
-            trees.packages[package_slot] = Some(lowered);
-        }
-
-        Ok(())
     }
 
     fn build_packages_parallel(

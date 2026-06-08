@@ -48,10 +48,6 @@ impl PhasePackageSet {
         self.packages.is_empty()
     }
 
-    pub(super) fn len(&self) -> usize {
-        self.packages.len()
-    }
-
     pub(super) fn iter(&self) -> impl Iterator<Item = PackageSlot> + '_ {
         self.packages.iter().copied()
     }

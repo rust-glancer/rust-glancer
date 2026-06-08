@@ -19,25 +19,6 @@ pub(super) fn resolve_packages(
     def_map: &DefMapReadTxn<'_>,
     semantic_ir: &SemanticIrReadTxn<'_>,
 ) -> anyhow::Result<()> {
-    if packages.len() <= 1 {
-        for (package_idx, ((package, parse_package), interner)) in packages
-            .iter_mut()
-            .zip(parse.packages())
-            .zip(interners.packages_mut())
-            .enumerate()
-        {
-            resolve_package(
-                PackageSlot(package_idx),
-                parse_package,
-                package,
-                interner,
-                def_map,
-                semantic_ir,
-            )?;
-        }
-        return Ok(());
-    }
-
     let thread_pool = local_thread_pool("rg-body-resolve")?;
     thread_pool
         .install(|| {
@@ -102,20 +83,6 @@ pub(super) fn resolve_selected_packages(
         jobs.push((*package_slot, parse_package, package, interner));
         remaining_interners = rest;
         next_package_idx = package_slot.0 + 1;
-    }
-
-    if jobs.len() <= 1 {
-        for (package_slot, parse_package, package, interner) in jobs {
-            resolve_package(
-                package_slot,
-                parse_package,
-                package,
-                interner,
-                def_map,
-                semantic_ir,
-            )?;
-        }
-        return Ok(());
     }
 
     let thread_pool = local_thread_pool("rg-body-resolve")?;

@@ -163,13 +163,6 @@ impl<'a> ResidencyApplication<'a> {
         }
 
         let writer = self.project.cache_store.prepare_artifact_writes()?;
-        if packages.len() <= 1 {
-            for package in packages.iter() {
-                Self::write_package_artifact(self.project, &writer, package)?;
-            }
-            return Ok(());
-        }
-
         let thread_pool = Self::local_thread_pool("rg-cache-write")?;
         let project = &*self.project;
 
