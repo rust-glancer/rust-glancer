@@ -1,3 +1,4 @@
+mod associated_value;
 mod body_items;
 mod callable;
 mod receiver_items;
