@@ -5,7 +5,7 @@
 
 pub mod locals;
 
-use rg_body_ir::BodyScopeQuery;
+use rg_body_ir::BodyResolutionContext;
 use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, Path, ScopeId, SemanticItemRef, TypePathResolution,
     identity::DeclarationRef, identity::ExprRef, items::PrimitiveTy,
@@ -89,8 +89,9 @@ impl<'a, 'db> TyView<'a, 'db> {
         let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(Ty::Unknown);
         };
-        let resolution = BodyScopeQuery::new(self.db, self.db, body_ref, body)
-            .resolve_type_path_in_scope(scope, path)?;
+        let resolution = BodyResolutionContext::new(self.db, self.db, body_ref, body)
+            .type_path_query()
+            .resolve_in_scope(scope, path)?;
         if matches!(resolution, TypePathResolution::Unknown)
             && let Some(primitive) = path.single_name().and_then(PrimitiveTy::from_name)
         {
@@ -111,8 +112,9 @@ impl<'a, 'db> TyView<'a, 'db> {
         let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(Ty::Unknown);
         };
-        let (_, ty) = BodyScopeQuery::new(self.db, self.db, body_ref, body)
-            .resolve_value_path_in_scope(scope, path)?;
+        let (_, ty) = BodyResolutionContext::new(self.db, self.db, body_ref, body)
+            .value_paths()
+            .resolve_nonlocal_path_expr(scope, path)?;
         Ok(ty)
     }
 

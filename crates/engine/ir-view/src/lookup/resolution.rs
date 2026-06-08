@@ -4,7 +4,7 @@
 //! rules that turn paths, declaration refs, and body resolutions into canonical declaration
 //! identities.
 
-use rg_body_ir::{BodyResolution, BodyScopeQuery};
+use rg_body_ir::{BodyResolution, BodyResolutionContext};
 use rg_ir_model::Path;
 use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
@@ -117,8 +117,9 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let Some(body) = self.0.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
-        let resolution = BodyScopeQuery::new(self.0, self.0, body_ref, body)
-            .resolve_type_path_in_scope(scope, path)?;
+        let resolution = BodyResolutionContext::new(self.0, self.0, body_ref, body)
+            .type_path_query()
+            .resolve_in_scope(scope, path)?;
 
         let declarations = self.declarations_for_body_type_path_resolution(resolution);
         if !declarations.is_empty() {
@@ -137,8 +138,9 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let Some(body) = self.0.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
-        let (resolution, _) = BodyScopeQuery::new(self.0, self.0, body_ref, body)
-            .resolve_value_path_in_scope(scope, path)?;
+        let (resolution, _) = BodyResolutionContext::new(self.0, self.0, body_ref, body)
+            .value_paths()
+            .resolve_nonlocal_path_expr(scope, path)?;
         self.declarations_for_body_resolution(Some(body_ref), &resolution)
     }
 
@@ -152,8 +154,9 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let Some(body) = self.0.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
-        let resolution = BodyScopeQuery::new(self.0, self.0, body_ref, body)
-            .resolve_type_path_in_scope(scope, owner)?;
+        let resolution = BodyResolutionContext::new(self.0, self.0, body_ref, body)
+            .type_path_query()
+            .resolve_in_scope(scope, owner)?;
 
         let (TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types)) =
             resolution

@@ -8,22 +8,17 @@ use rg_ir_model::{
     PathSegment, ScopeId, SemanticItemRef, TypeAliasRef, TypePathResolution,
     items::{TypePath, TypeRef},
 };
-use rg_ir_storage::{
-    DefMapSource, ItemStoreQuery, ItemStoreSource, NameResolutionFilter, TypePathContext,
-};
+use rg_ir_storage::{DefMapSource, ItemStoreSource, NameResolutionFilter, TypePathContext};
 use rg_package_store::PackageStoreError;
-use rg_ty::{GenericArg, ImplMatcher, NominalTy, Ty, TypeSubst};
+use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
 use crate::ir::BodyOwner;
 
-use crate::resolution::{BodyQuerySource, BodyResolutionContext, support::push_unique};
+use crate::resolution::{BodyResolutionContext, support::push_unique};
 
-use super::{
-    BodyLocalItemQuery,
-    type_ref::{TypeRefResolutionQuery, TypeRefUseSite},
-};
+use super::type_ref::{TypeRefResolutionQuery, TypeRefUseSite};
 
-pub(crate) struct BodyTypePathQuery<'query, D, I> {
+pub struct BodyTypePathQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
@@ -43,25 +38,11 @@ where
         TypeRefResolutionQuery::new(self, use_site)
     }
 
-    pub(super) fn source(&self) -> BodyQuerySource<'query, D, I> {
-        self.context.query_source()
+    pub(super) fn context(&self) -> BodyResolutionContext<'query, D, I> {
+        self.context
     }
 
-    fn impl_matcher(
-        &self,
-    ) -> ImplMatcher<'query, BodyQuerySource<'query, D, I>, BodyQuerySource<'query, D, I>> {
-        self.context.impl_matcher()
-    }
-
-    pub(super) fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
-        self.context.item_query()
-    }
-
-    fn body_local_items(&self) -> BodyLocalItemQuery<'query, D, I> {
-        self.context.body_local_items()
-    }
-
-    pub(crate) fn resolve_in_scope(
+    pub fn resolve_in_scope(
         &self,
         scope: ScopeId,
         path: &Path,
@@ -122,7 +103,7 @@ where
         let Some(impl_ref) = context.impl_ref else {
             return Ok(Vec::new());
         };
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         let Some(impl_data) = item_query.impl_data(impl_ref)? else {
             return Ok(Vec::new());
         };
@@ -161,6 +142,7 @@ where
         fallback_module: ModuleRef,
     ) -> Result<TypePathContext, PackageStoreError> {
         Ok(self
+            .context
             .item_query()
             .type_path_context_for_function(function)?
             .unwrap_or_else(|| TypePathContext::module(fallback_module)))
@@ -171,7 +153,7 @@ where
         match self.context.body().owner() {
             BodyOwner::Function(function) => self.context_for_function(function, fallback_module),
             BodyOwner::Const(const_ref) => {
-                let item_query = self.item_query();
+                let item_query = self.context.item_query();
                 let Some(data) = item_query.const_data(const_ref)? else {
                     return Ok(TypePathContext::module(fallback_module));
                 };
@@ -233,7 +215,11 @@ where
             let DefId::Local(local_def) = def else {
                 continue;
             };
-            if let Some(item) = self.item_query().semantic_item_for_local_def(local_def)? {
+            if let Some(item) = self
+                .context
+                .item_query()
+                .semantic_item_for_local_def(local_def)?
+            {
                 push_unique(&mut items, item);
             }
         }
@@ -298,7 +284,7 @@ where
         args: &[GenericArg],
         subst: &TypeSubst,
     ) -> Result<Ty, PackageStoreError> {
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         let Some(alias_data) = item_query.type_alias_data(alias_ref)? else {
             return Ok(Ty::Unknown);
         };
@@ -331,14 +317,18 @@ where
     ) -> Result<Option<TypeAliasRef>, PackageStoreError> {
         // In order to find the associated type, we need to iterate through its impl
         // blocks.
-        let impls = self.body_local_items().inherent_impls_for_type(ty.def)?;
+        let impls = self
+            .context
+            .body_local_items()
+            .inherent_impls_for_type(ty.def)?;
 
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         for impl_ref in impls {
             let Some(impl_data) = item_query.impl_data(impl_ref)? else {
                 continue;
             };
             if !self
+                .context
                 .impl_matcher()
                 .impl_applies_to_receiver(impl_ref, impl_data, ty)?
             {
@@ -371,7 +361,7 @@ where
         receiver_ty: &NominalTy,
         args: &[GenericArg],
     ) -> Result<Ty, PackageStoreError> {
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         let Some(alias_data) = item_query.type_alias_data(alias_ref)? else {
             return Ok(Ty::Unknown);
         };
@@ -390,7 +380,8 @@ where
             };
             if let Some(impl_data) = item_query.impl_data(impl_ref)? {
                 alias_subst.extend(
-                    self.impl_matcher()
+                    self.context
+                        .impl_matcher()
                         .impl_self_subst_for_impl(impl_data, receiver_ty),
                 );
             }
@@ -412,6 +403,7 @@ where
         ty: &NominalTy,
     ) -> Result<TypeSubst, PackageStoreError> {
         Ok(self
+            .context
             .item_query()
             .generic_params_for_type_def(ty.def)?
             .map(|generics| TypeSubst::from_generics(generics, &ty.args))

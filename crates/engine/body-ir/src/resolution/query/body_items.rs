@@ -6,10 +6,10 @@
 //! target-level semantic index.
 
 use rg_ir_model::{AssocItemId, DefMapRef, FunctionRef, ImplRef, TraitImplRef, TypeDefRef};
-use rg_ir_storage::{DefMapSource, ItemStore, ItemStoreQuery, ItemStoreSource};
+use rg_ir_storage::{DefMapSource, ItemStore, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 
-use crate::resolution::{BodyQuerySource, BodyResolutionContext, support::push_unique};
+use crate::resolution::{BodyResolutionContext, support::push_unique};
 
 pub(crate) struct BodyLocalItemQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
@@ -47,7 +47,7 @@ where
         ty: TypeDefRef,
     ) -> Result<Vec<FunctionRef>, PackageStoreError> {
         let mut functions = Vec::new();
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         for impl_ref in self.inherent_impls_for_type(ty)? {
             let Some(impl_data) = item_query.impl_data(impl_ref)? else {
                 continue;
@@ -74,7 +74,7 @@ where
         name: &str,
     ) -> Result<Vec<FunctionRef>, PackageStoreError> {
         let mut functions = Vec::new();
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         for function in self.inherent_functions_for_type(ty)? {
             let Some(function_data) = item_query.function_data(function)? else {
                 continue;
@@ -113,10 +113,6 @@ where
         Ok(trait_impls)
     }
 
-    fn item_query(&self) -> ItemStoreQuery<'query, BodyQuerySource<'query, D, I>> {
-        self.context.item_query()
-    }
-
     fn body_lookup_stores(&self) -> Result<Vec<&'query ItemStore>, PackageStoreError> {
         let mut origins = Vec::new();
 
@@ -132,7 +128,7 @@ where
             }
         }
 
-        let item_query = self.item_query();
+        let item_query = self.context.item_query();
         let mut stores = Vec::new();
         for origin in origins {
             if let Some(store) = item_query.item_store_for_origin(origin)? {

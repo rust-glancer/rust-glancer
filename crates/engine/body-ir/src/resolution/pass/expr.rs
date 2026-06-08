@@ -22,8 +22,7 @@ use crate::{
 };
 
 use crate::resolution::{
-    BodyValuePathQuery, TypeRefUseSite,
-    query::CallableReturnQuery,
+    TypeRefUseSite,
     support::{TyNormalizer, push_unique},
 };
 
@@ -59,8 +58,11 @@ where
                 self.pass.body.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::Call { callee, args } => {
-                let ty =
-                    CallableReturnQuery::new(self.pass.context()).call_expr_ty(callee, &args)?;
+                let ty = self
+                    .pass
+                    .context()
+                    .callable_returns()
+                    .call_expr_ty(callee, &args)?;
                 self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Tuple { fields } => {
@@ -242,11 +244,10 @@ where
         let expr_data = self.pass.body.expr_unchecked(expr);
         let scope = expr_data.scope;
         let visible_bindings = expr_data.visible_bindings;
-        BodyValuePathQuery::new(self.pass.context()).resolve_path_expr(
-            scope,
-            path,
-            Some(visible_bindings),
-        )
+        self.pass
+            .context()
+            .value_paths()
+            .resolve_path_expr(scope, path, Some(visible_bindings))
     }
 
     fn tuple_expr_ty(&self, fields: &[ExprId]) -> Ty {
@@ -313,14 +314,6 @@ where
         Ty::Unknown
     }
 
-    pub(super) fn resolve_nonlocal_path_expr(
-        &self,
-        scope: ScopeId,
-        path: &Path,
-    ) -> Result<(BodyResolution, Ty), PackageStoreError> {
-        BodyValuePathQuery::new(self.pass.context()).resolve_nonlocal_path_expr(scope, path)
-    }
-
     fn resolve_record_expr_path(
         &self,
         scope: ScopeId,
@@ -357,7 +350,10 @@ where
             | TypePathResolution::Unknown => {}
         }
 
-        self.resolve_nonlocal_path_expr(scope, path)
+        self.pass
+            .context()
+            .value_paths()
+            .resolve_nonlocal_path_expr(scope, path)
     }
 
     fn resolve_field_expr(
@@ -463,7 +459,7 @@ where
 
         let receiver_ty = self.pass.body.expr_ty_unchecked(receiver);
         let item_query = self.pass.context().item_query();
-        let callable_returns = CallableReturnQuery::new(self.pass.context());
+        let callable_returns = self.pass.context().callable_returns();
 
         // Method lookup is intentionally shallow: nominal type plus lightweight impl-argument
         // matching gives useful candidates without modeling the full trait solver.

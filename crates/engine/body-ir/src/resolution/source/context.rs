@@ -13,18 +13,25 @@ use rg_ty::{Autoderef, ImplMatcher, ItemPathQuery, IterationItemResolver};
 
 use crate::ir::body::ResolvedBodyData;
 
-use crate::resolution::query::{BodyLocalItemQuery, BodyReceiverFunctionQuery, BodyTypePathQuery};
+use crate::resolution::query::{
+    BodyAssociatedValueQuery, BodyLocalItemQuery, BodyReceiverFunctionQuery, BodyTypePathQuery,
+    BodyValuePathQuery, CallableReturnQuery,
+};
 
 use super::BodyQuerySource;
 
 #[derive(Clone, Copy)]
-pub(crate) struct BodyResolutionContext<'a, D, I> {
+pub struct BodyResolutionContext<'a, D, I> {
     source: BodyQuerySource<'a, D, I>,
     semantic_index: Option<&'a ItemLookupIndex>,
 }
 
 impl<'a, D, I> BodyResolutionContext<'a, D, I> {
-    pub(crate) fn new(
+    pub fn new(def_maps: D, item_stores: I, body_ref: BodyRef, body: &'a ResolvedBodyData) -> Self {
+        Self::with_semantic_index(def_maps, item_stores, body_ref, body, None)
+    }
+
+    pub(crate) fn with_semantic_index(
         def_maps: D,
         item_stores: I,
         body_ref: BodyRef,
@@ -55,10 +62,6 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'a, Error = PackageStoreError> + Copy,
 {
-    pub(crate) fn query_source(&self) -> BodyQuerySource<'a, D, I> {
-        self.source
-    }
-
     pub(crate) fn def_map_query(&self) -> DefMapQuery<BodyQuerySource<'a, D, I>> {
         DefMapQuery::new(self.source)
     }
@@ -81,15 +84,27 @@ where
         TargetItemQuery::new(source, source, self.source.body_ref().target)
     }
 
-    pub(crate) fn type_path_query(&self) -> BodyTypePathQuery<'a, D, I> {
+    pub fn type_path_query(&self) -> BodyTypePathQuery<'a, D, I> {
         BodyTypePathQuery::new(*self)
+    }
+
+    pub fn value_paths(&self) -> BodyValuePathQuery<'a, D, I> {
+        BodyValuePathQuery::new(*self)
+    }
+
+    pub(crate) fn associated_values(&self) -> BodyAssociatedValueQuery<'a, D, I> {
+        BodyAssociatedValueQuery::new(*self)
+    }
+
+    pub(crate) fn callable_returns(&self) -> CallableReturnQuery<'a, D, I> {
+        CallableReturnQuery::new(*self)
     }
 
     pub(crate) fn body_local_items(&self) -> BodyLocalItemQuery<'a, D, I> {
         BodyLocalItemQuery::new(*self)
     }
 
-    pub(crate) fn receiver_functions(&self) -> BodyReceiverFunctionQuery<'a, D, I> {
+    pub fn receiver_functions(&self) -> BodyReceiverFunctionQuery<'a, D, I> {
         BodyReceiverFunctionQuery::new(*self)
     }
 

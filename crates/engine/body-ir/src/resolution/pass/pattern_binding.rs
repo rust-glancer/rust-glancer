@@ -31,8 +31,7 @@ use crate::{
 };
 
 use crate::resolution::{
-    BodyResolutionContext, BodyResolutionProviders, BodyValuePathQuery, TypeRefUseSite,
-    support::push_unique,
+    BodyResolutionContext, BodyResolutionProviders, TypeRefUseSite, support::push_unique,
 };
 
 /// Resolves lowered binding candidates into the final body binding arena.
@@ -530,7 +529,9 @@ where
             return Ok(true);
         }
 
-        let (resolution, _) = BodyValuePathQuery::new(self.context())
+        let (resolution, _) = self
+            .context()
+            .value_paths()
             .resolve_nonlocal_path_expr(binding_data.scope, &path)?;
 
         Ok(matches!(

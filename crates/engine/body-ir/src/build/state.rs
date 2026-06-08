@@ -11,9 +11,7 @@ use rg_text::NameInterner;
 
 use crate::{
     BodyOwner, TargetBodies,
-    resolution::{
-        BodyResolutionContext, BodyResolutionPass, BodyTypePathQuery, TypeRefUseSite, push_unique,
-    },
+    resolution::{BodyResolutionContext, BodyResolutionPass, TypeRefUseSite, push_unique},
 };
 
 use super::{
@@ -238,9 +236,8 @@ impl<'target> TargetBodyBuildState<'target> {
                     self.target,
                     &self.body_local_items,
                 );
-                let type_paths = BodyTypePathQuery::new(BodyResolutionContext::new(
-                    &source, &source, body_ref, body, None,
-                ));
+                let type_paths =
+                    BodyResolutionContext::new(&source, &source, body_ref, body).type_path_query();
                 let mut resolved_headers = Vec::new();
                 for (impl_id, owner, self_ty, trait_ref) in impl_headers {
                     if owner.origin != DefMapRef::Body(body_ref) {

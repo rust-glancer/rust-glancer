@@ -3,7 +3,7 @@
 //! `rg_ty::MemberQuery` returns stable refs. Completion and hover still need borrowed item data,
 //! docs, and display paths, so this module keeps that projection close to the analysis features.
 
-use rg_body_ir::BodyScopeQuery;
+use rg_body_ir::BodyResolutionContext;
 use rg_ir_model::Path;
 use rg_ir_model::items::{Documentation, FieldKey, ParamItem};
 use rg_ir_model::{
@@ -168,8 +168,9 @@ impl<'a, 'db> MemberView<'a, 'db> {
         let Some(body_data) = self.db.body_data(body)? else {
             return Ok(Vec::new());
         };
-        let resolution = BodyScopeQuery::new(self.db, self.db, body, body_data)
-            .resolve_type_path_in_scope(scope, path)?;
+        let resolution = BodyResolutionContext::new(self.db, self.db, body, body_data)
+            .type_path_query()
+            .resolve_in_scope(scope, path)?;
 
         let mut fields = Vec::new();
         let member_query = MemberQuery::new(
@@ -247,9 +248,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
             return self.method_candidates_for_ty(MemberUseSite::target(body.target), ty);
         };
 
-        let body_scope_query = BodyScopeQuery::new(self.db, self.db, body, body_data);
+        let body_context = BodyResolutionContext::new(self.db, self.db, body, body_data);
         let mut methods = Vec::new();
-        for candidate in body_scope_query.method_candidates_for_ty(ty)? {
+        for candidate in body_context
+            .receiver_functions()
+            .method_candidates_for_ty(ty)?
+        {
             let Some(function) = self.function(candidate.function())? else {
                 continue;
             };

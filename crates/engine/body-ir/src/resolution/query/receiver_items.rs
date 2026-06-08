@@ -13,7 +13,7 @@ use crate::resolution::{BodyQuerySource, BodyResolutionContext, support::push_un
 
 use super::BodyLocalItemQuery;
 
-pub(crate) struct BodyReceiverFunctionQuery<'query, D, I> {
+pub struct BodyReceiverFunctionQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
@@ -51,7 +51,7 @@ where
         Self { context }
     }
 
-    pub(super) fn method_candidates_for_ty(
+    pub fn method_candidates_for_ty(
         &self,
         ty: &Ty,
     ) -> Result<Vec<MemberMethodCandidateRef>, PackageStoreError> {

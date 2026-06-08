@@ -30,7 +30,9 @@ pub use self::{
         RecordExprField, RecordExprSpread, RecordFieldSyntax, RecordPatField, ResolvedBodyData,
         ScopeData, StmtData, StmtKind,
     },
-    resolution::BodyScopeQuery,
+    resolution::{
+        BodyReceiverFunctionQuery, BodyResolutionContext, BodyTypePathQuery, BodyValuePathQuery,
+    },
     store::{
         BodyIrDb, BodyIrReadTxn, BodyIrStats, PackageBodies, TargetBodies, TargetBodiesStatus,
     },

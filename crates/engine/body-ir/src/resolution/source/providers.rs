@@ -48,7 +48,7 @@ impl<'query, D, I> BodyResolutionProviders<'query, D, I> {
         &'source self,
         body: &'source ResolvedBodyData,
     ) -> BodyResolutionContext<'source, &'source D, &'source I> {
-        BodyResolutionContext::new(
+        BodyResolutionContext::with_semantic_index(
             self.def_maps,
             self.item_stores,
             self.body_ref,

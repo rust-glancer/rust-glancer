@@ -10,9 +10,12 @@ mod support;
 
 pub(crate) use self::{
     pass::BodyResolutionPass,
-    query::{BodyTypePathQuery, BodyValuePathQuery, TypeRefUseSite},
-    source::{BodyQuerySource, BodyResolutionContext, BodyResolutionProviders},
+    query::TypeRefUseSite,
+    source::{BodyQuerySource, BodyResolutionProviders},
     support::push_unique,
 };
 
-pub use self::query::BodyScopeQuery;
+pub use self::{
+    query::{BodyReceiverFunctionQuery, BodyTypePathQuery, BodyValuePathQuery},
+    source::BodyResolutionContext,
+};

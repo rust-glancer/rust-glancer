@@ -20,14 +20,14 @@ use crate::resolution::{
     support::{push_unique, unique_ty_or_unknown},
 };
 
-use super::{associated_value::BodyAssociatedValueQuery, type_path::split_associated_path};
+use super::type_path::split_associated_path;
 
 /// Resolves body value paths without mutating the body.
 ///
 /// The main pass uses this during the fixed-point pass, and analysis reuses it for cursor
 /// queries over path prefixes. Keeping it read-only avoids cloning bodies just to answer
 /// goto-definition/type-at for `Type::assoc` or `Enum::Variant` segments.
-pub(crate) struct BodyValuePathQuery<'query, D, I> {
+pub struct BodyValuePathQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
@@ -51,7 +51,7 @@ where
         Self { context }
     }
 
-    pub(crate) fn resolve_nonlocal_path_expr(
+    pub fn resolve_nonlocal_path_expr(
         &self,
         scope: ScopeId,
         path: &Path,
@@ -121,8 +121,10 @@ where
         }
 
         if let Some((prefix, last_segment)) = split_associated_path(path) {
-            if let Some((resolution, ty)) = BodyAssociatedValueQuery::new(self.context)
-                .resolve_path(scope, &prefix, last_segment)?
+            if let Some((resolution, ty)) =
+                self.context
+                    .associated_values()
+                    .resolve_path(scope, &prefix, last_segment)?
             {
                 return Ok((resolution, ty));
             }

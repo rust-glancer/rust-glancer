@@ -11,7 +11,7 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
-use rg_ty::{GenericArg, ItemPathQuery, RefMutability, Ty, TypeSubst};
+use rg_ty::{GenericArg, RefMutability, Ty, TypeSubst};
 
 use crate::resolution::support::push_unique;
 
@@ -59,9 +59,10 @@ where
             TypeRefUseSite::Module(module) => self.resolve_in_module(ty, module),
             TypeRefUseSite::OwnerContext(context) => self.resolve_in_owner_context(ty, context),
             TypeRefUseSite::Function(function) => {
-                let context = self
-                    .resolver
-                    .context_for_function(function, self.resolver.source().body().owner_module())?;
+                let context = self.resolver.context_for_function(
+                    function,
+                    self.resolver.context().body().owner_module(),
+                )?;
                 self.with_use_site(TypeRefUseSite::OwnerContext(context))
                     .resolve(ty)
             }
@@ -89,11 +90,10 @@ where
     }
 
     fn resolve_in_module(&self, ty: &TypeRef, module: ModuleRef) -> Result<Ty, PackageStoreError> {
-        if let Some(scope) = self
-            .resolver
-            .source()
+        let body_context = self.resolver.context();
+        if let Some(scope) = body_context
             .body()
-            .scope_for_module(self.resolver.source().body_ref(), module)
+            .scope_for_module(body_context.body_ref(), module)
         {
             return self.with_use_site(TypeRefUseSite::Scope(scope)).resolve(ty);
         }
@@ -110,7 +110,7 @@ where
         ty: &TypeRef,
         context: TypePathContext,
     ) -> Result<Ty, PackageStoreError> {
-        if context.module.origin == DefMapRef::Body(self.resolver.source().body_ref()) {
+        if context.module.origin == DefMapRef::Body(self.resolver.context().body_ref()) {
             return self
                 .with_use_site(TypeRefUseSite::Module(context.module))
                 .resolve(ty);
@@ -176,9 +176,12 @@ where
         ty: &TypeRef,
         context: TypePathContext,
     ) -> Result<Ty, PackageStoreError> {
-        let source = self.resolver.source();
-        let item_paths = ItemPathQuery::new(source, source);
-        item_paths.resolve_type_ref(ty, context, Ty::syntax(ty.clone()), &self.subst)
+        self.resolver.context().item_paths().resolve_type_ref(
+            ty,
+            context,
+            Ty::syntax(ty.clone()),
+            &self.subst,
+        )
     }
 
     fn resolve_structural_type(&self, ty: &TypeRef) -> Result<Ty, PackageStoreError> {
@@ -219,6 +222,7 @@ where
             };
             let types = self
                 .resolver
+                .context()
                 .item_query()
                 .impl_data(impl_ref)?
                 .map(|data| data.resolved_self_tys.clone())
