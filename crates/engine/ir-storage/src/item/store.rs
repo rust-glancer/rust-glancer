@@ -130,10 +130,17 @@ impl ItemStore {
         &self.impls
     }
 
-    // TODO: Smell, shouldn't exist. Mutator should convert
-    // to ItemStoreBuilder, mutate, and then convert back, probably.
-    pub fn impls_mut(&mut self) -> &mut Arena<ImplId, ImplData> {
-        &mut self.impls
+    /// Applies resolved header facts after impl item identities are already allocated.
+    pub fn set_impl_header_facts(
+        &mut self,
+        id: ImplId,
+        resolved_self_tys: Vec<TypeDefRef>,
+        resolved_trait_refs: Vec<TraitRef>,
+    ) -> Option<()> {
+        let data = self.impls.get_mut(id)?;
+        data.resolved_self_tys = resolved_self_tys;
+        data.resolved_trait_refs = resolved_trait_refs;
+        Some(())
     }
 
     pub fn functions(&self) -> &Arena<FunctionId, FunctionData> {

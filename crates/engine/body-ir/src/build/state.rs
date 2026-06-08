@@ -277,10 +277,8 @@ impl<'target> TargetBodyBuildState<'target> {
                 continue;
             };
             for (impl_id, resolved_self_tys, resolved_trait_refs) in resolved_headers {
-                if let Some(impl_data) = items.item_store_mut().impls_mut().get_mut(impl_id) {
-                    impl_data.resolved_self_tys = resolved_self_tys;
-                    impl_data.resolved_trait_refs = resolved_trait_refs;
-                }
+                let _ =
+                    items.set_impl_header_facts(impl_id, resolved_self_tys, resolved_trait_refs);
             }
         }
 

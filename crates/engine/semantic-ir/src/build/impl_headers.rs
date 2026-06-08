@@ -82,11 +82,11 @@ pub(super) fn apply_impl_header_resolutions(
     resolutions: Vec<ImplHeaderResolution>,
 ) {
     for resolution in resolutions {
-        let Some(data) = db.impl_data_mut(resolution.impl_ref) else {
-            continue;
-        };
-        data.resolved_self_tys = resolution.resolved_self_tys;
-        data.resolved_trait_refs = resolution.resolved_trait_refs;
+        let _ = db.set_impl_header_facts(
+            resolution.impl_ref,
+            resolution.resolved_self_tys,
+            resolution.resolved_trait_refs,
+        );
     }
 }
 

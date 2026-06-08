@@ -1,8 +1,7 @@
 //! Semantic IR package store and transaction entry points.
 
 use rg_def_map::PackageSlot;
-use rg_ir_model::ImplRef;
-use rg_ir_model::hir::items::ImplData;
+use rg_ir_model::{ImplRef, TraitRef, TypeDefRef};
 use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 
@@ -148,12 +147,16 @@ impl SemanticIrDbMutator<'_> {
         self.db.packages.replace(package, package_ir)
     }
 
-    pub(crate) fn impl_data_mut(&mut self, impl_ref: ImplRef) -> Option<&mut ImplData> {
+    pub(crate) fn set_impl_header_facts(
+        &mut self,
+        impl_ref: ImplRef,
+        resolved_self_tys: Vec<TypeDefRef>,
+        resolved_trait_refs: Vec<TraitRef>,
+    ) -> Option<()> {
         let target = impl_ref.origin.as_target_ref()?;
         self.package_mut(target.package)?
             .target_mut(target.target)?
-            .impls_mut()
-            .get_mut(impl_ref.id)
+            .set_impl_header_facts(impl_ref.id, resolved_self_tys, resolved_trait_refs)
     }
 
     fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageIr> {

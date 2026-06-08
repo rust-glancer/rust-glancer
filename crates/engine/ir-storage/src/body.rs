@@ -1,3 +1,5 @@
+use rg_ir_model::{ImplId, TraitRef, TypeDefRef};
+
 use crate::{DefMap, ItemStore};
 
 /// Finalized body-local DefMap and semantic-shaped item facts for one body.
@@ -25,8 +27,14 @@ impl BodyLocalItems {
         &self.item_store
     }
 
-    pub fn item_store_mut(&mut self) -> &mut ItemStore {
-        &mut self.item_store
+    pub fn set_impl_header_facts(
+        &mut self,
+        id: ImplId,
+        resolved_self_tys: Vec<TypeDefRef>,
+        resolved_trait_refs: Vec<TraitRef>,
+    ) -> Option<()> {
+        self.item_store
+            .set_impl_header_facts(id, resolved_self_tys, resolved_trait_refs)
     }
 
     pub fn shrink_to_fit(&mut self) {
