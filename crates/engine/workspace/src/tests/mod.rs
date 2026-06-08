@@ -188,7 +188,7 @@ fn main() {}
         .expect("fixture example file should be removable after metadata is loaded");
 
     let workspace =
-        WorkspaceMetadata::from_cargo(metadata).expect("missing optional target should normalize");
+        WorkspaceMetadata::for_tests(metadata).expect("missing optional target should normalize");
     let package = workspace
         .workspace_packages()
         .find(|package| package.name == "missing_target_fixture")
@@ -247,8 +247,8 @@ fn main() {}
     fs::remove_file(fixture.path("dep/examples/demo.rs"))
         .expect("fixture dependency example file should be removable after metadata is loaded");
 
-    let workspace = WorkspaceMetadata::from_cargo(metadata)
-        .expect("missing dependency target should normalize");
+    let workspace =
+        WorkspaceMetadata::for_tests(metadata).expect("missing dependency target should normalize");
     let package = workspace
         .packages()
         .iter()
@@ -315,7 +315,7 @@ pub struct Lib;
         });
 
         let workspace =
-            WorkspaceMetadata::from_cargo(metadata).expect("known package source should normalize");
+            WorkspaceMetadata::for_tests(metadata).expect("known package source should normalize");
         assert_eq!(
             workspace.packages()[0].source,
             expected_source,
@@ -345,7 +345,7 @@ pub struct Lib;
     });
 
     let error =
-        WorkspaceMetadata::from_cargo(metadata).expect_err("unknown source should be rejected");
+        WorkspaceMetadata::for_tests(metadata).expect_err("unknown source should be rejected");
 
     assert!(
         matches!(
@@ -464,7 +464,7 @@ pub mod marker {
     );
     let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
         .expect("fixture sysroot should be complete");
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
         .expect("fixture workspace metadata should build")
         .with_sysroot_sources(Some(sysroot));
     let app = workspace
@@ -547,7 +547,7 @@ edition = "2024"
 pub struct Independent;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
         .expect("fixture workspace metadata should build");
     let dep_id = workspace
         .packages()
@@ -597,7 +597,7 @@ edition = "2024"
 pub struct Dep;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
         .expect("fixture workspace metadata should build");
 
     let app_api = fixture

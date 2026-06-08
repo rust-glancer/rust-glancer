@@ -197,7 +197,7 @@ pub struct Transitive;
         let mut metadata = fixture.metadata();
         mark_package_as_registry(&mut metadata, "direct");
         mark_package_as_registry(&mut metadata, "transitive");
-        let workspace = WorkspaceMetadata::from_cargo(metadata)
+        let workspace = WorkspaceMetadata::for_tests(metadata)
             .expect("fixture workspace metadata should normalize");
 
         let app = package_slot(&workspace, "app");

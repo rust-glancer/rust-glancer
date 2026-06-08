@@ -385,15 +385,15 @@ impl EngineWorker {
 
         let metadata_started = Instant::now();
         let metadata = cargo_metadata_config
-            .load_metadata(&manifest_path)
+            .load_metadata_with_target_cfg(&manifest_path)
             .context("while attempting to run cargo metadata for LSP initialization")?;
         tracing::info!(
-            package_count = metadata.packages.len(),
+            package_count = metadata.metadata.packages.len(),
             elapsed_ms = metadata_started.elapsed().as_millis(),
             "cargo metadata finished"
         );
 
-        let workspace = WorkspaceMetadata::from_cargo(metadata)
+        let workspace = WorkspaceMetadata::lower(metadata.metadata, metadata.target_cfg)
             .context("while attempting to normalize Cargo metadata")?;
         let workspace_root = workspace.workspace_root().to_path_buf();
         let sysroot = SysrootSources::discover(workspace.workspace_root());

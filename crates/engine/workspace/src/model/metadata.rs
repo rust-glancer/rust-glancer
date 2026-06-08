@@ -6,10 +6,7 @@ use std::{
 use rg_cfg_eval::CfgOptions;
 use rg_memsize::MemorySize;
 
-use crate::{
-    CargoMetadataConfig, SysrootCrate, SysrootSources, WorkspaceMetadataError,
-    WorkspaceMetadataResult, path::canonicalize_path,
-};
+use crate::{SysrootCrate, SysrootSources};
 
 use super::{
     dependency::PackageDependency,
@@ -20,11 +17,10 @@ use super::{
 
 /// Normalized workspace metadata used by the analysis pipeline.
 ///
-/// This is our internal view of `cargo metadata`: it keeps only the fields and semantics the
-/// later phases care about and avoids leaking Cargo's transport types throughout the codebase.
-/// Filesystem roots are canonicalized at construction so save handling can compare paths directly
-/// without each phase defending against Cargo's original path spelling. Missing non-workspace
-/// targets are omitted because they cannot be parsed or reached through local save handling.
+/// It keeps only the fields and semantics the later phases care about. Filesystem roots are
+/// canonicalized at construction so save handling can compare paths directly without each phase
+/// defending against the original path spelling. Missing non-workspace targets are omitted because
+/// they cannot be parsed or reached through local save handling.
 #[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct WorkspaceMetadata {
     workspace_root: PathBuf,
@@ -36,128 +32,18 @@ pub struct WorkspaceMetadata {
 }
 
 impl WorkspaceMetadata {
-    /// Loads Cargo metadata from a manifest path and lowers it into the analysis metadata model.
-    pub fn from_manifest_path(manifest_path: impl AsRef<Path>) -> WorkspaceMetadataResult<Self> {
-        Self::from_manifest_path_with_config(manifest_path, &CargoMetadataConfig::default())
-    }
-
-    /// Loads Cargo metadata with explicit metadata options and lowers it into the internal model.
-    pub fn from_manifest_path_with_config(
-        manifest_path: impl AsRef<Path>,
-        config: &CargoMetadataConfig,
-    ) -> WorkspaceMetadataResult<Self> {
-        let target = config.resolved_target()?;
-        let target_cfg = target.cfg_options()?;
-        let metadata = config
-            .metadata_command_for_target(manifest_path.as_ref(), &target)
-            .exec()
-            .map_err(WorkspaceMetadataError::CargoMetadata)?;
-
-        Self::from_cargo_with_target_cfg(metadata, target_cfg)
-    }
-
-    /// Lowers raw `cargo metadata` output into the project's normalized metadata model.
-    pub fn from_cargo(metadata: cargo_metadata::Metadata) -> WorkspaceMetadataResult<Self> {
-        Self::from_cargo_with_target_cfg(metadata, CfgOptions::current_host())
-    }
-
-    /// Lowers raw Cargo metadata with an already-resolved target cfg environment.
-    pub fn from_cargo_with_target_cfg(
-        metadata: cargo_metadata::Metadata,
-        target_cfg: CfgOptions,
-    ) -> WorkspaceMetadataResult<Self> {
-        let workspace_root = canonicalize_path(metadata.workspace_root.as_std_path())
-            .map_err(WorkspaceMetadataError::Path)?;
-        let workspace_members = metadata
-            .workspace_members
-            .iter()
-            .map(PackageId::from_cargo)
-            .collect::<HashSet<_>>();
-        let dependencies_by_package = metadata
-            .resolve
-            .as_ref()
-            .map(Self::lower_dependencies)
-            .unwrap_or_default();
-        let features_by_package = metadata
-            .resolve
-            .as_ref()
-            .map(Self::lower_active_features)
-            .unwrap_or_default();
-
-        let packages = metadata
-            .packages
-            .into_iter()
-            .map(|package| {
-                let package_id = PackageId::from_cargo(&package.id);
-                let mut cfg_options = target_cfg.clone();
-                for feature in features_by_package.get(&package_id).into_iter().flatten() {
-                    cfg_options.insert_key_value("feature", feature);
-                }
-                let is_workspace_member = workspace_members.contains(&package_id);
-                let raw_manifest_path = package.manifest_path.as_std_path();
-                let manifest_path =
-                    canonicalize_path(raw_manifest_path).map_err(WorkspaceMetadataError::Path)?;
-                let raw_package_root = raw_manifest_path
-                    .parent()
-                    .expect("Cargo package manifest path should have a parent directory");
-                let package_root = manifest_path
-                    .parent()
-                    .expect("canonical package manifest path should have a parent directory");
-                let source = PackageSource::from_cargo_source(
-                    &package_id,
-                    is_workspace_member,
-                    package.source.as_ref(),
-                )?;
-                let targets = package
-                    .targets
-                    .iter()
-                    .map(|target| {
-                        Target::from_cargo(
-                            target,
-                            raw_package_root,
-                            package_root,
-                            is_workspace_member,
-                        )
-                    })
-                    .collect::<WorkspaceMetadataResult<Vec<_>>>()?
-                    .into_iter()
-                    .flatten()
-                    .collect();
-
-                Ok(Package {
-                    id: package_id.clone(),
-                    name: package.name.to_string(),
-                    edition: RustEdition::from_cargo(package.edition),
-                    origin: if is_workspace_member {
-                        PackageOrigin::Workspace
-                    } else {
-                        PackageOrigin::Dependency
-                    },
-                    source,
-                    is_workspace_member,
-                    manifest_path,
-                    cfg_options,
-                    targets,
-                    dependencies: dependencies_by_package
-                        .get(&package_id)
-                        .cloned()
-                        .unwrap_or_default(),
-                })
-            })
-            .collect::<WorkspaceMetadataResult<Vec<_>>>()?;
-
-        let package_by_id = packages
-            .iter()
-            .enumerate()
-            .map(|(idx, package)| (package.id.clone(), idx))
-            .collect();
-
-        Ok(Self {
+    pub(crate) fn from_parts(
+        workspace_root: PathBuf,
+        target_cfg_options: CfgOptions,
+        packages: Vec<Package>,
+    ) -> Self {
+        let package_by_id = Self::package_index(&packages);
+        Self {
             workspace_root,
-            target_cfg_options: target_cfg,
+            target_cfg_options,
             packages,
             package_by_id,
-        })
+        }
     }
 
     /// Returns this workspace with sysroot crates modeled as ordinary packages.
@@ -257,46 +143,14 @@ impl WorkspaceMetadata {
     }
 
     fn rebuild_package_index(&mut self) {
-        self.package_by_id = self
-            .packages
+        self.package_by_id = Self::package_index(&self.packages);
+    }
+
+    fn package_index(packages: &[Package]) -> HashMap<PackageId, usize> {
+        packages
             .iter()
             .enumerate()
             .map(|(idx, package)| (package.id.clone(), idx))
-            .collect();
-    }
-
-    fn lower_dependencies(
-        resolve: &cargo_metadata::Resolve,
-    ) -> HashMap<PackageId, Vec<PackageDependency>> {
-        resolve
-            .nodes
-            .iter()
-            .map(|node| {
-                (
-                    PackageId::from_cargo(&node.id),
-                    node.deps
-                        .iter()
-                        .map(PackageDependency::from_cargo)
-                        .collect::<Vec<_>>(),
-                )
-            })
-            .collect()
-    }
-
-    fn lower_active_features(resolve: &cargo_metadata::Resolve) -> HashMap<PackageId, Vec<String>> {
-        resolve
-            .nodes
-            .iter()
-            .map(|node| {
-                let mut features = node
-                    .features
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>();
-                features.sort();
-                features.dedup();
-                (PackageId::from_cargo(&node.id), features)
-            })
             .collect()
     }
 

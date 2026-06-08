@@ -11,26 +11,16 @@ pub struct PackageDependency {
 }
 
 impl PackageDependency {
-    pub(crate) fn from_cargo(dependency: &cargo_metadata::NodeDep) -> Self {
-        let mut is_normal = dependency.dep_kinds.is_empty();
-        let mut is_build = false;
-        let mut is_dev = false;
-
-        // Cargo may report separate platform-specific entries for the same dependency kind.
-        // Until we analyze a concrete target platform, each listed kind is potentially relevant.
-        for kind in &dependency.dep_kinds {
-            match kind.kind {
-                cargo_metadata::DependencyKind::Normal => is_normal = true,
-                cargo_metadata::DependencyKind::Development => is_dev = true,
-                cargo_metadata::DependencyKind::Build => is_build = true,
-                // Keep future Cargo dependency kinds resolvable instead of silently dropping them.
-                cargo_metadata::DependencyKind::Unknown => is_normal = true,
-            }
-        }
-
+    pub(crate) fn new(
+        package: PackageId,
+        name: impl Into<String>,
+        is_normal: bool,
+        is_build: bool,
+        is_dev: bool,
+    ) -> Self {
         Self {
-            package: PackageId::from_cargo(&dependency.pkg),
-            name: dependency.name.clone(),
+            package,
+            name: name.into(),
             is_normal,
             is_build,
             is_dev,

@@ -25,7 +25,7 @@ impl ProjectSourceFixture {
     }
 
     pub fn workspace_metadata(&self) -> WorkspaceMetadata {
-        WorkspaceMetadata::from_cargo(self.fixture.metadata())
+        WorkspaceMetadata::for_tests(self.fixture.metadata())
             .expect("fixture workspace metadata should build")
     }
 

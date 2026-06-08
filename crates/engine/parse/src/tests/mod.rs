@@ -257,7 +257,7 @@ fn in_memory_source_keeps_its_line_index_when_saved_indexes_are_offloaded() {
         pub fn saved() {}
         "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
         .expect("fixture workspace metadata should build");
     let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
     let file_path = fixture

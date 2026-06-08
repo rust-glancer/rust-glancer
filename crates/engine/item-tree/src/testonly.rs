@@ -14,7 +14,7 @@ pub struct ItemTreeFixture {
 impl ItemTreeFixture {
     pub fn build(fixture: &str) -> Self {
         let fixture = fixture_crate(fixture);
-        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
             .expect("fixture workspace metadata should build");
         Self::build_from_crate(fixture, &workspace)
     }

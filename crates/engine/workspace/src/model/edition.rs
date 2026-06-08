@@ -4,8 +4,8 @@ use rg_memsize::MemorySize;
 
 /// Rust edition used by a package.
 ///
-/// We keep this normalized instead of leaking `cargo_metadata::Edition` so later phases can ask
-/// edition-shaped questions without depending on Cargo's transport model.
+/// We keep this normalized so later phases can ask edition-shaped questions without depending on
+/// an external transport model.
 #[derive(
     Debug,
     Clone,
@@ -31,18 +31,6 @@ pub enum RustEdition {
 }
 
 impl RustEdition {
-    pub(crate) fn from_cargo(edition: cargo_metadata::Edition) -> Self {
-        match edition {
-            cargo_metadata::Edition::E2015 => Self::Edition2015,
-            cargo_metadata::Edition::E2018 => Self::Edition2018,
-            cargo_metadata::Edition::E2021 => Self::Edition2021,
-            cargo_metadata::Edition::E2024 => Self::Edition2024,
-            // Cargo parses a few future-edition placeholders. Until rust-src exposes matching
-            // prelude modules, resolve them through the newest edition we understand.
-            _ => Self::Edition2024,
-        }
-    }
-
     pub fn prelude_module(self) -> &'static str {
         match self {
             Self::Edition2015 => "rust_2015",

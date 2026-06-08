@@ -3,11 +3,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use rg_cfg_eval::CfgOptions;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    PackageId, RustcTarget, WorkspaceMetadataError, WorkspaceMetadataResult,
-    path::canonicalize_path,
+    RustcTarget, WorkspaceMetadataError, WorkspaceMetadataResult, path::canonicalize_path,
 };
 
 /// Options used when asking Cargo for the workspace graph.
@@ -34,15 +34,22 @@ impl CargoMetadataConfig {
         &self.target
     }
 
-    /// Runs `cargo metadata` with the target-platform filter selected by this configuration.
-    pub fn load_metadata(
+    /// Runs `cargo metadata` and returns the target cfg environment used for normalization.
+    pub fn load_metadata_with_target_cfg(
         &self,
         manifest_path: impl AsRef<Path>,
-    ) -> WorkspaceMetadataResult<cargo_metadata::Metadata> {
+    ) -> WorkspaceMetadataResult<LoadedCargoMetadata> {
         let target = self.resolved_target()?;
-        self.metadata_command_for_target(manifest_path.as_ref(), &target)
+        let target_cfg = target.cfg_options()?;
+        let metadata = self
+            .metadata_command_for_target(manifest_path.as_ref(), &target)
             .exec()
-            .map_err(WorkspaceMetadataError::CargoMetadata)
+            .map_err(WorkspaceMetadataError::CargoMetadata)?;
+
+        Ok(LoadedCargoMetadata {
+            metadata,
+            target_cfg,
+        })
     }
 
     /// Runs `cargo metadata --no-deps` and returns canonical workspace member manifests.
@@ -62,13 +69,13 @@ impl CargoMetadataConfig {
         let workspace_members = metadata
             .workspace_members
             .iter()
-            .map(PackageId::from_cargo)
+            .map(ToString::to_string)
             .collect::<HashSet<_>>();
 
         metadata
             .packages
             .into_iter()
-            .filter(|package| workspace_members.contains(&PackageId::from_cargo(&package.id)))
+            .filter(|package| workspace_members.contains(&package.id.to_string()))
             .map(|package| {
                 canonicalize_path(package.manifest_path.as_std_path())
                     .map_err(WorkspaceMetadataError::Path)
@@ -76,7 +83,7 @@ impl CargoMetadataConfig {
             .collect()
     }
 
-    pub(crate) fn metadata_command_for_target(
+    fn metadata_command_for_target(
         &self,
         manifest_path: &Path,
         target: &RustcTarget,
@@ -90,7 +97,7 @@ impl CargoMetadataConfig {
         command
     }
 
-    pub(crate) fn resolved_target(&self) -> WorkspaceMetadataResult<RustcTarget> {
+    fn resolved_target(&self) -> WorkspaceMetadataResult<RustcTarget> {
         match &self.target {
             CargoMetadataTarget::Auto => RustcTarget::detect_host(),
             CargoMetadataTarget::Triple(target) => Ok(target.clone()),
@@ -113,4 +120,11 @@ pub enum CargoMetadataTarget {
     Auto,
     /// Pass this target triple to `cargo metadata --filter-platform`.
     Triple(RustcTarget),
+}
+
+/// Raw Cargo metadata plus the resolved target cfg facts it should be lowered with.
+#[derive(Debug)]
+pub struct LoadedCargoMetadata {
+    pub metadata: cargo_metadata::Metadata,
+    pub target_cfg: CfgOptions,
 }

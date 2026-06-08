@@ -3,20 +3,16 @@ use std::path::{Path, PathBuf};
 use rg_cfg_eval::CfgOptions;
 use rg_memsize::MemorySize;
 
-use crate::{SysrootCrate, WorkspaceMetadataError, WorkspaceMetadataResult};
+use crate::SysrootCrate;
 
 use super::{dependency::PackageDependency, edition::RustEdition, target::Target};
 
-/// Stable package identifier derived from Cargo metadata.
+/// Stable package identifier inside a normalized workspace metadata snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, MemorySize)]
 #[display("{_0}")]
-pub struct PackageId(#[memsize(inline)] String);
+pub struct PackageId(#[memsize(inline)] pub(crate) String);
 
 impl PackageId {
-    pub(crate) fn from_cargo(id: &cargo_metadata::PackageId) -> Self {
-        Self(id.to_string())
-    }
-
     pub(crate) fn sysroot(krate: SysrootCrate) -> Self {
         Self(format!("sysroot:{}", krate.name()))
     }
@@ -56,7 +52,7 @@ impl PackageOrigin {
     }
 }
 
-/// Cargo source kind used to classify packages for future residency/cache policies.
+/// Package source kind used for future residency/cache policies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, derive_more::Display, MemorySize)]
 #[memsize(leaf)]
 pub enum PackageSource {
@@ -76,42 +72,6 @@ pub enum PackageSource {
     Directory,
     #[display("sysroot")]
     Sysroot,
-}
-
-impl PackageSource {
-    pub(crate) fn from_cargo_source(
-        package: &PackageId,
-        is_workspace_member: bool,
-        source: Option<&cargo_metadata::Source>,
-    ) -> WorkspaceMetadataResult<Self> {
-        if is_workspace_member {
-            return Ok(Self::Workspace);
-        }
-
-        let Some(source) = source else {
-            return Ok(Self::Path);
-        };
-        let source = source.repr.as_str();
-
-        if source.starts_with("path+") {
-            Ok(Self::Path)
-        } else if source.starts_with("registry+") {
-            Ok(Self::Registry)
-        } else if source.starts_with("sparse+") {
-            Ok(Self::SparseRegistry)
-        } else if source.starts_with("git+") {
-            Ok(Self::Git)
-        } else if source.starts_with("local-registry+") {
-            Ok(Self::LocalRegistry)
-        } else if source.starts_with("directory+") {
-            Ok(Self::Directory)
-        } else {
-            Err(WorkspaceMetadataError::UnsupportedPackageSource {
-                package: package.clone(),
-                source: source.to_string(),
-            })
-        }
-    }
 }
 
 /// Normalized package metadata relevant to later analysis phases.

@@ -1,6 +1,7 @@
 use std::{error::Error, fmt, io};
 
 mod cargo;
+mod lower;
 mod model;
 mod path;
 mod rustc;
@@ -10,7 +11,7 @@ mod sysroot;
 mod tests;
 
 pub use self::{
-    cargo::{CargoMetadataConfig, CargoMetadataTarget},
+    cargo::{CargoMetadataConfig, CargoMetadataTarget, LoadedCargoMetadata},
     model::{
         Package, PackageDependency, PackageId, PackageOrigin, PackageSlot, PackageSource,
         RustEdition, Target, TargetKind, WorkspaceMetadata,

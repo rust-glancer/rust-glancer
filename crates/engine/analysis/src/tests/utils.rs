@@ -39,7 +39,7 @@ pub(super) fn check_analysis_queries_with_sysroot(
     let (fixture, markers) = fixture_crate_with_markers(fixture);
     let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
         .expect("fixture sysroot should be complete");
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
         .expect("fixture workspace metadata should build")
         .with_sysroot_sources(Some(sysroot));
     let db = AnalysisFixtureDb::build_from_crate_with_workspace(fixture, workspace);
@@ -303,7 +303,7 @@ struct AnalysisFixtureDb {
 
 impl AnalysisFixtureDb {
     fn build_from_crate(fixture: CrateFixture) -> Self {
-        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
             .expect("fixture workspace metadata should build");
         Self::build_from_crate_with_workspace(fixture, workspace)
     }

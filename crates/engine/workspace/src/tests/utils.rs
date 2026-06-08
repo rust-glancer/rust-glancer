@@ -8,7 +8,7 @@ use test_fixture::fixture_crate;
 pub(super) fn check_workspace_metadata(fixture: &str, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let actual = render_workspace_metadata(
-        &WorkspaceMetadata::from_cargo(fixture.metadata())
+        &WorkspaceMetadata::for_tests(fixture.metadata())
             .expect("fixture workspace metadata should build"),
     );
     let actual = format!("{}\n", actual.trim_end());
@@ -19,7 +19,7 @@ pub(super) fn check_workspace_metadata_with_sysroot(fixture: &str, expect: Expec
     let fixture = fixture_crate(fixture);
     let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
         .expect("fixture sysroot should be complete");
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
         .expect("fixture workspace metadata should build")
         .with_sysroot_sources(Some(sysroot));
     let actual = render_workspace_metadata(&workspace);
