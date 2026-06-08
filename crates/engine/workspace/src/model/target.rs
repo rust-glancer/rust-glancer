@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{WorkspaceMetadataError, WorkspaceMetadataResult, canonicalize_path};
+use crate::{WorkspaceMetadataError, WorkspaceMetadataResult, path::canonicalize_path};
 
 /// Normalized target metadata with one target kind per target.
 #[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]

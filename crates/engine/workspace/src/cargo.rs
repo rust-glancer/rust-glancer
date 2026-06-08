@@ -1,0 +1,116 @@
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
+
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    PackageId, RustcTarget, WorkspaceMetadataError, WorkspaceMetadataResult,
+    path::canonicalize_path,
+};
+
+/// Options used when asking Cargo for the workspace graph.
+///
+/// Cargo metadata includes dependencies for every platform unless callers pass
+/// `--filter-platform`. Analysis wants one concrete graph, so the default resolves the current
+/// rustc host triple and lets Cargo prune target-specific dependencies before lowering starts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, rg_memsize::MemorySize)]
+pub struct CargoMetadataConfig {
+    target: CargoMetadataTarget,
+}
+
+impl CargoMetadataConfig {
+    /// Uses an explicit target triple instead of auto-detecting the rustc host target.
+    pub fn target_triple(mut self, target_triple: impl Into<String>) -> Self {
+        self.target = RustcTarget::new(target_triple)
+            .map(CargoMetadataTarget::Triple)
+            .unwrap_or(CargoMetadataTarget::Auto);
+        self
+    }
+
+    /// Returns the configured target selection before auto-detection is resolved.
+    pub fn target(&self) -> &CargoMetadataTarget {
+        &self.target
+    }
+
+    /// Runs `cargo metadata` with the target-platform filter selected by this configuration.
+    pub fn load_metadata(
+        &self,
+        manifest_path: impl AsRef<Path>,
+    ) -> WorkspaceMetadataResult<cargo_metadata::Metadata> {
+        let target = self.resolved_target()?;
+        self.metadata_command_for_target(manifest_path.as_ref(), &target)
+            .exec()
+            .map_err(WorkspaceMetadataError::CargoMetadata)
+    }
+
+    /// Runs `cargo metadata --no-deps` and returns canonical workspace member manifests.
+    ///
+    /// This gives update code a cheap Cargo-backed discovery probe for new workspace members
+    /// without constructing a partial analysis graph or resolving third-party dependencies.
+    pub fn load_workspace_member_manifest_paths(
+        &self,
+        manifest_path: impl AsRef<Path>,
+    ) -> WorkspaceMetadataResult<Vec<PathBuf>> {
+        let target = self.resolved_target()?;
+        let metadata = self
+            .metadata_command_for_target(manifest_path.as_ref(), &target)
+            .no_deps()
+            .exec()
+            .map_err(WorkspaceMetadataError::CargoMetadata)?;
+        let workspace_members = metadata
+            .workspace_members
+            .iter()
+            .map(PackageId::from_cargo)
+            .collect::<HashSet<_>>();
+
+        metadata
+            .packages
+            .into_iter()
+            .filter(|package| workspace_members.contains(&PackageId::from_cargo(&package.id)))
+            .map(|package| {
+                canonicalize_path(package.manifest_path.as_std_path())
+                    .map_err(WorkspaceMetadataError::Path)
+            })
+            .collect()
+    }
+
+    pub(crate) fn metadata_command_for_target(
+        &self,
+        manifest_path: &Path,
+        target: &RustcTarget,
+    ) -> cargo_metadata::MetadataCommand {
+        let mut command = cargo_metadata::MetadataCommand::new();
+        command.manifest_path(manifest_path.to_path_buf());
+        command.other_options(vec![
+            "--filter-platform".to_string(),
+            target.as_str().to_string(),
+        ]);
+        command
+    }
+
+    pub(crate) fn resolved_target(&self) -> WorkspaceMetadataResult<RustcTarget> {
+        match &self.target {
+            CargoMetadataTarget::Auto => RustcTarget::detect_host(),
+            CargoMetadataTarget::Triple(target) => Ok(target.clone()),
+        }
+    }
+}
+
+impl Default for CargoMetadataConfig {
+    fn default() -> Self {
+        Self {
+            target: CargoMetadataTarget::Auto,
+        }
+    }
+}
+
+/// Target platform selection for Cargo metadata filtering.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, rg_memsize::MemorySize)]
+pub enum CargoMetadataTarget {
+    /// Detect the host triple from `rustc -vV`.
+    Auto,
+    /// Pass this target triple to `cargo metadata --filter-platform`.
+    Triple(RustcTarget),
+}

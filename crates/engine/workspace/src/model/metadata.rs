@@ -8,7 +8,7 @@ use rg_memsize::MemorySize;
 
 use crate::{
     CargoMetadataConfig, SysrootCrate, SysrootSources, WorkspaceMetadataError,
-    WorkspaceMetadataResult, canonicalize_path, cfg_options_from_rustc_target,
+    WorkspaceMetadataResult, path::canonicalize_path,
 };
 
 use super::{
@@ -46,10 +46,10 @@ impl WorkspaceMetadata {
         manifest_path: impl AsRef<Path>,
         config: &CargoMetadataConfig,
     ) -> WorkspaceMetadataResult<Self> {
-        let target_triple = config.resolved_target_triple()?;
-        let target_cfg = cfg_options_from_rustc_target(&target_triple)?;
+        let target = config.resolved_target()?;
+        let target_cfg = target.cfg_options()?;
         let metadata = config
-            .metadata_command_for_target(manifest_path.as_ref(), &target_triple)?
+            .metadata_command_for_target(manifest_path.as_ref(), &target)
             .exec()
             .map_err(WorkspaceMetadataError::CargoMetadata)?;
 

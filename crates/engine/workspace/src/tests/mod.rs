@@ -6,8 +6,8 @@ use expect_test::expect;
 use test_fixture::fixture_crate;
 
 use crate::{
-    CargoMetadataConfig, CargoMetadataTarget, PackageSource, SysrootSources, TargetKind,
-    WorkspaceMetadata, WorkspaceMetadataError, parse_rustc_host_target,
+    CargoMetadataConfig, CargoMetadataTarget, PackageSource, RustcTarget, SysrootSources,
+    TargetKind, WorkspaceMetadata, WorkspaceMetadataError,
 };
 
 #[test]
@@ -639,18 +639,18 @@ host: aarch64-apple-darwin
 release: 1.94.1
 "#;
 
-    assert_eq!(
-        parse_rustc_host_target(output),
-        Some("aarch64-apple-darwin".to_string()),
-    );
+    let target = RustcTarget::parse_host_from_verbose_output(output)
+        .expect("verbose rustc output should contain a host triple");
+
+    assert_eq!(target.as_str(), "aarch64-apple-darwin");
 }
 
 #[test]
 fn normalizes_explicit_cargo_metadata_target() {
     let config = CargoMetadataConfig::default().target_triple("  x86_64-unknown-linux-gnu  ");
 
-    assert_eq!(
-        config.target(),
-        &CargoMetadataTarget::Triple("x86_64-unknown-linux-gnu".to_string()),
-    );
+    let CargoMetadataTarget::Triple(target) = config.target() else {
+        panic!("non-empty explicit target should configure a target triple");
+    };
+    assert_eq!(target.as_str(), "x86_64-unknown-linux-gnu");
 }
