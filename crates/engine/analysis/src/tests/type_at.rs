@@ -1160,8 +1160,20 @@ pub struct DefMapBuilder {
 }
 
 impl DefMapBuilder {
-    pub fn as_incomplete_def_map(&self) -> &DefMap {
-        &self.incomplete
+    pub fn partial(&self) -> PartialDefMap<'_> {
+        PartialDefMap {
+            def_map: &self.incomplete,
+        }
+    }
+}
+
+pub struct PartialDefMap<'a> {
+    def_map: &'a DefMap,
+}
+
+impl<'a> PartialDefMap<'a> {
+    pub fn imports(&self) -> &'a [ImportData] {
+        self.def_map.imports()
     }
 }
 
@@ -1187,7 +1199,7 @@ pub fn use_it(def_map: &DefMap, state: &BuildState) {
         let _import = imp$type_import$ort;
     }
 
-    for chained in state.builder.as_incomplete_def_map().imports() {
+    for chained in state.builder.partial().imports() {
         let _chained = chai$type_chained$ned;
     }
 }
@@ -1241,8 +1253,20 @@ pub struct DefMapBuilder {
 }
 
 impl DefMapBuilder {
-    pub fn as_incomplete_def_map(&self) -> &DefMap {
-        &self.incomplete
+    pub fn partial(&self) -> PartialDefMap<'_> {
+        PartialDefMap {
+            def_map: &self.incomplete,
+        }
+    }
+}
+
+pub struct PartialDefMap<'a> {
+    def_map: &'a DefMap,
+}
+
+impl<'a> PartialDefMap<'a> {
+    pub fn imports(&self) -> &'a [ImportData] {
+        self.def_map.imports()
     }
 }
 
@@ -1267,7 +1291,7 @@ pub fn use_it(def_map: &DefMap, state: &BuildState) {
         let _import = imp$type_import$ort;
     }
 
-    for chained in state.builder.as_incomplete_def_map().imports() {
+    for chained in state.builder.partial().imports() {
         let _chained = chai$type_chained$ned;
     }
 }
@@ -1623,8 +1647,24 @@ pub struct DefMapBuilder {
 }
 
 impl DefMapBuilder {
-    pub fn as_incomplete_def_map(&self) -> &DefMap {
-        &self.incomplete
+    pub fn partial(&self) -> PartialDefMap<'_> {
+        PartialDefMap {
+            def_map: &self.incomplete,
+        }
+    }
+}
+
+pub struct PartialDefMap<'a> {
+    def_map: &'a DefMap,
+}
+
+impl<'a> PartialDefMap<'a> {
+    pub fn imports(&self) -> &'a [ImportData] {
+        self.def_map.imports()
+    }
+
+    pub fn imports_with_ids(&self) -> impl iter::Iterator<Item = (ImportId, &'a ImportData)> + 'a {
+        self.def_map.imports_with_ids()
     }
 }
 
@@ -1646,13 +1686,13 @@ storage = { path = "../storage" }
 use storage::TargetState;
 
 pub fn use_it(state: &TargetState) {
-    for imp$hover_iter_import$ort in state.def_map_builder.as_incomplete_def_map().imports().iter() {
+    for imp$hover_iter_import$ort in state.def_map_builder.partial().imports().iter() {
         let _import = imp$type_iter_import$ort;
     }
 
     for (import_$hover_import_id$id, imp$hover_ids_import$ort) in state
         .def_map_builder
-        .as_incomplete_def_map()
+        .partial()
         .imports_with_ids()
     {
         let _import_id = import$type_import_id$_id;

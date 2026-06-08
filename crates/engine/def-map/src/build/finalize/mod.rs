@@ -222,10 +222,7 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
         if let Some(target) = module_ref.origin.as_target_ref()
             && let Some(state) = self.states.target(target)
         {
-            return Ok(state
-                .def_map_builder
-                .as_incomplete_def_map()
-                .module(module_ref.module));
+            return Ok(state.def_map_builder.partial().module(module_ref.module));
         }
 
         let Some(target) = module_ref.origin.as_target_ref() else {
@@ -298,7 +295,7 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
         {
             return Ok(state
                 .def_map_builder
-                .as_incomplete_def_map()
+                .partial()
                 .local_def(local_def_ref.local_def));
         }
 
@@ -324,7 +321,7 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
         {
             return Ok(state
                 .def_map_builder
-                .as_incomplete_def_map()
+                .partial()
                 .macro_definition(local_def_ref.local_def));
         }
 

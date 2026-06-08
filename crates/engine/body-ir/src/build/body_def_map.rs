@@ -362,7 +362,7 @@ impl BodyDefMapBuildState {
         S: DefMapSource<Error = PackageStoreError> + Copy,
     {
         let resolver = PathResolver::new(env);
-        for import in self.builder.as_incomplete_def_map().imports() {
+        for import in self.builder.partial().imports() {
             let importing_module = self.importing_module(import.module);
             match import.kind {
                 ImportKind::Glob => {
@@ -426,8 +426,7 @@ impl BodyDefMapBuildState {
     where
         S: DefMapSource<Error = PackageStoreError> + Copy,
     {
-        let mut module_imports =
-            vec![Vec::new(); self.builder.as_incomplete_def_map().module_count()];
+        let mut module_imports = vec![Vec::new(); self.builder.partial().module_count()];
         let env = BodyDefMapFinalizationEnv {
             def_maps,
             state: self,
@@ -435,7 +434,7 @@ impl BodyDefMapBuildState {
         };
         let resolver = PathResolver::new(&env);
 
-        for (import_id, import) in self.builder.as_incomplete_def_map().imports_with_ids() {
+        for (import_id, import) in self.builder.partial().imports_with_ids() {
             let importing_module = self.importing_module(import.module);
             let is_unresolved = match import.kind {
                 ImportKind::Glob => resolver
@@ -487,11 +486,7 @@ where
 
     fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
         if self.is_active_body_origin(module_ref.origin) {
-            return Ok(self
-                .state
-                .builder
-                .as_incomplete_def_map()
-                .module(module_ref.module));
+            return Ok(self.state.builder.partial().module(module_ref.module));
         }
 
         Ok(self
@@ -550,7 +545,7 @@ where
             return Ok(self
                 .state
                 .builder
-                .as_incomplete_def_map()
+                .partial()
                 .local_def(local_def_ref.local_def));
         }
 
@@ -568,7 +563,7 @@ where
             return Ok(self
                 .state
                 .builder
-                .as_incomplete_def_map()
+                .partial()
                 .macro_definition(local_def_ref.local_def));
         }
 

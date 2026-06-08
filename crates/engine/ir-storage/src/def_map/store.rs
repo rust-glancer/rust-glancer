@@ -76,13 +76,10 @@ impl DefMapBuilder {
         }
     }
 
-    /// DefMap is first build, and then populated.
-    /// This method provides a method to access the defmap directly, but it's the caller's
-    /// responsibility to make sure that the defmap has been populated already.
-    // TODO: Add `collected` flag to forbid adding more things and only allow mutating
-    // existing ones.
-    pub fn as_incomplete_def_map(&self) -> &DefMap {
-        &self.def_map
+    pub fn partial(&self) -> PartialDefMap<'_> {
+        PartialDefMap {
+            def_map: &self.def_map,
+        }
     }
 
     pub fn module_mut(&mut self, module_id: ModuleId) -> Option<&mut ModuleData> {
@@ -125,6 +122,53 @@ impl DefMapBuilder {
 
     pub fn build(self) -> DefMap {
         self.def_map
+    }
+}
+
+/// Read-only view over a DefMap that is still being collected/finalized.
+///
+/// This facade is intentionally narrower than `DefMap`: it permits the build pipeline to inspect
+/// data allocated so far without making the object look like a frozen namespace map.
+#[derive(Debug, Clone, Copy)]
+pub struct PartialDefMap<'a> {
+    def_map: &'a DefMap,
+}
+
+impl<'a> PartialDefMap<'a> {
+    /// Returns module data allocated so far during collection/finalization.
+    pub fn module(&self, module_id: ModuleId) -> Option<&'a ModuleData> {
+        self.def_map.module(module_id)
+    }
+
+    pub fn module_count(&self) -> usize {
+        self.def_map.module_count()
+    }
+
+    /// Returns local definition data allocated so far during collection/finalization.
+    pub fn local_def(&self, local_def: LocalDefId) -> Option<&'a LocalDefData> {
+        self.def_map.local_def(local_def)
+    }
+
+    /// Returns a declarative macro payload allocated so far during collection/finalization.
+    pub fn macro_definition(&self, local_def: LocalDefId) -> Option<&'a MacroDefinitionData> {
+        self.def_map.macro_definition(local_def)
+    }
+
+    /// Returns imports allocated so far during collection/finalization.
+    pub fn imports(&self) -> &'a [ImportData] {
+        self.def_map.imports()
+    }
+
+    pub fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &'a ImportData)> + 'a {
+        self.def_map.imports_with_ids()
+    }
+
+    /// Returns a retained generated source allocated so far during macro collection.
+    pub fn generated_source(
+        &self,
+        generated_source: GeneratedSourceId,
+    ) -> Option<&'a GeneratedSourceData> {
+        self.def_map.generated_source(generated_source)
     }
 }
 

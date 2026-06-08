@@ -22,6 +22,6 @@ pub use self::{
         ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin, ScopeEntry,
         ScopeEntryRef,
     },
-    store::{DefMap, DefMapBuilder},
+    store::{DefMap, DefMapBuilder, PartialDefMap},
     visible::{ScopeNamespace, VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin},
 };
