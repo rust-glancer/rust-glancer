@@ -10,7 +10,7 @@
 // Putting things here should have good enough justification.
 
 pub mod memsize;
-mod shrink;
+pub mod shrink;
 
 pub use self::{
     memsize::{MemoryRecord, MemoryRecordKind, MemoryRecorder, MemoryRecorderMode, MemorySize},
