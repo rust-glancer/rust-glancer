@@ -2,6 +2,7 @@ mod build;
 mod dirty;
 pub(crate) mod loading;
 pub(crate) mod offloading;
+mod package_set;
 mod snapshot;
 pub(crate) mod state;
 mod stats;

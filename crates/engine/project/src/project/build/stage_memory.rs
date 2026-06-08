@@ -1,5 +1,5 @@
 use rg_body_ir::BodyIrDb;
-use rg_def_map::{DefMapDb, PackageSlot};
+use rg_def_map::DefMapDb;
 use rg_item_tree::ItemTreeDb;
 use rg_memsize::{MemoryRecorder, MemorySize};
 use rg_parse::ParseDb;
@@ -9,6 +9,7 @@ use rg_text::PackageNameInterners;
 use crate::{
     cache::Fingerprint,
     profile::{BuildProfileStage, BuildProfiler},
+    project::package_set::PhasePackageSet,
 };
 
 /// Snapshot of the phase locals that are still alive at a build checkpoint.
@@ -19,7 +20,7 @@ use crate::{
 pub(super) struct StageMemory<'a> {
     names: Option<&'a PackageNameInterners>,
     parse: Option<&'a ParseDb>,
-    build_plan: Option<&'a Vec<PackageSlot>>,
+    build_plan: Option<&'a PhasePackageSet>,
     item_tree: Option<&'a ItemTreeDb>,
     source_fingerprints: Option<&'a Vec<Option<Fingerprint>>>,
     def_map: Option<&'a DefMapDb>,
@@ -38,7 +39,7 @@ impl<'a> StageMemory<'a> {
         self
     }
 
-    pub(super) fn build_plan(mut self, build_plan: &'a Vec<PackageSlot>) -> Self {
+    pub(super) fn build_plan(mut self, build_plan: &'a PhasePackageSet) -> Self {
         self.build_plan = Some(build_plan);
         self
     }

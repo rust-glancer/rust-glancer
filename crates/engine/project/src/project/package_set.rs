@@ -1,0 +1,79 @@
+use rg_body_ir::BodyIrFile;
+use rg_def_map::PackageSlot;
+use rg_package_store::PackageSubset;
+use rg_workspace::WorkspaceMetadata;
+
+use super::subset;
+
+/// Packages selected for one phase build, rebuild, or residency step.
+///
+/// The durable phase stores move by package slot, while item-tree construction still wants raw
+/// package indices. Keeping both projections here prevents project lifecycle code from growing its
+/// own subtly different package-set plumbing.
+#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+pub(super) struct PhasePackageSet {
+    packages: Vec<PackageSlot>,
+}
+
+impl PhasePackageSet {
+    pub(super) fn all(package_count: usize) -> Self {
+        Self {
+            packages: (0..package_count).map(PackageSlot).collect(),
+        }
+    }
+
+    pub(super) fn from_packages(packages: Vec<PackageSlot>) -> Self {
+        Self { packages }
+    }
+
+    pub(super) fn from_slice(packages: &[PackageSlot]) -> Self {
+        Self {
+            packages: packages.to_vec(),
+        }
+    }
+
+    pub(super) fn from_body_files(files: &[BodyIrFile]) -> Self {
+        let mut packages = files.iter().map(|file| file.package).collect::<Vec<_>>();
+        packages.sort_by_key(|package| package.0);
+        packages.dedup();
+        Self { packages }
+    }
+
+    pub(super) fn as_slice(&self) -> &[PackageSlot] {
+        &self.packages
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.packages.is_empty()
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.packages.len()
+    }
+
+    pub(super) fn iter(&self) -> impl Iterator<Item = PackageSlot> + '_ {
+        self.packages.iter().copied()
+    }
+
+    pub(super) fn filter(&self, mut predicate: impl FnMut(PackageSlot) -> bool) -> Self {
+        Self {
+            packages: self
+                .packages
+                .iter()
+                .copied()
+                .filter(|&package| predicate(package))
+                .collect(),
+        }
+    }
+
+    pub(super) fn package_indices(&self) -> Vec<usize> {
+        self.packages.iter().map(|package| package.0).collect()
+    }
+
+    pub(super) fn visible_dependency_subset(&self, workspace: &WorkspaceMetadata) -> PackageSubset {
+        // Source-built packages can resolve names through visible dependencies, including packages
+        // that were startup-cache hits. The subset tells lazy package stores which offloaded
+        // packages are valid reads during this coherent build.
+        subset::rebuild_packages_with_visible_dependencies(workspace, &self.packages)
+    }
+}
