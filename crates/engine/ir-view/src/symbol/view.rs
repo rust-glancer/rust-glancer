@@ -7,128 +7,14 @@ use rg_ir_model::{
     TypeAliasRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery, SemanticItemView};
-use rg_ir_view::{
-    IndexedViewDb, SymbolKind,
-    item::declaration::{Declaration, DeclarationView},
-    ty::locals::BodyView,
-};
 use rg_parse::{FileId, Span};
 
-use crate::model::{DocumentSymbol, WorkspaceSymbol};
-
-/// One outline declaration. Most nodes come from real declarations, but some syntax-only
-/// children, such as tuple variant fields, only exist as document outline entries.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DocumentSymbolDeclaration {
-    name: String,
-    kind: SymbolKind,
-    file_id: FileId,
-    span: Span,
-    selection_span: Span,
-}
-
-impl DocumentSymbolDeclaration {
-    fn field(file_id: FileId, name: String, span: Span) -> Self {
-        Self {
-            name,
-            kind: SymbolKind::Field,
-            file_id,
-            span,
-            selection_span: span,
-        }
-    }
-}
-
-impl From<Declaration> for DocumentSymbolDeclaration {
-    fn from(declaration: Declaration) -> Self {
-        Self {
-            name: declaration.name().to_string(),
-            kind: declaration.kind(),
-            file_id: declaration.file_id(),
-            span: declaration.span(),
-            selection_span: declaration.selection_span(),
-        }
-    }
-}
-
-/// Hierarchical source outline node for a single file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DocumentSymbolNode {
-    declaration: DocumentSymbolDeclaration,
-    children: Vec<DocumentSymbolNode>,
-}
-
-impl DocumentSymbolNode {
-    fn new(declaration: impl Into<DocumentSymbolDeclaration>) -> Self {
-        Self {
-            declaration: declaration.into(),
-            children: Vec::new(),
-        }
-    }
-
-    fn with_children(mut self, children: Vec<DocumentSymbolNode>) -> Self {
-        self.children = children;
-        self
-    }
-}
-
-impl From<DocumentSymbolDeclaration> for DocumentSymbol {
-    fn from(declaration: DocumentSymbolDeclaration) -> Self {
-        Self {
-            name: declaration.name,
-            kind: declaration.kind,
-            file_id: declaration.file_id,
-            span: declaration.span,
-            selection_span: declaration.selection_span,
-            children: Vec::new(),
-        }
-    }
-}
-
-impl From<DocumentSymbolNode> for DocumentSymbol {
-    fn from(node: DocumentSymbolNode) -> Self {
-        let mut symbol = DocumentSymbol::from(node.declaration);
-        symbol.children = node
-            .children
-            .into_iter()
-            .map(DocumentSymbol::from)
-            .collect();
-        symbol
-    }
-}
-
-/// One workspace-wide symbol entry with enough context for search and rendering.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WorkspaceSymbolEntry {
-    declaration: Declaration,
-    container_name: Option<String>,
-}
-
-impl WorkspaceSymbolEntry {
-    fn new(declaration: Declaration, container_name: Option<String>) -> Self {
-        Self {
-            declaration,
-            container_name,
-        }
-    }
-
-    pub(crate) fn name(&self) -> &str {
-        self.declaration.name()
-    }
-}
-
-impl From<WorkspaceSymbolEntry> for WorkspaceSymbol {
-    fn from(entry: WorkspaceSymbolEntry) -> Self {
-        Self {
-            target: entry.declaration.target(),
-            name: entry.declaration.name().to_string(),
-            kind: entry.declaration.kind(),
-            file_id: entry.declaration.file_id(),
-            span: Some(entry.declaration.selection_span()),
-            container_name: entry.container_name,
-        }
-    }
-}
+use crate::{
+    IndexedViewDb,
+    item::declaration::{Declaration, DeclarationView},
+    symbol::{IndexedSymbolEntry, SourceOutlineDeclaration, SourceOutlineNode, SymbolKind},
+    ty::locals::BodyView,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IndexedSyntaxChild {
@@ -452,39 +338,39 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
     }
 }
 
-/// Enumerates symbols from indexed items, leaving editor shaping in this module.
-pub(crate) struct IndexedSymbols<'a, 'db> {
+/// Enumerates reusable symbol projections from indexed items.
+pub struct SymbolView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
 
-impl<'a, 'db> IndexedSymbols<'a, 'db> {
-    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+impl<'a, 'db> SymbolView<'a, 'db> {
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
         Self { db }
     }
 
-    pub(crate) fn document_symbols(
+    pub fn source_outline(
         &self,
         target: TargetRef,
         file_id: FileId,
-    ) -> Result<Vec<DocumentSymbolNode>> {
+    ) -> Result<Vec<SourceOutlineNode>> {
         let index = SymbolItemIndex::new(self.db);
         let mut symbols = Vec::new();
 
         for declaration in index.module_declarations(target)? {
-            if let Some(symbol) = self.declaration_document_symbol(declaration)?
-                && symbol.declaration.file_id == file_id
+            if let Some(symbol) = self.declaration_source_outline_node(declaration)?
+                && symbol.declaration().file_id() == file_id
             {
                 symbols.push(symbol);
             }
         }
 
         for item in index.module_owned_items(target, Some(file_id))? {
-            if let Some(symbol) = self.document_item(&item, Some(file_id))? {
+            if let Some(symbol) = self.source_outline_item(&item, Some(file_id))? {
                 symbols.push(symbol);
             }
         }
 
-        // Body-local items belong to their owning function in an editor outline. The owner may
+        // Body-local items belong to their owning function in a source outline. The owner may
         // already be nested under a trait or impl, so attachment searches the built tree.
         for group in index.body_local_groups(target, file_id)? {
             let Some(owner) = self.declaration(group.owner())? else {
@@ -494,18 +380,18 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
                 continue;
             };
             for item in group.children() {
-                if let Some(symbol) = self.document_item(item, Some(file_id))? {
-                    parent.children.push(symbol);
+                if let Some(symbol) = self.source_outline_item(item, Some(file_id))? {
+                    parent.children_mut().push(symbol);
                 }
             }
         }
 
-        let mut symbols = Self::nest_module_document_symbols(symbols);
-        Self::sort_document_symbols(&mut symbols);
+        let mut symbols = Self::nest_module_source_outline(symbols);
+        Self::sort_source_outline(&mut symbols);
         Ok(symbols)
     }
 
-    pub(crate) fn workspace_symbols(&self) -> Result<Vec<WorkspaceSymbolEntry>> {
+    pub fn workspace_symbols(&self) -> Result<Vec<IndexedSymbolEntry>> {
         let index = SymbolItemIndex::new(self.db);
         let mut symbols = Vec::new();
 
@@ -524,7 +410,7 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
                     | DeclarationRef::EnumVariant(_)
                     | DeclarationRef::BodyBinding(_) => None,
                 };
-                symbols.push(WorkspaceSymbolEntry::new(module, container_name));
+                symbols.push(IndexedSymbolEntry::new(module, container_name));
             }
 
             for item in index.module_owned_items(target, None)? {
@@ -535,11 +421,11 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
         Ok(symbols)
     }
 
-    fn document_item(
+    fn source_outline_item(
         &self,
         item: &IndexedItem,
         file_id: Option<FileId>,
-    ) -> Result<Option<DocumentSymbolNode>> {
+    ) -> Result<Option<SourceOutlineNode>> {
         let Some(declaration) = self.declaration(item.declaration())? else {
             return Ok(None);
         };
@@ -551,7 +437,7 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
         for child in item.children() {
             match child {
                 IndexedItemChild::Declaration(child) => {
-                    if let Some(symbol) = self.document_item(child, file_id)? {
+                    if let Some(symbol) = self.source_outline_item(child, file_id)? {
                         children.push(symbol);
                     }
                 }
@@ -559,7 +445,7 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
                     if file_id.is_some_and(|file_id| child.file_id() != file_id) {
                         continue;
                     }
-                    children.push(DocumentSymbolNode::new(DocumentSymbolDeclaration::field(
+                    children.push(SourceOutlineNode::new(SourceOutlineDeclaration::field(
                         child.file_id(),
                         child.name().to_string(),
                         child.span(),
@@ -569,7 +455,7 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
         }
 
         Ok(Some(
-            DocumentSymbolNode::new(declaration).with_children(children),
+            SourceOutlineNode::new(declaration).with_children(children),
         ))
     }
 
@@ -577,14 +463,14 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
         &self,
         item: &IndexedItem,
         container_name: Option<String>,
-        symbols: &mut Vec<WorkspaceSymbolEntry>,
+        symbols: &mut Vec<IndexedSymbolEntry>,
     ) -> Result<()> {
         let Some(declaration) = self.declaration(item.declaration())? else {
             return Ok(());
         };
         let child_container_name = Self::child_container_name(&declaration);
         if declaration.kind() != SymbolKind::Impl {
-            symbols.push(WorkspaceSymbolEntry::new(declaration, container_name));
+            symbols.push(IndexedSymbolEntry::new(declaration, container_name));
         }
 
         for child in item.children() {
@@ -621,30 +507,33 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
         DeclarationView::new(self.db).declaration(declaration)
     }
 
-    fn declaration_document_symbol(
+    fn declaration_source_outline_node(
         &self,
         declaration: DeclarationRef,
-    ) -> Result<Option<DocumentSymbolNode>> {
-        Ok(self.declaration(declaration)?.map(DocumentSymbolNode::new))
+    ) -> Result<Option<SourceOutlineNode>> {
+        Ok(self.declaration(declaration)?.map(SourceOutlineNode::new))
     }
 
     fn find_function_symbol_mut<'s>(
-        symbols: &'s mut [DocumentSymbolNode],
+        symbols: &'s mut [SourceOutlineNode],
         function: &Declaration,
-    ) -> Option<&'s mut DocumentSymbolNode> {
+    ) -> Option<&'s mut SourceOutlineNode> {
         // Associated functions may already be nested below traits or impls, so search the outline
         // tree instead of assuming module-level placement.
         for symbol in symbols {
-            if symbol.declaration.name == function.name()
-                && symbol.declaration.span == function.span()
-                && matches!(
-                    symbol.declaration.kind,
-                    SymbolKind::Function | SymbolKind::Method
-                )
-            {
+            let is_owner = {
+                let declaration = symbol.declaration();
+                declaration.name() == function.name()
+                    && declaration.span() == function.span()
+                    && matches!(
+                        declaration.kind(),
+                        SymbolKind::Function | SymbolKind::Method
+                    )
+            };
+            if is_owner {
                 return Some(symbol);
             }
-            if let Some(found) = Self::find_function_symbol_mut(&mut symbol.children, function) {
+            if let Some(found) = Self::find_function_symbol_mut(symbol.children_mut(), function) {
                 return Some(found);
             }
         }
@@ -652,7 +541,7 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
         None
     }
 
-    fn nest_module_document_symbols(symbols: Vec<DocumentSymbolNode>) -> Vec<DocumentSymbolNode> {
+    fn nest_module_source_outline(symbols: Vec<SourceOutlineNode>) -> Vec<SourceOutlineNode> {
         let parent_by_symbol = Self::module_parents_by_symbol(&symbols);
         let mut children_by_parent = vec![Vec::new(); symbols.len()];
         let mut roots = Vec::new();
@@ -666,11 +555,11 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
 
         roots
             .into_iter()
-            .map(|idx| Self::build_nested_document_symbol(idx, &symbols, &children_by_parent))
+            .map(|idx| Self::build_nested_source_outline(idx, &symbols, &children_by_parent))
             .collect()
     }
 
-    fn module_parents_by_symbol(symbols: &[DocumentSymbolNode]) -> Vec<Option<usize>> {
+    fn module_parents_by_symbol(symbols: &[SourceOutlineNode]) -> Vec<Option<usize>> {
         // Inline module spans contain their nested item spans. Choosing the smallest containing
         // module reconstructs the outline hierarchy without consulting def-map parent ids.
         symbols
@@ -682,47 +571,48 @@ impl<'a, 'db> IndexedSymbols<'a, 'db> {
                     .enumerate()
                     .filter(|(module_idx, module)| {
                         *module_idx != symbol_idx
-                            && module.declaration.kind == SymbolKind::Module
+                            && module.declaration().kind() == SymbolKind::Module
                             && Self::span_strictly_contains(
-                                module.declaration.span,
-                                symbol.declaration.span,
+                                module.declaration().span(),
+                                symbol.declaration().span(),
                             )
                     })
-                    .min_by_key(|(_, module)| module.declaration.span.len())
+                    .min_by_key(|(_, module)| module.declaration().span().len())
                     .map(|(module_idx, _)| module_idx)
             })
             .collect()
     }
 
-    fn build_nested_document_symbol(
+    fn build_nested_source_outline(
         idx: usize,
-        symbols: &[DocumentSymbolNode],
+        symbols: &[SourceOutlineNode],
         children_by_parent: &[Vec<usize>],
-    ) -> DocumentSymbolNode {
+    ) -> SourceOutlineNode {
         let mut symbol = symbols[idx].clone();
-        symbol.children.extend(
+        symbol.children_mut().extend(
             children_by_parent[idx]
                 .iter()
                 .map(|child_idx| {
-                    Self::build_nested_document_symbol(*child_idx, symbols, children_by_parent)
+                    Self::build_nested_source_outline(*child_idx, symbols, children_by_parent)
                 })
                 .collect::<Vec<_>>(),
         );
-        Self::sort_document_symbols(&mut symbol.children);
+        Self::sort_source_outline(symbol.children_mut());
         symbol
     }
 
-    fn sort_document_symbols(symbols: &mut [DocumentSymbolNode]) {
+    fn sort_source_outline(symbols: &mut [SourceOutlineNode]) {
         for symbol in symbols.iter_mut() {
-            Self::sort_document_symbols(&mut symbol.children);
+            Self::sort_source_outline(symbol.children_mut());
         }
 
         symbols.sort_by_key(|symbol| {
+            let declaration = symbol.declaration();
             (
-                symbol.declaration.span.text.start,
-                symbol.declaration.span.text.end,
-                symbol.declaration.kind,
-                symbol.declaration.name.clone(),
+                declaration.span().text.start,
+                declaration.span().text.end,
+                declaration.kind(),
+                declaration.name().to_string(),
             )
         });
     }

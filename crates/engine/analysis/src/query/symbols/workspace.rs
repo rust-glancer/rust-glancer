@@ -1,11 +1,9 @@
 //! Workspace-wide symbol search.
 
 use anyhow::Result;
-use rg_ir_view::IndexedViewDb;
+use rg_ir_view::{IndexedViewDb, symbol::SymbolView};
 
 use crate::model::WorkspaceSymbol;
-
-use super::indexed::IndexedSymbols;
 
 pub(crate) struct WorkspaceSymbolCollector<'a, 'db>(&'a IndexedViewDb<'db>);
 
@@ -18,7 +16,7 @@ impl<'a, 'db> WorkspaceSymbolCollector<'a, 'db> {
         let query = WorkspaceSymbolQuery::new(query);
         let mut symbols = Vec::new();
 
-        for symbol in IndexedSymbols::new(self.0).workspace_symbols()? {
+        for symbol in SymbolView::new(self.0).workspace_symbols()? {
             if !query.matches(symbol.name()) {
                 continue;
             }
