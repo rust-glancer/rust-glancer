@@ -1,6 +1,6 @@
 use std::{any, collections::BTreeMap};
 
-use crate::{MemoryRecordKind, MemoryRecorder, MemoryRecorderMode};
+use super::{MemoryRecordKind, MemoryRecorder, MemoryRecorderMode};
 
 #[test]
 fn recorder_keeps_scoped_paths_and_totals() {

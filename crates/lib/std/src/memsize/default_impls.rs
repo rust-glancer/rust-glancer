@@ -8,9 +8,11 @@ use std::{
     sync::Arc,
 };
 
-use crate::{MemoryRecorder, MemorySize, Shrink, approximate_allocation_overhead};
+use crate::Shrink;
 
-crate::impl_memory_size_leaf!(
+use super::{MemoryRecorder, MemorySize, approximate_allocation_overhead};
+
+super::impl_memory_size_leaf!(
     (),
     bool,
     char,
@@ -455,7 +457,9 @@ where
 mod tests {
     use std::{any, collections::BTreeMap, mem, sync::Arc};
 
-    use crate::{MemoryRecordKind, MemoryRecorder, MemorySize, approximate_allocation_overhead};
+    use crate::memsize::{
+        MemoryRecordKind, MemoryRecorder, MemorySize, approximate_allocation_overhead,
+    };
 
     #[test]
     fn records_string_shallow_and_heap_capacity() {

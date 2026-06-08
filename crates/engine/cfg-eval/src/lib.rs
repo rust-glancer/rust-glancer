@@ -372,7 +372,7 @@ impl<'a> CfgEvaluator<'a> {
     }
 }
 
-rg_std::impl_memory_size_children! {
+rg_std::memsize::impl_memory_size_children! {
     CfgOptions => atoms, key_values;
     CfgKeyValue => key, value;
     CfgExpr => gates;

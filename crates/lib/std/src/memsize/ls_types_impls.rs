@@ -1,8 +1,8 @@
 use std::mem;
 
-use crate::{MemoryRecorder, MemorySize};
+use super::{MemoryRecorder, MemorySize};
 
-crate::impl_memory_size_leaf!(
+super::impl_memory_size_leaf!(
     ls_types::CompletionItemKind,
     ls_types::CompletionItemTag,
     ls_types::DiagnosticSeverity,
@@ -17,7 +17,7 @@ crate::impl_memory_size_leaf!(
     ls_types::SymbolTag,
 );
 
-crate::impl_memory_size_children! {
+super::impl_memory_size_children! {
     ls_types::Range => start, end;
     ls_types::Location => uri, range;
     ls_types::LocationLink => origin_selection_range, target_uri, target_range,
@@ -230,7 +230,7 @@ impl MemorySize for ls_types::InlayHintLabelPartTooltip {
 
 #[cfg(test)]
 mod tests {
-    use crate::{MemoryRecorder, MemorySize};
+    use crate::memsize::{MemoryRecorder, MemorySize};
 
     #[test]
     fn records_diagnostic_owned_payloads() {
