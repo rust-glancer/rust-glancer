@@ -20,6 +20,7 @@ rg_ir_model.workspace = true
 rg_ir_storage.workspace = true
 rg_ir_view.workspace = true
 rg_parse.workspace = true
+rg_std.workspace = true
 rg_ty.workspace = true
 
 [dev-dependencies]

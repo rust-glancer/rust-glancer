@@ -18,6 +18,7 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, NameResolutionFilter};
 use rg_package_store::PackageStoreError;
+use rg_std::UniqueVec;
 use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
 use crate::{
@@ -30,9 +31,7 @@ use crate::{
     },
 };
 
-use crate::resolution::{
-    BodyResolutionContext, BodyResolutionProviders, TypeRefUseSite, support::push_unique,
-};
+use crate::resolution::{BodyResolutionContext, BodyResolutionProviders, TypeRefUseSite};
 
 /// Resolves lowered binding candidates into the final body binding arena.
 ///
@@ -380,7 +379,7 @@ where
     ) -> Result<Option<Ty>, PackageStoreError> {
         let def_map_path = path.and_then(|path| path.as_def_map_path());
         let variant_name = Self::pattern_path_last_name(def_map_path.as_ref());
-        let mut candidates = Vec::new();
+        let mut candidates = UniqueVec::new();
 
         // Pattern fields are checked against the type of the field they destructure. This matters
         // before final binding materialization because `None` in `User { value: None }` only makes
@@ -392,7 +391,7 @@ where
                         if let Some(field_ty) =
                             self.field_ty_for_nominal_type(nominal_ty, field_key)?
                         {
-                            push_unique(&mut candidates, field_ty);
+                            candidates.push(field_ty);
                         }
                     }
                     TypeDefId::Enum(_) => {
@@ -402,7 +401,7 @@ where
                         if let Some(field_ty) =
                             self.variant_field_ty_for_enum(nominal_ty, variant_name, field_key)?
                         {
-                            push_unique(&mut candidates, field_ty);
+                            candidates.push(field_ty);
                         }
                     }
                 }

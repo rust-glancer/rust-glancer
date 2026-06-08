@@ -1092,7 +1092,7 @@ where
             return;
         }
 
-        push_unique(functions, (function, applicability));
+        functions.push((function, applicability));
     }
 
     /// Returns whether the impl header has no constraints that require solving.
@@ -1159,12 +1159,6 @@ where
             Ty::Opaque { .. } => true,
             Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Nominal(_) | Ty::SelfTy(_) => false,
         }
-    }
-}
-
-fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
-    if !items.contains(&item) {
-        items.push(item);
     }
 }
 

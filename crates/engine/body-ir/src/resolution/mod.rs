@@ -12,7 +12,6 @@ pub(crate) use self::{
     pass::BodyResolutionPass,
     query::TypeRefUseSite,
     source::{BodyQuerySource, BodyResolutionProviders},
-    support::push_unique,
 };
 
 pub use self::{

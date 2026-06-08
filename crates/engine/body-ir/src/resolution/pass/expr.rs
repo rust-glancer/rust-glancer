@@ -10,6 +10,7 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
+use rg_std::UniqueVec;
 use rg_ty::{
     AutoderefMode, CallArgMapping, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst,
     ty_for_binary, ty_for_literal, ty_for_unary,
@@ -21,10 +22,7 @@ use crate::{
     ir::{ExprKind, ExprWrapperKind},
 };
 
-use crate::resolution::{
-    TypeRefUseSite,
-    support::{TyNormalizer, push_unique},
-};
+use crate::resolution::{TypeRefUseSite, support::TyNormalizer};
 
 use super::body::BodyResolutionPass;
 
@@ -97,16 +95,15 @@ where
                 self.pass.body.set_expr_ty(expr, ty);
             }
             ExprKind::Match { arms, .. } => {
-                let mut arm_tys = Vec::new();
+                let mut arm_tys = UniqueVec::new();
                 for arm in arms {
                     if let Some(expr) = arm.expr {
-                        push_unique(&mut arm_tys, self.pass.body.expr_ty_unchecked(expr).clone());
+                        arm_tys.push(self.pass.body.expr_ty_unchecked(expr).clone());
                     }
                 }
-                let ty = if arm_tys.len() == 1 {
-                    arm_tys.pop().expect("one arm type should exist")
-                } else {
-                    Ty::Unknown
+                let ty = match arm_tys.as_slice() {
+                    [ty] => ty.clone(),
+                    [] | [_, ..] => Ty::Unknown,
                 };
                 self.pass.body.set_expr_ty(expr, ty);
             }
@@ -117,22 +114,15 @@ where
             } => {
                 let ty = match else_branch {
                     Some(else_branch) => {
-                        let mut branch_tys = Vec::new();
+                        let mut branch_tys = UniqueVec::new();
                         if let Some(then_branch) = then_branch {
-                            push_unique(
-                                &mut branch_tys,
-                                self.pass.body.expr_ty_unchecked(then_branch).clone(),
-                            );
+                            branch_tys.push(self.pass.body.expr_ty_unchecked(then_branch).clone());
                         }
-                        push_unique(
-                            &mut branch_tys,
-                            self.pass.body.expr_ty_unchecked(else_branch).clone(),
-                        );
+                        branch_tys.push(self.pass.body.expr_ty_unchecked(else_branch).clone());
 
-                        if branch_tys.len() == 1 {
-                            branch_tys.pop().expect("one branch type should exist")
-                        } else {
-                            Ty::Unknown
+                        match branch_tys.as_slice() {
+                            [ty] => ty.clone(),
+                            [] | [_, ..] => Ty::Unknown,
                         }
                     }
                     None => Ty::Unit,
@@ -264,24 +254,18 @@ where
             return Ty::Unknown;
         }
 
-        let mut element_tys = Vec::new();
+        let mut element_tys = UniqueVec::new();
         for element in elements {
             let element_ty = self.pass.body.expr_ty_unchecked(*element).clone();
             if matches!(element_ty, Ty::Unknown) {
                 return Ty::Unknown;
             }
-            push_unique(&mut element_tys, element_ty);
+            element_tys.push(element_ty);
         }
 
-        if element_tys.len() == 1 {
-            Ty::array(
-                element_tys
-                    .pop()
-                    .expect("one array element type should exist"),
-                Some(elements.len().to_string()),
-            )
-        } else {
-            Ty::Unknown
+        match element_tys.as_slice() {
+            [element_ty] => Ty::array(element_ty.clone(), Some(elements.len().to_string())),
+            [] | [_, ..] => Ty::Unknown,
         }
     }
 
@@ -367,8 +351,8 @@ where
 
         let item_query = self.pass.context().item_query();
         let mut current_depth = None;
-        let mut fields = Vec::new();
-        let mut field_tys = Vec::new();
+        let mut fields = UniqueVec::new();
+        let mut field_tys: UniqueVec<Ty> = UniqueVec::new();
 
         for candidate in self.pass.context().autoderef().candidates(
             AutoderefMode::FieldLookup,
@@ -380,10 +364,9 @@ where
             if current_depth.is_some_and(|depth| depth != candidate.depth())
                 && (!fields.is_empty() || !field_tys.is_empty())
             {
-                let ty = if field_tys.len() == 1 {
-                    field_tys.pop().expect("one field type should exist")
-                } else {
-                    Ty::Unknown
+                let ty = match field_tys.as_slice() {
+                    [ty] => ty.clone(),
+                    [] | [_, ..] => Ty::Unknown,
                 };
                 let resolution = if fields.is_empty() {
                     BodyResolution::Unknown
@@ -397,14 +380,14 @@ where
             current_depth = Some(candidate.depth());
 
             if let Some(field_ty) = Self::structural_field_ty(candidate.ty(), field) {
-                push_unique(&mut field_tys, field_ty);
+                field_tys.push(field_ty);
             }
 
             for nominal_ty in candidate.ty().as_nominals() {
                 let Some(field_ref) = item_query.field_for_type(nominal_ty.def, field)? else {
                     continue;
                 };
-                push_unique(&mut fields, field_ref);
+                fields.push(field_ref);
 
                 let Some(field_data) = item_query.field_data(field_ref)? else {
                     continue;
@@ -417,15 +400,14 @@ where
                     .type_ref(TypeRefUseSite::Module(field_data.owner_module))
                     .with_subst(&subst)
                     .resolve(&field_data.field.ty)?;
-                push_unique(&mut field_tys, field_ty);
+                field_tys.push(field_ty);
             }
         }
 
         if !fields.is_empty() || !field_tys.is_empty() {
-            let ty = if field_tys.len() == 1 {
-                field_tys.pop().expect("one field type should exist")
-            } else {
-                Ty::Unknown
+            let ty = match field_tys.as_slice() {
+                [ty] => ty.clone(),
+                [] | [_, ..] => Ty::Unknown,
             };
             let resolution = if fields.is_empty() {
                 BodyResolution::Unknown
@@ -464,8 +446,8 @@ where
         // Method lookup is intentionally shallow: nominal type plus lightweight impl-argument
         // matching gives useful candidates without modeling the full trait solver.
         let mut current_depth = None;
-        let mut functions = Vec::new();
-        let mut return_tys = Vec::new();
+        let mut functions = UniqueVec::new();
+        let mut return_tys: UniqueVec<Ty> = UniqueVec::new();
 
         for candidate in self
             .pass
@@ -479,10 +461,9 @@ where
             if current_depth.is_some_and(|depth| depth != candidate.depth())
                 && !functions.is_empty()
             {
-                let ty = if return_tys.len() == 1 {
-                    return_tys.pop().expect("one return type should exist")
-                } else {
-                    Ty::Unknown
+                let ty = match return_tys.as_slice() {
+                    [ty] => ty.clone(),
+                    [] | [_, ..] => Ty::Unknown,
                 };
                 return Ok((
                     BodyResolution::Declarations(
@@ -507,18 +488,15 @@ where
                         continue;
                     }
 
-                    push_unique(&mut functions, function_ref);
-                    push_unique(
-                        &mut return_tys,
-                        callable_returns.return_ty_with_call_args(
-                            function_ref,
-                            Some(nominal_ty),
-                            explicit_args,
-                            args,
-                            CallArgMapping::MethodCall,
-                            Some(call_scope),
-                        )?,
-                    );
+                    functions.push(function_ref);
+                    return_tys.push(callable_returns.return_ty_with_call_args(
+                        function_ref,
+                        Some(nominal_ty),
+                        explicit_args,
+                        args,
+                        CallArgMapping::MethodCall,
+                        Some(call_scope),
+                    )?);
                 }
             }
 
@@ -540,27 +518,23 @@ where
                     continue;
                 }
 
-                push_unique(&mut functions, function_ref);
-                push_unique(
-                    &mut return_tys,
-                    callable_returns.return_ty_with_subst_and_call_args(
-                        function_ref,
-                        Some(structural.receiver_ty().clone()),
-                        structural.subst().clone(),
-                        explicit_args,
-                        args,
-                        CallArgMapping::MethodCall,
-                        Some(call_scope),
-                    )?,
-                );
+                functions.push(function_ref);
+                return_tys.push(callable_returns.return_ty_with_subst_and_call_args(
+                    function_ref,
+                    Some(structural.receiver_ty().clone()),
+                    structural.subst().clone(),
+                    explicit_args,
+                    args,
+                    CallArgMapping::MethodCall,
+                    Some(call_scope),
+                )?);
             }
         }
 
         if !functions.is_empty() {
-            let ty = if return_tys.len() == 1 {
-                return_tys.pop().expect("one return type should exist")
-            } else {
-                Ty::Unknown
+            let ty = match return_tys.as_slice() {
+                [ty] => ty.clone(),
+                [] | [_, ..] => Ty::Unknown,
             };
             return Ok((
                 BodyResolution::Declarations(
@@ -593,20 +567,17 @@ where
     }
 
     fn explicit_deref_ty(&self, inner: ExprId) -> Result<Ty, PackageStoreError> {
-        let mut candidates = Vec::new();
+        let mut candidates = UniqueVec::new();
         for candidate in self.pass.context().autoderef().candidates(
             AutoderefMode::ExplicitDeref,
             self.pass.body.expr_ty_unchecked(inner),
         ) {
-            push_unique(&mut candidates, candidate?.ty().clone());
+            candidates.push(candidate?.ty().clone());
         }
 
-        Ok(if candidates.len() == 1 {
-            candidates
-                .pop()
-                .expect("one explicit deref candidate should exist")
-        } else {
-            Ty::Unknown
+        Ok(match candidates.as_slice() {
+            [ty] => ty.clone(),
+            [] | [_, ..] => Ty::Unknown,
         })
     }
 

@@ -11,8 +11,10 @@
 
 pub mod memsize;
 pub mod shrink;
+pub mod unique;
 
 pub use self::{
     memsize::{MemoryRecord, MemoryRecordKind, MemoryRecorder, MemoryRecorderMode, MemorySize},
     shrink::Shrink,
+    unique::UniqueVec,
 };

@@ -9,6 +9,7 @@ use rg_ir_model::{
     DefId, ModuleRef, Path, SemanticItemRef, TraitRef, TypeDefRef, TypePathResolution,
 };
 use rg_ir_storage::{DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, TypePathContext};
+use rg_std::UniqueVec;
 
 use crate::{GenericArg, OpaqueTraitBound, PrimitiveTy, RefMutability, Ty, TypeSubst};
 
@@ -205,16 +206,16 @@ where
         path: &Path,
     ) -> Result<Vec<SemanticItemRef>, D::Error> {
         let result = self.def_maps.resolve_path_in_type_namespace(from, path)?;
-        let mut resolved_items = Vec::new();
+        let mut resolved_items = UniqueVec::new();
         for def in result.resolved {
             if let DefId::Local(local_def) = def
                 && let Some(item) = self.items.semantic_item_for_local_def(local_def)?
             {
-                push_unique(&mut resolved_items, item);
+                resolved_items.push(item);
             }
         }
 
-        Ok(resolved_items)
+        Ok(resolved_items.into_vec())
     }
 
     fn generic_args_from_type_path(
@@ -278,7 +279,7 @@ where
         context: TypePathContext,
         subst: &TypeSubst,
     ) -> Result<Vec<OpaqueTraitBound>, D::Error> {
-        let mut opaque_bounds = Vec::new();
+        let mut opaque_bounds = UniqueVec::new();
 
         for bound in bounds {
             match bound {
@@ -290,25 +291,16 @@ where
                     };
                     let args = self.generic_args_from_type_path(bound_path, context, subst)?;
                     for trait_ref in traits {
-                        push_unique(
-                            &mut opaque_bounds,
-                            OpaqueTraitBound {
-                                trait_ref,
-                                args: args.clone(),
-                            },
-                        );
+                        opaque_bounds.push(OpaqueTraitBound {
+                            trait_ref,
+                            args: args.clone(),
+                        });
                     }
                 }
                 TypeBound::Trait(_) | TypeBound::Lifetime(_) | TypeBound::Unsupported(_) => {}
             }
         }
 
-        Ok(opaque_bounds)
-    }
-}
-
-fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
-    if !items.contains(&item) {
-        items.push(item);
+        Ok(opaque_bounds.into_vec())
     }
 }

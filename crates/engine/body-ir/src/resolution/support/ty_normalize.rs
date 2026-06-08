@@ -5,6 +5,7 @@
 //! `Try` trait, or `Future::Output` projection.
 
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_std::UniqueVec;
 use rg_ty::{GenericArg, Ty};
 
 use crate::ir::ExprWrapperKind;
@@ -12,8 +13,6 @@ use crate::ir::ExprWrapperKind;
 use rg_package_store::PackageStoreError;
 
 use crate::resolution::BodyResolutionContext;
-
-use super::push_unique;
 
 pub(crate) struct TyNormalizer<'a, D, I> {
     context: BodyResolutionContext<'a, D, I>,
@@ -44,7 +43,7 @@ where
     }
 
     fn try_output_ty(&self, ty: &Ty) -> Ty {
-        let mut outputs = Vec::new();
+        let mut outputs = UniqueVec::new();
         let item_query = self.context.item_query();
 
         for nominal in ty.as_nominals() {
@@ -53,12 +52,12 @@ where
             };
             if matches!(name, "Result" | "Option") {
                 if let Some(output) = first_type_arg(&nominal.args) {
-                    push_unique(&mut outputs, output);
+                    outputs.push(output);
                 }
             }
         }
 
-        Ty::one_or_unknown(outputs)
+        Ty::one_or_unknown(outputs.into_vec())
     }
 }
 

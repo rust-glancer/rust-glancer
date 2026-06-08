@@ -8,8 +8,9 @@
 use rg_ir_model::{AssocItemId, DefMapRef, FunctionRef, ImplRef, TraitImplRef, TypeDefRef};
 use rg_ir_storage::{DefMapSource, ItemStore, ItemStoreSource};
 use rg_package_store::PackageStoreError;
+use rg_std::UniqueVec;
 
-use crate::resolution::{BodyResolutionContext, support::push_unique};
+use crate::resolution::BodyResolutionContext;
 
 pub(crate) struct BodyLocalItemQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
@@ -28,25 +29,25 @@ where
         &self,
         ty: TypeDefRef,
     ) -> Result<Vec<ImplRef>, PackageStoreError> {
-        let mut impls = Vec::new();
+        let mut impls = UniqueVec::new();
 
         for store in self.body_lookup_stores()? {
             for (impl_ref, impl_data) in store.impls_with_refs() {
                 if impl_data.trait_ref.is_some() || !impl_data.resolved_self_tys.contains(&ty) {
                     continue;
                 }
-                push_unique(&mut impls, impl_ref);
+                impls.push(impl_ref);
             }
         }
 
-        Ok(impls)
+        Ok(impls.into_vec())
     }
 
     pub(super) fn inherent_functions_for_type(
         &self,
         ty: TypeDefRef,
     ) -> Result<Vec<FunctionRef>, PackageStoreError> {
-        let mut functions = Vec::new();
+        let mut functions = UniqueVec::new();
         let item_query = self.context.item_query();
         for impl_ref in self.inherent_impls_for_type(ty)? {
             let Some(impl_data) = item_query.impl_data(impl_ref)? else {
@@ -54,18 +55,15 @@ where
             };
             for item in &impl_data.items {
                 if let AssocItemId::Function(id) = item {
-                    push_unique(
-                        &mut functions,
-                        FunctionRef {
-                            origin: impl_ref.origin,
-                            id: *id,
-                        },
-                    );
+                    functions.push(FunctionRef {
+                        origin: impl_ref.origin,
+                        id: *id,
+                    });
                 }
             }
         }
 
-        Ok(functions)
+        Ok(functions.into_vec())
     }
 
     pub(super) fn inherent_functions_for_type_and_name(
@@ -73,25 +71,25 @@ where
         ty: TypeDefRef,
         name: &str,
     ) -> Result<Vec<FunctionRef>, PackageStoreError> {
-        let mut functions = Vec::new();
+        let mut functions = UniqueVec::new();
         let item_query = self.context.item_query();
         for function in self.inherent_functions_for_type(ty)? {
             let Some(function_data) = item_query.function_data(function)? else {
                 continue;
             };
             if function_data.name == name {
-                push_unique(&mut functions, function);
+                functions.push(function);
             }
         }
 
-        Ok(functions)
+        Ok(functions.into_vec())
     }
 
     pub(super) fn trait_impls_for_type(
         &self,
         ty: TypeDefRef,
     ) -> Result<Vec<TraitImplRef>, PackageStoreError> {
-        let mut trait_impls = Vec::new();
+        let mut trait_impls = UniqueVec::new();
 
         for store in self.body_lookup_stores()? {
             for (impl_ref, impl_data) in store.impls_with_refs() {
@@ -99,32 +97,29 @@ where
                     continue;
                 }
                 for trait_ref in &impl_data.resolved_trait_refs {
-                    push_unique(
-                        &mut trait_impls,
-                        TraitImplRef {
-                            impl_ref,
-                            trait_ref: *trait_ref,
-                        },
-                    );
+                    trait_impls.push(TraitImplRef {
+                        impl_ref,
+                        trait_ref: *trait_ref,
+                    });
                 }
             }
         }
 
-        Ok(trait_impls)
+        Ok(trait_impls.into_vec())
     }
 
     fn body_lookup_stores(&self) -> Result<Vec<&'query ItemStore>, PackageStoreError> {
-        let mut origins = Vec::new();
+        let mut origins = UniqueVec::new();
 
         // Check the active body first, then the body-local modules that own this declaration and
         // its fallback. Target modules are still handled by TargetItemQuery.
-        push_unique(&mut origins, DefMapRef::Body(self.context.body_ref()));
+        origins.push(DefMapRef::Body(self.context.body_ref()));
         for module in [
             self.context.body().owner_module(),
             self.context.body().fallback_module(),
         ] {
             if let DefMapRef::Body(_) = module.origin {
-                push_unique(&mut origins, module.origin);
+                origins.push(module.origin);
             }
         }
 

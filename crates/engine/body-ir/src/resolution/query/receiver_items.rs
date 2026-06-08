@@ -7,9 +7,10 @@
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef};
 use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource};
 use rg_package_store::PackageStoreError;
+use rg_std::UniqueVec;
 use rg_ty::{ImplMatcher, MemberMethodCandidateRef, MemberMethodOrigin, NominalTy, Ty, TypeSubst};
 
-use crate::resolution::{BodyQuerySource, BodyResolutionContext, support::push_unique};
+use crate::resolution::{BodyQuerySource, BodyResolutionContext};
 
 use super::BodyLocalItemQuery;
 
@@ -83,11 +84,11 @@ where
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
     ) -> Result<Vec<FunctionRef>, PackageStoreError> {
-        let mut functions = Vec::new();
+        let mut functions = UniqueVec::new();
         for candidate in self.function_candidates_for_receiver(receiver_ty, method_name)? {
-            push_unique(&mut functions, candidate.function());
+            functions.push(candidate.function());
         }
-        Ok(functions)
+        Ok(functions.into_vec())
     }
 
     pub(super) fn function_candidates_for_receiver(

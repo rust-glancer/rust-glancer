@@ -10,10 +10,11 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
+use rg_std::UniqueVec;
 use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
 use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite, support::push_unique};
+use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
 pub(super) struct PatternTypePropagationPass<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
@@ -288,7 +289,7 @@ where
         variant_name: &str,
         field_key: &FieldKey,
     ) -> Result<Option<Ty>, PackageStoreError> {
-        let mut candidates = Vec::new();
+        let mut candidates = UniqueVec::new();
 
         // Pattern propagation peels only reference wrappers so enum payload inference remains
         // useful without opting into receiver autoderef or future trait-backed deref.
@@ -304,7 +305,7 @@ where
                 else {
                     continue;
                 };
-                push_unique(&mut candidates, field_ty);
+                candidates.push(field_ty);
             }
         }
 

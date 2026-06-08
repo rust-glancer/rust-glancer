@@ -7,11 +7,12 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{BodyLocalItems, ItemLookupIndex, ItemStore, TargetItemQuery};
 use rg_semantic_ir::SemanticIrReadTxn;
+use rg_std::UniqueVec;
 use rg_text::NameInterner;
 
 use crate::{
     BodyOwner, TargetBodies,
-    resolution::{BodyResolutionContext, BodyResolutionPass, TypeRefUseSite, push_unique},
+    resolution::{BodyResolutionContext, BodyResolutionPass, TypeRefUseSite},
 };
 
 use super::{
@@ -251,9 +252,9 @@ impl<'target> TargetBodyBuildState<'target> {
                     let ty = type_paths
                         .type_ref(TypeRefUseSite::Scope(scope))
                         .resolve(&self_ty)?;
-                    let mut resolved_self_tys = Vec::new();
+                    let mut resolved_self_tys = UniqueVec::new();
                     for nominal in ty.as_nominals() {
-                        push_unique(&mut resolved_self_tys, nominal.def);
+                        resolved_self_tys.push(nominal.def);
                     }
 
                     let mut resolved_trait_refs = Vec::new();
@@ -264,7 +265,11 @@ impl<'target> TargetBodyBuildState<'target> {
                     {
                         resolved_trait_refs = traits;
                     }
-                    resolved_headers.push((impl_id, resolved_self_tys, resolved_trait_refs));
+                    resolved_headers.push((
+                        impl_id,
+                        resolved_self_tys.into_vec(),
+                        resolved_trait_refs,
+                    ));
                 }
                 resolved_headers
             };

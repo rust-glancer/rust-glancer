@@ -12,13 +12,11 @@ use rg_ir_storage::{
     DefMapSource, ItemStoreSource, NameResolutionFilter, ResolvePathResult, TypePathContext,
 };
 use rg_package_store::PackageStoreError;
+use rg_std::UniqueVec;
 use rg_ty::{NominalTy, Ty};
 
 use crate::ir::resolved::BodyResolution;
-use crate::resolution::{
-    BodyResolutionContext, TypeRefUseSite,
-    support::{push_unique, unique_ty_or_unknown},
-};
+use crate::resolution::{BodyResolutionContext, TypeRefUseSite, support::unique_ty_or_unknown};
 
 use super::type_path::split_associated_path;
 
@@ -106,7 +104,7 @@ where
                 ));
             }
             TypePathResolution::TypeDefs(types) => {
-                let mut constructors = Vec::new();
+                let mut constructors = UniqueVec::new();
                 for type_def in types
                     .into_iter()
                     .filter(|ty| ty.origin == DefMapRef::Body(self.context.body_ref()))
@@ -116,11 +114,12 @@ where
                         .item_query()
                         .type_def_has_value_constructor(type_def)?
                     {
-                        push_unique(&mut constructors, type_def);
+                        constructors.push(type_def);
                     }
                 }
 
                 if !constructors.is_empty() {
+                    let constructors = constructors.into_vec();
                     return Ok((
                         BodyResolution::Declarations(
                             constructors
@@ -275,7 +274,7 @@ where
         &self,
         defs: Vec<DefId>,
     ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
-        let mut items = Vec::new();
+        let mut items = UniqueVec::new();
         for def in defs {
             let DefId::Local(local_def) = def else {
                 continue;
@@ -293,11 +292,11 @@ where
                     | SemanticItemRef::Const(_)
                     | SemanticItemRef::Static(_)
             ) {
-                push_unique(&mut items, item);
+                items.push(item);
             }
         }
 
-        Ok(items)
+        Ok(items.into_vec())
     }
 
     fn value_name_resolution(
@@ -310,22 +309,22 @@ where
                 Ok(Some((BodyResolution::Binding(binding), ty)))
             }
             BodyValueName::SemanticItems(items) => {
-                let mut functions = Vec::new();
-                let mut declarations = Vec::new();
-                let mut tys = Vec::new();
+                let mut functions = UniqueVec::new();
+                let mut declarations = UniqueVec::new();
+                let mut tys = UniqueVec::new();
 
                 for item in items {
                     match item {
                         SemanticItemRef::Function(function) => {
-                            push_unique(&mut functions, DeclarationRef::from(function));
+                            functions.push(DeclarationRef::from(function));
                         }
                         SemanticItemRef::Const(const_ref) => {
-                            push_unique(&mut declarations, DeclarationRef::from(const_ref));
-                            push_unique(&mut tys, self.semantic_const_ty(const_ref)?);
+                            declarations.push(DeclarationRef::from(const_ref));
+                            tys.push(self.semantic_const_ty(const_ref)?);
                         }
                         SemanticItemRef::Static(static_ref) => {
-                            push_unique(&mut declarations, DeclarationRef::from(static_ref));
-                            push_unique(&mut tys, self.semantic_static_ty(static_ref)?);
+                            declarations.push(DeclarationRef::from(static_ref));
+                            tys.push(self.semantic_static_ty(static_ref)?);
                         }
                         SemanticItemRef::TypeDef(_)
                         | SemanticItemRef::Trait(_)
@@ -336,12 +335,15 @@ where
 
                 if !declarations.is_empty() {
                     return Ok(Some((
-                        BodyResolution::Declarations(declarations),
+                        BodyResolution::Declarations(declarations.into_vec()),
                         unique_ty_or_unknown(tys),
                     )));
                 }
                 if !functions.is_empty() {
-                    return Ok(Some((BodyResolution::Declarations(functions), Ty::Unknown)));
+                    return Ok(Some((
+                        BodyResolution::Declarations(functions.into_vec()),
+                        Ty::Unknown,
+                    )));
                 }
 
                 Ok(None)
@@ -383,7 +385,7 @@ where
     }
 
     fn nominal_ty_from_defs(&self, defs: &[DefId]) -> Result<Ty, PackageStoreError> {
-        let mut type_defs = Vec::new();
+        let mut type_defs = UniqueVec::new();
         for def in defs {
             let DefId::Local(local_def) = def else {
                 continue;
@@ -395,13 +397,19 @@ where
             else {
                 continue;
             };
-            push_unique(&mut type_defs, type_def);
+            type_defs.push(type_def);
         }
 
         Ok(if type_defs.is_empty() {
             Ty::Unknown
         } else {
-            Ty::nominal(type_defs.into_iter().map(NominalTy::bare).collect())
+            Ty::nominal(
+                type_defs
+                    .into_vec()
+                    .into_iter()
+                    .map(NominalTy::bare)
+                    .collect(),
+            )
         })
     }
 }

@@ -18,9 +18,3 @@ pub use self::{
         SemanticItemView, TargetItemQuery, TypePathContext,
     },
 };
-
-fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
-    if !items.contains(&item) {
-        items.push(item);
-    }
-}

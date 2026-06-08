@@ -11,9 +11,8 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
+use rg_std::UniqueVec;
 use rg_ty::{GenericArg, RefMutability, Ty, TypeSubst};
-
-use crate::resolution::support::push_unique;
 
 use super::type_path::{BodyTypePathQuery, prefix_type_ref, split_associated_path};
 
@@ -238,14 +237,14 @@ where
             let prefix_resolution = self.resolve_type_path_in_body_context(context, &prefix)?;
             let prefix_ty =
                 Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
-            let mut aliases = Vec::new();
+            let mut aliases = UniqueVec::new();
             for ty in prefix_ty.as_nominals() {
                 if let Some(alias) = self.resolver.associated_type_alias_for_type(ty, name)? {
-                    push_unique(&mut aliases, alias);
+                    aliases.push(alias);
                 }
             }
             if !aliases.is_empty() {
-                return Ok(TypePathResolution::TypeAliases(aliases));
+                return Ok(TypePathResolution::TypeAliases(aliases.into_vec()));
             }
         }
 

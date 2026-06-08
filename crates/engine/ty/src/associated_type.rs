@@ -9,6 +9,7 @@ use rg_ir_model::{
     hir::items::ImplData,
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TargetItemQuery, TypePathContext};
+use rg_std::UniqueVec;
 
 use crate::{GenericArg, ItemPathQuery, OpaqueTraitBound, Ty, TypeSubst};
 
@@ -61,7 +62,7 @@ where
         impl_data: &ImplData,
         trait_path: &Path,
     ) -> Result<Vec<TraitRef>, D::Error> {
-        let mut traits = Vec::new();
+        let mut traits = UniqueVec::new();
 
         // Impls written outside `core` can resolve `::core::path::Trait` from their own module.
         // Impls written inside the core crate itself need the lookup target's extern-root view
@@ -83,16 +84,16 @@ where
             )?;
         }
 
-        Ok(traits)
+        Ok(traits.into_vec())
     }
 
     pub(crate) fn trait_refs_for_path_from_use_site(
         &self,
         trait_path: &Path,
     ) -> Result<Vec<TraitRef>, D::Error> {
-        let mut traits = Vec::new();
+        let mut traits = UniqueVec::new();
         let Some(use_site_root) = self.target_items.use_site_root_module()? else {
-            return Ok(traits);
+            return Ok(traits.into_vec());
         };
 
         self.push_trait_refs_for_path(
@@ -103,17 +104,17 @@ where
             trait_path,
             &mut traits,
         )?;
-        Ok(traits)
+        Ok(traits.into_vec())
     }
 
     fn push_trait_refs_for_path(
         &self,
         context: TypePathContext,
         trait_path: &Path,
-        traits: &mut Vec<TraitRef>,
+        traits: &mut UniqueVec<TraitRef>,
     ) -> Result<(), D::Error> {
         for trait_ref in self.trait_refs_for_path(context, trait_path)? {
-            push_unique(traits, trait_ref);
+            traits.push(trait_ref);
         }
         Ok(())
     }
@@ -162,7 +163,7 @@ where
 
     pub(crate) fn push_associated_types_from_opaque_bounds(
         &self,
-        candidates: &mut Vec<Ty>,
+        candidates: &mut UniqueVec<Ty>,
         bounds: &[OpaqueTraitBound],
         canonical_traits: &[TraitRef],
         assoc_name: &str,
@@ -180,15 +181,9 @@ where
                     continue;
                 };
                 if name.as_str() == assoc_name && ty.is_projectable() {
-                    push_unique(candidates, (**ty).clone());
+                    candidates.push((**ty).clone());
                 }
             }
         }
-    }
-}
-
-fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
-    if !items.contains(&item) {
-        items.push(item);
     }
 }

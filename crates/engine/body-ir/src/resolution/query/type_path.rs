@@ -10,11 +10,12 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, NameResolutionFilter, TypePathContext};
 use rg_package_store::PackageStoreError;
+use rg_std::UniqueVec;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
 use crate::ir::BodyOwner;
 
-use crate::resolution::{BodyResolutionContext, support::push_unique};
+use crate::resolution::BodyResolutionContext;
 
 use super::type_ref::{TypeRefResolutionQuery, TypeRefUseSite};
 
@@ -51,14 +52,14 @@ where
             let prefix_resolution = self.resolve_in_scope(scope, &prefix)?;
             let prefix_ty =
                 Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
-            let mut aliases = Vec::new();
+            let mut aliases = UniqueVec::new();
             for ty in prefix_ty.as_nominals() {
                 if let Some(alias) = self.associated_type_alias_for_type(ty, name)? {
-                    push_unique(&mut aliases, alias);
+                    aliases.push(alias);
                 }
             }
             if !aliases.is_empty() {
-                return Ok(TypePathResolution::TypeAliases(aliases));
+                return Ok(TypePathResolution::TypeAliases(aliases.into_vec()));
             }
         }
 
@@ -116,10 +117,10 @@ where
             &TypeSubst::new(),
         )?;
 
-        let mut self_tys = Vec::new();
+        let mut self_tys = UniqueVec::new();
         for ty in resolved.as_nominals() {
             if impl_data.resolved_self_tys.contains(&ty.def) {
-                push_unique(&mut self_tys, ty.clone());
+                self_tys.push(ty.clone());
             }
         }
 
@@ -133,7 +134,7 @@ where
             );
         }
 
-        Ok(self_tys)
+        Ok(self_tys.into_vec())
     }
 
     pub(super) fn context_for_function(
@@ -210,7 +211,7 @@ where
         &self,
         defs: Vec<DefId>,
     ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
-        let mut items = Vec::new();
+        let mut items = UniqueVec::new();
         for def in defs {
             let DefId::Local(local_def) = def else {
                 continue;
@@ -220,26 +221,30 @@ where
                 .item_query()
                 .semantic_item_for_local_def(local_def)?
             {
-                push_unique(&mut items, item);
+                items.push(item);
             }
         }
-        Ok(items)
+        Ok(items.into_vec())
     }
 
     pub(super) fn type_resolution_from_items(
         &self,
         items: Vec<SemanticItemRef>,
     ) -> TypePathResolution {
-        let mut type_defs = Vec::new();
-        let mut type_aliases = Vec::new();
-        let mut traits = Vec::new();
+        let mut type_defs = UniqueVec::new();
+        let mut type_aliases = UniqueVec::new();
+        let mut traits = UniqueVec::new();
         for item in items {
             match item {
-                SemanticItemRef::TypeDef(type_def) => push_unique(&mut type_defs, type_def),
-                SemanticItemRef::TypeAlias(type_alias) => {
-                    push_unique(&mut type_aliases, type_alias);
+                SemanticItemRef::TypeDef(type_def) => {
+                    type_defs.push(type_def);
                 }
-                SemanticItemRef::Trait(trait_ref) => push_unique(&mut traits, trait_ref),
+                SemanticItemRef::TypeAlias(type_alias) => {
+                    type_aliases.push(type_alias);
+                }
+                SemanticItemRef::Trait(trait_ref) => {
+                    traits.push(trait_ref);
+                }
                 SemanticItemRef::Impl(_)
                 | SemanticItemRef::Function(_)
                 | SemanticItemRef::Const(_)
@@ -248,11 +253,11 @@ where
         }
 
         if !type_defs.is_empty() {
-            TypePathResolution::TypeDefs(type_defs)
+            TypePathResolution::TypeDefs(type_defs.into_vec())
         } else if !type_aliases.is_empty() {
-            TypePathResolution::TypeAliases(type_aliases)
+            TypePathResolution::TypeAliases(type_aliases.into_vec())
         } else if !traits.is_empty() {
-            TypePathResolution::Traits(traits)
+            TypePathResolution::Traits(traits.into_vec())
         } else {
             TypePathResolution::Unknown
         }

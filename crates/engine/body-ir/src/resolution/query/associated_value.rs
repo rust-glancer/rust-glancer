@@ -10,14 +10,12 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
+use rg_std::UniqueVec;
 use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{
     ir::resolved::BodyResolution,
-    resolution::{
-        BodyResolutionContext, TypeRefUseSite,
-        support::{push_unique, unique_ty_or_unknown},
-    },
+    resolution::{BodyResolutionContext, TypeRefUseSite, support::unique_ty_or_unknown},
 };
 
 pub(crate) struct BodyAssociatedValueQuery<'query, D, I> {
@@ -52,8 +50,8 @@ where
         // First treat the final segment as an enum variant. Variants are not ordinary associated
         // functions in either Semantic IR or Body IR, but value paths use the same syntax for
         // `Action::Start` and `Widget::new`, so they need an explicit pass.
-        let mut variants = Vec::new();
-        let mut variant_tys = Vec::new();
+        let mut variants = UniqueVec::new();
+        let mut variant_tys = UniqueVec::new();
         for nominal_ty in prefix_ty.as_nominals() {
             if !matches!(nominal_ty.def.id, TypeDefId::Enum(_)) {
                 continue;
@@ -65,8 +63,8 @@ where
             else {
                 continue;
             };
-            push_unique(&mut variants, variant_ref);
-            push_unique(&mut variant_tys, Ty::nominal(vec![nominal_ty.clone()]));
+            variants.push(variant_ref);
+            variant_tys.push(Ty::nominal(vec![nominal_ty.clone()]));
         }
 
         if !variants.is_empty() {
@@ -94,14 +92,14 @@ where
         // `Type` has a visible trait impl, then reads the matching const item from that impl or
         // falls back to the trait declaration. This mirrors trait method lookup without pretending
         // to be a full trait solver.
-        let mut trait_consts = Vec::new();
-        let mut trait_const_tys = Vec::new();
+        let mut trait_consts = UniqueVec::new();
+        let mut trait_const_tys = UniqueVec::new();
         for nominal_ty in prefix_ty.as_nominals() {
             for (const_ref, ty) in
                 self.semantic_associated_trait_value_items_for_type(nominal_ty, last_segment)?
             {
-                push_unique(&mut trait_consts, const_ref);
-                push_unique(&mut trait_const_tys, ty);
+                trait_consts.push(const_ref);
+                trait_const_tys.push(ty);
             }
         }
 
@@ -117,7 +115,7 @@ where
         // Inherent associated functions are exact candidates. Trait-associated functions are kept
         // deliberately optimistic, following the same "prefer useful candidates over false
         // negatives" policy as dot completion.
-        let mut functions = Vec::new();
+        let mut functions = UniqueVec::new();
         let item_query = self.context.item_query();
         for nominal_ty in prefix_ty.as_nominals() {
             for function_ref in self
@@ -129,7 +127,7 @@ where
                     continue;
                 };
                 if function_data.name == last_segment && !function_data.has_self_receiver() {
-                    push_unique(&mut functions, function_ref);
+                    functions.push(function_ref);
                 }
             }
         }

@@ -11,11 +11,12 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
+use rg_std::UniqueVec;
 use rg_ty::{
     CallArgInference, CallArgMapping, NominalTy, Ty, TypeSubst, function_generic_shadow_subst,
 };
 
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite, support::push_unique};
+use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 use crate::{ir::ExprKind, ir::resolved::BodyResolution};
 
 pub(crate) struct CallableReturnQuery<'query, D, I> {
@@ -48,7 +49,7 @@ where
 
         // Ordinary calls use declared return types plus a deliberately-small substitution model:
         // explicit turbofish args and direct argument-to-parameter type inference.
-        let mut return_tys = Vec::new();
+        let mut return_tys = UniqueVec::new();
         match self.context.body().expr_resolution(callee) {
             BodyResolution::Declarations(declarations) => {
                 for declaration in declarations {
@@ -64,6 +65,7 @@ where
             BodyResolution::Binding(_) | BodyResolution::Unknown => {}
         }
 
+        let mut return_tys = return_tys.into_vec();
         if return_tys.len() == 1 {
             Ok(return_tys.pop().expect("one return type should exist"))
         } else {
@@ -184,7 +186,7 @@ where
     fn push_return_ty_for_declaration(
         &self,
         declaration: DeclarationRef,
-        return_tys: &mut Vec<Ty>,
+        return_tys: &mut UniqueVec<Ty>,
         explicit_args: &[ItemGenericArg],
         call_scope: ScopeId,
         args: &[ExprId],
@@ -194,30 +196,24 @@ where
                 let Some(function_ref) = self.function_ref_for_def(DefId::Local(local_def))? else {
                     return Ok(());
                 };
-                push_unique(
-                    return_tys,
-                    self.return_ty_with_call_args(
-                        function_ref,
-                        None,
-                        explicit_args,
-                        args,
-                        CallArgMapping::FunctionCall,
-                        Some(call_scope),
-                    )?,
-                );
+                return_tys.push(self.return_ty_with_call_args(
+                    function_ref,
+                    None,
+                    explicit_args,
+                    args,
+                    CallArgMapping::FunctionCall,
+                    Some(call_scope),
+                )?);
             }
             DeclarationRef::Item(SemanticItemRef::Function(function_ref)) => {
-                push_unique(
-                    return_tys,
-                    self.return_ty_with_call_args(
-                        function_ref,
-                        None,
-                        explicit_args,
-                        args,
-                        CallArgMapping::FunctionCall,
-                        Some(call_scope),
-                    )?,
-                );
+                return_tys.push(self.return_ty_with_call_args(
+                    function_ref,
+                    None,
+                    explicit_args,
+                    args,
+                    CallArgMapping::FunctionCall,
+                    Some(call_scope),
+                )?);
             }
             DeclarationRef::Module(_)
             | DeclarationRef::Item(
