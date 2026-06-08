@@ -37,7 +37,7 @@ pub struct BodyValuePathQuery<'query, D, I> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BodyValueName {
     Binding(BindingId),
-    SemanticItems(Vec<SemanticItemRef>),
+    SemanticItems(UniqueVec<SemanticItemRef>),
 }
 
 impl<'query, D, I> BodyValuePathQuery<'query, D, I>
@@ -119,15 +119,13 @@ where
                 }
 
                 if !constructors.is_empty() {
-                    let constructors = constructors.into_vec();
+                    let declarations = constructors
+                        .iter()
+                        .copied()
+                        .map(DeclarationRef::from)
+                        .collect();
                     return Ok((
-                        BodyResolution::Declarations(
-                            constructors
-                                .iter()
-                                .copied()
-                                .map(DeclarationRef::from)
-                                .collect(),
-                        ),
+                        BodyResolution::Declarations(declarations),
                         Ty::nominal(constructors.into_iter().map(NominalTy::bare).collect()),
                     ));
                 }
@@ -273,7 +271,7 @@ where
     fn semantic_items_for_defs(
         &self,
         defs: Vec<DefId>,
-    ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<SemanticItemRef>, PackageStoreError> {
         let mut items = UniqueVec::new();
         for def in defs {
             let DefId::Local(local_def) = def else {
@@ -296,7 +294,7 @@ where
             }
         }
 
-        Ok(items.into_vec())
+        Ok(items)
     }
 
     fn value_name_resolution(
@@ -335,15 +333,12 @@ where
 
                 if !declarations.is_empty() {
                     return Ok(Some((
-                        BodyResolution::Declarations(declarations.into_vec()),
+                        BodyResolution::Declarations(declarations),
                         unique_ty_or_unknown(tys),
                     )));
                 }
                 if !functions.is_empty() {
-                    return Ok(Some((
-                        BodyResolution::Declarations(functions.into_vec()),
-                        Ty::Unknown,
-                    )));
+                    return Ok(Some((BodyResolution::Declarations(functions), Ty::Unknown)));
                 }
 
                 Ok(None)
@@ -403,13 +398,7 @@ where
         Ok(if type_defs.is_empty() {
             Ty::Unknown
         } else {
-            Ty::nominal(
-                type_defs
-                    .into_vec()
-                    .into_iter()
-                    .map(NominalTy::bare)
-                    .collect(),
-            )
+            Ty::nominal(type_defs.into_iter().map(NominalTy::bare).collect())
         })
     }
 }

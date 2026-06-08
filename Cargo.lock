@@ -1706,6 +1706,7 @@ version = "0.1.0"
 dependencies = [
  "ls-types",
  "rg_std_derive",
+ "wincode",
 ]
 
 [[package]]

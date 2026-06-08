@@ -59,7 +59,7 @@ where
                 }
             }
             if !aliases.is_empty() {
-                return Ok(TypePathResolution::TypeAliases(aliases.into_vec()));
+                return Ok(TypePathResolution::TypeAliases(aliases));
             }
         }
 
@@ -92,7 +92,7 @@ where
     pub(crate) fn self_nominal_tys_for_function(
         &self,
         function: FunctionRef,
-    ) -> Result<Vec<NominalTy>, PackageStoreError> {
+    ) -> Result<UniqueVec<NominalTy>, PackageStoreError> {
         let context = self.context_for_function(function, self.context.body().owner_module())?;
         self.self_nominal_tys_for_context(context)
     }
@@ -100,13 +100,13 @@ where
     pub(super) fn self_nominal_tys_for_context(
         &self,
         context: TypePathContext,
-    ) -> Result<Vec<NominalTy>, PackageStoreError> {
+    ) -> Result<UniqueVec<NominalTy>, PackageStoreError> {
         let Some(impl_ref) = context.impl_ref else {
-            return Ok(Vec::new());
+            return Ok(UniqueVec::new());
         };
         let item_query = self.context.item_query();
         let Some(impl_data) = item_query.impl_data(impl_ref)? else {
-            return Ok(Vec::new());
+            return Ok(UniqueVec::new());
         };
 
         let item_paths = self.context.item_paths();
@@ -134,7 +134,7 @@ where
             );
         }
 
-        Ok(self_tys.into_vec())
+        Ok(self_tys)
     }
 
     pub(super) fn context_for_function(
@@ -170,7 +170,7 @@ where
         &self,
         scope: ScopeId,
         path: &Path,
-    ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<SemanticItemRef>, PackageStoreError> {
         let from = ModuleRef {
             origin: DefMapRef::Body(self.context.body_ref()),
             module: ModuleId(scope.0),
@@ -188,7 +188,7 @@ where
         &self,
         module: ModuleRef,
         path: &Path,
-    ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<SemanticItemRef>, PackageStoreError> {
         let def_maps = self.context.def_map_query();
         let result = def_maps.resolve_path_in_type_namespace(module, path)?;
         let items = self.semantic_items_for_defs(result.resolved)?;
@@ -210,7 +210,7 @@ where
     fn semantic_items_for_defs(
         &self,
         defs: Vec<DefId>,
-    ) -> Result<Vec<SemanticItemRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<SemanticItemRef>, PackageStoreError> {
         let mut items = UniqueVec::new();
         for def in defs {
             let DefId::Local(local_def) = def else {
@@ -224,12 +224,12 @@ where
                 items.push(item);
             }
         }
-        Ok(items.into_vec())
+        Ok(items)
     }
 
     pub(super) fn type_resolution_from_items(
         &self,
-        items: Vec<SemanticItemRef>,
+        items: UniqueVec<SemanticItemRef>,
     ) -> TypePathResolution {
         let mut type_defs = UniqueVec::new();
         let mut type_aliases = UniqueVec::new();
@@ -253,11 +253,11 @@ where
         }
 
         if !type_defs.is_empty() {
-            TypePathResolution::TypeDefs(type_defs.into_vec())
+            TypePathResolution::TypeDefs(type_defs)
         } else if !type_aliases.is_empty() {
-            TypePathResolution::TypeAliases(type_aliases.into_vec())
+            TypePathResolution::TypeAliases(type_aliases)
         } else if !traits.is_empty() {
-            TypePathResolution::Traits(traits.into_vec())
+            TypePathResolution::Traits(traits)
         } else {
             TypePathResolution::Unknown
         }
@@ -374,7 +374,7 @@ where
             return Ok(Ty::Unknown);
         };
         if aliased_ty.is_self_type() {
-            return Ok(Ty::nominal(vec![receiver_ty.clone()]));
+            return Ok(Ty::nominal([receiver_ty.clone()].into_iter().collect()));
         }
 
         let mut alias_subst = self.semantic_type_subst(receiver_ty)?;

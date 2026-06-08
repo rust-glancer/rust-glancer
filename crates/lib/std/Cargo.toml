@@ -13,6 +13,7 @@ description.workspace = true
 [dependencies]
 ls_types.workspace = true
 rg_std_derive.workspace = true
+wincode.workspace = true
 
 [[test]]
 name = "derive"

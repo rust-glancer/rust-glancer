@@ -58,14 +58,13 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
             declarations.extend(self.implementations_for_ty(target, &ty)?);
         }
 
-        NavigationTargetProjection::new(self.0.view_db())
-            .targets_for_declarations(declarations.into_vec())
+        NavigationTargetProjection::new(self.0.view_db()).targets_for_declarations(declarations)
     }
 
     fn implementations_for_method_call_expr(
         &self,
         expr: ExprRef,
-    ) -> anyhow::Result<Option<Vec<DeclarationRef>>> {
+    ) -> anyhow::Result<Option<UniqueVec<DeclarationRef>>> {
         let body_ref = expr.body_ir();
         let Some(body_data) = self.0.view_db().body_data(body_ref)? else {
             return Ok(None);
@@ -103,14 +102,14 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
                     .map(DeclarationRef::from),
             );
         }
-        Ok(Some(implementations.into_vec()))
+        Ok(Some(implementations))
     }
 
     fn implementations_for_declaration(
         &self,
         use_site: TargetRef,
         declaration: DeclarationRef,
-    ) -> anyhow::Result<Vec<DeclarationRef>> {
+    ) -> anyhow::Result<UniqueVec<DeclarationRef>> {
         let implementation_query = ImplementationQuery::new(
             ItemPathQuery::new(self.0.view_db(), self.0.view_db()),
             TargetItemQuery::new(self.0.view_db(), self.0.view_db(), use_site),
@@ -152,7 +151,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
                 let Some(function) =
                     self.function_ref_for_declaration(DeclarationRef::local_def(local_def))?
                 else {
-                    return Ok(implementations.into_vec());
+                    return Ok(implementations);
                 };
                 implementations.extend(
                     implementation_query
@@ -163,10 +162,10 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
             }
             DeclarationRef::BodyBinding(binding) => {
                 let Some(body) = self.0.view_db().body_data(binding.body)? else {
-                    return Ok(implementations.into_vec());
+                    return Ok(implementations);
                 };
                 let Some(binding_ty) = body.binding_ty(binding.binding) else {
-                    return Ok(implementations.into_vec());
+                    return Ok(implementations);
                 };
                 implementations.extend(
                     implementation_query
@@ -180,14 +179,14 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
             | DeclarationRef::EnumVariant(_) => {}
         }
 
-        Ok(implementations.into_vec())
+        Ok(implementations)
     }
 
     fn implementations_for_ty(
         &self,
         use_site: TargetRef,
         ty: &Ty,
-    ) -> anyhow::Result<Vec<DeclarationRef>> {
+    ) -> anyhow::Result<UniqueVec<DeclarationRef>> {
         let implementation_query = ImplementationQuery::new(
             ItemPathQuery::new(self.0.view_db(), self.0.view_db()),
             TargetItemQuery::new(self.0.view_db(), self.0.view_db(), use_site),
@@ -199,7 +198,7 @@ impl<'a, 'db> ImplementationResolver<'a, 'db> {
                 .into_iter()
                 .map(DeclarationRef::from),
         );
-        Ok(implementations.into_vec())
+        Ok(implementations)
     }
 
     fn function_ref_for_declaration(

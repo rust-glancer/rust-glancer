@@ -57,7 +57,7 @@ where
             }
         }
 
-        Ty::one_or_unknown(outputs.into_vec())
+        Ty::one_or_unknown(outputs)
     }
 }
 

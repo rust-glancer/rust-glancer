@@ -48,18 +48,20 @@ where
     }
 
     /// Searches impls visible from the use-site target, not from the receiver type's origin.
-    pub fn impls_for_type(&self, ty: TypeDefRef) -> Result<Vec<ImplRef>, I::Error> {
-        let mut impls = Vec::new();
+    pub fn impls_for_type(&self, ty: TypeDefRef) -> Result<UniqueVec<ImplRef>, I::Error> {
+        let mut impls = UniqueVec::new();
         for store in self.impl_stores_for_origin(ty.origin)? {
-            impls.extend(store.impls_with_refs().filter_map(|(impl_ref, data)| {
-                data.resolved_self_tys.contains(&ty).then_some(impl_ref)
-            }));
+            for (impl_ref, data) in store.impls_with_refs() {
+                if data.resolved_self_tys.contains(&ty) {
+                    impls.push(impl_ref);
+                }
+            }
         }
         Ok(impls)
     }
 
     /// Searches visible impls for a trait ref while keeping duplicate refs out of the result.
-    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> Result<Vec<ImplRef>, I::Error> {
+    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> Result<UniqueVec<ImplRef>, I::Error> {
         let mut impls = UniqueVec::new();
         for store in self.impl_stores_for_origin(trait_ref.origin)? {
             for (impl_ref, data) in store.impls_with_refs() {
@@ -68,14 +70,14 @@ where
                 }
             }
         }
-        Ok(impls.into_vec())
+        Ok(impls)
     }
 
     /// Searches visible impls for a trait ref and returns the trait identity used by each impl.
     pub fn trait_impls_for_trait(
         &self,
         trait_ref: TraitRef,
-    ) -> Result<Vec<TraitImplRef>, I::Error> {
+    ) -> Result<UniqueVec<TraitImplRef>, I::Error> {
         let mut trait_impls = UniqueVec::new();
         for impl_ref in self.impls_for_trait(trait_ref)? {
             trait_impls.push(TraitImplRef {
@@ -83,12 +85,12 @@ where
                 trait_ref,
             });
         }
-        Ok(trait_impls.into_vec())
+        Ok(trait_impls)
     }
 
     /// Narrows type impl lookup to inherent impls, which is the path used for method completion.
-    pub fn inherent_impls_for_type(&self, ty: TypeDefRef) -> Result<Vec<ImplRef>, I::Error> {
-        let mut impls = Vec::new();
+    pub fn inherent_impls_for_type(&self, ty: TypeDefRef) -> Result<UniqueVec<ImplRef>, I::Error> {
+        let mut impls = UniqueVec::new();
         for impl_ref in self.impls_for_type(ty)? {
             let Some(data) = self.items.impl_data(impl_ref)? else {
                 continue;
@@ -101,7 +103,7 @@ where
     }
 
     /// Searches all visible inherent impls, including impls whose `Self` type is structural.
-    pub fn inherent_impls(&self) -> Result<Vec<ImplRef>, I::Error> {
+    pub fn inherent_impls(&self) -> Result<UniqueVec<ImplRef>, I::Error> {
         let mut impls = UniqueVec::new();
         for store in self.visible_stores()? {
             for (impl_ref, data) in store.impls_with_refs() {
@@ -110,15 +112,15 @@ where
                 }
             }
         }
-        Ok(impls.into_vec())
+        Ok(impls)
     }
 
     /// Collects inherent functions for callers that care about callable members, not impl blocks.
     pub fn inherent_functions_for_type(
         &self,
         ty: TypeDefRef,
-    ) -> Result<Vec<FunctionRef>, I::Error> {
-        let mut functions = Vec::new();
+    ) -> Result<UniqueVec<FunctionRef>, I::Error> {
+        let mut functions = UniqueVec::new();
         for impl_ref in self.inherent_impls_for_type(ty)? {
             let Some(data) = self.items.impl_data(impl_ref)? else {
                 continue;
@@ -129,7 +131,10 @@ where
     }
 
     /// Expands matching trait impl blocks into the trait refs they actually implement.
-    pub fn trait_impls_for_type(&self, ty: TypeDefRef) -> Result<Vec<TraitImplRef>, I::Error> {
+    pub fn trait_impls_for_type(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<UniqueVec<TraitImplRef>, I::Error> {
         let mut trait_impls = UniqueVec::new();
         for impl_ref in self.impls_for_type(ty)? {
             let Some(data) = self.items.impl_data(impl_ref)? else {
@@ -143,20 +148,23 @@ where
                 });
             }
         }
-        Ok(trait_impls.into_vec())
+        Ok(trait_impls)
     }
 
     /// Lists trait declarations implemented by the visible impls for a nominal type.
-    pub fn traits_for_type(&self, ty: TypeDefRef) -> Result<Vec<TraitRef>, I::Error> {
+    pub fn traits_for_type(&self, ty: TypeDefRef) -> Result<UniqueVec<TraitRef>, I::Error> {
         let mut traits = UniqueVec::new();
         for trait_impl in self.trait_impls_for_type(ty)? {
             traits.push(trait_impl.trait_ref);
         }
-        Ok(traits.into_vec())
+        Ok(traits)
     }
 
     /// Collects trait-declared functions available for a nominal type.
-    pub fn trait_functions_for_type(&self, ty: TypeDefRef) -> Result<Vec<FunctionRef>, I::Error> {
+    pub fn trait_functions_for_type(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<UniqueVec<FunctionRef>, I::Error> {
         let mut functions = UniqueVec::new();
         for trait_ref in self.traits_for_type(ty)? {
             let Some(data) = self.items.trait_data(trait_ref)? else {
@@ -166,15 +174,15 @@ where
                 functions.push(function);
             }
         }
-        Ok(functions.into_vec())
+        Ok(functions)
     }
 
     /// Collects concrete trait-impl functions available for a nominal type.
     pub fn trait_impl_functions_for_type(
         &self,
         ty: TypeDefRef,
-    ) -> Result<Vec<FunctionRef>, I::Error> {
-        let mut functions = Vec::new();
+    ) -> Result<UniqueVec<FunctionRef>, I::Error> {
+        let mut functions = UniqueVec::new();
         for trait_impl in self.trait_impls_for_type(ty)? {
             let Some(data) = self.items.impl_data(trait_impl.impl_ref)? else {
                 continue;

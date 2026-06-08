@@ -40,7 +40,7 @@ where
     }
 
     /// Returns all one-step `Deref::Target` types for a known type.
-    pub(crate) fn targets_for_ty(&self, ty: &Ty) -> Result<Vec<Ty>, D::Error> {
+    pub(crate) fn targets_for_ty(&self, ty: &Ty) -> Result<UniqueVec<Ty>, D::Error> {
         // TODO: Add `DerefMut` once receiver contexts carry enough mutability information to
         // distinguish mutable adjustment from shared `Deref`.
         let mut targets = UniqueVec::new();
@@ -49,19 +49,22 @@ where
                 targets.push(target);
             }
         }
-        Ok(targets.into_vec())
+        Ok(targets)
     }
 
     /// Returns one-step `Deref::Target` types for a nominal receiver.
     ///
     /// For `impl<T> core::ops::Deref for Wrapper<T> { type Target = T; }` and receiver
     /// `Wrapper<User>`, this resolves the target as `User`.
-    fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<Vec<Ty>, D::Error> {
+    fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<UniqueVec<Ty>, D::Error> {
         let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
         let item_query = self.item_paths.items();
         let mut targets = UniqueVec::new();
         let trait_impls = match self.lookup_index {
-            Some(index) => index.trait_impls_for_type(receiver_ty.def).to_vec(),
+            Some(index) => index
+                .trait_impls_for_type(receiver_ty.def)
+                .cloned()
+                .unwrap_or_default(),
             None => self.target_items.trait_impls_for_type(receiver_ty.def)?,
         };
 
@@ -86,7 +89,7 @@ where
             targets.push(target);
         }
 
-        Ok(targets.into_vec())
+        Ok(targets)
     }
 
     /// Checks whether this trait impl resolved to the canonical `core::ops::Deref` path.

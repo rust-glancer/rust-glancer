@@ -28,7 +28,7 @@ where
     pub(super) fn inherent_impls_for_type(
         &self,
         ty: TypeDefRef,
-    ) -> Result<Vec<ImplRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<ImplRef>, PackageStoreError> {
         let mut impls = UniqueVec::new();
 
         for store in self.body_lookup_stores()? {
@@ -40,13 +40,13 @@ where
             }
         }
 
-        Ok(impls.into_vec())
+        Ok(impls)
     }
 
     pub(super) fn inherent_functions_for_type(
         &self,
         ty: TypeDefRef,
-    ) -> Result<Vec<FunctionRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
         let mut functions = UniqueVec::new();
         let item_query = self.context.item_query();
         for impl_ref in self.inherent_impls_for_type(ty)? {
@@ -63,14 +63,14 @@ where
             }
         }
 
-        Ok(functions.into_vec())
+        Ok(functions)
     }
 
     pub(super) fn inherent_functions_for_type_and_name(
         &self,
         ty: TypeDefRef,
         name: &str,
-    ) -> Result<Vec<FunctionRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
         let mut functions = UniqueVec::new();
         let item_query = self.context.item_query();
         for function in self.inherent_functions_for_type(ty)? {
@@ -82,13 +82,13 @@ where
             }
         }
 
-        Ok(functions.into_vec())
+        Ok(functions)
     }
 
     pub(super) fn trait_impls_for_type(
         &self,
         ty: TypeDefRef,
-    ) -> Result<Vec<TraitImplRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<TraitImplRef>, PackageStoreError> {
         let mut trait_impls = UniqueVec::new();
 
         for store in self.body_lookup_stores()? {
@@ -105,7 +105,7 @@ where
             }
         }
 
-        Ok(trait_impls.into_vec())
+        Ok(trait_impls)
     }
 
     fn body_lookup_stores(&self) -> Result<Vec<&'query ItemStore>, PackageStoreError> {

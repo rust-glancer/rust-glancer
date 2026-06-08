@@ -83,12 +83,12 @@ where
         &self,
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
-    ) -> Result<Vec<FunctionRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
         let mut functions = UniqueVec::new();
         for candidate in self.function_candidates_for_receiver(receiver_ty, method_name)? {
             functions.push(candidate.function());
         }
-        Ok(functions.into_vec())
+        Ok(functions)
     }
 
     pub(super) fn function_candidates_for_receiver(
@@ -169,7 +169,7 @@ where
         // Body-local impl lookup remains nominal-only because block-local impls are useful for
         // local structs, not for defining new inherent methods on builtin shaped types.
         let impl_refs = match self.context.semantic_index() {
-            Some(index) => index.structural_inherent_impls().to_vec(),
+            Some(index) => index.structural_inherent_impls().clone(),
             None => target_items.inherent_impls()?,
         };
         for impl_ref in impl_refs {
@@ -243,7 +243,7 @@ where
         body_items: &BodyLocalItemQuery<'query, D, I>,
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
-    ) -> Result<Vec<FunctionRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
         match method_name {
             Some(name) => body_items.inherent_functions_for_type_and_name(receiver_ty.def, name),
             None => body_items.inherent_functions_for_type(receiver_ty.def),
@@ -254,11 +254,12 @@ where
         &self,
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
-    ) -> Result<Vec<FunctionRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
         match (self.context.semantic_index(), method_name) {
             (Some(index), Some(name)) => Ok(index
                 .inherent_functions_for_type_and_name(receiver_ty.def, name)
-                .to_vec()),
+                .cloned()
+                .unwrap_or_default()),
             (Some(index), None) => {
                 let item_query = self.context.item_query();
                 index.inherent_functions_for_type(&item_query, receiver_ty.def)
@@ -275,15 +276,15 @@ where
 
     fn filter_functions_by_name(
         &self,
-        functions: Vec<FunctionRef>,
+        functions: UniqueVec<FunctionRef>,
         name: Option<&str>,
-    ) -> Result<Vec<FunctionRef>, PackageStoreError> {
+    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
         let Some(name) = name else {
             return Ok(functions);
         };
 
         let item_query = self.context.item_query();
-        let mut retained = Vec::new();
+        let mut retained = UniqueVec::new();
         for function in functions {
             let Some(function_data) = item_query.function_data(function)? else {
                 continue;

@@ -1,4 +1,4 @@
-use rg_std::MemorySize;
+use rg_std::{MemorySize, UniqueVec};
 use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
@@ -72,7 +72,7 @@ pub(crate) enum BodyResolution {
     /// Lexical value binding introduced by a pattern or parameter.
     Binding(BindingId),
     /// Item-like declarations, fields, enum variants, functions, consts, statics, or modules.
-    Declarations(Vec<DeclarationRef>),
+    Declarations(UniqueVec<DeclarationRef>),
     #[default]
     Unknown,
 }
@@ -84,7 +84,7 @@ impl BodyResolution {
                 body: body_ref,
                 binding: *binding,
             })],
-            Self::Declarations(declarations) => declarations.clone(),
+            Self::Declarations(declarations) => declarations.clone().into_vec(),
             Self::Unknown => Vec::new(),
         }
     }

@@ -64,7 +64,7 @@ where
                 continue;
             };
             variants.push(variant_ref);
-            variant_tys.push(Ty::nominal(vec![nominal_ty.clone()]));
+            variant_tys.push(Ty::nominal([nominal_ty.clone()].into_iter().collect()));
         }
 
         if !variants.is_empty() {
@@ -82,7 +82,7 @@ where
                 self.semantic_associated_value_item_for_type(nominal_ty, last_segment)?
             {
                 return Ok(Some((
-                    BodyResolution::Declarations(vec![const_ref.into()]),
+                    BodyResolution::Declarations([const_ref.into()].into_iter().collect()),
                     ty,
                 )));
             }
@@ -188,7 +188,10 @@ where
 
         let target_items = self.context.target_items();
         let semantic_trait_impls = match self.context.semantic_index() {
-            Some(index) => index.trait_impls_for_type(ty.def).to_vec(),
+            Some(index) => index
+                .trait_impls_for_type(ty.def)
+                .cloned()
+                .unwrap_or_default(),
             None => target_items.trait_impls_for_type(ty.def)?,
         };
         self.push_associated_trait_value_items_for_impls(
@@ -204,7 +207,7 @@ where
     fn push_associated_trait_value_items_for_impls(
         &self,
         items: &mut Vec<(ConstRef, Ty)>,
-        trait_impls: Vec<TraitImplRef>,
+        trait_impls: UniqueVec<TraitImplRef>,
         ty: &NominalTy,
         name: &str,
     ) -> Result<(), PackageStoreError> {
@@ -255,7 +258,7 @@ where
 
     fn associated_value_item_for_impls(
         &self,
-        impls: Vec<ImplRef>,
+        impls: UniqueVec<ImplRef>,
         ty: &NominalTy,
         name: &str,
     ) -> Result<Option<(ConstRef, Ty)>, PackageStoreError> {
@@ -324,7 +327,7 @@ where
         };
 
         if ty.is_self_type() {
-            return Ok(Ty::nominal(vec![receiver_ty.clone()]));
+            return Ok(Ty::nominal([receiver_ty.clone()].into_iter().collect()));
         }
 
         let mut subst = self.semantic_type_subst(receiver_ty)?;

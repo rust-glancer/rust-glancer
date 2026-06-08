@@ -257,7 +257,7 @@ impl<'target> TargetBodyBuildState<'target> {
                         resolved_self_tys.push(nominal.def);
                     }
 
-                    let mut resolved_trait_refs = Vec::new();
+                    let mut resolved_trait_refs = UniqueVec::new();
                     if let Some(trait_ref) = trait_ref
                         && let Some(path) = Path::from_type_ref(&trait_ref)
                         && let TypePathResolution::Traits(traits) =
@@ -265,11 +265,7 @@ impl<'target> TargetBodyBuildState<'target> {
                     {
                         resolved_trait_refs = traits;
                     }
-                    resolved_headers.push((
-                        impl_id,
-                        resolved_self_tys.into_vec(),
-                        resolved_trait_refs,
-                    ));
+                    resolved_headers.push((impl_id, resolved_self_tys, resolved_trait_refs));
                 }
                 resolved_headers
             };

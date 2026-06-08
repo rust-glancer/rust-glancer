@@ -65,12 +65,10 @@ where
             BodyResolution::Binding(_) | BodyResolution::Unknown => {}
         }
 
-        let mut return_tys = return_tys.into_vec();
-        if return_tys.len() == 1 {
-            Ok(return_tys.pop().expect("one return type should exist"))
-        } else {
-            Ok(Ty::Unknown)
-        }
+        Ok(match return_tys.as_slice() {
+            [ty] => ty.clone(),
+            [] | [_, ..] => Ty::Unknown,
+        })
     }
 
     pub(crate) fn return_ty_with_call_args(
@@ -101,7 +99,9 @@ where
             .unwrap_or_default();
         self.return_ty_with_subst_and_call_args(
             function_ref,
-            receiver_ty.cloned().map(|ty| Ty::nominal(vec![ty])),
+            receiver_ty
+                .cloned()
+                .map(|ty| Ty::nominal([ty].into_iter().collect())),
             subst,
             explicit_args,
             args,

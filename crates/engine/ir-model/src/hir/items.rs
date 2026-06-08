@@ -3,7 +3,7 @@ use crate::items::{
     TypeBound, TypeRef, VisibilityLevel,
 };
 use rg_parse::{FileId, Span};
-use rg_std::MemorySize;
+use rg_std::{MemorySize, UniqueVec};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -169,8 +169,8 @@ pub struct ImplData {
     pub generics: GenericParams,
     pub trait_ref: Option<TypeRef>,
     pub self_ty: TypeRef,
-    pub resolved_self_tys: Vec<TypeDefRef>,
-    pub resolved_trait_refs: Vec<TraitRef>,
+    pub resolved_self_tys: UniqueVec<TypeDefRef>,
+    pub resolved_trait_refs: UniqueVec<TraitRef>,
     pub items: Vec<AssocItemId>,
     pub is_unsafe: bool,
 }

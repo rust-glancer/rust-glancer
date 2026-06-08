@@ -50,11 +50,13 @@ impl<'a, 'db> TyView<'a, 'db> {
                 else {
                     return Ok(None);
                 };
-                Ok(Some(Ty::nominal(vec![NominalTy::bare(ty)])))
+                Ok(Some(Ty::nominal(
+                    [NominalTy::bare(ty)].into_iter().collect(),
+                )))
             }
-            DeclarationRef::Item(SemanticItemRef::TypeDef(ty)) => {
-                Ok(Some(Ty::nominal(vec![NominalTy::bare(ty)])))
-            }
+            DeclarationRef::Item(SemanticItemRef::TypeDef(ty)) => Ok(Some(Ty::nominal(
+                [NominalTy::bare(ty)].into_iter().collect(),
+            ))),
             DeclarationRef::Item(
                 SemanticItemRef::Trait(_)
                 | SemanticItemRef::Impl(_)
@@ -137,7 +139,9 @@ impl<'a, 'db> TyView<'a, 'db> {
         let Some(data) = ItemStoreQuery::new(self.db).enum_variant_data(variant)? else {
             return Ok(None);
         };
-        Ok(Some(Ty::nominal(vec![NominalTy::bare(data.owner)])))
+        Ok(Some(Ty::nominal(
+            [NominalTy::bare(data.owner)].into_iter().collect(),
+        )))
     }
 
     fn type_path_resolution_to_ty(resolution: TypePathResolution) -> Ty {

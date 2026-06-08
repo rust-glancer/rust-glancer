@@ -8,7 +8,7 @@ use rg_ir_model::{
         TypeAliasData, UnionData,
     },
 };
-use rg_std::MemorySize;
+use rg_std::{MemorySize, UniqueVec};
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{SemanticItemView, view::SemanticItemData};
@@ -134,8 +134,8 @@ impl ItemStore {
     pub fn set_impl_header_facts(
         &mut self,
         id: ImplId,
-        resolved_self_tys: Vec<TypeDefRef>,
-        resolved_trait_refs: Vec<TraitRef>,
+        resolved_self_tys: UniqueVec<TypeDefRef>,
+        resolved_trait_refs: UniqueVec<TraitRef>,
     ) -> Option<()> {
         let data = self.impls.get_mut(id)?;
         data.resolved_self_tys = resolved_self_tys;

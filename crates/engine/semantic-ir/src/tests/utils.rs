@@ -159,7 +159,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             .semantic_ir_db()
             .read_txn(PackageLoader::resident_only("resident semantic IR fixture"));
         let target_items = TargetItemQuery::new(&def_map_txn, &semantic_ir_txn, target_ref);
-        let mut type_defs = ItemPathQuery::new(&def_map_txn, &semantic_ir_txn)
+        let type_defs = ItemPathQuery::new(&def_map_txn, &semantic_ir_txn)
             .type_defs_for_path(
                 ModuleRef {
                     origin: DefMapRef::Target(target_ref),
@@ -168,6 +168,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 &path,
             )
             .expect("fixture semantic query should resolve type path");
+        let mut type_defs = type_defs.into_vec();
         type_defs.sort_by_key(|ty| self.render_type_def_ref(&semantic_ir_txn, *ty));
 
         if type_defs.is_empty() {

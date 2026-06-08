@@ -117,15 +117,15 @@ where
             candidates.push(item_ty);
         }
 
-        Ok(Ty::one_or_unknown(candidates.into_vec()))
+        Ok(Ty::one_or_unknown(candidates))
     }
 
     fn trait_impl_candidates(
         &self,
         projector: &AssociatedTypeProjector<'_, 'query, D, I>,
-        canonical_traits: &[TraitRef],
+        canonical_traits: &UniqueVec<TraitRef>,
         trait_kind: CanonicalIteratorTrait,
-    ) -> Result<Vec<TraitImplRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitImplRef>, D::Error> {
         let mut candidates = UniqueVec::new();
         for trait_ref in canonical_traits {
             if let Some(indexed_impls) = self
@@ -144,7 +144,7 @@ where
         }
 
         if !canonical_traits.is_empty() {
-            return Ok(candidates.into_vec());
+            return Ok(candidates);
         }
 
         // Some fixture/core-like contexts cannot resolve `::core` from the use-site root. Keep the
@@ -171,7 +171,7 @@ where
             }
         }
 
-        Ok(candidates.into_vec())
+        Ok(candidates)
     }
 
     /// Checks whether this trait impl resolved to the canonical iterator trait path.
@@ -192,7 +192,7 @@ where
         projector: &AssociatedTypeProjector<'_, 'query, D, I>,
         impl_data: &ImplData,
         trait_kind: CanonicalIteratorTrait,
-    ) -> Result<Vec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitRef>, D::Error> {
         projector
             .trait_refs_for_path_from_impl_and_use_site(impl_data, &trait_kind.absolute_core_path())
     }
@@ -201,7 +201,7 @@ where
         &self,
         projector: &AssociatedTypeProjector<'_, 'query, D, I>,
         trait_kind: CanonicalIteratorTrait,
-    ) -> Result<Vec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitRef>, D::Error> {
         projector.trait_refs_for_path_from_use_site(&trait_kind.absolute_core_path())
     }
 

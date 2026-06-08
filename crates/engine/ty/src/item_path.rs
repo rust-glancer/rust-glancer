@@ -151,7 +151,7 @@ where
         &self,
         context: TypePathContext,
         path: &Path,
-    ) -> Result<Vec<SemanticItemRef>, D::Error> {
+    ) -> Result<UniqueVec<SemanticItemRef>, D::Error> {
         if path.is_self_type() {
             if let Some(impl_ref) = context.impl_ref
                 && let Some(data) = self.items.impl_data(impl_ref)?
@@ -164,7 +164,7 @@ where
                     .collect();
                 return Ok(items);
             } else {
-                return Ok(Vec::new());
+                return Ok(UniqueVec::new());
             };
         }
 
@@ -176,7 +176,7 @@ where
         &self,
         from: ModuleRef,
         path: &Path,
-    ) -> Result<Vec<TypeDefRef>, D::Error> {
+    ) -> Result<UniqueVec<TypeDefRef>, D::Error> {
         Ok(self
             .semantic_items_for_path(from, path)?
             .into_iter()
@@ -188,7 +188,11 @@ where
     }
 
     /// Filters a type-position path to trait definitions.
-    pub fn traits_for_path(&self, from: ModuleRef, path: &Path) -> Result<Vec<TraitRef>, D::Error> {
+    pub fn traits_for_path(
+        &self,
+        from: ModuleRef,
+        path: &Path,
+    ) -> Result<UniqueVec<TraitRef>, D::Error> {
         Ok(self
             .semantic_items_for_path(from, path)?
             .into_iter()
@@ -204,7 +208,7 @@ where
         &self,
         from: ModuleRef,
         path: &Path,
-    ) -> Result<Vec<SemanticItemRef>, D::Error> {
+    ) -> Result<UniqueVec<SemanticItemRef>, D::Error> {
         let result = self.def_maps.resolve_path_in_type_namespace(from, path)?;
         let mut resolved_items = UniqueVec::new();
         for def in result.resolved {
@@ -215,7 +219,7 @@ where
             }
         }
 
-        Ok(resolved_items.into_vec())
+        Ok(resolved_items)
     }
 
     fn generic_args_from_type_path(
@@ -278,7 +282,7 @@ where
         bounds: &[TypeBound],
         context: TypePathContext,
         subst: &TypeSubst,
-    ) -> Result<Vec<OpaqueTraitBound>, D::Error> {
+    ) -> Result<UniqueVec<OpaqueTraitBound>, D::Error> {
         let mut opaque_bounds = UniqueVec::new();
 
         for bound in bounds {
@@ -301,6 +305,6 @@ where
             }
         }
 
-        Ok(opaque_bounds.into_vec())
+        Ok(opaque_bounds)
     }
 }

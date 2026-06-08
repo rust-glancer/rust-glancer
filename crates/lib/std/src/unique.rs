@@ -1,6 +1,7 @@
 use std::slice;
 
 use crate::{MemoryRecorder, MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Vec-backed ordered set for small candidate lists.
 ///
@@ -47,12 +48,20 @@ impl<T> UniqueVec<T> {
     pub fn into_vec(self) -> Vec<T> {
         self.items
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.items.shrink_to_fit();
+    }
 }
 
 impl<T> UniqueVec<T>
 where
     T: PartialEq,
 {
+    pub fn contains(&self, item: &T) -> bool {
+        self.items.contains(item)
+    }
+
     /// Adds `item` when no equal item has been seen yet.
     ///
     /// Returns whether the item was inserted.
@@ -112,12 +121,6 @@ impl<'a, T> IntoIterator for &'a UniqueVec<T> {
     }
 }
 
-impl<T> From<UniqueVec<T>> for Vec<T> {
-    fn from(value: UniqueVec<T>) -> Self {
-        value.into_vec()
-    }
-}
-
 impl<T> MemorySize for UniqueVec<T>
 where
     T: MemorySize,
@@ -127,12 +130,53 @@ where
     }
 }
 
+unsafe impl<C, T> SchemaWrite<C> for UniqueVec<T>
+where
+    C: wincode::config::ConfigCore,
+    Vec<T>: SchemaWrite<C, Src = Vec<T>>,
+{
+    type Src = UniqueVec<T>;
+
+    const TYPE_META: wincode::TypeMeta = <Vec<T> as SchemaWrite<C>>::TYPE_META;
+
+    fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
+        <Vec<T> as SchemaWrite<C>>::size_of(&src.items)
+    }
+
+    fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
+        <Vec<T> as SchemaWrite<C>>::write(writer, &src.items)
+    }
+}
+
+unsafe impl<'de, C, T> SchemaRead<'de, C> for UniqueVec<T>
+where
+    C: wincode::config::ConfigCore,
+    T: PartialEq,
+    Vec<T>: SchemaRead<'de, C, Dst = Vec<T>>,
+{
+    type Dst = UniqueVec<T>;
+
+    const TYPE_META: wincode::TypeMeta = <Vec<T> as SchemaRead<'de, C>>::TYPE_META;
+
+    fn read(
+        reader: impl wincode::io::Reader<'de>,
+        dst: &mut std::mem::MaybeUninit<Self::Dst>,
+    ) -> wincode::ReadResult<()> {
+        let items = <Vec<T> as SchemaRead<'de, C>>::get(reader)?;
+        dst.write(items.into_iter().collect());
+        Ok(())
+    }
+}
+
 impl<T> Shrink for UniqueVec<T>
 where
     T: Shrink,
 {
     fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(&mut self.items);
+        UniqueVec::shrink_to_fit(self);
+        for item in &mut self.items {
+            item.shrink_to_fit();
+        }
     }
 }
 
@@ -149,6 +193,8 @@ mod tests {
         assert!(!values.push("core"));
         assert!(values.push("std"));
 
+        assert!(values.contains(&"alloc"));
+        assert!(!values.contains(&"test"));
         assert_eq!(values.as_slice(), &["core", "alloc", "std"]);
     }
 

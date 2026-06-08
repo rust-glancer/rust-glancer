@@ -4,13 +4,12 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::{ImplRef, TraitRef, TypeDefRef};
 use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
+use rg_std::{MemorySize, UniqueVec};
 
 use crate::{
     PackageIr, SemanticIrReadTxn, SemanticIrStats,
     build::{SemanticIrDbBuilder, SemanticIrDbPackageRebuilder},
 };
-use rg_std::MemorySize;
-
 /// Semantic item graph for all analyzed packages and targets.
 ///
 /// Semantic IR is the signature layer: it keeps named items, fields, impl headers, function
@@ -151,8 +150,8 @@ impl SemanticIrDbMutator<'_> {
     pub(crate) fn set_impl_header_facts(
         &mut self,
         impl_ref: ImplRef,
-        resolved_self_tys: Vec<TypeDefRef>,
-        resolved_trait_refs: Vec<TraitRef>,
+        resolved_self_tys: UniqueVec<TypeDefRef>,
+        resolved_trait_refs: UniqueVec<TraitRef>,
     ) -> Option<()> {
         let target = impl_ref.origin.as_target_ref()?;
         self.package_mut(target.package)?

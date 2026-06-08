@@ -48,11 +48,11 @@ where
         &self,
         context: TypePathContext,
         trait_path: &Path,
-    ) -> Result<Vec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitRef>, D::Error> {
         let TypePathResolution::Traits(traits) =
             self.item_paths.resolve_type_path(context, trait_path)?
         else {
-            return Ok(Vec::new());
+            return Ok(UniqueVec::new());
         };
         Ok(traits)
     }
@@ -61,7 +61,7 @@ where
         &self,
         impl_data: &ImplData,
         trait_path: &Path,
-    ) -> Result<Vec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitRef>, D::Error> {
         let mut traits = UniqueVec::new();
 
         // Impls written outside `core` can resolve `::core::path::Trait` from their own module.
@@ -84,16 +84,16 @@ where
             )?;
         }
 
-        Ok(traits.into_vec())
+        Ok(traits)
     }
 
     pub(crate) fn trait_refs_for_path_from_use_site(
         &self,
         trait_path: &Path,
-    ) -> Result<Vec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitRef>, D::Error> {
         let mut traits = UniqueVec::new();
         let Some(use_site_root) = self.target_items.use_site_root_module()? else {
-            return Ok(traits.into_vec());
+            return Ok(traits);
         };
 
         self.push_trait_refs_for_path(
@@ -104,7 +104,7 @@ where
             trait_path,
             &mut traits,
         )?;
-        Ok(traits.into_vec())
+        Ok(traits)
     }
 
     fn push_trait_refs_for_path(
@@ -164,8 +164,8 @@ where
     pub(crate) fn push_associated_types_from_opaque_bounds(
         &self,
         candidates: &mut UniqueVec<Ty>,
-        bounds: &[OpaqueTraitBound],
-        canonical_traits: &[TraitRef],
+        bounds: &UniqueVec<OpaqueTraitBound>,
+        canonical_traits: &UniqueVec<TraitRef>,
         assoc_name: &str,
     ) {
         for bound in bounds {

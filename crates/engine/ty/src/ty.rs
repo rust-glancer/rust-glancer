@@ -1,10 +1,9 @@
 use rg_ir_model::items::{GenericParams, TypeRef};
 use rg_ir_model::{TraitRef, TypeDefRef, TypePathResolution};
-use rg_std::Shrink;
+use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 
 use crate::{GenericArg, PrimitiveTy, RefMutability};
-use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Ordered substitutions for type parameters visible at one use site.
@@ -86,12 +85,18 @@ pub enum Ty {
         inner: Box<Ty>,
     },
     Opaque {
-        #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<OpaqueTraitBound>>")]
-        bounds: Vec<OpaqueTraitBound>,
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<UniqueVec<OpaqueTraitBound>>")]
+        bounds: UniqueVec<OpaqueTraitBound>,
     },
     Syntax(TypeRef),
-    Nominal(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<NominalTy>>")] Vec<NominalTy>),
-    SelfTy(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<NominalTy>>")] Vec<NominalTy>),
+    Nominal(
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<UniqueVec<NominalTy>>")]
+        UniqueVec<NominalTy>,
+    ),
+    SelfTy(
+        #[wincode(with = "rg_wincode_utils::WincodeDynamic<UniqueVec<NominalTy>>")]
+        UniqueVec<NominalTy>,
+    ),
     Unknown,
 }
 
@@ -120,6 +125,12 @@ impl OpaqueTraitBound {
     }
 }
 
+impl Shrink for OpaqueTraitBound {
+    fn shrink_to_fit(&mut self) {
+        OpaqueTraitBound::shrink_to_fit(self);
+    }
+}
+
 impl NominalTy {
     pub fn bare(def: TypeDefRef) -> Self {
         Self {
@@ -133,6 +144,12 @@ impl NominalTy {
         for arg in &mut self.args {
             arg.shrink_to_fit();
         }
+    }
+}
+
+impl Shrink for NominalTy {
+    fn shrink_to_fit(&mut self) {
+        NominalTy::shrink_to_fit(self);
     }
 }
 
@@ -171,7 +188,7 @@ impl Ty {
         Self::Syntax(ty)
     }
 
-    pub fn opaque(bounds: Vec<OpaqueTraitBound>) -> Self {
+    pub fn opaque(bounds: UniqueVec<OpaqueTraitBound>) -> Self {
         if bounds.is_empty() {
             return Self::Unknown;
         }
@@ -179,11 +196,11 @@ impl Ty {
         Self::Opaque { bounds }
     }
 
-    pub fn nominal(types: Vec<NominalTy>) -> Self {
+    pub fn nominal(types: UniqueVec<NominalTy>) -> Self {
         Self::Nominal(types)
     }
 
-    pub fn self_ty(types: Vec<NominalTy>) -> Self {
+    pub fn self_ty(types: UniqueVec<NominalTy>) -> Self {
         if types.is_empty() {
             return Self::Unknown;
         }
@@ -229,7 +246,7 @@ impl Ty {
 
     pub fn as_nominals(&self) -> &[NominalTy] {
         match self {
-            Self::Nominal(types) | Self::SelfTy(types) => types,
+            Self::Nominal(types) | Self::SelfTy(types) => types.as_slice(),
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
@@ -260,9 +277,10 @@ impl Ty {
         }
     }
 
-    pub fn one_or_unknown(mut tys: Vec<Self>) -> Self {
-        if tys.len() == 1 {
-            tys.pop().expect("one type should exist")
+    pub fn one_or_unknown(tys: UniqueVec<Self>) -> Self {
+        let mut vec = tys.into_vec();
+        if vec.len() == 1 {
+            vec.pop().unwrap()
         } else {
             Self::Unknown
         }
@@ -300,17 +318,11 @@ impl Ty {
             Self::Slice(inner) => inner.shrink_to_fit(),
             Self::Reference { inner, .. } => inner.shrink_to_fit(),
             Self::Opaque { bounds } => {
-                bounds.shrink_to_fit();
-                for bound in bounds {
-                    bound.shrink_to_fit();
-                }
+                Shrink::shrink_to_fit(bounds);
             }
             Self::Syntax(ty) => ty.shrink_to_fit(),
             Self::Nominal(types) | Self::SelfTy(types) => {
-                types.shrink_to_fit();
-                for ty in types {
-                    ty.shrink_to_fit();
-                }
+                Shrink::shrink_to_fit(types);
             }
             Self::Unit | Self::Never | Self::Primitive(_) | Self::Unknown => {}
         }

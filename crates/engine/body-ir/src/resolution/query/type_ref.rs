@@ -244,7 +244,7 @@ where
                 }
             }
             if !aliases.is_empty() {
-                return Ok(TypePathResolution::TypeAliases(aliases.into_vec()));
+                return Ok(TypePathResolution::TypeAliases(aliases));
             }
         }
 
@@ -294,7 +294,7 @@ where
         if let TypePathResolution::TypeAliases(aliases) = &resolution {
             return self
                 .resolver
-                .ty_from_type_aliases(aliases, &args, &self.subst);
+                .ty_from_type_aliases(aliases.as_slice(), &args, &self.subst);
         }
         let is_unknown = matches!(resolution, TypePathResolution::Unknown);
         Ok(
