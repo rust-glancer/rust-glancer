@@ -13,10 +13,10 @@ description.workspace = true
 [dependencies]
 derive_more = { workspace = true, features = ["display"] }
 wincode.workspace = true
-rg_arena = { workspace = true, features = ["memsize"] }
+rg_arena.workspace = true
 rg_std.workspace = true
 rg_ir_model.workspace = true
 rg_parse.workspace = true
-rg_text = { workspace = true, features = ["memsize"] }
+rg_text.workspace = true
 rg_tt.workspace = true
 rg_workspace.workspace = true

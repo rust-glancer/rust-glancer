@@ -311,7 +311,6 @@ impl<'a, Id, T> IntoIterator for &'a FrozenArena<Id, T> {
     }
 }
 
-#[cfg(feature = "memsize")]
 mod memsize {
     use rg_std::{MemoryRecorder, MemorySize};
 
@@ -417,7 +416,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "memsize")]
     #[test]
     fn records_arena_memory_without_losing_container_shape() {
         use std::mem;
@@ -455,7 +453,6 @@ mod tests {
         assert!(!paths.iter().any(|path| path.contains("items.items")));
     }
 
-    #[cfg(feature = "memsize")]
     #[test]
     fn records_frozen_arena_without_spare_capacity() {
         use std::mem;

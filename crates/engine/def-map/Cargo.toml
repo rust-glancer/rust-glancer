@@ -13,7 +13,7 @@ description.workspace = true
 [dependencies]
 anyhow.workspace = true
 rayon.workspace = true
-rg_arena = { workspace = true, features = ["memsize"] }
+rg_arena.workspace = true
 rg_cfg_eval.workspace = true
 rg_macro_expand.workspace = true
 rg_std.workspace = true
@@ -23,7 +23,7 @@ rg_ir_model.workspace = true
 rg_ir_storage.workspace = true
 rg_parse.workspace = true
 rg_syntax.workspace = true
-rg_text = { workspace = true, features = ["memsize"] }
+rg_text.workspace = true
 rg_tt.workspace = true
 rg_workspace.workspace = true
 test_fixture.workspace = true

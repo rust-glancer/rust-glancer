@@ -16,13 +16,13 @@ derive_more = { workspace = true, features = ["display"] }
 rg_syntax.workspace = true
 rayon.workspace = true
 wincode.workspace = true
-rg_arena = { workspace = true, features = ["memsize"] }
+rg_arena.workspace = true
 rg_cfg_eval.workspace = true
 rg_ir_model.workspace = true
 rg_macro_expand.workspace = true
 rg_std.workspace = true
 rg_parse.workspace = true
-rg_text = { workspace = true, features = ["memsize"] }
+rg_text.workspace = true
 rg_tt.workspace = true
 rg_wincode_utils.workspace = true
 rg_workspace.workspace = true

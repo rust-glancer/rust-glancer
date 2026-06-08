@@ -30,7 +30,7 @@ rg_package_store.workspace = true
 rg_parse.workspace = true
 rg_semantic_ir.workspace = true
 rg_workspace.workspace = true
-rg_text = { workspace = true, features = ["memsize"] }
+rg_text.workspace = true
 serde = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]

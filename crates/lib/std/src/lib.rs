@@ -6,7 +6,6 @@
 use std::{any, collections::BTreeMap, mem};
 
 mod default_impls;
-#[cfg(feature = "ls_types")]
 mod ls_types_impls;
 mod shrink;
 #[cfg(test)]
@@ -14,7 +13,6 @@ mod tests;
 
 pub use self::shrink::Shrink;
 
-#[cfg(feature = "derive")]
 pub use rg_std_derive::MemorySize;
 
 /// Records approximate retained memory for a value.

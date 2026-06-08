@@ -14,6 +14,6 @@ description.workspace = true
 rg_ir_model.workspace = true
 rg_ir_storage.workspace = true
 rg_std.workspace = true
-rg_text = { workspace = true, features = ["memsize"] }
+rg_text.workspace = true
 rg_wincode_utils.workspace = true
 wincode.workspace = true

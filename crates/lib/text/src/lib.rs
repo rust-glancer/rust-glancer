@@ -238,7 +238,6 @@ impl PackageNameInterners {
     }
 }
 
-#[cfg(feature = "memsize")]
 mod memsize {
     use std::{mem, sync::Weak};
 
@@ -411,7 +410,6 @@ mod tests {
         assert_eq!(interners.len(), 2);
     }
 
-    #[cfg(feature = "memsize")]
     #[test]
     fn interner_records_unique_text_payload() {
         use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize};

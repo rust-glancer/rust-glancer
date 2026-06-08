@@ -10,14 +10,9 @@ homepage.workspace = true
 readme.workspace = true
 description.workspace = true
 
-[features]
-default = ["derive"]
-derive = ["dep:rg_std_derive"]
-ls_types = ["dep:ls_types"]
-
 [dependencies]
-ls_types = { workspace = true, optional = true }
-rg_std_derive = { workspace = true, optional = true }
+ls_types.workspace = true
+rg_std_derive.workspace = true
 
 [[test]]
 name = "derive"
