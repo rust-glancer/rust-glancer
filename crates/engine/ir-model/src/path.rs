@@ -8,10 +8,10 @@ use crate::{
     TargetRef,
     items::{TypePath, TypeRef, UsePath, UsePathSegment, UsePathSegmentKind},
 };
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 
 /// Structured path used by def-map path resolution queries.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct Path {
     pub absolute: bool,
     pub segments: Vec<PathSegment>,
@@ -109,10 +109,7 @@ impl Path {
     }
 
     pub fn shrink_to_fit(&mut self) {
-        self.segments.shrink_to_fit();
-        for segment in &mut self.segments {
-            segment.shrink_to_fit();
-        }
+        Shrink::shrink_to_fit(self);
     }
 }
 
@@ -135,7 +132,7 @@ impl fmt::Display for Path {
 
 /// One structured path segment.
 #[derive(
-    Debug, Clone, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug, Clone, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize, Shrink,
 )]
 pub enum PathSegment {
     #[display("{_0}")]
@@ -171,9 +168,7 @@ impl PathSegment {
     }
 
     pub fn shrink_to_fit(&mut self) {
-        if let Self::Name(name) = self {
-            name.shrink_to_fit();
-        }
+        Shrink::shrink_to_fit(self);
     }
 }
 

@@ -2,7 +2,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::TargetRef;
 use crate::declare_id;
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 
 declare_id! {
     /// Stable identifier for one lowered body inside a target.
@@ -25,14 +25,16 @@ declare_id! {
 }
 
 /// Stable reference to one lowered body across the project.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub struct BodyRef {
     pub target: TargetRef,
     pub body: BodyId,
 }
 
 /// Stable reference to one local binding inside a body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub struct BodyBindingRef {
     pub body: BodyRef,
     pub binding: BindingId,

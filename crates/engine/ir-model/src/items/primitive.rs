@@ -1,9 +1,10 @@
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Rust primitive type known without resolving a module-scope definition.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum PrimitiveTy {
     Bool,
     Char,
@@ -14,8 +15,9 @@ pub enum PrimitiveTy {
 }
 
 /// Signed integer primitive width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum SignedIntTy {
     I8,
     I16,
@@ -26,8 +28,9 @@ pub enum SignedIntTy {
 }
 
 /// Unsigned integer primitive width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum UnsignedIntTy {
     U8,
     U16,
@@ -38,8 +41,9 @@ pub enum UnsignedIntTy {
 }
 
 /// Floating-point primitive width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum FloatTy {
     F32,
     F64,

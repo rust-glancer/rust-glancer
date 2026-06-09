@@ -1,6 +1,6 @@
 use rg_cfg_eval::CfgExpr;
 use rg_parse::{FileId, Span};
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -38,8 +38,9 @@ mod type_ref;
 mod visibility;
 
 /// Stable file-local identifier for one lowered item-tree node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub struct ItemTreeId(pub usize);
 
 impl rg_arena::ArenaId for ItemTreeId {
@@ -53,7 +54,8 @@ impl rg_arena::ArenaId for ItemTreeId {
 }
 
 /// Stable project-local reference to one item-tree node.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub struct ItemTreeRef {
     pub file_id: FileId,
     pub item: ItemTreeId,

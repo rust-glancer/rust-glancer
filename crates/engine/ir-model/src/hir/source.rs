@@ -1,14 +1,15 @@
 use crate::items::{ItemNode, ItemTreeId, ItemTreeRef};
 use rg_arena::Arena;
 use rg_parse::{FileId, Span};
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::BodyRef;
 
 /// Stable identifier of one retained macro expansion payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub struct GeneratedSourceId(pub usize);
 
 impl rg_arena::ArenaId for GeneratedSourceId {
@@ -22,28 +23,32 @@ impl rg_arena::ArenaId for GeneratedSourceId {
 }
 
 /// Target-local reference to one generated item payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub struct GeneratedItemRef {
     pub source: GeneratedSourceId,
     pub item: ItemTreeId,
 }
 
 /// Body-local reference to one item-tree-shaped source payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub struct BodyItemSourceRef {
     pub body: BodyRef,
     pub item: ItemTreeId,
 }
 
 /// Durable source identity for definitions collected into DefMap and later IR layers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub struct ItemSource {
     pub file_id: FileId,
     pub kind: ItemSourceKind,
 }
 
 /// The storage layer that owns a source item payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub enum ItemSourceKind {
     ItemTree(ItemTreeRef),
     Generated(GeneratedItemRef),

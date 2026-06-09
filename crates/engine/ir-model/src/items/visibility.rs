@@ -1,7 +1,7 @@
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 #[derive(
-    Debug, Clone, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug, Clone, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize, Shrink,
 )]
 pub enum VisibilityLevel {
     #[display("private")]
@@ -22,9 +22,6 @@ pub enum VisibilityLevel {
 
 impl VisibilityLevel {
     pub fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Restricted(path) | Self::Unknown(path) => path.shrink_to_fit(),
-            Self::Private | Self::Public | Self::Crate | Self::Super | Self::Self_ => {}
-        }
+        Shrink::shrink_to_fit(self);
     }
 }

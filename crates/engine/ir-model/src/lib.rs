@@ -56,8 +56,10 @@ macro_rules! declare_id {
                 SchemaRead,
                 SchemaWrite,
                 MemorySize,
+                Shrink,
             )]
             #[memsize(leaf)]
+            #[shrink(leaf)]
             $vis struct $id(pub usize);
 
             impl rg_arena::ArenaId for $id {

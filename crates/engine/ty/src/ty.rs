@@ -103,7 +103,6 @@ pub enum Ty {
 /// Module-level nominal type together with the generic arguments visible at use site.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct NominalTy {
-    #[shrink(skip)]
     pub def: TypeDefRef,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
     pub args: Vec<GenericArg>,
@@ -112,7 +111,6 @@ pub struct NominalTy {
 /// Resolved trait bound preserved for opaque `impl Trait` types.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct OpaqueTraitBound {
-    #[shrink(skip)]
     pub trait_ref: TraitRef,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
     pub args: Vec<GenericArg>,
