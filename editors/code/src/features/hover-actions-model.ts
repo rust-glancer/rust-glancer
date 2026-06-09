@@ -119,58 +119,9 @@ export function locationsExcludingCurrentHover(
   );
 }
 
-export function deserializeSerializedLocations(value: unknown): SerializedLocation[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.flatMap((location) => {
-    const parsed = deserializeLocation(location);
-    return parsed === undefined ? [] : [parsed];
-  });
-}
-
 function commandLink(action: HoverAction): string {
   const args = encodeURIComponent(JSON.stringify([action.locations]));
   return `[${action.label}](command:${action.command}?${args})`;
-}
-
-function deserializeLocation(value: unknown): SerializedLocation | undefined {
-  if (!isRecord(value) || typeof value.uri !== "string" || !isRecord(value.range)) {
-    return undefined;
-  }
-
-  const range = deserializeRange(value.range);
-  if (range === undefined) {
-    return undefined;
-  }
-
-  return { uri: value.uri, range };
-}
-
-function deserializeRange(value: unknown): SerializedRange | undefined {
-  if (!isRecord(value) || !isRecord(value.start) || !isRecord(value.end)) {
-    return undefined;
-  }
-
-  const start = deserializePosition(value.start);
-  const end = deserializePosition(value.end);
-  if (start === undefined || end === undefined) {
-    return undefined;
-  }
-
-  return { start, end };
-}
-
-function deserializePosition(value: unknown): SerializedPosition | undefined {
-  if (!isRecord(value) || typeof value.line !== "number" || typeof value.character !== "number") {
-    return undefined;
-  }
-
-  return {
-    line: value.line,
-    character: value.character,
-  };
 }
 
 function sameRange(left: SerializedRange, right: SerializedRange): boolean {
@@ -185,8 +136,4 @@ function isLocationLink(
   value: ProtocolLocationLike | ProtocolLocationLinkLike,
 ): value is ProtocolLocationLinkLike {
   return "targetUri" in value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }

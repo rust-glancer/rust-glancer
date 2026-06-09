@@ -2,7 +2,6 @@ import * as assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  deserializeSerializedLocations,
   hoverAction,
   hoverActionLinkLine,
   locationsExcludingCurrentHover,
@@ -76,20 +75,6 @@ describe("hover action model", () => {
         EXTENSION_COMMANDS.goToImplementationFromHover,
         implTargets,
       )}`,
-    );
-  });
-
-  it("deserializes only well-formed command locations", () => {
-    const valid = location("file:///src/lib.rs", 1, 4, 1, 10);
-
-    assert.deepEqual(
-      deserializeSerializedLocations([
-        valid,
-        { uri: 42, range: valid.range },
-        { uri: "file:///bad.rs", range: { start: { line: 1, character: 0 }, end: {} } },
-        "not a location",
-      ]),
-      [valid],
     );
   });
 });

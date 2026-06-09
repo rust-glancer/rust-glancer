@@ -16,7 +16,6 @@ import {
 
 import { EXTENSION_COMMANDS } from "../commands";
 import {
-  deserializeSerializedLocations,
   hoverAction,
   hoverActionLinkLine,
   locationsExcludingCurrentHover,
@@ -114,25 +113,28 @@ function registerGoToLocationsCommand(
   logLabel: string,
   notFoundMessage: string,
 ): vscode.Disposable {
-  return vscode.commands.registerCommand(command, async (serializedLocations: unknown) => {
-    const locations = deserializeLocations(serializedLocations);
-    if (locations.length === 0) {
-      output.warn(`${logLabel} command ignored empty or malformed locations`);
-      return;
-    }
+  return vscode.commands.registerCommand(
+    command,
+    async (serializedLocations?: SerializedLocation[]) => {
+      const locations = toVsCodeLocations(serializedLocations);
+      if (locations.length === 0) {
+        output.warn(`${logLabel} command ignored empty locations`);
+        return;
+      }
 
-    const activeEditor = vscode.window.activeTextEditor;
-    const originUri = activeEditor?.document.uri ?? locations[0].uri;
-    const originPosition = activeEditor?.selection.active ?? locations[0].range.start;
-    await vscode.commands.executeCommand(
-      "editor.action.goToLocations",
-      originUri,
-      originPosition,
-      locations,
-      "peek",
-      notFoundMessage,
-    );
-  });
+      const activeEditor = vscode.window.activeTextEditor;
+      const originUri = activeEditor?.document.uri ?? locations[0].uri;
+      const originPosition = activeEditor?.selection.active ?? locations[0].range.start;
+      await vscode.commands.executeCommand(
+        "editor.action.goToLocations",
+        originUri,
+        originPosition,
+        locations,
+        "peek",
+        notFoundMessage,
+      );
+    },
+  );
 }
 
 async function typeDefinitionLocations(
@@ -196,8 +198,10 @@ function commandLinkLine(actions: readonly HoverAction[]): vscode.MarkdownString
   return line;
 }
 
-function deserializeLocations(value: unknown): vscode.Location[] {
-  return deserializeSerializedLocations(value).map(
+function toVsCodeLocations(
+  locations: readonly SerializedLocation[] | undefined,
+): vscode.Location[] {
+  return (locations ?? []).map(
     (location) => new vscode.Location(vscode.Uri.parse(location.uri), range(location.range)),
   );
 }
