@@ -6,9 +6,10 @@
 use std::collections::HashSet;
 
 use rg_body_ir::BindingKind;
+use rg_ir_model::ExprKind;
 use rg_ir_model::{
-    BindingId, BodyBindingRef, BodyRef, DefMapRef, ExprId, ModuleId, ModuleRef, ScopeId,
-    SemanticItemKind, SemanticItemRef, TargetRef, hir::source::ItemSourceKind,
+    BindingId, BodyBindingRef, BodyRef, DefMapRef, ExprId, FunctionRef, ModuleId, ModuleRef,
+    ScopeId, SemanticItemKind, SemanticItemRef, TargetRef, hir::source::ItemSourceKind,
     identity::DeclarationRef,
 };
 use rg_ir_storage::ItemStoreQuery;
@@ -92,6 +93,48 @@ impl InferredBindingTy {
 
     pub fn ty(&self) -> &Ty {
         &self.ty
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedCallArg {
+    span: Span,
+}
+
+impl ResolvedCallArg {
+    pub fn span(&self) -> Span {
+        self.span
+    }
+}
+
+/// A call site whose arguments can be related back to one function signature.
+///
+/// This gives higher analysis features a stable way to talk about call-site arguments in
+/// declaration terms, regardless of whether the source used a free call, an associated call, or a
+/// receiver method call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedFunctionCall {
+    file_id: FileId,
+    function: FunctionRef,
+    param_offset: usize,
+    args: Vec<ResolvedCallArg>,
+}
+
+impl ResolvedFunctionCall {
+    pub fn file_id(&self) -> FileId {
+        self.file_id
+    }
+
+    pub fn function(&self) -> FunctionRef {
+        self.function
+    }
+
+    pub fn param_offset(&self) -> usize {
+        self.param_offset
+    }
+
+    pub fn args(&self) -> &[ResolvedCallArg] {
+        &self.args
     }
 }
 
@@ -390,6 +433,69 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(bindings)
     }
 
+    /// Returns call sites in one file that resolve to a single known function.
+    ///
+    /// This is the body-local view used by features that need to project declaration metadata, such
+    /// as parameter names, onto concrete argument expressions without owning call resolution.
+    pub fn resolved_function_calls(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+    ) -> anyhow::Result<Vec<ResolvedFunctionCall>> {
+        let Some(target_bodies) = self.db.body_ir.target_bodies(target)? else {
+            return Ok(Vec::new());
+        };
+
+        let mut calls = Vec::new();
+        for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
+            let body_ref = BodyRef {
+                target,
+                body: rg_ir_model::BodyId(body_idx),
+            };
+
+            for (expr_idx, expr) in body.exprs().iter().enumerate() {
+                if expr.source.file_id != file_id {
+                    continue;
+                }
+
+                match &expr.kind {
+                    ExprKind::Call { callee, args } => {
+                        let Some(callee) = *callee else {
+                            continue;
+                        };
+                        let Some(function) =
+                            self.single_function(body.expr_declarations(body_ref, callee))?
+                        else {
+                            continue;
+                        };
+                        calls.push(ResolvedFunctionCall {
+                            file_id: expr.source.file_id,
+                            function,
+                            param_offset: 0,
+                            args: Self::resolved_call_args(body, args),
+                        });
+                    }
+                    ExprKind::MethodCall { args, .. } => {
+                        let Some(function) = self
+                            .single_function(body.expr_declarations(body_ref, ExprId(expr_idx)))?
+                        else {
+                            continue;
+                        };
+                        calls.push(ResolvedFunctionCall {
+                            file_id: expr.source.file_id,
+                            function,
+                            param_offset: 1,
+                            args: Self::resolved_call_args(body, args),
+                        });
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Ok(calls)
+    }
+
     pub fn local_groups(
         &self,
         target: TargetRef,
@@ -448,5 +554,58 @@ impl<'a, 'db> BodyView<'a, 'db> {
         }
 
         Ok(declarations)
+    }
+
+    fn single_function(
+        &self,
+        declarations: Vec<DeclarationRef>,
+    ) -> anyhow::Result<Option<FunctionRef>> {
+        let mut functions = Vec::new();
+        for declaration in declarations {
+            match declaration {
+                DeclarationRef::LocalDef(local_def) => {
+                    let Some(SemanticItemRef::Function(function)) =
+                        ItemStoreQuery::new(self.db).semantic_item_for_local_def(local_def)?
+                    else {
+                        continue;
+                    };
+                    functions.push(function);
+                }
+                DeclarationRef::Item(SemanticItemRef::Function(function)) => {
+                    functions.push(function);
+                }
+                DeclarationRef::Module(_)
+                | DeclarationRef::Item(
+                    SemanticItemRef::TypeDef(_)
+                    | SemanticItemRef::Trait(_)
+                    | SemanticItemRef::Impl(_)
+                    | SemanticItemRef::TypeAlias(_)
+                    | SemanticItemRef::Const(_)
+                    | SemanticItemRef::Static(_),
+                )
+                | DeclarationRef::Field(_)
+                | DeclarationRef::EnumVariant(_)
+                | DeclarationRef::BodyBinding(_) => {}
+            }
+        }
+
+        let mut functions = functions.into_iter();
+        let Some(function) = functions.next() else {
+            return Ok(None);
+        };
+        Ok(functions.next().is_none().then_some(function))
+    }
+
+    fn resolved_call_args(
+        body: &rg_body_ir::ResolvedBodyData,
+        args: &[ExprId],
+    ) -> Vec<ResolvedCallArg> {
+        args.iter()
+            .filter_map(|arg| {
+                body.expr(*arg).map(|expr| ResolvedCallArg {
+                    span: expr.source.span,
+                })
+            })
+            .collect()
     }
 }
