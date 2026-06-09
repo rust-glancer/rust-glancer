@@ -1,7 +1,7 @@
 use rg_ir_model::TargetRef;
 use rg_ir_view::{
     SymbolKind,
-    ty::locals::{BodyClosingBraceBlock, BodyView},
+    body::{BodyClosingBraceBlock, BodyClosingBraceBlockKind, BodyStructureView},
 };
 use rg_parse::{FileId, Span, TextSpan};
 
@@ -73,7 +73,9 @@ impl ClosingBraceCandidate {
         for symbol in analysis.document_symbols(target, file_id)? {
             Self::collect_document_symbol(&symbol, &mut candidates);
         }
-        for block in BodyView::new(analysis.view_db()).closing_brace_blocks(target, file_id)? {
+        for block in
+            BodyStructureView::new(analysis.view_db()).closing_brace_blocks(target, file_id)?
+        {
             let label = Self::body_block_label(analysis, target, &block);
             if let Some(candidate) = Self::from_block_span(block.file_id(), block.span(), label) {
                 candidates.push(candidate);
@@ -121,17 +123,35 @@ impl ClosingBraceCandidate {
         target: TargetRef,
         block: &BodyClosingBraceBlock,
     ) -> String {
-        let Some(label_span) = block.label_span() else {
-            return block.label().to_string();
+        match block.kind() {
+            BodyClosingBraceBlockKind::Function { name } => format!("// fn {name}"),
+            BodyClosingBraceBlockKind::Match { scrutinee } => {
+                Self::control_flow_label(analysis, target, block.file_id(), "// match", *scrutinee)
+            }
+            BodyClosingBraceBlockKind::Loop => "// loop".to_string(),
+            BodyClosingBraceBlockKind::While => "// while".to_string(),
+            BodyClosingBraceBlockKind::For => "// for".to_string(),
+        }
+    }
+
+    fn control_flow_label(
+        analysis: &Analysis<'_>,
+        target: TargetRef,
+        file_id: FileId,
+        label: &str,
+        detail_span: Option<Span>,
+    ) -> String {
+        let Some(detail_span) = detail_span else {
+            return label.to_string();
         };
-        let Some(source_label) = analysis
-            .source_text_for_span(target.package, block.file_id(), label_span)
+        let Some(detail) = analysis
+            .source_text_for_span(target.package, file_id, detail_span)
             .and_then(Self::compact_source_label)
         else {
-            return block.label().to_string();
+            return label.to_string();
         };
 
-        format!("{} {source_label}", block.label())
+        format!("{label} {detail}")
     }
 
     fn compact_source_label(text: String) -> Option<String> {

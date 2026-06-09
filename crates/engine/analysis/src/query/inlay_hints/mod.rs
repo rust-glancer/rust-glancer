@@ -5,7 +5,7 @@ mod closing_brace;
 use rg_ir_model::TargetRef;
 use rg_ir_model::items::{ParamItem, ParamKind};
 use rg_ir_storage::ItemStoreQuery;
-use rg_ir_view::{display::ty_label::TypeRenderer, ty::locals::BodyView};
+use rg_ir_view::{body::BodyStructureView, display::ty_label::TypeRenderer, ty::locals::BodyView};
 use rg_parse::{FileId, TextSpan};
 use rg_ty::Ty;
 
@@ -80,7 +80,9 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
     ) -> anyhow::Result<Vec<InlayHint>> {
         let renderer = TypeRenderer::new(self.0.view_db());
         let mut hints = Vec::new();
-        for expr in BodyView::new(self.0.view_db()).method_chain_expr_tys(target, file_id)? {
+        for expr in
+            BodyStructureView::new(self.0.view_db()).method_chain_expr_tys(target, file_id)?
+        {
             let expr_span = expr.span();
             if range.is_some_and(|range| !range.touches(expr_span.text.end)) {
                 continue;
