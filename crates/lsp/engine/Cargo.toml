@@ -27,3 +27,7 @@ rg_workspace.workspace = true
 tarpc = { workspace = true, features = ["serde-transport", "serde-transport-json", "tcp", "tokio1"] }
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
+
+[dev-dependencies]
+expect-test.workspace = true
+test_fixture.workspace = true

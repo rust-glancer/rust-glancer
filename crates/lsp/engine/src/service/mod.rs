@@ -11,6 +11,9 @@ use crate::{
     memory::MemoryControl,
 };
 
+#[cfg(test)]
+pub(crate) use self::notifications::ServiceNotificationPublisher;
+
 /// RPC-facing façade owned by one engine process.
 ///
 /// `Service` is the boundary visible to the LSP server: it accepts editor-shaped requests and
