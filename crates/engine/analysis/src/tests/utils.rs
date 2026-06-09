@@ -181,6 +181,11 @@ impl InlayHintsQuery {
         self.target = AnalysisTarget::bin(package_name);
         self
     }
+
+    pub(super) fn in_lib(mut self, package_name: &'static str) -> Self {
+        self.target = AnalysisTarget::lib_package(package_name);
+        self
+    }
 }
 
 impl DocumentSymbolsQuery {

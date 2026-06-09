@@ -389,6 +389,10 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(names)
     }
 
+    /// Returns let-like bindings whose type is already known from body facts.
+    ///
+    /// These are the local pattern bindings that can carry inferred type hints: ordinary `let`
+    /// bindings, `let else` and match-pattern bindings, and `for` loop pattern bindings.
     pub fn inferred_binding_tys(
         &self,
         target: TargetRef,

@@ -73,6 +73,126 @@ fn main() {
 }
 
 #[test]
+fn shows_type_hints_for_pattern_bindings_with_known_types() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_pattern_type_hints"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Profile;
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub enum Message<T> {
+    User { profile: T },
+    Empty,
+}
+
+pub fn use_it(maybe: Option<User>, message: Message<Profile>) {
+    let Some(value) = maybe else { return; };
+    value;
+
+    let Message::User { profile } = message else { return; };
+    profile;
+}
+
+pub fn match_it(maybe: Option<User>) {
+    match maybe {
+        Option::Some(user) => {
+            user;
+        }
+        Option::None => {}
+    }
+}
+"#,
+        InlayHintsQuery::new("pattern type hints", "/src/lib.rs"),
+        expect![[r#"
+            pattern type hints
+            - `: User` @ 15:14-15:19
+            - `: Profile` @ 18:25-18:32
+            - `: User` @ 24:22-24:26
+        "#]],
+    );
+}
+
+#[test]
+fn shows_type_hints_for_for_loop_bindings_with_known_items() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait IntoIterator {
+        type Item;
+    }
+}
+
+impl<'a, T> iter::IntoIterator for &'a [T] {
+    type Item = &'a T;
+}
+
+impl<T, const N: usize> iter::IntoIterator for [T; N] {
+    type Item = T;
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct Package;
+pub struct UserId;
+
+pub fn use_it(packages: &[Package], array: [Package; 3], pairs: [(Package, UserId); 2]) {
+    for borrowed in packages {
+        borrowed;
+    }
+
+    for owned in array {
+        owned;
+    }
+
+    for (package, user_id) in pairs {
+        package;
+        user_id;
+    }
+}
+"#,
+        InlayHintsQuery::new("for loop type hints", "/app/src/lib.rs").in_lib("app"),
+        expect![[r#"
+            for loop type hints
+            - `: &Package` @ 5:9-5:17
+            - `: Package` @ 9:9-9:14
+            - `: Package` @ 13:10-13:17
+            - `: UserId` @ 13:19-13:26
+        "#]],
+    );
+}
+
+#[test]
 fn shows_parameter_hints_for_resolved_calls() {
     check_inlay_hints(
         r#"
