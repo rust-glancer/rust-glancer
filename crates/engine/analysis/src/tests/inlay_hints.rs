@@ -419,6 +419,77 @@ pub fn process(mode: Mode) {
 }
 
 #[test]
+fn shows_closing_brace_hints_for_loop_conditions() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_closing_brace_loop_detail_hints"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Items;
+
+pub fn process(items: Items, active: bool) {
+    for item in items {
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+    }
+
+    while active {
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        break;
+    }
+}
+"#,
+        InlayHintsQuery::new("closing brace loop detail hints", "/src/lib.rs"),
+        expect![[r#"
+            closing brace loop detail hints
+            - `// for item in items` @ 25:5-25:6
+            - `// while active` @ 48:5-48:6
+            - `// fn process` @ 49:1-49:2
+        "#]],
+    );
+}
+
+#[test]
 fn skips_closing_brace_hints_for_short_blocks() {
     check_inlay_hints(
         r#"

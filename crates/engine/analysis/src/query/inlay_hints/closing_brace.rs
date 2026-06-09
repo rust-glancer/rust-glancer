@@ -129,8 +129,12 @@ impl ClosingBraceCandidate {
                 Self::control_flow_label(analysis, target, block.file_id(), "// match", *scrutinee)
             }
             BodyClosingBraceBlockKind::Loop => "// loop".to_string(),
-            BodyClosingBraceBlockKind::While => "// while".to_string(),
-            BodyClosingBraceBlockKind::For => "// for".to_string(),
+            BodyClosingBraceBlockKind::While { condition } => {
+                Self::control_flow_label(analysis, target, block.file_id(), "// while", *condition)
+            }
+            BodyClosingBraceBlockKind::For { pat, iterable } => {
+                Self::for_label(analysis, target, block.file_id(), *pat, *iterable)
+            }
         }
     }
 
@@ -152,6 +156,37 @@ impl ClosingBraceCandidate {
         };
 
         format!("{label} {detail}")
+    }
+
+    fn for_label(
+        analysis: &Analysis<'_>,
+        target: TargetRef,
+        file_id: FileId,
+        pat: Option<Span>,
+        iterable: Option<Span>,
+    ) -> String {
+        let Some(pat) = pat.and_then(|span| Self::source_detail(analysis, target, file_id, span))
+        else {
+            return "// for".to_string();
+        };
+        let Some(iterable) =
+            iterable.and_then(|span| Self::source_detail(analysis, target, file_id, span))
+        else {
+            return format!("// for {pat}");
+        };
+
+        format!("// for {pat} in {iterable}")
+    }
+
+    fn source_detail(
+        analysis: &Analysis<'_>,
+        target: TargetRef,
+        file_id: FileId,
+        span: Span,
+    ) -> Option<String> {
+        analysis
+            .source_text_for_span(target.package, file_id, span)
+            .and_then(Self::compact_source_label)
     }
 
     fn compact_source_label(text: String) -> Option<String> {

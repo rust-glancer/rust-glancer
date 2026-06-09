@@ -19,11 +19,20 @@ pub struct BodyClosingBraceBlock {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BodyClosingBraceBlockKind {
-    Function { name: String },
-    Match { scrutinee: Option<Span> },
+    Function {
+        name: String,
+    },
+    Match {
+        scrutinee: Option<Span>,
+    },
     Loop,
-    While,
-    For,
+    While {
+        condition: Option<Span>,
+    },
+    For {
+        pat: Option<Span>,
+        iterable: Option<Span>,
+    },
 }
 
 impl BodyClosingBraceBlock {
@@ -218,8 +227,15 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
                     .and_then(|scrutinee| body.expr(scrutinee).map(|expr| expr.source.span)),
             }),
             ExprKind::Loop { .. } => Some(BodyClosingBraceBlockKind::Loop),
-            ExprKind::While { .. } => Some(BodyClosingBraceBlockKind::While),
-            ExprKind::For { .. } => Some(BodyClosingBraceBlockKind::For),
+            ExprKind::While { condition, .. } => Some(BodyClosingBraceBlockKind::While {
+                condition: condition
+                    .and_then(|condition| body.expr(condition).map(|expr| expr.source.span)),
+            }),
+            ExprKind::For { pat, iterable, .. } => Some(BodyClosingBraceBlockKind::For {
+                pat: pat.and_then(|pat| body.pat(pat).map(|pat| pat.source.span)),
+                iterable: iterable
+                    .and_then(|iterable| body.expr(iterable).map(|expr| expr.source.span)),
+            }),
             _ => None,
         }
     }
