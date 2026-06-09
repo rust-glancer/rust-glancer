@@ -7,6 +7,7 @@ use rg_ir_model::items::{ParamItem, ParamKind};
 use rg_ir_storage::ItemStoreQuery;
 use rg_ir_view::{display::ty_label::TypeRenderer, ty::locals::BodyView};
 use rg_parse::{FileId, TextSpan};
+use rg_ty::Ty;
 
 use crate::{
     Analysis,
@@ -28,6 +29,7 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
     ) -> anyhow::Result<Vec<InlayHint>> {
         let mut hints = self.binding_type_hints(target, file_id, range)?;
         hints.extend(self.parameter_hints(target, file_id, range)?);
+        hints.extend(self.expression_type_hints(target, file_id, range)?);
         hints.extend(closing_brace::closing_brace_hints(
             self.0, target, file_id, range,
         )?);
@@ -60,6 +62,51 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
                 kind: InlayHintKind::Type,
                 label: format!(": {ty}"),
                 padding_left: None,
+                padding_right: None,
+            };
+            if !hints.contains(&hint) {
+                hints.push(hint);
+            }
+        }
+
+        Ok(hints)
+    }
+
+    fn expression_type_hints(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        range: Option<TextSpan>,
+    ) -> anyhow::Result<Vec<InlayHint>> {
+        let renderer = TypeRenderer::new(self.0.view_db());
+        let mut hints = Vec::new();
+        for expr in BodyView::new(self.0.view_db()).method_chain_expr_tys(target, file_id)? {
+            let expr_span = expr.span();
+            if range.is_some_and(|range| !range.touches(expr_span.text.end)) {
+                continue;
+            }
+            if !self.should_show_method_chain_expr_hint(
+                target,
+                expr.file_id(),
+                expr_span,
+                expr.parent_dot_span(),
+            ) {
+                continue;
+            }
+            if matches!(expr.ty(), Ty::Unit | Ty::Never) {
+                continue;
+            }
+            let Some(ty) = renderer.render(expr.ty())? else {
+                continue;
+            };
+
+            let hint = InlayHint {
+                file_id: expr.file_id(),
+                span: expr_span,
+                position: InlayHintPosition::After,
+                kind: InlayHintKind::Type,
+                label: ty,
+                padding_left: Some(true),
                 padding_right: None,
             };
             if !hints.contains(&hint) {
@@ -139,5 +186,29 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         chars
             .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
             .then_some(name)
+    }
+
+    fn should_show_method_chain_expr_hint(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        expr_span: rg_parse::Span,
+        parent_dot_span: rg_parse::Span,
+    ) -> bool {
+        let Some(expr_end_line) = self.0.source_line_for_offset(
+            target.package,
+            file_id,
+            expr_span.text.end.saturating_sub(1),
+        ) else {
+            return false;
+        };
+        let Some(parent_dot_line) =
+            self.0
+                .source_line_for_offset(target.package, file_id, parent_dot_span.text.start)
+        else {
+            return false;
+        };
+
+        parent_dot_line > expr_end_line
     }
 }

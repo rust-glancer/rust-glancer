@@ -193,6 +193,106 @@ pub fn use_it(packages: &[Package], array: [Package; 3], pairs: [(Package, UserI
 }
 
 #[test]
+fn shows_type_hints_for_multiline_method_chain_segments() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_method_chain_expression_type_hints"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Factory;
+pub struct User;
+pub struct Profile;
+pub struct UserName;
+
+impl Factory {
+    pub fn build(&self) -> User {
+        User
+    }
+}
+
+impl User {
+    pub fn profile(self) -> Profile {
+        Profile
+    }
+}
+
+impl Profile {
+    pub fn name(self) -> UserName {
+        UserName
+    }
+}
+
+pub fn use_it(factory: Factory) {
+    let name: UserName = factory
+        .build()
+        .profile()
+        .name();
+}
+"#,
+        InlayHintsQuery::new("method chain expression type hints", "/src/lib.rs"),
+        expect![[r#"
+            method chain expression type hints
+            - `User` @ 25:26-26:17
+            - `Profile` @ 25:26-27:19
+        "#]],
+    );
+}
+
+#[test]
+fn skips_expression_type_hints_for_inline_or_unknown_method_chains() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_method_chain_expression_type_hint_skips"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Factory;
+pub struct User;
+pub struct Profile;
+pub struct UserName;
+
+impl Factory {
+    pub fn build(&self) -> User {
+        User
+    }
+}
+
+impl User {
+    pub fn profile(self) -> Profile {
+        Profile
+    }
+}
+
+impl Profile {
+    pub fn name(self) -> UserName {
+        UserName
+    }
+}
+
+pub fn use_it(factory: Factory) {
+    let inline: UserName = factory.build().profile().name();
+    let unknown: UserName = missing()
+        .build()
+        .profile()
+        .name();
+}
+"#,
+        InlayHintsQuery::new("method chain expression type hint skips", "/src/lib.rs"),
+        expect![[r#"
+            method chain expression type hint skips
+            - <none>
+        "#]],
+    );
+}
+
+#[test]
 fn shows_closing_brace_hints_for_long_named_blocks() {
     check_inlay_hints(
         r#"
