@@ -14,7 +14,9 @@ use rg_lsp_proto::{
 };
 use rg_parse::LineIndex;
 use tarpc::context;
-use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate_with_markers};
+use test_fixture::{
+    CrateFixture, FixtureMarkers, fixture_crate_with_markers, testonly::MarkedText,
+};
 
 use crate::{
     MemoryControl, Service, ServiceNotificationsSink, service::ServiceNotificationPublisher,
@@ -61,6 +63,26 @@ impl LspEngineFixture {
     }
 
     pub(super) async fn check(&self, queries: &[LspQuery], expect: Expect) {
+        self.check_with_markers(QueryMarkers::Saved, queries, expect)
+            .await;
+    }
+
+    pub(super) async fn check_dirty(
+        &self,
+        dirty: &DirtyDocument,
+        queries: &[LspQuery],
+        expect: Expect,
+    ) {
+        self.check_with_markers(QueryMarkers::Dirty(dirty), queries, expect)
+            .await;
+    }
+
+    async fn check_with_markers(
+        &self,
+        markers: QueryMarkers<'_>,
+        queries: &[LspQuery],
+        expect: Expect,
+    ) {
         let mut rendered = String::new();
 
         for (idx, query) in queries.iter().enumerate() {
@@ -68,10 +90,47 @@ impl LspEngineFixture {
                 rendered.push('\n');
             }
 
-            self.render_query(&mut rendered, query).await;
+            self.render_query(&mut rendered, markers, query).await;
         }
 
         expect.assert_eq(&rendered);
+    }
+
+    pub(super) async fn did_open_saved(&self, path: &str, version: i32) {
+        let text = std::fs::read_to_string(self.fixture.path(path))
+            .expect("fixture saved document should be readable");
+
+        self.service
+            .clone()
+            .did_open(
+                context::current(),
+                self.fixture.path(path),
+                Some(version),
+                text,
+            )
+            .await
+            .expect("fixture saved document should open");
+    }
+
+    pub(super) async fn did_change_full(
+        &self,
+        path: &'static str,
+        version: i32,
+        text: MarkedText,
+    ) -> DirtyDocument {
+        self.service
+            .clone()
+            .did_change(
+                context::current(),
+                self.fixture.path(path),
+                Some(version),
+                Some(text.text().to_string()),
+                1,
+            )
+            .await
+            .expect("fixture dirty document should change");
+
+        DirtyDocument { path, text }
     }
 
     pub(super) async fn shutdown(&self) {
@@ -82,11 +141,16 @@ impl LspEngineFixture {
             .expect("fixture LSP engine should shut down");
     }
 
-    async fn render_query(&self, rendered: &mut String, query: &LspQuery) {
+    async fn render_query(
+        &self,
+        rendered: &mut String,
+        markers: QueryMarkers<'_>,
+        query: &LspQuery,
+    ) {
         match query {
             LspQuery::GotoDefinition { title, marker } => {
-                let path = self.marker_path(marker);
-                let position = self.marker_position(marker);
+                let path = self.marker_path(markers, marker);
+                let position = self.marker_position(markers, marker);
                 let locations = self
                     .service
                     .clone()
@@ -98,8 +162,8 @@ impl LspEngineFixture {
                 self.render_locations(rendered, &locations);
             }
             LspQuery::Hover { title, marker } => {
-                let path = self.marker_path(marker);
-                let position = self.marker_position(marker);
+                let path = self.marker_path(markers, marker);
+                let position = self.marker_position(markers, marker);
                 let hover = self
                     .service
                     .clone()
@@ -111,8 +175,8 @@ impl LspEngineFixture {
                 self.render_hover(rendered, path.as_path(), hover.as_ref());
             }
             LspQuery::Completion { title, marker } => {
-                let path = self.marker_path(marker);
-                let position = self.marker_position(marker);
+                let path = self.marker_path(markers, marker);
+                let position = self.marker_position(markers, marker);
                 let completions = self
                     .service
                     .clone()
@@ -142,16 +206,30 @@ impl LspEngineFixture {
         }
     }
 
-    fn marker_path(&self, marker: &str) -> std::path::PathBuf {
-        let marker = self.markers.position(marker);
-        self.fixture.path(&marker.path)
+    fn marker_path(&self, markers: QueryMarkers<'_>, marker: &str) -> std::path::PathBuf {
+        match markers {
+            QueryMarkers::Saved => {
+                let marker = self.markers.position(marker);
+                self.fixture.path(&marker.path)
+            }
+            QueryMarkers::Dirty(document) => self.fixture.path(document.path),
+        }
     }
 
-    fn marker_position(&self, marker: &str) -> Position {
-        let marker = self.markers.position(marker);
-        let text = std::fs::read_to_string(self.fixture.path(&marker.path))
-            .expect("fixture marker file should be readable");
-        let position = LineIndex::new(&text).utf16_position(marker.offset);
+    fn marker_position(&self, markers: QueryMarkers<'_>, marker: &str) -> Position {
+        let position = match markers {
+            QueryMarkers::Saved => {
+                let marker = self.markers.position(marker);
+                let text = std::fs::read_to_string(self.fixture.path(&marker.path))
+                    .expect("fixture marker file should be readable");
+                LineIndex::new(&text).utf16_position(marker.offset)
+            }
+            QueryMarkers::Dirty(document) => {
+                let offset = u32::try_from(document.text.offset(marker))
+                    .expect("dirty marker offset should fit into u32");
+                LineIndex::new(document.text.text()).utf16_position(offset)
+            }
+        };
 
         Position::new(position.line, position.column)
     }
@@ -346,6 +424,17 @@ impl LspEngineFixture {
             }
         }
     }
+}
+
+pub(super) struct DirtyDocument {
+    path: &'static str,
+    text: MarkedText,
+}
+
+#[derive(Clone, Copy)]
+enum QueryMarkers<'a> {
+    Saved,
+    Dirty(&'a DirtyDocument),
 }
 
 pub(super) enum LspQuery {
