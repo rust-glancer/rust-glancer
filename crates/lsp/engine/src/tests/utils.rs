@@ -26,6 +26,7 @@ pub(super) struct LspEngineFixture {
     fixture: CrateFixture,
     markers: FixtureMarkers,
     service: Service,
+    notifications: RecordingNotifications,
 }
 
 impl LspEngineFixture {
@@ -40,13 +41,14 @@ impl LspEngineFixture {
         let notifications = RecordingNotifications::default();
         let service = Service::spawn(
             Arc::new(()) as Arc<dyn MemoryControl>,
-            ServiceNotificationsSink::from_publisher(notifications),
+            ServiceNotificationsSink::from_publisher(notifications.clone()),
         );
 
         Self {
             fixture,
             markers,
             service,
+            notifications,
         }
     }
 
@@ -131,6 +133,94 @@ impl LspEngineFixture {
             .expect("fixture dirty document should change");
 
         DirtyDocument { path, text }
+    }
+
+    pub(super) async fn did_save_dirty(&self, dirty: &DirtyDocument) {
+        self.notifications.clear();
+        std::fs::write(self.fixture.path(dirty.path), dirty.text.text())
+            .expect("fixture dirty document should be writable before save");
+
+        self.service
+            .clone()
+            .did_save(
+                context::current(),
+                self.fixture.path(dirty.path),
+                Some(dirty.text.text().to_string()),
+            )
+            .await
+            .expect("fixture dirty document should save");
+    }
+
+    pub(super) fn check_notification_effects(&self, expect: Expect) {
+        let mut rendered = String::new();
+        writeln!(rendered, "notifications").expect("snapshot should be writable");
+
+        let notifications = self.notifications.snapshot();
+        if notifications.is_empty() {
+            writeln!(rendered, "- none").expect("snapshot should be writable");
+        }
+
+        let mut rendered_inlay_hint_refresh = false;
+        for notification in notifications {
+            match notification {
+                ServiceNotification::PublishDiagnostics {
+                    path,
+                    diagnostics,
+                    version,
+                } => {
+                    writeln!(
+                        rendered,
+                        "- publish diagnostics {} version {:?} count {}",
+                        self.render_path(path.as_path()),
+                        version,
+                        diagnostics.len(),
+                    )
+                    .expect("snapshot should be writable");
+                }
+                ServiceNotification::BeginWorkDoneProgress {
+                    token,
+                    title,
+                    message,
+                } => {
+                    writeln!(
+                        rendered,
+                        "- begin progress {token:?}: {title}{}",
+                        message
+                            .as_deref()
+                            .map(|message| format!(" ({message})"))
+                            .unwrap_or_default(),
+                    )
+                    .expect("snapshot should be writable");
+                }
+                ServiceNotification::EndWorkDoneProgress { token, message } => {
+                    writeln!(
+                        rendered,
+                        "- end progress {token:?}{}",
+                        message
+                            .as_deref()
+                            .map(|message| format!(" ({message})"))
+                            .unwrap_or_default(),
+                    )
+                    .expect("snapshot should be writable");
+                }
+                ServiceNotification::InlayHintRefresh => {
+                    // This snapshot records stable editor-facing effects, not the exact event log.
+                    // `didChange` may have a pending debounced refresh while `didSave` sends an
+                    // immediate refresh, so duplicate invalidations are intentionally collapsed.
+                    if !rendered_inlay_hint_refresh {
+                        writeln!(rendered, "- inlay hint refresh")
+                            .expect("snapshot should be writable");
+                        rendered_inlay_hint_refresh = true;
+                    }
+                }
+                ServiceNotification::LogMessage { level, message } => {
+                    writeln!(rendered, "- log {level:?}: {message}")
+                        .expect("snapshot should be writable");
+                }
+            }
+        }
+
+        expect.assert_eq(&rendered);
     }
 
     pub(super) async fn shutdown(&self) {
@@ -485,5 +575,21 @@ impl ServiceNotificationPublisher for RecordingNotifications {
             .lock()
             .expect("recorded notifications should not be poisoned")
             .push(notification);
+    }
+}
+
+impl RecordingNotifications {
+    fn clear(&self) {
+        self.notifications
+            .lock()
+            .expect("recorded notifications should not be poisoned")
+            .clear();
+    }
+
+    fn snapshot(&self) -> Vec<ServiceNotification> {
+        self.notifications
+            .lock()
+            .expect("recorded notifications should not be poisoned")
+            .clone()
     }
 }
