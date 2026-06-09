@@ -21,7 +21,7 @@ fn check_parse_db_with(fixture: &str, mode: ParseFixtureMode, expect: Expect) {
         .canonicalize()
         .expect("fixture root should be canonicalizable");
     let display_root = fixture.path("");
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
         .expect("fixture workspace metadata should build");
     let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
     if matches!(mode, ParseFixtureMode::DiscoverModules) {

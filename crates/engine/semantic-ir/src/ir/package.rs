@@ -1,21 +1,14 @@
 use rg_arena::Arena;
 use rg_ir_storage::ItemStore;
 use rg_parse::TargetId;
+use rg_std::{MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Semantic IR for one Cargo package.
 ///
 /// Packages keep target IRs in the same stable order as parse/def-map packages, so a
 /// `TargetRef { package, target }` can address every phase without an extra translation table.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct PackageIr {
     pub(crate) targets: Arena<TargetId, ItemStore>,
 }
@@ -24,13 +17,6 @@ impl PackageIr {
     pub(crate) fn new(targets: Vec<ItemStore>) -> Self {
         Self {
             targets: Arena::from_vec(targets),
-        }
-    }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.targets.shrink_to_fit();
-        for target in self.targets.iter_mut() {
-            target.shrink_to_fit();
         }
     }
 

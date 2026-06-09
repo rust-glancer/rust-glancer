@@ -4,9 +4,9 @@
 //! concepts: they are names visible from an indexed module or lexical body scope.
 
 use rg_ir_model::items::Documentation;
-use rg_ir_model::{DefId, FunctionRef, ModuleRef, SemanticItemRef, identity::DeclarationRef};
+use rg_ir_model::{DefId, FunctionRef, ModuleRef, Path, SemanticItemRef, identity::DeclarationRef};
 use rg_ir_storage::{
-    DefMapQuery, ItemStoreQuery, Path, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin,
+    DefMapQuery, ItemStoreQuery, ScopeNamespace, VisibleScopeDef, VisibleScopeOrigin,
 };
 
 use crate::{IndexedViewDb, SymbolKind};

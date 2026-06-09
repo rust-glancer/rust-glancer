@@ -1,4 +1,6 @@
+use rg_std::{MemorySize, Shrink};
 use std::collections::HashMap;
+use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
 use rg_ir_model::{
@@ -13,16 +15,7 @@ use super::{
     module::ModuleData,
 };
 
-#[derive(
-    Debug,
-    Default,
-    Clone,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 struct DefMapData {
     modules: Arena<ModuleId, ModuleData>,
     local_defs: Arena<LocalDefId, LocalDefData>,
@@ -30,32 +23,6 @@ struct DefMapData {
     local_impls: Arena<LocalImplId, LocalImplData>,
     imports: Arena<ImportId, ImportData>,
     generated_sources: Arena<GeneratedSourceId, GeneratedSourceData>,
-}
-
-impl DefMapData {
-    fn shrink_to_fit(&mut self) {
-        self.modules.shrink_to_fit();
-        for module in self.modules.iter_mut() {
-            module.shrink_to_fit();
-        }
-        self.local_defs.shrink_to_fit();
-        for local_def in self.local_defs.iter_mut() {
-            local_def.shrink_to_fit();
-        }
-        self.macro_definitions.shrink_to_fit();
-        for macro_definition in self.macro_definitions.values_mut() {
-            macro_definition.shrink_to_fit();
-        }
-        self.local_impls.shrink_to_fit();
-        self.imports.shrink_to_fit();
-        for import in self.imports.iter_mut() {
-            import.shrink_to_fit();
-        }
-        self.generated_sources.shrink_to_fit();
-        for generated_source in self.generated_sources.iter_mut() {
-            generated_source.shrink_to_fit();
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,13 +43,10 @@ impl DefMapBuilder {
         }
     }
 
-    /// DefMap is first build, and then populated.
-    /// This method provides a method to access the defmap directly, but it's the caller's
-    /// responsibility to make sure that the defmap has been populated already.
-    // TODO: Add `collected` flag to forbid adding more things and only allow mutating
-    // existing ones.
-    pub fn as_incomplete_def_map(&self) -> &DefMap {
-        &self.def_map
+    pub fn partial(&self) -> PartialDefMap<'_> {
+        PartialDefMap {
+            def_map: &self.def_map,
+        }
     }
 
     pub fn module_mut(&mut self, module_id: ModuleId) -> Option<&mut ModuleData> {
@@ -128,6 +92,53 @@ impl DefMapBuilder {
     }
 }
 
+/// Read-only view over a DefMap that is still being collected/finalized.
+///
+/// This facade is intentionally narrower than `DefMap`: it permits the build pipeline to inspect
+/// data allocated so far without making the object look like a frozen namespace map.
+#[derive(Debug, Clone, Copy)]
+pub struct PartialDefMap<'a> {
+    def_map: &'a DefMap,
+}
+
+impl<'a> PartialDefMap<'a> {
+    /// Returns module data allocated so far during collection/finalization.
+    pub fn module(&self, module_id: ModuleId) -> Option<&'a ModuleData> {
+        self.def_map.module(module_id)
+    }
+
+    pub fn module_count(&self) -> usize {
+        self.def_map.module_count()
+    }
+
+    /// Returns local definition data allocated so far during collection/finalization.
+    pub fn local_def(&self, local_def: LocalDefId) -> Option<&'a LocalDefData> {
+        self.def_map.local_def(local_def)
+    }
+
+    /// Returns a declarative macro payload allocated so far during collection/finalization.
+    pub fn macro_definition(&self, local_def: LocalDefId) -> Option<&'a MacroDefinitionData> {
+        self.def_map.macro_definition(local_def)
+    }
+
+    /// Returns imports allocated so far during collection/finalization.
+    pub fn imports(&self) -> &'a [ImportData] {
+        self.def_map.imports()
+    }
+
+    pub fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &'a ImportData)> + 'a {
+        self.def_map.imports_with_ids()
+    }
+
+    /// Returns a retained generated source allocated so far during macro collection.
+    pub fn generated_source(
+        &self,
+        generated_source: GeneratedSourceId,
+    ) -> Option<&'a GeneratedSourceData> {
+        self.def_map.generated_source(generated_source)
+    }
+}
+
 /// Frozen namespace map for one analyzed scope.
 ///
 /// There might be several defmaps per target:
@@ -135,7 +146,7 @@ impl DefMapBuilder {
 /// each body function has its own defmap that tracks the body-local items.
 /// While functions are not really modules, they work similarly, and we model
 /// them as if each scope is a module.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Shrink)]
 pub struct DefMap {
     /// Ref to this defmap, which can be used to emit correct refs.
     own_ref: DefMapRef,
@@ -244,16 +255,12 @@ impl DefMap {
     pub fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &ImportData)> {
         self.data.imports.iter_with_ids()
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.data.shrink_to_fit();
-    }
 }
 
-impl rg_memsize::MemorySize for DefMap {
-    fn record_memory_children(&self, recorder: &mut rg_memsize::MemoryRecorder) {
+impl MemorySize for DefMap {
+    fn record_memory_children(&self, recorder: &mut rg_std::MemoryRecorder) {
         recorder.scope("data", |recorder| {
-            rg_memsize::MemorySize::record_memory_children(&self.data, recorder);
+            MemorySize::record_memory_children(&self.data, recorder);
         });
     }
 }

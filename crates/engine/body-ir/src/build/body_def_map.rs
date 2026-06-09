@@ -3,6 +3,9 @@
 //! Body scopes become synthetic modules. Direct declarations are collected first, then imports are
 //! resolved in a fixed-point loop before the final DefMap is frozen.
 
+use rg_ir_model::items::{
+    Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource,
+};
 use rg_ir_model::{
     BodyRef, DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef,
     hir::source::{BodyItemSourceRef, ItemSource},
@@ -13,15 +16,14 @@ use rg_ir_storage::{
     ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, PathResolver, ScopeBinding,
     ScopeBindingOrigin, ScopeEntryRef, ScopeResolutionEnv, TargetResolutionEnv,
 };
-use rg_item_tree::{Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ModuleSource};
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
 
-use crate::BodyData;
+use crate::ResolvedBodyData;
 
 pub(crate) struct BodyDefMapCollector<'body> {
     body_ref: BodyRef,
-    body: &'body BodyData,
+    body: &'body ResolvedBodyData,
     builder: DefMapBuilder,
     /// There might be more modules than scopes, so we need a mapping.
     /// Keys here are scope IDs, values are corresponding modules.
@@ -30,25 +32,25 @@ pub(crate) struct BodyDefMapCollector<'body> {
 }
 
 impl<'body> BodyDefMapCollector<'body> {
-    pub fn new(body_ref: BodyRef, body: &'body BodyData) -> Self {
+    pub fn new(body_ref: BodyRef, body: &'body ResolvedBodyData) -> Self {
         Self {
             body_ref,
             body,
             builder: DefMapBuilder::new_body(body_ref),
-            modules_by_scope: Vec::with_capacity(body.scopes.len()),
-            base_scopes: Vec::with_capacity(body.scopes.len()),
+            modules_by_scope: Vec::with_capacity(body.scopes().len()),
+            base_scopes: Vec::with_capacity(body.scopes().len()),
         }
     }
 
     /// Collects direct body-local scope facts. Imports are finalized in a separate fixed-point step.
     pub fn collect(mut self) -> BodyDefMapBuildState {
         // First, go through all the scopes and allocate synthetic modules.
-        for (_, scope) in self.body.scopes.iter_with_ids() {
+        for (_, scope) in self.body.scopes_with_ids() {
             // Body scopes are synthetic modules. They carry lexical scope data, but they do not
             // correspond to Rust module declarations and lookup must treat them differently.
             let origin = ModuleOrigin::Synthetic {
-                file_id: self.body.source.file_id,
-                span: self.body.source.span,
+                file_id: self.body.source().file_id,
+                span: self.body.source().span,
             };
 
             // Note: we're going through scopes in order, so we process all the parents first.
@@ -72,7 +74,7 @@ impl<'body> BodyDefMapCollector<'body> {
         // Second, go through all the items in each scope and collect them too.
         // Note that we are collecting _items_ from scopes, but here we do not
         // recurse: even if an item has a body, we do not start to analyze it.
-        for (scope_id, scope) in self.body.scopes.iter_with_ids() {
+        for (scope_id, scope) in self.body.scopes_with_ids() {
             let module = *self
                 .modules_by_scope
                 .get(scope_id.0)
@@ -360,7 +362,7 @@ impl BodyDefMapBuildState {
         S: DefMapSource<Error = PackageStoreError> + Copy,
     {
         let resolver = PathResolver::new(env);
-        for import in self.builder.as_incomplete_def_map().imports() {
+        for import in self.builder.partial().imports() {
             let importing_module = self.importing_module(import.module);
             match import.kind {
                 ImportKind::Glob => {
@@ -424,8 +426,7 @@ impl BodyDefMapBuildState {
     where
         S: DefMapSource<Error = PackageStoreError> + Copy,
     {
-        let mut module_imports =
-            vec![Vec::new(); self.builder.as_incomplete_def_map().module_count()];
+        let mut module_imports = vec![Vec::new(); self.builder.partial().module_count()];
         let env = BodyDefMapFinalizationEnv {
             def_maps,
             state: self,
@@ -433,7 +434,7 @@ impl BodyDefMapBuildState {
         };
         let resolver = PathResolver::new(&env);
 
-        for (import_id, import) in self.builder.as_incomplete_def_map().imports_with_ids() {
+        for (import_id, import) in self.builder.partial().imports_with_ids() {
             let importing_module = self.importing_module(import.module);
             let is_unresolved = match import.kind {
                 ImportKind::Glob => resolver
@@ -485,11 +486,7 @@ where
 
     fn module_data(&self, module_ref: ModuleRef) -> Result<Option<&ModuleData>, Self::Error> {
         if self.is_active_body_origin(module_ref.origin) {
-            return Ok(self
-                .state
-                .builder
-                .as_incomplete_def_map()
-                .module(module_ref.module));
+            return Ok(self.state.builder.partial().module(module_ref.module));
         }
 
         Ok(self
@@ -548,7 +545,7 @@ where
             return Ok(self
                 .state
                 .builder
-                .as_incomplete_def_map()
+                .partial()
                 .local_def(local_def_ref.local_def));
         }
 
@@ -566,7 +563,7 @@ where
             return Ok(self
                 .state
                 .builder
-                .as_incomplete_def_map()
+                .partial()
                 .macro_definition(local_def_ref.local_def));
         }
 

@@ -2,18 +2,17 @@
 
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
-    BodyId, BodyRef, ConstRef, DefMapRef, ItemOwner, ModuleRef, StaticRef, TargetRef,
+    BodyId, BodyRef, ConstRef, DefMapRef, ItemOwner, ModuleRef, Path, StaticRef, TargetRef,
     TypePathResolution,
 };
-use rg_ir_storage::{ItemLookupIndex, ItemStore, Path, TargetItemQuery};
+use rg_ir_storage::{BodyLocalItems, ItemLookupIndex, ItemStore, TargetItemQuery};
 use rg_semantic_ir::SemanticIrReadTxn;
+use rg_std::UniqueVec;
 use rg_text::NameInterner;
 
 use crate::{
-    BodyLocalItems, BodyOwner, TargetBodies,
-    resolution::{
-        BodyQuerySource, BodyResolver, BodyTypePathResolver, TypeRefUseSite, push_unique,
-    },
+    BodyOwner, TargetBodies,
+    resolution::{BodyResolutionContext, BodyResolutionPass, TypeRefUseSite},
 };
 
 use super::{
@@ -94,7 +93,7 @@ impl<'target> TargetBodyBuildState<'target> {
             let items = self.collect_body_local_items(body_idx, def_map, semantic_ir)?;
             let fallback_module = self.target_bodies.bodies()[body_idx].fallback_module();
             let nested_tasks =
-                Self::nested_body_tasks(body_ref, fallback_module, &items.item_store);
+                Self::nested_body_tasks(body_ref, fallback_module, items.item_store());
             self.body_local_items.push(Some(items));
 
             if !nested_tasks.is_empty() {
@@ -218,7 +217,7 @@ impl<'target> TargetBodyBuildState<'target> {
                     continue;
                 };
                 let impl_headers = items
-                    .item_store
+                    .item_store()
                     .impls_with_refs()
                     .map(|(impl_ref, impl_data)| {
                         (
@@ -238,9 +237,8 @@ impl<'target> TargetBodyBuildState<'target> {
                     self.target,
                     &self.body_local_items,
                 );
-                let resolver = BodyTypePathResolver::new(BodyQuerySource::new(
-                    &source, &source, body_ref, body,
-                ));
+                let type_paths =
+                    BodyResolutionContext::new(&source, &source, body_ref, body).type_path_query();
                 let mut resolved_headers = Vec::new();
                 for (impl_id, owner, self_ty, trait_ref) in impl_headers {
                     if owner.origin != DefMapRef::Body(body_ref) {
@@ -251,19 +249,19 @@ impl<'target> TargetBodyBuildState<'target> {
                         continue;
                     };
 
-                    let ty = resolver
+                    let ty = type_paths
                         .type_ref(TypeRefUseSite::Scope(scope))
                         .resolve(&self_ty)?;
-                    let mut resolved_self_tys = Vec::new();
+                    let mut resolved_self_tys = UniqueVec::new();
                     for nominal in ty.as_nominals() {
-                        push_unique(&mut resolved_self_tys, nominal.def);
+                        resolved_self_tys.push(nominal.def);
                     }
 
-                    let mut resolved_trait_refs = Vec::new();
+                    let mut resolved_trait_refs = UniqueVec::new();
                     if let Some(trait_ref) = trait_ref
                         && let Some(path) = Path::from_type_ref(&trait_ref)
                         && let TypePathResolution::Traits(traits) =
-                            resolver.resolve_in_scope(scope, &path)?
+                            type_paths.resolve_in_scope(scope, &path)?
                     {
                         resolved_trait_refs = traits;
                     }
@@ -280,10 +278,8 @@ impl<'target> TargetBodyBuildState<'target> {
                 continue;
             };
             for (impl_id, resolved_self_tys, resolved_trait_refs) in resolved_headers {
-                if let Some(impl_data) = items.item_store.impls_mut().get_mut(impl_id) {
-                    impl_data.resolved_self_tys = resolved_self_tys;
-                    impl_data.resolved_trait_refs = resolved_trait_refs;
-                }
+                let _ =
+                    items.set_impl_header_facts(impl_id, resolved_self_tys, resolved_trait_refs);
             }
         }
 
@@ -299,7 +295,7 @@ impl<'target> TargetBodyBuildState<'target> {
         semantic_ir: &SemanticIrReadTxn<'_>,
         semantic_index: &ItemLookupIndex,
     ) -> anyhow::Result<()> {
-        // Make the body resolver aware of body-local items.
+        // Make the body resolution pass aware of body-local items.
         let source =
             BodyBuildQuerySource::new(def_map, semantic_ir, self.target, &self.body_local_items);
         let target = self.target;
@@ -310,7 +306,7 @@ impl<'target> TargetBodyBuildState<'target> {
                 target,
                 body: BodyId(body_idx),
             };
-            BodyResolver::new(&source, &source, semantic_index, body_ref, body).resolve()?;
+            BodyResolutionPass::new(&source, &source, semantic_index, body_ref, body).resolve()?;
         }
 
         Ok(())

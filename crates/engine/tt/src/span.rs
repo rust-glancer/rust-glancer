@@ -15,7 +15,7 @@ use wincode::{
     io::{Reader, Writer},
 };
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct Span {
     #[wincode(with = "crate::wincode_adapters::TextRangeCodec")]
     pub range: TextRange,
@@ -33,7 +33,7 @@ impl fmt::Debug for Span {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct SpanAnchor {
     pub file_id: EditionedFileId,
     pub ast_id: ErasedFileAstId,
@@ -117,7 +117,7 @@ impl fmt::Debug for EditionedFileId {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct ErasedFileAstId(pub u32);
 
 impl fmt::Debug for ErasedFileAstId {
@@ -127,7 +127,7 @@ impl fmt::Debug for ErasedFileAstId {
 }
 
 pub const ROOT_ERASED_FILE_AST_ID: ErasedFileAstId = ErasedFileAstId(0);
-#[derive(Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct SyntaxContext {
     #[wincode(with = "crate::wincode_adapters::EditionCodec")]
     edition: Edition,

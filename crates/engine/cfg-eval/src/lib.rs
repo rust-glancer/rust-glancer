@@ -4,14 +4,15 @@
 //! about the same cfg language. This crate owns that small domain so those phases can share
 //! predicates and options without routing through item-tree or def-map internals.
 
-use rg_memsize::{MemoryRecorder, MemorySize};
+use rg_std::{MemoryRecorder, MemorySize, Shrink};
 use rg_syntax::{
     SyntaxToken,
     ast::{self, HasAttrs},
 };
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Active cfg facts for one package under one Cargo target selection.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default, Shrink)]
 pub struct CfgOptions {
     atoms: Vec<String>,
     key_values: Vec<CfgKeyValue>,
@@ -108,7 +109,7 @@ impl CfgOptions {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Shrink)]
 pub struct CfgKeyValue {
     key: String,
     value: String,
@@ -133,7 +134,7 @@ fn cfg_value_from_rustc(value: &str) -> String {
 }
 
 /// Item-level cfg gates that later target-specific phases evaluate.
-#[derive(Debug, Clone, PartialEq, Eq, Default, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, Shrink)]
 pub struct CfgExpr {
     pub gates: Vec<CfgGate>,
 }
@@ -179,17 +180,10 @@ impl CfgExpr {
 
         expr
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.gates.shrink_to_fit();
-        for gate in &mut self.gates {
-            gate.shrink_to_fit();
-        }
-    }
 }
 
 /// One top-level gate that can make an item unavailable.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Shrink)]
 pub enum CfgGate {
     /// A direct `#[cfg(...)]` item attribute.
     Direct(CfgPredicate),
@@ -200,20 +194,8 @@ pub enum CfgGate {
     },
 }
 
-impl CfgGate {
-    fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Direct(predicate) => predicate.shrink_to_fit(),
-            Self::CfgAttr { predicate, cfg } => {
-                predicate.shrink_to_fit();
-                cfg.shrink_to_fit();
-            }
-        }
-    }
-}
-
 /// Lowered cfg predicate syntax used by target-specific evaluators.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Shrink)]
 pub enum CfgPredicate {
     True,
     False,
@@ -266,23 +248,6 @@ impl CfgPredicate {
             Some("any") => Self::Any(predicates),
             Some("not") => Self::Not(predicates),
             _ => Self::Invalid,
-        }
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Atom(atom) => atom.shrink_to_fit(),
-            Self::KeyValue { key, value } => {
-                key.shrink_to_fit();
-                value.shrink_to_fit();
-            }
-            Self::All(predicates) | Self::Any(predicates) | Self::Not(predicates) => {
-                predicates.shrink_to_fit();
-                for predicate in predicates {
-                    predicate.shrink_to_fit();
-                }
-            }
-            Self::True | Self::False | Self::Invalid => {}
         }
     }
 }
@@ -371,7 +336,7 @@ impl<'a> CfgEvaluator<'a> {
     }
 }
 
-rg_memsize::impl_memory_size_children! {
+rg_std::memsize::impl_memory_size_children! {
     CfgOptions => atoms, key_values;
     CfgKeyValue => key, value;
     CfgExpr => gates;

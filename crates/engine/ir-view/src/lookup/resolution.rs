@@ -4,13 +4,14 @@
 //! rules that turn paths, declaration refs, and body resolutions into canonical declaration
 //! identities.
 
-use rg_body_ir::{BodyResolution, BodyScopeQuery};
+use rg_body_ir::BodyResolutionContext;
+use rg_ir_model::Path;
 use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
-    BodyBindingRef, BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
+    BodyRef, DefId, LocalDefRef, ModuleRef, ScopeId, TypePathResolution,
     identity::{DeclarationRef, ExprRef},
 };
-use rg_ir_storage::{DefMapQuery, ItemStoreQuery, Path, TypePathContext};
+use rg_ir_storage::{DefMapQuery, ItemStoreQuery, TypePathContext};
 use rg_ty::ItemPathQuery;
 
 use crate::IndexedViewDb;
@@ -59,10 +60,7 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let Some(body) = self.0.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
-        let Some(expr_data) = body.expr(expr.expr_id()) else {
-            return Ok(Vec::new());
-        };
-        self.declarations_for_body_resolution(Some(body_ref), &expr_data.resolution)
+        self.canonical_declarations(body.expr_declarations(body_ref, expr.expr_id()))
     }
 
     fn fallback_name_def(&self, local_def: LocalDefRef) -> DeclarationRef {
@@ -116,8 +114,9 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let Some(body) = self.0.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
-        let resolution = BodyScopeQuery::new(self.0, self.0, body_ref, body)
-            .resolve_type_path_in_scope(scope, path)?;
+        let resolution = BodyResolutionContext::new(self.0, self.0, body_ref, body)
+            .type_path_query()
+            .resolve_in_scope(scope, path)?;
 
         let declarations = self.declarations_for_body_type_path_resolution(resolution);
         if !declarations.is_empty() {
@@ -136,9 +135,10 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let Some(body) = self.0.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
-        let (resolution, _) = BodyScopeQuery::new(self.0, self.0, body_ref, body)
-            .resolve_value_path_in_scope(scope, path)?;
-        self.declarations_for_body_resolution(Some(body_ref), &resolution)
+        let declarations = BodyResolutionContext::new(self.0, self.0, body_ref, body)
+            .value_paths()
+            .resolve_nonlocal_path_declarations(scope, path)?;
+        self.canonical_declarations(declarations)
     }
 
     pub fn declarations_for_body_record_field(
@@ -151,8 +151,9 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let Some(body) = self.0.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
-        let resolution = BodyScopeQuery::new(self.0, self.0, body_ref, body)
-            .resolve_type_path_in_scope(scope, owner)?;
+        let resolution = BodyResolutionContext::new(self.0, self.0, body_ref, body)
+            .type_path_query()
+            .resolve_in_scope(scope, owner)?;
 
         let (TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types)) =
             resolution
@@ -175,29 +176,14 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         Ok(declarations)
     }
 
-    pub(crate) fn declarations_for_body_resolution(
+    fn canonical_declarations(
         &self,
-        body_ref: Option<BodyRef>,
-        resolution: &BodyResolution,
+        declarations: Vec<DeclarationRef>,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        match resolution {
-            BodyResolution::Binding(binding) => Ok(body_ref
-                .map(|body| BodyBindingRef {
-                    body,
-                    binding: *binding,
-                })
-                .map(DeclarationRef::body_binding)
-                .into_iter()
-                .collect()),
-            BodyResolution::Declarations(resolved) => {
-                let mut declarations = Vec::new();
-                for declaration in resolved {
-                    declarations.push(self.canonical_declaration(*declaration)?);
-                }
-                Ok(declarations)
-            }
-            BodyResolution::Unknown => Ok(Vec::new()),
-        }
+        declarations
+            .into_iter()
+            .map(|declaration| self.canonical_declaration(declaration))
+            .collect()
     }
 
     fn declarations_for_body_type_path_resolution(

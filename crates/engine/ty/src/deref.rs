@@ -3,11 +3,11 @@
 //! This module deliberately stays narrow: it recognizes `core::ops::Deref` impls for a known
 //! nominal receiver and resolves the impl's associated `Target` type with the receiver substitution.
 
-use rg_ir_model::{TraitImplRef, hir::items::ImplData};
+use rg_ir_model::{Path, PathSegment, TraitImplRef, hir::items::ImplData};
 use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemStoreSource, Path, PathSegment, TargetItemQuery,
-    TypePathContext,
+    DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext,
 };
+use rg_std::UniqueVec;
 use rg_text::Name;
 
 use crate::{
@@ -40,13 +40,13 @@ where
     }
 
     /// Returns all one-step `Deref::Target` types for a known type.
-    pub(crate) fn targets_for_ty(&self, ty: &Ty) -> Result<Vec<Ty>, D::Error> {
+    pub(crate) fn targets_for_ty(&self, ty: &Ty) -> Result<UniqueVec<Ty>, D::Error> {
         // TODO: Add `DerefMut` once receiver contexts carry enough mutability information to
         // distinguish mutable adjustment from shared `Deref`.
-        let mut targets = Vec::new();
+        let mut targets = UniqueVec::new();
         for receiver_ty in ty.as_nominals() {
             for target in self.targets_for_nominal(receiver_ty)? {
-                push_unique(&mut targets, target);
+                targets.push(target);
             }
         }
         Ok(targets)
@@ -56,12 +56,15 @@ where
     ///
     /// For `impl<T> core::ops::Deref for Wrapper<T> { type Target = T; }` and receiver
     /// `Wrapper<User>`, this resolves the target as `User`.
-    fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<Vec<Ty>, D::Error> {
+    fn targets_for_nominal(&self, receiver_ty: &NominalTy) -> Result<UniqueVec<Ty>, D::Error> {
         let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
         let item_query = self.item_paths.items();
-        let mut targets = Vec::new();
+        let mut targets = UniqueVec::new();
         let trait_impls = match self.lookup_index {
-            Some(index) => index.trait_impls_for_type(receiver_ty.def).to_vec(),
+            Some(index) => index
+                .trait_impls_for_type(receiver_ty.def)
+                .cloned()
+                .unwrap_or_default(),
             None => self.target_items.trait_impls_for_type(receiver_ty.def)?,
         };
 
@@ -83,7 +86,7 @@ where
             let Some(target) = self.target_from_impl(trait_impl, impl_data, &subst)? else {
                 continue;
             };
-            push_unique(&mut targets, target);
+            targets.push(target);
         }
 
         Ok(targets)
@@ -121,11 +124,5 @@ where
     ) -> Result<Option<Ty>, D::Error> {
         AssociatedTypeProjector::new(&self.item_paths, &self.target_items)
             .associated_type_from_impl(trait_impl, impl_data, "Target", subst)
-    }
-}
-
-fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
-    if !items.contains(&item) {
-        items.push(item);
     }
 }

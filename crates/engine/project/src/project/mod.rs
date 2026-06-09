@@ -2,6 +2,7 @@ mod build;
 mod dirty;
 pub(crate) mod loading;
 pub(crate) mod offloading;
+mod package_set;
 mod snapshot;
 pub(crate) mod state;
 mod stats;
@@ -19,6 +20,7 @@ use rg_workspace::WorkspaceMetadata;
 
 use self::state::ProjectState;
 use crate::residency::PackageResidencyPlan;
+use rg_std::MemorySize;
 
 pub use self::{
     build::{ProjectBuild, ProjectBuilder, StartupCacheLoad},
@@ -35,7 +37,7 @@ pub use self::{
 /// The main project intentionally follows a rebuild-on-save model. Dirty editor buffers are handled
 /// as temporary overlays so saved-state fingerprints, package cache artifacts, and residency
 /// decisions remain tied to committed source files.
-#[derive(Debug, Clone, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, MemorySize)]
 pub struct Project {
     pub(crate) state: ProjectState,
 }
@@ -114,7 +116,7 @@ impl Project {
 /// The project treats the filesystem as the source of truth. This keeps save handling aligned
 /// with the project's rebuild-on-save model and avoids retaining editor buffer text in analysis
 /// caches.
-#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct SavedFileChange {
     pub path: PathBuf,
 }
@@ -128,7 +130,7 @@ impl SavedFileChange {
 }
 
 /// Summary of what one saved-file change touched.
-#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct AnalysisChangeSummary {
     pub changed_files: Vec<ChangedFile>,
     pub affected_packages: Vec<PackageSlot>,
@@ -136,7 +138,7 @@ pub struct AnalysisChangeSummary {
 }
 
 /// One known package-local source file that was reparsed in place.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
 pub struct ChangedFile {
     pub package: PackageSlot,
     pub file: FileId,
@@ -147,7 +149,7 @@ pub struct ChangedFile {
 /// The same file can be reachable from more than one target, for example when a package library
 /// and binary both declare `mod shared;`. Unreachable parsed-cache files are intentionally omitted
 /// by path lookups, because LSP queries need a current target context to answer semantic questions.
-#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct FileContext {
     pub package: PackageSlot,
     pub file: FileId,

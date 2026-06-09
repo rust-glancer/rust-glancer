@@ -20,10 +20,7 @@ use rg_parse::{FileId, ParseDb, TargetId};
 use rg_semantic_ir::SemanticIrReadTxn;
 use rg_text::{NameInterner, PackageNameInterners};
 
-use crate::{
-    BodyIrBuildPolicy, BodyIrFile,
-    ir::{PackageBodies, TargetBodies},
-};
+use crate::{BodyIrBuildPolicy, BodyIrFile, PackageBodies, TargetBodies};
 
 use self::target::TargetLowering;
 pub(super) use self::task::{BodyLoweringTask, BodyTaskLowering};
@@ -105,55 +102,6 @@ fn build_package_outputs(
         parse.package_count(),
     );
 
-    let selected_count = selected.iter().filter(|selected| **selected).count();
-    if selected_count <= 1 {
-        build_package_outputs_serial(parse, semantic_ir, scope, interners, selected, packages)
-    } else {
-        build_package_outputs_parallel(parse, semantic_ir, scope, interners, selected, packages)
-    }
-}
-
-fn build_package_outputs_serial(
-    parse: &ParseDb,
-    semantic_ir: &SemanticIrReadTxn<'_>,
-    scope: BodyIrLoweringScope<'_>,
-    interners: &mut PackageNameInterners,
-    selected: &[bool],
-    packages: &mut [Option<PackageBodies>],
-) -> anyhow::Result<()> {
-    for (package_idx, (((parse_package, interner), selected), output)) in parse
-        .packages()
-        .iter()
-        .zip(interners.packages_mut().iter_mut())
-        .zip(selected)
-        .zip(packages.iter_mut())
-        .enumerate()
-    {
-        if !*selected {
-            continue;
-        }
-
-        let package = PackageSlot(package_idx);
-        *output = Some(build_package_with_interner(
-            parse_package,
-            semantic_ir,
-            scope,
-            package,
-            interner,
-        )?);
-    }
-
-    Ok(())
-}
-
-fn build_package_outputs_parallel(
-    parse: &ParseDb,
-    semantic_ir: &SemanticIrReadTxn<'_>,
-    scope: BodyIrLoweringScope<'_>,
-    interners: &mut PackageNameInterners,
-    selected: &[bool],
-    packages: &mut [Option<PackageBodies>],
-) -> anyhow::Result<()> {
     let thread_pool = local_thread_pool("rg-body-lower")?;
 
     // Body lowering is package-local: each worker receives one parse package, one name interner,

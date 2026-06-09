@@ -13,7 +13,7 @@ use rg_item_tree::{
 use rg_parse::{FileId, Span};
 
 use crate::{
-    BodyData, BodyPath, ExprKind, StmtKind,
+    BodyPath, ExprKind, ResolvedBodyData, StmtKind,
     walk::{
         PatWalkSite, walk_body_path_type_refs as walk_embedded_body_path_type_refs,
         walk_generic_args_type_refs, walk_pat, walk_type_ref_paths,
@@ -57,11 +57,11 @@ pub(super) struct TypePathSite<'body> {
 
 /// Structural views over lowered body syntax used by cursor scans.
 pub(super) struct BodyScanSites<'body> {
-    body: &'body BodyData,
+    body: &'body ResolvedBodyData,
 }
 
 impl<'body> BodyScanSites<'body> {
-    pub(super) fn new(body: &'body BodyData) -> Self {
+    pub(super) fn new(body: &'body ResolvedBodyData) -> Self {
         Self { body }
     }
 
@@ -117,7 +117,7 @@ impl<'body> BodyScanSites<'body> {
     }
 
     fn for_each_pattern_site(&self, mut visit: impl FnMut(PatternSite)) {
-        for statement in self.body.statements.iter() {
+        for statement in self.body.statements().iter() {
             let StmtKind::Let {
                 scope,
                 pat: Some(pat),
@@ -129,7 +129,7 @@ impl<'body> BodyScanSites<'body> {
             self.visit_pattern_site(&mut visit, *scope, *pat);
         }
 
-        for expr in self.body.exprs.iter() {
+        for expr in self.body.exprs().iter() {
             match &expr.kind {
                 ExprKind::Match { arms, .. } => {
                     for arm in arms {
@@ -213,7 +213,7 @@ where
 
     fn walk_let_annotations(&mut self) {
         let body = self.sites.body;
-        for statement in body.statements.iter() {
+        for statement in body.statements().iter() {
             let StmtKind::Let {
                 scope,
                 annotation: Some(annotation),
@@ -228,7 +228,7 @@ where
     }
 
     fn walk_source_item_declarations(&mut self) {
-        for (scope_idx, scope_data) in self.sites.body.scopes.iter().enumerate() {
+        for (scope_idx, scope_data) in self.sites.body.scopes().iter().enumerate() {
             let scope = ScopeId(scope_idx);
             for item in &scope_data.source_items {
                 let Some(item) = self.sites.body.source_item(*item) else {
@@ -242,7 +242,7 @@ where
 
     fn walk_expression_type_refs(&mut self) {
         let body = self.sites.body;
-        for expr in body.exprs.iter() {
+        for expr in body.exprs().iter() {
             match &expr.kind {
                 ExprKind::Closure {
                     scope,

@@ -7,13 +7,14 @@ use anyhow::Context as _;
 use rg_body_ir::BodyIrFile;
 use rg_def_map::PackageSlot;
 use rg_item_tree::ItemTreeDb;
+use rg_std::Shrink;
 
 use crate::{
     ProjectMemoryPurgePoint,
     profile::BuildProfiler,
     project::{
         StartupCacheLoad, build, loading::PackageReadLoaders, offloading::ResidencyApplication,
-        state::ProjectState, subset,
+        package_set::PhasePackageSet, state::ProjectState,
     },
 };
 
@@ -69,20 +70,15 @@ fn try_rebuild_packages(
 ) -> anyhow::Result<()> {
     // Rebuilding one package can resolve names through its dependencies, but unrelated packages
     // should stay offloaded so save handling does not recreate full-project spikes.
-    let rebuild_subset = subset::rebuild_packages_with_visible_dependencies(
-        &state.workspace,
-        plan.semantic_packages,
-    );
+    let rebuild_subset = plan
+        .source_packages
+        .visible_dependency_subset(&state.workspace);
     let loaders = PackageReadLoaders::new(state);
     let old_def_map_txn = state
         .def_map
         .read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
 
-    let package_indices = plan
-        .semantic_packages
-        .iter()
-        .map(|package| package.0)
-        .collect::<Vec<_>>();
+    let package_indices = plan.source_packages.package_indices();
     let item_tree =
         ItemTreeDb::build_packages(&mut state.parse, &package_indices, &mut state.names)
             .context("while attempting to rebuild affected item-tree packages")?;
@@ -102,7 +98,7 @@ fn try_rebuild_packages(
             &state.workspace,
             &state.parse,
             &item_tree,
-            plan.semantic_packages,
+            plan.source_packages.as_slice(),
             &mut state.names,
         )
         .build()
@@ -113,26 +109,25 @@ fn try_rebuild_packages(
         .package_rebuilder(
             &item_tree,
             &def_map,
-            plan.semantic_packages,
+            plan.source_packages.as_slice(),
             loaders.def_map.clone(),
             loaders.semantic_ir.clone(),
             &rebuild_subset,
         )
         .build()
         .context("while attempting to rebuild affected semantic IR packages")?;
-    let body_packages = plan.body_packages();
     let mut body_rebuilder = state.body_ir.package_rebuilder(
         &state.parse,
         &def_map,
         &semantic_ir,
-        &body_packages,
+        plan.body_packages.as_slice(),
         &mut state.names,
         loaders.def_map,
         loaders.semantic_ir,
         &rebuild_subset,
     );
     body_rebuilder = match plan.body_scope {
-        BodyRebuildScope::SavedPolicy => body_rebuilder.policy(state.body_ir_policy),
+        BodyRebuildScope::Policy => body_rebuilder.policy(state.body_ir_policy),
         BodyRebuildScope::DirtyFiles(files) => body_rebuilder.selected_files(files.to_vec()),
     };
     let body_ir = body_rebuilder
@@ -146,9 +141,9 @@ fn try_rebuild_packages(
     state.def_map = def_map;
     state.semantic_ir = semantic_ir;
     state.body_ir = body_ir;
-    state.names.shrink_to_fit();
+    Shrink::shrink_to_fit(&mut state.names);
     if matches!(plan.residency, RebuildResidency::RestoreSavedState) {
-        ResidencyApplication::restore(state, plan.semantic_packages)
+        ResidencyApplication::restore(state, plan.source_packages.as_slice())
             .apply()
             .context("while attempting to apply package cache residency after package rebuild")?;
     }
@@ -157,7 +152,8 @@ fn try_rebuild_packages(
 }
 
 struct PackageRebuildPlan<'a> {
-    semantic_packages: &'a [PackageSlot],
+    source_packages: PhasePackageSet,
+    body_packages: PhasePackageSet,
     body_scope: BodyRebuildScope<'a>,
     residency: RebuildResidency,
 }
@@ -165,36 +161,26 @@ struct PackageRebuildPlan<'a> {
 impl<'a> PackageRebuildPlan<'a> {
     fn saved(packages: &'a [PackageSlot]) -> Self {
         Self {
-            semantic_packages: packages,
-            body_scope: BodyRebuildScope::SavedPolicy,
+            source_packages: PhasePackageSet::from_slice(packages),
+            body_packages: PhasePackageSet::from_slice(packages),
+            body_scope: BodyRebuildScope::Policy,
             residency: RebuildResidency::RestoreSavedState,
         }
     }
 
-    fn dirty_overlay(semantic_packages: &'a [PackageSlot], body_files: &'a [BodyIrFile]) -> Self {
+    fn dirty_overlay(source_packages: &'a [PackageSlot], body_files: &'a [BodyIrFile]) -> Self {
         Self {
-            semantic_packages,
+            source_packages: PhasePackageSet::from_slice(source_packages),
+            body_packages: PhasePackageSet::from_body_files(body_files),
             body_scope: BodyRebuildScope::DirtyFiles(body_files),
             residency: RebuildResidency::KeepResident,
-        }
-    }
-
-    fn body_packages(&self) -> Vec<PackageSlot> {
-        match self.body_scope {
-            BodyRebuildScope::SavedPolicy => self.semantic_packages.to_vec(),
-            BodyRebuildScope::DirtyFiles(files) => {
-                let mut packages = files.iter().map(|file| file.package).collect::<Vec<_>>();
-                packages.sort_by_key(|package| package.0);
-                packages.dedup();
-                packages
-            }
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BodyRebuildScope<'a> {
-    SavedPolicy,
+    Policy,
     DirtyFiles(&'a [BodyIrFile]),
 }
 

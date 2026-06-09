@@ -9,6 +9,7 @@ use std::{
     ops::{Index, IndexMut},
     slice,
 };
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Stable typed index into an arena.
 ///
@@ -68,7 +69,7 @@ macro_rules! arena_id {
 }
 
 /// Mutable dense arena used while lowering/building a phase.
-#[derive(Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
 pub struct Arena<Id, T> {
     items: Vec<T>,
     _marker: PhantomData<fn(Id) -> Id>,
@@ -310,9 +311,8 @@ impl<'a, Id, T> IntoIterator for &'a FrozenArena<Id, T> {
     }
 }
 
-#[cfg(feature = "memsize")]
 mod memsize {
-    use rg_memsize::{MemoryRecorder, MemorySize};
+    use rg_std::{MemoryRecorder, MemorySize};
 
     use crate::{Arena, FrozenArena};
 
@@ -331,6 +331,30 @@ mod memsize {
     {
         fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
             self.items.record_memory_children(recorder);
+        }
+    }
+}
+
+mod shrink {
+    use rg_std::Shrink;
+
+    use crate::{Arena, FrozenArena};
+
+    impl<Id, T> Shrink for Arena<Id, T>
+    where
+        T: Shrink,
+    {
+        fn shrink_to_fit(&mut self) {
+            Shrink::shrink_to_fit(&mut self.items);
+        }
+    }
+
+    impl<Id, T> Shrink for FrozenArena<Id, T>
+    where
+        T: Shrink,
+    {
+        fn shrink_to_fit(&mut self) {
+            Shrink::shrink_to_fit(&mut self.items);
         }
     }
 }
@@ -416,12 +440,11 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "memsize")]
     #[test]
     fn records_arena_memory_without_losing_container_shape() {
         use std::mem;
 
-        use rg_memsize::{MemoryRecordKind, MemoryRecorder, MemorySize};
+        use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize};
 
         let mut arena = Arena::<ExprId, String>::with_capacity(2);
         arena.alloc("user".to_string());
@@ -454,12 +477,11 @@ mod tests {
         assert!(!paths.iter().any(|path| path.contains("items.items")));
     }
 
-    #[cfg(feature = "memsize")]
     #[test]
     fn records_frozen_arena_without_spare_capacity() {
         use std::mem;
 
-        use rg_memsize::{MemoryRecordKind, MemoryRecorder, MemorySize};
+        use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize};
 
         let mut arena = Arena::<ExprId, String>::new();
         arena.alloc("user".to_string());
@@ -487,5 +509,18 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(paths.iter().any(|path| path == "frozen.items"));
         assert!(!paths.iter().any(|path| path.contains("items.items")));
+    }
+
+    #[test]
+    fn shrinks_arena_storage_and_children() {
+        use rg_std::Shrink;
+
+        let mut arena = Arena::<ExprId, String>::with_capacity(8);
+        let id = arena.alloc(String::with_capacity(8));
+
+        Shrink::shrink_to_fit(&mut arena);
+
+        assert_eq!(arena.capacity(), arena.len());
+        assert_eq!(arena[id].capacity(), arena[id].len());
     }
 }

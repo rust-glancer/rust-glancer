@@ -4,8 +4,9 @@
 //! Analysis can therefore ask a read transaction for cursor candidates without reaching back into
 //! item-tree storage.
 
+use rg_ir_model::Path;
 use rg_ir_model::{DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef};
-use rg_ir_storage::{DefMap, ModuleOrigin, Path};
+use rg_ir_storage::{DefMap, ModuleOrigin};
 use rg_parse::{FileId, Span};
 
 use rg_package_store::PackageStoreError;

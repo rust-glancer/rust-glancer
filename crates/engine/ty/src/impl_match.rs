@@ -9,12 +9,13 @@ use rg_ir_model::items::{
     GenericArg as ItemGenericArg, GenericParams, Mutability, TypePath, TypeRef,
 };
 use rg_ir_model::{
-    FunctionRef, ImplRef, ItemOwner, TraitApplicability, TraitImplRef, TypePathResolution,
+    FunctionRef, ImplRef, ItemOwner, Path, TraitApplicability, TraitImplRef, TypePathResolution,
     hir::items::ImplData,
 };
 use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemStoreSource, Path, TargetItemQuery, TypePathContext,
+    DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext,
 };
+use rg_std::UniqueVec;
 use rg_text::Name;
 
 /// Result of matching one trait impl header against a receiver type.
@@ -290,7 +291,10 @@ where
         method_name: Option<&str>,
     ) -> Result<Vec<(FunctionRef, TraitApplicability)>, D::Error> {
         let trait_impls = match index {
-            Some(index) => index.trait_impls_for_type(receiver_ty.def).to_vec(),
+            Some(index) => index
+                .trait_impls_for_type(receiver_ty.def)
+                .cloned()
+                .unwrap_or_default(),
             None => self.target_items.trait_impls_for_type(receiver_ty.def)?,
         };
         self.trait_function_candidates_from_impls(index, trait_impls, receiver_ty, method_name)
@@ -303,7 +307,7 @@ where
     pub fn trait_function_candidates_from_impls(
         &self,
         index: Option<&ItemLookupIndex>,
-        trait_impls: Vec<TraitImplRef>,
+        trait_impls: UniqueVec<TraitImplRef>,
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
     ) -> Result<Vec<(FunctionRef, TraitApplicability)>, D::Error> {
@@ -315,13 +319,13 @@ where
             // candidate regardless of how well the impl header matches the receiver.
             let mut indexed_trait_functions = None;
             if let (Some(index), Some(method_name)) = (index, method_name)
-                && let Some(functions) =
+                && let Some(indexed_functions) =
                     index.trait_functions_by_name(trait_impl.trait_ref, method_name)
             {
-                if functions.is_empty() {
+                if indexed_functions.is_empty() {
                     continue;
                 }
-                indexed_trait_functions = Some(functions.to_vec());
+                indexed_trait_functions = indexed_functions.functions().cloned();
             }
 
             let Some(trait_impl_match) = self.trait_impl_match(trait_impl, receiver_ty)? else {
@@ -335,7 +339,7 @@ where
                 let trait_functions = if let Some(index) = index
                     && let Some(functions) = index.trait_functions(trait_impl.trait_ref)
                 {
-                    functions.to_vec()
+                    functions.clone()
                 } else {
                     item_query
                         .trait_data(trait_impl.trait_ref)?
@@ -346,7 +350,7 @@ where
                 // The direct item-store fallback cannot skip the impl check up front, but it can
                 // still avoid returning unrelated trait functions to the later method-call filter.
                 if let Some(method_name) = method_name {
-                    let mut retained = Vec::new();
+                    let mut retained = UniqueVec::new();
                     for function in trait_functions {
                         let Some(function_data) = item_query.function_data(function)? else {
                             continue;
@@ -1092,7 +1096,7 @@ where
             return;
         }
 
-        push_unique(functions, (function, applicability));
+        functions.push((function, applicability));
     }
 
     /// Returns whether the impl header has no constraints that require solving.
@@ -1159,12 +1163,6 @@ where
             Ty::Opaque { .. } => true,
             Ty::Unit | Ty::Never | Ty::Primitive(_) | Ty::Nominal(_) | Ty::SelfTy(_) => false,
         }
-    }
-}
-
-fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
-    if !items.contains(&item) {
-        items.push(item);
     }
 }
 

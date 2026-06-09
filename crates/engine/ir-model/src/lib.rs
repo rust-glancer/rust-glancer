@@ -7,8 +7,17 @@
 pub mod hir;
 mod ids;
 pub mod items;
+pub mod path;
 mod resolution;
 
+pub use self::hir::body::{
+    BindingData, BindingKind, BodyData, BodyOwner, BodyPath, BodyPathSegment, BodyPathSegmentArgs,
+    BodyPathSegmentKind, BodySelfParamKind, BodySource, BodySourceItems, ClosureCapture,
+    ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprKind,
+    ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LabelData, LiteralKind, MatchArmData,
+    PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordExprField,
+    RecordExprSpread, RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
+};
 pub use self::ids::{
     body::{BindingId, BodyBindingRef, BodyId, BodyRef, ExprId, PatId, ScopeId, StmtId},
     def_map::{
@@ -23,6 +32,7 @@ pub use self::ids::{
         TypeDefId, TypeDefRef, UnionId,
     },
 };
+pub use self::path::{Path, PathSegment, last_segment_name};
 pub use self::resolution::TypePathResolution;
 
 // We have a lot of arenas, and each has to have a unique ID.
@@ -43,11 +53,13 @@ macro_rules! declare_id {
                 PartialEq,
                 Eq,
                 Hash,
-                wincode::SchemaRead,
-                wincode::SchemaWrite,
-                rg_memsize::MemorySize,
+                SchemaRead,
+                SchemaWrite,
+                MemorySize,
+                Shrink,
             )]
             #[memsize(leaf)]
+            #[shrink(leaf)]
             $vis struct $id(pub usize);
 
             impl rg_arena::ArenaId for $id {

@@ -22,7 +22,7 @@ jemalloc-stats = [
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
-rg_memsize.workspace = true
+rg_std.workspace = true
 rg_project.workspace = true
 rg_workspace.workspace = true
 rg_lsp_engine.workspace = true

@@ -2,12 +2,10 @@
 
 use anyhow::Result;
 use rg_ir_model::TargetRef;
-use rg_ir_view::IndexedViewDb;
+use rg_ir_view::{IndexedViewDb, symbol::SymbolView};
 use rg_parse::FileId;
 
 use crate::model::DocumentSymbol;
-
-use super::indexed::IndexedSymbols;
 
 pub(crate) struct DocumentSymbolCollector<'a, 'db>(&'a IndexedViewDb<'db>);
 
@@ -21,8 +19,8 @@ impl<'a, 'db> DocumentSymbolCollector<'a, 'db> {
         target: TargetRef,
         file_id: FileId,
     ) -> Result<Vec<DocumentSymbol>> {
-        Ok(IndexedSymbols::new(self.0)
-            .document_symbols(target, file_id)?
+        Ok(SymbolView::new(self.0)
+            .source_outline(target, file_id)?
             .into_iter()
             .map(DocumentSymbol::from)
             .collect())

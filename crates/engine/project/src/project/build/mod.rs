@@ -2,6 +2,7 @@
 
 mod cache_probe;
 mod phases;
+mod stage_memory;
 
 use anyhow::Context as _;
 use rg_def_map::DefMapFinalizationStats;

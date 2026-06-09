@@ -2,7 +2,6 @@ mod import;
 mod local;
 mod module;
 mod package;
-mod path;
 mod query;
 mod scope;
 mod store;
@@ -15,7 +14,6 @@ pub use self::{
     },
     module::{ModuleData, ModuleOrigin},
     package::{PackageDefMaps, TargetData},
-    path::{Path, PathSegment},
     query::{
         DefMapQuery, DefMapSource, NameResolutionFilter, PathResolver, ResolvePathResult,
         ScopeResolutionEnv, TargetResolutionEnv,
@@ -24,6 +22,6 @@ pub use self::{
         ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin, ScopeEntry,
         ScopeEntryRef,
     },
-    store::{DefMap, DefMapBuilder},
+    store::{DefMap, DefMapBuilder, PartialDefMap},
     visible::{ScopeNamespace, VisibleScopeDef, VisibleScopeDefs, VisibleScopeOrigin},
 };

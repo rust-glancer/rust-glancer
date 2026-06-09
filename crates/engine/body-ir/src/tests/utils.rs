@@ -2,18 +2,19 @@ use std::fmt::Write as _;
 
 use expect_test::Expect;
 
+use crate::ir::resolved::BodyResolution;
 use crate::{
-    BindingData, BodyData, BodyIrBuildPolicy, BodyIrReadTxn, BodyOwner, BodyResolution, BodySource,
-    ClosureCapture, ClosureKind, ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData,
-    PatBindingMode, PatData, PatKind, StmtKind, TargetBodiesStatus, testonly::BodyIrFixture,
+    BindingData, BodyIrBuildPolicy, BodyIrReadTxn, BodyOwner, BodySource, ClosureCapture,
+    ClosureKind, ClosureParamData, ExprBlockKind, ExprData, ExprKind, LabelData, PatBindingMode,
+    PatData, PatKind, ResolvedBodyData, StmtKind, TargetBodiesStatus, testonly::BodyIrFixture,
 };
+use rg_ir_model::items::FieldItem;
 use rg_ir_model::{
     BindingId, BodyId, BodyRef, DefId, DefMapRef, EnumVariantRef, ExprId, FieldRef, FunctionRef,
     ImplRef, ItemId, ItemOwner, LocalDefRef, ModuleId, ModuleRef, PatId, SemanticItemRef, StmtId,
     TargetRef, TraitRef, TypeDefId, TypeDefRef, identity::DeclarationRef,
 };
 use rg_ir_storage::ModuleOrigin;
-use rg_item_tree::FieldItem;
 use rg_package_store::PackageLoader;
 use rg_parse::{Package, ParseDb, Target};
 use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
@@ -175,18 +176,18 @@ impl TargetBodyIrSnapshot<'_> {
         dump
     }
 
-    fn render_body(&self, body: &BodyData, body_id: BodyId, dump: &mut String) {
+    fn render_body(&self, body: &ResolvedBodyData, body_id: BodyId, dump: &mut String) {
         writeln!(
             dump,
             "body b{} {} @ {}",
             body_id.0,
             self.render_body_owner(body.owner()),
-            self.render_source(body.source),
+            self.render_source(body.source()),
         )
         .expect("string writes should not fail");
 
         writeln!(dump, "scopes").expect("string writes should not fail");
-        for (idx, scope) in body.scopes.iter().enumerate() {
+        for (idx, scope) in body.scopes().iter().enumerate() {
             let parent = scope
                 .parent
                 .map(|scope| format!("s{}", scope.0))
@@ -226,36 +227,41 @@ impl TargetBodyIrSnapshot<'_> {
         }
 
         writeln!(dump, "bindings").expect("string writes should not fail");
-        for (idx, binding) in body.bindings.iter().enumerate() {
+        for (idx, binding) in body.bindings().iter().enumerate() {
             self.render_binding(body, BindingId(idx), binding, dump);
         }
 
         writeln!(dump, "body").expect("string writes should not fail");
-        self.render_expr(body, body.root_expr, 0, dump);
+        self.render_expr(body, body.root_expr(), 0, dump);
     }
 
-    fn render_body_patterns(&self, body: &BodyData, body_id: BodyId, dump: &mut String) {
+    fn render_body_patterns(&self, body: &ResolvedBodyData, body_id: BodyId, dump: &mut String) {
         writeln!(
             dump,
             "body b{} {} @ {}",
             body_id.0,
             self.render_body_owner(body.owner()),
-            self.render_source(body.source),
+            self.render_source(body.source()),
         )
         .expect("string writes should not fail");
 
         writeln!(dump, "patterns").expect("string writes should not fail");
-        if body.pats.is_empty() {
+        if body.pats().is_empty() {
             writeln!(dump, "<none>").expect("string writes should not fail");
             return;
         }
 
-        for (idx, pat) in body.pats.iter().enumerate() {
+        for (idx, pat) in body.pats().iter().enumerate() {
             self.render_pat(PatId(idx), pat, dump);
         }
     }
 
-    fn render_source_item(&self, id: usize, item: &rg_item_tree::ItemNode, dump: &mut String) {
+    fn render_source_item(
+        &self,
+        id: usize,
+        item: &rg_ir_model::items::ItemNode,
+        dump: &mut String,
+    ) {
         let name = item.name.as_deref().unwrap_or("<unnamed>");
         writeln!(
             dump,
@@ -273,7 +279,7 @@ impl TargetBodyIrSnapshot<'_> {
 
     fn render_binding(
         &self,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         id: BindingId,
         binding: &BindingData,
         dump: &mut String,
@@ -308,7 +314,7 @@ impl TargetBodyIrSnapshot<'_> {
             name,
             self.render_source_text(binding.source),
             annotation,
-            self.render_ty(&binding.ty),
+            self.render_ty(body.binding_ty_unchecked(id)),
             self.render_source(binding.source),
             name_span,
         )
@@ -428,7 +434,7 @@ impl TargetBodyIrSnapshot<'_> {
 
     fn render_statement(
         &self,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         statement: StmtId,
         depth: usize,
         dump: &mut String,
@@ -513,18 +519,21 @@ impl TargetBodyIrSnapshot<'_> {
         }
     }
 
-    fn render_expr(&self, body: &BodyData, expr: ExprId, depth: usize, dump: &mut String) {
+    fn render_expr(&self, body: &ResolvedBodyData, expr: ExprId, depth: usize, dump: &mut String) {
         let data = body
             .expr(expr)
             .expect("expr id should exist while rendering body IR");
+        let facts = body
+            .expr_fact(expr)
+            .expect("expr facts should exist while rendering body IR");
         writeln!(
             dump,
             "{}expr e{} {}{} => {} @ {}",
             indent(depth),
             expr.0,
             self.render_expr_head(data),
-            self.render_resolution(&data.resolution),
-            self.render_ty(&data.ty),
+            self.render_resolution(&facts.resolution),
+            self.render_ty(&facts.ty),
             self.render_source(data.source),
         )
         .expect("string writes should not fail");
@@ -1545,7 +1554,7 @@ fn render_binding_list(bindings: &[BindingId]) -> String {
         .join(", ")
 }
 
-fn render_item_generic_args(args: &[rg_item_tree::GenericArg]) -> String {
+fn render_item_generic_args(args: &[rg_ir_model::items::GenericArg]) -> String {
     if args.is_empty() {
         return String::new();
     }

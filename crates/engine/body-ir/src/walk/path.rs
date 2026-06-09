@@ -1,8 +1,6 @@
-use rg_item_tree::{GenericArg, TypeRef};
-
-use crate::{
-    BodyPath,
-    ir::path::{BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind},
+use rg_ir_model::{
+    BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind,
+    items::{GenericArg, TypeRef},
 };
 
 /// Walks type references embedded in rich body-path syntax.
@@ -14,7 +12,7 @@ pub(crate) fn walk_body_path_type_refs<'path>(
     path: &'path BodyPath,
     visit: &mut impl FnMut(&'path TypeRef),
 ) {
-    for segment in &path.segments {
+    for segment in path.segments() {
         walk_segment_type_refs(segment, visit);
     }
 }
@@ -23,7 +21,7 @@ fn walk_segment_type_refs<'path>(
     segment: &'path BodyPathSegment,
     visit: &mut impl FnMut(&'path TypeRef),
 ) {
-    if let BodyPathSegmentKind::TypeAnchor { ty, trait_ref } = &segment.kind {
+    if let BodyPathSegmentKind::TypeAnchor { ty, trait_ref } = segment.kind() {
         if let Some(ty) = ty {
             visit(ty);
         }
@@ -32,7 +30,7 @@ fn walk_segment_type_refs<'path>(
         }
     }
 
-    if let Some(args) = &segment.args {
+    if let Some(args) = segment.args() {
         walk_segment_args_type_refs(args, visit);
     }
 }

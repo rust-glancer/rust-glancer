@@ -4,6 +4,7 @@
 //! cached package metadata so stale or mismatched files can be rejected before loading analysis
 //! payloads.
 
+use rg_std::MemorySize;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::{cached::CachedPackage, fingerprint::Fingerprint};
@@ -12,14 +13,12 @@ use super::{cached::CachedPackage, fingerprint::Fingerprint};
 pub const CURRENT_PACKAGE_CACHE_SCHEMA_VERSION: PackageCacheSchemaVersion =
     PackageCacheSchemaVersion(2);
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 #[memsize(leaf)]
 pub struct PackageCacheSchemaVersion(pub u32);
 
 /// Header shared by future package cache artifacts.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
 pub struct PackageCacheHeader {
     pub schema_version: PackageCacheSchemaVersion,
     pub package: CachedPackage,

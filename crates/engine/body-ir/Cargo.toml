@@ -16,8 +16,8 @@ derive_more = { workspace = true, features = ["display", "from"] }
 rg_syntax.workspace = true
 rayon.workspace = true
 wincode.workspace = true
-rg_arena = { workspace = true, features = ["memsize"] }
-rg_memsize.workspace = true
+rg_arena.workspace = true
+rg_std.workspace = true
 rg_package_store.workspace = true
 rg_def_map.workspace = true
 rg_ir_model.workspace = true
@@ -25,7 +25,7 @@ rg_ir_storage.workspace = true
 rg_item_tree.workspace = true
 rg_parse.workspace = true
 rg_semantic_ir.workspace = true
-rg_text = { workspace = true, features = ["memsize"] }
+rg_text.workspace = true
 rg_ty.workspace = true
 rg_wincode_utils.workspace = true
 

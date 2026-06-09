@@ -3,9 +3,10 @@
 use rg_ir_model::{
     DefMapRef, FunctionRef, ImplRef, ModuleRef, TargetRef, TraitImplRef, TraitRef, TypeDefRef,
 };
+use rg_std::UniqueVec;
 
 use super::{ItemStoreQuery, ItemStoreSource};
-use crate::{DefMapQuery, DefMapSource, ItemStore, TargetResolutionEnv, push_unique};
+use crate::{DefMapQuery, DefMapSource, ItemStore, TargetResolutionEnv};
 
 /// Item queries that need a Rust language visibility context.
 ///
@@ -47,23 +48,25 @@ where
     }
 
     /// Searches impls visible from the use-site target, not from the receiver type's origin.
-    pub fn impls_for_type(&self, ty: TypeDefRef) -> Result<Vec<ImplRef>, I::Error> {
-        let mut impls = Vec::new();
+    pub fn impls_for_type(&self, ty: TypeDefRef) -> Result<UniqueVec<ImplRef>, I::Error> {
+        let mut impls = UniqueVec::new();
         for store in self.impl_stores_for_origin(ty.origin)? {
-            impls.extend(store.impls_with_refs().filter_map(|(impl_ref, data)| {
-                data.resolved_self_tys.contains(&ty).then_some(impl_ref)
-            }));
+            for (impl_ref, data) in store.impls_with_refs() {
+                if data.resolved_self_tys.contains(&ty) {
+                    impls.push(impl_ref);
+                }
+            }
         }
         Ok(impls)
     }
 
     /// Searches visible impls for a trait ref while keeping duplicate refs out of the result.
-    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> Result<Vec<ImplRef>, I::Error> {
-        let mut impls = Vec::new();
+    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> Result<UniqueVec<ImplRef>, I::Error> {
+        let mut impls = UniqueVec::new();
         for store in self.impl_stores_for_origin(trait_ref.origin)? {
             for (impl_ref, data) in store.impls_with_refs() {
                 if data.resolved_trait_refs.contains(&trait_ref) {
-                    push_unique(&mut impls, impl_ref);
+                    impls.push(impl_ref);
                 }
             }
         }
@@ -74,23 +77,20 @@ where
     pub fn trait_impls_for_trait(
         &self,
         trait_ref: TraitRef,
-    ) -> Result<Vec<TraitImplRef>, I::Error> {
-        let mut trait_impls = Vec::new();
+    ) -> Result<UniqueVec<TraitImplRef>, I::Error> {
+        let mut trait_impls = UniqueVec::new();
         for impl_ref in self.impls_for_trait(trait_ref)? {
-            push_unique(
-                &mut trait_impls,
-                TraitImplRef {
-                    impl_ref,
-                    trait_ref,
-                },
-            );
+            trait_impls.push(TraitImplRef {
+                impl_ref,
+                trait_ref,
+            });
         }
         Ok(trait_impls)
     }
 
     /// Narrows type impl lookup to inherent impls, which is the path used for method completion.
-    pub fn inherent_impls_for_type(&self, ty: TypeDefRef) -> Result<Vec<ImplRef>, I::Error> {
-        let mut impls = Vec::new();
+    pub fn inherent_impls_for_type(&self, ty: TypeDefRef) -> Result<UniqueVec<ImplRef>, I::Error> {
+        let mut impls = UniqueVec::new();
         for impl_ref in self.impls_for_type(ty)? {
             let Some(data) = self.items.impl_data(impl_ref)? else {
                 continue;
@@ -103,12 +103,12 @@ where
     }
 
     /// Searches all visible inherent impls, including impls whose `Self` type is structural.
-    pub fn inherent_impls(&self) -> Result<Vec<ImplRef>, I::Error> {
-        let mut impls = Vec::new();
+    pub fn inherent_impls(&self) -> Result<UniqueVec<ImplRef>, I::Error> {
+        let mut impls = UniqueVec::new();
         for store in self.visible_stores()? {
             for (impl_ref, data) in store.impls_with_refs() {
                 if data.trait_ref.is_none() {
-                    push_unique(&mut impls, impl_ref);
+                    impls.push(impl_ref);
                 }
             }
         }
@@ -119,8 +119,8 @@ where
     pub fn inherent_functions_for_type(
         &self,
         ty: TypeDefRef,
-    ) -> Result<Vec<FunctionRef>, I::Error> {
-        let mut functions = Vec::new();
+    ) -> Result<UniqueVec<FunctionRef>, I::Error> {
+        let mut functions = UniqueVec::new();
         for impl_ref in self.inherent_impls_for_type(ty)? {
             let Some(data) = self.items.impl_data(impl_ref)? else {
                 continue;
@@ -131,44 +131,47 @@ where
     }
 
     /// Expands matching trait impl blocks into the trait refs they actually implement.
-    pub fn trait_impls_for_type(&self, ty: TypeDefRef) -> Result<Vec<TraitImplRef>, I::Error> {
-        let mut trait_impls = Vec::new();
+    pub fn trait_impls_for_type(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<UniqueVec<TraitImplRef>, I::Error> {
+        let mut trait_impls = UniqueVec::new();
         for impl_ref in self.impls_for_type(ty)? {
             let Some(data) = self.items.impl_data(impl_ref)? else {
                 continue;
             };
 
             for trait_ref in &data.resolved_trait_refs {
-                push_unique(
-                    &mut trait_impls,
-                    TraitImplRef {
-                        impl_ref,
-                        trait_ref: *trait_ref,
-                    },
-                );
+                trait_impls.push(TraitImplRef {
+                    impl_ref,
+                    trait_ref: *trait_ref,
+                });
             }
         }
         Ok(trait_impls)
     }
 
     /// Lists trait declarations implemented by the visible impls for a nominal type.
-    pub fn traits_for_type(&self, ty: TypeDefRef) -> Result<Vec<TraitRef>, I::Error> {
-        let mut traits = Vec::new();
+    pub fn traits_for_type(&self, ty: TypeDefRef) -> Result<UniqueVec<TraitRef>, I::Error> {
+        let mut traits = UniqueVec::new();
         for trait_impl in self.trait_impls_for_type(ty)? {
-            push_unique(&mut traits, trait_impl.trait_ref);
+            traits.push(trait_impl.trait_ref);
         }
         Ok(traits)
     }
 
     /// Collects trait-declared functions available for a nominal type.
-    pub fn trait_functions_for_type(&self, ty: TypeDefRef) -> Result<Vec<FunctionRef>, I::Error> {
-        let mut functions = Vec::new();
+    pub fn trait_functions_for_type(
+        &self,
+        ty: TypeDefRef,
+    ) -> Result<UniqueVec<FunctionRef>, I::Error> {
+        let mut functions = UniqueVec::new();
         for trait_ref in self.traits_for_type(ty)? {
             let Some(data) = self.items.trait_data(trait_ref)? else {
                 continue;
             };
             for function in data.functions() {
-                push_unique(&mut functions, function);
+                functions.push(function);
             }
         }
         Ok(functions)
@@ -178,8 +181,8 @@ where
     pub fn trait_impl_functions_for_type(
         &self,
         ty: TypeDefRef,
-    ) -> Result<Vec<FunctionRef>, I::Error> {
-        let mut functions = Vec::new();
+    ) -> Result<UniqueVec<FunctionRef>, I::Error> {
+        let mut functions = UniqueVec::new();
         for trait_impl in self.trait_impls_for_type(ty)? {
             let Some(data) = self.items.impl_data(trait_impl.impl_ref)? else {
                 continue;

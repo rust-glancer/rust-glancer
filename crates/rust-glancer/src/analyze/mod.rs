@@ -113,12 +113,12 @@ pub(crate) fn analyze(
         .unwrap_or_default();
     let metadata_started = Instant::now();
     let metadata = cargo_metadata_config
-        .load_metadata(&cargo_manifest)
+        .load_metadata_with_target_cfg(&cargo_manifest)
         .context("cargo metadata failed")?;
     let metadata_elapsed = metadata_started.elapsed();
 
     let workspace_started = Instant::now();
-    let workspace = WorkspaceMetadata::from_cargo(metadata)
+    let workspace = WorkspaceMetadata::lower(metadata.metadata, metadata.target_cfg)
         .context("while attempting to normalize Cargo metadata")?;
     let workspace_elapsed = workspace_started.elapsed();
 

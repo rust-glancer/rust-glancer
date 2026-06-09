@@ -1,6 +1,6 @@
 //! Shared read handle for indexed-data views.
 
-use rg_body_ir::{BodyData, BodyIrReadTxn};
+use rg_body_ir::{BodyIrReadTxn, ResolvedBodyData};
 use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
 use rg_ir_storage::{DefMap, DefMapSource, ItemStore, ItemStoreSource, PackageDefMaps};
@@ -42,7 +42,7 @@ impl<'db> IndexedViewDb<'db> {
     pub fn body_data(
         &self,
         body_ref: rg_ir_model::BodyRef,
-    ) -> Result<Option<&BodyData>, PackageStoreError> {
+    ) -> Result<Option<&ResolvedBodyData>, PackageStoreError> {
         self.body_ir.body_data(body_ref)
     }
 }

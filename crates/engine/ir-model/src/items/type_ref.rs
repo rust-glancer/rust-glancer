@@ -1,20 +1,15 @@
 use std::fmt;
 
+use wincode::{SchemaRead, SchemaWrite};
+
 use rg_parse::Span;
+use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 
 /// Syntax-level mutability marker used by lowered declarations and type refs.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum Mutability {
     Shared,
     Mutable,
@@ -23,6 +18,13 @@ pub enum Mutability {
 impl Mutability {
     pub fn from_mut_token(is_mut: bool) -> Self {
         if is_mut { Self::Mutable } else { Self::Shared }
+    }
+
+    pub fn render_prefix(self) -> &'static str {
+        match self {
+            Self::Shared => "&",
+            Self::Mutable => "&mut ",
+        }
     }
 }
 
@@ -39,9 +41,7 @@ impl fmt::Display for Mutability {
 ///
 /// This intentionally stops before semantic resolution. `TypeRef` represents what the user wrote
 /// in an item declaration; resolving paths to definitions belongs to later IR layers.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum TypeRef {
     Unknown(String),
     Never,
@@ -141,54 +141,6 @@ impl TypeRef {
             Self::Unknown(_) | Self::Never | Self::Unit | Self::Infer => false,
         }
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Unknown(text) => text.shrink_to_fit(),
-            Self::Path(path) => path.shrink_to_fit(),
-            Self::Tuple(types) => {
-                types.shrink_to_fit();
-                for ty in types {
-                    ty.shrink_to_fit();
-                }
-            }
-            Self::Reference {
-                lifetime, inner, ..
-            } => {
-                if let Some(lifetime) = lifetime {
-                    lifetime.shrink_to_fit();
-                }
-                inner.shrink_to_fit();
-            }
-            Self::RawPointer { inner, .. } | Self::Slice(inner) => inner.shrink_to_fit(),
-            Self::Array { inner, len } => {
-                inner.shrink_to_fit();
-                if let Some(len) = len {
-                    len.shrink_to_fit();
-                }
-            }
-            Self::FnPointer { params, ret } => {
-                params.shrink_to_fit();
-                for param in params {
-                    param.shrink_to_fit();
-                }
-                ret.shrink_to_fit();
-            }
-            Self::ImplTrait(bounds) | Self::DynTrait(bounds) => {
-                bounds.shrink_to_fit();
-                for bound in bounds {
-                    bound.shrink_to_fit();
-                }
-            }
-            Self::Never | Self::Unit | Self::Infer => {}
-        }
-    }
-}
-
-impl rg_memsize::Shrink for TypeRef {
-    fn shrink_to_fit(&mut self) {
-        TypeRef::shrink_to_fit(self);
-    }
 }
 
 impl fmt::Display for TypeRef {
@@ -260,11 +212,10 @@ impl fmt::Display for TypeRef {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TypePath {
     /// Full source range of the path syntax, including separators around segments.
+    #[shrink(skip)]
     pub source_span: Span,
     pub absolute: bool,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<TypePathSegment>>")]
@@ -285,13 +236,6 @@ impl TypePath {
         self.single_name()
             .is_some_and(|name| name.as_str() == "Self")
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.segments.shrink_to_fit();
-        for segment in &mut self.segments {
-            segment.shrink_to_fit();
-        }
-    }
 }
 
 impl fmt::Display for TypePath {
@@ -311,24 +255,13 @@ impl fmt::Display for TypePath {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TypePathSegment {
     pub name: Name,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
     pub args: Vec<GenericArg>,
+    #[shrink(skip)]
     pub span: Span,
-}
-
-impl TypePathSegment {
-    pub fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        self.args.shrink_to_fit();
-        for arg in &mut self.args {
-            arg.shrink_to_fit();
-        }
-    }
 }
 
 impl fmt::Display for TypePathSegment {
@@ -353,9 +286,7 @@ impl fmt::Display for TypePathSegment {
     }
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum GenericArg {
     Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
     Lifetime(String),
@@ -405,28 +336,6 @@ impl GenericArg {
             Self::Lifetime(_) | Self::Const(_) | Self::Unsupported(_) => false,
         }
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Type(ty) => ty.shrink_to_fit(),
-            Self::Lifetime(lifetime) | Self::Const(lifetime) | Self::Unsupported(lifetime) => {
-                lifetime.shrink_to_fit();
-            }
-            Self::FnTraitArgs { params, ret } => {
-                params.shrink_to_fit();
-                for param in params {
-                    param.shrink_to_fit();
-                }
-                ret.shrink_to_fit();
-            }
-            Self::AssocType { name, ty } => {
-                name.shrink_to_fit();
-                if let Some(ty) = ty {
-                    ty.shrink_to_fit();
-                }
-            }
-        }
-    }
 }
 
 impl fmt::Display for GenericArg {
@@ -464,9 +373,7 @@ fn write_fn_trait_args(
     Ok(())
 }
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum TypeBound {
     Trait(#[wincode(with = "rg_wincode_utils::WincodeDynamic<TypeRef>")] TypeRef),
     Lifetime(String),
@@ -487,13 +394,6 @@ impl TypeBound {
         match self {
             Self::Trait(ty) => ty.mentions_type_param(params),
             Self::Lifetime(_) | Self::Unsupported(_) => false,
-        }
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Trait(ty) => ty.shrink_to_fit(),
-            Self::Lifetime(lifetime) | Self::Unsupported(lifetime) => lifetime.shrink_to_fit(),
         }
     }
 }

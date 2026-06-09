@@ -1,3 +1,4 @@
+use rg_std::MemorySize;
 use std::collections::HashSet;
 
 use rg_def_map::PackageSlot;
@@ -8,9 +9,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// This is cache policy, not Cargo metadata. `PackageSource` says where Cargo resolved a package
 /// from; residency policy decides how eagerly rust-glancer should keep that package in memory.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, MemorySize)]
 #[memsize(leaf)]
 pub enum PackageResidencyPolicy {
     /// Keep the current pre-cache behavior: all packages stay in memory.
@@ -27,7 +26,7 @@ pub enum PackageResidencyPolicy {
 }
 
 /// Storage decision for one package in a built project snapshot.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
 #[memsize(leaf)]
 pub enum PackageResidency {
     Resident,
@@ -35,7 +34,7 @@ pub enum PackageResidency {
 }
 
 /// Per-package residency decisions for one workspace metadata snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct PackageResidencyPlan {
     pub(crate) policy: PackageResidencyPolicy,
     pub(crate) packages: Vec<PackageResidency>,
@@ -197,7 +196,7 @@ pub struct Transitive;
         let mut metadata = fixture.metadata();
         mark_package_as_registry(&mut metadata, "direct");
         mark_package_as_registry(&mut metadata, "transitive");
-        let workspace = WorkspaceMetadata::from_cargo(metadata)
+        let workspace = WorkspaceMetadata::for_tests(metadata)
             .expect("fixture workspace metadata should normalize");
 
         let app = package_slot(&workspace, "app");

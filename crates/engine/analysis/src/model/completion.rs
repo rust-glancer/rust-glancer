@@ -1,6 +1,6 @@
 use rg_ir_model::{
     EnumVariantRef, FieldRef, FunctionRef, SemanticItemKind, TraitApplicability,
-    identity::DeclarationRef,
+    identity::DeclarationRef, items::PrimitiveTy,
 };
 use rg_parse::Span;
 
@@ -39,7 +39,7 @@ pub enum CompletionTarget {
     Field(FieldRef),
     Function(FunctionRef),
     Keyword(KeywordCompletion),
-    PrimitiveType(rg_ty::PrimitiveTy),
+    PrimitiveType(PrimitiveTy),
 }
 
 /// Small, explicit set of Rust keyword and keyword-like snippet completions.

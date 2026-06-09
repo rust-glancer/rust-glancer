@@ -11,7 +11,7 @@ use std::{
     mem::MaybeUninit,
 };
 
-use rg_memsize::{MemoryRecorder, MemorySize};
+use rg_std::{MemoryRecorder, MemorySize};
 use smol_str::SmolStr;
 use wincode::{
     ReadResult, SchemaRead, SchemaWrite, TypeMeta, WriteResult,

@@ -1,16 +1,16 @@
 use rg_ir_model::items::{ItemTag, MacroDefinitionItem, VisibilityLevel};
 use rg_ir_model::{ModuleId, TargetRef, hir::source::ItemSource};
 use rg_parse::{FileId, Span};
+use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use rg_tt::TopSubtree;
 use rg_workspace::RustEdition;
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::scope::Namespace;
 
 /// One module-scope definition collected from source.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct LocalDefData {
     pub module: ModuleId,
     pub name: Name,
@@ -22,20 +22,13 @@ pub struct LocalDefData {
     pub span: Span,
 }
 
-impl LocalDefData {
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-    }
-}
-
 /// Declarative macro definition payload retained for expansion after def-map freezing.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct MacroDefinitionData {
     pub edition: RustEdition,
     /// Target that `$crate` inside this macro body should resolve to when expanded.
     pub dollar_crate_target: TargetRef,
+    #[shrink(skip)]
     pub payload: MacroDefinitionPayload,
 }
 
@@ -51,21 +44,20 @@ impl MacroDefinitionData {
             payload: MacroDefinitionPayload::from_item(item),
         }
     }
-
-    pub(crate) fn shrink_to_fit(&mut self) {}
 }
 
 /// Token-tree payload needed to compile a collected declarative macro.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum MacroDefinitionPayload {
     MacroRules {
         #[memsize(scope = "body")]
+        #[shrink(skip)]
         body: Option<TopSubtree>,
     },
     MacroDef {
+        #[shrink(skip)]
         args: Option<TopSubtree>,
+        #[shrink(skip)]
         body: Option<TopSubtree>,
     },
 }
@@ -83,9 +75,7 @@ impl MacroDefinitionPayload {
 }
 
 /// One module-owned impl block collected from source.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct LocalImplData {
     pub module: ModuleId,
     pub source: ItemSource,
@@ -101,11 +91,13 @@ pub struct LocalImplData {
     PartialEq,
     Eq,
     derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum LocalDefKind {
     #[display("const")]
     Const,

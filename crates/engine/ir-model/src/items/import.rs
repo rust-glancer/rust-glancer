@@ -1,4 +1,6 @@
+use rg_std::{MemorySize, Shrink};
 use std::fmt;
+use wincode::{SchemaRead, SchemaWrite};
 
 use rg_parse::{Span, TextSpan};
 use rg_text::Name;
@@ -6,59 +8,25 @@ use rg_text::Name;
 use super::MacroUseAttr;
 
 /// Syntactic `extern crate` facts attached to `ItemKind::ExternCrate`.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ExternCrateItem {
     pub name: Option<Name>,
     pub alias: ImportAlias,
     pub macro_use: Option<MacroUseAttr>,
 }
 
-impl ExternCrateItem {
-    pub fn shrink_to_fit(&mut self) {
-        if let Some(name) = &mut self.name {
-            name.shrink_to_fit();
-        }
-        self.alias.shrink_to_fit();
-        if let Some(macro_use) = &mut self.macro_use {
-            macro_use.shrink_to_fit();
-        }
-    }
-}
-
 /// Syntactic `use` facts attached to `ItemKind::Use`.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct UseItem {
     pub imports: Vec<UseImport>,
 }
 
-impl UseItem {
-    pub fn shrink_to_fit(&mut self) {
-        self.imports.shrink_to_fit();
-        for import in &mut self.imports {
-            import.shrink_to_fit();
-        }
-    }
-}
-
 /// One leaf import produced by a potentially nested use tree.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct UseImport {
     pub kind: UseImportKind,
     pub path: UsePath,
     pub alias: ImportAlias,
-}
-
-impl UseImport {
-    pub fn shrink_to_fit(&mut self) {
-        self.path.shrink_to_fit();
-        self.alias.shrink_to_fit();
-    }
 }
 
 /// Import form before name resolution.
@@ -69,11 +37,13 @@ impl UseImport {
     PartialEq,
     Eq,
     derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum UseImportKind {
     #[display("named")]
     Named,
@@ -84,22 +54,11 @@ pub enum UseImportKind {
 }
 
 /// Explicit import alias, including `as _`.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum ImportAlias {
     Inferred,
     Explicit { name: Name, span: Span },
     Hidden,
-}
-
-impl ImportAlias {
-    pub fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Explicit { name, .. } => name.shrink_to_fit(),
-            Self::Inferred | Self::Hidden => {}
-        }
-    }
 }
 
 impl fmt::Display for ImportAlias {
@@ -113,9 +72,7 @@ impl fmt::Display for ImportAlias {
 }
 
 /// Structured path used before semantic resolution.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct UsePath {
     pub source_span: Option<Span>,
     pub absolute: bool,
@@ -173,13 +130,6 @@ impl UsePath {
             Some(UsePathSegmentKind::SelfKw)
         )
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.segments.shrink_to_fit();
-        for segment in &mut self.segments {
-            segment.shrink_to_fit();
-        }
-    }
 }
 
 impl fmt::Display for UsePath {
@@ -200,18 +150,10 @@ impl fmt::Display for UsePath {
 }
 
 /// One structured path segment.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct UsePathSegment {
     pub kind: UsePathSegmentKind,
     pub span: Span,
-}
-
-impl UsePathSegment {
-    pub fn shrink_to_fit(&mut self) {
-        self.kind.shrink_to_fit();
-    }
 }
 
 impl fmt::Display for UsePathSegment {
@@ -221,14 +163,7 @@ impl fmt::Display for UsePathSegment {
 }
 
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize, Shrink,
 )]
 pub enum UsePathSegmentKind {
     #[display("{_0}")]
@@ -239,13 +174,4 @@ pub enum UsePathSegmentKind {
     SuperKw,
     #[display("crate")]
     CrateKw,
-}
-
-impl UsePathSegmentKind {
-    pub fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Name(name) => name.shrink_to_fit(),
-            Self::SelfKw | Self::SuperKw | Self::CrateKw => {}
-        }
-    }
 }

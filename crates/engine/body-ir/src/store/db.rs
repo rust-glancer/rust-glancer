@@ -6,13 +6,25 @@ use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
 use rg_semantic_ir::PackageIr;
 use rg_text::PackageNameInterners;
 
-use crate::{
-    BodyIrReadTxn, BodyIrStats, PackageBodies, TargetBodiesStatus,
-    build::{BodyIrDbBuilder, BodyIrDbPackageRebuilder},
-};
+use super::{BodyIrReadTxn, PackageBodies, TargetBodiesStatus};
+use crate::build::{BodyIrDbBuilder, BodyIrDbPackageRebuilder};
+use rg_std::{MemorySize, Shrink};
+
+/// Coarse totals for reporting that the Body IR phase produced useful data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
+pub struct BodyIrStats {
+    pub target_count: usize,
+    pub built_target_count: usize,
+    pub skipped_target_count: usize,
+    pub body_count: usize,
+    pub scope_count: usize,
+    pub binding_count: usize,
+    pub statement_count: usize,
+    pub expression_count: usize,
+}
 
 /// Body-level IR for all analyzed packages and targets.
-#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct BodyIrDb {
     packages: PackageStore<PackageBodies>,
 }
@@ -84,10 +96,10 @@ impl BodyIrDb {
                 }
                 stats.body_count += target.bodies().len();
                 for body in target.bodies() {
-                    stats.scope_count += body.scopes.len();
-                    stats.binding_count += body.bindings.len();
-                    stats.statement_count += body.statements.len();
-                    stats.expression_count += body.exprs.len();
+                    stats.scope_count += body.scopes().len();
+                    stats.binding_count += body.bindings().len();
+                    stats.statement_count += body.statements().len();
+                    stats.expression_count += body.exprs().len();
                 }
             }
         }
@@ -135,19 +147,14 @@ impl BodyIrDbMutator<'_> {
         self.db.packages.replace(package, bodies)
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.db.packages.shrink_to_fit();
-        for entry in self.db.packages.raw_entries_mut() {
-            if let Some(package) = entry.as_resident_unique_mut() {
-                package.shrink_to_fit();
-            }
-        }
+    pub(crate) fn compact_storage(&mut self) {
+        Shrink::shrink_to_fit(&mut self.db.packages);
     }
 
-    pub(crate) fn shrink_packages(&mut self, packages: &[PackageSlot]) {
+    pub(crate) fn compact_packages(&mut self, packages: &[PackageSlot]) {
         for package in packages {
             if let Some(package) = self.db.packages.get_unique_mut(*package) {
-                package.shrink_to_fit();
+                Shrink::shrink_to_fit(package);
             }
         }
     }

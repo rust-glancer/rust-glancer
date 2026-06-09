@@ -9,16 +9,17 @@ use std::{
 use anyhow::Context as _;
 
 use crate::{FileId, LineIndex, Package, PackageParseSnapshot};
+use rg_std::MemorySize;
 
 /// Parsed project metadata, packages, and source files.
-#[derive(Debug, Clone, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, MemorySize)]
 pub struct ParseDb {
     pub(crate) workspace_root: PathBuf,
     pub(crate) packages: Vec<Package>,
 }
 
 /// One package-local file touched by a saved file update.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, MemorySize)]
 pub struct PackageFileRef {
     pub package: usize,
     pub file: FileId,

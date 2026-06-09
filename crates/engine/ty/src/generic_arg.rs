@@ -1,12 +1,11 @@
-use rg_memsize::Shrink;
+use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 
 use crate::Ty;
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Generic argument as understood by the shared type vocabulary.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum GenericArg {
     Type(#[wincode(with = "rg_wincode_utils::WincodeDynamic<Box<Ty>>")] Box<Ty>),
     Lifetime(String),
@@ -47,30 +46,6 @@ impl GenericArg {
             }
             Self::AssocType { ty, .. } => ty.as_deref().is_none_or(Ty::is_projectable),
             Self::Unsupported(_) => false,
-        }
-    }
-}
-
-impl Shrink for GenericArg {
-    fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Type(ty) => ty.shrink_to_fit(),
-            Self::Lifetime(text) | Self::Const(text) | Self::Unsupported(text) => {
-                text.shrink_to_fit();
-            }
-            Self::FnTraitArgs { params, ret } => {
-                params.shrink_to_fit();
-                for param in params {
-                    param.shrink_to_fit();
-                }
-                ret.shrink_to_fit();
-            }
-            Self::AssocType { name, ty } => {
-                name.shrink_to_fit();
-                if let Some(ty) = ty {
-                    ty.shrink_to_fit();
-                }
-            }
         }
     }
 }

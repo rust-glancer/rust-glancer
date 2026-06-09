@@ -4,6 +4,7 @@
 //! package identity and dependency edges. The parse crate supplies the target-selection rule so
 //! cache planning can predict the artifact graph before a `ParseDb` exists.
 
+use rg_std::MemorySize;
 use std::path::Path;
 
 use rg_parse::{PackageParseSnapshot, ParseDb};
@@ -19,7 +20,7 @@ use super::{
 ///
 /// This is the deterministic, in-memory view used to name package artifacts and reject artifacts
 /// whose package/target graph no longer matches the current Cargo metadata snapshot.
-#[derive(Debug, Clone, PartialEq, Eq, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
 pub struct WorkspaceCachePlan {
     pub(crate) packages: Vec<CachedPackage>,
 }

@@ -6,8 +6,8 @@ use expect_test::expect;
 use test_fixture::fixture_crate;
 
 use crate::{
-    CargoMetadataConfig, CargoMetadataTarget, PackageSource, SysrootSources, TargetKind,
-    WorkspaceMetadata, WorkspaceMetadataError, parse_rustc_host_target,
+    CargoMetadataConfig, CargoMetadataTarget, PackageSource, RustcTarget, SysrootSources,
+    TargetKind, WorkspaceMetadata, WorkspaceMetadataError,
 };
 
 #[test]
@@ -188,7 +188,7 @@ fn main() {}
         .expect("fixture example file should be removable after metadata is loaded");
 
     let workspace =
-        WorkspaceMetadata::from_cargo(metadata).expect("missing optional target should normalize");
+        WorkspaceMetadata::for_tests(metadata).expect("missing optional target should normalize");
     let package = workspace
         .workspace_packages()
         .find(|package| package.name == "missing_target_fixture")
@@ -247,8 +247,8 @@ fn main() {}
     fs::remove_file(fixture.path("dep/examples/demo.rs"))
         .expect("fixture dependency example file should be removable after metadata is loaded");
 
-    let workspace = WorkspaceMetadata::from_cargo(metadata)
-        .expect("missing dependency target should normalize");
+    let workspace =
+        WorkspaceMetadata::for_tests(metadata).expect("missing dependency target should normalize");
     let package = workspace
         .packages()
         .iter()
@@ -315,7 +315,7 @@ pub struct Lib;
         });
 
         let workspace =
-            WorkspaceMetadata::from_cargo(metadata).expect("known package source should normalize");
+            WorkspaceMetadata::for_tests(metadata).expect("known package source should normalize");
         assert_eq!(
             workspace.packages()[0].source,
             expected_source,
@@ -345,7 +345,7 @@ pub struct Lib;
     });
 
     let error =
-        WorkspaceMetadata::from_cargo(metadata).expect_err("unknown source should be rejected");
+        WorkspaceMetadata::for_tests(metadata).expect_err("unknown source should be rejected");
 
     assert!(
         matches!(
@@ -464,7 +464,7 @@ pub mod marker {
     );
     let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
         .expect("fixture sysroot should be complete");
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
         .expect("fixture workspace metadata should build")
         .with_sysroot_sources(Some(sysroot));
     let app = workspace
@@ -547,7 +547,7 @@ edition = "2024"
 pub struct Independent;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
         .expect("fixture workspace metadata should build");
     let dep_id = workspace
         .packages()
@@ -597,7 +597,7 @@ edition = "2024"
 pub struct Dep;
 "#,
     );
-    let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
         .expect("fixture workspace metadata should build");
 
     let app_api = fixture
@@ -639,18 +639,18 @@ host: aarch64-apple-darwin
 release: 1.94.1
 "#;
 
-    assert_eq!(
-        parse_rustc_host_target(output),
-        Some("aarch64-apple-darwin".to_string()),
-    );
+    let target = RustcTarget::parse_host_from_verbose_output(output)
+        .expect("verbose rustc output should contain a host triple");
+
+    assert_eq!(target.as_str(), "aarch64-apple-darwin");
 }
 
 #[test]
 fn normalizes_explicit_cargo_metadata_target() {
     let config = CargoMetadataConfig::default().target_triple("  x86_64-unknown-linux-gnu  ");
 
-    assert_eq!(
-        config.target(),
-        &CargoMetadataTarget::Triple("x86_64-unknown-linux-gnu".to_string()),
-    );
+    let CargoMetadataTarget::Triple(target) = config.target() else {
+        panic!("non-empty explicit target should configure a target triple");
+    };
+    assert_eq!(target.as_str(), "x86_64-unknown-linux-gnu");
 }

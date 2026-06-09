@@ -1,22 +1,21 @@
 //! Semantic IR package store and transaction entry points.
 
 use rg_def_map::PackageSlot;
-use rg_ir_model::ImplRef;
-use rg_ir_model::hir::items::ImplData;
+use rg_ir_model::{ImplRef, TraitRef, TypeDefRef};
 use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
+use rg_std::{MemorySize, Shrink, UniqueVec};
 
 use crate::{
     PackageIr, SemanticIrReadTxn, SemanticIrStats,
     build::{SemanticIrDbBuilder, SemanticIrDbPackageRebuilder},
 };
-
 /// Semantic item graph for all analyzed packages and targets.
 ///
 /// Semantic IR is the signature layer: it keeps named items, fields, impl headers, function
 /// signatures, and enough resolution metadata to answer LSP-shaped questions without parsing AST
 /// again. Bodies live in `rg_body_ir`; this layer intentionally stops at item/signature facts.
-#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct SemanticIrDb {
     packages: PackageStore<PackageIr>,
 }
@@ -148,31 +147,30 @@ impl SemanticIrDbMutator<'_> {
         self.db.packages.replace(package, package_ir)
     }
 
-    pub(crate) fn impl_data_mut(&mut self, impl_ref: ImplRef) -> Option<&mut ImplData> {
+    pub(crate) fn set_impl_header_facts(
+        &mut self,
+        impl_ref: ImplRef,
+        resolved_self_tys: UniqueVec<TypeDefRef>,
+        resolved_trait_refs: UniqueVec<TraitRef>,
+    ) -> Option<()> {
         let target = impl_ref.origin.as_target_ref()?;
         self.package_mut(target.package)?
             .target_mut(target.target)?
-            .impls_mut()
-            .get_mut(impl_ref.id)
+            .set_impl_header_facts(impl_ref.id, resolved_self_tys, resolved_trait_refs)
     }
 
     fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageIr> {
         self.db.packages.make_mut(package)
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.db.packages.shrink_to_fit();
-        for entry in self.db.packages.raw_entries_mut() {
-            if let Some(package) = entry.as_resident_unique_mut() {
-                package.shrink_to_fit();
-            }
-        }
+    pub(crate) fn compact_storage(&mut self) {
+        Shrink::shrink_to_fit(&mut self.db.packages);
     }
 
-    pub(crate) fn shrink_packages(&mut self, packages: &[PackageSlot]) {
+    pub(crate) fn compact_packages(&mut self, packages: &[PackageSlot]) {
         for package in packages {
             if let Some(package) = self.db.packages.get_unique_mut(*package) {
-                package.shrink_to_fit();
+                Shrink::shrink_to_fit(package);
             }
         }
     }

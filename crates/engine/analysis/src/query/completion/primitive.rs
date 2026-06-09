@@ -3,6 +3,8 @@
 //! Primitives are part of the Rust language rather than module-scope definitions, so completion
 //! renders them from the shared type vocabulary instead of pretending they live in DefMap.
 
+use rg_ir_model::items::PrimitiveTy;
+
 use crate::model::{
     CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
     CompletionTarget,
@@ -17,7 +19,7 @@ pub(super) struct PrimitiveTypeCompletionResolver;
 
 impl PrimitiveTypeCompletionResolver {
     pub(super) fn completions(
-        primitives: impl IntoIterator<Item = rg_ty::PrimitiveTy>,
+        primitives: impl IntoIterator<Item = PrimitiveTy>,
         edit: CompletionEdit,
     ) -> Vec<CompletionItem> {
         primitives
@@ -26,7 +28,7 @@ impl PrimitiveTypeCompletionResolver {
             .collect()
     }
 
-    fn completion(primitive: rg_ty::PrimitiveTy, edit: CompletionEdit) -> CompletionItem {
+    fn completion(primitive: PrimitiveTy, edit: CompletionEdit) -> CompletionItem {
         let label = primitive.label().to_string();
         let kind = CompletionKind::PrimitiveType;
         let target = CompletionTarget::PrimitiveType(primitive);

@@ -4,12 +4,13 @@ use anyhow::Context as _;
 use rayon::prelude::*;
 
 use rg_parse::ParseDb;
+use rg_std::{MemorySize, Shrink};
 use rg_text::PackageNameInterners;
 
 use crate::{Package, lower};
 
 /// Lowered item trees for all parsed packages.
-#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize, Shrink)]
 pub struct ItemTreeDb {
     pub(crate) packages: Vec<Option<Package>>,
 }
@@ -47,12 +48,8 @@ impl ItemTreeDb {
             packages: vec![None; parse.package_count()],
         };
 
-        if package_slots.len() <= 1 {
-            Self::build_packages_serial(parse, &package_slots, interners, &mut trees)?;
-        } else {
-            Self::build_packages_parallel(parse, &package_slots, interners, &mut trees)?;
-        }
-        trees.shrink_to_fit();
+        Self::build_packages_parallel(parse, &package_slots, interners, &mut trees)?;
+        Shrink::shrink_to_fit(&mut trees);
 
         Ok(trees)
     }
@@ -60,34 +57,6 @@ impl ItemTreeDb {
     /// Returns one package tree set by slot.
     pub fn package(&self, package_slot: usize) -> Option<&Package> {
         self.packages.get(package_slot)?.as_ref()
-    }
-
-    /// Compacts the transient item-tree graph before later phases overlap with it.
-    pub fn shrink_to_fit(&mut self) {
-        for package in self.packages.iter_mut().flatten() {
-            package.shrink_to_fit();
-        }
-        self.packages.shrink_to_fit();
-    }
-
-    fn build_packages_serial(
-        parse: &mut ParseDb,
-        package_slots: &[usize],
-        interners: &mut PackageNameInterners,
-        trees: &mut Self,
-    ) -> anyhow::Result<()> {
-        for &package_slot in package_slots {
-            let interner = interners.package_mut(package_slot).with_context(|| {
-                format!("while attempting to fetch name interner for package {package_slot}")
-            })?;
-            let package = parse.package_mut(package_slot).with_context(|| {
-                format!("while attempting to fetch parsed package {package_slot}")
-            })?;
-            let lowered = Self::lower_package(package_slot, package, interner)?;
-            trees.packages[package_slot] = Some(lowered);
-        }
-
-        Ok(())
     }
 
     fn build_packages_parallel(

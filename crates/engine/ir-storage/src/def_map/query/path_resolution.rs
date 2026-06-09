@@ -9,12 +9,11 @@
 //! construction, the same path-walking logic reads from frozen `DefMapDb` data.
 
 use rg_ir_model::items::VisibilityLevel;
-use rg_ir_model::{DefId, DefMapRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment, TargetRef};
+use rg_std::UniqueVec;
 use rg_text::Name;
 
-use super::super::{
-    ImportPath, ModuleOrigin, ModuleScopeBuilder, Namespace, Path, PathSegment, ScopeBinding,
-};
+use super::super::{ImportPath, ModuleOrigin, ModuleScopeBuilder, Namespace, ScopeBinding};
 
 use super::resolution_env::{ScopeResolutionEnv, TargetResolutionEnv};
 
@@ -138,36 +137,36 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
             return Ok(Vec::new());
         };
 
-        let mut defs = Vec::new();
+        let mut defs = UniqueVec::new();
         if !matches!(filter, NameResolutionFilter::ValuesOnly) {
             for binding in scope_entry.types() {
                 if self.lexical_binding_is_visible(importing_module, binding)? {
-                    push_unique_def(&mut defs, binding.def);
+                    defs.push(binding.def);
                 }
             }
         }
 
         if matches!(filter, NameResolutionFilter::TypesOnly) {
-            return Ok(defs);
+            return Ok(defs.into_vec());
         }
 
         for binding in scope_entry.values() {
             if self.lexical_binding_is_visible(importing_module, binding)? {
-                push_unique_def(&mut defs, binding.def);
+                defs.push(binding.def);
             }
         }
 
         if matches!(filter, NameResolutionFilter::ValuesOnly) {
-            return Ok(defs);
+            return Ok(defs.into_vec());
         }
 
         for binding in scope_entry.macros() {
             if self.lexical_binding_is_visible(importing_module, binding)? {
-                push_unique_def(&mut defs, binding.def);
+                defs.push(binding.def);
             }
         }
 
-        Ok(defs)
+        Ok(defs.into_vec())
     }
 
     fn lexical_next_name_segment(
@@ -177,7 +176,7 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
         name: &str,
         filter: NameResolutionFilter,
     ) -> Result<Vec<DefId>, E::Error> {
-        let mut next_defs = Vec::new();
+        let mut next_defs = UniqueVec::new();
 
         for current_def in current_defs {
             let DefId::Module(module_ref) = current_def else {
@@ -187,11 +186,11 @@ impl<E: ScopeResolutionEnv + ?Sized> PathResolver<'_, E> {
             for resolved_def in
                 self.resolve_lexical_name_in_module(importing_module, module_ref, name, filter)?
             {
-                push_unique_def(&mut next_defs, resolved_def);
+                next_defs.push(resolved_def);
             }
         }
 
-        Ok(next_defs)
+        Ok(next_defs.into_vec())
     }
 
     fn first_name_in_lexical_scope(
@@ -602,7 +601,7 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         segment: &PathSegment,
         filter: NameResolutionFilter,
     ) -> Result<Vec<DefId>, E::Error> {
-        let mut next_defs = Vec::new();
+        let mut next_defs = UniqueVec::new();
 
         for current_def in current_defs {
             let DefId::Module(module_ref) = current_def else {
@@ -611,16 +610,16 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
 
             match segment {
                 PathSegment::SelfKw => {
-                    push_unique_def(&mut next_defs, DefId::Module(module_ref));
+                    next_defs.push(DefId::Module(module_ref));
                 }
                 PathSegment::SuperKw => {
                     if let Some(parent) = self.env.parent_module(module_ref)? {
-                        push_unique_def(&mut next_defs, DefId::Module(parent));
+                        next_defs.push(DefId::Module(parent));
                     }
                 }
                 PathSegment::CrateKw => {
                     if let Some(root) = self.env.root_module(module_ref.origin.origin_target())? {
-                        push_unique_def(&mut next_defs, DefId::Module(root));
+                        next_defs.push(DefId::Module(root));
                     }
                 }
                 PathSegment::DollarCrate(_) => {}
@@ -628,13 +627,13 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
                     for resolved_def in
                         self.name_in_module(importing_module, module_ref, name.as_str(), filter)?
                     {
-                        push_unique_def(&mut next_defs, resolved_def);
+                        next_defs.push(resolved_def);
                     }
                 }
             }
         }
 
-        Ok(next_defs)
+        Ok(next_defs.into_vec())
     }
 
     /// Resolves one textual name inside one module scope.
@@ -649,39 +648,39 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
             return Ok(Vec::new());
         };
 
-        let mut defs = Vec::new();
+        let mut defs = UniqueVec::new();
 
         // One textual name can contribute bindings from several namespaces, so we collect them all
         // into a deduplicated result set.
         if !matches!(filter, NameResolutionFilter::ValuesOnly) {
             for binding in scope_entry.types() {
                 if self.binding_is_visible(importing_module, binding)? {
-                    push_unique_def(&mut defs, binding.def);
+                    defs.push(binding.def);
                 }
             }
         }
 
         if matches!(filter, NameResolutionFilter::TypesOnly) {
-            return Ok(defs);
+            return Ok(defs.into_vec());
         }
 
         for binding in scope_entry.values() {
             if self.binding_is_visible(importing_module, binding)? {
-                push_unique_def(&mut defs, binding.def);
+                defs.push(binding.def);
             }
         }
 
         if matches!(filter, NameResolutionFilter::ValuesOnly) {
-            return Ok(defs);
+            return Ok(defs.into_vec());
         }
 
         for binding in scope_entry.macros() {
             if self.binding_is_visible(importing_module, binding)? {
-                push_unique_def(&mut defs, binding.def);
+                defs.push(binding.def);
             }
         }
 
-        Ok(defs)
+        Ok(defs.into_vec())
     }
 
     /// Synthetic modules model lexical scopes, so unqualified lookup climbs synthetic parents until
@@ -796,12 +795,5 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         }
 
         Ok(Some(current))
-    }
-}
-
-/// Pushes one resolved definition unless it is already present in the result list.
-fn push_unique_def(defs: &mut Vec<DefId>, def: DefId) {
-    if !defs.contains(&def) {
-        defs.push(def);
     }
 }

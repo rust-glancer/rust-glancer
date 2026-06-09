@@ -4,11 +4,11 @@
 //! storage owns name, member, or type lookup. This adapter accepts completion-domain cursor sites
 //! and projects generic view facts into completion-ready candidates.
 
-use rg_ir_model::items::FieldKey;
+use rg_ir_model::items::{FieldKey, PrimitiveTy};
 use rg_ir_model::{
-    EnumVariantRef, FieldRef, FunctionRef, ModuleRef, TypeDefId, identity::DeclarationRef,
+    EnumVariantRef, FieldRef, FunctionRef, ModuleRef, Path, TypeDefId, identity::DeclarationRef,
 };
-use rg_ir_storage::{ItemStoreQuery, Path};
+use rg_ir_storage::ItemStoreQuery;
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     lookup::name::{ModuleScopeName, NameLookupView, NameNamespace, NameOrigin},
@@ -302,7 +302,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
     pub(crate) fn primitive_type_candidates_for_unqualified(
         &self,
         site: &UnqualifiedCompletionSite,
-    ) -> anyhow::Result<Vec<rg_ty::PrimitiveTy>> {
+    ) -> anyhow::Result<Vec<PrimitiveTy>> {
         let IndexedUnqualifiedNameScope::Body {
             scope,
             namespace,
@@ -318,7 +318,7 @@ impl<'a, 'db> CompletionCandidateSource<'a, 'db> {
 
         let mut candidates = Vec::new();
 
-        for primitive in rg_ty::PrimitiveTy::ALL
+        for primitive in PrimitiveTy::ALL
             .iter()
             .copied()
             .filter(|primitive| primitive.label().starts_with(member_prefix.as_str()))

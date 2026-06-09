@@ -3,13 +3,14 @@
 //! Record-field sites are the field-name slots inside struct literals and record patterns, such
 //! as `User { na$0 }` or `let User { na$0 } = user`.
 
+use rg_ir_model::items::FieldKey;
 use rg_ir_model::{BodyId, BodyRef, ScopeId, TargetRef};
-use rg_item_tree::FieldKey;
 use rg_package_store::PackageStoreError;
 use rg_parse::{FileId, Span, TextSpan};
 
 use crate::{
-    BodyData, BodyIrReadTxn, BodyPath, ExprKind, PatData, PatKind, RecordExprField, RecordPatField,
+    BodyIrReadTxn, BodyPath, ExprKind, PatData, PatKind, RecordExprField, RecordPatField,
+    ResolvedBodyData,
 };
 
 use super::{super::RecordFieldCompletionSite, sites::BodyScanSites};
@@ -47,7 +48,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
         let mut best: Option<(RecordFieldCompletionSite, u32)> = None;
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            if body.source.file_id != self.file_id || !body.source.span.contains(self.offset) {
+            if body.source().file_id != self.file_id || !body.source().span.contains(self.offset) {
                 continue;
             }
 
@@ -66,10 +67,10 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     fn scan_record_exprs(
         &self,
         body_ref: BodyRef,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         best: &mut Option<(RecordFieldCompletionSite, u32)>,
     ) {
-        for expr in body.exprs.iter() {
+        for expr in body.exprs().iter() {
             if expr.source.file_id != self.file_id {
                 continue;
             }
@@ -101,7 +102,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     fn scan_record_pats(
         &self,
         body_ref: BodyRef,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         best: &mut Option<(RecordFieldCompletionSite, u32)>,
     ) {
         let sites = BodyScanSites::new(body);
@@ -114,7 +115,7 @@ impl<'txn, 'db> RecordFieldCompletionSiteScanner<'txn, 'db> {
     fn scan_pat_data(
         &self,
         body_ref: BodyRef,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         scope: ScopeId,
         data: &PatData,
         best: &mut Option<(RecordFieldCompletionSite, u32)>,

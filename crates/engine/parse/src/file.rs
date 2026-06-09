@@ -15,20 +15,13 @@ use crate::{
     line_index::{LineIndex, LineIndexSnapshot},
     span::Span,
 };
+use rg_std::{MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Stable identifier for a parsed source file inside `FileDb`.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub struct FileId(pub usize);
 
 impl rg_arena::ArenaId for FileId {
@@ -42,7 +35,7 @@ impl rg_arena::ArenaId for FileId {
 }
 
 /// Internal parsed representation used by the parser cache.
-#[derive(Debug, Clone, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, MemorySize)]
 pub(crate) struct ParsedFileData {
     /// Canonical filesystem path for this source file.
     pub(crate) path: PathBuf,
@@ -75,7 +68,7 @@ pub struct ParsedFile<'a> {
 }
 
 /// Source backing for a parsed file whose syntax tree may be evicted.
-#[derive(Debug, Clone, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, MemorySize)]
 #[memsize(with = "Self::record_memory")]
 pub(crate) enum ParsedSource {
     SavedFile,
@@ -86,9 +79,7 @@ pub(crate) enum ParsedSource {
 ///
 /// Cache-backed startup restores this data so later queries can still translate file ids into
 /// paths and source coordinates without rebuilding item trees first.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct ParsedFileSnapshot {
     pub(crate) path: ParsedFilePath,
     pub(crate) line_index: LineIndexSnapshot,
@@ -105,9 +96,7 @@ impl ParsedFileSnapshot {
 /// `PathBuf` is the natural in-memory type, but cache artifacts should stay platform-neutral. The
 /// snapshot stores the canonical path as a string and converts back to `PathBuf` when restoring the
 /// parse database.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub(crate) struct ParsedFilePath(#[memsize(inline)] pub(crate) String);
 
 impl ParsedFilePath {
@@ -186,7 +175,7 @@ impl<'a> ParsedFile<'a> {
 ///
 /// `FileDb` deduplicates parsing across targets, so shared modules are parsed once
 /// and reused during multiple target traversals.
-#[derive(Debug, Clone, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, MemorySize)]
 pub(super) struct FileDb {
     pub(crate) edition: RustEdition,
     pub(crate) parsed_files: Arena<FileId, ParsedFileData>,
@@ -402,7 +391,7 @@ impl ParsedSource {
         }
     }
 
-    fn record_memory(source: &Self, _recorder: &mut rg_memsize::MemoryRecorder) {
+    fn record_memory(source: &Self, _recorder: &mut rg_std::MemoryRecorder) {
         match source {
             Self::SavedFile => {}
             Self::InMemory(_) => {
@@ -416,7 +405,7 @@ impl ParsedSource {
 impl ParsedFileData {
     fn record_syntax_memory(
         syntax: &Option<SyntaxParse<SourceFile>>,
-        recorder: &mut rg_memsize::MemoryRecorder,
+        recorder: &mut rg_std::MemoryRecorder,
     ) {
         if let Some(syntax) = syntax {
             // The parse cache owns one retained syntax tree per parsed file. Count it here
@@ -431,28 +420,28 @@ impl ParsedFileData {
                 });
                 recorder.scope("nodes", |recorder| {
                     recorder.record_type_name(
-                        rg_memsize::MemoryRecordKind::Heap,
+                        rg_std::MemoryRecordKind::Heap,
                         "rg_syntax::NodeData",
                         usage.node_table_bytes,
                     );
                 });
                 recorder.scope("tokens", |recorder| {
                     recorder.record_type_name(
-                        rg_memsize::MemoryRecordKind::Heap,
+                        rg_std::MemoryRecordKind::Heap,
                         "rg_syntax::TokenData",
                         usage.token_table_bytes,
                     );
                 });
                 recorder.scope("children", |recorder| {
                     recorder.record_type_name(
-                        rg_memsize::MemoryRecordKind::Heap,
+                        rg_std::MemoryRecordKind::Heap,
                         "rg_syntax::ElementId",
                         usage.child_table_bytes,
                     );
                 });
                 recorder.scope("errors", |recorder| {
                     recorder.record_type_name(
-                        rg_memsize::MemoryRecordKind::Heap,
+                        rg_std::MemoryRecordKind::Heap,
                         "rg_syntax::SyntaxError",
                         usage.error_bytes,
                     );
@@ -487,7 +476,7 @@ impl ParsedFileData {
 /// File paths and file ids stay resident because they define package inventory. The heavier line
 /// tables can be dropped after package artifacts are durable and reconstructed from the saved source
 /// file when an LSP range conversion actually needs them.
-#[derive(Debug, rg_memsize::MemorySize)]
+#[derive(Debug, MemorySize)]
 #[memsize(with = "Self::record_memory")]
 pub(crate) enum LineIndexState {
     Resident(LineIndex),
@@ -545,15 +534,15 @@ impl LineIndexState {
         }
     }
 
-    fn record_memory(state: &Self, recorder: &mut rg_memsize::MemoryRecorder) {
+    fn record_memory(state: &Self, recorder: &mut rg_std::MemoryRecorder) {
         match state {
             Self::Resident(line_index) => recorder.scope("resident", |recorder| {
-                rg_memsize::MemorySize::record_memory_children(line_index, recorder);
+                MemorySize::record_memory_children(line_index, recorder);
             }),
             Self::Offloaded(line_index) => {
                 if let Some(line_index) = line_index.get() {
                     recorder.scope("loaded", |recorder| {
-                        rg_memsize::MemorySize::record_memory_children(line_index, recorder);
+                        MemorySize::record_memory_children(line_index, recorder);
                     });
                 }
             }

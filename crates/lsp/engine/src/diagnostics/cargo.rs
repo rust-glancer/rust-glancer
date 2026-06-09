@@ -12,10 +12,11 @@ use ls_types::{
     Diagnostic, DiagnosticRelatedInformation, DiagnosticSeverity, Location, NumberOrString,
     Position, Range, Uri,
 };
+use rg_std::UniqueVec;
 
 #[derive(Debug, Default)]
 pub(crate) struct CargoDiagnostics {
-    by_path: BTreeMap<PathBuf, Vec<Diagnostic>>,
+    by_path: BTreeMap<PathBuf, UniqueVec<Diagnostic>>,
 }
 
 impl CargoDiagnostics {
@@ -36,11 +37,19 @@ impl CargoDiagnostics {
 
     pub(crate) fn into_inner(self) -> BTreeMap<PathBuf, Vec<Diagnostic>> {
         self.by_path
+            .into_iter()
+            .map(|(path, diagnostics)| (path, diagnostics.into_vec()))
+            .collect()
     }
 
     #[cfg(test)]
     pub(super) fn from_map(by_path: BTreeMap<PathBuf, Vec<Diagnostic>>) -> Self {
-        Self { by_path }
+        Self {
+            by_path: by_path
+                .into_iter()
+                .map(|(path, diagnostics)| (path, diagnostics.into_iter().collect()))
+                .collect(),
+        }
     }
 
     fn parse_stream(&mut self, workspace_root: &Path, source: &str, bytes: &[u8]) {
@@ -72,20 +81,8 @@ impl CargoDiagnostics {
                 self.by_path
                     .entry(diagnostic.path)
                     .or_default()
-                    .push_unique(diagnostic.diagnostic);
+                    .push(diagnostic.diagnostic);
             }
-        }
-    }
-}
-
-trait DiagnosticVecExt {
-    fn push_unique(&mut self, diagnostic: Diagnostic);
-}
-
-impl DiagnosticVecExt for Vec<Diagnostic> {
-    fn push_unique(&mut self, diagnostic: Diagnostic) {
-        if !self.contains(&diagnostic) {
-            self.push(diagnostic);
         }
     }
 }
@@ -270,8 +267,9 @@ mod tests {
     };
 
     use ls_types::{Diagnostic, Position, Range};
+    use rg_std::UniqueVec;
 
-    use super::{CargoDiagnosticMapper, DiagnosticVecExt};
+    use super::CargoDiagnosticMapper;
 
     #[test]
     fn deduplicates_identical_cargo_diagnostics() {
@@ -286,10 +284,10 @@ mod tests {
             tags: None,
             data: None,
         };
-        let mut diagnostics = Vec::new();
+        let mut diagnostics = UniqueVec::new();
 
-        diagnostics.push_unique(diagnostic.clone());
-        diagnostics.push_unique(diagnostic);
+        diagnostics.push(diagnostic.clone());
+        diagnostics.push(diagnostic);
 
         assert_eq!(diagnostics.len(), 1);
     }

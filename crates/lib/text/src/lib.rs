@@ -5,6 +5,7 @@
 //! allocation through `Arc<str>`, while the interner itself can prune names that no live analysis
 //! snapshot still references.
 
+use rg_std::Shrink;
 use std::{
     borrow::Borrow,
     collections::{HashMap, hash_map::DefaultHasher},
@@ -13,6 +14,7 @@ use std::{
     ops::Deref,
     sync::{Arc, Weak},
 };
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Shared short text, usually an identifier or path segment.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -30,8 +32,10 @@ impl Name {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
 
-    pub fn shrink_to_fit(&mut self) {}
+impl Shrink for Name {
+    fn shrink_to_fit(&mut self) {}
 }
 
 impl fmt::Debug for Name {
@@ -80,22 +84,22 @@ impl From<String> for Name {
 
 // Encode names as plain strings. That keeps the runtime interner out of the cache format while
 // preserving the compact representation used by the rest of the schema.
-unsafe impl<C> wincode::SchemaWrite<C> for Name
+unsafe impl<C> SchemaWrite<C> for Name
 where
     C: wincode::config::Config,
 {
     type Src = Name;
 
     fn size_of(src: &Self::Src) -> wincode::WriteResult<usize> {
-        <str as wincode::SchemaWrite<C>>::size_of(src.as_str())
+        <str as SchemaWrite<C>>::size_of(src.as_str())
     }
 
     fn write(writer: impl wincode::io::Writer, src: &Self::Src) -> wincode::WriteResult<()> {
-        <str as wincode::SchemaWrite<C>>::write(writer, src.as_str())
+        <str as SchemaWrite<C>>::write(writer, src.as_str())
     }
 }
 
-unsafe impl<'de, C> wincode::SchemaRead<'de, C> for Name
+unsafe impl<'de, C> SchemaRead<'de, C> for Name
 where
     C: wincode::config::Config,
 {
@@ -105,7 +109,7 @@ where
         reader: impl wincode::io::Reader<'de>,
         dst: &mut std::mem::MaybeUninit<Self::Dst>,
     ) -> wincode::ReadResult<()> {
-        let text = <String as wincode::SchemaRead<C>>::get(reader)?;
+        let text = <String as SchemaRead<C>>::get(reader)?;
         dst.write(Name::from(text));
         Ok(())
     }
@@ -126,7 +130,7 @@ impl PartialEq<&str> for Name {
 /// Reuse table that deduplicates short text allocations without owning them forever.
 ///
 /// The table stores weak handles grouped by text hash. Phase data owns the strong `Name`s; once a
-/// rebuild drops obsolete phase data, `shrink_to_fit` removes the now-dead weak handles.
+/// rebuild drops obsolete phase data, `Shrink` removes the now-dead weak handles.
 #[derive(Debug, Clone, Default)]
 pub struct NameInterner {
     buckets: HashMap<u64, Vec<Weak<str>>>,
@@ -185,19 +189,21 @@ impl NameInterner {
             .all(|bucket| bucket.iter().all(|name| name.strong_count() == 0))
     }
 
-    pub fn shrink_to_fit(&mut self) {
+    fn hash_text(text: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl Shrink for NameInterner {
+    fn shrink_to_fit(&mut self) {
         self.buckets.retain(|_, bucket| {
             bucket.retain(|name| name.strong_count() > 0);
             bucket.shrink_to_fit();
             !bucket.is_empty()
         });
         self.buckets.shrink_to_fit();
-    }
-
-    fn hash_text(text: &str) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        text.hash(&mut hasher);
-        hasher.finish()
     }
 }
 
@@ -221,13 +227,6 @@ impl PackageNameInterners {
         &mut self.packages
     }
 
-    pub fn shrink_to_fit(&mut self) {
-        self.packages.shrink_to_fit();
-        for package in &mut self.packages {
-            package.shrink_to_fit();
-        }
-    }
-
     pub fn len(&self) -> usize {
         self.packages.iter().map(NameInterner::len).sum()
     }
@@ -237,22 +236,24 @@ impl PackageNameInterners {
     }
 }
 
-#[cfg(feature = "memsize")]
+impl Shrink for PackageNameInterners {
+    fn shrink_to_fit(&mut self) {
+        self.packages.shrink_to_fit();
+        for package in &mut self.packages {
+            Shrink::shrink_to_fit(package);
+        }
+    }
+}
+
 mod memsize {
     use std::{mem, sync::Weak};
 
-    use rg_memsize::{MemoryRecorder, MemorySize, Shrink};
+    use rg_std::{MemoryRecorder, MemorySize};
 
     use crate::{Name, NameInterner, PackageNameInterners};
 
     impl MemorySize for Name {
         fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-    }
-
-    impl Shrink for Name {
-        fn shrink_to_fit(&mut self) {
-            Name::shrink_to_fit(self);
-        }
     }
 
     impl MemorySize for NameInterner {
@@ -334,6 +335,8 @@ mod memsize {
 
 #[cfg(test)]
 mod tests {
+    use rg_std::Shrink;
+
     use crate::{Name, NameInterner, PackageNameInterners};
 
     #[test]
@@ -360,7 +363,7 @@ mod tests {
         assert_eq!(interner.len(), 0);
         assert_eq!(stored_weak_count(&interner), 1);
 
-        interner.shrink_to_fit();
+        Shrink::shrink_to_fit(&mut interner);
         assert_eq!(interner.len(), 0);
         assert_eq!(stored_weak_count(&interner), 0);
         assert!(interner.is_empty());
@@ -374,7 +377,7 @@ mod tests {
         let stale = interner.intern("Thing");
         drop(stale);
 
-        interner.shrink_to_fit();
+        Shrink::shrink_to_fit(&mut interner);
         let reused = interner.intern("User");
 
         assert_eq!(live.as_str().as_ptr(), reused.as_str().as_ptr());
@@ -410,10 +413,9 @@ mod tests {
         assert_eq!(interners.len(), 2);
     }
 
-    #[cfg(feature = "memsize")]
     #[test]
     fn interner_records_unique_text_payload() {
-        use rg_memsize::{MemoryRecordKind, MemoryRecorder, MemorySize};
+        use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize};
 
         let mut interner = NameInterner::new();
         let user = interner.intern("User");

@@ -9,20 +9,21 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_def_map::PackageSlot;
+use rg_std::Shrink;
 
 use crate::{
     PackageResidency, ProjectMemoryPurgePoint,
     cache::{PackageCacheArtifact, PackageCachePayload, PreparedPackageCacheWriter},
 };
 
-use super::{state::ProjectState, update};
+use super::{package_set::PhasePackageSet, state::ProjectState, update};
 
 /// Planned residency transition for one mutable project snapshot.
 pub(crate) struct ResidencyApplication<'a> {
     project: &'a mut ProjectState,
-    refresh_source_fingerprints_for: Vec<PackageSlot>,
-    packages_to_write: Vec<PackageSlot>,
-    packages_to_offload: Vec<PackageSlot>,
+    refresh_source_fingerprints_for: PhasePackageSet,
+    packages_to_write: PhasePackageSet,
+    packages_to_offload: PhasePackageSet,
 }
 
 impl<'a> ResidencyApplication<'a> {
@@ -37,14 +38,11 @@ impl<'a> ResidencyApplication<'a> {
         // Cache artifacts are the durable backing store for offloadable packages. Resident packages
         // stay in memory and should not pay serialization/write cost until policy asks for it.
         let packages_to_write = packages_to_offload
-            .iter()
-            .copied()
-            .filter(|package| Self::package_artifact_is_resident(project, *package))
-            .collect::<Vec<_>>();
+            .filter(|package| Self::package_artifact_is_resident(project, package));
 
         Self {
             project,
-            refresh_source_fingerprints_for: Vec::new(),
+            refresh_source_fingerprints_for: PhasePackageSet::default(),
             packages_to_write,
             packages_to_offload,
         }
@@ -58,7 +56,7 @@ impl<'a> ResidencyApplication<'a> {
     /// back to its current cache backing store afterward.
     pub(crate) fn restore(project: &'a mut ProjectState, rebuilt_packages: &[PackageSlot]) -> Self {
         Self {
-            refresh_source_fingerprints_for: rebuilt_packages.to_vec(),
+            refresh_source_fingerprints_for: PhasePackageSet::from_slice(rebuilt_packages),
             packages_to_write: Self::rebuilt_offloadable_packages(project, rebuilt_packages),
             packages_to_offload: Self::offloadable_packages(project),
             project,
@@ -91,14 +89,12 @@ impl<'a> ResidencyApplication<'a> {
 
         self.write_package_artifacts(&self.packages_to_write)?;
 
-        let mut offloaded_packages = Vec::new();
         let packages_to_offload = std::mem::take(&mut self.packages_to_offload);
-        for package in packages_to_offload {
+        for package in packages_to_offload.iter() {
             self.offload_package(package)?;
-            offloaded_packages.push(package.0);
         }
 
-        self.finish_offloading(&offloaded_packages);
+        self.finish_offloading(&packages_to_offload);
         self.project
             .cache_store
             .cleanup_stale_generations()
@@ -108,20 +104,23 @@ impl<'a> ResidencyApplication<'a> {
     }
 
     /// Returns all packages selected by the current residency policy.
-    fn offloadable_packages(project: &ProjectState) -> Vec<PackageSlot> {
-        (0..project.workspace.packages().len())
-            .map(PackageSlot)
-            .filter(|package| {
-                project.package_residency.package(*package) == Some(PackageResidency::Offloadable)
-            })
-            .collect::<Vec<_>>()
+    fn offloadable_packages(project: &ProjectState) -> PhasePackageSet {
+        PhasePackageSet::from_packages(
+            (0..project.workspace.packages().len())
+                .map(PackageSlot)
+                .filter(|package| {
+                    project.package_residency.package(*package)
+                        == Some(PackageResidency::Offloadable)
+                })
+                .collect(),
+        )
     }
 
     /// Intersects the rebuilt package set with the current offloadable package set.
     fn rebuilt_offloadable_packages(
         project: &ProjectState,
         rebuilt_packages: &[PackageSlot],
-    ) -> Vec<PackageSlot> {
+    ) -> PhasePackageSet {
         let package_count = project.workspace.packages().len();
         let mut rebuilt = vec![false; package_count];
         for package in rebuilt_packages {
@@ -138,7 +137,7 @@ impl<'a> ResidencyApplication<'a> {
                 packages.push(package);
             }
         }
-        packages
+        PhasePackageSet::from_packages(packages)
     }
 
     /// Refreshes source fingerprints for packages that were rebuilt from source.
@@ -147,7 +146,7 @@ impl<'a> ResidencyApplication<'a> {
             self.project.workspace.workspace_root(),
             &self.project.parse,
             &mut self.project.package_source_fingerprints,
-            &self.refresh_source_fingerprints_for,
+            self.refresh_source_fingerprints_for.as_slice(),
         )
     }
 
@@ -159,19 +158,12 @@ impl<'a> ResidencyApplication<'a> {
     }
 
     /// Writes durable cache artifacts for packages whose resident payloads are about to be dropped.
-    fn write_package_artifacts(&self, packages: &[PackageSlot]) -> anyhow::Result<()> {
+    fn write_package_artifacts(&self, packages: &PhasePackageSet) -> anyhow::Result<()> {
         if packages.is_empty() {
             return Ok(());
         }
 
         let writer = self.project.cache_store.prepare_artifact_writes()?;
-        if packages.len() <= 1 {
-            for package in packages {
-                Self::write_package_artifact(self.project, &writer, *package)?;
-            }
-            return Ok(());
-        }
-
         let thread_pool = Self::local_thread_pool("rg-cache-write")?;
         let project = &*self.project;
 
@@ -179,7 +171,7 @@ impl<'a> ResidencyApplication<'a> {
         // mutation. Write every durable artifact first; only then can callers safely drop residents.
         thread_pool
             .install(|| {
-                packages.par_iter().try_for_each(|package| {
+                packages.as_slice().par_iter().try_for_each(|package| {
                     Self::write_package_artifact(project, &writer, *package)
                 })
             })
@@ -187,18 +179,19 @@ impl<'a> ResidencyApplication<'a> {
     }
 
     /// Drops compactable project data after package payloads have been offloaded.
-    fn finish_offloading(&mut self, offloaded_packages: &[usize]) {
+    fn finish_offloading(&mut self, offloaded_packages: &PhasePackageSet) {
         if !offloaded_packages.is_empty() {
             // Offloading drops many strong `Name` handles from phase payloads. Prune the interner
             // immediately so dead weak entries and their Arc control blocks do not pin allocator
             // pages until a later rebuild happens to compact the project.
-            self.project.names.shrink_to_fit();
+            Shrink::shrink_to_fit(&mut self.project.names);
 
             // File ids and paths remain resident as the source inventory. Line indexes are larger
             // and can be reconstructed from saved source text when a query needs LSP coordinates.
+            let offloaded_package_indices = offloaded_packages.package_indices();
             self.project
                 .parse
-                .offload_line_indexes_for_packages(offloaded_packages);
+                .offload_line_indexes_for_packages(&offloaded_package_indices);
         }
     }
 

@@ -6,6 +6,7 @@
 
 use rg_ir_model::{FieldRef, FunctionRef, TraitApplicability, TypeDefRef};
 use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
+use rg_std::UniqueVec;
 
 use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, NominalTy, Ty};
 
@@ -150,7 +151,7 @@ where
     fn inherent_functions_for_nominal(
         &self,
         receiver_ty: &NominalTy,
-    ) -> Result<Vec<FunctionRef>, D::Error> {
+    ) -> Result<UniqueVec<FunctionRef>, D::Error> {
         match self.lookup_index {
             Some(index) => {
                 index.inherent_functions_for_type(self.item_paths.items(), receiver_ty.def)

@@ -4,13 +4,12 @@
 //! Qualified paths are left to the path-completion scanner because their
 //! candidate set comes from the resolved qualifier rather than lexical scope.
 
-use rg_ir_model::{BodyId, BodyRef, ScopeId, TargetRef};
-use rg_item_tree::TypePath;
+use rg_ir_model::{BodyId, BodyRef, ScopeId, TargetRef, items::TypePath};
 use rg_package_store::PackageStoreError;
 use rg_parse::FileId;
 
 use crate::{
-    BodyData, BodyIrReadTxn, BodyPath, ExprKind,
+    BodyIrReadTxn, BodyPath, ExprKind, ResolvedBodyData,
     cursor::{UnqualifiedCompletionNamespace, UnqualifiedCompletionSite},
 };
 
@@ -49,7 +48,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
         let mut best: Option<(UnqualifiedCompletionSite, u32)> = None;
 
         for (body_idx, body) in target_bodies.bodies().iter().enumerate() {
-            if body.source.file_id != self.file_id || !body.source.span.contains(self.offset) {
+            if body.source().file_id != self.file_id || !body.source().span.contains(self.offset) {
                 continue;
             }
 
@@ -68,7 +67,7 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     fn scan_type_names(
         &self,
         body_ref: BodyRef,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         best: &mut Option<(UnqualifiedCompletionSite, u32)>,
     ) {
         let sites = BodyScanSites::new(body);
@@ -85,10 +84,10 @@ impl<'txn, 'db> UnqualifiedCompletionSiteScanner<'txn, 'db> {
     fn scan_value_names(
         &self,
         body_ref: BodyRef,
-        body: &BodyData,
+        body: &ResolvedBodyData,
         best: &mut Option<(UnqualifiedCompletionSite, u32)>,
     ) {
-        for (_expr, expr_data) in body.exprs.iter_with_ids() {
+        for (_expr, expr_data) in body.exprs_with_ids() {
             if expr_data.source.file_id != self.file_id {
                 continue;
             }

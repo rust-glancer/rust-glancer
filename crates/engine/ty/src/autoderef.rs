@@ -9,6 +9,7 @@ use std::{borrow::Cow, collections::VecDeque};
 use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery};
 
 use crate::{ItemPathQuery, RefMutability, Ty, deref::DerefResolver};
+use rg_std::UniqueVec;
 
 const AUTODEREF_LIMIT: usize = 8;
 
@@ -80,7 +81,7 @@ where
         }
     }
 
-    fn deref_targets(&self, ty: &Ty) -> Result<Vec<Ty>, D::Error> {
+    fn deref_targets(&self, ty: &Ty) -> Result<UniqueVec<Ty>, D::Error> {
         DerefResolver::new(
             self.item_paths.clone(),
             self.target_items.clone(),

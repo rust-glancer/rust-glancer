@@ -3,7 +3,7 @@
 //! DefMaps only know about one scope graph. This query object adds the routing layer that decides
 //! which graph owns a `DefMapRef`, then reuses the private path resolver for the actual lookup.
 
-use rg_ir_model::{DefId, DefMapRef, LocalDefRef, LocalImplRef, ModuleRef, TargetRef};
+use rg_ir_model::{DefId, DefMapRef, LocalDefRef, LocalImplRef, ModuleRef, Path, TargetRef};
 use rg_text::Name;
 
 use super::{
@@ -13,7 +13,7 @@ use super::{
 
 use super::super::{
     DefMap, LocalDefData, LocalImplData, MacroDefinitionData, ModuleData, ModuleScopeBuilder,
-    Namespace, Path, ScopeEntryRef, ScopeNamespace, VisibleScopeDef, VisibleScopeDefs,
+    Namespace, ScopeEntryRef, ScopeNamespace, VisibleScopeDef, VisibleScopeDefs,
     VisibleScopeOrigin,
 };
 

@@ -5,10 +5,12 @@ use rg_arena::Arena;
 use rg_cfg_eval::CfgOptions;
 
 use crate::{FileId, LineIndex, ParsedFile, ParsedFileSnapshot, Target, TargetId, file::FileDb};
+use rg_std::MemorySize;
 use rg_workspace::{PackageId, PackageOrigin, RustEdition, TargetKind};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Parsed package, including package-local files and target entrypoints.
-#[derive(Debug, Clone, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, MemorySize)]
 pub struct Package {
     /// Stable package id from workspace metadata.
     pub(crate) id: PackageId,
@@ -228,9 +230,7 @@ impl Package {
 ///
 /// The file vector is intentionally package-local and ordered by `FileId`; cached item/semantic
 /// payloads can only be reused if those ids keep pointing at the same paths and line indexes.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
 pub struct PackageParseSnapshot {
     pub(crate) files: Vec<ParsedFileSnapshot>,
     pub(crate) target_root_files: Vec<FileId>,

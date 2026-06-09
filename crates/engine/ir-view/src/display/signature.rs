@@ -12,6 +12,7 @@ use rg_ir_model::items::{
     EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionQualifiers, GenericParams, Mutability,
     ParamItem, TypeBound, TypeRef, VisibilityLevel, WherePredicate,
 };
+use rg_ty::Ty;
 
 use crate::{IndexedViewDb, display::ty_label::TypeRenderer};
 
@@ -148,10 +149,16 @@ impl SignatureRenderer {
         }
     }
 
-    pub fn binding_signature(db: &IndexedViewDb<'_>, data: &BindingData) -> anyhow::Result<String> {
+    pub fn binding_signature(
+        db: &IndexedViewDb<'_>,
+        data: &BindingData,
+        ty: Option<&Ty>,
+    ) -> anyhow::Result<String> {
         let name = data.name.as_deref().unwrap_or("<unsupported>");
-        let ty = TypeRenderer::new(db)
-            .render(&data.ty)?
+        let ty = ty
+            .map(|ty| TypeRenderer::new(db).render(ty))
+            .transpose()?
+            .flatten()
             .or_else(|| data.annotation.as_ref().map(ToString::to_string))
             .unwrap_or_else(|| "_".to_string());
 

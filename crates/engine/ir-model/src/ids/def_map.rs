@@ -1,9 +1,9 @@
-use rg_memsize::MemorySize;
 use rg_parse::TargetId;
 use rg_workspace::PackageSlot;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{BodyRef, declare_id};
+use rg_std::{MemorySize, Shrink};
 
 declare_id! {
     /// Stable identifier of one module inside a target map.
@@ -20,7 +20,8 @@ declare_id! {
 }
 
 /// Stable reference to one target across the whole project analysis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub struct TargetRef {
     pub package: PackageSlot,
     pub target: TargetId,
@@ -30,7 +31,8 @@ pub struct TargetRef {
 // Note: we intentionally do not derive or provide `From` here, as it can be very
 // easy to just convert `TargetRef` (which is always present) where `BodyRef` must
 // be used.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub enum DefMapRef {
     /// Item originates from a target (e.g. semantic scope)
     Target(TargetRef),
@@ -61,35 +63,40 @@ impl DefMapRef {
 }
 
 /// Stable reference to one module across the whole project analysis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub struct ModuleRef {
     pub origin: DefMapRef,
     pub module: ModuleId,
 }
 
 /// Stable reference to one local definition across the whole project analysis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub struct LocalDefRef {
     pub origin: DefMapRef,
     pub local_def: LocalDefId,
 }
 
 /// Stable reference to one impl block across the whole project analysis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub struct LocalImplRef {
     pub origin: DefMapRef,
     pub local_impl: LocalImplId,
 }
 
 /// Stable reference to one import across the whole project analysis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub struct ImportRef {
     pub origin: DefMapRef,
     pub import: ImportId,
 }
 
 /// Namespace-resolved target-level definition reference.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub enum DefId {
     Module(ModuleRef),
     Local(LocalDefRef),

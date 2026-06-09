@@ -7,13 +7,13 @@
 use anyhow::{Context as _, Result};
 
 use rg_ir_model::{
-    DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, TargetRef,
+    DefId, DefMapRef, LocalDefId, LocalDefRef, ModuleId, ModuleRef, PathSegment, TargetRef,
     hir::source::{GeneratedItemRef, GeneratedSourceId, ItemSource},
 };
 use rg_ir_storage::{
     ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath, LocalDefData,
     LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData, ModuleOrigin, ModuleScope,
-    Namespace, PathSegment, ScopeBinding, ScopeBindingOrigin,
+    Namespace, ScopeBinding, ScopeBindingOrigin,
 };
 use rg_item_tree::{
     Documentation, ImportAlias, ItemKind, ItemNode, ItemTreeId, ItemTreeRef, MacroCallItem,
@@ -89,7 +89,7 @@ impl GeneratedCollector<'_> {
         let top_level = self
             .state
             .def_map_builder
-            .as_incomplete_def_map()
+            .partial()
             .generated_source(generated_source_id)
             .expect("generated source should exist immediately after allocation")
             .top_level
@@ -125,7 +125,7 @@ impl GeneratedCollector<'_> {
         let item = self
             .state
             .def_map_builder
-            .as_incomplete_def_map()
+            .partial()
             .generated_source(generated_source)
             .and_then(|source| source.item(item_id))
             .expect("generated item id should exist while collecting def map")

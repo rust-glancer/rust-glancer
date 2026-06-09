@@ -6,12 +6,13 @@
 
 use rg_ir_model::items::{TypeBound, TypeRef};
 use rg_ir_model::{
-    AssocItemId, ImplRef, TraitImplRef, TraitRef, TypeAliasRef, hir::items::ImplData,
+    AssocItemId, ImplRef, Path, PathSegment, TraitImplRef, TraitRef, TypeAliasRef,
+    hir::items::ImplData,
 };
 use rg_ir_storage::{
-    DefMapSource, ItemLookupIndex, ItemStoreSource, Path, PathSegment, TargetItemQuery,
-    TypePathContext,
+    DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext,
 };
+use rg_std::UniqueVec;
 use rg_text::Name;
 
 use crate::{ImplMatcher, ItemPathQuery, Ty, associated_type::AssociatedTypeProjector};
@@ -75,7 +76,7 @@ where
         let projector = AssociatedTypeProjector::new(&self.item_paths, &self.target_items);
         let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
         let canonical_traits = self.canonical_trait_refs_from_use_site(&projector, trait_kind)?;
-        let mut candidates = Vec::new();
+        let mut candidates = UniqueVec::new();
         if let Ty::Opaque { bounds } = ty {
             projector.push_associated_types_from_opaque_bounds(
                 &mut candidates,
@@ -99,7 +100,7 @@ where
                     ty,
                 )?
             {
-                push_unique(&mut candidates, item_ty);
+                candidates.push(item_ty);
                 continue;
             }
 
@@ -113,7 +114,7 @@ where
             else {
                 continue;
             };
-            push_unique(&mut candidates, item_ty);
+            candidates.push(item_ty);
         }
 
         Ok(Ty::one_or_unknown(candidates))
@@ -122,23 +123,23 @@ where
     fn trait_impl_candidates(
         &self,
         projector: &AssociatedTypeProjector<'_, 'query, D, I>,
-        canonical_traits: &[TraitRef],
+        canonical_traits: &UniqueVec<TraitRef>,
         trait_kind: CanonicalIteratorTrait,
-    ) -> Result<Vec<TraitImplRef>, D::Error> {
-        let mut candidates = Vec::new();
+    ) -> Result<UniqueVec<TraitImplRef>, D::Error> {
+        let mut candidates = UniqueVec::new();
         for trait_ref in canonical_traits {
             if let Some(indexed_impls) = self
                 .lookup_index
                 .and_then(|index| index.trait_impls_for_trait(*trait_ref))
             {
                 for trait_impl in indexed_impls {
-                    push_unique(&mut candidates, *trait_impl);
+                    candidates.push(*trait_impl);
                 }
                 continue;
             }
 
             for trait_impl in self.target_items.trait_impls_for_trait(*trait_ref)? {
-                push_unique(&mut candidates, trait_impl);
+                candidates.push(trait_impl);
             }
         }
 
@@ -165,7 +166,7 @@ where
                         continue;
                     }
 
-                    push_unique(&mut candidates, trait_impl);
+                    candidates.push(trait_impl);
                 }
             }
         }
@@ -191,7 +192,7 @@ where
         projector: &AssociatedTypeProjector<'_, 'query, D, I>,
         impl_data: &ImplData,
         trait_kind: CanonicalIteratorTrait,
-    ) -> Result<Vec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitRef>, D::Error> {
         projector
             .trait_refs_for_path_from_impl_and_use_site(impl_data, &trait_kind.absolute_core_path())
     }
@@ -200,7 +201,7 @@ where
         &self,
         projector: &AssociatedTypeProjector<'_, 'query, D, I>,
         trait_kind: CanonicalIteratorTrait,
-    ) -> Result<Vec<TraitRef>, D::Error> {
+    ) -> Result<UniqueVec<TraitRef>, D::Error> {
         projector.trait_refs_for_path_from_use_site(&trait_kind.absolute_core_path())
     }
 
@@ -361,11 +362,5 @@ impl CanonicalIteratorTrait {
                 PathSegment::Name(Name::new(trait_name)),
             ],
         }
-    }
-}
-
-fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
-    if !items.contains(&item) {
-        items.push(item);
     }
 }

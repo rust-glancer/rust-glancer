@@ -5,12 +5,12 @@
 
 pub mod locals;
 
-use rg_body_ir::BodyScopeQuery;
+use rg_body_ir::BodyResolutionContext;
 use rg_ir_model::{
-    BodyRef, EnumVariantRef, FieldRef, ScopeId, SemanticItemRef, TypePathResolution,
-    identity::DeclarationRef, identity::ExprRef,
+    BodyRef, EnumVariantRef, FieldRef, Path, ScopeId, SemanticItemRef, TypePathResolution,
+    identity::DeclarationRef, identity::ExprRef, items::PrimitiveTy,
 };
-use rg_ir_storage::{ItemStoreQuery, Path, TypePathContext};
+use rg_ir_storage::{ItemStoreQuery, TypePathContext};
 use rg_ty::{ItemPathQuery, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
 use crate::{IndexedViewDb, ty::locals::BodyView};
@@ -50,11 +50,13 @@ impl<'a, 'db> TyView<'a, 'db> {
                 else {
                     return Ok(None);
                 };
-                Ok(Some(Ty::nominal(vec![NominalTy::bare(ty)])))
+                Ok(Some(Ty::nominal(
+                    [NominalTy::bare(ty)].into_iter().collect(),
+                )))
             }
-            DeclarationRef::Item(SemanticItemRef::TypeDef(ty)) => {
-                Ok(Some(Ty::nominal(vec![NominalTy::bare(ty)])))
-            }
+            DeclarationRef::Item(SemanticItemRef::TypeDef(ty)) => Ok(Some(Ty::nominal(
+                [NominalTy::bare(ty)].into_iter().collect(),
+            ))),
             DeclarationRef::Item(
                 SemanticItemRef::Trait(_)
                 | SemanticItemRef::Impl(_)
@@ -72,7 +74,7 @@ impl<'a, 'db> TyView<'a, 'db> {
     pub fn ty_for_type_path(&self, context: TypePathContext, path: &Path) -> anyhow::Result<Ty> {
         let resolution = ItemPathQuery::new(self.db, self.db).resolve_type_path(context, path)?;
         if matches!(resolution, TypePathResolution::Unknown)
-            && let Some(primitive) = path.single_name().and_then(rg_ty::PrimitiveTy::from_name)
+            && let Some(primitive) = path.single_name().and_then(PrimitiveTy::from_name)
         {
             return Ok(Ty::Primitive(primitive));
         }
@@ -89,10 +91,11 @@ impl<'a, 'db> TyView<'a, 'db> {
         let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(Ty::Unknown);
         };
-        let resolution = BodyScopeQuery::new(self.db, self.db, body_ref, body)
-            .resolve_type_path_in_scope(scope, path)?;
+        let resolution = BodyResolutionContext::new(self.db, self.db, body_ref, body)
+            .type_path_query()
+            .resolve_in_scope(scope, path)?;
         if matches!(resolution, TypePathResolution::Unknown)
-            && let Some(primitive) = path.single_name().and_then(rg_ty::PrimitiveTy::from_name)
+            && let Some(primitive) = path.single_name().and_then(PrimitiveTy::from_name)
         {
             return Ok(Ty::Primitive(primitive));
         }
@@ -111,8 +114,9 @@ impl<'a, 'db> TyView<'a, 'db> {
         let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(Ty::Unknown);
         };
-        let (_, ty) = BodyScopeQuery::new(self.db, self.db, body_ref, body)
-            .resolve_value_path_in_scope(scope, path)?;
+        let ty = BodyResolutionContext::new(self.db, self.db, body_ref, body)
+            .value_paths()
+            .resolve_nonlocal_path_ty(scope, path)?;
         Ok(ty)
     }
 
@@ -135,7 +139,9 @@ impl<'a, 'db> TyView<'a, 'db> {
         let Some(data) = ItemStoreQuery::new(self.db).enum_variant_data(variant)? else {
             return Ok(None);
         };
-        Ok(Some(Ty::nominal(vec![NominalTy::bare(data.owner)])))
+        Ok(Some(Ty::nominal(
+            [NominalTy::bare(data.owner)].into_iter().collect(),
+        )))
     }
 
     fn type_path_resolution_to_ty(resolution: TypePathResolution) -> Ty {

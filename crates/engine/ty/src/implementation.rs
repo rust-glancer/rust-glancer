@@ -6,6 +6,7 @@
 
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner, TraitRef, TypeDefRef};
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TargetItemQuery};
+use rg_std::UniqueVec;
 
 use crate::{Autoderef, AutoderefMode, ImplMatcher, ItemPathQuery, ReferencePeelingCandidates, Ty};
 
@@ -31,12 +32,12 @@ where
     }
 
     /// Returns impl blocks for all nominal type definitions reachable through reference peeling.
-    pub fn impls_for_ty(&self, ty: &Ty) -> Result<Vec<ImplRef>, D::Error> {
-        let mut impls = Vec::new();
+    pub fn impls_for_ty(&self, ty: &Ty) -> Result<UniqueVec<ImplRef>, D::Error> {
+        let mut impls = UniqueVec::new();
         for candidate in ReferencePeelingCandidates::new(ty) {
             for ty in candidate.ty().as_nominals() {
                 for impl_ref in self.impls_for_type_def(ty.def)? {
-                    Self::push_unique(&mut impls, impl_ref);
+                    impls.push(impl_ref);
                 }
             }
         }
@@ -44,12 +45,12 @@ where
     }
 
     /// Returns impl blocks whose resolved self type mentions this nominal type definition.
-    pub fn impls_for_type_def(&self, ty: TypeDefRef) -> Result<Vec<ImplRef>, D::Error> {
+    pub fn impls_for_type_def(&self, ty: TypeDefRef) -> Result<UniqueVec<ImplRef>, D::Error> {
         self.target_items.impls_for_type(ty)
     }
 
     /// Returns impl blocks that resolve to the requested trait.
-    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> Result<Vec<ImplRef>, D::Error> {
+    pub fn impls_for_trait(&self, trait_ref: TraitRef) -> Result<UniqueVec<ImplRef>, D::Error> {
         self.target_items.impls_for_trait(trait_ref)
     }
 
@@ -61,9 +62,9 @@ where
         &self,
         function: FunctionRef,
         receiver_ty: Option<&Ty>,
-    ) -> Result<Vec<FunctionRef>, D::Error> {
+    ) -> Result<UniqueVec<FunctionRef>, D::Error> {
         let Some(data) = self.item_paths.items().function_data(function)? else {
-            return Ok(Vec::new());
+            return Ok(UniqueVec::new());
         };
 
         match data.owner {
@@ -75,8 +76,8 @@ where
                 data.name.as_str(),
                 receiver_ty,
             ),
-            ItemOwner::Impl(_) => Ok(vec![function]),
-            ItemOwner::Module(_) => Ok(Vec::new()),
+            ItemOwner::Impl(_) => Ok([function].into_iter().collect()),
+            ItemOwner::Module(_) => Ok(UniqueVec::new()),
         }
     }
 
@@ -86,7 +87,7 @@ where
         trait_ref: TraitRef,
         method_name: &str,
         receiver_ty: Option<&Ty>,
-    ) -> Result<Vec<FunctionRef>, D::Error> {
+    ) -> Result<UniqueVec<FunctionRef>, D::Error> {
         match receiver_ty {
             Some(receiver_ty) => {
                 self.impl_methods_for_trait_method_receiver(trait_ref, method_name, receiver_ty)
@@ -100,10 +101,10 @@ where
         trait_ref: TraitRef,
         method_name: &str,
         receiver_ty: &Ty,
-    ) -> Result<Vec<FunctionRef>, D::Error> {
+    ) -> Result<UniqueVec<FunctionRef>, D::Error> {
         let autoderef = Autoderef::new(self.item_paths.clone(), self.target_items.clone());
         let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
-        let mut functions = Vec::new();
+        let mut functions = UniqueVec::new();
 
         for candidate in autoderef.candidates(AutoderefMode::MethodReceiver, receiver_ty) {
             let candidate = candidate?;
@@ -122,7 +123,7 @@ where
                         continue;
                     }
                     for function in self.matching_impl_methods(trait_impl.impl_ref, method_name)? {
-                        Self::push_unique(&mut functions, function);
+                        functions.push(function);
                     }
                 }
             }
@@ -135,11 +136,11 @@ where
         &self,
         trait_ref: TraitRef,
         method_name: &str,
-    ) -> Result<Vec<FunctionRef>, D::Error> {
-        let mut functions = Vec::new();
+    ) -> Result<UniqueVec<FunctionRef>, D::Error> {
+        let mut functions = UniqueVec::new();
         for impl_ref in self.impls_for_trait(trait_ref)? {
             for function in self.matching_impl_methods(impl_ref, method_name)? {
-                Self::push_unique(&mut functions, function);
+                functions.push(function);
             }
         }
         Ok(functions)
@@ -149,12 +150,12 @@ where
         &self,
         impl_ref: ImplRef,
         method_name: &str,
-    ) -> Result<Vec<FunctionRef>, D::Error> {
+    ) -> Result<UniqueVec<FunctionRef>, D::Error> {
         let Some(data) = self.item_paths.items().impl_data(impl_ref)? else {
-            return Ok(Vec::new());
+            return Ok(UniqueVec::new());
         };
 
-        let mut functions = Vec::new();
+        let mut functions = UniqueVec::new();
         for item in &data.items {
             let &AssocItemId::Function(id) = item else {
                 continue;
@@ -169,14 +170,8 @@ where
             if function_data.name.as_str() != method_name {
                 continue;
             }
-            Self::push_unique(&mut functions, function);
+            functions.push(function);
         }
         Ok(functions)
-    }
-
-    fn push_unique<T: PartialEq>(items: &mut Vec<T>, item: T) {
-        if !items.contains(&item) {
-            items.push(item);
-        }
     }
 }

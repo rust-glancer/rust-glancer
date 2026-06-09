@@ -8,6 +8,8 @@ use rg_ir_model::{
         TypeAliasData, UnionData,
     },
 };
+use rg_std::{MemorySize, Shrink, UniqueVec};
+use wincode::{SchemaRead, SchemaWrite};
 
 use super::{SemanticItemView, view::SemanticItemData};
 
@@ -80,9 +82,7 @@ impl ItemStoreBuilder {
 ///
 /// Semantic ids are dense indexes into these vectors. Keeping all item families in one store lets
 /// lowering allocate ids cheaply while the public query surface exposes stable typed references.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ItemStore {
     // DefMap this item store corresponds to.
     origin: DefMapRef,
@@ -130,10 +130,17 @@ impl ItemStore {
         &self.impls
     }
 
-    // TODO: Smell, shouldn't exist. Mutator should convert
-    // to ItemStoreBuilder, mutate, and then convert back, probably.
-    pub fn impls_mut(&mut self) -> &mut Arena<ImplId, ImplData> {
-        &mut self.impls
+    /// Applies resolved header facts after impl item identities are already allocated.
+    pub fn set_impl_header_facts(
+        &mut self,
+        id: ImplId,
+        resolved_self_tys: UniqueVec<TypeDefRef>,
+        resolved_trait_refs: UniqueVec<TraitRef>,
+    ) -> Option<()> {
+        let data = self.impls.get_mut(id)?;
+        data.resolved_self_tys = resolved_self_tys;
+        data.resolved_trait_refs = resolved_trait_refs;
+        Some(())
     }
 
     pub fn functions(&self) -> &Arena<FunctionId, FunctionData> {
@@ -241,46 +248,6 @@ impl ItemStore {
         };
 
         Some(SemanticItemView::new(item, data))
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.local_items.shrink_to_fit();
-        self.structs.shrink_to_fit();
-        for data in self.structs.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.unions.shrink_to_fit();
-        for data in self.unions.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.enums.shrink_to_fit();
-        for data in self.enums.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.traits.shrink_to_fit();
-        for data in self.traits.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.impls.shrink_to_fit();
-        for data in self.impls.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.functions.shrink_to_fit();
-        for data in self.functions.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.type_aliases.shrink_to_fit();
-        for data in self.type_aliases.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.consts.shrink_to_fit();
-        for data in self.consts.iter_mut() {
-            data.shrink_to_fit();
-        }
-        self.statics.shrink_to_fit();
-        for data in self.statics.iter_mut() {
-            data.shrink_to_fit();
-        }
     }
 
     pub fn semantic_items(&self) -> impl Iterator<Item = SemanticItemView<'_>> {

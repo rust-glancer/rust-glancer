@@ -5,10 +5,10 @@
 
 use anyhow::Result;
 
-use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, TargetRef};
+use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, PathSegment, TargetRef};
 use rg_ir_storage::{
-    ImportPath, LocalDefData, LocalDefKind, MacroDefinitionData, PathResolver, PathSegment,
-    ScopeBinding, ScopeBindingOrigin, TargetResolutionEnv,
+    ImportPath, LocalDefData, LocalDefKind, MacroDefinitionData, PathResolver, ScopeBinding,
+    ScopeBindingOrigin, TargetResolutionEnv,
 };
 use rg_text::Name;
 

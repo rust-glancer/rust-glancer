@@ -11,7 +11,7 @@ mod txn;
 
 use std::sync::Arc;
 
-use rg_memsize::{MemoryRecorder, MemorySize};
+use rg_std::{MemoryRecorder, MemorySize, Shrink};
 use rg_workspace::PackageSlot;
 
 pub use self::{
@@ -92,10 +92,6 @@ impl<T> PackageStore<T> {
 
     pub fn is_empty(&self) -> bool {
         self.packages.is_empty()
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.packages.shrink_to_fit();
     }
 
     /// Returns one raw package storage entry by package slot.
@@ -257,6 +253,32 @@ impl<T> PackageEntry<T> {
     }
 }
 
+impl<T> Shrink for PackageStore<T>
+where
+    T: Shrink,
+{
+    fn shrink_to_fit(&mut self) {
+        self.packages.shrink_to_fit();
+        for entry in &mut self.packages {
+            Shrink::shrink_to_fit(entry);
+        }
+    }
+}
+
+impl<T> Shrink for PackageEntry<T>
+where
+    T: Shrink,
+{
+    fn shrink_to_fit(&mut self) {
+        // Resident payloads may be shared with older snapshots or read transactions. Compacting
+        // only uniquely-owned payloads preserves copy-on-write sharing instead of cloning data
+        // just to release spare capacity.
+        if let Some(package) = self.as_resident_unique_mut() {
+            Shrink::shrink_to_fit(package);
+        }
+    }
+}
+
 impl<T> MemorySize for PackageStore<T>
 where
     T: MemorySize,
@@ -277,6 +299,7 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
 
+    use rg_std::Shrink;
     use rg_workspace::PackageSlot;
 
     use crate::{
@@ -287,6 +310,17 @@ mod tests {
     struct TestLoader {
         loads: AtomicUsize,
         packages: Vec<&'static str>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct ShrinkProbe {
+        calls: usize,
+    }
+
+    impl Shrink for ShrinkProbe {
+        fn shrink_to_fit(&mut self) {
+            self.calls += 1;
+        }
     }
 
     impl LoadPackage<&'static str> for TestLoader {
@@ -371,6 +405,28 @@ mod tests {
                 .expect("offloaded package slot should exist")
                 .is_offloaded()
         );
+    }
+
+    #[test]
+    fn shrink_compacts_unique_resident_packages_without_cloning_shared_ones() {
+        let original = PackageStore::from_entries(vec![
+            PackageEntry::resident(ShrinkProbe { calls: 0 }),
+            PackageEntry::resident(ShrinkProbe { calls: 0 }),
+            PackageEntry::offloaded(),
+        ]);
+        let mut cloned = original.clone();
+
+        cloned
+            .replace(PackageSlot(1), ShrinkProbe { calls: 0 })
+            .expect("package slot should exist");
+        Shrink::shrink_to_fit(&mut cloned);
+
+        let calls = cloned
+            .raw_entries_with_slots()
+            .map(|(slot, entry)| (slot.0, entry.as_resident().map(|probe| probe.calls)))
+            .collect::<Vec<_>>();
+
+        assert_eq!(calls, vec![(0, Some(0)), (1, Some(1)), (2, None)]);
     }
 
     #[test]

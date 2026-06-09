@@ -11,6 +11,8 @@ use crate::{
     FunctionRef, ImplRef, LocalDefRef, ModuleRef, ScopeId, SemanticItemRef, StaticRef, TargetRef,
     TraitRef, TypeAliasRef, TypeDefRef,
 };
+use rg_std::{MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Stable identity for one lowered function body declaration.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -101,16 +103,9 @@ impl fmt::Debug for LexicalScopeRef {
 
 /// Stable declaration identity exposed by indexed-data views.
 #[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    Hash,
-    derive_more::From,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Clone, Copy, PartialEq, Eq, Hash, derive_more::From, SchemaRead, SchemaWrite, MemorySize, Shrink,
 )]
+#[shrink(leaf)]
 pub enum DeclarationRef {
     #[from]
     Module(ModuleRef),

@@ -4,7 +4,8 @@ use expect_test::Expect;
 
 use crate::{SemanticIrReadTxn, testonly::SemanticIrFixture};
 use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef, TypeAliasId};
-use rg_ir_storage::{ItemStore, ItemStoreQuery, Path, PathSegment, TargetItemQuery};
+use rg_ir_model::{Path, PathSegment};
+use rg_ir_storage::{ItemStore, ItemStoreQuery, TargetItemQuery};
 use rg_item_tree::{FieldItem, FieldList, ParamKind, VisibilityLevel};
 use rg_package_store::PackageLoader;
 use rg_parse::{Package, ParseDb, Target};
@@ -158,7 +159,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
             .semantic_ir_db()
             .read_txn(PackageLoader::resident_only("resident semantic IR fixture"));
         let target_items = TargetItemQuery::new(&def_map_txn, &semantic_ir_txn, target_ref);
-        let mut type_defs = ItemPathQuery::new(&def_map_txn, &semantic_ir_txn)
+        let type_defs = ItemPathQuery::new(&def_map_txn, &semantic_ir_txn)
             .type_defs_for_path(
                 ModuleRef {
                     origin: DefMapRef::Target(target_ref),
@@ -167,6 +168,7 @@ impl<'a> ProjectSemanticQuerySnapshot<'a> {
                 &path,
             )
             .expect("fixture semantic query should resolve type path");
+        let mut type_defs = type_defs.into_vec();
         type_defs.sort_by_key(|ty| self.render_type_def_ref(&semantic_ir_txn, *ty));
 
         if type_defs.is_empty() {

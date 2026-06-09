@@ -146,7 +146,7 @@ impl<'a, 'db> PathView<'a, 'db> {
             return Ok(None);
         };
 
-        if let Some(ty) = data.resolved_self_tys.first()
+        if let Some(ty) = data.resolved_self_tys.as_slice().first()
             && let Some(path) = self.type_def_path(*ty)?
         {
             return Ok(Some(path));

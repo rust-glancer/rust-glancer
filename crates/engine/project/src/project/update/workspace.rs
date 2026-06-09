@@ -24,10 +24,12 @@ pub(super) fn rebuild_workspace_graph(
     let sysroot = project.state.workspace().sysroot_sources();
     let cargo_metadata_config = project.state.cargo_metadata_config.clone();
     let memory_hooks = Arc::clone(&project.state.memory_hooks);
-    let workspace =
-        WorkspaceMetadata::from_manifest_path_with_config(&manifest_path, &cargo_metadata_config)
-            .with_context(|| format!("while attempting to load {}", manifest_path.display()))?
-            .with_sysroot_sources(sysroot);
+    let loaded = cargo_metadata_config
+        .load_metadata_with_target_cfg(&manifest_path)
+        .with_context(|| format!("while attempting to load {}", manifest_path.display()))?;
+    let workspace = WorkspaceMetadata::lower(loaded.metadata, loaded.target_cfg)
+        .context("while attempting to normalize Cargo metadata")?
+        .with_sysroot_sources(sysroot);
     let body_ir_policy = project.state.body_ir_policy;
     let package_residency_policy = project.state.package_residency_policy;
 

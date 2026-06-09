@@ -7,24 +7,25 @@
 use std::collections::HashMap;
 
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, TraitImplRef, TraitRef, TypeDefRef};
+use rg_std::UniqueVec;
 use rg_text::Name;
 
-use crate::{ItemStoreQuery, ItemStoreSource, TargetItemQuery, push_unique};
+use crate::{ItemStoreQuery, ItemStoreSource, TargetItemQuery};
 
 /// Receiver-oriented lookup cache built from the stores visible from one use-site target.
 #[derive(Debug, Default)]
 pub struct ItemLookupIndex {
     // Method lookup starts from a receiver type. These maps let callers jump directly to impls
     // whose already-resolved `Self` type mentions that receiver, instead of re-scanning all impls.
-    inherent_impls_by_type: HashMap<TypeDefRef, Vec<ImplRef>>,
-    inherent_functions_by_type_and_name: HashMap<TypeDefRef, HashMap<Name, Vec<FunctionRef>>>,
-    structural_inherent_impls: Vec<ImplRef>,
-    trait_impls_by_type: HashMap<TypeDefRef, Vec<TraitImplRef>>,
-    trait_impls_by_trait: HashMap<TraitRef, Vec<TraitImplRef>>,
+    inherent_impls_by_type: HashMap<TypeDefRef, UniqueVec<ImplRef>>,
+    inherent_functions_by_type_and_name: HashMap<TypeDefRef, HashMap<Name, UniqueVec<FunctionRef>>>,
+    structural_inherent_impls: UniqueVec<ImplRef>,
+    trait_impls_by_type: HashMap<TypeDefRef, UniqueVec<TraitImplRef>>,
+    trait_impls_by_trait: HashMap<TraitRef, UniqueVec<TraitImplRef>>,
     // Trait impl lookup produces trait identities first; this cache then expands each trait into
     // its associated function declarations without reopening the trait item every time.
-    trait_functions_by_trait: HashMap<TraitRef, Vec<FunctionRef>>,
-    trait_functions_by_trait_and_name: HashMap<TraitRef, HashMap<Name, Vec<FunctionRef>>>,
+    trait_functions_by_trait: HashMap<TraitRef, UniqueVec<FunctionRef>>,
+    trait_functions_by_trait_and_name: HashMap<TraitRef, HashMap<Name, UniqueVec<FunctionRef>>>,
 }
 
 impl ItemLookupIndex {
@@ -45,6 +46,7 @@ impl ItemLookupIndex {
             // processing impls that later point back to these traits.
             for (trait_ref, trait_data) in store.traits_with_refs() {
                 let functions = index.trait_functions_by_trait.entry(trait_ref).or_default();
+                index.trait_impls_by_trait.entry(trait_ref).or_default();
                 index
                     .trait_functions_by_trait_and_name
                     .entry(trait_ref)
@@ -55,19 +57,17 @@ impl ItemLookupIndex {
                             origin: trait_ref.origin,
                             id: *id,
                         };
-                        push_unique(functions, function_ref);
+                        functions.push(function_ref);
                         if let Some(function_data) =
                             target_items.items().function_data(function_ref)?
                         {
-                            push_unique(
-                                index
-                                    .trait_functions_by_trait_and_name
-                                    .entry(trait_ref)
-                                    .or_default()
-                                    .entry(function_data.name.clone())
-                                    .or_default(),
-                                function_ref,
-                            );
+                            index
+                                .trait_functions_by_trait_and_name
+                                .entry(trait_ref)
+                                .or_default()
+                                .entry(function_data.name.clone())
+                                .or_default()
+                                .push(function_ref);
                         }
                     }
                 }
@@ -82,14 +82,15 @@ impl ItemLookupIndex {
                         // Inherent impls for shaped builtin types, such as `impl<T> [T]`, do not
                         // have a nominal receiver key. Keep them in a small side list so structural
                         // method lookup does not scan every visible impl.
-                        push_unique(&mut index.structural_inherent_impls, impl_ref);
+                        index.structural_inherent_impls.push(impl_ref);
                     }
 
                     for self_ty in &impl_data.resolved_self_tys {
-                        push_unique(
-                            index.inherent_impls_by_type.entry(*self_ty).or_default(),
-                            impl_ref,
-                        );
+                        index
+                            .inherent_impls_by_type
+                            .entry(*self_ty)
+                            .or_default()
+                            .push(impl_ref);
                         for item in &impl_data.items {
                             if let AssocItemId::Function(id) = item {
                                 let function_ref = FunctionRef {
@@ -101,15 +102,13 @@ impl ItemLookupIndex {
                                 else {
                                     continue;
                                 };
-                                push_unique(
-                                    index
-                                        .inherent_functions_by_type_and_name
-                                        .entry(*self_ty)
-                                        .or_default()
-                                        .entry(function_data.name.clone())
-                                        .or_default(),
-                                    function_ref,
-                                );
+                                index
+                                    .inherent_functions_by_type_and_name
+                                    .entry(*self_ty)
+                                    .or_default()
+                                    .entry(function_data.name.clone())
+                                    .or_default()
+                                    .push(function_ref);
                             }
                         }
                     }
@@ -123,16 +122,18 @@ impl ItemLookupIndex {
                         // Structural impls such as `impl<T> IntoIterator for &[T]` may not have a
                         // nominal receiver key, but iterator-like queries can still start from the
                         // canonical trait identity and ask which impls provide it.
-                        push_unique(
-                            index.trait_impls_by_trait.entry(*trait_ref).or_default(),
-                            trait_impl,
-                        );
+                        index
+                            .trait_impls_by_trait
+                            .entry(*trait_ref)
+                            .or_default()
+                            .push(trait_impl);
 
                         for self_ty in &impl_data.resolved_self_tys {
-                            push_unique(
-                                index.trait_impls_by_type.entry(*self_ty).or_default(),
-                                trait_impl,
-                            );
+                            index
+                                .trait_impls_by_type
+                                .entry(*self_ty)
+                                .or_default()
+                                .push(trait_impl);
                         }
                     }
                 }
@@ -147,11 +148,11 @@ impl ItemLookupIndex {
         &self,
         item_query: &ItemStoreQuery<'item, S>,
         ty: TypeDefRef,
-    ) -> Result<Vec<FunctionRef>, S::Error>
+    ) -> Result<UniqueVec<FunctionRef>, S::Error>
     where
         S: ItemStoreSource<'item>,
     {
-        let mut functions = Vec::new();
+        let mut functions = UniqueVec::new();
         let Some(impl_refs) = self.inherent_impls_by_type.get(&ty) else {
             return Ok(functions);
         };
@@ -165,13 +166,10 @@ impl ItemLookupIndex {
 
             for item in &data.items {
                 if let AssocItemId::Function(id) = item {
-                    push_unique(
-                        &mut functions,
-                        FunctionRef {
-                            origin: impl_ref.origin,
-                            id: *id,
-                        },
-                    );
+                    functions.push(FunctionRef {
+                        origin: impl_ref.origin,
+                        id: *id,
+                    });
                 }
             }
         }
@@ -184,49 +182,34 @@ impl ItemLookupIndex {
         &self,
         ty: TypeDefRef,
         name: &str,
-    ) -> &[FunctionRef] {
+    ) -> Option<&UniqueVec<FunctionRef>> {
         // Dot lookup almost always starts with the method name already known. Keeping the name as
         // part of the key lets callers avoid checking receiver applicability for unrelated methods.
         self.inherent_functions_by_type_and_name
             .get(&ty)
             .and_then(|functions_by_name| functions_by_name.get(name))
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
     }
 
     /// Returns inherent impls whose `Self` type needs structural matching instead of a type key.
-    pub fn structural_inherent_impls(&self) -> &[ImplRef] {
+    pub fn structural_inherent_impls(&self) -> &UniqueVec<ImplRef> {
         &self.structural_inherent_impls
     }
 
     /// Returns trait impl candidates indexed for a receiver type.
-    pub fn trait_impls_for_type(&self, ty: TypeDefRef) -> &[TraitImplRef] {
-        self.trait_impls_by_type
-            .get(&ty)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
+    pub fn trait_impls_for_type(&self, ty: TypeDefRef) -> Option<&UniqueVec<TraitImplRef>> {
+        self.trait_impls_by_type.get(&ty)
     }
 
     /// Returns trait impl candidates indexed by the implemented trait.
-    pub fn trait_impls_for_trait(&self, trait_ref: TraitRef) -> Option<&[TraitImplRef]> {
-        if let Some(trait_impls) = self.trait_impls_by_trait.get(&trait_ref) {
-            return Some(trait_impls);
-        }
-
-        // `Some(&[])` means the trait is visible and indexed, but no visible impl provides it.
-        // `None` means the caller may be looking across a context this index did not cover.
-        self.trait_functions_by_trait
-            .contains_key(&trait_ref)
-            .then_some(&[])
+    pub fn trait_impls_for_trait(&self, trait_ref: TraitRef) -> Option<&UniqueVec<TraitImplRef>> {
+        self.trait_impls_by_trait.get(&trait_ref)
     }
 
     /// Returns trait-declared functions if the trait was visible when the index was built.
-    pub fn trait_functions(&self, trait_ref: TraitRef) -> Option<&[FunctionRef]> {
+    pub fn trait_functions(&self, trait_ref: TraitRef) -> Option<&UniqueVec<FunctionRef>> {
         // `None` means the trait was not visible while this index was built. Callers can then fall
         // back to the direct item-store query for cross-subset/offloaded edge cases.
-        self.trait_functions_by_trait
-            .get(&trait_ref)
-            .map(Vec::as_slice)
+        self.trait_functions_by_trait.get(&trait_ref)
     }
 
     /// Returns same-name trait functions if the trait was visible when the index was built.
@@ -234,15 +217,26 @@ impl ItemLookupIndex {
         &self,
         trait_ref: TraitRef,
         name: &str,
-    ) -> Option<&[FunctionRef]> {
+    ) -> Option<IndexedTraitFunctions<'_>> {
         // `Some(&[])` is meaningful: the trait is indexed and has no function with this name, so
         // callers can skip the trait-impl applicability check entirely for this method lookup.
         let functions_by_name = self.trait_functions_by_trait_and_name.get(&trait_ref)?;
-        Some(
-            functions_by_name
-                .get(name)
-                .map(Vec::as_slice)
-                .unwrap_or(&[]),
-        )
+        Some(IndexedTraitFunctions {
+            functions: functions_by_name.get(name),
+        })
+    }
+}
+
+pub struct IndexedTraitFunctions<'a> {
+    functions: Option<&'a UniqueVec<FunctionRef>>,
+}
+
+impl<'a> IndexedTraitFunctions<'a> {
+    pub fn is_empty(&self) -> bool {
+        self.functions.is_none_or(UniqueVec::is_empty)
+    }
+
+    pub fn functions(&self) -> Option<&'a UniqueVec<FunctionRef>> {
+        self.functions
     }
 }

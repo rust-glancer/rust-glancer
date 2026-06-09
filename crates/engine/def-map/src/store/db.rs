@@ -12,9 +12,10 @@ use crate::{
     DefMapReadTxn, PackageSlot,
     build::{DefMapDbBuilder, DefMapDbPackageRebuilder},
 };
+use rg_std::{MemorySize, Shrink};
 
 /// Frozen def maps for all parsed packages and targets.
-#[derive(Debug, Clone, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct DefMapDb {
     packages: PackageStore<PackageDefMaps>,
 }
@@ -147,26 +148,21 @@ impl DefMapDbMutator<'_> {
         self.db.packages.replace(package_slot, package)
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.db.packages.shrink_to_fit();
-        for entry in self.db.packages.raw_entries_mut() {
-            if let Some(package) = entry.as_resident_unique_mut() {
-                package.shrink_to_fit();
-            }
-        }
+    pub(crate) fn compact_storage(&mut self) {
+        Shrink::shrink_to_fit(&mut self.db.packages);
     }
 
-    pub(crate) fn shrink_packages(&mut self, packages: &[PackageSlot]) {
+    pub(crate) fn compact_packages(&mut self, packages: &[PackageSlot]) {
         for package in packages {
             if let Some(package) = self.db.packages.get_unique_mut(*package) {
-                package.shrink_to_fit();
+                Shrink::shrink_to_fit(package);
             }
         }
     }
 }
 
 /// Coarse totals for reporting that the DefMap phase produced useful data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 pub struct DefMapStats {
     pub target_count: usize,
     pub module_count: usize,

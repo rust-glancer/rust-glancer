@@ -1,3 +1,4 @@
+use rg_std::MemorySize;
 mod build;
 mod cursor;
 mod ir;
@@ -10,7 +11,7 @@ mod walk;
 use rg_def_map::PackageSlot;
 use rg_parse::FileId;
 
-pub use rg_item_tree::FieldKey;
+pub use rg_ir_model::items::FieldKey;
 
 #[cfg(test)]
 mod tests;
@@ -23,19 +24,20 @@ pub use self::{
         ValueReferenceSurface,
     },
     ir::{
-        BindingData, BindingKind, BodyData, BodyIrStats, BodyLocalItems, BodyOwner, BodyPath,
-        BodySelfParamKind, BodySource, BodySourceItems, ClosureCapture, ClosureKind,
-        ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprKind,
-        ExprRangeKind, ExprUnaryOp, LabelData, LiteralKind, PackageBodies, PatBindingMode, PatData,
-        PatKind, PatMutability, PatRangeKind, RecordExprField, RecordExprSpread, RecordFieldSyntax,
-        RecordPatField, ScopeData, StmtData, StmtKind, TargetBodies, TargetBodiesStatus,
+        BindingData, BindingFacts, BindingKind, BodyOwner, BodyPath, BodySelfParamKind, BodySource,
+        BodySourceItems, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp,
+        ExprBlockKind, ExprData, ExprFacts, ExprKind, ExprRangeKind, ExprUnaryOp, LabelData,
+        LiteralKind, PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind,
+        RecordExprField, RecordExprSpread, RecordFieldSyntax, RecordPatField, ResolvedBodyData,
+        ScopeData, StmtData, StmtKind,
     },
-    resolution::BodyScopeQuery,
-    store::{BodyIrDb, BodyIrReadTxn},
+    resolution::{
+        BodyReceiverFunctionQuery, BodyResolutionContext, BodyTypePathQuery, BodyValuePathQuery,
+    },
+    store::{
+        BodyIrDb, BodyIrReadTxn, BodyIrStats, PackageBodies, TargetBodies, TargetBodiesStatus,
+    },
 };
-
-// TODO: Shouldn't be exposed normally; remove after analysis owns resolver projection.
-pub use self::ir::BodyResolution;
 
 /// One package-local source file whose function bodies should be lowered during a partial rebuild.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -51,7 +53,7 @@ impl BodyIrFile {
 }
 
 /// Package-set selector for eager body lowering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 #[memsize(leaf)]
 enum BodyIrPackageScope {
     #[default]
@@ -60,7 +62,7 @@ enum BodyIrPackageScope {
 }
 
 /// Controls which packages get function-body lowering during eager Body IR construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, rg_memsize::MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
 pub struct BodyIrBuildPolicy {
     package_scope: BodyIrPackageScope,
 }

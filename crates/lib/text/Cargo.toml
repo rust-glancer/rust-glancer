@@ -10,10 +10,6 @@ homepage.workspace = true
 readme.workspace = true
 description.workspace = true
 
-[features]
-default = []
-memsize = ["dep:rg_memsize"]
-
 [dependencies]
 wincode.workspace = true
-rg_memsize = { workspace = true, optional = true }
+rg_std.workspace = true

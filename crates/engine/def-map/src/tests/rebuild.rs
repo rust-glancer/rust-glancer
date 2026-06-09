@@ -138,7 +138,7 @@ struct RebuildFixture {
 impl RebuildFixture {
     fn build(fixture: &str, clean_package: &str) -> Self {
         let fixture = fixture_crate(fixture);
-        let workspace = WorkspaceMetadata::from_cargo(fixture.metadata())
+        let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
             .expect("fixture workspace metadata should build");
         let (parse, item_tree, mut names) = Self::build_item_tree(&workspace);
         let mut old = DefMapDb::builder(&workspace, &parse, &item_tree)

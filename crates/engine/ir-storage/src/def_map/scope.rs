@@ -1,4 +1,6 @@
+use rg_std::{MemorySize, Shrink};
 use std::collections::HashMap;
+use wincode::{SchemaRead, SchemaWrite};
 
 use rg_ir_model::items::VisibilityLevel;
 use rg_ir_model::{DefId, ModuleRef};
@@ -8,16 +10,7 @@ use rg_text::Name;
 ///
 /// Build-time import resolution uses `ModuleScopeBuilder`; once scopes stabilize, entries are
 /// sorted and boxed here so retained modules do not keep hash-table and `Vec` capacity overhead.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ModuleScope {
     pub(crate) entries: Box<[ScopeNameEntry]>,
 }
@@ -35,19 +28,10 @@ impl ModuleScope {
     pub fn entries(&self) -> impl Iterator<Item = (&Name, &ScopeEntry)> {
         self.entries.iter().map(|entry| (&entry.name, &entry.entry))
     }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        for entry in &mut self.entries {
-            entry.name.shrink_to_fit();
-            entry.entry.shrink_to_fit();
-        }
-    }
 }
 
 /// One sorted name entry inside a frozen module scope.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub(crate) struct ScopeNameEntry {
     pub(crate) name: Name,
     pub(crate) entry: ScopeEntry,
@@ -145,16 +129,7 @@ impl ModuleScopeBuilder {
 }
 
 /// Frozen namespace slots for one textual name.
-#[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Default,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ScopeEntry {
     pub(crate) types: Box<[ScopeBinding]>,
     pub(crate) values: Box<[ScopeBinding]>,
@@ -183,17 +158,6 @@ impl ScopeEntry {
             types: &self.types,
             values: &self.values,
             macros: &self.macros,
-        }
-    }
-
-    fn shrink_to_fit(&mut self) {
-        for binding in self
-            .types
-            .iter_mut()
-            .chain(self.values.iter_mut())
-            .chain(self.macros.iter_mut())
-        {
-            binding.shrink_to_fit();
         }
     }
 }
@@ -262,9 +226,7 @@ impl<'a> ScopeEntryRef<'a> {
 }
 
 /// One definition together with the visibility of the binding that introduced it.
-#[derive(
-    Debug, Clone, PartialEq, Eq, wincode::SchemaRead, wincode::SchemaWrite, rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ScopeBinding {
     pub def: DefId,
     pub visibility: VisibilityLevel,
@@ -272,33 +234,10 @@ pub struct ScopeBinding {
     pub origin: ScopeBindingOrigin,
 }
 
-impl ScopeBinding {
-    fn shrink_to_fit(&mut self) {
-        match &mut self.visibility {
-            VisibilityLevel::Restricted(path) | VisibilityLevel::Unknown(path) => {
-                path.shrink_to_fit();
-            }
-            VisibilityLevel::Private
-            | VisibilityLevel::Public
-            | VisibilityLevel::Crate
-            | VisibilityLevel::Super
-            | VisibilityLevel::Self_ => {}
-        }
-    }
-}
-
 /// How a binding entered a module scope.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum ScopeBindingOrigin {
     Direct,
     Import,

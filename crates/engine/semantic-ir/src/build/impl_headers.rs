@@ -1,11 +1,13 @@
 //! Resolves impl headers after semantic item identities are available.
 
 use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
+use rg_ir_model::Path;
 use rg_ir_model::{ImplRef, ModuleRef, TargetRef, TraitRef, TypeDefRef};
-use rg_ir_storage::{ItemStoreQuery, Path};
+use rg_ir_storage::ItemStoreQuery;
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
+use rg_std::UniqueVec;
 use rg_ty::ItemPathQuery;
 
 use crate::{SemanticIrReadTxn, store::SemanticIrDbMutator};
@@ -26,8 +28,8 @@ pub(super) fn resolve_impl_headers(
 
 pub(super) struct ImplHeaderResolution {
     impl_ref: ImplRef,
-    resolved_self_tys: Vec<TypeDefRef>,
-    resolved_trait_refs: Vec<TraitRef>,
+    resolved_self_tys: UniqueVec<TypeDefRef>,
+    resolved_trait_refs: UniqueVec<TraitRef>,
 }
 
 pub(super) fn impl_header_resolutions_for_packages(
@@ -81,11 +83,11 @@ pub(super) fn apply_impl_header_resolutions(
     resolutions: Vec<ImplHeaderResolution>,
 ) {
     for resolution in resolutions {
-        let Some(data) = db.impl_data_mut(resolution.impl_ref) else {
-            continue;
-        };
-        data.resolved_self_tys = resolution.resolved_self_tys;
-        data.resolved_trait_refs = resolution.resolved_trait_refs;
+        let _ = db.set_impl_header_facts(
+            resolution.impl_ref,
+            resolution.resolved_self_tys,
+            resolution.resolved_trait_refs,
+        );
     }
 }
 
@@ -94,9 +96,9 @@ fn resolve_type_defs_from_ref(
     def_map: &DefMapReadTxn<'_>,
     owner: ModuleRef,
     ty: &TypeRef,
-) -> Result<Vec<TypeDefRef>, PackageStoreError> {
+) -> Result<UniqueVec<TypeDefRef>, PackageStoreError> {
     let Some(path) = Path::from_type_ref(ty) else {
-        return Ok(Vec::new());
+        return Ok(UniqueVec::new());
     };
 
     ItemPathQuery::new(def_map, db).type_defs_for_path(owner, &path)
@@ -107,9 +109,9 @@ fn resolve_traits_from_ref(
     def_map: &DefMapReadTxn<'_>,
     owner: ModuleRef,
     ty: &TypeRef,
-) -> Result<Vec<TraitRef>, PackageStoreError> {
+) -> Result<UniqueVec<TraitRef>, PackageStoreError> {
     let Some(path) = Path::from_type_ref(ty) else {
-        return Ok(Vec::new());
+        return Ok(UniqueVec::new());
     };
 
     ItemPathQuery::new(def_map, db).traits_for_path(owner, &path)

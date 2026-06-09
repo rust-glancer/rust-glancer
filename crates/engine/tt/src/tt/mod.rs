@@ -5,6 +5,7 @@
 //!
 //! The `TokenTree` is semantically a tree, but for performance reasons it is stored as a flat structure.
 
+use wincode::{SchemaRead, SchemaWrite};
 pub(crate) mod buffer;
 pub mod iter;
 mod storage;
@@ -25,7 +26,7 @@ pub use self::storage::{TopSubtree, TopSubtreeBuilder};
 
 pub const MAX_GLUED_PUNCT_LEN: usize = 3;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub enum IdentIsRaw {
     No,
     Yes,
@@ -52,7 +53,7 @@ impl IdentIsRaw {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash, SchemaRead, SchemaWrite)]
 pub enum LitKind {
     Byte,
     Char,
@@ -67,7 +68,7 @@ pub enum LitKind {
     Err(()),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub enum TokenTree {
     Leaf(Leaf),
     Subtree(Subtree),
@@ -82,7 +83,7 @@ impl TokenTree {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub enum Leaf {
     Literal(Literal),
     Punct(Punct),
@@ -100,7 +101,7 @@ impl Leaf {
 }
 impl_from!(Literal, Punct, Ident for Leaf);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct Subtree {
     pub delimiter: Delimiter,
     /// Number of following token trees that belong to this subtree, excluding this subtree.
@@ -333,7 +334,7 @@ impl fmt::Display for SubtreeView<'_> {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Copy, Clone, PartialEq, SchemaRead, SchemaWrite)]
 pub struct DelimSpan {
     pub open: Span,
     pub close: Span,
@@ -347,7 +348,7 @@ impl DelimSpan {
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct Delimiter {
     pub open: Span,
     pub close: Span,
@@ -379,7 +380,7 @@ impl Delimiter {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub enum DelimiterKind {
     Parenthesis,
     Brace,
@@ -387,7 +388,7 @@ pub enum DelimiterKind {
     Invisible,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct Literal {
     /// Escaped, text then suffix concatenated.
     pub text_and_suffix: Symbol,
@@ -488,7 +489,7 @@ pub fn token_to_literal(text: &str, span: Span) -> Literal {
     Literal::new(lit, span, kind, suffix)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct Punct {
     pub char: char,
     pub spacing: Spacing,
@@ -497,7 +498,7 @@ pub struct Punct {
 
 /// Indicates whether a token can join with the following token to form a
 /// compound token.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub enum Spacing {
     /// The token cannot join with the following token to form a compound
     /// token.
@@ -528,7 +529,7 @@ pub enum Spacing {
 }
 
 /// Identifier or keyword.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, wincode::SchemaRead, wincode::SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite)]
 pub struct Ident {
     pub sym: Symbol,
     pub span: Span,

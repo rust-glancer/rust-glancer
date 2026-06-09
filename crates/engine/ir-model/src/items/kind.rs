@@ -7,20 +7,15 @@ use super::{
     macro_item::{MacroCallItem, MacroDefinitionItem},
     module::ModuleItem,
 };
+use rg_std::{MemorySize, Shrink};
+use wincode::{SchemaRead, SchemaWrite};
 
 /// Payload-bearing item kind.
 ///
 /// Unit variants are enough for plain local definitions. Structured payloads live inline in the
 /// file item arena so lowering avoids one heap allocation per payload-bearing item.
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    Debug, Clone, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize, Shrink,
 )]
 pub enum ItemKind {
     #[display("asm")]
@@ -79,26 +74,6 @@ impl ItemKind {
             Self::Use(_) => ItemTag::Use,
         }
     }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        match self {
-            Self::AsmExpr | Self::ExternBlock => {}
-            Self::Const(item) => item.shrink_to_fit(),
-            Self::Enum(item) => item.shrink_to_fit(),
-            Self::ExternCrate(item) => item.shrink_to_fit(),
-            Self::Function(item) => item.shrink_to_fit(),
-            Self::Impl(item) => item.shrink_to_fit(),
-            Self::MacroCall(item) => item.shrink_to_fit(),
-            Self::MacroDefinition(item) => item.shrink_to_fit(),
-            Self::Module(item) => item.shrink_to_fit(),
-            Self::Static(item) => item.shrink_to_fit(),
-            Self::Struct(item) => item.shrink_to_fit(),
-            Self::Trait(item) => item.shrink_to_fit(),
-            Self::TypeAlias(item) => item.shrink_to_fit(),
-            Self::Union(item) => item.shrink_to_fit(),
-            Self::Use(item) => item.shrink_to_fit(),
-        }
-    }
 }
 
 /// Payload-independent item classification.
@@ -109,11 +84,13 @@ impl ItemKind {
     PartialEq,
     Eq,
     derive_more::Display,
-    wincode::SchemaRead,
-    wincode::SchemaWrite,
-    rg_memsize::MemorySize,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum ItemTag {
     #[display("asm")]
     AsmExpr,
