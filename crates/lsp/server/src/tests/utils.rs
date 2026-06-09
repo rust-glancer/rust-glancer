@@ -56,6 +56,15 @@ impl RoutingFixture {
                     writeln!(rendered, "{title}: {}", self.render_workspace_route(&route))
                         .expect("routing snapshot should be writable");
                 }
+                RoutingStep::DiscoveryWorkspace { title, path } => {
+                    let workspace = self
+                        .routing
+                        .discovery_workspace_for(&self.path(path))
+                        .map(|path| self.render_path(path))
+                        .unwrap_or_else(|| "none".to_string());
+                    writeln!(rendered, "{title}: {workspace}")
+                        .expect("routing snapshot should be writable");
+                }
                 RoutingStep::OpenFile { title, path } => {
                     let active = self
                         .routing
@@ -157,6 +166,10 @@ pub(super) enum RoutingStep {
         title: &'static str,
         workspace_root: &'static str,
     },
+    DiscoveryWorkspace {
+        title: &'static str,
+        path: &'static str,
+    },
     OpenFile {
         title: &'static str,
         path: &'static str,
@@ -180,6 +193,10 @@ impl RoutingStep {
             title,
             workspace_root,
         }
+    }
+
+    pub(super) fn discovery_workspace(title: &'static str, path: &'static str) -> Self {
+        Self::DiscoveryWorkspace { title, path }
     }
 
     pub(super) fn open_file(title: &'static str, path: &'static str) -> Self {

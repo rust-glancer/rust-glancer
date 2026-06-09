@@ -91,3 +91,40 @@ external file keeps active engine: active e0 /workspace
 "#,
     );
 }
+
+#[test]
+fn respects_workspace_folder_boundaries_during_discovery_and_spawn() {
+    check_routing(
+        RoutingFixture::new(MULTI_PROJECT_FIXTURE)
+            .workspace_folders(["workspace/project_a", "workspace/project_a/vendor"]),
+        &[
+            RoutingStep::discovery_workspace(
+                "project file discovers nearest configured folder",
+                "workspace/project_a/src/lib.rs",
+            ),
+            RoutingStep::discovery_workspace(
+                "nested file discovers most specific configured folder",
+                "workspace/project_a/vendor/member/src/lib.rs",
+            ),
+            RoutingStep::discovery_workspace(
+                "external file has no discovery folder",
+                "external/thin_vec/src/lib.rs",
+            ),
+            RoutingStep::workspace_root(
+                "resolved project root inside configured folder spawns engine",
+                "workspace/project_a",
+            ),
+            RoutingStep::workspace_root(
+                "resolved external root outside configured folders does not spawn",
+                "external",
+            ),
+        ],
+        r#"
+project file discovers nearest configured folder: /workspace/project_a
+nested file discovers most specific configured folder: /workspace/project_a/vendor
+external file has no discovery folder: none
+resolved project root inside configured folder spawns engine: spawn e0 /workspace/project_a
+resolved external root outside configured folders does not spawn: none
+"#,
+    );
+}

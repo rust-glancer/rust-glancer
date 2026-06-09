@@ -1550,6 +1550,7 @@ dependencies = [
  "anyhow",
  "cargo_metadata",
  "derive_more",
+ "expect-test",
  "futures",
  "ls-types",
  "rg_analysis",
@@ -1561,6 +1562,7 @@ dependencies = [
  "rg_std",
  "rg_workspace",
  "tarpc",
+ "test_fixture",
  "tokio",
  "tracing",
 ]

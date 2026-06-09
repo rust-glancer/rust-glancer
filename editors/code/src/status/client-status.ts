@@ -12,7 +12,7 @@ import {
   type WorkDoneProgressReport,
 } from "vscode-languageclient/node";
 
-import { StatusView, statusText, type StatusDetails, type StatusSnapshot } from "./status-view";
+import { statusText, type StatusDetails, type StatusSnapshot } from "./status-model";
 
 const CARGO_DIAGNOSTICS_PROGRESS_TITLE = "Cargo diagnostics";
 
@@ -27,6 +27,17 @@ export interface ClientStatusSnapshot {
 }
 
 export type ActiveWorkspaceState = "indexing" | "ready" | "failed";
+
+export interface ClientStatusView {
+  starting(details: StatusDetails): void;
+  indexing(details?: StatusDetails): void;
+  ready(details?: StatusDetails): void;
+  stale(details?: StatusDetails): void;
+  diagnosticsRunning(command: string | undefined, details?: StatusDetails): void;
+  diagnosticsFailed(details?: StatusDetails): void;
+  stopped(reason: string, details?: StatusDetails): void;
+  failed(reason: string, details?: StatusDetails): void;
+}
 
 /**
  * Tracks client-facing state and decides which status-bar state should win.
@@ -51,7 +62,7 @@ export class ClientStatus {
   private readonly diagnosticsProgressTokens = new Set<ProgressToken>();
 
   public constructor(
-    private readonly view: StatusView,
+    private readonly view: ClientStatusView,
     private readonly shouldRender: () => boolean = () => true,
   ) {}
 

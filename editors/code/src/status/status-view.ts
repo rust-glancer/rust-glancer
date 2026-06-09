@@ -4,35 +4,18 @@
  * This module knows how status states should look in VS Code: text, tooltip contents, background
  * color, command wiring, and plain snapshots for tests. It does not decide lifecycle state.
  */
-import * as path from "node:path";
 import * as vscode from "vscode";
 
 import { EXTENSION_COMMANDS } from "../commands";
+import {
+  statusText,
+  type StatusDetails,
+  type StatusSnapshot,
+  type StatusState,
+} from "./status-model";
 
-export interface StatusDetails {
-  readonly workspaceRoot?: string;
-  readonly activeWorkspaceRoot?: string;
-  readonly serverCommand?: string;
-  readonly serverSource?: string;
-}
-
-export type StatusState =
-  | "created"
-  | "starting"
-  | "indexing"
-  | "ready"
-  | "stale"
-  | "diagnostics-running"
-  | "diagnostics-failed"
-  | "stopped"
-  | "failed"
-  | "disposed";
-
-export interface StatusSnapshot {
-  readonly state: StatusState;
-  readonly text: string;
-  readonly details: StatusDetails;
-}
+export { statusText };
+export type { StatusDetails, StatusSnapshot, StatusState } from "./status-model";
 
 export class StatusView implements vscode.Disposable {
   private readonly item: vscode.StatusBarItem;
@@ -195,20 +178,4 @@ function appendCodeField(tooltip: vscode.MarkdownString, label: string, value: s
 
 function singleLine(value: string): string {
   return value.replace(/\s+/g, " ");
-}
-
-export function statusText(baseText: string, details: StatusDetails | undefined): string {
-  const label = workspaceLabel(details);
-  return label === undefined ? baseText : `${baseText} [${label}]`;
-}
-
-function workspaceLabel(details: StatusDetails | undefined): string | undefined {
-  const root = details?.activeWorkspaceRoot;
-  if (root === undefined) {
-    return undefined;
-  }
-
-  const trimmed = root.replace(/[\\/]+$/, "");
-  const label = path.basename(trimmed);
-  return label.length > 0 ? label : trimmed;
 }

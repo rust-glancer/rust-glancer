@@ -14,6 +14,9 @@ mod proto;
 mod rpc;
 mod service;
 
+#[cfg(test)]
+mod tests;
+
 pub use self::{
     memory::{AllocatorPurgeResult, AllocatorStats, MemoryControl},
     rpc::run_rpc,
