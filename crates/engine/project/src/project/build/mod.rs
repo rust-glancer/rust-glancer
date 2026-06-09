@@ -171,7 +171,7 @@ impl ProjectBuilder {
         )
         .context("while attempting to build resident analysis project")?;
         ResidencyApplication::fresh(&mut state)
-            .apply()
+            .apply_profiled(&mut profiler)
             .context("while attempting to apply package cache residency")?;
         self.memory_hooks
             .purge(ProjectMemoryPurgePoint::AfterProjectBuild);

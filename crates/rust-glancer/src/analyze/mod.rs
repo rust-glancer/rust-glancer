@@ -148,6 +148,7 @@ pub(crate) fn analyze(
                         allocated_bytes: stats.allocated_bytes,
                         active_bytes: stats.active_bytes,
                         resident_bytes: stats.resident_bytes,
+                        mapped_bytes: stats.mapped_bytes,
                     })
             })
     } else {
