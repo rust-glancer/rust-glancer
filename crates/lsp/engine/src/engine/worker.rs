@@ -5,7 +5,9 @@ use std::{
 };
 
 use anyhow::Context as _;
-use rg_analysis::{CompletionQuery, ReferenceQuery, RenameEdit, RenameTarget, TypeHint};
+use rg_analysis::{
+    CompletionQuery, InlayHint as AnalysisInlayHint, ReferenceQuery, RenameEdit, RenameTarget,
+};
 use rg_ir_model::TargetRef;
 use rg_lsp_proto::{
     AnalysisConfig, CargoMetadataTarget as ProtoCargoMetadataTarget, CompletionClientCapabilities,
@@ -908,7 +910,7 @@ impl EngineWorker {
                     .flat_map(|context| context.targets.iter().copied())
                     .collect::<Vec<_>>();
                 let analysis = snapshot.analysis_for_targets(&analysis_targets)?;
-                let mut hints = Vec::<(rg_def_map::PackageSlot, TypeHint)>::new();
+                let mut hints = Vec::<(rg_def_map::PackageSlot, AnalysisInlayHint)>::new();
 
                 for context in contexts {
                     let Some(range) = Self::text_span_for_context(snapshot, &context, range) else {
@@ -916,7 +918,7 @@ impl EngineWorker {
                     };
 
                     for target in context.targets {
-                        for hint in analysis.type_hints(target, context.file, Some(range))? {
+                        for hint in analysis.inlay_hints(target, context.file, Some(range))? {
                             if !hints
                                 .iter()
                                 .any(|(_, existing_hint)| existing_hint == &hint)
@@ -929,7 +931,7 @@ impl EngineWorker {
 
                 let mut lsp_hints = Vec::new();
                 for (package, hint) in hints {
-                    let Some(hint) = inlay_hint::type_hint(snapshot, package, hint)? else {
+                    let Some(hint) = inlay_hint::inlay_hint(snapshot, package, hint)? else {
                         continue;
                     };
                     lsp_hints.push(hint);

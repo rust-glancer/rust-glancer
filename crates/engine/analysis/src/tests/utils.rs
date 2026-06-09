@@ -4,9 +4,9 @@ use expect_test::Expect;
 
 use crate::{
     Analysis, CompletionApplicability, CompletionClientCapabilities, CompletionInsertText,
-    CompletionItem, CompletionQuery, DocumentSymbol, HoverInfo, NavigationTarget,
+    CompletionItem, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint, NavigationTarget,
     ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, RenameEdit, RenameResult,
-    RenameTarget, SourceTextView, SymbolAt, TypeHint, WorkspaceSymbol,
+    RenameTarget, SourceTextView, SymbolAt, WorkspaceSymbol,
 };
 use rg_body_ir::{BodyIrReadTxn, BodyOwner, ExprData, ExprKind, testonly::BodyIrFixture};
 use rg_def_map::{PackageSlot, testonly::DefMapFixture};
@@ -64,11 +64,11 @@ pub(super) fn check_workspace_symbols(fixture: &str, query: &str, expect: Expect
     expect.assert_eq(&actual);
 }
 
-pub(super) fn check_type_hints(fixture: &str, query: TypeHintsQuery, expect: Expect) {
+pub(super) fn check_inlay_hints(fixture: &str, query: InlayHintsQuery, expect: Expect) {
     let fixture = fixture_crate(fixture);
     let db = AnalysisFixtureDb::build_from_crate(fixture);
     let renderer = AnalysisSymbolSnapshot::new(&db);
-    let actual = format!("{}\n", renderer.render_type_hints(&query).trim_end());
+    let actual = format!("{}\n", renderer.render_inlay_hints(&query).trim_end());
     expect.assert_eq(&actual);
 }
 
@@ -162,13 +162,13 @@ pub(super) struct DocumentSymbolsQuery {
     target: AnalysisTarget,
 }
 
-pub(super) struct TypeHintsQuery {
+pub(super) struct InlayHintsQuery {
     title: &'static str,
     path: &'static str,
     target: AnalysisTarget,
 }
 
-impl TypeHintsQuery {
+impl InlayHintsQuery {
     pub(super) fn new(title: &'static str, path: &'static str) -> Self {
         Self {
             title,
@@ -1541,13 +1541,13 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
         dump
     }
 
-    fn render_type_hints(&self, query: &TypeHintsQuery) -> String {
+    fn render_inlay_hints(&self, query: &InlayHintsQuery) -> String {
         let (target, file_id) = self.db.target_and_file_for_path(&query.target, query.path);
         let hints = self
             .db
             .analysis()
-            .type_hints(target, file_id, None)
-            .expect("fixture type hints should resolve");
+            .inlay_hints(target, file_id, None)
+            .expect("fixture inlay hints should resolve");
         let mut dump = query.title.to_string();
 
         if hints.is_empty() {
@@ -1557,7 +1557,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
 
         writeln!(dump).expect("string writes should not fail");
         for hint in hints {
-            self.render_type_hint(target.package, &hint, &mut dump);
+            self.render_inlay_hint(target.package, &hint, &mut dump);
         }
         dump
     }
@@ -1626,7 +1626,7 @@ impl<'a> AnalysisSymbolSnapshot<'a> {
         .expect("string writes should not fail");
     }
 
-    fn render_type_hint(&self, package: PackageSlot, hint: &TypeHint, dump: &mut String) {
+    fn render_inlay_hint(&self, package: PackageSlot, hint: &InlayHint, dump: &mut String) {
         writeln!(
             dump,
             "- `{}` @ {}",

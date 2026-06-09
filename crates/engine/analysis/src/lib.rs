@@ -22,9 +22,10 @@ use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver
 
 pub use self::model::{
     CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
-    CompletionTarget, DocumentSymbol, HoverBlock, HoverInfo, KeywordCompletion, NavigationTarget,
-    NavigationTargetKind, ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
-    TypeHint, TypePathScopeRef, WorkspaceSymbol,
+    CompletionTarget, DocumentSymbol, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
+    InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
+    ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt, TypePathScopeRef,
+    WorkspaceSymbol,
 };
 
 /// High-level LSP-facing query API over one request-scoped project transaction.
@@ -140,14 +141,14 @@ impl<'a> Analysis<'a> {
         SourceSymbolResolver::new(self.view_db()).ty_for_symbol(symbol)
     }
 
-    /// Returns best-effort inferred type hints for local bindings in one file.
-    pub fn type_hints(
+    /// Returns best-effort inlay hints for one file.
+    pub fn inlay_hints(
         &self,
         target: TargetRef,
         file_id: FileId,
         range: Option<rg_parse::TextSpan>,
-    ) -> anyhow::Result<Vec<TypeHint>> {
-        query::type_hints::TypeHintCollector::new(self).type_hints(target, file_id, range)
+    ) -> anyhow::Result<Vec<InlayHint>> {
+        query::inlay_hints::InlayHintCollector::new(self).inlay_hints(target, file_id, range)
     }
 
     /// Returns best-effort hover information for the symbol under a source offset.

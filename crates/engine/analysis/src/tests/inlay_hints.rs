@@ -1,10 +1,10 @@
 use expect_test::expect;
 
-use super::utils::{TypeHintsQuery, check_type_hints};
+use super::utils::{InlayHintsQuery, check_inlay_hints};
 
 #[test]
 fn shows_inferred_local_binding_types() {
-    check_type_hints(
+    check_inlay_hints(
         r#"
 //- /Cargo.toml
 [package]
@@ -30,7 +30,7 @@ pub fn use_it() {
     let unknown = missing();
 }
 "#,
-        TypeHintsQuery::new("type hints", "/src/lib.rs"),
+        InlayHintsQuery::new("type hints", "/src/lib.rs"),
         expect![[r#"
             type hints
             - `: User` @ 11:9-11:13
@@ -41,7 +41,7 @@ pub fn use_it() {
 
 #[test]
 fn shows_type_hints_inside_bin_roots() {
-    check_type_hints(
+    check_inlay_hints(
         r#"
 //- /Cargo.toml
 [package]
@@ -64,7 +64,7 @@ fn main() {
     let user = make_user();
 }
 "#,
-        TypeHintsQuery::new("bin type hints", "/src/main.rs").in_bin("analysis_bin_type_hints"),
+        InlayHintsQuery::new("bin type hints", "/src/main.rs").in_bin("analysis_bin_type_hints"),
         expect![[r#"
             bin type hints
             - `: User` @ 8:9-8:13
