@@ -15,12 +15,13 @@ use crate::{
     line_index::{LineIndex, LineIndexSnapshot},
     span::Span,
 };
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Stable identifier for a parsed source file inside `FileDb`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub struct FileId(pub usize);
 
 impl rg_arena::ArenaId for FileId {

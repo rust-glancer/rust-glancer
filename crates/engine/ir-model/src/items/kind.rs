@@ -7,7 +7,7 @@ use super::{
     macro_item::{MacroCallItem, MacroDefinitionItem},
     module::ModuleItem,
 };
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Payload-bearing item kind.
@@ -98,9 +98,19 @@ impl ItemKind {
 
 /// Payload-independent item classification.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum ItemTag {
     #[display("asm")]
     AsmExpr,

@@ -2,13 +2,14 @@ use std::path::PathBuf;
 
 use crate::file::FileId;
 use rg_arena::ArenaId;
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use rg_workspace::TargetKind;
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Stable identifier of a target within one parsed package.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub struct TargetId(pub usize);
 
 impl ArenaId for TargetId {
