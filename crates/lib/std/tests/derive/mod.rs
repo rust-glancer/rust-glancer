@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, marker::PhantomData, mem};
 
-use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize};
+use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize, Shrink};
 
 #[derive(MemorySize)]
 #[allow(dead_code)]
@@ -165,4 +165,128 @@ fn derive_supports_type_level_custom_recorders() {
         Some(&6)
     );
     assert_eq!(recorder.totals_by_path().get("whole"), Some(&6));
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ShrinkProbe {
+    calls: usize,
+}
+
+impl Shrink for ShrinkProbe {
+    fn shrink_to_fit(&mut self) {
+        self.calls += 1;
+    }
+}
+
+#[derive(Shrink)]
+struct ShrinkProject {
+    value: ShrinkProbe,
+    values: Vec<ShrinkProbe>,
+    #[shrink(skip)]
+    scratch: ShrinkProbe,
+}
+
+#[test]
+fn shrink_derive_compacts_struct_fields_and_skips_marked_fields() {
+    let mut value = ShrinkProject {
+        value: ShrinkProbe::default(),
+        values: vec![ShrinkProbe::default(), ShrinkProbe::default()],
+        scratch: ShrinkProbe::default(),
+    };
+
+    value.shrink_to_fit();
+
+    assert_eq!(value.value.calls, 1);
+    assert_eq!(value.values[0].calls, 1);
+    assert_eq!(value.values[1].calls, 1);
+    assert_eq!(value.scratch.calls, 0);
+}
+
+#[derive(Shrink)]
+enum ShrinkResolution {
+    Local(ShrinkProbe),
+    Pair {
+        left: ShrinkProbe,
+        #[shrink(skip)]
+        right: ShrinkProbe,
+    },
+    #[shrink(skip)]
+    Unknown {
+        payload: ShrinkProbe,
+    },
+}
+
+#[test]
+fn shrink_derive_compacts_only_active_enum_variant_fields() {
+    let mut value = ShrinkResolution::Local(ShrinkProbe::default());
+    value.shrink_to_fit();
+    let ShrinkResolution::Local(probe) = value else {
+        panic!("variant should be preserved");
+    };
+    assert_eq!(probe.calls, 1);
+
+    let mut value = ShrinkResolution::Pair {
+        left: ShrinkProbe::default(),
+        right: ShrinkProbe::default(),
+    };
+    value.shrink_to_fit();
+    let ShrinkResolution::Pair { left, right } = value else {
+        panic!("variant should be preserved");
+    };
+    assert_eq!(left.calls, 1);
+    assert_eq!(right.calls, 0);
+
+    let mut value = ShrinkResolution::Unknown {
+        payload: ShrinkProbe::default(),
+    };
+    value.shrink_to_fit();
+    let ShrinkResolution::Unknown { payload } = value else {
+        panic!("variant should be preserved");
+    };
+    assert_eq!(payload.calls, 0);
+}
+
+#[derive(Shrink)]
+struct GenericShrink<T> {
+    value: Option<T>,
+    #[shrink(skip)]
+    marker: PhantomData<T>,
+}
+
+#[derive(Shrink)]
+struct CustomShrink {
+    #[shrink(with = "shrink_custom_value")]
+    value: ShrinkProbe,
+}
+
+fn shrink_custom_value(value: &mut ShrinkProbe) {
+    value.calls += 10;
+}
+
+#[derive(Shrink)]
+#[shrink(no_auto_bound)]
+struct CustomGenericShrink<T> {
+    #[shrink(skip)]
+    marker: PhantomData<T>,
+}
+
+#[test]
+fn shrink_derive_handles_generics_and_custom_fields() {
+    let mut value = GenericShrink {
+        value: Some(ShrinkProbe::default()),
+        marker: PhantomData,
+    };
+    value.shrink_to_fit();
+    assert_eq!(value.value.expect("option should stay populated").calls, 1);
+
+    let mut value = CustomShrink {
+        value: ShrinkProbe::default(),
+    };
+    value.shrink_to_fit();
+    assert_eq!(value.value.calls, 10);
+
+    let mut value = CustomGenericShrink::<String> {
+        marker: PhantomData,
+    };
+    value.shrink_to_fit();
 }

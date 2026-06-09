@@ -1,3 +1,5 @@
+pub use rg_std_derive::Shrink;
+
 /// Releases spare heap capacity retained inside a value.
 ///
 /// This is intentionally separate from `MemorySize`: some generic data models need to ask their

@@ -1,8 +1,8 @@
 //! Generic-bound handling for the derive expansion.
 //!
-//! The macro should add `T: MemorySize` when a recorded field actually depends on `T`, but it
-//! should stay out of the way for skipped fields and custom recorders. This module keeps that
-//! bookkeeping separate from the token-generation flow.
+//! Derives should add trait bounds only when generated field traversal actually needs them.
+//! Skipped fields and custom handlers can carry unconstrained type parameters, so this module keeps
+//! that bookkeeping separate from each derive's token-generation flow.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,15 +21,14 @@ pub(crate) fn add_configured_bounds(generics: &mut Generics, bounds: Vec<WherePr
     where_clause.predicates.extend(bounds);
 }
 
-/// Adds `MemorySize` bounds for type parameters found in recorded fields.
+/// Adds trait bounds for type parameters found in generated field traversal.
 pub(crate) fn add_auto_bounds(
     generics: &mut Generics,
     original_generics: &Generics,
     crate_path: &Path,
+    trait_name: &Ident,
     bound_types: &[Type],
 ) {
-    // Only fields recorded through `MemorySize` need automatic bounds. Skipped fields and
-    // custom `with` recorders can carry unconstrained type parameters.
     let type_params = original_generics
         .type_params()
         .map(|param| (param.ident.to_string(), param.ident.clone()))
@@ -54,7 +53,7 @@ pub(crate) fn add_auto_bounds(
             .expect("collector only stores known type parameters");
         where_clause
             .predicates
-            .push(parse_quote!(#ident: #crate_path::MemorySize));
+            .push(parse_quote!(#ident: #crate_path::#trait_name));
     }
 }
 

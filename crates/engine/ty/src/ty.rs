@@ -101,34 +101,21 @@ pub enum Ty {
 }
 
 /// Module-level nominal type together with the generic arguments visible at use site.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct NominalTy {
+    #[shrink(skip)]
     pub def: TypeDefRef,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
     pub args: Vec<GenericArg>,
 }
 
 /// Resolved trait bound preserved for opaque `impl Trait` types.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct OpaqueTraitBound {
+    #[shrink(skip)]
     pub trait_ref: TraitRef,
     #[wincode(with = "rg_wincode_utils::WincodeDynamic<Vec<GenericArg>>")]
     pub args: Vec<GenericArg>,
-}
-
-impl OpaqueTraitBound {
-    fn shrink_to_fit(&mut self) {
-        self.args.shrink_to_fit();
-        for arg in &mut self.args {
-            arg.shrink_to_fit();
-        }
-    }
-}
-
-impl Shrink for OpaqueTraitBound {
-    fn shrink_to_fit(&mut self) {
-        OpaqueTraitBound::shrink_to_fit(self);
-    }
 }
 
 impl NominalTy {
@@ -137,19 +124,6 @@ impl NominalTy {
             def,
             args: Vec::new(),
         }
-    }
-
-    fn shrink_to_fit(&mut self) {
-        self.args.shrink_to_fit();
-        for arg in &mut self.args {
-            arg.shrink_to_fit();
-        }
-    }
-}
-
-impl Shrink for NominalTy {
-    fn shrink_to_fit(&mut self) {
-        NominalTy::shrink_to_fit(self);
     }
 }
 

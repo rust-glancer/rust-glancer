@@ -1,16 +1,16 @@
 //! Procedural macro implementation for `rg_std`.
 //!
-//! This crate is re-exported by `rg_std`, so normal call sites should write
-//! `#[derive(MemorySize)]` rather than depending on this crate directly.
+//! This crate is re-exported by `rg_std`, so normal call sites should write derives such as
+//! `#[derive(MemorySize)]` and `#[derive(Shrink)]` rather than depending on this crate directly.
 //! Keeping the implementation separate avoids making the runtime `rg_std` crate a proc-macro
-//! crate, while still letting users opt into the derive through a regular feature.
+//! crate.
 
 use proc_macro::TokenStream;
 use syn::{DeriveInput, parse_macro_input};
 
-mod attrs;
-mod expand;
 mod generics;
+mod memory_size;
+mod shrink;
 
 /// Derives `MemorySize` by generating `record_memory_children`.
 ///
@@ -54,7 +54,30 @@ mod generics;
 pub fn derive_memory_size(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
 
-    expand::expand_memory_size(input)
+    memory_size::derive(input)
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Derives `Shrink` by generating `shrink_to_fit` over owned child fields.
+///
+/// Supported container attributes:
+/// - `#[shrink(leaf)]`: generate a no-op implementation for ids, flags, and marker values.
+/// - `#[shrink(crate_path = "::some_path")]`: use a different path to the `rg_std` crate.
+/// - `#[shrink(no_auto_bound)]`: skip generated `T: Shrink` bounds.
+/// - `#[shrink(bound = "T: SomeBound")]`: add an explicit where-clause predicate.
+///
+/// Supported field attributes:
+/// - `#[shrink(skip)]`: omit the field and do not require a `Shrink` bound for it.
+/// - `#[shrink(with = "shrink_field")]`: call a custom `fn(&mut FieldTy)`.
+///
+/// Supported variant attributes:
+/// - `#[shrink(skip)]`: omit every child for that variant.
+#[proc_macro_derive(Shrink, attributes(shrink))]
+pub fn derive_shrink(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+
+    shrink::derive(input)
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
 }

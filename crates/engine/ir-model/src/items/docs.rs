@@ -1,10 +1,10 @@
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 /// User-facing documentation attached to one source declaration.
 ///
 /// The text is already stripped from Rust doc-comment/doc-attribute syntax, but otherwise remains
 /// Markdown-like so editor features can render it without re-reading AST.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct Documentation {
     pub(crate) text: String,
 }
@@ -36,6 +36,6 @@ impl Documentation {
     }
 
     pub fn shrink_to_fit(&mut self) {
-        self.text.shrink_to_fit();
+        Shrink::shrink_to_fit(self);
     }
 }
