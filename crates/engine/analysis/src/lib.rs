@@ -56,6 +56,15 @@ impl<'a> Analysis<'a> {
         self.source_text.text_for_span(package, file, span)
     }
 
+    pub(crate) fn source_line_for_offset(
+        &self,
+        package: PackageSlot,
+        file: FileId,
+        offset: u32,
+    ) -> Option<u32> {
+        self.source_text.line_for_offset(package, file, offset)
+    }
+
     /// Returns the smallest known symbol under a source offset.
     pub fn symbol_at(
         &self,
@@ -269,5 +278,10 @@ impl<'a> SourceTextView<'a> {
             .package(package.0)?
             .parsed_file(file)?
             .text_for_span(span)
+    }
+
+    fn line_for_offset(&self, package: PackageSlot, file: FileId, offset: u32) -> Option<u32> {
+        let parsed_file = self.parse.package(package.0)?.parsed_file(file)?;
+        Some(parsed_file.line_index().ok()?.position(offset).line)
     }
 }

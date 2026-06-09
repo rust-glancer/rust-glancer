@@ -138,6 +138,28 @@ impl ResolvedFunctionCall {
     }
 }
 
+/// A body-derived construct whose known source span can be labeled after its closing brace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BodyClosingBraceBlock {
+    file_id: FileId,
+    span: Span,
+    label: String,
+}
+
+impl BodyClosingBraceBlock {
+    pub fn file_id(&self) -> FileId {
+        self.file_id
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BodyLocalGroup {
     owner: DeclarationRef,
@@ -500,6 +522,53 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(calls)
     }
 
+    /// Returns body-owned blocks whose source extent ends at their closing brace.
+    ///
+    /// Closing-brace hints only need the block-level source span, not the body syntax tree that
+    /// originally produced it. This keeps the analysis path tied to durable Body IR facts.
+    pub fn closing_brace_blocks(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+    ) -> anyhow::Result<Vec<BodyClosingBraceBlock>> {
+        let Some(target_bodies) = self.db.body_ir.target_bodies(target)? else {
+            return Ok(Vec::new());
+        };
+
+        let items = ItemStoreQuery::new(self.db);
+        let mut blocks = Vec::new();
+        for body in target_bodies.bodies() {
+            let body_source = body.source();
+            if body_source.file_id == file_id
+                && let Some(function) = body.function_owner()
+                && let Some(function) = items.function_data(function)?
+            {
+                blocks.push(BodyClosingBraceBlock {
+                    file_id: body_source.file_id,
+                    span: body_source.span,
+                    label: format!("// fn {}", function.name),
+                });
+            }
+
+            for expr in body.exprs() {
+                if expr.source.file_id != file_id {
+                    continue;
+                }
+                let Some(label) = Self::closing_brace_label(&expr.kind) else {
+                    continue;
+                };
+
+                blocks.push(BodyClosingBraceBlock {
+                    file_id: expr.source.file_id,
+                    span: expr.source.span,
+                    label: label.to_string(),
+                });
+            }
+        }
+
+        Ok(blocks)
+    }
+
     pub fn local_groups(
         &self,
         target: TargetRef,
@@ -611,5 +680,15 @@ impl<'a, 'db> BodyView<'a, 'db> {
                 })
             })
             .collect()
+    }
+
+    fn closing_brace_label(expr: &ExprKind) -> Option<&'static str> {
+        match expr {
+            ExprKind::Match { .. } => Some("// match"),
+            ExprKind::Loop { .. } => Some("// loop"),
+            ExprKind::While { .. } => Some("// while"),
+            ExprKind::For { .. } => Some("// for"),
+            _ => None,
+        }
     }
 }

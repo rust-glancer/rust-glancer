@@ -193,6 +193,155 @@ pub fn use_it(packages: &[Package], array: [Package; 3], pairs: [(Package, UserI
 }
 
 #[test]
+fn shows_closing_brace_hints_for_long_named_blocks() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_closing_brace_named_hints"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod outer {
+    pub struct User;
+
+    impl User {
+        pub fn process(&self) {
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+            self;
+        }
+    }
+}
+"#,
+        InlayHintsQuery::new("closing brace named hints", "/src/lib.rs"),
+        expect![[r#"
+            closing brace named hints
+            - `// fn process` @ 26:9-26:10
+            - `// impl` @ 27:5-27:6
+            - `// mod outer` @ 28:1-28:2
+        "#]],
+    );
+}
+
+#[test]
+fn shows_closing_brace_hints_for_long_control_flow_blocks() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_closing_brace_flow_hints"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum Mode {
+    Fast,
+    Slow,
+}
+
+pub fn process(mode: Mode) {
+    match mode {
+        Mode::Fast => {
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+            ();
+        }
+        Mode::Slow => {}
+    }
+
+    loop {
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        ();
+        break;
+    }
+}
+"#,
+        InlayHintsQuery::new("closing brace control-flow hints", "/src/lib.rs"),
+        expect![[r#"
+            closing brace control-flow hints
+            - `// match` @ 30:5-30:6
+            - `// loop` @ 53:5-53:6
+            - `// fn process` @ 54:1-54:2
+        "#]],
+    );
+}
+
+#[test]
+fn skips_closing_brace_hints_for_short_blocks() {
+    check_inlay_hints(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_short_closing_brace_hints"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn short() {
+    ();
+}
+"#,
+        InlayHintsQuery::new("short closing brace hints", "/src/lib.rs"),
+        expect![[r#"
+            short closing brace hints
+            - <none>
+        "#]],
+    );
+}
+
+#[test]
 fn shows_parameter_hints_for_resolved_calls() {
     check_inlay_hints(
         r#"

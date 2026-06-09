@@ -1,5 +1,7 @@
 //! Inlay-style hints derived from the frozen analysis snapshot.
 
+mod closing_brace;
+
 use rg_ir_model::TargetRef;
 use rg_ir_model::items::{ParamItem, ParamKind};
 use rg_ir_storage::ItemStoreQuery;
@@ -26,6 +28,9 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
     ) -> anyhow::Result<Vec<InlayHint>> {
         let mut hints = self.binding_type_hints(target, file_id, range)?;
         hints.extend(self.parameter_hints(target, file_id, range)?);
+        hints.extend(closing_brace::closing_brace_hints(
+            self.0, target, file_id, range,
+        )?);
 
         hints.sort_by_key(|hint| (hint.text_offset(), hint.label.clone()));
         Ok(hints)
