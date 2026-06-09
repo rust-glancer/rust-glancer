@@ -22,9 +22,10 @@ use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver
 
 pub use self::model::{
     CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
-    CompletionTarget, DocumentSymbol, HoverBlock, HoverInfo, KeywordCompletion, NavigationTarget,
-    NavigationTargetKind, ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt,
-    TypeHint, TypePathScopeRef, WorkspaceSymbol,
+    CompletionTarget, DocumentSymbol, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
+    InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
+    ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt, TypePathScopeRef,
+    WorkspaceSymbol,
 };
 
 /// High-level LSP-facing query API over one request-scoped project transaction.
@@ -53,6 +54,15 @@ impl<'a> Analysis<'a> {
         span: Span,
     ) -> Option<String> {
         self.source_text.text_for_span(package, file, span)
+    }
+
+    pub(crate) fn source_line_for_offset(
+        &self,
+        package: PackageSlot,
+        file: FileId,
+        offset: u32,
+    ) -> Option<u32> {
+        self.source_text.line_for_offset(package, file, offset)
     }
 
     /// Returns the smallest known symbol under a source offset.
@@ -140,14 +150,14 @@ impl<'a> Analysis<'a> {
         SourceSymbolResolver::new(self.view_db()).ty_for_symbol(symbol)
     }
 
-    /// Returns best-effort inferred type hints for local bindings in one file.
-    pub fn type_hints(
+    /// Returns best-effort inlay hints for one file.
+    pub fn inlay_hints(
         &self,
         target: TargetRef,
         file_id: FileId,
         range: Option<rg_parse::TextSpan>,
-    ) -> anyhow::Result<Vec<TypeHint>> {
-        query::type_hints::TypeHintCollector::new(self).type_hints(target, file_id, range)
+    ) -> anyhow::Result<Vec<InlayHint>> {
+        query::inlay_hints::InlayHintCollector::new(self).inlay_hints(target, file_id, range)
     }
 
     /// Returns best-effort hover information for the symbol under a source offset.
@@ -268,5 +278,10 @@ impl<'a> SourceTextView<'a> {
             .package(package.0)?
             .parsed_file(file)?
             .text_for_span(span)
+    }
+
+    fn line_for_offset(&self, package: PackageSlot, file: FileId, offset: u32) -> Option<u32> {
+        let parsed_file = self.parse.package(package.0)?.parsed_file(file)?;
+        Some(parsed_file.line_index().ok()?.position(offset).line)
     }
 }

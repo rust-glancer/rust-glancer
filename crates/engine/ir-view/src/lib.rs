@@ -5,6 +5,7 @@
 //! hover, symbols, and other query modules should build feature-specific behavior on top of these
 //! generic projections.
 
+pub mod body;
 pub mod db;
 pub mod display;
 pub mod item;
