@@ -336,7 +336,7 @@ pub mod outer {
         expect![[r#"
             closing brace named hints
             - `// fn process` @ 26:9-26:10
-            - `// impl` @ 27:5-27:6
+            - `// impl User` @ 27:5-27:6
             - `// mod outer` @ 28:1-28:2
         "#]],
     );
@@ -411,7 +411,7 @@ pub fn process(mode: Mode) {
         InlayHintsQuery::new("closing brace control-flow hints", "/src/lib.rs"),
         expect![[r#"
             closing brace control-flow hints
-            - `// match` @ 30:5-30:6
+            - `// match mode` @ 30:5-30:6
             - `// loop` @ 53:5-53:6
             - `// fn process` @ 54:1-54:2
         "#]],

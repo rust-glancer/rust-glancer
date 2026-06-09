@@ -143,6 +143,7 @@ pub struct BodyClosingBraceBlock {
     file_id: FileId,
     span: Span,
     label: String,
+    label_span: Option<Span>,
 }
 
 impl BodyClosingBraceBlock {
@@ -156,6 +157,10 @@ impl BodyClosingBraceBlock {
 
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    pub fn label_span(&self) -> Option<Span> {
+        self.label_span
     }
 }
 
@@ -620,6 +625,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                     file_id: body_source.file_id,
                     span: body_source.span,
                     label: format!("// fn {}", function.name),
+                    label_span: None,
                 });
             }
 
@@ -635,6 +641,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
                     file_id: expr.source.file_id,
                     span: expr.source.span,
                     label: label.to_string(),
+                    label_span: Self::closing_brace_label_span(body, &expr.kind),
                 });
             }
         }
@@ -799,5 +806,20 @@ impl<'a, 'db> BodyView<'a, 'db> {
             ExprKind::For { .. } => Some("// for"),
             _ => None,
         }
+    }
+
+    fn closing_brace_label_span(
+        body: &rg_body_ir::ResolvedBodyData,
+        expr: &ExprKind,
+    ) -> Option<Span> {
+        let ExprKind::Match {
+            scrutinee: Some(scrutinee),
+            ..
+        } = expr
+        else {
+            return None;
+        };
+
+        body.expr(*scrutinee).map(|expr| expr.source.span)
     }
 }

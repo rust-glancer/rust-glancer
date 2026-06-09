@@ -1,5 +1,8 @@
 use rg_ir_model::TargetRef;
-use rg_ir_view::{SymbolKind, ty::locals::BodyView};
+use rg_ir_view::{
+    SymbolKind,
+    ty::locals::{BodyClosingBraceBlock, BodyView},
+};
 use rg_parse::{FileId, Span, TextSpan};
 
 use crate::{
@@ -71,9 +74,8 @@ impl ClosingBraceCandidate {
             Self::collect_document_symbol(&symbol, &mut candidates);
         }
         for block in BodyView::new(analysis.view_db()).closing_brace_blocks(target, file_id)? {
-            if let Some(candidate) =
-                Self::from_block_span(block.file_id(), block.span(), block.label().to_string())
-            {
+            let label = Self::body_block_label(analysis, target, &block);
+            if let Some(candidate) = Self::from_block_span(block.file_id(), block.span(), label) {
                 candidates.push(candidate);
             }
         }
@@ -97,7 +99,7 @@ impl ClosingBraceCandidate {
     fn symbol_label(symbol: &DocumentSymbol) -> Option<String> {
         match symbol.kind {
             SymbolKind::Module => Some(format!("// mod {}", symbol.name)),
-            SymbolKind::Impl => Some("// impl".to_string()),
+            SymbolKind::Impl => Some(format!("// {}", symbol.name)),
             SymbolKind::Const
             | SymbolKind::Enum
             | SymbolKind::EnumVariant
@@ -112,6 +114,31 @@ impl ClosingBraceCandidate {
             | SymbolKind::Union
             | SymbolKind::Variable => None,
         }
+    }
+
+    fn body_block_label(
+        analysis: &Analysis<'_>,
+        target: TargetRef,
+        block: &BodyClosingBraceBlock,
+    ) -> String {
+        let Some(label_span) = block.label_span() else {
+            return block.label().to_string();
+        };
+        let Some(source_label) = analysis
+            .source_text_for_span(target.package, block.file_id(), label_span)
+            .and_then(Self::compact_source_label)
+        else {
+            return block.label().to_string();
+        };
+
+        format!("{} {source_label}", block.label())
+    }
+
+    fn compact_source_label(text: String) -> Option<String> {
+        const MAX_LABEL_CHARS: usize = 40;
+
+        let label = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        (!label.is_empty() && label.chars().count() <= MAX_LABEL_CHARS).then_some(label)
     }
 
     fn from_block_span(file_id: FileId, block_span: Span, label: String) -> Option<Self> {
