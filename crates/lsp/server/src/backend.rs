@@ -443,3 +443,46 @@ fn workspace_folders(params: &InitializeParams) -> Vec<PathBuf> {
     folders.dedup();
     folders
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{path::Path, str::FromStr};
+
+    use tower_lsp_server::ls_types::{InitializeParams, Uri, WorkspaceFolder};
+
+    use super::workspace_folders;
+
+    #[test]
+    fn workspace_folders_keep_unique_filesystem_roots_in_stable_order() {
+        let root = std::env::current_dir()
+            .expect("test process should have a current directory")
+            .join("server-workspaces");
+        let project_a = root.join("project_a");
+        let project_b = root.join("project_b");
+        let params = InitializeParams {
+            workspace_folders: Some(vec![
+                workspace_folder(&project_b),
+                workspace_folder(&project_a),
+                workspace_folder(&project_b),
+                WorkspaceFolder {
+                    uri: Uri::from_str("untitled:Scratch").expect("untitled URI should be valid"),
+                    name: "scratch".to_string(),
+                },
+            ]),
+            ..Default::default()
+        };
+
+        assert_eq!(workspace_folders(&params), vec![project_a, project_b]);
+    }
+
+    fn workspace_folder(path: &Path) -> WorkspaceFolder {
+        WorkspaceFolder {
+            uri: Uri::from_file_path(path).expect("test path should convert to URI"),
+            name: path
+                .file_name()
+                .expect("test path should have a file name")
+                .to_string_lossy()
+                .into_owned(),
+        }
+    }
+}

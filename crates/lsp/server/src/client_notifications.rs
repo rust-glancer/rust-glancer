@@ -59,3 +59,61 @@ impl ActiveWorkspaceState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_workspace_changed_params_render_state_and_optional_message() {
+        let cases = [
+            (
+                ActiveWorkspaceStatus {
+                    root: PathBuf::from("workspace/project_a"),
+                    state: ActiveWorkspaceState::Indexing,
+                    message: None,
+                },
+                "root: workspace/project_a\nstate: indexing",
+            ),
+            (
+                ActiveWorkspaceStatus {
+                    root: PathBuf::from("workspace/project_b"),
+                    state: ActiveWorkspaceState::Ready,
+                    message: None,
+                },
+                "root: workspace/project_b\nstate: ready",
+            ),
+            (
+                ActiveWorkspaceStatus {
+                    root: PathBuf::from("workspace/project_c"),
+                    state: ActiveWorkspaceState::Failed,
+                    message: Some("engine process exited unexpectedly".to_string()),
+                },
+                "message: engine process exited unexpectedly\nroot: workspace/project_c\nstate: failed",
+            ),
+        ];
+
+        for (status, expected) in cases {
+            let actual = render_params(ActiveWorkspaceChanged::params(&status));
+            assert_eq!(actual, expected);
+        }
+    }
+
+    fn render_params(params: LSPAny) -> String {
+        let LSPAny::Object(params) = params else {
+            panic!("active workspace notification params should be an object");
+        };
+
+        let mut entries = params
+            .into_iter()
+            .map(|(key, value)| {
+                let LSPAny::String(value) = value else {
+                    panic!("active workspace notification field `{key}` should be a string");
+                };
+                format!("{key}: {value}")
+            })
+            .collect::<Vec<_>>();
+        entries.sort();
+        entries.join("\n")
+    }
+}
