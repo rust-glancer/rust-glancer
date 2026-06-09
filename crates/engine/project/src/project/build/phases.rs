@@ -160,6 +160,7 @@ pub(super) fn build(
     }
     .context("while attempting to build def map db")?;
     drop(old_def_map_txn);
+    memory_hooks.purge(ProjectMemoryPurgePoint::AfterDefMapBuild);
     stage_memory = stage_memory
         .names(&names)
         .parse(&parse)

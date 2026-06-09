@@ -57,6 +57,7 @@ pub struct User;
         points.as_slice(),
         [
             ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction,
+            ProjectMemoryPurgePoint::AfterDefMapBuild,
             ProjectMemoryPurgePoint::AfterProjectBuild,
         ],
         "fresh builds should expose the high-value transient memory boundaries",

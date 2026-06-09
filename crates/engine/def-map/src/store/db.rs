@@ -153,10 +153,20 @@ impl DefMapDbMutator<'_> {
     }
 
     pub(crate) fn compact_packages(&mut self, packages: &[PackageSlot]) {
-        for package in packages {
-            if let Some(package) = self.db.packages.get_unique_mut(*package) {
-                Shrink::shrink_to_fit(package);
-            }
+        // Build compact package copies before replacing the source packages. This keeps the final
+        // allocations grouped together instead of interleaving each shrink allocation with frees
+        // from the same package, which can leave sparse allocator slabs after large rebuilds.
+        let compacted_packages = packages
+            .iter()
+            .filter_map(|package| {
+                let mut compacted = self.db.resident_package(*package)?.clone();
+                Shrink::shrink_to_fit(&mut compacted);
+                Some((*package, compacted))
+            })
+            .collect::<Vec<_>>();
+
+        for (package, compacted) in compacted_packages {
+            self.replace_package(package, compacted);
         }
     }
 }

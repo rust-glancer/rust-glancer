@@ -3,6 +3,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectMemoryPurgePoint {
     AfterItemTreeSyntaxEviction,
+    AfterDefMapBuild,
     AfterProjectBuild,
     AfterPackageRebuild,
     AfterDirtyOverlayBuild,
@@ -12,6 +13,7 @@ impl ProjectMemoryPurgePoint {
     pub fn label(self) -> &'static str {
         match self {
             Self::AfterItemTreeSyntaxEviction => "after item-tree syntax eviction",
+            Self::AfterDefMapBuild => "after def-map build",
             Self::AfterProjectBuild => "after project build",
             Self::AfterPackageRebuild => "after package rebuild",
             Self::AfterDirtyOverlayBuild => "after dirty overlay",
