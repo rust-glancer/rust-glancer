@@ -236,6 +236,7 @@ pub(super) fn build(
         .policy(body_ir_policy)
         .build()
         .context("while attempting to build body ir db")?;
+    memory_hooks.purge(ProjectMemoryPurgePoint::AfterBodyIrBuild);
     stage_memory = stage_memory
         .names(&names)
         .parse(&parse)

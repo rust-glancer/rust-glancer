@@ -58,6 +58,7 @@ pub struct User;
         [
             ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction,
             ProjectMemoryPurgePoint::AfterDefMapBuild,
+            ProjectMemoryPurgePoint::AfterBodyIrBuild,
             ProjectMemoryPurgePoint::AfterProjectBuild,
         ],
         "fresh builds should expose the high-value transient memory boundaries",
