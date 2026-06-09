@@ -7,7 +7,7 @@ use std::{
 use expect_test::Expect;
 use ls_types::{
     CompletionItem, CompletionTextEdit, DocumentSymbol, Hover, HoverContents, Location, Position,
-    Range,
+    Range, WorkspaceEdit,
 };
 use rg_lsp_proto::{
     CompletionClientCapabilities, EngineConfig, EngineService, ServiceNotification,
@@ -220,6 +220,49 @@ impl LspEngineFixture {
             }
         }
 
+        expect.assert_eq(&rendered);
+    }
+
+    pub(super) async fn check_rename_error(
+        &self,
+        title: &'static str,
+        marker: &'static str,
+        new_name: &'static str,
+        expect: Expect,
+    ) {
+        let path = self.marker_path(QueryMarkers::Saved, marker);
+        let position = self.marker_position(QueryMarkers::Saved, marker);
+        let error = self
+            .service
+            .clone()
+            .rename(context::current(), path, position, new_name.to_string())
+            .await
+            .expect_err("rename should fail in this fixture");
+
+        let actual = format!("{title}\n- {error}\n");
+        expect.assert_eq(&actual);
+    }
+
+    pub(super) async fn check_rename(
+        &self,
+        title: &'static str,
+        marker: &'static str,
+        new_name: &'static str,
+        expect: Expect,
+    ) {
+        let path = self.marker_path(QueryMarkers::Saved, marker);
+        let position = self.marker_position(QueryMarkers::Saved, marker);
+        let edit = self
+            .service
+            .clone()
+            .rename(context::current(), path, position, new_name.to_string())
+            .await
+            .expect("rename query should succeed")
+            .expect("rename query should produce a workspace edit");
+
+        let mut rendered = String::new();
+        writeln!(rendered, "{title}").expect("snapshot should be writable");
+        self.render_workspace_edit(&mut rendered, &edit);
         expect.assert_eq(&rendered);
     }
 
@@ -467,6 +510,30 @@ impl LspEngineFixture {
             self.render_uri_path(&location.uri),
             Self::render_range(location.range)
         )
+    }
+
+    fn render_workspace_edit(&self, rendered: &mut String, edit: &WorkspaceEdit) {
+        let Some(changes) = &edit.changes else {
+            writeln!(rendered, "- no changes").expect("snapshot should be writable");
+            return;
+        };
+
+        let mut changes = changes.iter().collect::<Vec<_>>();
+        changes.sort_by(|(left, _), (right, _)| left.as_str().cmp(right.as_str()));
+
+        for (uri, edits) in changes {
+            writeln!(rendered, "- {}", self.render_uri_path(uri))
+                .expect("snapshot should be writable");
+            for edit in edits {
+                writeln!(
+                    rendered,
+                    "  - {} -> {}",
+                    Self::render_range(edit.range),
+                    Self::render_text(&edit.new_text),
+                )
+                .expect("snapshot should be writable");
+            }
+        }
     }
 
     fn render_uri_path(&self, uri: &ls_types::Uri) -> String {
