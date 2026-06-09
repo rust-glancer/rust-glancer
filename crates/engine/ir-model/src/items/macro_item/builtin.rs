@@ -20,12 +20,6 @@ pub enum BuiltinMacroItem {
     CfgSelect { arms: Vec<CfgSelectArmItem> },
 }
 
-impl BuiltinMacroItem {
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
-}
-
 /// One item-position arm from a lowered `cfg_select!` call.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct CfgSelectArmItem {
@@ -47,10 +41,6 @@ impl CfgSelectArmItem {
             payload: CfgSelectArmPayload::LoweringFailed,
         }
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }
 
 /// Source-fragment lowering result for one `cfg_select!` arm.
@@ -60,10 +50,4 @@ pub enum CfgSelectArmPayload {
     Items(Vec<ItemTreeId>),
     /// The arm could not be lowered as source. This matters only if target cfg selects it.
     LoweringFailed,
-}
-
-impl CfgSelectArmPayload {
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }

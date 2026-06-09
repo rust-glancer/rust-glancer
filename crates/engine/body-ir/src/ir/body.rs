@@ -1,4 +1,4 @@
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 use rg_arena::Arena;
@@ -12,7 +12,7 @@ use rg_ir_model::{
 use super::resolved::{BindingFacts, BodyFacts, BodyResolution, ExprFacts};
 
 /// Body storage with model-shaped body data plus pass-derived resolution facts.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ResolvedBodyData {
     pub(crate) body: BodyData,
     pub(crate) facts: BodyFacts,
@@ -230,20 +230,15 @@ impl ResolvedBodyData {
             pending_binding_resolutions,
         }
     }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.body.shrink_to_fit();
-        self.facts.shrink_to_fit();
-        self.pending_binding_resolutions.shrink_to_fit();
-    }
 }
 
 /// How a lowered binding slot should be treated before final binding materialization.
 ///
 /// Pattern lowering records ambiguous identifiers as slots first. Body resolution then decides
 /// whether each slot becomes a real binding or remains a path-pattern use.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub(crate) enum PendingBindingResolution {
     AlwaysBinding,
     AmbiguousPattern,

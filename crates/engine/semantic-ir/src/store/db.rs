@@ -4,7 +4,7 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::{ImplRef, TraitRef, TypeDefRef};
 use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
-use rg_std::{MemorySize, UniqueVec};
+use rg_std::{MemorySize, Shrink, UniqueVec};
 
 use crate::{
     PackageIr, SemanticIrReadTxn, SemanticIrStats,
@@ -163,19 +163,14 @@ impl SemanticIrDbMutator<'_> {
         self.db.packages.make_mut(package)
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.db.packages.shrink_to_fit();
-        for entry in self.db.packages.raw_entries_mut() {
-            if let Some(package) = entry.as_resident_unique_mut() {
-                package.shrink_to_fit();
-            }
-        }
+    pub(crate) fn compact_storage(&mut self) {
+        Shrink::shrink_to_fit(&mut self.db.packages);
     }
 
-    pub(crate) fn shrink_packages(&mut self, packages: &[PackageSlot]) {
+    pub(crate) fn compact_packages(&mut self, packages: &[PackageSlot]) {
         for package in packages {
             if let Some(package) = self.db.packages.get_unique_mut(*package) {
-                package.shrink_to_fit();
+                Shrink::shrink_to_fit(package);
             }
         }
     }

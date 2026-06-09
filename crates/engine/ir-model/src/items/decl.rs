@@ -3,7 +3,7 @@
 //! These types preserve what the user wrote in signatures and item headers. Name resolution,
 //! type solving, and semantic ownership are left to later IR layers.
 
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use std::fmt;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -13,33 +13,12 @@ use rg_text::Name;
 use super::{Documentation, ItemTreeId, Mutability, TypeBound, TypeRef, VisibilityLevel};
 
 /// Generic parameter data attached to an item declaration.
-#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct GenericParams {
     pub lifetimes: Vec<LifetimeParamData>,
     pub types: Vec<TypeParamData>,
     pub consts: Vec<ConstParamData>,
     pub where_predicates: Vec<WherePredicate>,
-}
-
-impl GenericParams {
-    pub fn shrink_to_fit(&mut self) {
-        self.lifetimes.shrink_to_fit();
-        for param in &mut self.lifetimes {
-            param.shrink_to_fit();
-        }
-        self.types.shrink_to_fit();
-        for param in &mut self.types {
-            param.shrink_to_fit();
-        }
-        self.consts.shrink_to_fit();
-        for param in &mut self.consts {
-            param.shrink_to_fit();
-        }
-        self.where_predicates.shrink_to_fit();
-        for predicate in &mut self.where_predicates {
-            predicate.shrink_to_fit();
-        }
-    }
 }
 
 impl fmt::Display for GenericParams {
@@ -103,63 +82,28 @@ impl fmt::Display for GenericParams {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct LifetimeParamData {
     pub name: Name,
     pub bounds: Vec<String>,
 }
 
-impl LifetimeParamData {
-    fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        self.bounds.shrink_to_fit();
-        for bound in &mut self.bounds {
-            bound.shrink_to_fit();
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TypeParamData {
     pub name: Name,
     pub bounds: Vec<TypeBound>,
     pub default: Option<TypeRef>,
 }
 
-impl TypeParamData {
-    fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        self.bounds.shrink_to_fit();
-        for bound in &mut self.bounds {
-            bound.shrink_to_fit();
-        }
-        if let Some(default) = &mut self.default {
-            default.shrink_to_fit();
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ConstParamData {
     pub name: Name,
     pub ty: Option<TypeRef>,
     pub default: Option<String>,
 }
 
-impl ConstParamData {
-    fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        if let Some(ty) = &mut self.ty {
-            ty.shrink_to_fit();
-        }
-        if let Some(default) = &mut self.default {
-            default.shrink_to_fit();
-        }
-    }
-}
-
 /// Where-clause predicate that can affect later signature resolution.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum WherePredicate {
     Type {
         ty: TypeRef,
@@ -170,28 +114,6 @@ pub enum WherePredicate {
         bounds: Vec<String>,
     },
     Unsupported(String),
-}
-
-impl WherePredicate {
-    fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Type { ty, bounds } => {
-                ty.shrink_to_fit();
-                bounds.shrink_to_fit();
-                for bound in bounds {
-                    bound.shrink_to_fit();
-                }
-            }
-            Self::Lifetime { lifetime, bounds } => {
-                lifetime.shrink_to_fit();
-                bounds.shrink_to_fit();
-                for bound in bounds {
-                    bound.shrink_to_fit();
-                }
-            }
-            Self::Unsupported(text) => text.shrink_to_fit(),
-        }
-    }
 }
 
 impl fmt::Display for WherePredicate {
@@ -206,7 +128,7 @@ impl fmt::Display for WherePredicate {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct FunctionItem {
     pub generics: GenericParams,
     pub params: Vec<ParamItem>,
@@ -214,95 +136,50 @@ pub struct FunctionItem {
     pub qualifiers: FunctionQualifiers,
 }
 
-impl FunctionItem {
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        self.params.shrink_to_fit();
-        for param in &mut self.params {
-            param.shrink_to_fit();
-        }
-        if let Some(ret_ty) = &mut self.ret_ty {
-            ret_ty.shrink_to_fit();
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink,
+)]
+#[shrink(leaf)]
 pub struct FunctionQualifiers {
     pub is_async: bool,
     pub is_const: bool,
     pub is_unsafe: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ParamItem {
     pub pat: String,
     pub ty: Option<TypeRef>,
     pub kind: ParamKind,
 }
 
-impl ParamItem {
-    pub fn shrink_to_fit(&mut self) {
-        self.pat.shrink_to_fit();
-        if let Some(ty) = &mut self.ty {
-            ty.shrink_to_fit();
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum ParamKind {
     SelfParam,
     Normal,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct StructItem {
     pub generics: GenericParams,
     pub fields: FieldList,
 }
 
-impl StructItem {
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        self.fields.shrink_to_fit();
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct UnionItem {
     pub generics: GenericParams,
     pub fields: Vec<FieldItem>,
 }
 
-impl UnionItem {
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        self.fields.shrink_to_fit();
-        for field in &mut self.fields {
-            field.shrink_to_fit();
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct EnumItem {
     pub generics: GenericParams,
     pub variants: Vec<EnumVariantItem>,
 }
 
-impl EnumItem {
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        self.variants.shrink_to_fit();
-        for variant in &mut self.variants {
-            variant.shrink_to_fit();
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct EnumVariantItem {
     pub name: Name,
     pub span: Span,
@@ -311,18 +188,8 @@ pub struct EnumVariantItem {
     pub fields: FieldList,
 }
 
-impl EnumVariantItem {
-    pub fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-        self.fields.shrink_to_fit();
-    }
-}
-
 /// Field shape shared by structs and enum variants.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum FieldList {
     Named(Vec<FieldItem>),
     Tuple(Vec<FieldItem>),
@@ -336,21 +203,9 @@ impl FieldList {
             Self::Unit => &[],
         }
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Named(fields) | Self::Tuple(fields) => {
-                fields.shrink_to_fit();
-                for field in fields {
-                    field.shrink_to_fit();
-                }
-            }
-            Self::Unit => {}
-        }
-    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct FieldItem {
     pub key: Option<FieldKey>,
     pub visibility: VisibilityLevel,
@@ -360,7 +215,7 @@ pub struct FieldItem {
 }
 
 /// User-visible field identity before semantic ownership is known.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum FieldKey {
     Named(Name),
     Tuple(usize),
@@ -371,12 +226,6 @@ impl FieldKey {
         match self {
             Self::Named(name) => name.to_string(),
             Self::Tuple(index) => format!("#{index}"),
-        }
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        if let Self::Named(name) = self {
-            name.shrink_to_fit();
         }
     }
 }
@@ -395,19 +244,9 @@ impl FieldItem {
     pub fn key_declaration_label(&self) -> Option<String> {
         self.key.as_ref().map(FieldKey::declaration_label)
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        if let Some(key) = &mut self.key {
-            key.shrink_to_fit();
-        }
-        self.ty.shrink_to_fit();
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TraitItem {
     pub generics: GenericParams,
     pub super_traits: Vec<TypeBound>,
@@ -415,18 +254,7 @@ pub struct TraitItem {
     pub is_unsafe: bool,
 }
 
-impl TraitItem {
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        self.super_traits.shrink_to_fit();
-        for bound in &mut self.super_traits {
-            bound.shrink_to_fit();
-        }
-        self.items.shrink_to_fit();
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ImplItem {
     pub generics: GenericParams,
     pub trait_ref: Option<TypeRef>,
@@ -435,64 +263,23 @@ pub struct ImplItem {
     pub is_unsafe: bool,
 }
 
-impl ImplItem {
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        if let Some(trait_ref) = &mut self.trait_ref {
-            trait_ref.shrink_to_fit();
-        }
-        self.self_ty.shrink_to_fit();
-        self.items.shrink_to_fit();
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TypeAliasItem {
     pub generics: GenericParams,
     pub bounds: Vec<TypeBound>,
     pub aliased_ty: Option<TypeRef>,
 }
 
-impl TypeAliasItem {
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        self.bounds.shrink_to_fit();
-        for bound in &mut self.bounds {
-            bound.shrink_to_fit();
-        }
-        if let Some(aliased_ty) = &mut self.aliased_ty {
-            aliased_ty.shrink_to_fit();
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ConstItem {
     pub generics: GenericParams,
     pub ty: Option<TypeRef>,
 }
 
-impl ConstItem {
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        if let Some(ty) = &mut self.ty {
-            ty.shrink_to_fit();
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct StaticItem {
     pub ty: Option<TypeRef>,
     pub mutability: Mutability,
-}
-
-impl StaticItem {
-    pub fn shrink_to_fit(&mut self) {
-        if let Some(ty) = &mut self.ty {
-            ty.shrink_to_fit();
-        }
-    }
 }
 
 fn write_bound_list(

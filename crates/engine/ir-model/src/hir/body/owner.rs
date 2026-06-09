@@ -1,10 +1,10 @@
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{ConstRef, FunctionRef, StaticRef, identity::DeclarationRef};
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 
 /// Semantic item that owns a lowered expression body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum BodyOwner {
     /// Function body, such as `fn read() { value }`.
     Function(FunctionRef),

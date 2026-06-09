@@ -12,21 +12,9 @@ pub struct ModuleItem {
     pub source: ModuleSource,
 }
 
-impl ModuleItem {
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
-}
-
 /// How a module declaration obtains its item list.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum ModuleSource {
     Inline { items: Vec<ItemTreeId> },
     OutOfLine { definition_file: Option<FileId> },
-}
-
-impl ModuleSource {
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }

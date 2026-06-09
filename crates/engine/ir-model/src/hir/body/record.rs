@@ -1,12 +1,13 @@
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Whether a record field was written with `key: value` syntax or colonless shorthand.
 ///
 /// This is shared by record expressions and record patterns so later source queries can preserve
 /// the user's spelling without carrying inverted `explicit`/`shorthand` booleans.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum RecordFieldSyntax {
     /// `User { name: value }` or `User { name: ref binding }`.
     Explicit,

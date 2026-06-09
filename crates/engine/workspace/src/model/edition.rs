@@ -1,4 +1,4 @@
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Rust edition used by a package.
@@ -16,8 +16,10 @@ use wincode::{SchemaRead, SchemaWrite};
     SchemaRead,
     SchemaWrite,
     MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum RustEdition {
     #[display("2015")]
     Edition2015,

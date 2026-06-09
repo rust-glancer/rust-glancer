@@ -5,6 +5,7 @@
 //! allocation through `Arc<str>`, while the interner itself can prune names that no live analysis
 //! snapshot still references.
 
+use rg_std::Shrink;
 use std::{
     borrow::Borrow,
     collections::{HashMap, hash_map::DefaultHasher},
@@ -31,8 +32,10 @@ impl Name {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+}
 
-    pub fn shrink_to_fit(&mut self) {}
+impl Shrink for Name {
+    fn shrink_to_fit(&mut self) {}
 }
 
 impl fmt::Debug for Name {
@@ -127,7 +130,7 @@ impl PartialEq<&str> for Name {
 /// Reuse table that deduplicates short text allocations without owning them forever.
 ///
 /// The table stores weak handles grouped by text hash. Phase data owns the strong `Name`s; once a
-/// rebuild drops obsolete phase data, `shrink_to_fit` removes the now-dead weak handles.
+/// rebuild drops obsolete phase data, `Shrink` removes the now-dead weak handles.
 #[derive(Debug, Clone, Default)]
 pub struct NameInterner {
     buckets: HashMap<u64, Vec<Weak<str>>>,
@@ -186,19 +189,21 @@ impl NameInterner {
             .all(|bucket| bucket.iter().all(|name| name.strong_count() == 0))
     }
 
-    pub fn shrink_to_fit(&mut self) {
+    fn hash_text(text: &str) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl Shrink for NameInterner {
+    fn shrink_to_fit(&mut self) {
         self.buckets.retain(|_, bucket| {
             bucket.retain(|name| name.strong_count() > 0);
             bucket.shrink_to_fit();
             !bucket.is_empty()
         });
         self.buckets.shrink_to_fit();
-    }
-
-    fn hash_text(text: &str) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        text.hash(&mut hasher);
-        hasher.finish()
     }
 }
 
@@ -222,13 +227,6 @@ impl PackageNameInterners {
         &mut self.packages
     }
 
-    pub fn shrink_to_fit(&mut self) {
-        self.packages.shrink_to_fit();
-        for package in &mut self.packages {
-            package.shrink_to_fit();
-        }
-    }
-
     pub fn len(&self) -> usize {
         self.packages.iter().map(NameInterner::len).sum()
     }
@@ -238,21 +236,24 @@ impl PackageNameInterners {
     }
 }
 
+impl Shrink for PackageNameInterners {
+    fn shrink_to_fit(&mut self) {
+        self.packages.shrink_to_fit();
+        for package in &mut self.packages {
+            Shrink::shrink_to_fit(package);
+        }
+    }
+}
+
 mod memsize {
     use std::{mem, sync::Weak};
 
-    use rg_std::{MemoryRecorder, MemorySize, Shrink};
+    use rg_std::{MemoryRecorder, MemorySize};
 
     use crate::{Name, NameInterner, PackageNameInterners};
 
     impl MemorySize for Name {
         fn record_memory_children(&self, _recorder: &mut MemoryRecorder) {}
-    }
-
-    impl Shrink for Name {
-        fn shrink_to_fit(&mut self) {
-            Name::shrink_to_fit(self);
-        }
     }
 
     impl MemorySize for NameInterner {
@@ -334,6 +335,8 @@ mod memsize {
 
 #[cfg(test)]
 mod tests {
+    use rg_std::Shrink;
+
     use crate::{Name, NameInterner, PackageNameInterners};
 
     #[test]
@@ -360,7 +363,7 @@ mod tests {
         assert_eq!(interner.len(), 0);
         assert_eq!(stored_weak_count(&interner), 1);
 
-        interner.shrink_to_fit();
+        Shrink::shrink_to_fit(&mut interner);
         assert_eq!(interner.len(), 0);
         assert_eq!(stored_weak_count(&interner), 0);
         assert!(interner.is_empty());
@@ -374,7 +377,7 @@ mod tests {
         let stale = interner.intern("Thing");
         drop(stale);
 
-        interner.shrink_to_fit();
+        Shrink::shrink_to_fit(&mut interner);
         let reused = interner.intern("User");
 
         assert_eq!(live.as_str().as_ptr(), reused.as_str().as_ptr());

@@ -141,10 +141,6 @@ impl TypeRef {
             Self::Unknown(_) | Self::Never | Self::Unit | Self::Infer => false,
         }
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }
 
 impl fmt::Display for TypeRef {
@@ -240,10 +236,6 @@ impl TypePath {
         self.single_name()
             .is_some_and(|name| name.as_str() == "Self")
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }
 
 impl fmt::Display for TypePath {
@@ -270,12 +262,6 @@ pub struct TypePathSegment {
     pub args: Vec<GenericArg>,
     #[shrink(skip)]
     pub span: Span,
-}
-
-impl TypePathSegment {
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }
 
 impl fmt::Display for TypePathSegment {
@@ -350,10 +336,6 @@ impl GenericArg {
             Self::Lifetime(_) | Self::Const(_) | Self::Unsupported(_) => false,
         }
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }
 
 impl fmt::Display for GenericArg {
@@ -413,10 +395,6 @@ impl TypeBound {
             Self::Trait(ty) => ty.mentions_type_param(params),
             Self::Lifetime(_) | Self::Unsupported(_) => false,
         }
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
     }
 }
 

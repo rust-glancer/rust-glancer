@@ -15,22 +15,10 @@ pub struct ExternCrateItem {
     pub macro_use: Option<MacroUseAttr>,
 }
 
-impl ExternCrateItem {
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
-}
-
 /// Syntactic `use` facts attached to `ItemKind::Use`.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct UseItem {
     pub imports: Vec<UseImport>,
-}
-
-impl UseItem {
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }
 
 /// One leaf import produced by a potentially nested use tree.
@@ -39,12 +27,6 @@ pub struct UseImport {
     pub kind: UseImportKind,
     pub path: UsePath,
     pub alias: ImportAlias,
-}
-
-impl UseImport {
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }
 
 /// Import form before name resolution.
@@ -77,12 +59,6 @@ pub enum ImportAlias {
     Inferred,
     Explicit { name: Name, span: Span },
     Hidden,
-}
-
-impl ImportAlias {
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }
 
 impl fmt::Display for ImportAlias {
@@ -154,10 +130,6 @@ impl UsePath {
             Some(UsePathSegmentKind::SelfKw)
         )
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }
 
 impl fmt::Display for UsePath {
@@ -184,12 +156,6 @@ pub struct UsePathSegment {
     pub span: Span,
 }
 
-impl UsePathSegment {
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
-}
-
 impl fmt::Display for UsePathSegment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.kind.fmt(f)
@@ -208,10 +174,4 @@ pub enum UsePathSegmentKind {
     SuperKw,
     #[display("crate")]
     CrateKw,
-}
-
-impl UsePathSegmentKind {
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }

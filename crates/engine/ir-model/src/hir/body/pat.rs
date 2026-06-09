@@ -3,13 +3,16 @@ use wincode::{SchemaRead, SchemaWrite};
 use rg_parse::Span;
 
 use crate::{BindingId, ExprId, PatId, items::FieldKey};
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 
 use super::{BodyPath, BodySource, LiteralKind, RecordFieldSyntax};
 
 /// Binding mode written on an identifier pattern.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink,
+)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub struct PatBindingMode {
     pub by_ref: bool,
     pub mutable: bool,
@@ -17,9 +20,19 @@ pub struct PatBindingMode {
 
 /// Mutability written on a reference pattern.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum PatMutability {
     /// `&<pat>`.
     #[display("shared")]
@@ -31,9 +44,19 @@ pub enum PatMutability {
 
 /// Range operator written in a range pattern.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum PatRangeKind {
     /// `..`.
     #[display("..")]
@@ -44,14 +67,14 @@ pub enum PatRangeKind {
 }
 
 /// One lowered pattern node.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct PatData {
     pub source: BodySource,
     pub kind: PatKind,
 }
 
 /// Pattern forms that matter for binding and enum-payload type propagation.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum PatKind {
     /// `name`, `ref mut name`, or `name @ <pat>`.
     Binding {
@@ -109,19 +132,13 @@ pub enum PatKind {
 }
 
 /// One field inside a record pattern.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct RecordPatField {
     pub key: FieldKey,
     pub key_span: Span,
     pub source_span: Span,
     pub syntax: RecordFieldSyntax,
     pub pat: PatId,
-}
-
-impl PatData {
-    pub fn shrink_to_fit(&mut self) {
-        self.kind.shrink_to_fit();
-    }
 }
 
 impl PatKind {
@@ -166,54 +183,5 @@ impl PatKind {
             | Self::Wildcard
             | Self::Unsupported => None,
         }
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Tuple { fields } | Self::Slice { fields } => fields.shrink_to_fit(),
-            Self::TupleStruct { path, fields } => {
-                if let Some(path) = path {
-                    path.shrink_to_fit();
-                }
-                fields.shrink_to_fit();
-            }
-            Self::Record {
-                path, fields, rest, ..
-            } => {
-                if let Some(path) = path {
-                    path.shrink_to_fit();
-                }
-                fields.shrink_to_fit();
-                for field in fields {
-                    field.shrink_to_fit();
-                }
-                let _ = rest;
-            }
-            Self::Or { pats } => pats.shrink_to_fit(),
-            Self::Path { path } => {
-                if let Some(path) = path {
-                    path.shrink_to_fit();
-                }
-            }
-            Self::Binding { path, .. } => {
-                if let Some(path) = path {
-                    path.shrink_to_fit();
-                }
-            }
-            Self::Ref { .. }
-            | Self::Box { .. }
-            | Self::Range { .. }
-            | Self::ConstBlock { .. }
-            | Self::Rest
-            | Self::Literal { .. }
-            | Self::Wildcard
-            | Self::Unsupported => {}
-        }
-    }
-}
-
-impl RecordPatField {
-    fn shrink_to_fit(&mut self) {
-        self.key.shrink_to_fit();
     }
 }

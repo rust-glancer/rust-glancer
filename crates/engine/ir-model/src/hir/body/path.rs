@@ -8,13 +8,13 @@ use crate::{
     Path, PathSegment,
     items::{GenericArg, TypeRef},
 };
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 
 /// Body expression/pattern path together with body-specific syntax details.
 ///
 /// DefMap paths intentionally keep only the semantic shape. Body paths keep the richer source shape
 /// and expose a DefMap projection so existing resolution can keep using DefMap paths.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BodyPath {
     /// Full source range of the path expression or pattern.
     pub source_span: Span,
@@ -22,14 +22,14 @@ pub struct BodyPath {
     segments: Vec<BodyPathSegment>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BodyPathSegment {
     kind: BodyPathSegmentKind,
     span: Span,
     args: Option<BodyPathSegmentArgs>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum BodyPathSegmentKind {
     /// `name` in `module::name`.
     Name(Name),
@@ -51,7 +51,7 @@ pub enum BodyPathSegmentKind {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum BodyPathSegmentArgs {
     /// `<T>` or `::<T>`.
     Angle {
@@ -126,13 +126,6 @@ impl BodyPath {
             .and_then(BodyPathSegment::args)
             .and_then(BodyPathSegmentArgs::angle_args)
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.segments.shrink_to_fit();
-        for segment in &mut self.segments {
-            segment.shrink_to_fit();
-        }
-    }
 }
 
 impl BodyPathSegment {
@@ -162,30 +155,6 @@ impl BodyPathSegment {
             BodyPathSegmentKind::TypeAnchor { .. } => None,
         }
     }
-
-    fn shrink_to_fit(&mut self) {
-        self.kind.shrink_to_fit();
-        if let Some(args) = &mut self.args {
-            args.shrink_to_fit();
-        }
-    }
-}
-
-impl BodyPathSegmentKind {
-    fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Name(name) => name.shrink_to_fit(),
-            Self::TypeAnchor { ty, trait_ref } => {
-                if let Some(ty) = ty {
-                    ty.shrink_to_fit();
-                }
-                if let Some(trait_ref) = trait_ref {
-                    trait_ref.shrink_to_fit();
-                }
-            }
-            Self::SelfType | Self::SelfKw | Self::SuperKw | Self::CrateKw => {}
-        }
-    }
 }
 
 impl BodyPathSegmentArgs {
@@ -193,18 +162,6 @@ impl BodyPathSegmentArgs {
         match self {
             Self::Angle { args, .. } => Some(args),
             Self::Parenthesized(_) => None,
-        }
-    }
-
-    fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Angle { args, .. } => {
-                args.shrink_to_fit();
-                for arg in args {
-                    arg.shrink_to_fit();
-                }
-            }
-            Self::Parenthesized(text) => text.shrink_to_fit(),
         }
     }
 }

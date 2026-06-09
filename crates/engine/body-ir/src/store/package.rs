@@ -6,10 +6,10 @@ use rg_ir_storage::{BodyLocalItems, DefMap, ItemStore};
 use rg_parse::TargetId;
 
 use crate::ir::body::ResolvedBodyData;
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 
 /// Lowered bodies for all targets inside one parsed package.
-#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct PackageBodies {
     pub(crate) targets: Arena<TargetId, TargetBodies>,
 }
@@ -18,13 +18,6 @@ impl PackageBodies {
     pub(crate) fn new(targets: Vec<TargetBodies>) -> Self {
         Self {
             targets: Arena::from_vec(targets),
-        }
-    }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.targets.shrink_to_fit();
-        for target in self.targets.iter_mut() {
-            target.shrink_to_fit();
         }
     }
 
@@ -42,7 +35,7 @@ impl PackageBodies {
 }
 
 /// Resolved bodies for one target.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TargetBodies {
     pub(crate) status: TargetBodiesStatus,
     pub(crate) bodies: Arena<BodyId, ResolvedBodyData>,
@@ -106,24 +99,23 @@ impl TargetBodies {
     pub(crate) fn bodies_mut(&mut self) -> &mut [ResolvedBodyData] {
         self.bodies.as_mut_slice()
     }
-
-    fn shrink_to_fit(&mut self) {
-        self.bodies.shrink_to_fit();
-        for body in self.bodies.iter_mut() {
-            body.shrink_to_fit();
-        }
-        self.body_local_items.shrink_to_fit();
-        for items in self.body_local_items.iter_mut() {
-            items.shrink_to_fit();
-        }
-    }
 }
 
 /// Whether one target's bodies were eagerly lowered.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum TargetBodiesStatus {
     #[display("built")]
     Built,

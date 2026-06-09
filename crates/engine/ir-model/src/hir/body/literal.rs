@@ -3,11 +3,12 @@ use std::fmt;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::items::PrimitiveTy;
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 
 /// Literal category plus the primitive type implied by suffix/default heuristics.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum LiteralKind {
     Bool,
     Char,

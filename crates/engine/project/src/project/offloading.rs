@@ -9,6 +9,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use rayon::prelude::*;
 use rg_def_map::PackageSlot;
+use rg_std::Shrink;
 
 use crate::{
     PackageResidency, ProjectMemoryPurgePoint,
@@ -183,7 +184,7 @@ impl<'a> ResidencyApplication<'a> {
             // Offloading drops many strong `Name` handles from phase payloads. Prune the interner
             // immediately so dead weak entries and their Arc control blocks do not pin allocator
             // pages until a later rebuild happens to compact the project.
-            self.project.names.shrink_to_fit();
+            Shrink::shrink_to_fit(&mut self.project.names);
 
             // File ids and paths remain resident as the source inventory. Line indexes are larger
             // and can be reconstructed from saved source text when a query needs LSP coordinates.

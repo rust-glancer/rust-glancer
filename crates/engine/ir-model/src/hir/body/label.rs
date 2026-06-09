@@ -11,9 +11,3 @@ pub struct LabelData {
     #[shrink(skip)]
     pub span: Span,
 }
-
-impl LabelData {
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
-}

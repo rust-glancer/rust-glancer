@@ -1,4 +1,4 @@
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use std::fmt;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -13,7 +13,7 @@ use rg_text::{Name, NameInterner};
 use rg_workspace::RustEdition;
 
 /// One lowered import declaration.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ImportData {
     pub module: ModuleId,
     pub visibility: VisibilityLevel,
@@ -37,17 +37,11 @@ impl ImportData {
 
         self.binding.resolve(inferred_name)
     }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.path.shrink_to_fit();
-        self.source_path.shrink_to_fit();
-        self.binding.shrink_to_fit();
-    }
 }
 
 /// Binding strategy for one lowered import or extern crate item.
 #[derive(
-    Debug, Clone, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug, Clone, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize, Shrink,
 )]
 pub enum ImportBinding {
     #[display("")]
@@ -74,17 +68,12 @@ impl ImportBinding {
             Self::Hidden => None,
         }
     }
-
-    fn shrink_to_fit(&mut self) {
-        if let Self::Explicit(name) = self {
-            name.shrink_to_fit();
-        }
-    }
 }
 
 /// Import form that matters for scope propagation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum ImportKind {
     Named,
     SelfImport,
@@ -102,7 +91,7 @@ impl ImportKind {
 }
 
 /// Structured path used during import resolution.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ImportPath {
     pub absolute: bool,
     pub segments: Vec<PathSegment>,
@@ -148,17 +137,10 @@ impl ImportPath {
     pub(super) fn last_name(&self) -> Option<Name> {
         last_segment_name(&self.segments)
     }
-
-    fn shrink_to_fit(&mut self) {
-        self.segments.shrink_to_fit();
-        for segment in &mut self.segments {
-            segment.shrink_to_fit();
-        }
-    }
 }
 
 /// Import path plus source spans for each segment.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ImportSourcePath {
     pub source_span: Option<Span>,
     pub absolute: bool,
@@ -204,17 +186,10 @@ impl ImportSourcePath {
                 .collect(),
         }
     }
-
-    fn shrink_to_fit(&mut self) {
-        self.segments.shrink_to_fit();
-        for segment in &mut self.segments {
-            segment.segment.shrink_to_fit();
-        }
-    }
 }
 
 /// One source-spanned import path segment.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ImportSourcePathSegment {
     pub segment: PathSegment,
     pub span: Span,

@@ -5,7 +5,7 @@ use crate::{
     BindingId, BodyRef, DefMapRef, ExprId, ModuleRef, PatId, ScopeId, StmtId,
     items::{ItemNode, ItemTreeId},
 };
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 
 use super::{
     BindingData, BodyOwner, BodySource, BodySourceItems, ExprData, ExprKind, PatData, PatKind,
@@ -16,7 +16,7 @@ use super::{
 ///
 /// This is the pure body shape: source identity, lexical scopes, and lowered node arenas.
 /// Resolution keeps derived facts in separate sidecars owned by the body resolution layer.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BodyData {
     owner: BodyOwner,
     owner_module: ModuleRef,
@@ -242,31 +242,6 @@ impl BodyData {
         }
 
         self.bindings = new_bindings;
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.params.shrink_to_fit();
-        self.source_items.shrink_to_fit();
-        self.scopes.shrink_to_fit();
-        for scope in self.scopes.iter_mut() {
-            scope.shrink_to_fit();
-        }
-        self.bindings.shrink_to_fit();
-        for binding in self.bindings.iter_mut() {
-            binding.shrink_to_fit();
-        }
-        self.pats.shrink_to_fit();
-        for pat in self.pats.iter_mut() {
-            pat.shrink_to_fit();
-        }
-        self.statements.shrink_to_fit();
-        for statement in self.statements.iter_mut() {
-            statement.shrink_to_fit();
-        }
-        self.exprs.shrink_to_fit();
-        for expr in self.exprs.iter_mut() {
-            expr.shrink_to_fit();
-        }
     }
 }
 

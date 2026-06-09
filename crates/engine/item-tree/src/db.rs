@@ -4,13 +4,13 @@ use anyhow::Context as _;
 use rayon::prelude::*;
 
 use rg_parse::ParseDb;
+use rg_std::{MemorySize, Shrink};
 use rg_text::PackageNameInterners;
 
 use crate::{Package, lower};
-use rg_std::MemorySize;
 
 /// Lowered item trees for all parsed packages.
-#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize, Shrink)]
 pub struct ItemTreeDb {
     pub(crate) packages: Vec<Option<Package>>,
 }
@@ -49,7 +49,7 @@ impl ItemTreeDb {
         };
 
         Self::build_packages_parallel(parse, &package_slots, interners, &mut trees)?;
-        trees.shrink_to_fit();
+        Shrink::shrink_to_fit(&mut trees);
 
         Ok(trees)
     }
@@ -57,14 +57,6 @@ impl ItemTreeDb {
     /// Returns one package tree set by slot.
     pub fn package(&self, package_slot: usize) -> Option<&Package> {
         self.packages.get(package_slot)?.as_ref()
-    }
-
-    /// Compacts the transient item-tree graph before later phases overlap with it.
-    pub fn shrink_to_fit(&mut self) {
-        for package in self.packages.iter_mut().flatten() {
-            package.shrink_to_fit();
-        }
-        self.packages.shrink_to_fit();
     }
 
     fn build_packages_parallel(

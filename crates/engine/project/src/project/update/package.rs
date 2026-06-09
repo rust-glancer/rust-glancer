@@ -7,6 +7,7 @@ use anyhow::Context as _;
 use rg_body_ir::BodyIrFile;
 use rg_def_map::PackageSlot;
 use rg_item_tree::ItemTreeDb;
+use rg_std::Shrink;
 
 use crate::{
     ProjectMemoryPurgePoint,
@@ -140,7 +141,7 @@ fn try_rebuild_packages(
     state.def_map = def_map;
     state.semantic_ir = semantic_ir;
     state.body_ir = body_ir;
-    state.names.shrink_to_fit();
+    Shrink::shrink_to_fit(&mut state.names);
     if matches!(plan.residency, RebuildResidency::RestoreSavedState) {
         ResidencyApplication::restore(state, plan.source_packages.as_slice())
             .apply()

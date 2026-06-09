@@ -7,12 +7,12 @@ use crate::{
     ScopeId,
     items::{Mutability, TypeRef},
 };
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 
 use super::BodySource;
 
 /// One local binding introduced by a parameter or `let`.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct BindingData {
     pub source: BodySource,
     pub name_span: Option<Span>,
@@ -24,9 +24,19 @@ pub struct BindingData {
 
 /// Local binding category.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum BindingKind {
     /// `param` in `fn f(param: Type)`.
     #[display("param")]
@@ -40,20 +50,10 @@ pub enum BindingKind {
 }
 
 /// Receiver form written by a function's self parameter.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SchemaRead, SchemaWrite, Shrink)]
+#[shrink(leaf)]
 pub enum BodySelfParamKind {
     Value,
     Reference { mutability: Mutability },
     Explicit,
-}
-
-impl BindingData {
-    pub fn shrink_to_fit(&mut self) {
-        if let Some(name) = &mut self.name {
-            name.shrink_to_fit();
-        }
-        if let Some(annotation) = &mut self.annotation {
-            annotation.shrink_to_fit();
-        }
-    }
 }

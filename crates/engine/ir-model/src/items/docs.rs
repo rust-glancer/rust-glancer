@@ -34,8 +34,4 @@ impl Documentation {
     pub fn text(&self) -> String {
         self.text.clone()
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }

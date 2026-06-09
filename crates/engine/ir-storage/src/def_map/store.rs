@@ -1,4 +1,4 @@
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use std::collections::HashMap;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -15,7 +15,7 @@ use super::{
     module::ModuleData,
 };
 
-#[derive(Debug, Default, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 struct DefMapData {
     modules: Arena<ModuleId, ModuleData>,
     local_defs: Arena<LocalDefId, LocalDefData>,
@@ -23,32 +23,6 @@ struct DefMapData {
     local_impls: Arena<LocalImplId, LocalImplData>,
     imports: Arena<ImportId, ImportData>,
     generated_sources: Arena<GeneratedSourceId, GeneratedSourceData>,
-}
-
-impl DefMapData {
-    fn shrink_to_fit(&mut self) {
-        self.modules.shrink_to_fit();
-        for module in self.modules.iter_mut() {
-            module.shrink_to_fit();
-        }
-        self.local_defs.shrink_to_fit();
-        for local_def in self.local_defs.iter_mut() {
-            local_def.shrink_to_fit();
-        }
-        self.macro_definitions.shrink_to_fit();
-        for macro_definition in self.macro_definitions.values_mut() {
-            macro_definition.shrink_to_fit();
-        }
-        self.local_impls.shrink_to_fit();
-        self.imports.shrink_to_fit();
-        for import in self.imports.iter_mut() {
-            import.shrink_to_fit();
-        }
-        self.generated_sources.shrink_to_fit();
-        for generated_source in self.generated_sources.iter_mut() {
-            generated_source.shrink_to_fit();
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,7 +146,7 @@ impl<'a> PartialDefMap<'a> {
 /// each body function has its own defmap that tracks the body-local items.
 /// While functions are not really modules, they work similarly, and we model
 /// them as if each scope is a module.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Shrink)]
 pub struct DefMap {
     /// Ref to this defmap, which can be used to emit correct refs.
     own_ref: DefMapRef,
@@ -280,10 +254,6 @@ impl DefMap {
 
     pub fn imports_with_ids(&self) -> impl Iterator<Item = (ImportId, &ImportData)> {
         self.data.imports.iter_with_ids()
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.data.shrink_to_fit();
     }
 }
 

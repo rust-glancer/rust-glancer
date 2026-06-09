@@ -9,15 +9,25 @@ use crate::{
     BindingId, ExprId, PatId, ScopeId, StmtId,
     items::{FieldKey, GenericArg, Mutability, TypeRef},
 };
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 
 use super::{BodyPath, BodySource, LabelData, LiteralKind, RecordFieldSyntax};
 
 /// Closure capture mode written before the closure parameter list.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum ClosureCapture {
     #[display("inferred")]
     Inferred,
@@ -27,9 +37,19 @@ pub enum ClosureCapture {
 
 /// Closure-level execution modifier that affects how its body is interpreted.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum ClosureKind {
     #[display("normal")]
     Normal,
@@ -39,9 +59,19 @@ pub enum ClosureKind {
 
 /// Unary operator written before an expression.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum ExprUnaryOp {
     #[display("*")]
     Deref,
@@ -53,9 +83,19 @@ pub enum ExprUnaryOp {
 
 /// Non-assignment binary operator written between two expressions.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum ExprBinaryOp {
     #[display("||")]
     LogicOr,
@@ -110,9 +150,19 @@ impl ExprBinaryOp {
 
 /// Assignment operator written between a target expression and a value expression.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum ExprAssignOp {
     #[display("=")]
     Assign,
@@ -140,9 +190,19 @@ pub enum ExprAssignOp {
 
 /// Range operator written between optional range bounds.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum ExprRangeKind {
     /// `..`.
     #[display("..")]
@@ -153,7 +213,7 @@ pub enum ExprRangeKind {
 }
 
 /// One lowered expression.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ExprData {
     pub source: BodySource,
     pub scope: ScopeId,
@@ -166,7 +226,7 @@ pub struct ExprData {
 }
 
 /// Block-level execution modifier written before the statement list.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum ExprBlockKind {
     /// `{ ... }`.
     Plain,
@@ -198,7 +258,7 @@ pub enum ExprBlockKind {
 }
 
 /// Expression forms that the first Body IR pass understands.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum ExprKind {
     /// `{ ... }`, `async { ... }`, or `'label: { ... }`.
     Block {
@@ -359,9 +419,19 @@ pub enum ExprKind {
 
 /// Transparent or nearly-transparent expression wrapper understood by cheap type normalization.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, derive_more::Display, SchemaRead, SchemaWrite, MemorySize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    derive_more::Display,
+    SchemaRead,
+    SchemaWrite,
+    MemorySize,
+    Shrink,
 )]
 #[memsize(leaf)]
+#[shrink(leaf)]
 pub enum ExprWrapperKind {
     /// `(<expr>)`.
     #[display("paren")]
@@ -381,7 +451,7 @@ pub enum ExprWrapperKind {
 }
 
 /// One match arm with its pattern scope and lowered arm expression.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct MatchArmData {
     pub pat: Option<PatId>,
     pub scope: ScopeId,
@@ -390,7 +460,7 @@ pub struct MatchArmData {
 }
 
 /// One closure parameter pattern and its lowered bindings.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ClosureParamData {
     pub source: BodySource,
     pub pat: Option<PatId>,
@@ -399,7 +469,7 @@ pub struct ClosureParamData {
 }
 
 /// One field written inside a record expression.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct RecordExprField {
     pub key: FieldKey,
     pub key_span: Span,
@@ -409,7 +479,7 @@ pub struct RecordExprField {
 }
 
 /// `..` or `..base` written after record fields.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct RecordExprSpread {
     pub source_span: Span,
     pub expr: Option<ExprId>,
@@ -449,159 +519,6 @@ impl fmt::Display for ExprBlockKind {
                 move_capture: false,
             } => f.write_str("async gen"),
             Self::AsyncGen { move_capture: true } => f.write_str("async gen move"),
-        }
-    }
-}
-
-impl ExprData {
-    pub fn shrink_to_fit(&mut self) {
-        self.kind.shrink_to_fit();
-    }
-}
-
-impl ExprBlockKind {
-    fn shrink_to_fit(&mut self) {
-        if let Self::Try {
-            result_ty: Some(result_ty),
-            ..
-        } = self
-        {
-            result_ty.shrink_to_fit();
-        }
-    }
-}
-
-impl ExprKind {
-    pub fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Block {
-                kind,
-                label,
-                statements,
-                tail,
-                ..
-            } => {
-                kind.shrink_to_fit();
-                if let Some(label) = label {
-                    label.shrink_to_fit();
-                }
-                statements.shrink_to_fit();
-                let _ = tail;
-            }
-            Self::Path { path } => path.shrink_to_fit(),
-            Self::Call { callee, args } => {
-                let _ = callee;
-                args.shrink_to_fit();
-            }
-            Self::Tuple { fields } => fields.shrink_to_fit(),
-            Self::Array { elements } => elements.shrink_to_fit(),
-            Self::Cast { ty, .. } => {
-                if let Some(ty) = ty {
-                    ty.shrink_to_fit();
-                }
-            }
-            Self::Match { scrutinee, arms } => {
-                let _ = scrutinee;
-                arms.shrink_to_fit();
-            }
-            Self::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => {
-                let _ = condition;
-                let _ = then_branch;
-                let _ = else_branch;
-            }
-            Self::Let { bindings, .. } => {
-                bindings.shrink_to_fit();
-            }
-            Self::Closure { params, ret_ty, .. } => {
-                params.shrink_to_fit();
-                for param in params {
-                    param.shrink_to_fit();
-                }
-                if let Some(ret_ty) = ret_ty {
-                    ret_ty.shrink_to_fit();
-                }
-            }
-            Self::For {
-                label, bindings, ..
-            } => {
-                if let Some(label) = label {
-                    label.shrink_to_fit();
-                }
-                bindings.shrink_to_fit();
-            }
-            Self::Loop { label, .. }
-            | Self::While { label, .. }
-            | Self::Break { label, .. }
-            | Self::Continue { label } => {
-                if let Some(label) = label {
-                    label.shrink_to_fit();
-                }
-            }
-            Self::MethodCall {
-                receiver,
-                method_name,
-                generic_args,
-                args,
-                ..
-            } => {
-                let _ = receiver;
-                method_name.shrink_to_fit();
-                generic_args.shrink_to_fit();
-                for arg in generic_args {
-                    arg.shrink_to_fit();
-                }
-                args.shrink_to_fit();
-            }
-            Self::Field { field, .. } => {
-                if let Some(field) = field {
-                    field.shrink_to_fit();
-                }
-            }
-            Self::Record { path, fields, .. } => {
-                if let Some(path) = path {
-                    path.shrink_to_fit();
-                }
-                fields.shrink_to_fit();
-                for field in fields {
-                    field.shrink_to_fit();
-                }
-            }
-            Self::RepeatArray { len_text, .. } => {
-                if let Some(len_text) = len_text {
-                    len_text.shrink_to_fit();
-                }
-            }
-            Self::Index { .. }
-            | Self::Range { .. }
-            | Self::Unary { .. }
-            | Self::Binary { .. }
-            | Self::Assign { .. }
-            | Self::Wrapper { .. }
-            | Self::Literal { .. }
-            | Self::Underscore
-            | Self::Yield { .. }
-            | Self::Yeet { .. }
-            | Self::Become { .. } => {}
-            Self::Unknown { children } => children.shrink_to_fit(),
-        }
-    }
-}
-
-impl RecordExprField {
-    fn shrink_to_fit(&mut self) {
-        self.key.shrink_to_fit();
-    }
-}
-
-impl ClosureParamData {
-    fn shrink_to_fit(&mut self) {
-        self.bindings.shrink_to_fit();
-        if let Some(annotation) = &mut self.annotation {
-            annotation.shrink_to_fit();
         }
     }
 }

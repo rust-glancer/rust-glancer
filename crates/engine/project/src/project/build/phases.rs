@@ -8,6 +8,7 @@ use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore};
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
+use rg_std::Shrink;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
@@ -252,7 +253,7 @@ pub(super) fn build(
 
     parse.evict_syntax_trees();
     parse.shrink_to_fit();
-    names.shrink_to_fit();
+    Shrink::shrink_to_fit(&mut names);
     stage_memory
         .names(&names)
         .parse(&parse)

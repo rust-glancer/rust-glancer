@@ -107,10 +107,6 @@ impl Path {
     pub fn last_segment_label(&self) -> Option<String> {
         last_segment_name(&self.segments).map(|name| name.to_string())
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }
 
 impl fmt::Display for Path {
@@ -165,10 +161,6 @@ impl PathSegment {
             UsePathSegmentKind::SuperKw => Self::SuperKw,
             UsePathSegmentKind::CrateKw => Self::CrateKw,
         }
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
     }
 }
 

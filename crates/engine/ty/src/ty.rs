@@ -272,37 +272,28 @@ impl Ty {
             }
         }
     }
+}
 
-    pub fn shrink_to_fit(&mut self) {
+impl Shrink for Ty {
+    fn shrink_to_fit(&mut self) {
         match self {
             Self::Tuple(fields) => {
-                fields.shrink_to_fit();
-                for field in fields {
-                    field.shrink_to_fit();
-                }
+                Shrink::shrink_to_fit(fields);
             }
             Self::Array { inner, len } => {
-                inner.shrink_to_fit();
-                if let Some(len) = len {
-                    len.shrink_to_fit();
-                }
+                Shrink::shrink_to_fit(inner);
+                Shrink::shrink_to_fit(len);
             }
-            Self::Slice(inner) => inner.shrink_to_fit(),
-            Self::Reference { inner, .. } => inner.shrink_to_fit(),
+            Self::Slice(inner) => Shrink::shrink_to_fit(inner),
+            Self::Reference { inner, .. } => Shrink::shrink_to_fit(inner),
             Self::Opaque { bounds } => {
                 Shrink::shrink_to_fit(bounds);
             }
-            Self::Syntax(ty) => ty.shrink_to_fit(),
+            Self::Syntax(ty) => Shrink::shrink_to_fit(ty),
             Self::Nominal(types) | Self::SelfTy(types) => {
                 Shrink::shrink_to_fit(types);
             }
             Self::Unit | Self::Never | Self::Primitive(_) | Self::Unknown => {}
         }
-    }
-}
-
-impl Shrink for Ty {
-    fn shrink_to_fit(&mut self) {
-        Ty::shrink_to_fit(self);
     }
 }

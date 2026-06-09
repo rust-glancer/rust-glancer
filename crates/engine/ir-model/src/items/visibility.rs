@@ -19,9 +19,3 @@ pub enum VisibilityLevel {
     #[display("{_0}")]
     Unknown(String),
 }
-
-impl VisibilityLevel {
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
-}

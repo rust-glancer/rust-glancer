@@ -4,19 +4,19 @@ use crate::{
     BindingId, ExprId, PatId, ScopeId,
     items::{ItemTreeId, TypeRef},
 };
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 
 use super::BodySource;
 
 /// One lowered statement.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct StmtData {
     pub source: BodySource,
     pub kind: StmtKind,
 }
 
 /// Statement forms that matter for the first Body IR pass.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum StmtKind {
     /// `let <pat>: Type = <expr>;` or `let <pat> = <expr> else { ... };`.
     Let {
@@ -33,28 +33,4 @@ pub enum StmtKind {
     Item { item: ItemTreeId },
     /// An item statement that Body IR intentionally could not lower into the source-item arena.
     ItemIgnored,
-}
-
-impl StmtData {
-    pub fn shrink_to_fit(&mut self) {
-        self.kind.shrink_to_fit();
-    }
-}
-
-impl StmtKind {
-    fn shrink_to_fit(&mut self) {
-        match self {
-            Self::Let {
-                bindings,
-                annotation,
-                ..
-            } => {
-                bindings.shrink_to_fit();
-                if let Some(annotation) = annotation {
-                    annotation.shrink_to_fit();
-                }
-            }
-            Self::Expr { .. } | Self::Item { .. } | Self::ItemIgnored => {}
-        }
-    }
 }

@@ -335,6 +335,30 @@ mod memsize {
     }
 }
 
+mod shrink {
+    use rg_std::Shrink;
+
+    use crate::{Arena, FrozenArena};
+
+    impl<Id, T> Shrink for Arena<Id, T>
+    where
+        T: Shrink,
+    {
+        fn shrink_to_fit(&mut self) {
+            Shrink::shrink_to_fit(&mut self.items);
+        }
+    }
+
+    impl<Id, T> Shrink for FrozenArena<Id, T>
+    where
+        T: Shrink,
+    {
+        fn shrink_to_fit(&mut self) {
+            Shrink::shrink_to_fit(&mut self.items);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{Arena, ArenaId, FrozenArena};
@@ -485,5 +509,18 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(paths.iter().any(|path| path == "frozen.items"));
         assert!(!paths.iter().any(|path| path.contains("items.items")));
+    }
+
+    #[test]
+    fn shrinks_arena_storage_and_children() {
+        use rg_std::Shrink;
+
+        let mut arena = Arena::<ExprId, String>::with_capacity(8);
+        let id = arena.alloc(String::with_capacity(8));
+
+        Shrink::shrink_to_fit(&mut arena);
+
+        assert_eq!(arena.capacity(), arena.len());
+        assert_eq!(arena[id].capacity(), arena[id].len());
     }
 }

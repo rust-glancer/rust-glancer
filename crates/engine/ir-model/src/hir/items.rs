@@ -3,7 +3,7 @@ use crate::items::{
     TypeBound, TypeRef, VisibilityLevel,
 };
 use rg_parse::{FileId, Span};
-use rg_std::{MemorySize, UniqueVec};
+use rg_std::{MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -37,7 +37,7 @@ pub struct EnumVariantData<'a> {
 }
 
 /// Nominal struct lowered from a module item.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct StructData {
     pub local_def: LocalDefRef,
     pub source: ItemSource,
@@ -49,19 +49,8 @@ pub struct StructData {
     pub fields: FieldList,
 }
 
-impl StructData {
-    pub fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-        self.generics.shrink_to_fit();
-        self.fields.shrink_to_fit();
-    }
-}
-
 /// Nominal union lowered from a module item.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct UnionData {
     pub local_def: LocalDefRef,
     pub source: ItemSource,
@@ -73,22 +62,8 @@ pub struct UnionData {
     pub fields: Vec<FieldItem>,
 }
 
-impl UnionData {
-    pub fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-        self.generics.shrink_to_fit();
-        self.fields.shrink_to_fit();
-        for field in &mut self.fields {
-            field.shrink_to_fit();
-        }
-    }
-}
-
 /// Enum definition together with variant payloads.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct EnumData {
     pub local_def: LocalDefRef,
     pub source: ItemSource,
@@ -100,22 +75,8 @@ pub struct EnumData {
     pub variants: Vec<EnumVariantItem>,
 }
 
-impl EnumData {
-    pub fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-        self.generics.shrink_to_fit();
-        self.variants.shrink_to_fit();
-        for variant in &mut self.variants {
-            variant.shrink_to_fit();
-        }
-    }
-}
-
 /// Trait signature and associated items.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TraitData {
     pub local_def: LocalDefRef,
     pub source: ItemSource,
@@ -142,26 +103,13 @@ impl TraitData {
             }
         })
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-        self.generics.shrink_to_fit();
-        self.super_traits.shrink_to_fit();
-        for bound in &mut self.super_traits {
-            bound.shrink_to_fit();
-        }
-        self.items.shrink_to_fit();
-    }
 }
 
 /// Impl block header and associated items.
 ///
 /// `resolved_*` fields are intentionally lossy and optimistic: they record all type/trait targets
 /// that our current path resolver can identify, without attempting a real trait solver.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ImplData {
     pub local_impl: LocalImplRef,
     pub source: ItemSource,
@@ -188,21 +136,10 @@ impl ImplData {
             }
         })
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.generics.shrink_to_fit();
-        if let Some(trait_ref) = &mut self.trait_ref {
-            trait_ref.shrink_to_fit();
-        }
-        self.self_ty.shrink_to_fit();
-        self.resolved_self_tys.shrink_to_fit();
-        self.resolved_trait_refs.shrink_to_fit();
-        self.items.shrink_to_fit();
-    }
 }
 
 /// Function signature and source identity.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct FunctionData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemSource,
@@ -222,18 +159,10 @@ impl FunctionData {
             .first()
             .is_some_and(|param| matches!(param.kind, ParamKind::SelfParam))
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-        self.signature.shrink_to_fit();
-    }
 }
 
 /// Type alias signature and optional aliased type.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TypeAliasData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemSource,
@@ -246,18 +175,8 @@ pub struct TypeAliasData {
     pub signature: TypeAliasSignature,
 }
 
-impl TypeAliasData {
-    pub fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-        self.signature.shrink_to_fit();
-    }
-}
-
 /// Const signature and optional value body owner.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ConstData {
     pub local_def: Option<LocalDefRef>,
     pub source: ItemSource,
@@ -270,18 +189,8 @@ pub struct ConstData {
     pub signature: ConstSignature,
 }
 
-impl ConstData {
-    pub fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-        self.signature.shrink_to_fit();
-    }
-}
-
 /// Module-level static item.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct StaticData {
     pub local_def: LocalDefRef,
     pub source: ItemSource,
@@ -293,16 +202,4 @@ pub struct StaticData {
     pub docs: Option<Documentation>,
     pub ty: Option<TypeRef>,
     pub mutability: Mutability,
-}
-
-impl StaticData {
-    pub fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-        if let Some(ty) = &mut self.ty {
-            ty.shrink_to_fit();
-        }
-    }
 }

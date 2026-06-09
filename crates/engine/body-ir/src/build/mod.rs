@@ -86,7 +86,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
         let mut db = BodyIrDb::from_packages(packages);
         {
             let mut mutator = db.mutator();
-            mutator.shrink_to_fit();
+            mutator.compact_storage();
         }
         Ok(db)
     }
@@ -200,7 +200,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
                     format!("while attempting to replace body IR package {}", package.0)
                 })?;
             }
-            mutator.shrink_packages(&rebuilt_slots);
+            mutator.compact_packages(&rebuilt_slots);
         }
         Ok(next)
     }

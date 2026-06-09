@@ -75,7 +75,7 @@ impl<'a, 'names> DefMapDbBuilder<'a, 'names> {
             self.interners.as_mut(),
             self.finalization_stats,
         )?;
-        db.mutator().shrink_to_fit();
+        db.mutator().compact_storage();
         Ok(db)
     }
 }
@@ -144,7 +144,7 @@ impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
             self.interners,
             self.finalization_stats,
         )?;
-        db.mutator().shrink_packages(self.packages);
+        db.mutator().compact_packages(self.packages);
         Ok(db)
     }
 }

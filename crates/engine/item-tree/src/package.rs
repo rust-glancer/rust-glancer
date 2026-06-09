@@ -1,11 +1,11 @@
 use rg_arena::Arena;
 use rg_parse::{FileId, TargetId};
+use rg_std::{MemorySize, Shrink};
 
 use crate::{Documentation, ItemNode, ItemTreeId, ItemTreeRef};
-use rg_std::MemorySize;
 
 /// Item trees for all files inside one parsed package, plus target entrypoints.
-#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize, Shrink)]
 pub struct Package {
     pub(crate) files: Arena<FileId, Option<FileTree>>,
     pub(crate) target_roots: Arena<TargetId, TargetRoot>,
@@ -36,18 +36,10 @@ impl Package {
     pub fn target_root(&self, target_id: TargetId) -> Option<&TargetRoot> {
         self.target_roots.get(target_id)
     }
-
-    pub(crate) fn shrink_to_fit(&mut self) {
-        for file in self.files.iter_mut().flatten() {
-            file.shrink_to_fit();
-        }
-        self.files.shrink_to_fit();
-        self.target_roots.shrink_to_fit();
-    }
 }
 
 /// File-local lowered item tree.
-#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize, Shrink)]
 pub struct FileTree {
     pub file: FileId,
     pub docs: Option<Documentation>,
@@ -60,21 +52,11 @@ impl FileTree {
     pub fn item(&self, item_id: ItemTreeId) -> Option<&ItemNode> {
         self.items.get(item_id)
     }
-
-    fn shrink_to_fit(&mut self) {
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-        self.top_level.shrink_to_fit();
-        for item in self.items.iter_mut() {
-            item.shrink_to_fit();
-        }
-        self.items.shrink_to_fit();
-    }
 }
 
 /// Target entrypoint into file-local item trees.
-#[derive(Debug, Clone, PartialEq, Eq, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub struct TargetRoot {
     pub target: TargetId,
     pub root_file: FileId,

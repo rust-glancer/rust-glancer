@@ -1,4 +1,4 @@
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use std::collections::HashMap;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -9,7 +9,7 @@ use rg_text::Name;
 
 use super::store::DefMap;
 
-#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct TargetData {
     pub(super) root_module: Option<ModuleId>,
     // Implicit roots visible to this target, including sibling lib roots.
@@ -31,10 +31,6 @@ impl TargetData {
         }
     }
 
-    pub(crate) fn shrink_to_fit(&mut self) {
-        self.extern_prelude.shrink_to_fit();
-    }
-
     /// Returns the root module of this target, if the map has been populated.
     // TODO: Also I guess it should not be an option given that we have builder now.
     pub fn root_module(&self) -> Option<ModuleId> {
@@ -53,7 +49,7 @@ impl TargetData {
 }
 
 /// Def maps for all targets inside one parsed package.
-#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct PackageDefMaps {
     pub(crate) name: String,
     pub(crate) target_names: Arena<TargetId, String>,
@@ -110,21 +106,5 @@ impl PackageDefMaps {
     /// Returns one target def map by target id.
     pub fn def_map(&self, target_id: TargetId) -> Option<&DefMap> {
         self.targets.get(target_id)
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.name.shrink_to_fit();
-        self.target_names.shrink_to_fit();
-        for target_name in self.target_names.iter_mut() {
-            target_name.shrink_to_fit();
-        }
-        self.target_data.shrink_to_fit();
-        for target_data in self.target_data.iter_mut() {
-            target_data.shrink_to_fit();
-        }
-        self.targets.shrink_to_fit();
-        for target in self.targets.iter_mut() {
-            target.shrink_to_fit();
-        }
     }
 }

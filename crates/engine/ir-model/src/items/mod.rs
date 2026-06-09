@@ -62,7 +62,7 @@ pub struct ItemTreeRef {
 }
 
 /// AST-independent item-tree node used by later lowering stages.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ItemNode {
     pub kind: ItemKind,
     /// Name (when applicable), e.g. for functions or structs.
@@ -113,18 +113,6 @@ impl ItemNode {
             docs,
             file_id,
             span,
-        }
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.kind.shrink_to_fit();
-        if let Some(name) = &mut self.name {
-            name.shrink_to_fit();
-        }
-        self.visibility.shrink_to_fit();
-        self.cfg.shrink_to_fit();
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
         }
     }
 }

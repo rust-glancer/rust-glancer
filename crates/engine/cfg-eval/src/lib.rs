@@ -180,10 +180,6 @@ impl CfgExpr {
 
         expr
     }
-
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
-    }
 }
 
 /// One top-level gate that can make an item unavailable.
@@ -253,10 +249,6 @@ impl CfgPredicate {
             Some("not") => Self::Not(predicates),
             _ => Self::Invalid,
         }
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        Shrink::shrink_to_fit(self);
     }
 }
 

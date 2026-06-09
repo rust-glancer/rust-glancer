@@ -118,7 +118,7 @@ impl From<ItemTreeRef> for ItemSource {
 }
 
 /// Item-tree-shaped payload retained for one declarative macro expansion.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct GeneratedSourceData {
     pub origin_file_id: FileId,
     pub origin_span: Span,
@@ -130,13 +130,5 @@ pub struct GeneratedSourceData {
 impl GeneratedSourceData {
     pub fn item(&self, item_id: ItemTreeId) -> Option<&ItemNode> {
         self.items.get(item_id)
-    }
-
-    pub fn shrink_to_fit(&mut self) {
-        self.top_level.shrink_to_fit();
-        for item in self.items.iter_mut() {
-            item.shrink_to_fit();
-        }
-        self.items.shrink_to_fit();
     }
 }

@@ -1,14 +1,14 @@
 use rg_ir_model::items::Documentation;
 use rg_ir_model::{ImportId, LocalDefId, LocalImplId, ModuleId};
 use rg_parse::{FileId, Span};
-use rg_std::MemorySize;
+use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
 use super::scope::ModuleScope;
 
 /// One module in the frozen namespace graph.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ModuleData {
     pub name: Option<Name>,
     pub name_span: Option<Span>,
@@ -23,28 +23,9 @@ pub struct ModuleData {
     pub origin: ModuleOrigin,
 }
 
-impl ModuleData {
-    pub(crate) fn shrink_to_fit(&mut self) {
-        if let Some(name) = &mut self.name {
-            name.shrink_to_fit();
-        }
-        if let Some(docs) = &mut self.docs {
-            docs.shrink_to_fit();
-        }
-        self.children.shrink_to_fit();
-        for (name, _) in &mut self.children {
-            name.shrink_to_fit();
-        }
-        self.local_defs.shrink_to_fit();
-        self.impls.shrink_to_fit();
-        self.imports.shrink_to_fit();
-        self.unresolved_imports.shrink_to_fit();
-        self.scope.shrink_to_fit();
-    }
-}
-
 /// Where a module-like scope came from.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+#[shrink(leaf)]
 pub enum ModuleOrigin {
     /// Root module of the crate, it is nameless (corresponds to the `crate::` scope).
     Root { file_id: FileId },
