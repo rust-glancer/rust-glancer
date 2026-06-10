@@ -314,6 +314,55 @@ pub fn explicit_return(flag: bool) -> u64 {
 }
 
 #[test]
+fn propagates_function_call_argument_expected_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_call_argument_expected_type_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn takes_u64(value: u64) {}
+
+pub fn takes_f32(value: f32) {}
+
+pub fn takes_pair(value: (u64, f32)) {}
+
+pub fn use_it() {
+    takes_u64(1$type_u64$);
+    takes_f32(1.0$type_f32$);
+    takes_pair((1$type_pair_int$, 1.0$type_pair_float$)$type_pair$);
+}
+"#,
+        &[
+            AnalysisQuery::ty("integer call argument", "type_u64"),
+            AnalysisQuery::ty("float call argument", "type_f32"),
+            AnalysisQuery::ty("tuple call integer field", "type_pair_int"),
+            AnalysisQuery::ty("tuple call float field", "type_pair_float"),
+            AnalysisQuery::ty("tuple call argument", "type_pair"),
+        ],
+        expect![[r#"
+            integer call argument
+            - u64
+
+            float call argument
+            - f32
+
+            tuple call integer field
+            - u64
+
+            tuple call float field
+            - f32
+
+            tuple call argument
+            - (u64, f32)
+        "#]],
+    );
+}
+
+#[test]
 fn returns_types_for_references_try_and_await_wrappers() {
     check_analysis_queries(
         r#"

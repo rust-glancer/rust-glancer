@@ -71,6 +71,32 @@ where
         })
     }
 
+    /// Returns declared parameter types for a uniquely resolved ordinary function call.
+    ///
+    /// This is signature evidence only: explicit turbofish args apply, but the arguments being
+    /// constrained do not feed back into generic inference here.
+    pub(crate) fn function_call_param_tys(
+        &self,
+        callee: ExprId,
+    ) -> Result<Option<Vec<Ty>>, PackageStoreError> {
+        let callee_data = self.context.body().expr_unchecked(callee);
+        let BodyResolution::Declarations(declarations) =
+            self.context.body().expr_resolution(callee)
+        else {
+            return Ok(None);
+        };
+        let [declaration] = declarations.as_slice() else {
+            return Ok(None);
+        };
+
+        self.param_tys_for_declaration(
+            *declaration,
+            Self::explicit_callee_generic_args(callee_data),
+            callee_data.scope,
+            CallArgMapping::FunctionCall,
+        )
+    }
+
     pub(crate) fn return_ty_with_call_args(
         &self,
         function_ref: FunctionRef,
@@ -223,30 +249,90 @@ where
         call_scope: ScopeId,
         args: &[ExprId],
     ) -> Result<(), PackageStoreError> {
+        let Some(function_ref) = self.function_ref_for_declaration(declaration)? else {
+            return Ok(());
+        };
+        return_tys.push(self.return_ty_with_call_args(
+            function_ref,
+            None,
+            explicit_args,
+            args,
+            CallArgMapping::FunctionCall,
+            Some(call_scope),
+        )?);
+
+        Ok(())
+    }
+
+    fn param_tys_for_declaration(
+        &self,
+        declaration: DeclarationRef,
+        explicit_args: &[ItemGenericArg],
+        call_scope: ScopeId,
+        arg_mapping: CallArgMapping,
+    ) -> Result<Option<Vec<Ty>>, PackageStoreError> {
+        let function_ref = self.function_ref_for_declaration(declaration)?;
+        let Some(function_ref) = function_ref else {
+            return Ok(None);
+        };
+
+        self.param_tys_for_function(function_ref, explicit_args, call_scope, arg_mapping)
+            .map(Some)
+    }
+
+    fn param_tys_for_function(
+        &self,
+        function_ref: FunctionRef,
+        explicit_args: &[ItemGenericArg],
+        call_scope: ScopeId,
+        arg_mapping: CallArgMapping,
+    ) -> Result<Vec<Ty>, PackageStoreError> {
+        let item_query = self.context.item_query();
+        let Some(function_data) = item_query.function_data(function_ref)? else {
+            return Ok(Vec::new());
+        };
+        let mut subst = function_generic_shadow_subst(function_data.signature.generics());
+        subst.extend(self.explicit_function_subst(
+            function_data.signature.generics(),
+            explicit_args,
+            call_scope,
+        )?);
+
+        let first_param_idx = match arg_mapping {
+            CallArgMapping::FunctionCall => 0,
+            CallArgMapping::MethodCall => 1,
+        };
+        let type_paths = self.context.type_path_query();
+        let param_resolver = type_paths
+            .type_ref(TypeRefUseSite::Function(function_ref))
+            .with_subst(&subst);
+
+        // Keep one expected type per written argument. Missing parameter annotations are not
+        // useful evidence, but `Unknown` preserves arity so the caller can still zip safely.
+        function_data
+            .signature
+            .params()
+            .iter()
+            .skip(first_param_idx)
+            .map(|param| {
+                let Some(param_ty) = &param.ty else {
+                    return Ok(Ty::Unknown);
+                };
+
+                param_resolver.resolve(param_ty)
+            })
+            .collect()
+    }
+
+    fn function_ref_for_declaration(
+        &self,
+        declaration: DeclarationRef,
+    ) -> Result<Option<FunctionRef>, PackageStoreError> {
         match declaration {
             DeclarationRef::LocalDef(local_def) => {
-                let Some(function_ref) = self.function_ref_for_def(DefId::Local(local_def))? else {
-                    return Ok(());
-                };
-                return_tys.push(self.return_ty_with_call_args(
-                    function_ref,
-                    None,
-                    explicit_args,
-                    args,
-                    CallArgMapping::FunctionCall,
-                    Some(call_scope),
-                )?);
+                self.function_ref_for_def(DefId::Local(local_def))
             }
-            DeclarationRef::Item(SemanticItemRef::Function(function_ref)) => {
-                return_tys.push(self.return_ty_with_call_args(
-                    function_ref,
-                    None,
-                    explicit_args,
-                    args,
-                    CallArgMapping::FunctionCall,
-                    Some(call_scope),
-                )?);
-            }
+            DeclarationRef::Item(SemanticItemRef::Function(function_ref)) => Ok(Some(function_ref)),
             DeclarationRef::Module(_)
             | DeclarationRef::Item(
                 SemanticItemRef::TypeDef(_)
@@ -258,10 +344,8 @@ where
             )
             | DeclarationRef::Field(_)
             | DeclarationRef::EnumVariant(_)
-            | DeclarationRef::BodyBinding(_) => {}
+            | DeclarationRef::BodyBinding(_) => Ok(None),
         }
-
-        Ok(())
     }
 
     fn explicit_callee_generic_args(callee_data: &ExprData) -> &[ItemGenericArg] {

@@ -46,6 +46,7 @@ where
         for statement_idx in 0..self.pass.body.statements().len() {
             self.constrain_statement_expected_types(StmtId(statement_idx))?;
         }
+        self.constrain_function_call_argument_expected_types()?;
         self.constrain_function_return_expected_types()?;
 
         Ok(())
@@ -87,6 +88,39 @@ where
             .type_ref(TypeRefUseSite::Scope(scope))
             .resolve(&annotation)?;
         self.constrain_expr_with_expected(initializer, &expected_ty);
+
+        Ok(())
+    }
+
+    fn constrain_function_call_argument_expected_types(&mut self) -> Result<(), PackageStoreError> {
+        for expr_idx in 0..self.pass.body.exprs().len() {
+            let expr = ExprId(expr_idx);
+            let ExprKind::Call {
+                callee: Some(callee),
+                args,
+            } = self.pass.body.expr_unchecked(expr).kind.clone()
+            else {
+                continue;
+            };
+
+            // Only a single resolved callee gives us trustworthy parameter evidence. Ambiguous
+            // calls keep their already-computed return type but do not push expectations inward.
+            let Some(param_tys) = self
+                .pass
+                .context()
+                .callable_returns()
+                .function_call_param_tys(callee)?
+            else {
+                continue;
+            };
+            if param_tys.len() != args.len() {
+                continue;
+            }
+
+            for (arg, expected_ty) in args.into_iter().zip(param_tys) {
+                self.constrain_expr_with_expected(arg, &expected_ty);
+            }
+        }
 
         Ok(())
     }
