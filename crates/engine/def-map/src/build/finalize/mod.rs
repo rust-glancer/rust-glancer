@@ -407,6 +407,7 @@ impl TargetResolutionEnv for FinalizeResolutionEnv<'_> {
 /// Collection records only local facts. This step attaches the edition prelude for each target,
 /// resolves imports and item-position macros against the package graph, and writes the final
 /// module scopes back into the collected states.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn finalize_target_states(
     old: Option<&DefMapReadTxn<'_>>,
     workspace: &WorkspaceMetadata,
