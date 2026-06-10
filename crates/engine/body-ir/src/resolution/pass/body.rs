@@ -6,7 +6,7 @@
 use rg_ir_model::{BindingId, BodyRef, ExprId};
 use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::Ty;
+use rg_ty::{PrimitiveTy, Ty};
 
 use crate::{
     ir::body::ResolvedBodyData,
@@ -19,8 +19,8 @@ use crate::resolution::{
 };
 
 use super::{
-    expr::ExprResolutionPass, pattern_binding::PatternBindingMaterializationPass,
-    pattern_type::PatternTypePropagationPass,
+    expr::ExprResolutionPass, inference::InferenceResolutionPass,
+    pattern_binding::PatternBindingMaterializationPass, pattern_type::PatternTypePropagationPass,
 };
 
 /// Shared state for the body-resolution fixed-point pass.
@@ -30,7 +30,7 @@ use super::{
 pub(crate) struct BodyResolutionPass<'query, 'body, D, I> {
     pub(super) providers: BodyResolutionProviders<'query, D, I>,
     pub(super) body: &'body mut ResolvedBodyData,
-    inference: Option<BodyInferenceCtx>,
+    pub(super) inference: Option<BodyInferenceCtx>,
 }
 
 impl<'query, 'body, D, I> BodyResolutionPass<'query, 'body, D, I>
@@ -89,7 +89,7 @@ where
             }
         }
 
-        self.finalize_inference_facts();
+        InferenceResolutionPass::new(self).run()?;
         Ok(())
     }
 
@@ -134,6 +134,22 @@ where
         self.body.set_expr_ty(expr, ty);
     }
 
+    pub(super) fn set_expr_integer_var(&mut self, expr: ExprId) {
+        if let Some(inference) = &mut self.inference {
+            inference.set_expr_integer_var(expr);
+        }
+        self.body
+            .set_expr_ty(expr, Ty::Primitive(PrimitiveTy::DEFAULT_INT));
+    }
+
+    pub(super) fn set_expr_float_var(&mut self, expr: ExprId) {
+        if let Some(inference) = &mut self.inference {
+            inference.set_expr_float_var(expr);
+        }
+        self.body
+            .set_expr_ty(expr, Ty::Primitive(PrimitiveTy::DEFAULT_FLOAT));
+    }
+
     pub(super) fn set_expr_facts(&mut self, expr: ExprId, resolution: BodyResolution, ty: Ty) {
         if let Some(inference) = &mut self.inference {
             inference.set_expr_ty(expr, &ty);
@@ -155,25 +171,6 @@ where
             self.body.exprs().len(),
             self.body.bindings().len(),
         ));
-    }
-
-    fn finalize_inference_facts(&mut self) {
-        let Some(inference) = self.inference.take() else {
-            return;
-        };
-
-        // Phase 1B mirrors already-known `Ty` facts, so this should be behavior-preserving. Later
-        // phases will let these slots contain real variables before finalization.
-        for expr_idx in 0..self.body.exprs().len() {
-            let expr = ExprId(expr_idx);
-            self.body
-                .set_expr_ty(expr, inference.finalize_expr_ty(expr));
-        }
-        for binding_idx in 0..self.body.bindings().len() {
-            let binding = BindingId(binding_idx);
-            self.body
-                .set_binding_ty(binding, inference.finalize_binding_ty(binding));
-        }
     }
 
     fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {

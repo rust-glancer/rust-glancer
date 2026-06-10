@@ -26,10 +26,14 @@ impl BodyLowering<'_> {
                 primitive_ty: Some(PrimitiveTy::UnsignedInt(UnsignedIntTy::U8)),
             },
             ast::LiteralKind::FloatNumber(number) => LiteralKind::Float {
-                primitive_ty: PrimitiveTy::from_float_suffix(number.suffix()),
+                primitive_ty: number
+                    .suffix()
+                    .and_then(|suffix| PrimitiveTy::from_float_suffix(Some(suffix))),
             },
             ast::LiteralKind::IntNumber(number) => LiteralKind::Int {
-                primitive_ty: PrimitiveTy::from_integer_suffix(number.suffix()),
+                primitive_ty: number
+                    .suffix()
+                    .and_then(|suffix| PrimitiveTy::from_integer_suffix(Some(suffix))),
             },
             ast::LiteralKind::String(_)
             | ast::LiteralKind::ByteString(_)
@@ -207,7 +211,7 @@ pub(super) fn source_for(file_id: FileId, syntax: &rg_syntax::SyntaxNode) -> Bod
 
 #[cfg(test)]
 mod tests {
-    use rg_ir_model::items::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy};
+    use rg_ir_model::items::{FloatTy, PrimitiveTy, UnsignedIntTy};
     use rg_syntax::{AstNode as _, Edition, SourceFile, ast};
 
     use crate::ir::LiteralKind;
@@ -228,9 +232,7 @@ mod tests {
             ),
             (
                 "42",
-                LiteralKind::Int {
-                    primitive_ty: Some(PrimitiveTy::SignedInt(SignedIntTy::I32)),
-                },
+                LiteralKind::Int { primitive_ty: None },
                 "integer literal",
             ),
             (
@@ -242,23 +244,17 @@ mod tests {
             ),
             (
                 "1.5",
-                LiteralKind::Float {
-                    primitive_ty: Some(PrimitiveTy::Float(FloatTy::F64)),
-                },
+                LiteralKind::Float { primitive_ty: None },
                 "decimal float literal",
             ),
             (
                 "1e10",
-                LiteralKind::Float {
-                    primitive_ty: Some(PrimitiveTy::Float(FloatTy::F64)),
-                },
+                LiteralKind::Float { primitive_ty: None },
                 "exponent float literal",
             ),
             (
                 "1E-10",
-                LiteralKind::Float {
-                    primitive_ty: Some(PrimitiveTy::Float(FloatTy::F64)),
-                },
+                LiteralKind::Float { primitive_ty: None },
                 "negative exponent float literal",
             ),
             (

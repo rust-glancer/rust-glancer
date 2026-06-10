@@ -19,7 +19,7 @@ use rg_ty::{
 use crate::{
     ExprUnaryOp,
     ir::resolved::BodyResolution,
-    ir::{ExprKind, ExprWrapperKind},
+    ir::{ExprKind, ExprWrapperKind, LiteralKind},
 };
 
 use crate::resolution::{TypeRefUseSite, support::TyNormalizer};
@@ -195,9 +195,11 @@ where
                 );
                 self.pass.set_expr_ty(expr, ty);
             }
-            ExprKind::Literal { kind } => {
-                self.pass.set_expr_ty(expr, ty_for_literal(kind));
-            }
+            ExprKind::Literal { kind } => match kind {
+                LiteralKind::Int { primitive_ty: None } => self.pass.set_expr_integer_var(expr),
+                LiteralKind::Float { primitive_ty: None } => self.pass.set_expr_float_var(expr),
+                _ => self.pass.set_expr_ty(expr, ty_for_literal(kind)),
+            },
             ExprKind::While { .. } | ExprKind::For { .. } => {
                 self.pass.set_expr_ty(expr, Ty::Unit);
             }

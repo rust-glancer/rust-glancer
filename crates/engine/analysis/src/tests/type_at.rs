@@ -133,6 +133,51 @@ pub fn use_it(flag: bool, byte: u8, lhs: i32, rhs: i32) {
 }
 
 #[test]
+fn refines_unsuffixed_numeric_literals_from_let_annotations() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_numeric_literal_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    let default_int = 1$type_default_int$;
+    let annotated_int: u64 = 1$type_u64$;
+    let default_float = 1.0$type_default_float$;
+    let annotated_float: f32 = 1.0$type_f32$;
+    let mismatch: bool = 1$type_mismatch$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("default integer literal", "type_default_int"),
+            AnalysisQuery::ty("annotated integer literal", "type_u64"),
+            AnalysisQuery::ty("default float literal", "type_default_float"),
+            AnalysisQuery::ty("annotated float literal", "type_f32"),
+            AnalysisQuery::ty("mismatched numeric literal", "type_mismatch"),
+        ],
+        expect![[r#"
+            default integer literal
+            - i32
+
+            annotated integer literal
+            - u64
+
+            default float literal
+            - f64
+
+            annotated float literal
+            - f32
+
+            mismatched numeric literal
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
 fn returns_types_for_references_try_and_await_wrappers() {
     check_analysis_queries(
         r#"

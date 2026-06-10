@@ -29,8 +29,23 @@ impl BodyInferenceCtx {
         self.expr_tys[expr.0] = InferTy::from_ty(ty);
     }
 
+    pub(super) fn set_expr_integer_var(&mut self, expr: ExprId) {
+        self.expr_tys[expr.0] = self.table.new_integer_var();
+    }
+
+    pub(super) fn set_expr_float_var(&mut self, expr: ExprId) {
+        self.expr_tys[expr.0] = self.table.new_float_var();
+    }
+
     pub(super) fn set_binding_ty(&mut self, binding: BindingId, ty: &Ty) {
         self.binding_tys[binding.0] = InferTy::from_ty(ty);
+    }
+
+    pub(super) fn constrain_expr_ty(&mut self, expr: ExprId, expected_ty: &Ty) -> bool {
+        self.table.unify(
+            &self.expr_tys[expr.0].clone(),
+            &InferTy::from_ty(expected_ty),
+        )
     }
 
     pub(super) fn finalize_expr_ty(&self, expr: ExprId) -> Ty {
