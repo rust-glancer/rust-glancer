@@ -10,7 +10,7 @@ use rg_package_store::PackageStoreError;
 use rg_ty::Ty;
 
 use crate::{
-    ir::{ExprKind, StmtKind},
+    ir::{ExprKind, ExprWrapperKind, StmtKind},
     resolution::TypeRefUseSite,
 };
 
@@ -46,6 +46,7 @@ where
         for statement_idx in 0..self.pass.body.statements().len() {
             self.constrain_statement_expected_types(StmtId(statement_idx))?;
         }
+        self.constrain_function_return_expected_types()?;
 
         Ok(())
     }
@@ -88,6 +89,75 @@ where
         self.constrain_expr_with_expected(initializer, &expected_ty);
 
         Ok(())
+    }
+
+    fn constrain_function_return_expected_types(&mut self) -> Result<(), PackageStoreError> {
+        let Some(expected_ty) = self.explicit_function_return_ty()? else {
+            return Ok(());
+        };
+
+        // A function return annotation applies to two syntactic shapes: the root block tail and
+        // every explicit `return expr`. Both feed into the same expression-level propagation.
+        self.constrain_root_tail_with_expected(&expected_ty);
+        self.constrain_explicit_returns_with_expected(&expected_ty);
+        Ok(())
+    }
+
+    fn explicit_function_return_ty(&self) -> Result<Option<Ty>, PackageStoreError> {
+        let Some(function) = self.pass.body.function_owner() else {
+            return Ok(None);
+        };
+
+        self.pass
+            .context()
+            .callable_returns()
+            .explicit_declared_return_ty(function)
+    }
+
+    fn constrain_root_tail_with_expected(&mut self, expected_ty: &Ty) {
+        let ExprKind::Block {
+            tail: Some(tail), ..
+        } = self
+            .pass
+            .body
+            .expr_unchecked(self.pass.body.root_expr())
+            .kind
+            .clone()
+        else {
+            return;
+        };
+
+        // `return expr` has type `!`; the wrapped expression is constrained separately below.
+        if self.is_explicit_return_expr(tail) {
+            return;
+        }
+
+        self.constrain_expr_with_expected(tail, expected_ty);
+    }
+
+    fn constrain_explicit_returns_with_expected(&mut self, expected_ty: &Ty) {
+        for expr_idx in 0..self.pass.body.exprs().len() {
+            let expr = ExprId(expr_idx);
+            let ExprKind::Wrapper {
+                kind: ExprWrapperKind::Return,
+                inner: Some(inner),
+            } = self.pass.body.expr_unchecked(expr).kind.clone()
+            else {
+                continue;
+            };
+
+            self.constrain_expr_with_expected(inner, expected_ty);
+        }
+    }
+
+    fn is_explicit_return_expr(&self, expr: ExprId) -> bool {
+        matches!(
+            self.pass.body.expr_unchecked(expr).kind,
+            ExprKind::Wrapper {
+                kind: ExprWrapperKind::Return,
+                ..
+            }
+        )
     }
 
     /// Applies an expected type to one expression and descends through shapes that preserve it.

@@ -7,7 +7,7 @@
 use rg_ir_model::{
     DefId, ExprData, ExprId, FunctionRef, ImplRef, ItemOwner, ScopeId, SemanticItemRef,
     identity::DeclarationRef,
-    items::{GenericArg as ItemGenericArg, GenericParams},
+    items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
@@ -151,6 +151,28 @@ where
         self.return_ty_with_resolved_subst(function_ref, self_ty, subst)
     }
 
+    /// Returns the explicitly declared return type for a function body, if one was written.
+    ///
+    /// This is the expected type for `return expr` and the body tail. Functions without `-> T`
+    /// are left to ordinary expression typing so this pass does not erase useful invalid-code
+    /// facts by forcing an implicit `()`.
+    pub(crate) fn explicit_declared_return_ty(
+        &self,
+        function_ref: FunctionRef,
+    ) -> Result<Option<Ty>, PackageStoreError> {
+        let item_query = self.context.item_query();
+        let Some(function_data) = item_query.function_data(function_ref)? else {
+            return Ok(None);
+        };
+        let Some(ret_ty) = function_data.signature.ret_ty() else {
+            return Ok(None);
+        };
+        let subst = function_generic_shadow_subst(function_data.signature.generics());
+
+        self.resolve_declared_return_ty(function_ref, None, &subst, ret_ty)
+            .map(Some)
+    }
+
     fn return_ty_with_resolved_subst(
         &self,
         function_ref: FunctionRef,
@@ -165,6 +187,16 @@ where
             return Ok(Ty::Unit);
         };
 
+        self.resolve_declared_return_ty(function_ref, self_ty, &subst, ret_ty)
+    }
+
+    fn resolve_declared_return_ty(
+        &self,
+        function_ref: FunctionRef,
+        self_ty: Option<Ty>,
+        subst: &TypeSubst,
+        ret_ty: &TypeRef,
+    ) -> Result<Ty, PackageStoreError> {
         if ret_ty.is_self_type() {
             return Ok(match self_ty {
                 Some(self_ty) => self_ty,
@@ -179,7 +211,7 @@ where
         self.context
             .type_path_query()
             .type_ref(TypeRefUseSite::Function(function_ref))
-            .with_subst(&subst)
+            .with_subst(subst)
             .resolve(ret_ty)
     }
 

@@ -250,6 +250,70 @@ pub fn use_it() {
 }
 
 #[test]
+fn propagates_function_return_expected_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_return_expected_type_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn int_tail() -> u64 {
+    1$type_int_tail$
+}
+
+pub fn float_tail() -> f32 {
+    1.0$type_float_tail$
+}
+
+pub fn tuple_tail() -> (u64, f32) {
+    (1$type_tuple_int$, 1.0$type_tuple_float$)$type_tuple_tail$
+}
+
+pub fn explicit_return(flag: bool) -> u64 {
+    if flag {
+        return 1$type_return$;
+    }
+    2$type_final_tail$
+}
+"#,
+        &[
+            AnalysisQuery::ty("integer tail return", "type_int_tail"),
+            AnalysisQuery::ty("float tail return", "type_float_tail"),
+            AnalysisQuery::ty("tuple return integer field", "type_tuple_int"),
+            AnalysisQuery::ty("tuple return float field", "type_tuple_float"),
+            AnalysisQuery::ty("tuple tail return", "type_tuple_tail"),
+            AnalysisQuery::ty("explicit return expression", "type_return"),
+            AnalysisQuery::ty("final tail return", "type_final_tail"),
+        ],
+        expect![[r#"
+            integer tail return
+            - u64
+
+            float tail return
+            - f32
+
+            tuple return integer field
+            - u64
+
+            tuple return float field
+            - f32
+
+            tuple tail return
+            - (u64, f32)
+
+            explicit return expression
+            - u64
+
+            final tail return
+            - u64
+        "#]],
+    );
+}
+
+#[test]
 fn returns_types_for_references_try_and_await_wrappers() {
     check_analysis_queries(
         r#"
