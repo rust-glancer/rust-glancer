@@ -91,6 +91,9 @@ fn try_rebuild_packages(
         .memory_hooks
         .purge(ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction);
 
+    // Fresh indexing exposes more allocator purge boundaries because it can build the whole
+    // workspace at once. Package rebuilds are usually smaller and can run on save or dirty-overlay
+    // paths, so we avoid adding extra def-map/body purges to the interactive rebuild path.
     let def_map = state
         .def_map
         .package_rebuilder(
