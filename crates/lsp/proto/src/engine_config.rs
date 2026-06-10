@@ -13,7 +13,7 @@ pub struct EngineConfig {
 impl EngineConfig {
     pub fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
         Ok(Self {
-            analysis: AnalysisConfig::from_initialization_options(options),
+            analysis: AnalysisConfig::from_initialization_options(options)?,
             diagnostics: DiagnosticsConfig::from_initialization_options(options)?,
         })
     }
@@ -23,7 +23,7 @@ impl EngineConfig {
 mod tests {
     use ls_types::LSPAny;
 
-    use crate::{CargoMetadataTarget, PackageResidencyPolicy};
+    use crate::{CargoMetadataTarget, IndexingPerformancePreference, PackageResidencyPolicy};
 
     use super::EngineConfig;
 
@@ -45,6 +45,13 @@ mod tests {
                 )]),
             ),
             (
+                "indexing",
+                object([(
+                    "performancePreference",
+                    LSPAny::String("faster-builds".to_string()),
+                )]),
+            ),
+            (
                 "diagnostics",
                 object([
                     ("onStartup", LSPAny::Bool(true)),
@@ -63,6 +70,10 @@ mod tests {
         assert_eq!(
             config.analysis.cargo_metadata_config.target(),
             &CargoMetadataTarget::Triple("x86_64-unknown-linux-gnu".to_string()),
+        );
+        assert_eq!(
+            config.analysis.indexing_preference,
+            IndexingPerformancePreference::FasterBuilds,
         );
         assert!(config.diagnostics.on_startup);
         assert_eq!(config.diagnostics.command, "clippy");

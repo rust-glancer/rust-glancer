@@ -80,6 +80,7 @@ export class LanguageClientSession implements vscode.Disposable {
       outputChannel: this.serverOutput,
       initializationOptions: {
         diagnostics: config.diagnostics,
+        indexing: config.indexing,
         cargo: config.cargo,
         cache: config.cache,
       },

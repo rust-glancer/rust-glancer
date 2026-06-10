@@ -4,7 +4,8 @@ use anyhow::Context as _;
 use clap::ValueEnum;
 use rg_lsp_engine::MemoryControl as _;
 use rg_project::{
-    BuildProcessMemory, BuildProfileStage, PackageResidencyPolicy, Project, StartupCacheLoad,
+    BuildProcessMemory, BuildProfileStage, IndexingPerformancePreference, PackageResidencyPolicy,
+    Project, StartupCacheLoad,
 };
 use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
 
@@ -31,6 +32,22 @@ impl From<CliPackageResidencyPolicy> for PackageResidencyPolicy {
                 Self::WorkspacePathAndDirectDepsResident
             }
             CliPackageResidencyPolicy::AllOffloadable => Self::AllOffloadable,
+        }
+    }
+}
+
+/// CLI-facing indexing preference names for the `analyze` command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum CliIndexingPreference {
+    LowerPeakMemory,
+    FasterBuilds,
+}
+
+impl From<CliIndexingPreference> for IndexingPerformancePreference {
+    fn from(preference: CliIndexingPreference) -> Self {
+        match preference {
+            CliIndexingPreference::LowerPeakMemory => Self::LowerPeakMemory,
+            CliIndexingPreference::FasterBuilds => Self::FasterBuilds,
         }
     }
 }
@@ -94,6 +111,7 @@ pub(crate) fn analyze(
     include_memory: bool,
     startup_cache_load: StartupCacheLoad,
     package_residency_policy: PackageResidencyPolicy,
+    indexing_preference: IndexingPerformancePreference,
     target: Option<String>,
     output_format: OutputFormat,
     memory_stage: CliMemoryStage,
@@ -132,6 +150,7 @@ pub(crate) fn analyze(
 
     let builder = Project::builder(workspace)
         .cargo_metadata_config(cargo_metadata_config)
+        .indexing_preference(indexing_preference)
         .package_residency_policy(package_residency_policy)
         .startup_cache_load(startup_cache_load)
         .collect_def_map_finalization_stats(include_def_map_finalization_stats)

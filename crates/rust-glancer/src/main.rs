@@ -41,6 +41,13 @@ enum Command {
         /// Which packages should remain resident after analysis is built.
         #[clap(long = "package-residency", value_enum, default_value = "all-resident")]
         package_residency: analyze::CliPackageResidencyPolicy,
+        /// Which indexing performance trade-off rust-glancer should prioritize.
+        #[clap(
+            long = "indexing-preference",
+            value_enum,
+            default_value = "lower-peak-memory"
+        )]
+        indexing_preference: analyze::CliIndexingPreference,
         /// Target triple used to filter Cargo metadata. Defaults to the current rustc host target.
         #[clap(long)]
         target: Option<String>,
@@ -73,6 +80,7 @@ fn main() -> anyhow::Result<()> {
             stage,
             load,
             package_residency,
+            indexing_preference,
             target,
             format,
         } => {
@@ -87,6 +95,7 @@ fn main() -> anyhow::Result<()> {
                     StartupCacheLoad::Disabled
                 },
                 package_residency.into(),
+                indexing_preference.into(),
                 target,
                 format,
                 stage,

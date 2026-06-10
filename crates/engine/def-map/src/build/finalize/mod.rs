@@ -25,6 +25,7 @@ use rg_workspace::WorkspaceMetadata;
 use crate::{DefMapReadTxn, PackageSlot};
 
 use super::{
+    DefMapPerformancePreference,
     collect::TargetState,
     imports::{UnresolvedImports, apply_imports},
     macros::{
@@ -414,6 +415,7 @@ pub(super) fn finalize_target_states(
     target_states: &mut FinalizeTargetStates,
     interners: &mut PackageNameInterners,
     finalization_stats: Option<&mut DefMapFinalizationStats>,
+    performance_preference: DefMapPerformancePreference,
 ) -> anyhow::Result<()> {
     // Prelude selection needs the directly declared root modules and implicit extern roots, but it
     // must happen before import resolution because prelude imports participate in normal lookup.
@@ -422,8 +424,15 @@ pub(super) fn finalize_target_states(
 
     // Once each target knows its prelude, imports and item-position macros can be resolved through
     // the shared fixed-point loop.
-    finalize_scopes(old, item_tree, target_states, interners, finalization_stats)
-        .context("while attempting to resolve target scopes")
+    finalize_scopes(
+        old,
+        item_tree,
+        target_states,
+        interners,
+        finalization_stats,
+        performance_preference,
+    )
+    .context("while attempting to resolve target scopes")
 }
 
 /// Freezes collected target states into the package payload stored by `DefMapDb`.
@@ -555,6 +564,7 @@ fn finalize_scopes(
     states: &mut FinalizeTargetStates,
     interners: &mut PackageNameInterners,
     finalization_stats: Option<&mut DefMapFinalizationStats>,
+    performance_preference: DefMapPerformancePreference,
 ) -> anyhow::Result<()> {
     let mut finalization_stats = DefMapFinalizationStatsSink::new(finalization_stats);
     let mut macro_cache = MacroExpansionCache::default();
@@ -622,7 +632,8 @@ fn finalize_scopes(
                 .any(|attempt| attempt.needs_expansion())
             {
                 if macro_expansion_executor.is_none() {
-                    macro_expansion_executor = Some(MacroExpansionExecutor::new()?);
+                    macro_expansion_executor =
+                        Some(MacroExpansionExecutor::new(performance_preference)?);
                 }
                 // The executor owns the rust-analyzer expansion adapter. It is created lazily so
                 // projects without expandable declarative macros do not pay its setup cost.

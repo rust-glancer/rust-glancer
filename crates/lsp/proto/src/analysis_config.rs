@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct AnalysisConfig {
     pub package_residency_policy: PackageResidencyPolicy,
     pub cargo_metadata_config: CargoMetadataConfig,
+    pub indexing_preference: IndexingPerformancePreference,
 }
 
 /// Protocol-level cache residency policy requested by an LSP client.
@@ -43,6 +44,32 @@ impl PackageResidencyPolicy {
                 Some(Self::WorkspacePathAndDirectDepsResident)
             }
             "all-offloadable" => Some(Self::AllOffloadable),
+            _ => None,
+        }
+    }
+}
+
+/// Protocol-level indexing trade-off requested by an LSP client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum IndexingPerformancePreference {
+    LowerPeakMemory,
+    FasterBuilds,
+}
+
+impl IndexingPerformancePreference {
+    /// Stable kebab-case name accepted in LSP initialization options.
+    pub fn config_name(self) -> &'static str {
+        match self {
+            Self::LowerPeakMemory => "lower-peak-memory",
+            Self::FasterBuilds => "faster-builds",
+        }
+    }
+
+    /// Parses the public preference names accepted by frontends.
+    pub fn from_config_name(value: &str) -> Option<Self> {
+        match value {
+            "lower-peak-memory" => Some(Self::LowerPeakMemory),
+            "faster-builds" => Some(Self::FasterBuilds),
             _ => None,
         }
     }
@@ -88,7 +115,7 @@ pub enum CargoMetadataTarget {
 }
 
 impl AnalysisConfig {
-    pub fn from_initialization_options(options: Option<&LSPAny>) -> Self {
+    pub fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
         let default = Self::default();
         let package_residency_policy = options
             .and_then(LSPAny::as_object)
@@ -112,11 +139,30 @@ impl AnalysisConfig {
             .and_then(LSPAny::as_str)
             .map(|target| CargoMetadataConfig::default().target_triple(target))
             .unwrap_or_else(|| default.cargo_metadata_config.clone());
+        let indexing_preference = match options.and_then(LSPAny::as_object).and_then(|options| {
+            options
+                .get("indexing")
+                .and_then(LSPAny::as_object)
+                .and_then(|indexing| indexing.get("performancePreference"))
+        }) {
+            Some(value) => {
+                let value = value.as_str().ok_or_else(|| {
+                    anyhow::anyhow!("rust-glancer indexing.performancePreference must be a string")
+                })?;
+                IndexingPerformancePreference::from_config_name(value).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "rust-glancer indexing.performancePreference must be one of: lower-peak-memory, faster-builds"
+                    )
+                })?
+            }
+            None => default.indexing_preference,
+        };
 
-        Self {
+        Ok(Self {
             package_residency_policy,
             cargo_metadata_config,
-        }
+            indexing_preference,
+        })
     }
 }
 
@@ -128,6 +174,7 @@ impl Default for AnalysisConfig {
             // resident while registry/git dependencies can be offloaded.
             package_residency_policy: PackageResidencyPolicy::WorkspaceAndPathDepsResident,
             cargo_metadata_config: CargoMetadataConfig::default(),
+            indexing_preference: IndexingPerformancePreference::LowerPeakMemory,
         }
     }
 }
@@ -136,11 +183,14 @@ impl Default for AnalysisConfig {
 mod tests {
     use ls_types::LSPAny;
 
-    use super::{AnalysisConfig, CargoMetadataTarget, PackageResidencyPolicy};
+    use super::{
+        AnalysisConfig, CargoMetadataTarget, IndexingPerformancePreference, PackageResidencyPolicy,
+    };
 
     #[test]
     fn defaults_to_workspace_and_path_dependency_residency() {
-        let config = AnalysisConfig::from_initialization_options(None);
+        let config = AnalysisConfig::from_initialization_options(None)
+            .expect("default analysis config should parse");
 
         assert_eq!(
             config.package_residency_policy,
@@ -149,6 +199,10 @@ mod tests {
         assert_eq!(
             config.cargo_metadata_config.target(),
             &CargoMetadataTarget::Auto
+        );
+        assert_eq!(
+            config.indexing_preference,
+            IndexingPerformancePreference::LowerPeakMemory,
         );
     }
 
@@ -162,7 +216,8 @@ mod tests {
             )]),
         )]);
 
-        let config = AnalysisConfig::from_initialization_options(Some(&options));
+        let config = AnalysisConfig::from_initialization_options(Some(&options))
+            .expect("analysis config should parse");
 
         assert_eq!(
             config.package_residency_policy,
@@ -180,11 +235,49 @@ mod tests {
             )]),
         )]);
 
-        let config = AnalysisConfig::from_initialization_options(Some(&options));
+        let config = AnalysisConfig::from_initialization_options(Some(&options))
+            .expect("analysis config should parse");
 
         assert_eq!(
             config.cargo_metadata_config.target(),
             &CargoMetadataTarget::Triple("x86_64-unknown-linux-gnu".to_string()),
+        );
+    }
+
+    #[test]
+    fn parses_indexing_preference() {
+        let options = object([(
+            "indexing",
+            object([(
+                "performancePreference",
+                LSPAny::String("faster-builds".to_string()),
+            )]),
+        )]);
+
+        let config = AnalysisConfig::from_initialization_options(Some(&options))
+            .expect("analysis config should parse");
+
+        assert_eq!(
+            config.indexing_preference,
+            IndexingPerformancePreference::FasterBuilds,
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_indexing_preference() {
+        let options = object([(
+            "indexing",
+            object([("performancePreference", LSPAny::String("fast".to_string()))]),
+        )]);
+
+        let error = AnalysisConfig::from_initialization_options(Some(&options))
+            .expect_err("unknown indexing preference should be rejected");
+
+        assert!(
+            error
+                .to_string()
+                .contains("rust-glancer indexing.performancePreference"),
+            "{error:?}",
         );
     }
 

@@ -12,8 +12,8 @@ use rg_body_ir::BodyIrBuildPolicy;
 use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::{
-    BuildProcessMemory, BuildProfile, BuildProfileStage, PackageResidencyPlan,
-    PackageResidencyPolicy, ProjectMemoryHooks, ProjectMemoryPurgePoint,
+    BuildProcessMemory, BuildProfile, BuildProfileStage, IndexingPerformancePreference,
+    PackageResidencyPlan, PackageResidencyPolicy, ProjectMemoryHooks, ProjectMemoryPurgePoint,
     cache::{PackageCacheStore, WorkspaceCachePlan},
     memory::NoopProjectMemoryHooks,
     profile::{BuildProfiler, ProcessMemorySampler},
@@ -65,6 +65,7 @@ pub struct ProjectBuilder {
     workspace: WorkspaceMetadata,
     cargo_metadata_config: CargoMetadataConfig,
     body_ir_policy: BodyIrBuildPolicy,
+    indexing_preference: IndexingPerformancePreference,
     profile_build_timing: bool,
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
@@ -81,6 +82,7 @@ impl ProjectBuilder {
             workspace,
             cargo_metadata_config: CargoMetadataConfig::default(),
             body_ir_policy: BodyIrBuildPolicy::default(),
+            indexing_preference: IndexingPerformancePreference::default(),
             profile_build_timing: false,
             package_residency_policy: PackageResidencyPolicy::default(),
             startup_cache_load: StartupCacheLoad::default(),
@@ -94,6 +96,11 @@ impl ProjectBuilder {
 
     pub fn body_ir_policy(mut self, policy: BodyIrBuildPolicy) -> Self {
         self.body_ir_policy = policy;
+        self
+    }
+
+    pub fn indexing_preference(mut self, preference: IndexingPerformancePreference) -> Self {
+        self.indexing_preference = preference;
         self
     }
 
@@ -163,6 +170,7 @@ impl ProjectBuilder {
             self.workspace,
             self.cargo_metadata_config,
             self.body_ir_policy,
+            self.indexing_preference,
             self.package_residency_policy,
             self.startup_cache_load,
             Arc::clone(&self.memory_hooks),
@@ -199,6 +207,7 @@ pub(crate) fn build_resident_state(
     workspace: WorkspaceMetadata,
     cargo_metadata_config: CargoMetadataConfig,
     body_ir_policy: BodyIrBuildPolicy,
+    indexing_preference: IndexingPerformancePreference,
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
@@ -211,6 +220,7 @@ pub(crate) fn build_resident_state(
     let phases = phases::build(
         &workspace,
         body_ir_policy,
+        indexing_preference,
         &package_residency,
         &cache_plan,
         &cache_store,
@@ -227,6 +237,7 @@ pub(crate) fn build_resident_state(
         cache_store,
         package_source_fingerprints: phases.package_source_fingerprints,
         body_ir_policy,
+        indexing_preference,
         package_residency_policy,
         package_residency,
         memory_hooks,

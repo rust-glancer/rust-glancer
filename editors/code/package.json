@@ -71,6 +71,20 @@
           "default": true,
           "description": "Ask the language server to purge allocator memory after project indexing and saved-file reindexing. This lowers idle RSS after large indexing spikes."
         },
+        "rust-glancer.indexing.performancePreference": {
+          "scope": "window",
+          "type": "string",
+          "enum": [
+            "lower-peak-memory",
+            "faster-builds"
+          ],
+          "enumDescriptions": [
+            "Prioritize lower peak memory while keeping indexing reasonably fast.",
+            "Prioritize faster indexing builds while allowing higher peak memory."
+          ],
+          "default": "faster-builds",
+          "description": "Controls which indexing performance trade-off rust-glancer should prioritize. Restart the rust-glancer server after changing this setting."
+        },
         "rust-glancer.cargo.target": {
           "scope": "window",
           "type": [

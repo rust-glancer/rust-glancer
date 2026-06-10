@@ -19,7 +19,7 @@ use rg_parse::FileId;
 use rg_workspace::WorkspaceMetadata;
 
 use self::state::ProjectState;
-use crate::residency::PackageResidencyPlan;
+use crate::{indexing::IndexingPerformancePreference, residency::PackageResidencyPlan};
 use rg_std::MemorySize;
 
 pub use self::{
@@ -61,6 +61,11 @@ impl Project {
     /// Returns package residency decisions for this project.
     pub fn package_residency_plan(&self) -> &PackageResidencyPlan {
         self.state.package_residency_plan()
+    }
+
+    /// Returns the indexing speed/memory trade-off used by this project.
+    pub fn indexing_preference(&self) -> IndexingPerformancePreference {
+        self.state.indexing_preference
     }
 
     /// Returns coarse status counters without exposing raw phase databases.
