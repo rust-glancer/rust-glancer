@@ -10,10 +10,13 @@ use rg_ty::Ty;
 
 use crate::{
     ir::body::ResolvedBodyData,
+    ir::resolved::BodyResolution,
     ir::{BindingKind, BodySelfParamKind},
 };
 
-use crate::resolution::{BodyResolutionContext, BodyResolutionProviders, TypeRefUseSite};
+use crate::resolution::{
+    BodyResolutionContext, BodyResolutionProviders, TypeRefUseSite, infer::BodyInferenceCtx,
+};
 
 use super::{
     expr::ExprResolutionPass, pattern_binding::PatternBindingMaterializationPass,
@@ -27,6 +30,7 @@ use super::{
 pub(crate) struct BodyResolutionPass<'query, 'body, D, I> {
     pub(super) providers: BodyResolutionProviders<'query, D, I>,
     pub(super) body: &'body mut ResolvedBodyData,
+    inference: Option<BodyInferenceCtx>,
 }
 
 impl<'query, 'body, D, I> BodyResolutionPass<'query, 'body, D, I>
@@ -49,6 +53,7 @@ where
                 body_ref,
             ),
             body,
+            inference: None,
         }
     }
 
@@ -60,6 +65,7 @@ where
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
         self.materialize_pattern_bindings()?;
+        self.initialize_inference();
         self.resolve_bindings()?;
 
         // Pattern propagation can unlock later expression types, and those expressions can then
@@ -83,6 +89,7 @@ where
             }
         }
 
+        self.finalize_inference_facts();
         Ok(())
     }
 
@@ -94,7 +101,7 @@ where
         for binding_idx in 0..self.body.bindings().len() {
             let binding = BindingId(binding_idx);
             let ty = self.binding_ty(binding)?;
-            self.body.set_binding_ty(binding, ty);
+            self.set_binding_ty(binding, ty);
         }
         Ok(())
     }
@@ -113,11 +120,60 @@ where
                 continue;
             }
 
-            self.body.set_binding_ty(binding, ty);
+            self.set_binding_ty(binding, ty);
             changed = true;
         }
 
         changed
+    }
+
+    pub(super) fn set_expr_ty(&mut self, expr: ExprId, ty: Ty) {
+        if let Some(inference) = &mut self.inference {
+            inference.set_expr_ty(expr, &ty);
+        }
+        self.body.set_expr_ty(expr, ty);
+    }
+
+    pub(super) fn set_expr_facts(&mut self, expr: ExprId, resolution: BodyResolution, ty: Ty) {
+        if let Some(inference) = &mut self.inference {
+            inference.set_expr_ty(expr, &ty);
+        }
+        self.body.set_expr_facts(expr, resolution, ty);
+    }
+
+    fn set_binding_ty(&mut self, binding: BindingId, ty: Ty) {
+        if let Some(inference) = &mut self.inference {
+            inference.set_binding_ty(binding, &ty);
+        }
+        self.body.set_binding_ty(binding, ty);
+    }
+
+    fn initialize_inference(&mut self) {
+        // Binding materialization may compact pending pattern slots. Size inference storage only
+        // after that step so its local ids mirror the final body facts.
+        self.inference = Some(BodyInferenceCtx::new(
+            self.body.exprs().len(),
+            self.body.bindings().len(),
+        ));
+    }
+
+    fn finalize_inference_facts(&mut self) {
+        let Some(inference) = self.inference.take() else {
+            return;
+        };
+
+        // Phase 1B mirrors already-known `Ty` facts, so this should be behavior-preserving. Later
+        // phases will let these slots contain real variables before finalization.
+        for expr_idx in 0..self.body.exprs().len() {
+            let expr = ExprId(expr_idx);
+            self.body
+                .set_expr_ty(expr, inference.finalize_expr_ty(expr));
+        }
+        for binding_idx in 0..self.body.bindings().len() {
+            let binding = BindingId(binding_idx);
+            self.body
+                .set_binding_ty(binding, inference.finalize_binding_ty(binding));
+        }
     }
 
     fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {

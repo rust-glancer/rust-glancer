@@ -53,7 +53,7 @@ where
                     Some(path) => self.resolve_path_expr(expr, &path)?,
                     None => (BodyResolution::Unknown, Ty::Unknown),
                 };
-                self.pass.body.set_expr_facts(expr, resolution, ty);
+                self.pass.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::Call { callee, args } => {
                 let ty = self
@@ -61,15 +61,15 @@ where
                     .context()
                     .callable_returns()
                     .call_expr_ty(callee, &args)?;
-                self.pass.body.set_expr_ty(expr, ty);
+                self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Tuple { fields } => {
                 let ty = self.tuple_expr_ty(&fields);
-                self.pass.body.set_expr_ty(expr, ty);
+                self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Array { elements } => {
                 let ty = self.array_expr_ty(&elements);
-                self.pass.body.set_expr_ty(expr, ty);
+                self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::RepeatArray {
                 initializer,
@@ -77,11 +77,11 @@ where
                 ..
             } => {
                 let ty = self.repeat_array_expr_ty(initializer, len_text.as_deref());
-                self.pass.body.set_expr_ty(expr, ty);
+                self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Index { base, .. } => {
                 let ty = self.index_expr_ty(base);
-                self.pass.body.set_expr_ty(expr, ty);
+                self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Cast { ty: Some(ty), .. } => {
                 let ty = self
@@ -92,7 +92,7 @@ where
                         self.pass.body.expr_unchecked(expr).scope,
                     ))
                     .resolve(&ty)?;
-                self.pass.body.set_expr_ty(expr, ty);
+                self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Match { arms, .. } => {
                 let mut arm_tys = UniqueVec::new();
@@ -105,7 +105,7 @@ where
                     [ty] => ty.clone(),
                     [] | [_, ..] => Ty::Unknown,
                 };
-                self.pass.body.set_expr_ty(expr, ty);
+                self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::If {
                 then_branch,
@@ -127,17 +127,17 @@ where
                     }
                     None => Ty::Unit,
                 };
-                self.pass.body.set_expr_ty(expr, ty);
+                self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Block { tail, .. } => {
                 let ty = tail
                     .map(|tail| self.pass.body.expr_ty_unchecked(tail).clone())
                     .unwrap_or(Ty::Unit);
-                self.pass.body.set_expr_ty(expr, ty);
+                self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Field { base, field, .. } => {
                 let (resolution, ty) = self.resolve_field_expr(base, field.as_ref())?;
-                self.pass.body.set_expr_facts(expr, resolution, ty);
+                self.pass.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::Record { path, .. } => {
                 let (resolution, ty) = match path.as_ref().and_then(|path| path.as_def_map_path()) {
@@ -147,7 +147,7 @@ where
                     )?,
                     None => (BodyResolution::Unknown, Ty::Unknown),
                 };
-                self.pass.body.set_expr_facts(expr, resolution, ty);
+                self.pass.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::MethodCall {
                 receiver,
@@ -163,25 +163,25 @@ where
                     &args,
                     self.pass.body.expr_unchecked(expr).scope,
                 )?;
-                self.pass.body.set_expr_facts(expr, resolution, ty);
+                self.pass.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::Wrapper { kind, inner } => {
                 let (resolution, ty) = self.resolve_wrapper_expr(kind, inner);
-                self.pass.body.set_expr_facts(expr, resolution, ty);
+                self.pass.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::Unary {
                 op: Some(ExprUnaryOp::Deref),
                 expr: Some(inner),
             } => {
                 let ty = self.explicit_deref_ty(inner)?;
-                self.pass.body.set_expr_ty(expr, ty);
+                self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Unary {
                 op: Some(op),
                 expr: Some(inner),
             } => {
                 let ty = ty_for_unary(op, self.pass.body.expr_ty_unchecked(inner));
-                self.pass.body.set_expr_ty(expr, ty);
+                self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Binary {
                 lhs: Some(lhs),
@@ -193,22 +193,22 @@ where
                     self.pass.body.expr_ty_unchecked(lhs),
                     self.pass.body.expr_ty_unchecked(rhs),
                 );
-                self.pass.body.set_expr_ty(expr, ty);
+                self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Literal { kind } => {
-                self.pass.body.set_expr_ty(expr, ty_for_literal(kind));
+                self.pass.set_expr_ty(expr, ty_for_literal(kind));
             }
             ExprKind::While { .. } | ExprKind::For { .. } => {
-                self.pass.body.set_expr_ty(expr, Ty::Unit);
+                self.pass.set_expr_ty(expr, Ty::Unit);
             }
             ExprKind::Assign { .. } => {
-                self.pass.body.set_expr_ty(expr, Ty::Unit);
+                self.pass.set_expr_ty(expr, Ty::Unit);
             }
             ExprKind::Break { .. } | ExprKind::Continue { .. } => {
-                self.pass.body.set_expr_ty(expr, Ty::Never);
+                self.pass.set_expr_ty(expr, Ty::Never);
             }
             ExprKind::Yeet { .. } | ExprKind::Become { .. } => {
-                self.pass.body.set_expr_ty(expr, Ty::Never);
+                self.pass.set_expr_ty(expr, Ty::Never);
             }
             ExprKind::Let { .. }
             | ExprKind::Closure { .. }

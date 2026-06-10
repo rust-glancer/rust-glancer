@@ -5,7 +5,7 @@
 //! until local evidence solves `?T`.
 
 use rg_ir_model::items::TypeRef;
-use rg_ir_model::{TraitRef, TypeDefRef};
+use rg_ir_model::{BindingId, ExprId, TraitRef, TypeDefRef};
 use rg_std::UniqueVec;
 use rg_text::Name;
 use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, PrimitiveTy, RefMutability, Ty};
@@ -25,12 +25,20 @@ impl BodyInferenceCtx {
         }
     }
 
-    pub(super) fn table(&self) -> &InferenceTable {
-        &self.table
+    pub(super) fn set_expr_ty(&mut self, expr: ExprId, ty: &Ty) {
+        self.expr_tys[expr.0] = InferTy::from_ty(ty);
     }
 
-    pub(super) fn table_mut(&mut self) -> &mut InferenceTable {
-        &mut self.table
+    pub(super) fn set_binding_ty(&mut self, binding: BindingId, ty: &Ty) {
+        self.binding_tys[binding.0] = InferTy::from_ty(ty);
+    }
+
+    pub(super) fn finalize_expr_ty(&self, expr: ExprId) -> Ty {
+        self.table.finalize(&self.expr_tys[expr.0])
+    }
+
+    pub(super) fn finalize_binding_ty(&self, binding: BindingId) -> Ty {
+        self.table.finalize(&self.binding_tys[binding.0])
     }
 }
 
@@ -841,11 +849,11 @@ mod tests {
     fn creates_body_inference_context_with_body_sized_slots() {
         let mut context = BodyInferenceCtx::new(2, 3);
 
-        let var = context.table_mut().new_type_var();
+        let var = context.table.new_type_var();
 
         assert_eq!(context.expr_tys, vec![InferTy::Unknown; 2]);
         assert_eq!(context.binding_tys, vec![InferTy::Unknown; 3]);
-        assert_eq!(context.table().finalize(&var), Ty::Unknown);
+        assert_eq!(context.table.finalize(&var), Ty::Unknown);
     }
 
     #[test]
