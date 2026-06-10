@@ -7,7 +7,7 @@
 use rg_ir_model::{
     BindingId, ExprId, ScopeId, StmtId,
     identity::DeclarationRef,
-    items::{FieldKey, TypeRef},
+    items::{FieldKey, GenericArg as ItemGenericArg, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
@@ -105,6 +105,19 @@ where
                 callee: Some(callee),
                 args,
             } => self.constrain_call_argument_expected_types(expr, callee, args),
+            ExprKind::MethodCall {
+                receiver: Some(receiver),
+                method_name,
+                generic_args,
+                args,
+                ..
+            } => self.constrain_method_call_argument_expected_types(
+                expr,
+                receiver,
+                &method_name,
+                &generic_args,
+                args,
+            ),
             ExprKind::Record { fields, .. } => {
                 self.constrain_record_field_initializer_expected_types(expr, fields)
             }
@@ -143,6 +156,35 @@ where
 
         for (arg, expected_ty) in args.iter().zip(param_tys) {
             self.constrain_expr_with_expected(*arg, &expected_ty);
+        }
+
+        Ok(())
+    }
+
+    fn constrain_method_call_argument_expected_types(
+        &mut self,
+        method_call: ExprId,
+        receiver: ExprId,
+        method_name: &str,
+        explicit_args: &[ItemGenericArg],
+        args: Vec<ExprId>,
+    ) -> Result<(), PackageStoreError> {
+        // Method calls need receiver substitutions before parameter types are useful. The
+        // callable query only returns a list when the selected method is unambiguous.
+        let Some(param_tys) = self
+            .pass
+            .context()
+            .callable_returns()
+            .method_call_param_tys(method_call, receiver, method_name, explicit_args)?
+        else {
+            return Ok(());
+        };
+        if param_tys.len() != args.len() {
+            return Ok(());
+        }
+
+        for (arg, expected_ty) in args.into_iter().zip(param_tys) {
+            self.constrain_expr_with_expected(arg, &expected_ty);
         }
 
         Ok(())

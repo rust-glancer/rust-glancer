@@ -239,6 +239,97 @@ pub fn use_it() {
 }
 
 #[test]
+fn propagates_method_call_argument_expected_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_method_call_argument_expected_type_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Sink;
+
+impl Sink {
+    pub fn put_u64(&self, value: u64) {}
+
+    pub fn put_f32(&self, value: f32) {}
+
+    pub fn put_pair(&self, value: (u64, f32)) {}
+}
+
+pub struct GenericSink<T> {
+    value: T,
+}
+
+impl<T> GenericSink<T> {
+    pub fn put(&self, value: T) {}
+
+    pub fn put_pair(&self, value: (T, f32)) {}
+}
+
+pub fn use_it(sink: Sink, generic_sink: GenericSink<u64>) {
+    sink.put_u64(1$type_u64$);
+    sink.put_f32(1.0$type_f32$);
+    sink.put_pair((1$type_pair_int$, 1.0$type_pair_float$)$type_pair$);
+
+    generic_sink.put(1$type_generic$);
+    generic_sink.put_pair((1$type_generic_pair_int$, 1.0$type_generic_pair_float$)$type_generic_pair$);
+}
+"#,
+        &[
+            AnalysisQuery::ty("integer method argument", "type_u64"),
+            AnalysisQuery::ty("float method argument", "type_f32"),
+            AnalysisQuery::ty("tuple method integer field", "type_pair_int"),
+            AnalysisQuery::ty("tuple method float field", "type_pair_float"),
+            AnalysisQuery::ty("tuple method argument", "type_pair"),
+            AnalysisQuery::ty("generic receiver method argument", "type_generic"),
+            AnalysisQuery::ty(
+                "generic receiver tuple method integer field",
+                "type_generic_pair_int",
+            ),
+            AnalysisQuery::ty(
+                "generic receiver tuple method float field",
+                "type_generic_pair_float",
+            ),
+            AnalysisQuery::ty(
+                "generic receiver tuple method argument",
+                "type_generic_pair",
+            ),
+        ],
+        expect![[r#"
+            integer method argument
+            - u64
+
+            float method argument
+            - f32
+
+            tuple method integer field
+            - u64
+
+            tuple method float field
+            - f32
+
+            tuple method argument
+            - (u64, f32)
+
+            generic receiver method argument
+            - u64
+
+            generic receiver tuple method integer field
+            - u64
+
+            generic receiver tuple method float field
+            - f32
+
+            generic receiver tuple method argument
+            - (u64, f32)
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_record_field_initializer_expected_types() {
     check_analysis_queries(
         r#"

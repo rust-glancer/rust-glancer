@@ -13,7 +13,8 @@ use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
 use rg_ty::{
-    CallArgInference, CallArgMapping, NominalTy, Ty, TypeSubst, function_generic_shadow_subst,
+    AutoderefMode, CallArgInference, CallArgMapping, NominalTy, Ty, TypeSubst,
+    function_generic_shadow_subst,
 };
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
@@ -95,6 +96,113 @@ where
             callee_data.scope,
             CallArgMapping::FunctionCall,
         )
+    }
+
+    /// Returns declared parameter types for a uniquely resolved method call.
+    ///
+    /// This mirrors method lookup closely enough to apply receiver and impl substitutions before
+    /// inference uses the signature as expected-type evidence for written call arguments.
+    pub(crate) fn method_call_param_tys(
+        &self,
+        method_call: ExprId,
+        receiver: ExprId,
+        method_name: &str,
+        explicit_args: &[ItemGenericArg],
+    ) -> Result<Option<Vec<Ty>>, PackageStoreError> {
+        let BodyResolution::Declarations(declarations) =
+            self.context.body().expr_resolution(method_call)
+        else {
+            return Ok(None);
+        };
+        let [declaration] = declarations.as_slice() else {
+            return Ok(None);
+        };
+        let Some(selected_function) = self.function_ref_for_declaration(*declaration)? else {
+            return Ok(None);
+        };
+
+        let receiver_ty = self.context.body().expr_ty_unchecked(receiver);
+        let call_scope = self.context.body().expr_unchecked(method_call).scope;
+        let item_query = self.context.item_query();
+        let mut current_depth = None;
+        let mut param_tys = UniqueVec::new();
+
+        for candidate in self
+            .context
+            .autoderef()
+            .candidates(AutoderefMode::MethodReceiver, receiver_ty)
+        {
+            let candidate = candidate?;
+            // Method lookup stops at the first autoderef depth that has matches. Keep expected
+            // types tied to that same selected depth so later candidates cannot leak inward.
+            if current_depth.is_some_and(|depth| depth != candidate.depth())
+                && !param_tys.is_empty()
+            {
+                return Ok(Self::single_param_tys(&param_tys));
+            }
+            current_depth = Some(candidate.depth());
+
+            for nominal_ty in candidate.ty().as_nominals() {
+                for function_ref in self
+                    .context
+                    .receiver_functions()
+                    .function_refs_for_receiver(nominal_ty, Some(method_name))?
+                {
+                    if function_ref != selected_function {
+                        continue;
+                    }
+                    let Some(function_data) = item_query.function_data(function_ref)? else {
+                        continue;
+                    };
+                    if function_data.name != method_name || !function_data.has_self_receiver() {
+                        continue;
+                    }
+
+                    let mut subst = self.semantic_type_subst(nominal_ty)?;
+                    subst.extend(self.impl_self_subst_for_function(
+                        function_ref,
+                        function_data.owner,
+                        nominal_ty,
+                    )?);
+                    param_tys.push(self.param_tys_for_function_with_subst(
+                        function_ref,
+                        subst,
+                        explicit_args,
+                        call_scope,
+                        CallArgMapping::MethodCall,
+                    )?);
+                }
+            }
+
+            // Structural receiver methods, such as slice methods, carry their receiver
+            // substitution in the candidate because there is no nominal type key to reconstruct.
+            for structural in self
+                .context
+                .receiver_functions()
+                .structural_function_candidates_for_receiver(candidate.ty(), Some(method_name))?
+            {
+                let function_ref = structural.function();
+                if function_ref != selected_function {
+                    continue;
+                }
+                let Some(function_data) = item_query.function_data(function_ref)? else {
+                    continue;
+                };
+                if function_data.name != method_name || !function_data.has_self_receiver() {
+                    continue;
+                }
+
+                param_tys.push(self.param_tys_for_function_with_subst(
+                    function_ref,
+                    structural.subst().clone(),
+                    explicit_args,
+                    call_scope,
+                    CallArgMapping::MethodCall,
+                )?);
+            }
+        }
+
+        Ok(Self::single_param_tys(&param_tys))
     }
 
     pub(crate) fn return_ty_with_call_args(
@@ -287,11 +395,30 @@ where
         call_scope: ScopeId,
         arg_mapping: CallArgMapping,
     ) -> Result<Vec<Ty>, PackageStoreError> {
+        self.param_tys_for_function_with_subst(
+            function_ref,
+            TypeSubst::new(),
+            explicit_args,
+            call_scope,
+            arg_mapping,
+        )
+    }
+
+    fn param_tys_for_function_with_subst(
+        &self,
+        function_ref: FunctionRef,
+        mut subst: TypeSubst,
+        explicit_args: &[ItemGenericArg],
+        call_scope: ScopeId,
+        arg_mapping: CallArgMapping,
+    ) -> Result<Vec<Ty>, PackageStoreError> {
         let item_query = self.context.item_query();
         let Some(function_data) = item_query.function_data(function_ref)? else {
             return Ok(Vec::new());
         };
-        let mut subst = function_generic_shadow_subst(function_data.signature.generics());
+        subst.extend(function_generic_shadow_subst(
+            function_data.signature.generics(),
+        ));
         subst.extend(self.explicit_function_subst(
             function_data.signature.generics(),
             explicit_args,
@@ -322,6 +449,13 @@ where
                 param_resolver.resolve(param_ty)
             })
             .collect()
+    }
+
+    fn single_param_tys(param_tys: &UniqueVec<Vec<Ty>>) -> Option<Vec<Ty>> {
+        match param_tys.as_slice() {
+            [param_tys] => Some(param_tys.clone()),
+            [] | [_, ..] => None,
+        }
     }
 
     fn function_ref_for_declaration(
