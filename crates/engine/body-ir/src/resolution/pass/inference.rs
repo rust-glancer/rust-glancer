@@ -4,12 +4,15 @@
 //! constraints over the parallel inference view and writes the finalized inference facts back into
 //! Body IR.
 
-use rg_ir_model::{BindingId, ExprId, StmtId};
+use rg_ir_model::{BindingId, ExprId, ScopeId, StmtId, items::TypeRef};
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_ty::Ty;
 
-use crate::{ir::StmtKind, resolution::TypeRefUseSite};
+use crate::{
+    ir::{ExprKind, StmtKind},
+    resolution::TypeRefUseSite,
+};
 
 use super::body::BodyResolutionPass;
 
@@ -33,50 +36,81 @@ where
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
 {
     pub(super) fn run(mut self) -> Result<(), PackageStoreError> {
-        self.constrain_let_annotation_initializers()?;
+        self.constrain_expected_types()?;
         self.finalize_facts();
         Ok(())
     }
 
-    /// Constrains initializer expression slots from explicit statement annotations.
-    ///
-    /// This intentionally only links the annotation to the initializer root expression. Nested
-    /// expected-type propagation belongs in expression kind-specific rules.
-    fn constrain_let_annotation_initializers(&mut self) -> Result<(), PackageStoreError> {
+    /// Walks statement-level expected-type sources and lets expression hooks push them inward.
+    fn constrain_expected_types(&mut self) -> Result<(), PackageStoreError> {
         for statement_idx in 0..self.pass.body.statements().len() {
-            let StmtKind::Let {
+            self.constrain_statement_expected_types(StmtId(statement_idx))?;
+        }
+
+        Ok(())
+    }
+
+    fn constrain_statement_expected_types(
+        &mut self,
+        statement: StmtId,
+    ) -> Result<(), PackageStoreError> {
+        let kind = self.pass.body.statement_unchecked(statement).kind.clone();
+        match kind {
+            StmtKind::Let {
                 scope,
                 annotation: Some(annotation),
                 initializer: Some(initializer),
                 ..
-            } = self
-                .pass
-                .body
-                .statement_unchecked(StmtId(statement_idx))
-                .kind
-                .clone()
-            else {
-                continue;
-            };
-
-            let expected_ty = self
-                .pass
-                .context()
-                .type_path_query()
-                .type_ref(TypeRefUseSite::Scope(scope))
-                .resolve(&annotation)?;
-            if matches!(expected_ty, Ty::Unknown) {
-                continue;
-            }
-
-            // A statement annotation is direct evidence only for the initializer expression
-            // itself. Nested expected-type propagation belongs in expression-specific rules.
-            if let Some(inference) = &mut self.pass.inference {
-                inference.constrain_expr_ty(initializer, &expected_ty);
-            }
+            } => self.constrain_let_annotation_initializer(scope, annotation, initializer),
+            StmtKind::Let { .. }
+            | StmtKind::Expr { .. }
+            | StmtKind::Item { .. }
+            | StmtKind::ItemIgnored => Ok(()),
         }
+    }
+
+    /// Constrains an initializer expression from its explicit statement annotation.
+    ///
+    /// This intentionally only links the annotation to the initializer root expression. Nested
+    /// expected-type propagation belongs in expression kind-specific rules.
+    fn constrain_let_annotation_initializer(
+        &mut self,
+        scope: ScopeId,
+        annotation: TypeRef,
+        initializer: ExprId,
+    ) -> Result<(), PackageStoreError> {
+        let expected_ty = self
+            .pass
+            .context()
+            .type_path_query()
+            .type_ref(TypeRefUseSite::Scope(scope))
+            .resolve(&annotation)?;
+        self.constrain_expr_with_expected(initializer, &expected_ty);
 
         Ok(())
+    }
+
+    /// Applies an expected type to one expression and descends through shapes that preserve it.
+    fn constrain_expr_with_expected(&mut self, expr: ExprId, expected_ty: &Ty) {
+        if matches!(expected_ty, Ty::Unknown) {
+            return;
+        }
+
+        if let Some(inference) = &mut self.pass.inference {
+            inference.constrain_expr_ty(expr, expected_ty);
+        }
+
+        let kind = self.pass.body.expr_unchecked(expr).kind.clone();
+        match (kind, expected_ty) {
+            (ExprKind::Tuple { fields }, Ty::Tuple(expected_fields))
+                if fields.len() == expected_fields.len() =>
+            {
+                for (field, expected_field) in fields.into_iter().zip(expected_fields) {
+                    self.constrain_expr_with_expected(field, expected_field);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Writes finalized inference facts back into the body.

@@ -37,6 +37,17 @@ impl BodyInferenceCtx {
         self.expr_tys[expr.0] = self.table.new_float_var();
     }
 
+    pub(super) fn set_expr_tuple_from_fields(&mut self, expr: ExprId, fields: &[ExprId]) {
+        // Tuple expressions carry child slots by value so later expected-type constraints can
+        // descend through the tuple and solve literals or variables nested inside each field.
+        self.expr_tys[expr.0] = InferTy::Tuple(
+            fields
+                .iter()
+                .map(|field| self.expr_tys[field.0].clone())
+                .collect(),
+        );
+    }
+
     pub(super) fn set_binding_ty(&mut self, binding: BindingId, ty: &Ty) {
         self.binding_tys[binding.0] = InferTy::from_ty(ty);
     }

@@ -64,8 +64,7 @@ where
                 self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Tuple { fields } => {
-                let ty = self.tuple_expr_ty(&fields);
-                self.pass.set_expr_ty(expr, ty);
+                self.pass.set_expr_tuple_from_fields(expr, &fields);
             }
             ExprKind::Array { elements } => {
                 let ty = self.array_expr_ty(&elements);
@@ -240,15 +239,6 @@ where
             .context()
             .value_paths()
             .resolve_path_expr(scope, path, Some(visible_bindings))
-    }
-
-    fn tuple_expr_ty(&self, fields: &[ExprId]) -> Ty {
-        Ty::tuple(
-            fields
-                .iter()
-                .map(|field| self.pass.body.expr_ty_unchecked(*field).clone())
-                .collect(),
-        )
     }
 
     fn array_expr_ty(&self, elements: &[ExprId]) -> Ty {

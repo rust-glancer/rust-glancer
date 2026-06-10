@@ -150,6 +150,21 @@ where
             .set_expr_ty(expr, Ty::Primitive(PrimitiveTy::DEFAULT_FLOAT));
     }
 
+    pub(super) fn set_expr_tuple_from_fields(&mut self, expr: ExprId, fields: &[ExprId]) {
+        if let Some(inference) = &mut self.inference {
+            inference.set_expr_tuple_from_fields(expr, fields);
+        }
+        self.body.set_expr_ty(
+            expr,
+            Ty::tuple(
+                fields
+                    .iter()
+                    .map(|field| self.body.expr_ty_unchecked(*field).clone())
+                    .collect(),
+            ),
+        );
+    }
+
     pub(super) fn set_expr_facts(&mut self, expr: ExprId, resolution: BodyResolution, ty: Ty) {
         if let Some(inference) = &mut self.inference {
             inference.set_expr_ty(expr, &ty);

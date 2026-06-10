@@ -178,6 +178,78 @@ pub fn use_it() {
 }
 
 #[test]
+fn propagates_let_annotation_expected_types_through_tuple_expressions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_tuple_expected_type_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    let default_pair = (1, 1.0)$type_default_pair$;
+    let annotated_pair: (u64, f32) = (1$type_pair_int$, 1.0$type_pair_float$)$type_pair$;
+    let nested: (u64, (f32, bool)) = (1$type_nested_int$, (1.0$type_nested_float$, true$type_nested_bool$)$type_nested_inner$)$type_nested$;
+    let conflict: (bool, f32) = (1$type_conflict_int$, 1.0$type_conflict_float$)$type_conflict_pair$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("default tuple expression", "type_default_pair"),
+            AnalysisQuery::ty("annotated tuple integer field", "type_pair_int"),
+            AnalysisQuery::ty("annotated tuple float field", "type_pair_float"),
+            AnalysisQuery::ty("annotated tuple expression", "type_pair"),
+            AnalysisQuery::ty("nested tuple integer field", "type_nested_int"),
+            AnalysisQuery::ty("nested tuple float field", "type_nested_float"),
+            AnalysisQuery::ty("nested tuple bool field", "type_nested_bool"),
+            AnalysisQuery::ty("nested inner tuple expression", "type_nested_inner"),
+            AnalysisQuery::ty("nested tuple expression", "type_nested"),
+            AnalysisQuery::ty("conflicting tuple integer field", "type_conflict_int"),
+            AnalysisQuery::ty("conflicting tuple float field", "type_conflict_float"),
+            AnalysisQuery::ty("conflicting tuple expression", "type_conflict_pair"),
+        ],
+        expect![[r#"
+            default tuple expression
+            - (i32, f64)
+
+            annotated tuple integer field
+            - u64
+
+            annotated tuple float field
+            - f32
+
+            annotated tuple expression
+            - (u64, f32)
+
+            nested tuple integer field
+            - u64
+
+            nested tuple float field
+            - f32
+
+            nested tuple bool field
+            - bool
+
+            nested inner tuple expression
+            - (f32, bool)
+
+            nested tuple expression
+            - (u64, (f32, bool))
+
+            conflicting tuple integer field
+            - <unknown>
+
+            conflicting tuple float field
+            - f32
+
+            conflicting tuple expression
+            - (<unknown>, f32)
+        "#]],
+    );
+}
+
+#[test]
 fn returns_types_for_references_try_and_await_wrappers() {
     check_analysis_queries(
         r#"
