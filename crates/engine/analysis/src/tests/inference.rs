@@ -330,6 +330,84 @@ pub fn use_it(sink: Sink, generic_sink: GenericSink<u64>) {
 }
 
 #[test]
+fn propagates_expected_types_into_generic_call_results() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_generic_call_result_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub fn id<T>(value: T) -> T {}
+
+pub fn missing<T>() -> T {}
+
+pub fn takes_user(value: User) {}
+
+pub struct Factory;
+
+impl Factory {
+    pub fn make<T>() -> T {}
+}
+
+pub struct Builder;
+
+impl Builder {
+    pub fn build<T>(&self) -> T {}
+}
+
+pub fn use_it(builder: Builder) {
+    let annotated: User = id(missing())$type_annotated$;
+    takes_user(id(missing())$type_arg$);
+    let pair: (User, bool) = (id(missing())$type_pair_user$, true$type_pair_bool$)$type_pair$;
+    let associated: User = Factory::make()$type_associated$;
+    let method: User = builder.build()$type_method$;
+    let unconstrained = id(missing())$type_unconstrained$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("annotated generic call result", "type_annotated"),
+            AnalysisQuery::ty("function argument generic call result", "type_arg"),
+            AnalysisQuery::ty("tuple generic call field", "type_pair_user"),
+            AnalysisQuery::ty("tuple bool field", "type_pair_bool"),
+            AnalysisQuery::ty("tuple containing generic call", "type_pair"),
+            AnalysisQuery::ty("associated function generic call result", "type_associated"),
+            AnalysisQuery::ty("method generic call result", "type_method"),
+            AnalysisQuery::ty("unconstrained generic call result", "type_unconstrained"),
+        ],
+        expect![[r#"
+            annotated generic call result
+            - nominal struct analysis_generic_call_result_inference[lib]::crate::User
+
+            function argument generic call result
+            - nominal struct analysis_generic_call_result_inference[lib]::crate::User
+
+            tuple generic call field
+            - nominal struct analysis_generic_call_result_inference[lib]::crate::User
+
+            tuple bool field
+            - bool
+
+            tuple containing generic call
+            - (nominal struct analysis_generic_call_result_inference[lib]::crate::User, bool)
+
+            associated function generic call result
+            - nominal struct analysis_generic_call_result_inference[lib]::crate::User
+
+            method generic call result
+            - nominal struct analysis_generic_call_result_inference[lib]::crate::User
+
+            unconstrained generic call result
+            - <unknown>
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_record_field_initializer_expected_types() {
     check_analysis_queries(
         r#"

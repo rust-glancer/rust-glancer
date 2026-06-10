@@ -29,6 +29,10 @@ impl BodyInferenceCtx {
         self.expr_tys[expr.0] = InferTy::from_ty(ty);
     }
 
+    pub(super) fn set_expr_type_var(&mut self, expr: ExprId) {
+        self.expr_tys[expr.0] = self.table.new_type_var();
+    }
+
     pub(super) fn set_expr_integer_var(&mut self, expr: ExprId) {
         self.expr_tys[expr.0] = self.table.new_integer_var();
     }
@@ -880,6 +884,17 @@ mod tests {
         assert_eq!(context.expr_tys, vec![InferTy::Unknown; 2]);
         assert_eq!(context.binding_tys, vec![InferTy::Unknown; 3]);
         assert_eq!(context.table.finalize(&var), Ty::Unknown);
+    }
+
+    #[test]
+    fn stores_expression_type_variables_until_expected_type_evidence_arrives() {
+        let mut context = BodyInferenceCtx::new(1, 0);
+
+        context.set_expr_type_var(ExprId(0));
+        assert_eq!(context.finalize_expr_ty(ExprId(0)), Ty::Unknown);
+
+        assert!(context.constrain_expr_ty(ExprId(0), &user_ty()));
+        assert_eq!(context.finalize_expr_ty(ExprId(0)), user_ty());
     }
 
     #[test]

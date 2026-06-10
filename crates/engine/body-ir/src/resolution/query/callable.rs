@@ -20,6 +20,23 @@ use rg_ty::{
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 use crate::{ir::ExprKind, ir::resolved::BodyResolution};
 
+/// Function selected by call syntax, plus the call-site generic args written for that function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SelectedCallable {
+    function_ref: FunctionRef,
+    explicit_args: Vec<ItemGenericArg>,
+}
+
+impl SelectedCallable {
+    pub(crate) fn function_ref(&self) -> FunctionRef {
+        self.function_ref
+    }
+
+    pub(crate) fn explicit_args(&self) -> &[ItemGenericArg] {
+        &self.explicit_args
+    }
+}
+
 pub(crate) struct CallableReturnQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -95,6 +112,34 @@ where
             Self::explicit_callee_generic_args(callee_data),
             callee_data.scope,
             CallArgMapping::FunctionCall,
+        )
+    }
+
+    /// Returns the function selected by a uniquely resolved ordinary call.
+    pub(crate) fn selected_callable_for_call(
+        &self,
+        callee: Option<ExprId>,
+    ) -> Result<Option<SelectedCallable>, PackageStoreError> {
+        let Some(callee) = callee else {
+            return Ok(None);
+        };
+        let callee_data = self.context.body().expr_unchecked(callee);
+
+        self.selected_callable_for_resolution(
+            self.context.body().expr_resolution(callee),
+            Self::explicit_callee_generic_args(callee_data),
+        )
+    }
+
+    /// Returns the function selected by a uniquely resolved method call.
+    pub(crate) fn selected_callable_for_method_call(
+        &self,
+        method_call: ExprId,
+        explicit_args: &[ItemGenericArg],
+    ) -> Result<Option<SelectedCallable>, PackageStoreError> {
+        self.selected_callable_for_resolution(
+            self.context.body().expr_resolution(method_call),
+            explicit_args,
         )
     }
 
@@ -449,6 +494,24 @@ where
                 param_resolver.resolve(param_ty)
             })
             .collect()
+    }
+
+    fn selected_callable_for_resolution(
+        &self,
+        resolution: &BodyResolution,
+        explicit_args: &[ItemGenericArg],
+    ) -> Result<Option<SelectedCallable>, PackageStoreError> {
+        if let BodyResolution::Declarations(declarations) = resolution
+            && let [declaration] = declarations.as_slice()
+            && let Some(function_ref) = self.function_ref_for_declaration(*declaration)?
+        {
+            return Ok(Some(SelectedCallable {
+                function_ref,
+                explicit_args: explicit_args.to_vec(),
+            }));
+        }
+
+        Ok(None)
     }
 
     fn single_param_tys(param_tys: &UniqueVec<Vec<Ty>>) -> Option<Vec<Ty>> {

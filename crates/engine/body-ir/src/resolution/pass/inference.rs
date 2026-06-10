@@ -15,7 +15,7 @@ use rg_ty::Ty;
 
 use crate::{
     ir::{ExprKind, ExprWrapperKind, RecordExprField, StmtKind, resolved::BodyResolution},
-    resolution::TypeRefUseSite,
+    resolution::{TypeRefUseSite, query::SelectedCallable},
 };
 
 use super::body::BodyResolutionPass;
@@ -40,8 +40,125 @@ where
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
 {
     pub(super) fn run(mut self) -> Result<(), PackageStoreError> {
+        self.seed_callable_return_inference_facts()?;
+        self.refresh_inference_dependent_expr_facts();
         self.constrain_expected_types()?;
         self.finalize_facts();
+        Ok(())
+    }
+
+    /// Seeds inference facts that ordinary `Ty` cannot represent during fixed-point resolution.
+    fn seed_callable_return_inference_facts(&mut self) -> Result<(), PackageStoreError> {
+        for expr_idx in 0..self.pass.body.exprs().len() {
+            let expr = ExprId(expr_idx);
+            let kind = self.pass.body.expr_unchecked(expr).kind.clone();
+            match kind {
+                ExprKind::Call { callee, .. } => {
+                    self.seed_call_return_inference_fact(expr, callee)?
+                }
+                ExprKind::MethodCall { generic_args, .. } => {
+                    self.seed_method_call_return_inference_fact(expr, &generic_args)?
+                }
+                _ => {}
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Rebuilds expression inference facts that copied child facts before late seeds existed.
+    fn refresh_inference_dependent_expr_facts(&mut self) {
+        let Some(inference) = &mut self.pass.inference else {
+            return;
+        };
+
+        for expr_idx in 0..self.pass.body.exprs().len() {
+            let expr = ExprId(expr_idx);
+            let ExprKind::Tuple { fields } = self.pass.body.expr_unchecked(expr).kind.clone()
+            else {
+                continue;
+            };
+
+            // Tuple facts embed field facts by value. Once generic call results have been seeded
+            // as variables, rebuild the tuple so outer tuple constraints can solve those fields.
+            inference.set_expr_tuple_from_fields(expr, &fields);
+        }
+    }
+
+    fn seed_call_return_inference_fact(
+        &mut self,
+        call: ExprId,
+        callee: Option<ExprId>,
+    ) -> Result<(), PackageStoreError> {
+        if !matches!(self.pass.body.expr_ty_unchecked(call), Ty::Unknown) {
+            return Ok(());
+        }
+
+        let Some(selected_callable) = self
+            .pass
+            .context()
+            .callable_returns()
+            .selected_callable_for_call(callee)?
+        else {
+            return Ok(());
+        };
+
+        self.seed_selected_callable_return_inference_fact(call, &selected_callable)
+    }
+
+    fn seed_method_call_return_inference_fact(
+        &mut self,
+        method_call: ExprId,
+        explicit_args: &[ItemGenericArg],
+    ) -> Result<(), PackageStoreError> {
+        if !matches!(self.pass.body.expr_ty_unchecked(method_call), Ty::Unknown) {
+            return Ok(());
+        }
+
+        let Some(selected_callable) = self
+            .pass
+            .context()
+            .callable_returns()
+            .selected_callable_for_method_call(method_call, explicit_args)?
+        else {
+            return Ok(());
+        };
+
+        self.seed_selected_callable_return_inference_fact(method_call, &selected_callable)
+    }
+
+    fn seed_selected_callable_return_inference_fact(
+        &mut self,
+        expr: ExprId,
+        selected_callable: &SelectedCallable,
+    ) -> Result<(), PackageStoreError> {
+        if !selected_callable.explicit_args().is_empty() {
+            return Ok(());
+        }
+
+        let should_seed_type_var = if let Some(function_data) = self
+            .pass
+            .context()
+            .item_query()
+            .function_data(selected_callable.function_ref())?
+            && let Some(generics) = function_data.signature.generics()
+            && let Some(ret_ty) = function_data.signature.ret_ty()
+            && let Some(ret_name) = ret_ty.type_param_name()
+        {
+            // `fn make<T>() -> T` has no concrete `Ty` before expected-type constraints run, but
+            // inference can preserve the return as `?T` and let the outer expression solve it.
+            generics
+                .types
+                .iter()
+                .any(|param| param.name.as_str() == ret_name.as_str())
+        } else {
+            false
+        };
+
+        if should_seed_type_var && let Some(inference) = &mut self.pass.inference {
+            inference.set_expr_type_var(expr);
+        }
+
         Ok(())
     }
 

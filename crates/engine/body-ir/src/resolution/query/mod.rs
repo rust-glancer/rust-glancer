@@ -16,4 +16,4 @@ pub(crate) use self::{
     type_ref::TypeRefUseSite,
 };
 
-pub(crate) use self::callable::CallableReturnQuery;
+pub(crate) use self::callable::{CallableReturnQuery, SelectedCallable};
