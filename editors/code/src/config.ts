@@ -14,13 +14,20 @@ export type PackageResidencySetting =
   | "workspace-path-and-direct-deps"
   | "all-offloadable";
 
+export type IndexingPerformancePreferenceSetting = "lower-peak-memory" | "faster-builds";
+
 export interface ExtensionConfig {
   readonly serverPath: string | undefined;
   readonly extraEnv: Record<string, string>;
   readonly purgeMemoryAfterBuild: boolean;
+  readonly indexing: IndexingConfig;
   readonly cargo: CargoConfig;
   readonly cache: CacheConfig;
   readonly diagnostics: DiagnosticsConfig;
+}
+
+export interface IndexingConfig {
+  readonly performancePreference: IndexingPerformancePreferenceSetting;
 }
 
 export interface CargoConfig {
@@ -44,6 +51,10 @@ export namespace ExtensionConfig {
     const serverPath = config.get<string | null>("server.path", null);
     const extraEnv = config.get<Record<string, unknown>>("server.extraEnv", {});
     const purgeMemoryAfterBuild = config.get<boolean>("server.purgeMemoryAfterBuild", true);
+    const indexingPerformancePreference = config.get<IndexingPerformancePreferenceSetting>(
+      "indexing.performancePreference",
+      "faster-builds",
+    );
     const cargoTarget = config.get<string | null>("cargo.target", null);
     const packageResidency = config.get<PackageResidencySetting>(
       "cache.packageResidency",
@@ -61,6 +72,9 @@ export namespace ExtensionConfig {
       serverPath: normalizeOptionalString(serverPath),
       extraEnv: normalizeStringRecord(extraEnv),
       purgeMemoryAfterBuild,
+      indexing: {
+        performancePreference: indexingPerformancePreference,
+      },
       cargo: {
         target: normalizeOptionalString(cargoTarget),
       },

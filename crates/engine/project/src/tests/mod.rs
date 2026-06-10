@@ -57,6 +57,8 @@ pub struct User;
         points.as_slice(),
         [
             ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction,
+            ProjectMemoryPurgePoint::AfterDefMapBuild,
+            ProjectMemoryPurgePoint::AfterBodyIrBuild,
             ProjectMemoryPurgePoint::AfterProjectBuild,
         ],
         "fresh builds should expose the high-value transient memory boundaries",
@@ -104,9 +106,51 @@ pub struct User;
                 && checkpoint.allocated_bytes.is_none()
                 && checkpoint.active_bytes.is_none()
                 && checkpoint.resident_bytes.is_none()
+                && checkpoint.mapped_bytes.is_none()
         }),
         "timing-only profiling should not run memory samplers"
     );
+}
+
+#[test]
+fn residency_profile_reports_offload_checkpoints() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "residency_profile_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let (_project, profile) = Project::builder(workspace)
+        .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
+        .profile_build_timing(true)
+        .build()
+        .expect("profiled offloadable project build should succeed")
+        .into_parts();
+    let profile = profile.expect("timing profiling should produce a profile");
+    let labels = profile
+        .checkpoints()
+        .iter()
+        .map(|checkpoint| checkpoint.label)
+        .collect::<Vec<_>>();
+
+    for label in [
+        "before package cache write",
+        "after package cache write",
+        "after package payload offload",
+        "after package offload cleanup",
+    ] {
+        assert!(
+            labels.contains(&label),
+            "offloadable builds should report the {label:?} residency checkpoint"
+        );
+    }
 }
 
 #[test]

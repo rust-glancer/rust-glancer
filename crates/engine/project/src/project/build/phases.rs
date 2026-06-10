@@ -13,7 +13,7 @@ use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{
-    PackageResidencyPlan,
+    IndexingPerformancePreference, PackageResidencyPlan,
     cache::{Fingerprint, PackageCacheStore, WorkspaceCachePlan},
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{BuildProfileStage, BuildProfiler, CacheProbeProfile},
@@ -40,6 +40,7 @@ pub(super) struct BuiltPhases {
 pub(super) fn build(
     workspace: &WorkspaceMetadata,
     body_ir_policy: BodyIrBuildPolicy,
+    indexing_preference: IndexingPerformancePreference,
     package_residency: &PackageResidencyPlan,
     cache_plan: &WorkspaceCachePlan,
     cache_store: &PackageCacheStore,
@@ -144,14 +145,16 @@ pub(super) fn build(
         DefMapDb::from_package_store(offloaded_package_store(parse.package_count()));
     let old_def_map_txn =
         baseline_def_map.read_txn_for_subset(loaders.def_map.clone(), &rebuild_subset);
-    let def_map_rebuilder = baseline_def_map.package_rebuilder(
-        &old_def_map_txn,
-        workspace,
-        &parse,
-        &item_tree,
-        build_plan.source_packages.as_slice(),
-        &mut names,
-    );
+    let def_map_rebuilder = baseline_def_map
+        .package_rebuilder(
+            &old_def_map_txn,
+            workspace,
+            &parse,
+            &item_tree,
+            build_plan.source_packages.as_slice(),
+            &mut names,
+        )
+        .performance_preference(indexing_preference.def_map_preference());
     let def_map = match finalization_stats {
         Some(finalization_stats) => def_map_rebuilder
             .finalization_stats(finalization_stats)
@@ -160,6 +163,7 @@ pub(super) fn build(
     }
     .context("while attempting to build def map db")?;
     drop(old_def_map_txn);
+    memory_hooks.purge(ProjectMemoryPurgePoint::AfterDefMapBuild);
     stage_memory = stage_memory
         .names(&names)
         .parse(&parse)
@@ -235,6 +239,7 @@ pub(super) fn build(
         .policy(body_ir_policy)
         .build()
         .context("while attempting to build body ir db")?;
+    memory_hooks.purge(ProjectMemoryPurgePoint::AfterBodyIrBuild);
     stage_memory = stage_memory
         .names(&names)
         .parse(&parse)

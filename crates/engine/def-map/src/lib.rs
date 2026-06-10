@@ -7,7 +7,7 @@ pub mod testonly;
 pub use rg_workspace::PackageSlot;
 
 pub use self::{
-    build::DefMapFinalizationStats,
+    build::{DefMapFinalizationStats, DefMapPerformancePreference},
     query::{DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite},
     store::{DefMapDb, DefMapReadTxn, DefMapStats},
 };

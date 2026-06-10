@@ -77,7 +77,7 @@ impl Package {
     }
 
     /// Drops retained syntax trees while preserving file ids, paths, diagnostics, and line indexes.
-    pub(crate) fn evict_syntax_trees(&mut self) {
+    pub fn evict_syntax_trees(&mut self) {
         self.files.evict_syntax_trees();
     }
 

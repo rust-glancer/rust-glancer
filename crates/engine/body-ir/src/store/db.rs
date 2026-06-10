@@ -150,12 +150,4 @@ impl BodyIrDbMutator<'_> {
     pub(crate) fn compact_storage(&mut self) {
         Shrink::shrink_to_fit(&mut self.db.packages);
     }
-
-    pub(crate) fn compact_packages(&mut self, packages: &[PackageSlot]) {
-        for package in packages {
-            if let Some(package) = self.db.packages.get_unique_mut(*package) {
-                Shrink::shrink_to_fit(package);
-            }
-        }
-    }
 }

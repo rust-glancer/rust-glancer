@@ -91,6 +91,9 @@ fn try_rebuild_packages(
         .memory_hooks
         .purge(ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction);
 
+    // Fresh indexing exposes more allocator purge boundaries because it can build the whole
+    // workspace at once. Package rebuilds are usually smaller and can run on save or dirty-overlay
+    // paths, so we avoid adding extra def-map/body purges to the interactive rebuild path.
     let def_map = state
         .def_map
         .package_rebuilder(
@@ -101,6 +104,7 @@ fn try_rebuild_packages(
             plan.source_packages.as_slice(),
             &mut state.names,
         )
+        .performance_preference(state.indexing_preference.def_map_preference())
         .build()
         .context("while attempting to rebuild affected def-map packages")?;
     drop(old_def_map_txn);
@@ -194,6 +198,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
     let workspace = state.workspace.clone();
     let cargo_metadata_config = state.cargo_metadata_config.clone();
     let body_ir_policy = state.body_ir_policy;
+    let indexing_preference = state.indexing_preference;
     let package_residency_policy = state.package_residency_policy;
     let cache_store = state.cache_store.clone();
     let memory_hooks = Arc::clone(&state.memory_hooks);
@@ -202,6 +207,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
         workspace,
         cargo_metadata_config,
         body_ir_policy,
+        indexing_preference,
         package_residency_policy,
         StartupCacheLoad::Disabled,
         memory_hooks,

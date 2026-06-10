@@ -72,12 +72,13 @@ impl BuildProfileReport {
                     || checkpoint.allocated_bytes.is_some()
                     || checkpoint.active_bytes.is_some()
                     || checkpoint.resident_bytes.is_some()
+                    || checkpoint.mapped_bytes.is_some()
             });
 
         if includes_memory {
             writeln!(
                 out,
-                "  {:>10}  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  checkpoint",
+                "  {:>10}  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  checkpoint",
                 "phase",
                 "elapsed",
                 "rg_sampled",
@@ -85,6 +86,7 @@ impl BuildProfileReport {
                 "j_allocated",
                 "j_active",
                 "j_resident",
+                "j_mapped",
             )?;
         } else {
             writeln!(out, "  {:>10}  {:>10}  checkpoint", "phase", "elapsed")?;
@@ -144,6 +146,7 @@ fn render_build_profile_memory_row(
         checkpoint.allocated_bytes,
         checkpoint.active_bytes,
         checkpoint.resident_bytes,
+        checkpoint.mapped_bytes,
         &checkpoint.label,
     )
 }
@@ -162,6 +165,7 @@ fn render_allocator_purge_build_row(
         purge.after.map(|stats| stats.allocated_bytes),
         purge.after.map(|stats| stats.active_bytes),
         purge.after.map(|stats| stats.resident_bytes),
+        purge.after.map(|stats| stats.mapped_bytes),
         "after allocator purge",
     )
 }
@@ -176,11 +180,12 @@ fn render_build_profile_memory_values(
     allocated_bytes: Option<usize>,
     active_bytes: Option<usize>,
     resident_bytes: Option<usize>,
+    mapped_bytes: Option<usize>,
     label: &str,
 ) -> std::fmt::Result {
     writeln!(
         out,
-        "  {:>10}  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  {}",
+        "  {:>10}  {:>10}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  {:>12}  {}",
         phase_elapsed,
         elapsed,
         format_optional_bytes(retained_bytes),
@@ -188,6 +193,7 @@ fn render_build_profile_memory_values(
         format_optional_bytes(allocated_bytes),
         format_optional_bytes(active_bytes),
         format_optional_bytes(resident_bytes),
+        format_optional_bytes(mapped_bytes),
         label,
     )
 }

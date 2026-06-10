@@ -19,7 +19,9 @@ use super::{
     MacroExpansionAttempt,
     cache::{MacroExpansionCache, MacroExpansionCacheKey},
 };
-use crate::build::stats::DefMapFinalizationStatsSink;
+use crate::build::{DefMapPerformancePreference, stats::DefMapFinalizationStatsSink};
+
+const LOWER_PEAK_MEMORY_MACRO_EXPANSION_THREAD_LIMIT: usize = 2;
 
 /// Dedicated pool for declarative macro expansion jobs.
 pub(crate) struct MacroExpansionExecutor {
@@ -27,13 +29,33 @@ pub(crate) struct MacroExpansionExecutor {
 }
 
 impl MacroExpansionExecutor {
-    pub(crate) fn new() -> anyhow::Result<Self> {
-        let thread_pool = rayon::ThreadPoolBuilder::new()
-            .thread_name(|index| format!("rg-def-map-macro-expand-{index}"))
+    pub(crate) fn new(preference: DefMapPerformancePreference) -> anyhow::Result<Self> {
+        // Macro expansion can allocate large parser and token-tree temporaries per worker. Keep
+        // this pool optionally narrower than the global CPU pool so a few large expansions do not
+        // multiply peak resident memory for the whole index build.
+        let mut builder = rayon::ThreadPoolBuilder::new()
+            .thread_name(|index| format!("rg-def-map-macro-expand-{index}"));
+        if let Some(thread_limit) = macro_expansion_thread_limit(preference) {
+            let worker_count = std::thread::available_parallelism()
+                .map(usize::from)
+                .unwrap_or(thread_limit)
+                .min(thread_limit);
+            builder = builder.num_threads(worker_count);
+        }
+        let thread_pool = builder
             .build()
             .context("while attempting to create macro expansion thread pool")?;
 
         Ok(Self { thread_pool })
+    }
+}
+
+fn macro_expansion_thread_limit(preference: DefMapPerformancePreference) -> Option<usize> {
+    match preference {
+        DefMapPerformancePreference::FasterBuilds => None,
+        DefMapPerformancePreference::LowerPeakMemory => {
+            Some(LOWER_PEAK_MEMORY_MACRO_EXPANSION_THREAD_LIMIT)
+        }
     }
 }
 

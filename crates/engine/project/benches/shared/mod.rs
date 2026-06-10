@@ -183,6 +183,7 @@ impl fmt::Display for BenchTarget {
 pub(crate) struct BenchFixture {
     pub(crate) workspace: WorkspaceMetadata,
     pub(crate) parse: ParseDb,
+    pub(crate) parse_after_item_tree: ParseDb,
     pub(crate) item_tree: ItemTreeDb,
     pub(crate) names_after_item_tree: PackageNameInterners,
     pub(crate) names_after_semantic_ir: PackageNameInterners,
@@ -228,18 +229,21 @@ impl BenchFixture {
             .unwrap_or_else(|error| panic!("{target} Cargo metadata should load: {error}"));
         let workspace = WorkspaceMetadata::lower(loaded.metadata, loaded.target_cfg)
             .unwrap_or_else(|error| panic!("{target} workspace metadata should lower: {error}"));
-        let mut parse = ParseDb::build(&workspace)
+        let parse = ParseDb::build(&workspace)
             .unwrap_or_else(|error| panic!("{target} parse db should build: {error}"));
         let source_files = count_source_files(&parse);
         let source_bytes = count_source_bytes(&parse);
 
-        let mut names = PackageNameInterners::new(parse.package_count());
-        let item_tree = ItemTreeDb::build(&mut parse, &mut names)
+        // Building item trees evicts syntax from its parse input. Keep the original parsed syntax
+        // for the item-tree benchmark, and use the post-item-tree parse for downstream phases.
+        let mut parse_after_item_tree = parse.clone();
+        let mut names = PackageNameInterners::new(parse_after_item_tree.package_count());
+        let item_tree = ItemTreeDb::build(&mut parse_after_item_tree, &mut names)
             .unwrap_or_else(|error| panic!("{target} item tree should build: {error}"));
         let item_tree_items = count_item_tree_items(&workspace, &item_tree);
         let names_after_item_tree = names.clone();
 
-        let def_map = DefMapDb::builder(&workspace, &parse, &item_tree)
+        let def_map = DefMapDb::builder(&workspace, &parse_after_item_tree, &item_tree)
             .name_interners(&mut names)
             .build()
             .unwrap_or_else(|error| panic!("{target} def map should build: {error}"));
@@ -260,7 +264,7 @@ impl BenchFixture {
             + semantic_stats.static_count;
         let names_after_semantic_ir = names.clone();
 
-        let body_ir = BodyIrDb::builder(&parse, &def_map, &semantic_ir)
+        let body_ir = BodyIrDb::builder(&parse_after_item_tree, &def_map, &semantic_ir)
             .name_interners(&mut names)
             .policy(BodyIrBuildPolicy::workspace_packages())
             .build()
@@ -270,6 +274,7 @@ impl BenchFixture {
         Self {
             workspace,
             parse,
+            parse_after_item_tree,
             item_tree,
             names_after_item_tree,
             names_after_semantic_ir,

@@ -11,8 +11,8 @@ use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use super::super::{
-    collect::collect_package_target_states, implicit_roots::build_implicit_roots,
-    stats::DefMapFinalizationStats,
+    DefMapPerformancePreference, collect::collect_package_target_states,
+    implicit_roots::build_implicit_roots, stats::DefMapFinalizationStats,
 };
 use super::{FinalizeTargetStates, finalize_target_states, freeze_package};
 use crate::{DefMapDb, DefMapReadTxn, PackageSlot};
@@ -28,6 +28,7 @@ pub(crate) fn rebuild_packages(
     packages: &[PackageSlot],
     interners: &mut PackageNameInterners,
     finalization_stats: Option<&mut DefMapFinalizationStats>,
+    performance_preference: DefMapPerformancePreference,
 ) -> anyhow::Result<DefMapDb> {
     let packages = normalized_package_slots(packages);
     if packages.is_empty() {
@@ -87,6 +88,7 @@ pub(crate) fn rebuild_packages(
         &mut target_states,
         interners,
         finalization_stats,
+        performance_preference,
     )
     .context("while attempting to finish rebuilt target states")?;
 

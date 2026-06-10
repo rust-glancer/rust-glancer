@@ -57,6 +57,8 @@ pub struct BuildCheckpoint {
     pub active_bytes: Option<usize>,
     /// Runtime resident memory reported by the executable, if available.
     pub resident_bytes: Option<usize>,
+    /// Runtime mapped memory reported by the executable, if available.
+    pub mapped_bytes: Option<usize>,
 }
 
 /// Process allocator counters sampled by the executable during a profiled build.
@@ -65,6 +67,7 @@ pub struct BuildProcessMemory {
     pub allocated_bytes: usize,
     pub active_bytes: usize,
     pub resident_bytes: usize,
+    pub mapped_bytes: usize,
 }
 
 pub type ProcessMemorySampler = Box<dyn FnMut() -> Option<BuildProcessMemory>>;
@@ -358,6 +361,7 @@ impl BuildProfiler {
             allocated_bytes: process_memory.map(|memory| memory.allocated_bytes),
             active_bytes: process_memory.map(|memory| memory.active_bytes),
             resident_bytes: process_memory.map(|memory| memory.resident_bytes),
+            mapped_bytes: process_memory.map(|memory| memory.mapped_bytes),
         });
     }
 

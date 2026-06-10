@@ -55,7 +55,7 @@ fn def_map_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
         .counter(ItemsCount::new(fixture.def_map_imports))
         .with_inputs(|| {
             (
-                fixture.parse.clone(),
+                fixture.parse_after_item_tree.clone(),
                 fixture.item_tree.clone(),
                 fixture.names_after_item_tree.clone(),
             )
@@ -90,7 +90,7 @@ fn body_ir_db(bencher: Bencher<'_, '_>, target: BenchTarget) {
         .counter(ItemsCount::new(fixture.body_expressions))
         .with_inputs(|| {
             (
-                fixture.parse.clone(),
+                fixture.parse_after_item_tree.clone(),
                 fixture.names_after_semantic_ir.clone(),
             )
         })
