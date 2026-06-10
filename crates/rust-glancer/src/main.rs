@@ -45,7 +45,7 @@ enum Command {
         #[clap(
             long = "indexing-preference",
             value_enum,
-            default_value = "lower-peak-memory"
+            default_value_t = analyze::CliIndexingPreference::default()
         )]
         indexing_preference: analyze::CliIndexingPreference,
         /// Target triple used to filter Cargo metadata. Defaults to the current rustc host target.

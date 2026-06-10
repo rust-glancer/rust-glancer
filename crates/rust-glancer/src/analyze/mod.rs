@@ -1,4 +1,4 @@
-use std::{io::Write as _, path::PathBuf, time::Instant};
+use std::{fmt as std_fmt, io::Write as _, path::PathBuf, time::Instant};
 
 use anyhow::Context as _;
 use clap::ValueEnum;
@@ -49,6 +49,27 @@ impl From<CliIndexingPreference> for IndexingPerformancePreference {
             CliIndexingPreference::LowerPeakMemory => Self::LowerPeakMemory,
             CliIndexingPreference::FasterBuilds => Self::FasterBuilds,
         }
+    }
+}
+
+impl From<IndexingPerformancePreference> for CliIndexingPreference {
+    fn from(preference: IndexingPerformancePreference) -> Self {
+        match preference {
+            IndexingPerformancePreference::LowerPeakMemory => Self::LowerPeakMemory,
+            IndexingPerformancePreference::FasterBuilds => Self::FasterBuilds,
+        }
+    }
+}
+
+impl Default for CliIndexingPreference {
+    fn default() -> Self {
+        IndexingPerformancePreference::default().into()
+    }
+}
+
+impl std_fmt::Display for CliIndexingPreference {
+    fn fmt(&self, f: &mut std_fmt::Formatter<'_>) -> std_fmt::Result {
+        f.write_str(IndexingPerformancePreference::from(*self).config_name())
     }
 }
 

@@ -6,9 +6,9 @@ use rg_def_map::DefMapPerformancePreference;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum IndexingPerformancePreference {
     /// Prefer lower peak memory when a build phase has to choose a speed/memory trade-off.
-    #[default]
     LowerPeakMemory,
     /// Prefer faster indexing when a build phase has to choose a speed/memory trade-off.
+    #[default]
     FasterBuilds,
 }
 
@@ -64,5 +64,13 @@ mod tests {
                 "{name}",
             );
         }
+    }
+
+    #[test]
+    fn defaults_to_faster_builds() {
+        assert_eq!(
+            IndexingPerformancePreference::default(),
+            IndexingPerformancePreference::FasterBuilds,
+        );
     }
 }

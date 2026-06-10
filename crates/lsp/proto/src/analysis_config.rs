@@ -50,9 +50,10 @@ impl PackageResidencyPolicy {
 }
 
 /// Protocol-level indexing trade-off requested by an LSP client.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub enum IndexingPerformancePreference {
     LowerPeakMemory,
+    #[default]
     FasterBuilds,
 }
 
@@ -169,12 +170,11 @@ impl AnalysisConfig {
 impl Default for AnalysisConfig {
     fn default() -> Self {
         Self {
-            // LSP optimizes for low steady-state memory by default. Workspace and local path
-            // dependencies are the packages users are most likely to edit by hand, so they remain
-            // resident while registry/git dependencies can be offloaded.
+            // LSP keeps the packages users are most likely to edit resident, but otherwise favors
+            // fast initial indexing unless a client explicitly asks to lower peak memory.
             package_residency_policy: PackageResidencyPolicy::WorkspaceAndPathDepsResident,
             cargo_metadata_config: CargoMetadataConfig::default(),
-            indexing_preference: IndexingPerformancePreference::LowerPeakMemory,
+            indexing_preference: IndexingPerformancePreference::default(),
         }
     }
 }
@@ -202,7 +202,7 @@ mod tests {
         );
         assert_eq!(
             config.indexing_preference,
-            IndexingPerformancePreference::LowerPeakMemory,
+            IndexingPerformancePreference::FasterBuilds,
         );
     }
 
