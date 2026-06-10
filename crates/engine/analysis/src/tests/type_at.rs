@@ -363,6 +363,57 @@ pub fn use_it() {
 }
 
 #[test]
+fn propagates_record_field_initializer_expected_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_record_field_expected_type_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Pair {
+    left: u64,
+    right: f32,
+    nested: (u64, f32),
+}
+
+pub fn use_it() {
+    let _pair = Pair {
+        left: 1$type_left$,
+        right: 1.0$type_right$,
+        nested: (1$type_nested_int$, 1.0$type_nested_float$)$type_nested$,
+    };
+}
+"#,
+        &[
+            AnalysisQuery::ty("record integer field initializer", "type_left"),
+            AnalysisQuery::ty("record float field initializer", "type_right"),
+            AnalysisQuery::ty("record tuple integer field", "type_nested_int"),
+            AnalysisQuery::ty("record tuple float field", "type_nested_float"),
+            AnalysisQuery::ty("record tuple field initializer", "type_nested"),
+        ],
+        expect![[r#"
+            record integer field initializer
+            - u64
+
+            record float field initializer
+            - f32
+
+            record tuple integer field
+            - u64
+
+            record tuple float field
+            - f32
+
+            record tuple field initializer
+            - (u64, f32)
+        "#]],
+    );
+}
+
+#[test]
 fn returns_types_for_references_try_and_await_wrappers() {
     check_analysis_queries(
         r#"

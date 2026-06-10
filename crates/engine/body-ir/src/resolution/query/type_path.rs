@@ -6,7 +6,7 @@
 use rg_ir_model::{
     AssocItemId, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef, Path,
     PathSegment, ScopeId, SemanticItemRef, TypeAliasRef, TypePathResolution,
-    items::{TypePath, TypeRef},
+    items::{FieldKey, TypePath, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, NameResolutionFilter, TypePathContext};
 use rg_package_store::PackageStoreError;
@@ -95,6 +95,27 @@ where
     ) -> Result<UniqueVec<NominalTy>, PackageStoreError> {
         let context = self.context_for_function(function, self.context.body().owner_module())?;
         self.self_nominal_tys_for_context(context)
+    }
+
+    /// Resolves the declared type of a field as seen through a concrete nominal owner type.
+    pub(crate) fn field_ty_for_nominal_type(
+        &self,
+        ty: &NominalTy,
+        field_key: &FieldKey,
+    ) -> Result<Option<Ty>, PackageStoreError> {
+        let item_query = self.context.item_query();
+        let Some(field_ref) = item_query.field_for_type(ty.def, field_key)? else {
+            return Ok(None);
+        };
+        let Some(field_data) = item_query.field_data(field_ref)? else {
+            return Ok(None);
+        };
+
+        Ok(Some(
+            self.type_ref(TypeRefUseSite::Module(field_data.owner_module))
+                .with_subst(&self.semantic_type_subst(ty)?)
+                .resolve(&field_data.field.ty)?,
+        ))
     }
 
     pub(super) fn self_nominal_tys_for_context(

@@ -10,7 +10,7 @@ use rg_package_store::PackageStoreError;
 use rg_ty::Ty;
 
 use crate::{
-    ir::{ExprKind, ExprWrapperKind, StmtKind},
+    ir::{ExprKind, ExprWrapperKind, RecordExprField, StmtKind},
     resolution::TypeRefUseSite,
 };
 
@@ -41,12 +41,14 @@ where
         Ok(())
     }
 
-    /// Walks statement-level expected-type sources and lets expression hooks push them inward.
+    /// Walks direct expected-type sources and lets expression hooks push them inward.
     fn constrain_expected_types(&mut self) -> Result<(), PackageStoreError> {
         for statement_idx in 0..self.pass.body.statements().len() {
             self.constrain_statement_expected_types(StmtId(statement_idx))?;
         }
-        self.constrain_function_call_argument_expected_types()?;
+        for expr_idx in 0..self.pass.body.exprs().len() {
+            self.constrain_expr_expected_types(ExprId(expr_idx))?;
+        }
         self.constrain_function_return_expected_types()?;
 
         Ok(())
@@ -92,34 +94,72 @@ where
         Ok(())
     }
 
-    fn constrain_function_call_argument_expected_types(&mut self) -> Result<(), PackageStoreError> {
-        for expr_idx in 0..self.pass.body.exprs().len() {
-            let expr = ExprId(expr_idx);
-            let ExprKind::Call {
+    fn constrain_expr_expected_types(&mut self, expr: ExprId) -> Result<(), PackageStoreError> {
+        let kind = self.pass.body.expr_unchecked(expr).kind.clone();
+        match kind {
+            ExprKind::Call {
                 callee: Some(callee),
                 args,
-            } = self.pass.body.expr_unchecked(expr).kind.clone()
-            else {
+            } => self.constrain_function_call_argument_expected_types(callee, args),
+            ExprKind::Record { fields, .. } => {
+                self.constrain_record_field_initializer_expected_types(expr, fields)
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn constrain_function_call_argument_expected_types(
+        &mut self,
+        callee: ExprId,
+        args: Vec<ExprId>,
+    ) -> Result<(), PackageStoreError> {
+        // Only a single resolved callee gives us trustworthy parameter evidence. Ambiguous calls
+        // keep their already-computed return type but do not push expectations inward.
+        let Some(param_tys) = self
+            .pass
+            .context()
+            .callable_returns()
+            .function_call_param_tys(callee)?
+        else {
+            return Ok(());
+        };
+        if param_tys.len() != args.len() {
+            return Ok(());
+        }
+
+        for (arg, expected_ty) in args.into_iter().zip(param_tys) {
+            self.constrain_expr_with_expected(arg, &expected_ty);
+        }
+
+        Ok(())
+    }
+
+    fn constrain_record_field_initializer_expected_types(
+        &mut self,
+        record: ExprId,
+        fields: Vec<RecordExprField>,
+    ) -> Result<(), PackageStoreError> {
+        let [record_ty] = self.pass.body.expr_ty_unchecked(record).as_nominals() else {
+            return Ok(());
+        };
+        let record_ty = record_ty.clone();
+
+        for field in fields {
+            let Some(value) = field.value else {
                 continue;
             };
-
-            // Only a single resolved callee gives us trustworthy parameter evidence. Ambiguous
-            // calls keep their already-computed return type but do not push expectations inward.
-            let Some(param_tys) = self
+            // Record field initializers are checked against the declared field type, with generic
+            // arguments from the record type applied before the expectation reaches the value.
+            let Some(expected_ty) = self
                 .pass
                 .context()
-                .callable_returns()
-                .function_call_param_tys(callee)?
+                .type_path_query()
+                .field_ty_for_nominal_type(&record_ty, &field.key)?
             else {
                 continue;
             };
-            if param_tys.len() != args.len() {
-                continue;
-            }
 
-            for (arg, expected_ty) in args.into_iter().zip(param_tys) {
-                self.constrain_expr_with_expected(arg, &expected_ty);
-            }
+            self.constrain_expr_with_expected(value, &expected_ty);
         }
 
         Ok(())

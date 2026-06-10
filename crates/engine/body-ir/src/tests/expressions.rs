@@ -541,12 +541,12 @@ pub fn use_it(id: u8, name: u8) -> User {
                 initializer
                   expr e4 record User -> item struct body_record_expr_fixture[lib]::crate::User => nominal struct body_record_expr_fixture[lib]::crate::User @ 8:20-8:38
                     field id
-                      expr e3 literal int `2` => i32 @ 8:31-8:32
+                      expr e3 literal int `2` => u8 @ 8:31-8:32
                     spread @ 8:34-8:36
               tail
                 expr e7 record User -> item struct body_record_expr_fixture[lib]::crate::User => nominal struct body_record_expr_fixture[lib]::crate::User @ 9:5-9:27
                   field id
-                    expr e5 literal int `1` => i32 @ 9:16-9:17
+                    expr e5 literal int `1` => u8 @ 9:16-9:17
                   spread @ 9:19-9:25
                     expr e6 path base -> local v2 => nominal struct body_record_expr_fixture[lib]::crate::User @ 9:21-9:25
         "#]],
