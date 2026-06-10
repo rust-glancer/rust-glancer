@@ -4,9 +4,10 @@
 //! query checks those scopes first and then falls back to the semantic/def-map context.
 
 use rg_ir_model::{
-    AssocItemId, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef, Path,
-    PathSegment, ScopeId, SemanticItemRef, TypeAliasRef, TypePathResolution,
-    items::{FieldKey, TypePath, TypeRef},
+    AssocItemId, DefId, DefMapRef, EnumVariantRef, FunctionRef, ImplRef, ItemOwner, ModuleId,
+    ModuleRef, Path, PathSegment, ScopeId, SemanticItemRef, TypeAliasRef, TypeDefId,
+    TypePathResolution,
+    items::{FieldItem, FieldKey, FieldList, TypePath, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, NameResolutionFilter, TypePathContext};
 use rg_package_store::PackageStoreError;
@@ -115,6 +116,35 @@ where
             self.type_ref(TypeRefUseSite::Module(field_data.owner_module))
                 .with_subst(&self.semantic_type_subst(ty)?)
                 .resolve(&field_data.field.ty)?,
+        ))
+    }
+
+    /// Resolves the declared payload type for an enum variant field.
+    pub(crate) fn variant_field_ty_for_enum_variant(
+        &self,
+        enum_ty: &NominalTy,
+        variant_ref: EnumVariantRef,
+        field_key: &FieldKey,
+    ) -> Result<Option<Ty>, PackageStoreError> {
+        let TypeDefId::Enum(enum_id) = enum_ty.def.id else {
+            return Ok(None);
+        };
+        if variant_ref.origin != enum_ty.def.origin || variant_ref.enum_id != enum_id {
+            return Ok(None);
+        }
+
+        let item_query = self.context.item_query();
+        let Some(variant_data) = item_query.enum_variant_data(variant_ref)? else {
+            return Ok(None);
+        };
+        let Some(field) = variant_field(&variant_data.variant.fields, field_key) else {
+            return Ok(None);
+        };
+
+        Ok(Some(
+            self.type_ref(TypeRefUseSite::Module(variant_data.owner_module))
+                .with_subst(&self.semantic_type_subst(enum_ty)?)
+                .resolve(&field.ty)?,
         ))
     }
 
@@ -434,6 +464,19 @@ where
             .generic_params_for_type_def(ty.def)?
             .map(|generics| TypeSubst::from_generics(generics, &ty.args))
             .unwrap_or_else(TypeSubst::new))
+    }
+}
+
+fn variant_field<'a>(fields: &'a FieldList, key: &FieldKey) -> Option<&'a FieldItem> {
+    match key {
+        FieldKey::Named(_) => fields
+            .fields()
+            .iter()
+            .find(|field| field.key.as_ref() == Some(key)),
+        FieldKey::Tuple(index) => fields
+            .fields()
+            .get(*index)
+            .filter(|field| field.key.as_ref() == Some(key)),
     }
 }
 

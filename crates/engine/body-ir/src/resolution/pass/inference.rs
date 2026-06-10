@@ -4,13 +4,17 @@
 //! constraints over the parallel inference view and writes the finalized inference facts back into
 //! Body IR.
 
-use rg_ir_model::{BindingId, ExprId, ScopeId, StmtId, items::TypeRef};
+use rg_ir_model::{
+    BindingId, ExprId, ScopeId, StmtId,
+    identity::DeclarationRef,
+    items::{FieldKey, TypeRef},
+};
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_ty::Ty;
 
 use crate::{
-    ir::{ExprKind, ExprWrapperKind, RecordExprField, StmtKind},
+    ir::{ExprKind, ExprWrapperKind, RecordExprField, StmtKind, resolved::BodyResolution},
     resolution::TypeRefUseSite,
 };
 
@@ -100,7 +104,7 @@ where
             ExprKind::Call {
                 callee: Some(callee),
                 args,
-            } => self.constrain_function_call_argument_expected_types(callee, args),
+            } => self.constrain_call_argument_expected_types(expr, callee, args),
             ExprKind::Record { fields, .. } => {
                 self.constrain_record_field_initializer_expected_types(expr, fields)
             }
@@ -108,12 +112,22 @@ where
         }
     }
 
-    fn constrain_function_call_argument_expected_types(
+    fn constrain_call_argument_expected_types(
         &mut self,
+        call: ExprId,
         callee: ExprId,
         args: Vec<ExprId>,
     ) -> Result<(), PackageStoreError> {
-        // Only a single resolved callee gives us trustworthy parameter evidence. Ambiguous calls
+        self.constrain_function_call_argument_expected_types(callee, &args)?;
+        self.constrain_enum_variant_payload_expected_types(call, callee, args)
+    }
+
+    fn constrain_function_call_argument_expected_types(
+        &mut self,
+        callee: ExprId,
+        args: &[ExprId],
+    ) -> Result<(), PackageStoreError> {
+        // Only a single resolved function gives us trustworthy parameter evidence. Ambiguous calls
         // keep their already-computed return type but do not push expectations inward.
         let Some(param_tys) = self
             .pass
@@ -127,7 +141,46 @@ where
             return Ok(());
         }
 
-        for (arg, expected_ty) in args.into_iter().zip(param_tys) {
+        for (arg, expected_ty) in args.iter().zip(param_tys) {
+            self.constrain_expr_with_expected(*arg, &expected_ty);
+        }
+
+        Ok(())
+    }
+
+    fn constrain_enum_variant_payload_expected_types(
+        &mut self,
+        call: ExprId,
+        callee: ExprId,
+        args: Vec<ExprId>,
+    ) -> Result<(), PackageStoreError> {
+        let BodyResolution::Declarations(declarations) = self.pass.body.expr_resolution(callee)
+        else {
+            return Ok(());
+        };
+        let [DeclarationRef::EnumVariant(variant_ref)] = declarations.as_slice() else {
+            return Ok(());
+        };
+        let variant_ref = *variant_ref;
+        let [enum_ty] = self.pass.body.expr_ty_unchecked(call).as_nominals() else {
+            return Ok(());
+        };
+        let enum_ty = enum_ty.clone();
+
+        for (index, arg) in args.into_iter().enumerate() {
+            // Enum tuple-variant constructors expose payload fields positionally at the call site.
+            // Record variant syntax is a separate expression shape and is intentionally not
+            // handled by this hook.
+            let field_key = FieldKey::Tuple(index);
+            let Some(expected_ty) = self
+                .pass
+                .context()
+                .type_path_query()
+                .variant_field_ty_for_enum_variant(&enum_ty, variant_ref, &field_key)?
+            else {
+                continue;
+            };
+
             self.constrain_expr_with_expected(arg, &expected_ty);
         }
 
