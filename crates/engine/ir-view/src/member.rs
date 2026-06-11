@@ -8,8 +8,9 @@
 use rg_ir_model::Path;
 use rg_ir_model::items::{Documentation, FieldKey, ParamItem};
 use rg_ir_model::{
-    BodyRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TargetRef, TypePathResolution,
-    hir::items::{FieldData, FunctionData},
+    BodyRef, EnumVariantRef, FieldRef, FunctionRef, ItemOwner, ScopeId, TargetRef, TypeDefId,
+    TypePathResolution,
+    hir::items::{EnumVariantData, FieldData, FunctionData},
 };
 use rg_ir_storage::{ItemStoreQuery, TargetItemQuery};
 use rg_ty::MemberMethodOrigin;
@@ -95,6 +96,27 @@ impl<'a> MemberFunction<'a> {
 
     fn docs(&self) -> Option<&'a Documentation> {
         self.data.docs.as_ref()
+    }
+}
+
+/// Borrowed data for one resolved enum variant constructor.
+#[derive(Debug, Clone, Copy)]
+pub struct MemberEnumVariant<'a> {
+    variant: EnumVariantRef,
+    data: EnumVariantData<'a>,
+}
+
+impl<'a> MemberEnumVariant<'a> {
+    pub fn variant_ref(&self) -> EnumVariantRef {
+        self.variant
+    }
+
+    pub fn label(&self) -> &'a str {
+        self.data.variant.name.as_str()
+    }
+
+    pub fn docs_text(&self) -> Option<String> {
+        self.data.variant.docs.as_ref().map(Documentation::text)
     }
 }
 
@@ -202,6 +224,50 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(ItemStoreQuery::new(self.db)
             .function_data(function)?
             .map(|data| MemberFunction { function, data }))
+    }
+
+    pub fn enum_variant(
+        &self,
+        variant: EnumVariantRef,
+    ) -> anyhow::Result<Option<MemberEnumVariant<'_>>> {
+        Ok(ItemStoreQuery::new(self.db)
+            .enum_variant_data(variant)?
+            .map(|data| MemberEnumVariant { variant, data }))
+    }
+
+    pub fn enum_variant_candidates_for_body_type_path(
+        &self,
+        body: BodyRef,
+        scope: ScopeId,
+        path: &Path,
+    ) -> anyhow::Result<Vec<EnumVariantRef>> {
+        let Some(resolution) =
+            BodyResolutionView::new(self.db).type_path_resolution(body, scope, path)?
+        else {
+            return Ok(Vec::new());
+        };
+        let (TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types)) =
+            resolution
+        else {
+            return Ok(Vec::new());
+        };
+
+        let item_query = ItemStoreQuery::new(self.db);
+        let mut variants = Vec::new();
+        for ty in types {
+            let TypeDefId::Enum(enum_id) = ty.id else {
+                continue;
+            };
+            let Some(data) = item_query.enum_data_for_type_def(ty)? else {
+                continue;
+            };
+            variants.extend((0..data.variants.len()).map(|index| EnumVariantRef {
+                origin: ty.origin,
+                enum_id,
+                index,
+            }));
+        }
+        Ok(variants)
     }
 
     pub fn method_candidates_for_ty<'view>(

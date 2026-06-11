@@ -10,7 +10,7 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::TargetRef;
 
 use super::{affected_packages, package};
-use crate::project::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange};
+use crate::project::{AnalysisChangeSummary, ChangedFile, Project, SavedFileChange, subset};
 
 pub(super) fn apply_source_change(
     project: &mut Project,
@@ -117,14 +117,18 @@ fn targets_for_changed_files(
         .iter()
         .map(|changed_file| changed_file.package)
         .collect::<Vec<_>>();
-    let snapshot = project.snapshot();
+
     // Reporting changed targets only needs package-local file ownership. Avoid materializing
     // dependency closures on the save path when semantic resolution is not involved.
-    let analysis = snapshot.shallow_analysis(&packages)?;
+    let subset = subset::packages_only(project.state.workspace(), &packages);
+    let def_map = project.state.def_map_read_txn_for_subset(&subset);
     let mut targets = Vec::new();
 
     for changed_file in changed_files {
-        for target_ref in analysis.targets_for_file(changed_file.package, changed_file.file)? {
+        for target_ref in def_map
+            .targets_for_file(changed_file.package, changed_file.file)
+            .context("while attempting to find target ownership for changed file")?
+        {
             if !targets.contains(&target_ref) {
                 targets.push(target_ref);
             }

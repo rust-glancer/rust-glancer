@@ -8,17 +8,11 @@ use crate::{
     ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, RenameEdit, RenameResult,
     RenameTarget, SourceTextView, SymbolAt, WorkspaceSymbol,
 };
-use rg_body_ir::{BodyIrReadTxn, BodyOwner, ExprData, ExprKind, testonly::BodyIrFixture};
-use rg_def_map::{PackageSlot, testonly::DefMapFixture};
-use rg_ir_model::{
-    BodyRef, DefMapRef, FunctionRef, ItemOwner, ModuleRef, TargetRef, TraitRef, TypeDefId,
-    TypeDefRef,
-};
-use rg_ir_storage::{DefMap, ItemStore, ItemStoreQuery};
-use rg_ir_view::IndexedViewDb;
-use rg_package_store::PackageLoader;
+use rg_def_map::testonly::DefMapFixture;
+use rg_ir_model::{BodySource, ExprData, ExprKind, PackageSlot, TargetRef};
+use rg_ir_view::testonly::ViewFixture;
 use rg_parse::{FileId, ParseDb, Span};
-use rg_semantic_ir::{SemanticIrReadTxn, testonly::SemanticIrFixture};
+use rg_semantic_ir::testonly::SemanticIrFixture;
 use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
 use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers};
@@ -303,7 +297,7 @@ enum ReferenceQueryScope {
 }
 
 struct AnalysisFixtureDb {
-    fixture: BodyIrFixture,
+    fixture: ViewFixture,
 }
 
 impl AnalysisFixtureDb {
@@ -320,39 +314,19 @@ impl AnalysisFixtureDb {
         let def_map = DefMapFixture::build_from_crate(fixture, workspace);
         let semantic_ir = SemanticIrFixture::build_from_def_map(def_map);
         Self {
-            fixture: BodyIrFixture::build_from_semantic_ir(semantic_ir),
+            fixture: ViewFixture::build_from_semantic_ir(semantic_ir),
         }
     }
 
     fn analysis(&self) -> Analysis<'_> {
-        let view_db = IndexedViewDb::new(
-            self.fixture
-                .def_map_db()
-                .read_txn(PackageLoader::resident_only("resident analysis fixture")),
-            self.fixture
-                .semantic_ir_db()
-                .read_txn(PackageLoader::resident_only("resident analysis fixture")),
-            self.fixture
-                .body_ir_db()
-                .read_txn(PackageLoader::resident_only("resident analysis fixture")),
-        );
-        Analysis::new(view_db, SourceTextView::new(self.fixture.parse_db()))
+        Analysis::new(
+            self.fixture.view_db(),
+            SourceTextView::new(self.fixture.parse_db()),
+        )
     }
 
     fn parse_db(&self) -> &ParseDb {
         self.fixture.parse_db()
-    }
-
-    fn resident_def_map(&self, target: TargetRef) -> Option<&DefMap> {
-        self.fixture.resident_def_map(target)
-    }
-
-    fn resident_target_ir(&self, target: TargetRef) -> Option<&ItemStore> {
-        self.fixture.resident_target_ir(target)
-    }
-
-    fn resident_body_item_store(&self, body: BodyRef) -> Option<&ItemStore> {
-        self.fixture.resident_body_item_store(body)
     }
 
     fn target_and_file_for_path(
@@ -444,14 +418,7 @@ impl AnalysisFixtureDb {
     }
 
     fn target_owns_file(&self, target: TargetRef, file_id: FileId) -> bool {
-        let def_map = self
-            .resident_def_map(target)
-            .expect("selected fixture target should have a def map");
-
-        def_map
-            .modules()
-            .iter()
-            .any(|module| module.origin.contains_file(file_id))
+        self.fixture.target_owns_file(target, file_id)
     }
 }
 
@@ -695,19 +662,15 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         match symbol {
             SymbolAt::FunctionBody { body } => {
                 let body = body.body_ir();
-                let body_ir = self.body_ir_txn();
-                let body_data = body_ir
-                    .body_data(body)
-                    .expect("body ref should load while rendering analysis symbol")
-                    .expect("body ref should exist while rendering analysis symbol");
+                let source = self
+                    .db
+                    .fixture
+                    .resident_body_source(body)
+                    .expect("body source should exist while rendering analysis symbol");
                 writeln!(
                     dump,
                     "\n- body @ {}",
-                    self.render_source_span(
-                        body.target.package,
-                        body_data.source().file_id,
-                        body_data.source().span
-                    )
+                    self.render_source_span(body.target.package, source.file_id, source.span)
                 )
                 .expect("string writes should not fail");
             }
@@ -730,13 +693,10 @@ impl<'a> AnalysisQuerySnapshot<'a> {
             }
             SymbolAt::Expr { expr } => {
                 let body = expr.body_ir();
-                let body_ir = self.body_ir_txn();
-                let body_data = body_ir
-                    .body_data(body)
-                    .expect("body ref should load while rendering analysis symbol")
-                    .expect("body ref should exist while rendering analysis symbol");
-                let expr_data = body_data
-                    .expr(expr.expr_id())
+                let expr_data = self
+                    .db
+                    .fixture
+                    .resident_expr(body, expr.expr_id())
                     .expect("expr id should exist while rendering analysis symbol");
                 writeln!(
                     dump,
@@ -1155,7 +1115,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     fn render_opaque_bound(&self, bound: &OpaqueTraitBound) -> String {
         format!(
             "{}{}",
-            self.render_trait_ref(bound.trait_ref),
+            self.db.fixture.render_trait_ref(bound.trait_ref),
             self.render_generic_args(&bound.args)
         )
     }
@@ -1163,7 +1123,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
     fn render_body_nominal_ty(&self, ty: &NominalTy) -> String {
         format!(
             "{}{}",
-            self.render_type_def_ref(ty.def),
+            self.db.fixture.render_type_def_ref(ty.def),
             self.render_generic_args(&ty.args)
         )
     }
@@ -1208,202 +1168,6 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         }
     }
 
-    fn render_type_def_ref(&self, ty: TypeDefRef) -> String {
-        let items = match ty.origin {
-            DefMapRef::Target(target) => self
-                .db
-                .resident_target_ir(target)
-                .expect("target semantic IR should exist while rendering analysis type"),
-            DefMapRef::Body(body) => self
-                .db
-                .resident_body_item_store(body)
-                .expect("body item store should exist while rendering analysis type"),
-        };
-
-        match ty.id {
-            TypeDefId::Struct(id) => {
-                let data = items
-                    .struct_data(id)
-                    .expect("struct id should exist while rendering analysis type");
-                format!(
-                    "struct {}::{}",
-                    self.render_module_ref(data.owner),
-                    data.name
-                )
-            }
-            TypeDefId::Enum(id) => {
-                let data = items
-                    .enum_data(id)
-                    .expect("enum id should exist while rendering analysis type");
-                format!("enum {}::{}", self.render_module_ref(data.owner), data.name)
-            }
-            TypeDefId::Union(id) => {
-                let data = items
-                    .union_data(id)
-                    .expect("union id should exist while rendering analysis type");
-                format!(
-                    "union {}::{}",
-                    self.render_module_ref(data.owner),
-                    data.name
-                )
-            }
-        }
-    }
-
-    fn render_trait_ref(&self, trait_ref: TraitRef) -> String {
-        let items = match trait_ref.origin {
-            DefMapRef::Target(target) => self
-                .db
-                .resident_target_ir(target)
-                .expect("target semantic IR should exist while rendering analysis trait"),
-            DefMapRef::Body(body) => self
-                .db
-                .resident_body_item_store(body)
-                .expect("body item store should exist while rendering analysis trait"),
-        };
-
-        let data = items
-            .trait_data(trait_ref.id)
-            .expect("trait id should exist while rendering analysis type");
-        format!(
-            "trait {}::{}",
-            self.render_module_ref(data.owner),
-            data.name
-        )
-    }
-
-    fn render_function_ref(&self, function_ref: FunctionRef) -> String {
-        let semantic_ir = self.semantic_ir_txn();
-        let item_query = ItemStoreQuery::new(&semantic_ir);
-        let data = item_query
-            .function_data(function_ref)
-            .expect("function ref should load while rendering analysis body item")
-            .expect("function ref should exist while rendering analysis body item");
-        let owner = self.render_item_owner(&item_query, function_ref.origin, data.owner);
-
-        format!("fn {owner}::{}", data.name)
-    }
-
-    fn render_body_owner(&self, owner: BodyOwner) -> String {
-        let semantic_ir = self.semantic_ir_txn();
-        let item_query = ItemStoreQuery::new(&semantic_ir);
-        match owner {
-            BodyOwner::Function(function_ref) => self.render_function_ref(function_ref),
-            BodyOwner::Const(const_ref) => {
-                let data = item_query
-                    .const_data(const_ref)
-                    .expect("const ref should load while rendering analysis body item")
-                    .expect("const ref should exist while rendering analysis body item");
-                let owner = self.render_item_owner(&item_query, const_ref.origin, data.owner);
-                format!("const {owner}::{}", data.name)
-            }
-            BodyOwner::Static(static_ref) => {
-                let data = item_query
-                    .static_data(static_ref)
-                    .expect("static ref should load while rendering analysis body item")
-                    .expect("static ref should exist while rendering analysis body item");
-                format!(
-                    "static {}::{}",
-                    self.render_module_ref(data.owner),
-                    data.name
-                )
-            }
-        }
-    }
-
-    fn render_item_owner(
-        &self,
-        item_query: &ItemStoreQuery<'_, &SemanticIrReadTxn<'_>>,
-        origin: DefMapRef,
-        owner: ItemOwner,
-    ) -> String {
-        match owner {
-            ItemOwner::Module(module_ref) => self.render_module_ref(module_ref),
-            ItemOwner::Trait(trait_id) => {
-                let trait_data = item_query
-                    .trait_data(TraitRef {
-                        origin,
-                        id: trait_id,
-                    })
-                    .expect("trait owner should load while rendering analysis body item")
-                    .expect("trait owner should exist while rendering analysis body item");
-                format!(
-                    "trait {}::{}",
-                    self.render_module_ref(trait_data.owner),
-                    trait_data.name
-                )
-            }
-            ItemOwner::Impl(_) => "impl".to_string(),
-        }
-    }
-
-    fn semantic_ir_txn(&self) -> SemanticIrReadTxn<'_> {
-        self.db
-            .fixture
-            .semantic_ir_db()
-            .read_txn(PackageLoader::resident_only("resident analysis fixture"))
-    }
-
-    fn body_ir_txn(&self) -> BodyIrReadTxn<'_> {
-        self.db
-            .fixture
-            .body_ir_db()
-            .read_txn(PackageLoader::resident_only("resident analysis fixture"))
-    }
-
-    fn render_module_ref(&self, module_ref: ModuleRef) -> String {
-        if let DefMapRef::Body(body_ref) = module_ref.origin {
-            let body_ir = self.body_ir_txn();
-            let body = body_ir
-                .body_data(body_ref)
-                .expect("body module owner should load while rendering analysis module")
-                .expect("body module owner should exist while rendering analysis module");
-            return self.render_body_owner(body.owner());
-        }
-
-        let target_ref = module_ref.origin.origin_target();
-        let package = self
-            .db
-            .parse_db()
-            .packages()
-            .get(target_ref.package.0)
-            .expect("package slot should exist while rendering analysis module");
-        let target = package
-            .target(target_ref.target)
-            .expect("target id should exist while rendering analysis module");
-
-        format!(
-            "{}[{}]::{}",
-            package.package_name(),
-            target.kind,
-            self.module_path(module_ref),
-        )
-    }
-
-    fn module_path(&self, module_ref: ModuleRef) -> String {
-        let module = self
-            .db
-            .resident_def_map(module_ref.origin.origin_target())
-            .expect("target def map should exist while rendering analysis module path")
-            .module(module_ref.module)
-            .expect("module id should exist while rendering analysis module path");
-
-        match module.parent {
-            Some(parent) => {
-                let parent_path = self.module_path(ModuleRef {
-                    origin: module_ref.origin,
-                    module: parent,
-                });
-                let name = module
-                    .name
-                    .as_deref()
-                    .expect("non-root modules should have names");
-                format!("{parent_path}::{name}")
-            }
-            None => "crate".to_string(),
-        }
-    }
-
     fn render_optional_span(
         &self,
         package: PackageSlot,
@@ -1434,7 +1198,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
         )
     }
 
-    fn render_source_text(&self, package: PackageSlot, source: rg_body_ir::BodySource) -> String {
+    fn render_source_text(&self, package: PackageSlot, source: BodySource) -> String {
         self.render_source_text_for_span(package, source.file_id, source.span)
     }
 

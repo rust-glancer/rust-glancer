@@ -86,6 +86,17 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }
     }
 
+    pub fn root_module_file(&self, module_ref: ModuleRef) -> anyhow::Result<Option<FileId>> {
+        let def_maps = DefMapQuery::new(self.db);
+        let Some(module) = def_maps.module_data(module_ref)? else {
+            return Ok(None);
+        };
+        let ModuleOrigin::Root { file_id } = module.origin else {
+            return Ok(None);
+        };
+        Ok(Some(file_id))
+    }
+
     fn module(&self, module_ref: ModuleRef) -> anyhow::Result<Option<Declaration>> {
         let def_maps = DefMapQuery::new(self.db);
         let Some(module) = def_maps.module_data(module_ref)? else {

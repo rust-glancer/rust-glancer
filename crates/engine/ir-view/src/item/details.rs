@@ -1,7 +1,8 @@
 //! Composite declaration details used by editor features.
 //!
-//! Declarations identify source facts, but UI features usually need surrounding presentation
-//! facts as well: docs, display path, symbol kind, and a compact signature.
+//! Declarations identify source facts, but UI features usually need surrounding presentation facts
+//! as well: docs, display path, symbol kind, and a compact signature. Keeping those projections in
+//! the view crate prevents editor-facing analysis code from reaching into storage queries directly.
 
 use rg_ir_model::items::Documentation;
 use rg_ir_model::{
@@ -10,35 +11,61 @@ use rg_ir_model::{
     identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery};
-use rg_ir_view::{
-    IndexedViewDb, display::signature::SignatureRenderer, item::path::PathView, member::MemberView,
+
+use crate::{
+    IndexedViewDb, SymbolKind, display::signature::SignatureRenderer, item::path::PathView,
+    member::MemberView,
 };
 
-use crate::SymbolKind;
-
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct DeclarationDetailsContext {
-    pub(crate) module_display_name: Option<String>,
+pub struct DeclarationDetailsContext {
+    module_display_name: Option<String>,
+}
+
+impl DeclarationDetailsContext {
+    pub fn new(module_display_name: Option<String>) -> Self {
+        Self {
+            module_display_name,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct DeclarationDetails {
-    pub(crate) kind: SymbolKind,
-    pub(crate) path: Option<String>,
-    pub(crate) signature: Option<String>,
-    pub(crate) docs: Option<String>,
+pub struct DeclarationDetails {
+    kind: SymbolKind,
+    path: Option<String>,
+    signature: Option<String>,
+    docs: Option<String>,
 }
 
-pub(crate) struct DeclarationDetailsResolver<'a, 'db> {
+impl DeclarationDetails {
+    pub fn kind(&self) -> SymbolKind {
+        self.kind
+    }
+
+    pub fn signature(&self) -> Option<&str> {
+        self.signature.as_deref()
+    }
+
+    pub fn docs(&self) -> Option<&str> {
+        self.docs.as_deref()
+    }
+
+    pub fn into_parts(self) -> (SymbolKind, Option<String>, Option<String>, Option<String>) {
+        (self.kind, self.path, self.signature, self.docs)
+    }
+}
+
+pub struct DeclarationDetailsView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
 
-impl<'a, 'db> DeclarationDetailsResolver<'a, 'db> {
-    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
         Self { db }
     }
 
-    pub(crate) fn details_for_declaration(
+    pub fn details_for_declaration(
         &self,
         declaration: DeclarationRef,
         context: &DeclarationDetailsContext,
@@ -57,7 +84,7 @@ impl<'a, 'db> DeclarationDetailsResolver<'a, 'db> {
         &self,
         binding_ref: BodyBindingRef,
     ) -> anyhow::Result<Option<DeclarationDetails>> {
-        let Some(body) = self.db.body_data(binding_ref.body)? else {
+        let Some(body) = self.db.body_ir.body_data(binding_ref.body)? else {
             return Ok(None);
         };
         let Some(binding_data) = body.binding(binding_ref.binding) else {

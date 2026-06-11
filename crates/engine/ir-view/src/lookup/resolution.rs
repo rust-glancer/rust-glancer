@@ -13,7 +13,7 @@ use rg_ir_model::{
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery, TypePathContext};
 use rg_ty::ItemPathQuery;
 
-use crate::{IndexedViewDb, body::BodyResolutionView};
+use crate::{IndexedViewDb, body::BodyResolutionView, source::IndexedTypePathScope};
 
 pub struct ResolutionView<'a, 'db>(&'a IndexedViewDb<'db>);
 
@@ -32,6 +32,26 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
             .into_iter()
             .map(DeclarationRef::from)
             .collect())
+    }
+
+    pub fn declarations_for_type_path(
+        &self,
+        scope: IndexedTypePathScope,
+        path: &Path,
+    ) -> anyhow::Result<Vec<DeclarationRef>> {
+        match scope {
+            IndexedTypePathScope::Signature(context) => {
+                let declarations = self.declarations_for_semantic_type_path(context, path)?;
+                if declarations.is_empty() {
+                    self.declarations_for_use_path(context.module, path)
+                } else {
+                    Ok(declarations)
+                }
+            }
+            IndexedTypePathScope::Body(scope) => {
+                self.declarations_for_body_type_path(scope.body_ir(), scope.scope_id(), path)
+            }
+        }
     }
 
     /// Converts declaration-like refs into the canonical declaration identity exposed to queries.

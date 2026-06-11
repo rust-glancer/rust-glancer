@@ -1,7 +1,6 @@
 //! Concrete navigation target projection.
 
 use rg_ir_model::{ModuleRef, identity::DeclarationRef};
-use rg_ir_storage::{DefMapQuery, ModuleOrigin};
 use rg_ir_view::{
     IndexedViewDb,
     item::declaration::{Declaration, DeclarationView},
@@ -52,11 +51,8 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
     }
 
     fn target_for_module(&self, module_ref: ModuleRef) -> anyhow::Result<Option<NavigationTarget>> {
-        let def_maps = DefMapQuery::new(self.0);
-        let Some(module) = def_maps.module_data(module_ref)? else {
-            return Ok(None);
-        };
-        if let ModuleOrigin::Root { file_id } = module.origin {
+        let declarations = DeclarationView::new(self.0);
+        if let Some(file_id) = declarations.root_module_file(module_ref)? {
             // Root modules have no declaration name to jump to, so they navigate to the owning
             // file. Named modules are ordinary declarations.
             return Ok(Some(NavigationTarget {
@@ -68,7 +64,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
             }));
         }
 
-        Ok(DeclarationView::new(self.0)
+        Ok(declarations
             .declaration(DeclarationRef::module(module_ref))?
             .map(|declaration| NavigationTarget {
                 target: declaration.target(),

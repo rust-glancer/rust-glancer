@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Context as _;
 
 use rg_analysis::Analysis;
-use rg_def_map::PackageSlot;
+use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::TargetRef;
 #[cfg(test)]
 use rg_parse::ParseDb;
@@ -32,17 +32,10 @@ impl<'a> ProjectSnapshot<'a> {
         Ok(self.state.analysis(&txn))
     }
 
-    /// Returns an analysis view over exactly the listed packages, without dependency expansion.
-    ///
-    /// This is only suitable for package-local metadata queries such as target/file ownership.
-    /// Semantic queries should use a target-scoped analysis so dependencies are visible too.
-    pub(crate) fn shallow_analysis(
-        &self,
-        packages: &[PackageSlot],
-    ) -> anyhow::Result<Analysis<'a>> {
+    /// Returns a def-map view over exactly the listed packages, without dependency expansion.
+    fn shallow_def_map(&self, packages: &[PackageSlot]) -> DefMapReadTxn<'a> {
         let subset = subset::packages_only(self.state.workspace(), packages);
-        let txn = self.state.read_txn_for_subset(&subset)?;
-        Ok(self.state.analysis(&txn))
+        self.state.def_map_read_txn_for_subset(&subset)
     }
 
     /// Returns targets whose source should be scanned for an explicit references query.
@@ -191,11 +184,13 @@ impl<'a> ProjectSnapshot<'a> {
             .iter()
             .map(|file| file.package)
             .collect::<Vec<_>>();
-        let analysis = self.shallow_analysis(&package_slots)?;
+        let def_map = self.shallow_def_map(&package_slots);
         let mut contexts = Vec::new();
 
         for file in candidates {
-            let targets = analysis.targets_for_file(file.package, file.file)?;
+            let targets = def_map
+                .targets_for_file(file.package, file.file)
+                .context("while attempting to find target ownership for source file")?;
             if targets.is_empty() {
                 continue;
             }
@@ -216,7 +211,9 @@ impl<'a> ProjectSnapshot<'a> {
         package: PackageSlot,
         file: FileId,
     ) -> anyhow::Result<Vec<TargetRef>> {
-        let analysis = self.shallow_analysis(&[package])?;
-        analysis.targets_for_file(package, file)
+        let def_map = self.shallow_def_map(&[package]);
+        def_map
+            .targets_for_file(package, file)
+            .context("while attempting to find target ownership for source file")
     }
 }

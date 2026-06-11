@@ -34,6 +34,7 @@ pub use self::ids::{
 };
 pub use self::path::{Path, PathSegment, last_segment_name};
 pub use self::resolution::TypePathResolution;
+pub use rg_workspace::PackageSlot;
 
 // We have a lot of arenas, and each has to have a unique ID.
 // This macro takes care of boilerplate.

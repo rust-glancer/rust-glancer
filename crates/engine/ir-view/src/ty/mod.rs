@@ -12,7 +12,9 @@ use rg_ir_model::{
 use rg_ir_storage::{ItemStoreQuery, TypePathContext};
 use rg_ty::{ItemPathQuery, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
-use crate::{IndexedViewDb, body::BodyResolutionView, ty::locals::BodyView};
+use crate::{
+    IndexedViewDb, body::BodyResolutionView, source::IndexedTypePathScope, ty::locals::BodyView,
+};
 
 pub struct TyView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
@@ -79,6 +81,19 @@ impl<'a, 'db> TyView<'a, 'db> {
         }
 
         Ok(Self::type_path_resolution_to_ty(resolution))
+    }
+
+    pub fn ty_for_indexed_type_path(
+        &self,
+        scope: IndexedTypePathScope,
+        path: &Path,
+    ) -> anyhow::Result<Ty> {
+        match scope {
+            IndexedTypePathScope::Signature(context) => self.ty_for_type_path(context, path),
+            IndexedTypePathScope::Body(scope) => {
+                self.ty_for_body_type_path(scope.body_ir(), scope.scope_id(), path)
+            }
+        }
     }
 
     pub fn ty_for_body_type_path(

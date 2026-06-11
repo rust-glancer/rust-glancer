@@ -25,7 +25,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Option<TypePathResolution>> {
-        let Some(body) = self.db.body_data(body_ref)? else {
+        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(None);
         };
 
@@ -42,7 +42,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let Some(body) = self.db.body_data(body_ref)? else {
+        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
 
@@ -57,7 +57,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Ty> {
-        let Some(body) = self.db.body_data(body_ref)? else {
+        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(Ty::Unknown);
         };
 
@@ -71,7 +71,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         body_ref: BodyRef,
         ty: &Ty,
     ) -> anyhow::Result<Option<Vec<MemberMethodCandidateRef>>> {
-        let Some(body) = self.db.body_data(body_ref)? else {
+        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
             return Ok(None);
         };
 

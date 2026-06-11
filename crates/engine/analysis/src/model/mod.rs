@@ -16,7 +16,5 @@ pub use inlay_hints::{InlayHint, InlayHintKind, InlayHintPosition};
 pub use navigation::{NavigationTarget, NavigationTargetKind};
 pub use references::ReferenceLocation;
 pub use rename::{RenameEdit, RenameResult, RenameTarget};
-pub use symbol::{SymbolAt, TypePathScopeRef};
+pub use symbol::SymbolAt;
 pub use symbols::{DocumentSymbol, WorkspaceSymbol};
-
-pub(crate) use symbol::TypePathScopeRepr;

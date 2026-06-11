@@ -4,7 +4,7 @@ use rg_ir_model::identity::DeclarationRef;
 use rg_ir_view::{IndexedViewDb, lookup::resolution::ResolutionView, ty::TyView};
 use rg_ty::Ty;
 
-use crate::model::{SymbolAt, TypePathScopeRepr};
+use crate::model::SymbolAt;
 
 pub(crate) struct SourceSymbolResolver<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
@@ -26,22 +26,9 @@ impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
                 Ok(vec![resolution.canonical_declaration(declaration)?])
             }
             SymbolAt::Expr { expr } => resolution.declarations_for_expr(expr),
-            SymbolAt::TypePath { scope, path, .. } => match scope.repr() {
-                TypePathScopeRepr::Signature(context) => {
-                    let declarations =
-                        resolution.declarations_for_semantic_type_path(context, &path)?;
-                    if declarations.is_empty() {
-                        resolution.declarations_for_use_path(context.module, &path)
-                    } else {
-                        Ok(declarations)
-                    }
-                }
-                TypePathScopeRepr::Body(scope) => resolution.declarations_for_body_type_path(
-                    scope.body_ir(),
-                    scope.scope_id(),
-                    &path,
-                ),
-            },
+            SymbolAt::TypePath { scope, path, .. } => {
+                resolution.declarations_for_type_path(scope, &path)
+            }
             SymbolAt::ValuePath { scope, path, .. } => resolution.declarations_for_body_value_path(
                 scope.body_ir(),
                 scope.scope_id(),
@@ -70,14 +57,9 @@ impl<'a, 'db> SourceSymbolResolver<'a, 'db> {
                     ResolutionView::new(self.db).canonical_declaration(declaration)?;
                 ty_view.ty_for_declaration(declaration)?
             }
-            SymbolAt::TypePath { scope, path, .. } => match scope.repr() {
-                TypePathScopeRepr::Signature(context) => {
-                    Some(ty_view.ty_for_type_path(context, &path)?)
-                }
-                TypePathScopeRepr::Body(scope) => {
-                    Some(ty_view.ty_for_body_type_path(scope.body_ir(), scope.scope_id(), &path)?)
-                }
-            },
+            SymbolAt::TypePath { scope, path, .. } => {
+                Some(ty_view.ty_for_indexed_type_path(scope, &path)?)
+            }
             SymbolAt::ValuePath { scope, path, .. } => {
                 Some(ty_view.ty_for_body_value_path(scope.body_ir(), scope.scope_id(), &path)?)
             }
