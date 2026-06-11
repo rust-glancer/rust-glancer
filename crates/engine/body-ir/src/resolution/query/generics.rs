@@ -1,15 +1,18 @@
 //! Generic substitution helpers for body-aware item projection.
 //!
 //! Field, associated const, and associated type projection all need the same receiver-driven
-//! generic bindings. This query keeps those bindings in one place while leaving syntax-level
-//! generic argument lowering in type-ref resolution.
+//! generic bindings. Explicit generic arguments also produce substitutions, while the type parts
+//! inside those arguments still resolve through the type-ref query.
 
-use rg_ir_model::{DefMapRef, ImplRef, ItemOwner};
+use rg_ir_model::{
+    DefMapRef, ImplRef, ItemOwner,
+    items::{GenericArg as ItemGenericArg, GenericParams},
+};
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{NominalTy, TypeSubst};
+use rg_ty::{GenericArg, NominalTy, TypeSubst};
 
-use crate::resolution::BodyResolutionContext;
+use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
 pub(crate) struct BodyGenericsQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
@@ -60,5 +63,25 @@ where
         }
 
         Ok(subst)
+    }
+
+    pub(crate) fn subst_for_explicit_args(
+        &self,
+        generics: &GenericParams,
+        args: &[ItemGenericArg],
+        use_site: TypeRefUseSite,
+    ) -> Result<TypeSubst, PackageStoreError> {
+        if args.is_empty() {
+            return Ok(TypeSubst::new());
+        }
+
+        // Explicit arguments can contain type syntax and associated-type bindings, so the
+        // generics query owns the substitution while type-ref resolution owns the syntax lowering.
+        let arg_resolver = self.context.type_refs(use_site);
+        let args = args
+            .iter()
+            .map(|arg| arg_resolver.resolve_generic_arg(arg))
+            .collect::<Result<Vec<GenericArg>, _>>()?;
+        Ok(TypeSubst::from_generics(generics, &args))
     }
 }

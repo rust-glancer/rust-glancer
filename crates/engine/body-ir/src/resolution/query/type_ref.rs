@@ -11,7 +11,8 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
-use rg_ty::{GenericArg, RefMutability, Ty, TypeSubst};
+use rg_std::UniqueVec;
+use rg_ty::{GenericArg, NominalTy, RefMutability, Ty, TypeSubst};
 
 use crate::resolution::BodyResolutionContext;
 
@@ -21,7 +22,13 @@ pub(crate) enum TypeRefUseSite {
     Module(ModuleRef),
     OwnerContext(TypePathContext),
     Function(FunctionRef),
-    BodyOwner,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TypeRefAnchor {
+    Scope(ScopeId),
+    BodyContext(TypePathContext),
+    PlainContext(TypePathContext),
 }
 
 pub(crate) struct TypeRefResolutionQuery<'query, D, I> {
@@ -52,142 +59,118 @@ where
     }
 
     pub(crate) fn resolve(&self, ty: &TypeRef) -> Result<Ty, PackageStoreError> {
-        match self.use_site {
-            TypeRefUseSite::Scope(scope) => self.resolve_in_scope(ty, scope),
-            TypeRefUseSite::Module(module) => self.resolve_in_module(ty, module),
-            TypeRefUseSite::OwnerContext(context) => self.resolve_in_owner_context(ty, context),
+        let anchor = self.anchor_for_use_site(self.use_site)?;
+        self.resolve_at(ty, anchor)
+    }
+
+    fn anchor_for_use_site(
+        &self,
+        use_site: TypeRefUseSite,
+    ) -> Result<TypeRefAnchor, PackageStoreError> {
+        match use_site {
+            TypeRefUseSite::Scope(scope) => Ok(TypeRefAnchor::Scope(scope)),
+            TypeRefUseSite::Module(module) => Ok(self.anchor_for_module(module)),
+            TypeRefUseSite::OwnerContext(context) => Ok(self.anchor_for_owner_context(context)),
             TypeRefUseSite::Function(function) => {
                 let context = self.context.type_contexts().for_function(function)?;
-                self.with_use_site(TypeRefUseSite::OwnerContext(context))
-                    .resolve(ty)
-            }
-            TypeRefUseSite::BodyOwner => {
-                let context = self.context.type_contexts().for_body_owner()?;
-                self.with_use_site(TypeRefUseSite::OwnerContext(context))
-                    .resolve(ty)
+                Ok(self.anchor_for_owner_context(context))
             }
         }
     }
 
-    fn with_use_site(&self, use_site: TypeRefUseSite) -> Self {
-        Self {
-            context: self.context,
-            use_site,
-            subst: self.subst.clone(),
-        }
-    }
-
-    fn resolve_in_scope(&self, ty: &TypeRef, scope: ScopeId) -> Result<Ty, PackageStoreError> {
-        match ty {
-            TypeRef::Path(type_path) => self.resolve_path_in_scope(ty, type_path, scope),
-            _ => self.with_use_site(TypeRefUseSite::BodyOwner).resolve(ty),
-        }
-    }
-
-    fn resolve_in_module(&self, ty: &TypeRef, module: ModuleRef) -> Result<Ty, PackageStoreError> {
+    fn anchor_for_module(&self, module: ModuleRef) -> TypeRefAnchor {
         if let Some(scope) = self
             .context
             .body()
             .scope_for_module(self.context.body_ref(), module)
         {
-            return self.with_use_site(TypeRefUseSite::Scope(scope)).resolve(ty);
+            return TypeRefAnchor::Scope(scope);
         }
 
         if let DefMapRef::Body(_) = module.origin {
-            return self.resolve_in_body_context(ty, TypePathContext::module(module));
+            TypeRefAnchor::BodyContext(TypePathContext::module(module))
+        } else {
+            TypeRefAnchor::PlainContext(TypePathContext::module(module))
         }
-
-        self.resolve_in_plain_context(ty, TypePathContext::module(module))
     }
 
-    fn resolve_in_owner_context(
-        &self,
-        ty: &TypeRef,
-        context: TypePathContext,
-    ) -> Result<Ty, PackageStoreError> {
+    fn anchor_for_owner_context(&self, context: TypePathContext) -> TypeRefAnchor {
         if context.module.origin == DefMapRef::Body(self.context.body_ref()) {
-            return self
-                .with_use_site(TypeRefUseSite::Module(context.module))
-                .resolve(ty);
+            return self.anchor_for_module(context.module);
         }
 
         if let DefMapRef::Body(_) = context.module.origin {
-            return self.resolve_in_body_context(ty, context);
+            TypeRefAnchor::BodyContext(context)
+        } else {
+            TypeRefAnchor::PlainContext(context)
         }
-
-        self.resolve_in_plain_context(ty, context)
     }
 
-    fn resolve_path_in_scope(
+    fn resolve_at(&self, ty: &TypeRef, anchor: TypeRefAnchor) -> Result<Ty, PackageStoreError> {
+        if let TypeRefAnchor::PlainContext(context) = anchor {
+            return self.resolve_in_plain_context(ty, context);
+        }
+
+        let TypeRef::Path(type_path) = ty else {
+            return self.resolve_structural_type(ty, anchor);
+        };
+
+        self.resolve_path_at(ty, type_path, anchor)
+    }
+
+    fn resolve_path_at(
         &self,
         original_ty: &TypeRef,
         type_path: &TypePath,
-        scope: ScopeId,
+        anchor: TypeRefAnchor,
     ) -> Result<Ty, PackageStoreError> {
         let path = Path::from_type_path(type_path);
         if let Some(ty) = self.subst_for_single_segment(&path) {
             return Ok(ty);
         }
         if path.is_self_type() {
-            let type_contexts = self.context.type_contexts();
-            let context = type_contexts.for_body_owner()?;
-            let self_tys = type_contexts.nominal_self_tys_for_context(context)?;
+            let self_tys = self.self_tys_for_anchor(anchor)?;
             return Ok(Ty::self_ty(self_tys));
         }
 
-        let args = self.generic_args_from_type_path(type_path)?;
-        if let Some(ty) = self.ty_from_associated_alias_path(
-            type_path,
-            &path,
-            TypeRefUseSite::Scope(scope),
-            &args,
-        )? {
+        let args = self.generic_args_from_type_path(type_path, anchor)?;
+        if let Some(ty) = self.ty_from_associated_alias_path(type_path, &path, anchor, &args)? {
             return Ok(ty);
         }
 
-        let resolution = self
-            .context
-            .type_path_query()
-            .resolve_in_scope(scope, &path)?;
+        let resolution = self.resolve_type_path(anchor, &path)?;
         self.ty_from_resolution(original_ty, &path, resolution, args)
     }
 
-    fn resolve_in_body_context(
+    fn self_tys_for_anchor(
         &self,
-        ty: &TypeRef,
-        context: TypePathContext,
-    ) -> Result<Ty, PackageStoreError> {
-        let TypeRef::Path(type_path) = ty else {
-            return self.resolve_structural_type(ty);
+        anchor: TypeRefAnchor,
+    ) -> Result<UniqueVec<NominalTy>, PackageStoreError> {
+        let type_contexts = self.context.type_contexts();
+        let context = match anchor {
+            TypeRefAnchor::Scope(_) => type_contexts.for_body_owner()?,
+            TypeRefAnchor::BodyContext(context) | TypeRefAnchor::PlainContext(context) => context,
         };
+        type_contexts.nominal_self_tys_for_context(context)
+    }
 
-        let path = Path::from_type_path(type_path);
-        if let Some(ty) = self.subst_for_single_segment(&path) {
-            return Ok(ty);
-        }
-        if path.is_self_type() {
-            let self_tys = self
+    fn resolve_type_path(
+        &self,
+        anchor: TypeRefAnchor,
+        path: &Path,
+    ) -> Result<TypePathResolution, PackageStoreError> {
+        match anchor {
+            TypeRefAnchor::Scope(scope) => {
+                self.context.type_path_query().resolve_in_scope(scope, path)
+            }
+            TypeRefAnchor::BodyContext(context) => self
                 .context
-                .type_contexts()
-                .nominal_self_tys_for_context(context)?;
-            return Ok(Ty::self_ty(self_tys));
+                .type_path_query()
+                .resolve_in_context(context, path),
+            TypeRefAnchor::PlainContext(context) => {
+                self.context.item_paths().resolve_type_path(context, path)
+            }
         }
-
-        let args = self.generic_args_from_type_path(type_path)?;
-        if let Some(ty) = self.ty_from_associated_alias_path(
-            type_path,
-            &path,
-            TypeRefUseSite::OwnerContext(context),
-            &args,
-        )? {
-            return Ok(ty);
-        }
-
-        let resolution = self
-            .context
-            .type_path_query()
-            .resolve_in_context(context, &path)?;
-        self.ty_from_resolution(ty, &path, resolution, args)
     }
 
     fn resolve_in_plain_context(
@@ -200,7 +183,11 @@ where
             .resolve_type_ref(ty, context, Ty::syntax(ty.clone()), &self.subst)
     }
 
-    fn resolve_structural_type(&self, ty: &TypeRef) -> Result<Ty, PackageStoreError> {
+    fn resolve_structural_type(
+        &self,
+        ty: &TypeRef,
+        anchor: TypeRefAnchor,
+    ) -> Result<Ty, PackageStoreError> {
         match ty {
             TypeRef::Unit => Ok(Ty::Unit),
             TypeRef::Never => Ok(Ty::Never),
@@ -211,18 +198,20 @@ where
                     Mutability::Shared => RefMutability::Shared,
                     Mutability::Mutable => RefMutability::Mutable,
                 },
-                self.resolve(inner)?,
+                self.resolve_at(inner, anchor)?,
             )),
             TypeRef::Unknown(_) | TypeRef::Infer => Ok(Ty::Unknown),
             TypeRef::Tuple(types) if types.is_empty() => Ok(Ty::Unit),
             TypeRef::Tuple(types) => Ok(Ty::tuple(
                 types
                     .iter()
-                    .map(|ty| self.resolve(ty))
+                    .map(|ty| self.resolve_at(ty, anchor))
                     .collect::<Result<_, _>>()?,
             )),
-            TypeRef::Slice(inner) => Ok(Ty::slice(self.resolve(inner)?)),
-            TypeRef::Array { inner, len } => Ok(Ty::array(self.resolve(inner)?, len.clone())),
+            TypeRef::Slice(inner) => Ok(Ty::slice(self.resolve_at(inner, anchor)?)),
+            TypeRef::Array { inner, len } => {
+                Ok(Ty::array(self.resolve_at(inner, anchor)?, len.clone()))
+            }
             _ => Ok(Ty::syntax(ty.clone())),
         }
     }
@@ -231,7 +220,7 @@ where
         &self,
         type_path: &TypePath,
         path: &Path,
-        prefix_use_site: TypeRefUseSite,
+        prefix_anchor: TypeRefAnchor,
         args: &[GenericArg],
     ) -> Result<Option<Ty>, PackageStoreError> {
         let Some((_, name)) = path.split_prefix_name() else {
@@ -240,9 +229,7 @@ where
         let Some(prefix_ty_ref) = prefix_type_ref(type_path) else {
             return Ok(None);
         };
-        let prefix_ty = self
-            .with_use_site(prefix_use_site)
-            .resolve(&prefix_ty_ref)?;
+        let prefix_ty = self.resolve_at(&prefix_ty_ref, prefix_anchor)?;
 
         for ty in prefix_ty.as_nominals() {
             let Some(alias_ref) = self
@@ -294,6 +281,7 @@ where
     fn generic_args_from_type_path(
         &self,
         type_path: &TypePath,
+        anchor: TypeRefAnchor,
     ) -> Result<Vec<GenericArg>, PackageStoreError> {
         let Some(segment) = type_path.segments.last() else {
             return Ok(Vec::new());
@@ -301,31 +289,42 @@ where
 
         let mut generic_args = Vec::new();
         for arg in &segment.args {
-            generic_args.push(self.generic_arg(arg)?);
+            generic_args.push(self.generic_arg_at(arg, anchor)?);
         }
         Ok(generic_args)
     }
 
-    pub(crate) fn generic_arg(
+    pub(super) fn resolve_generic_arg(
         &self,
         arg: &ItemGenericArg,
     ) -> Result<GenericArg, PackageStoreError> {
+        let anchor = self.anchor_for_use_site(self.use_site)?;
+        self.generic_arg_at(arg, anchor)
+    }
+
+    fn generic_arg_at(
+        &self,
+        arg: &ItemGenericArg,
+        anchor: TypeRefAnchor,
+    ) -> Result<GenericArg, PackageStoreError> {
         match arg {
-            ItemGenericArg::Type(ty) => Ok(GenericArg::Type(Box::new(self.resolve(ty)?))),
+            ItemGenericArg::Type(ty) => {
+                Ok(GenericArg::Type(Box::new(self.resolve_at(ty, anchor)?)))
+            }
             ItemGenericArg::Lifetime(lifetime) => Ok(GenericArg::Lifetime(lifetime.clone())),
             ItemGenericArg::Const(value) => Ok(GenericArg::Const(value.clone())),
             ItemGenericArg::FnTraitArgs { params, ret } => Ok(GenericArg::FnTraitArgs {
                 params: params
                     .iter()
-                    .map(|ty| self.resolve(ty))
+                    .map(|ty| self.resolve_at(ty, anchor))
                     .collect::<Result<_, _>>()?,
-                ret: Box::new(self.resolve(ret)?),
+                ret: Box::new(self.resolve_at(ret, anchor)?),
             }),
             ItemGenericArg::AssocType { name, ty } => Ok(GenericArg::AssocType {
                 name: name.clone(),
                 ty: ty
                     .as_ref()
-                    .map(|ty| self.resolve(ty).map(Box::new))
+                    .map(|ty| self.resolve_at(ty, anchor).map(Box::new))
                     .transpose()?,
             }),
             ItemGenericArg::Unsupported(text) => Ok(GenericArg::Unsupported(text.clone())),

@@ -486,17 +486,11 @@ where
 
         // Function turbofish arguments are supplied at the call site, so names inside them must
         // resolve from the body scope where the call was written.
-        let arg_resolver = self
-            .query
-            .context
-            .type_refs(TypeRefUseSite::Scope(self.target.site_scope));
-        let generic_args = self
-            .target
-            .explicit_args
-            .iter()
-            .map(|arg| arg_resolver.generic_arg(arg))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(TypeSubst::from_generics(generics, &generic_args))
+        self.query.context.generics().subst_for_explicit_args(
+            generics,
+            &self.target.explicit_args,
+            TypeRefUseSite::Scope(self.target.site_scope),
+        )
     }
 
     fn project_return(&self, subst: &TypeSubst, ret_ty: &TypeRef) -> Result<Ty, PackageStoreError> {
