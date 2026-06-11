@@ -335,28 +335,9 @@ where
         owner: ItemOwner,
         receiver_ty: &NominalTy,
     ) -> Result<TypeSubst, PackageStoreError> {
-        let mut subst = self
-            .context
-            .item_query()
-            .generic_params_for_type_def(receiver_ty.def)?
-            .map(|generics| TypeSubst::from_generics(generics, &receiver_ty.args))
-            .unwrap_or_else(TypeSubst::new);
-
-        if let ItemOwner::Impl(impl_id) = owner {
-            let item_query = self.context.item_query();
-            if let Some(impl_data) = item_query.impl_data(ImplRef {
-                origin: function_ref.origin,
-                id: impl_id,
-            })? {
-                subst.extend(
-                    self.context
-                        .impl_matcher()
-                        .impl_self_subst_for_impl(impl_data, receiver_ty),
-                );
-            }
-        }
-
-        Ok(subst)
+        self.context
+            .generics()
+            .subst_for_receiver_owner(function_ref.origin, owner, receiver_ty)
     }
 
     fn filter_functions_by_name(

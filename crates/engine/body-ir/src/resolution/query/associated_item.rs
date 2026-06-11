@@ -11,7 +11,7 @@ use rg_ir_model::{
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
-use rg_ty::{NominalTy, Ty, TypeSubst};
+use rg_ty::{NominalTy, Ty};
 
 use crate::{
     ir::resolved::BodyResolution,
@@ -464,20 +464,11 @@ where
             return Ok(Ty::nominal([receiver_ty.clone()].into_iter().collect()));
         }
 
-        let mut subst = self.semantic_type_subst(receiver_ty)?;
-        if let ItemOwner::Impl(impl_id) = owner {
-            let impl_ref = ImplRef {
-                origin: const_ref.origin,
-                id: impl_id,
-            };
-            if let Some(impl_data) = item_query.impl_data(impl_ref)? {
-                subst.extend(
-                    self.context
-                        .impl_matcher()
-                        .impl_self_subst_for_impl(impl_data, receiver_ty),
-                );
-            }
-        }
+        let subst = self.context.generics().subst_for_receiver_owner(
+            const_ref.origin,
+            owner,
+            receiver_ty,
+        )?;
 
         let context = self
             .context
@@ -488,14 +479,5 @@ where
             .type_refs(TypeRefUseSite::OwnerContext(context))
             .with_subst(&subst)
             .resolve(ty)
-    }
-
-    fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {
-        Ok(self
-            .context
-            .item_query()
-            .generic_params_for_type_def(ty.def)?
-            .map(|generics| TypeSubst::from_generics(generics, &ty.args))
-            .unwrap_or_else(TypeSubst::new))
     }
 }

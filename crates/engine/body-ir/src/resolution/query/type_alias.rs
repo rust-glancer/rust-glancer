@@ -4,7 +4,7 @@
 //! owner context, generic arguments, and impl receiver substitution. Keeping that projection here
 //! prevents path lookup from becoming the home for type-alias lowering details.
 
-use rg_ir_model::{AssocItemId, ImplRef, ItemOwner, TypeAliasRef};
+use rg_ir_model::{AssocItemId, TypeAliasRef};
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
@@ -105,20 +105,11 @@ where
             return Ok(Ty::nominal([receiver_ty.clone()].into_iter().collect()));
         }
 
-        let mut alias_subst = self.semantic_type_subst(receiver_ty)?;
-        if let ItemOwner::Impl(impl_id) = alias_data.owner {
-            let impl_ref = ImplRef {
-                origin: alias_ref.origin,
-                id: impl_id,
-            };
-            if let Some(impl_data) = item_query.impl_data(impl_ref)? {
-                alias_subst.extend(
-                    self.context
-                        .impl_matcher()
-                        .impl_self_subst_for_impl(impl_data, receiver_ty),
-                );
-            }
-        }
+        let mut alias_subst = self.context.generics().subst_for_receiver_owner(
+            alias_ref.origin,
+            alias_data.owner,
+            receiver_ty,
+        )?;
         if let Some(generics) = alias_data.signature.generics() {
             alias_subst.extend(TypeSubst::from_generics(generics, args));
         }
@@ -161,14 +152,5 @@ where
             .type_refs(TypeRefUseSite::OwnerContext(context))
             .with_subst(&alias_subst)
             .resolve(aliased_ty)
-    }
-
-    fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {
-        Ok(self
-            .context
-            .item_query()
-            .generic_params_for_type_def(ty.def)?
-            .map(|generics| TypeSubst::from_generics(generics, &ty.args))
-            .unwrap_or_else(TypeSubst::new))
     }
 }

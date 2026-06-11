@@ -14,9 +14,9 @@ use rg_ty::{Autoderef, ImplMatcher, ItemPathQuery, IterationItemResolver};
 use crate::ir::body::ResolvedBodyData;
 
 use crate::resolution::query::{
-    BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyLocalItemQuery,
-    BodyMethodQuery, BodyTypeAliasQuery, BodyTypeContextQuery, BodyTypePathQuery,
-    BodyValuePathQuery, TypeRefResolutionQuery, TypeRefUseSite,
+    BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
+    BodyLocalItemQuery, BodyMethodQuery, BodyTypeAliasQuery, BodyTypeContextQuery,
+    BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery, TypeRefUseSite,
 };
 
 use super::BodyQuerySource;
@@ -103,6 +103,10 @@ where
 
     pub(crate) fn type_aliases(&self) -> BodyTypeAliasQuery<'a, D, I> {
         BodyTypeAliasQuery::new(*self)
+    }
+
+    pub(crate) fn generics(&self) -> BodyGenericsQuery<'a, D, I> {
+        BodyGenericsQuery::new(*self)
     }
 
     pub(crate) fn associated_items(&self) -> BodyAssociatedItemQuery<'a, D, I> {

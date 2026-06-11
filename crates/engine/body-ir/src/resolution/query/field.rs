@@ -12,7 +12,7 @@ use rg_ir_model::{
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
-use rg_ty::{AutoderefMode, NominalTy, Ty, TypeSubst};
+use rg_ty::{AutoderefMode, NominalTy, Ty};
 
 use crate::{
     ir::resolved::BodyResolution,
@@ -165,7 +165,7 @@ where
         let ty = self
             .context
             .type_refs(TypeRefUseSite::Module(field_data.owner_module))
-            .with_subst(&self.semantic_type_subst(owner_ty)?)
+            .with_subst(&self.context.generics().subst_for_nominal_ty(owner_ty)?)
             .resolve(&field_data.field.ty)?;
 
         Ok(Some(DeclaredFieldTarget {
@@ -198,7 +198,7 @@ where
         Ok(Some(
             self.context
                 .type_refs(TypeRefUseSite::Module(variant_data.owner_module))
-                .with_subst(&self.semantic_type_subst(enum_ty)?)
+                .with_subst(&self.context.generics().subst_for_nominal_ty(enum_ty)?)
                 .resolve(&field.ty)?,
         ))
     }
@@ -224,14 +224,5 @@ where
                 .get(*index)
                 .filter(|field| field.key.as_ref() == Some(key)),
         }
-    }
-
-    fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {
-        Ok(self
-            .context
-            .item_query()
-            .generic_params_for_type_def(ty.def)?
-            .map(|generics| TypeSubst::from_generics(generics, &ty.args))
-            .unwrap_or_else(TypeSubst::new))
     }
 }

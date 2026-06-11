@@ -3,6 +3,7 @@ mod body_items;
 mod call;
 mod field;
 mod function;
+mod generics;
 mod method;
 mod type_alias;
 mod type_context;
@@ -19,6 +20,7 @@ pub(crate) use self::{
     body_items::BodyLocalItemQuery,
     field::BodyFieldQuery,
     function::BodyFunctionQuery,
+    generics::BodyGenericsQuery,
     type_alias::BodyTypeAliasQuery,
     type_context::BodyTypeContextQuery,
     type_ref::{TypeRefResolutionQuery, TypeRefUseSite},
