@@ -1,11 +1,12 @@
-//! Type-path resolution with body-local scope awareness.
+//! Type-path resolution with body-local scope and owner-context awareness.
 //!
-//! Semantic IR can resolve module items, but body-local structs live in lexical scopes. This
-//! query checks those scopes first and then falls back to the semantic/def-map context.
+//! Semantic IR can resolve module items, but body-local structs live in lexical scopes and
+//! body-local item signatures can be anchored to synthetic modules. This query owns those lookup
+//! rules so type-ref and value-path resolution can ask type-namespace questions without knowing
+//! how body modules fall back to their surrounding semantic module.
 
 use rg_ir_model::{
-    DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment, ScopeId, SemanticItemRef,
-    TypePathResolution,
+    DefId, DefMapRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, TypePathResolution,
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, NameResolutionFilter, TypePathContext};
 use rg_package_store::PackageStoreError;
@@ -32,7 +33,7 @@ where
         scope: ScopeId,
         path: &Path,
     ) -> Result<TypePathResolution, PackageStoreError> {
-        if let Some((prefix, name)) = split_associated_path(path) {
+        if let Some((prefix, name)) = path.split_prefix_name() {
             let prefix_resolution = self.resolve_in_scope(scope, &prefix)?;
             let prefix_ty =
                 Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
@@ -77,6 +78,50 @@ where
         )
     }
 
+    pub(crate) fn resolve_in_context(
+        &self,
+        context: TypePathContext,
+        path: &Path,
+    ) -> Result<TypePathResolution, PackageStoreError> {
+        if !matches!(context.module.origin, DefMapRef::Body(_)) {
+            return self.context.item_paths().resolve_type_path(context, path);
+        }
+
+        if path.is_self_type() {
+            let self_tys = self
+                .context
+                .type_contexts()
+                .nominal_self_tys_for_context(context)?;
+            return Ok(if self_tys.is_empty() {
+                TypePathResolution::Unknown
+            } else {
+                TypePathResolution::SelfType(self_tys.into_iter().map(|ty| ty.def).collect())
+            });
+        }
+
+        if let Some((prefix, name)) = path.split_prefix_name() {
+            let prefix_resolution = self.resolve_in_context(context, &prefix)?;
+            let prefix_ty =
+                Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
+            let mut aliases = UniqueVec::new();
+            for ty in prefix_ty.as_nominals() {
+                if let Some(alias) = self
+                    .context
+                    .type_aliases()
+                    .associated_alias_for_type(ty, name)?
+                {
+                    aliases.push(alias);
+                }
+            }
+            if !aliases.is_empty() {
+                return Ok(TypePathResolution::TypeAliases(aliases));
+            }
+        }
+
+        let body_items = self.resolve_body_type_items_from_module(context.module, path)?;
+        Ok(self.type_resolution_from_items(body_items))
+    }
+
     fn resolve_body_type_items_from_def_map(
         &self,
         scope: ScopeId,
@@ -95,7 +140,7 @@ where
         self.semantic_items_for_defs(result.resolved)
     }
 
-    pub(super) fn resolve_body_type_items_from_module(
+    fn resolve_body_type_items_from_module(
         &self,
         module: ModuleRef,
         path: &Path,
@@ -138,10 +183,7 @@ where
         Ok(items)
     }
 
-    pub(super) fn type_resolution_from_items(
-        &self,
-        items: UniqueVec<SemanticItemRef>,
-    ) -> TypePathResolution {
+    fn type_resolution_from_items(&self, items: UniqueVec<SemanticItemRef>) -> TypePathResolution {
         let mut type_defs = UniqueVec::new();
         let mut type_aliases = UniqueVec::new();
         let mut traits = UniqueVec::new();
@@ -173,22 +215,4 @@ where
             TypePathResolution::Unknown
         }
     }
-}
-
-pub(super) fn split_associated_path(path: &Path) -> Option<(Path, &str)> {
-    if path.segments.len() < 2 {
-        return None;
-    }
-
-    let PathSegment::Name(last_segment) = path.segments.last()? else {
-        return None;
-    };
-
-    Some((
-        Path {
-            absolute: path.absolute,
-            segments: path.segments[..path.segments.len() - 1].to_vec(),
-        },
-        last_segment.as_str(),
-    ))
 }

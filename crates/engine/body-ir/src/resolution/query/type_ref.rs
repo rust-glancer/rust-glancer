@@ -11,12 +11,9 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
-use rg_std::UniqueVec;
 use rg_ty::{GenericArg, RefMutability, Ty, TypeSubst};
 
 use crate::resolution::BodyResolutionContext;
-
-use super::type_path::split_associated_path;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TypeRefUseSite {
@@ -172,7 +169,10 @@ where
         }
 
         let args = self.generic_args_from_type_path(type_path)?;
-        let resolution = self.resolve_type_path_in_body_context(context, &path)?;
+        let resolution = self
+            .context
+            .type_path_query()
+            .resolve_in_context(context, &path)?;
         self.ty_from_resolution(ty, &path, resolution, args)
     }
 
@@ -213,57 +213,6 @@ where
         }
     }
 
-    fn resolve_type_path_in_body_context(
-        &self,
-        context: TypePathContext,
-        path: &Path,
-    ) -> Result<TypePathResolution, PackageStoreError> {
-        if path.is_self_type() {
-            let Some(impl_ref) = context.impl_ref else {
-                return Ok(TypePathResolution::Unknown);
-            };
-            let types = self
-                .context
-                .item_query()
-                .impl_data(impl_ref)?
-                .map(|data| data.resolved_self_tys.clone())
-                .unwrap_or_default();
-            return Ok(if types.is_empty() {
-                TypePathResolution::Unknown
-            } else {
-                TypePathResolution::SelfType(types)
-            });
-        }
-
-        if let Some((prefix, name)) = split_associated_path(path) {
-            let prefix_resolution = self.resolve_type_path_in_body_context(context, &prefix)?;
-            let prefix_ty =
-                Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
-            let mut aliases = UniqueVec::new();
-            for ty in prefix_ty.as_nominals() {
-                if let Some(alias) = self
-                    .context
-                    .type_aliases()
-                    .associated_alias_for_type(ty, name)?
-                {
-                    aliases.push(alias);
-                }
-            }
-            if !aliases.is_empty() {
-                return Ok(TypePathResolution::TypeAliases(aliases));
-            }
-        }
-
-        let body_items = self
-            .context
-            .type_path_query()
-            .resolve_body_type_items_from_module(context.module, path)?;
-        Ok(self
-            .context
-            .type_path_query()
-            .type_resolution_from_items(body_items))
-    }
-
     fn ty_from_local_associated_type_path(
         &self,
         type_path: &TypePath,
@@ -271,7 +220,7 @@ where
         scope: ScopeId,
         args: &[GenericArg],
     ) -> Result<Option<Ty>, PackageStoreError> {
-        let Some((_, name)) = split_associated_path(path) else {
+        let Some((_, name)) = path.split_prefix_name() else {
             return Ok(None);
         };
         let Some(prefix_ty_ref) = prefix_type_ref(type_path) else {

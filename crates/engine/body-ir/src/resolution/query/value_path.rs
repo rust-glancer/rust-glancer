@@ -18,8 +18,6 @@ use rg_ty::{NominalTy, Ty};
 use crate::ir::resolved::BodyResolution;
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite, support::unique_ty_or_unknown};
 
-use super::type_path::split_associated_path;
-
 /// Resolves body value paths without mutating the body.
 ///
 /// The main pass uses this during the fixed-point pass, and analysis reuses it for cursor
@@ -135,7 +133,7 @@ where
             | TypePathResolution::Unknown => {}
         }
 
-        if let Some((prefix, last_segment)) = split_associated_path(path) {
+        if let Some((prefix, last_segment)) = path.split_prefix_name() {
             if let Some((resolution, ty)) =
                 self.context
                     .associated_items()
