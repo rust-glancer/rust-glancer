@@ -16,7 +16,7 @@ use rg_ty::{GenericArg, RefMutability, Ty, TypeSubst};
 
 use crate::resolution::BodyResolutionContext;
 
-use super::type_path::{prefix_type_ref, split_associated_path};
+use super::type_path::split_associated_path;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TypeRefUseSite {
@@ -243,8 +243,8 @@ where
             for ty in prefix_ty.as_nominals() {
                 if let Some(alias) = self
                     .context
-                    .type_path_query()
-                    .associated_type_alias_for_type(ty, name)?
+                    .type_aliases()
+                    .associated_alias_for_type(ty, name)?
                 {
                     aliases.push(alias);
                 }
@@ -284,15 +284,15 @@ where
         for ty in prefix_ty.as_nominals() {
             let Some(alias_ref) = self
                 .context
-                .type_path_query()
-                .associated_type_alias_for_type(ty, name)?
+                .type_aliases()
+                .associated_alias_for_type(ty, name)?
             else {
                 continue;
             };
             return self
                 .context
-                .type_path_query()
-                .ty_from_associated_type_alias(alias_ref, ty, args)
+                .type_aliases()
+                .ty_from_associated_alias(alias_ref, ty, args)
                 .map(Some);
         }
 
@@ -307,7 +307,7 @@ where
         args: Vec<GenericArg>,
     ) -> Result<Ty, PackageStoreError> {
         if let TypePathResolution::TypeAliases(aliases) = &resolution {
-            return self.context.type_path_query().ty_from_type_aliases(
+            return self.context.type_aliases().ty_from_aliases(
                 aliases.as_slice(),
                 &args,
                 &self.subst,
@@ -373,4 +373,17 @@ where
         path.single_name()
             .and_then(|name| self.subst.type_param(name))
     }
+}
+
+fn prefix_type_ref(path: &TypePath) -> Option<TypeRef> {
+    let prefix_len = path.segments.len().checked_sub(1)?;
+    if prefix_len == 0 {
+        return None;
+    }
+
+    Some(TypeRef::Path(TypePath {
+        source_span: path.source_span,
+        absolute: path.absolute,
+        segments: path.segments[..prefix_len].to_vec(),
+    }))
 }
