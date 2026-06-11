@@ -231,11 +231,11 @@ where
             // Record variant syntax is a separate expression shape and is intentionally not
             // handled by this hook.
             let field_key = FieldKey::Tuple(index);
-            let Some(expected_ty) = self
-                .pass
-                .context()
-                .type_path_query()
-                .variant_field_ty_for_enum_variant(&enum_ty, variant_ref, &field_key)?
+            let Some(expected_ty) = self.pass.context().fields().enum_variant_field_ty(
+                &enum_ty,
+                variant_ref,
+                &field_key,
+            )?
             else {
                 continue;
             };

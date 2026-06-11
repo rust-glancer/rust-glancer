@@ -4,7 +4,11 @@
 //! and owner-generic substitution. Keeping those dimensions together avoids spreading
 //! field-specific lookup rules through expression traversal.
 
-use rg_ir_model::{ExprId, FieldRef, identity::DeclarationRef, items::FieldKey};
+use rg_ir_model::{
+    EnumVariantRef, ExprId, FieldRef, TypeDefId,
+    identity::DeclarationRef,
+    items::{FieldItem, FieldKey, FieldList},
+};
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
@@ -171,10 +175,56 @@ where
         }))
     }
 
+    pub(crate) fn enum_variant_field_ty(
+        &self,
+        enum_ty: &NominalTy,
+        variant_ref: EnumVariantRef,
+        field_key: &FieldKey,
+    ) -> Result<Option<Ty>, PackageStoreError> {
+        let TypeDefId::Enum(enum_id) = enum_ty.def.id else {
+            return Ok(None);
+        };
+        if variant_ref.origin != enum_ty.def.origin || variant_ref.enum_id != enum_id {
+            return Ok(None);
+        }
+
+        let item_query = self.context.item_query();
+        let Some(variant_data) = item_query.enum_variant_data(variant_ref)? else {
+            return Ok(None);
+        };
+        let Some(field) = Self::variant_field(&variant_data.variant.fields, field_key) else {
+            return Ok(None);
+        };
+
+        Ok(Some(
+            self.context
+                .type_path_query()
+                .type_ref(TypeRefUseSite::Module(variant_data.owner_module))
+                .with_subst(&self.semantic_type_subst(enum_ty)?)
+                .resolve(&field.ty)?,
+        ))
+    }
+
     fn structural_field_ty(ty: &Ty, field: &FieldKey) -> Option<Ty> {
         match (ty, field) {
             (Ty::Tuple(fields), FieldKey::Tuple(index)) => fields.get(*index).cloned(),
             _ => None,
+        }
+    }
+
+    fn variant_field<'field>(
+        fields: &'field FieldList,
+        key: &FieldKey,
+    ) -> Option<&'field FieldItem> {
+        match key {
+            FieldKey::Named(_) => fields
+                .fields()
+                .iter()
+                .find(|field| field.key.as_ref() == Some(key)),
+            FieldKey::Tuple(index) => fields
+                .fields()
+                .get(*index)
+                .filter(|field| field.key.as_ref() == Some(key)),
         }
     }
 

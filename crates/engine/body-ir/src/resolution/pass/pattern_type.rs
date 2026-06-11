@@ -6,12 +6,12 @@
 
 use rg_ir_model::{
     BindingId, BodyPath, ExprId, PatId, Path, PathSegment, ScopeId, StmtId, TypeDefId,
-    items::{FieldItem, FieldKey, FieldList, TypeRef},
+    items::{FieldKey, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
-use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
+use rg_ty::{ReferencePeelingCandidates, Ty};
 
 use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
@@ -300,8 +300,17 @@ where
                 .iter()
                 .filter(|ty| matches!(ty.def.id, TypeDefId::Enum(_)))
             {
+                let Some(variant_ref) = self
+                    .context
+                    .item_query()
+                    .enum_variant_ref_for_type_def(enum_ty.def, variant_name)?
+                else {
+                    continue;
+                };
                 let Some(field_ty) =
-                    self.variant_field_ty_for_enum(enum_ty, variant_name, field_key)?
+                    self.context
+                        .fields()
+                        .enum_variant_field_ty(enum_ty, variant_ref, field_key)?
                 else {
                     continue;
                 };
@@ -313,44 +322,6 @@ where
             [ty] => Ok(Some(ty.clone())),
             [] | [_, ..] => Ok(None),
         }
-    }
-
-    fn variant_field_ty_for_enum(
-        &self,
-        enum_ty: &NominalTy,
-        variant_name: &str,
-        field_key: &FieldKey,
-    ) -> Result<Option<Ty>, PackageStoreError> {
-        if !matches!(enum_ty.def.id, TypeDefId::Enum(_)) {
-            return Ok(None);
-        }
-
-        let Some(variant_ref) = self
-            .context
-            .item_query()
-            .enum_variant_ref_for_type_def(enum_ty.def, variant_name)?
-        else {
-            return Ok(None);
-        };
-        let item_query = self.context.item_query();
-        let Some(variant_data) = item_query.enum_variant_data(variant_ref)? else {
-            return Ok(None);
-        };
-        let Some(field) = variant_field(&variant_data.variant.fields, field_key) else {
-            return Ok(None);
-        };
-        let subst = item_query
-            .generic_params_for_type_def(enum_ty.def)?
-            .map(|generics| TypeSubst::from_generics(generics, &enum_ty.args))
-            .unwrap_or_else(TypeSubst::new);
-
-        Ok(Some(
-            self.context
-                .type_path_query()
-                .type_ref(TypeRefUseSite::Module(variant_data.owner_module))
-                .with_subst(&subst)
-                .resolve(&field.ty)?,
-        ))
     }
 
     fn push_binding_ty_update(
@@ -374,19 +345,6 @@ where
         }
 
         updates.push((binding, ty));
-    }
-}
-
-fn variant_field<'a>(fields: &'a FieldList, key: &FieldKey) -> Option<&'a FieldItem> {
-    match key {
-        FieldKey::Named(_) => fields
-            .fields()
-            .iter()
-            .find(|field| field.key.as_ref() == Some(key)),
-        FieldKey::Tuple(index) => fields
-            .fields()
-            .get(*index)
-            .filter(|field| field.key.as_ref() == Some(key)),
     }
 }
 
