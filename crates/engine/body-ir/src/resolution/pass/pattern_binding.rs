@@ -388,8 +388,11 @@ where
             for nominal_ty in candidate.ty().as_nominals() {
                 match nominal_ty.def.id {
                     TypeDefId::Struct(_) | TypeDefId::Union(_) => {
-                        if let Some(field_ty) =
-                            self.field_ty_for_nominal_type(nominal_ty, field_key)?
+                        if let Some(field_ty) = self
+                            .context()
+                            .fields()
+                            .declared(nominal_ty, field_key)?
+                            .and_then(|target| target.ty().cloned())
                         {
                             candidates.push(field_ty);
                         }
@@ -412,28 +415,6 @@ where
             [ty] => Some(ty.clone()),
             [] | [_, ..] => None,
         })
-    }
-
-    fn field_ty_for_nominal_type(
-        &self,
-        ty: &NominalTy,
-        field_key: &FieldKey,
-    ) -> Result<Option<Ty>, PackageStoreError> {
-        let item_query = self.context().item_query();
-        let Some(field_ref) = item_query.field_for_type(ty.def, field_key)? else {
-            return Ok(None);
-        };
-        let Some(field_data) = item_query.field_data(field_ref)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(
-            self.context()
-                .type_path_query()
-                .type_ref(TypeRefUseSite::Module(field_data.owner_module))
-                .with_subst(&self.semantic_type_subst(ty)?)
-                .resolve(&field_data.field.ty)?,
-        ))
     }
 
     fn variant_field_ty_for_enum(

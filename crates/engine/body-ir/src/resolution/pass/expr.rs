@@ -12,8 +12,8 @@ use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
 use rg_ty::{
-    AutoderefMode, CallArgMapping, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst,
-    ty_for_binary, ty_for_literal, ty_for_unary,
+    AutoderefMode, NominalTy, ReferencePeelingCandidates, Ty, ty_for_binary, ty_for_literal,
+    ty_for_unary,
 };
 
 use crate::{
@@ -22,7 +22,7 @@ use crate::{
     ir::{ExprKind, ExprWrapperKind, LiteralKind},
 };
 
-use crate::resolution::{TypeRefUseSite, support::TyNormalizer};
+use crate::resolution::{CallSite, MethodCallSite, TypeRefUseSite, support::TyNormalizer};
 
 use super::body::BodyResolutionPass;
 
@@ -56,11 +56,7 @@ where
                 self.pass.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::Call { callee, args } => {
-                let ty = self
-                    .pass
-                    .context()
-                    .callable_returns()
-                    .call_expr_ty(callee, &args)?;
+                let ty = self.pass.context().calls().call_expr_ty(callee, &args)?;
                 self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Tuple { fields } => {
@@ -341,82 +337,12 @@ where
             return Ok((BodyResolution::Unknown, Ty::Unknown));
         };
 
-        let item_query = self.pass.context().item_query();
-        let mut current_depth = None;
-        let mut fields = UniqueVec::new();
-        let mut field_tys: UniqueVec<Ty> = UniqueVec::new();
-
-        for candidate in self.pass.context().autoderef().candidates(
-            AutoderefMode::FieldLookup,
-            self.pass.body.expr_ty_unchecked(base),
-        ) {
-            let candidate = candidate?;
-            // Autoderef yields candidates by depth. Resolve only after the whole matching depth is
-            // collected, so same-depth alternatives produce ambiguity instead of order dependence.
-            if current_depth.is_some_and(|depth| depth != candidate.depth())
-                && (!fields.is_empty() || !field_tys.is_empty())
-            {
-                let ty = match field_tys.as_slice() {
-                    [ty] => ty.clone(),
-                    [] | [_, ..] => Ty::Unknown,
-                };
-                let resolution = if fields.is_empty() {
-                    BodyResolution::Unknown
-                } else {
-                    BodyResolution::Declarations(
-                        fields.into_iter().map(DeclarationRef::from).collect(),
-                    )
-                };
-                return Ok((resolution, ty));
-            }
-            current_depth = Some(candidate.depth());
-
-            if let Some(field_ty) = Self::structural_field_ty(candidate.ty(), field) {
-                field_tys.push(field_ty);
-            }
-
-            for nominal_ty in candidate.ty().as_nominals() {
-                let Some(field_ref) = item_query.field_for_type(nominal_ty.def, field)? else {
-                    continue;
-                };
-                fields.push(field_ref);
-
-                let Some(field_data) = item_query.field_data(field_ref)? else {
-                    continue;
-                };
-                let subst = self.semantic_type_subst(nominal_ty)?;
-                let field_ty = self
-                    .pass
-                    .context()
-                    .type_path_query()
-                    .type_ref(TypeRefUseSite::Module(field_data.owner_module))
-                    .with_subst(&subst)
-                    .resolve(&field_data.field.ty)?;
-                field_tys.push(field_ty);
-            }
+        let targets = self.pass.context().fields().resolve(base, field)?;
+        if targets.is_empty() {
+            return Ok((BodyResolution::Unknown, Ty::Unknown));
         }
 
-        if !fields.is_empty() || !field_tys.is_empty() {
-            let ty = match field_tys.as_slice() {
-                [ty] => ty.clone(),
-                [] | [_, ..] => Ty::Unknown,
-            };
-            let resolution = if fields.is_empty() {
-                BodyResolution::Unknown
-            } else {
-                BodyResolution::Declarations(fields.into_iter().map(DeclarationRef::from).collect())
-            };
-            return Ok((resolution, ty));
-        }
-
-        Ok((BodyResolution::Unknown, Ty::Unknown))
-    }
-
-    fn structural_field_ty(ty: &Ty, field: &FieldKey) -> Option<Ty> {
-        match (ty, field) {
-            (Ty::Tuple(fields), FieldKey::Tuple(index)) => fields.get(*index).cloned(),
-            _ => None,
-        }
+        Ok((targets.resolution(), targets.ty()))
     }
 
     fn resolve_method_call_expr(
@@ -431,112 +357,18 @@ where
             return Ok((BodyResolution::Unknown, Ty::Unknown));
         };
 
-        let receiver_ty = self.pass.body.expr_ty_unchecked(receiver);
-        let item_query = self.pass.context().item_query();
-        let callable_returns = self.pass.context().callable_returns();
-
-        // Method lookup is intentionally shallow: nominal type plus lightweight impl-argument
-        // matching gives useful candidates without modeling the full trait solver.
-        let mut current_depth = None;
-        let mut functions = UniqueVec::new();
-        let mut return_tys: UniqueVec<Ty> = UniqueVec::new();
-
-        for candidate in self
-            .pass
-            .context()
-            .autoderef()
-            .candidates(AutoderefMode::MethodReceiver, receiver_ty)
-        {
-            let candidate = candidate?;
-            // Autoderef yields candidates by depth. Resolve only after the whole matching depth is
-            // collected, so same-depth alternatives produce ambiguity instead of order dependence.
-            if current_depth.is_some_and(|depth| depth != candidate.depth())
-                && !functions.is_empty()
-            {
-                let ty = match return_tys.as_slice() {
-                    [ty] => ty.clone(),
-                    [] | [_, ..] => Ty::Unknown,
-                };
-                return Ok((
-                    BodyResolution::Declarations(
-                        functions.into_iter().map(DeclarationRef::from).collect(),
-                    ),
-                    ty,
-                ));
-            }
-            current_depth = Some(candidate.depth());
-
-            for nominal_ty in candidate.ty().as_nominals() {
-                for function_ref in self
-                    .pass
-                    .context()
-                    .receiver_functions()
-                    .function_refs_for_receiver(nominal_ty, Some(method_name))?
-                {
-                    let Some(function_data) = item_query.function_data(function_ref)? else {
-                        continue;
-                    };
-                    if function_data.name != method_name || !function_data.has_self_receiver() {
-                        continue;
-                    }
-
-                    functions.push(function_ref);
-                    return_tys.push(callable_returns.return_ty_with_call_args(
-                        function_ref,
-                        Some(nominal_ty),
-                        explicit_args,
-                        args,
-                        CallArgMapping::MethodCall,
-                        Some(call_scope),
-                    )?);
-                }
-            }
-
-            // Structural receivers such as `[T]` do not have a named type definition, so they
-            // cannot use the nominal `TypeDefRef` impl index above. They still may have visible
-            // inherent impls, for example `impl<T> [T]`, and those impls carry substitutions that
-            // are needed to render returns like `&T` in the receiver context.
-            for structural in self
-                .pass
-                .context()
-                .receiver_functions()
-                .structural_function_candidates_for_receiver(candidate.ty(), Some(method_name))?
-            {
-                let function_ref = structural.function();
-                let Some(function_data) = item_query.function_data(function_ref)? else {
-                    continue;
-                };
-                if function_data.name != method_name || !function_data.has_self_receiver() {
-                    continue;
-                }
-
-                functions.push(function_ref);
-                return_tys.push(callable_returns.return_ty_with_subst_and_call_args(
-                    function_ref,
-                    Some(structural.receiver_ty().clone()),
-                    structural.subst().clone(),
-                    explicit_args,
-                    args,
-                    CallArgMapping::MethodCall,
-                    Some(call_scope),
-                )?);
-            }
+        let calls = self.pass.context().calls();
+        let targets = calls.targets(CallSite::Method(MethodCallSite {
+            receiver,
+            name: method_name,
+            explicit_args,
+            scope: call_scope,
+        }))?;
+        if targets.is_empty() {
+            return Ok((BodyResolution::Unknown, Ty::Unknown));
         }
 
-        if !functions.is_empty() {
-            let ty = match return_tys.as_slice() {
-                [ty] => ty.clone(),
-                [] | [_, ..] => Ty::Unknown,
-            };
-            return Ok((
-                BodyResolution::Declarations(
-                    functions.into_iter().map(DeclarationRef::from).collect(),
-                ),
-                ty,
-            ));
-        }
-
-        Ok((BodyResolution::Unknown, Ty::Unknown))
+        Ok((targets.resolution(), targets.return_ty(&calls, args)?))
     }
 
     fn resolve_wrapper_expr(
@@ -571,15 +403,5 @@ where
             [ty] => ty.clone(),
             [] | [_, ..] => Ty::Unknown,
         })
-    }
-
-    fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {
-        Ok(self
-            .pass
-            .context()
-            .item_query()
-            .generic_params_for_type_def(ty.def)?
-            .map(|generics| TypeSubst::from_generics(generics, &ty.args))
-            .unwrap_or_else(TypeSubst::new))
     }
 }

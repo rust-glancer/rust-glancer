@@ -7,7 +7,7 @@
 use rg_ir_model::{
     BindingId, ExprId, ScopeId, StmtId,
     identity::DeclarationRef,
-    items::{FieldKey, GenericArg as ItemGenericArg, TypeRef},
+    items::{FieldKey, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
@@ -15,7 +15,7 @@ use rg_ty::Ty;
 
 use crate::{
     ir::{ExprKind, ExprWrapperKind, RecordExprField, StmtKind, resolved::BodyResolution},
-    resolution::{TypeRefUseSite, query::SelectedCallable},
+    resolution::TypeRefUseSite,
 };
 
 use super::body::BodyResolutionPass;
@@ -40,7 +40,7 @@ where
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
 {
     pub(super) fn run(mut self) -> Result<(), PackageStoreError> {
-        self.seed_callable_return_inference_facts()?;
+        self.seed_call_return_inference_facts()?;
         self.refresh_inference_dependent_expr_facts();
         self.constrain_expected_types()?;
         self.finalize_facts();
@@ -48,16 +48,13 @@ where
     }
 
     /// Seeds inference facts that ordinary `Ty` cannot represent during fixed-point resolution.
-    fn seed_callable_return_inference_facts(&mut self) -> Result<(), PackageStoreError> {
+    fn seed_call_return_inference_facts(&mut self) -> Result<(), PackageStoreError> {
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
             let kind = self.pass.body.expr_unchecked(expr).kind.clone();
             match kind {
-                ExprKind::Call { callee, .. } => {
-                    self.seed_call_return_inference_fact(expr, callee)?
-                }
-                ExprKind::MethodCall { generic_args, .. } => {
-                    self.seed_method_call_return_inference_fact(expr, &generic_args)?
+                ExprKind::Call { .. } | ExprKind::MethodCall { .. } => {
+                    self.seed_call_return_inference_fact(expr)?
                 }
                 _ => {}
             }
@@ -85,78 +82,46 @@ where
         }
     }
 
-    fn seed_call_return_inference_fact(
-        &mut self,
-        call: ExprId,
-        callee: Option<ExprId>,
-    ) -> Result<(), PackageStoreError> {
+    fn seed_call_return_inference_fact(&mut self, call: ExprId) -> Result<(), PackageStoreError> {
         if !matches!(self.pass.body.expr_ty_unchecked(call), Ty::Unknown) {
             return Ok(());
         }
 
-        let Some(selected_callable) = self
-            .pass
-            .context()
-            .callable_returns()
-            .selected_callable_for_call(callee)?
-        else {
-            return Ok(());
-        };
-
-        self.seed_selected_callable_return_inference_fact(call, &selected_callable)
-    }
-
-    fn seed_method_call_return_inference_fact(
-        &mut self,
-        method_call: ExprId,
-        explicit_args: &[ItemGenericArg],
-    ) -> Result<(), PackageStoreError> {
-        if !matches!(self.pass.body.expr_ty_unchecked(method_call), Ty::Unknown) {
-            return Ok(());
-        }
-
-        let Some(selected_callable) = self
-            .pass
-            .context()
-            .callable_returns()
-            .selected_callable_for_method_call(method_call, explicit_args)?
-        else {
-            return Ok(());
-        };
-
-        self.seed_selected_callable_return_inference_fact(method_call, &selected_callable)
-    }
-
-    fn seed_selected_callable_return_inference_fact(
-        &mut self,
-        expr: ExprId,
-        selected_callable: &SelectedCallable,
-    ) -> Result<(), PackageStoreError> {
-        if !selected_callable.explicit_args().is_empty() {
-            return Ok(());
-        }
-
-        let should_seed_type_var = if let Some(function_data) = self
-            .pass
-            .context()
-            .item_query()
-            .function_data(selected_callable.function_ref())?
-            && let Some(generics) = function_data.signature.generics()
-            && let Some(ret_ty) = function_data.signature.ret_ty()
-            && let Some(ret_name) = ret_ty.type_param_name()
-        {
-            // `fn make<T>() -> T` has no concrete `Ty` before expected-type constraints run, but
-            // inference can preserve the return as `?T` and let the outer expression solve it.
-            generics
-                .types
-                .iter()
-                .any(|param| param.name.as_str() == ret_name.as_str())
-        } else {
-            false
+        let should_seed_type_var = {
+            let calls = self.pass.context().calls();
+            let Some(target) = calls.target(call)? else {
+                return Ok(());
+            };
+            calls.signature(&target).can_seed_return_inference()?
         };
 
         if should_seed_type_var && let Some(inference) = &mut self.pass.inference {
-            inference.set_expr_type_var(expr);
+            inference.set_expr_type_var(call);
+        }
+
+        Ok(())
+    }
+
+    fn constrain_call_target_argument_expected_types(
+        &mut self,
+        call: ExprId,
+        args: &[ExprId],
+    ) -> Result<(), PackageStoreError> {
+        // Only a single resolved function gives us trustworthy parameter evidence. Ambiguous calls
+        // keep their already-computed return type but do not push expectations inward.
+        let param_tys = {
+            let calls = self.pass.context().calls();
+            let Some(target) = calls.target(call)? else {
+                return Ok(());
+            };
+            calls.signature(&target).param_tys()?
+        };
+        if param_tys.len() != args.len() {
+            return Ok(());
+        }
+
+        for (arg, expected_ty) in args.iter().zip(param_tys) {
+            self.constrain_expr_with_expected(*arg, &expected_ty);
         }
 
         Ok(())
@@ -222,19 +187,9 @@ where
                 callee: Some(callee),
                 args,
             } => self.constrain_call_argument_expected_types(expr, callee, args),
-            ExprKind::MethodCall {
-                receiver: Some(receiver),
-                method_name,
-                generic_args,
-                args,
-                ..
-            } => self.constrain_method_call_argument_expected_types(
-                expr,
-                receiver,
-                &method_name,
-                &generic_args,
-                args,
-            ),
+            ExprKind::MethodCall { args, .. } => {
+                self.constrain_call_target_argument_expected_types(expr, &args)
+            }
             ExprKind::Record { fields, .. } => {
                 self.constrain_record_field_initializer_expected_types(expr, fields)
             }
@@ -248,63 +203,8 @@ where
         callee: ExprId,
         args: Vec<ExprId>,
     ) -> Result<(), PackageStoreError> {
-        self.constrain_function_call_argument_expected_types(callee, &args)?;
+        self.constrain_call_target_argument_expected_types(call, &args)?;
         self.constrain_enum_variant_payload_expected_types(call, callee, args)
-    }
-
-    fn constrain_function_call_argument_expected_types(
-        &mut self,
-        callee: ExprId,
-        args: &[ExprId],
-    ) -> Result<(), PackageStoreError> {
-        // Only a single resolved function gives us trustworthy parameter evidence. Ambiguous calls
-        // keep their already-computed return type but do not push expectations inward.
-        let Some(param_tys) = self
-            .pass
-            .context()
-            .callable_returns()
-            .function_call_param_tys(callee)?
-        else {
-            return Ok(());
-        };
-        if param_tys.len() != args.len() {
-            return Ok(());
-        }
-
-        for (arg, expected_ty) in args.iter().zip(param_tys) {
-            self.constrain_expr_with_expected(*arg, &expected_ty);
-        }
-
-        Ok(())
-    }
-
-    fn constrain_method_call_argument_expected_types(
-        &mut self,
-        method_call: ExprId,
-        receiver: ExprId,
-        method_name: &str,
-        explicit_args: &[ItemGenericArg],
-        args: Vec<ExprId>,
-    ) -> Result<(), PackageStoreError> {
-        // Method calls need receiver substitutions before parameter types are useful. The
-        // callable query only returns a list when the selected method is unambiguous.
-        let Some(param_tys) = self
-            .pass
-            .context()
-            .callable_returns()
-            .method_call_param_tys(method_call, receiver, method_name, explicit_args)?
-        else {
-            return Ok(());
-        };
-        if param_tys.len() != args.len() {
-            return Ok(());
-        }
-
-        for (arg, expected_ty) in args.into_iter().zip(param_tys) {
-            self.constrain_expr_with_expected(arg, &expected_ty);
-        }
-
-        Ok(())
     }
 
     fn constrain_enum_variant_payload_expected_types(
@@ -365,8 +265,9 @@ where
             let Some(expected_ty) = self
                 .pass
                 .context()
-                .type_path_query()
-                .field_ty_for_nominal_type(&record_ty, &field.key)?
+                .fields()
+                .declared(&record_ty, &field.key)?
+                .and_then(|target| target.ty().cloned())
             else {
                 continue;
             };
@@ -394,10 +295,7 @@ where
             return Ok(None);
         };
 
-        self.pass
-            .context()
-            .callable_returns()
-            .explicit_declared_return_ty(function)
+        self.pass.context().functions().declared_return_ty(function)
     }
 
     fn constrain_root_tail_with_expected(&mut self, expected_ty: &Ty) {

@@ -1,6 +1,8 @@
 mod associated_value;
 mod body_items;
-mod callable;
+mod call;
+mod field;
+mod function;
 mod receiver_items;
 mod type_path;
 mod type_ref;
@@ -13,7 +15,7 @@ pub use self::{
 
 pub(crate) use self::{
     associated_value::BodyAssociatedValueQuery, body_items::BodyLocalItemQuery,
-    type_ref::TypeRefUseSite,
+    field::BodyFieldQuery, function::BodyFunctionQuery, type_ref::TypeRefUseSite,
 };
 
-pub(crate) use self::callable::{CallableReturnQuery, SelectedCallable};
+pub(crate) use self::call::{BodyCallQuery, CallSite, MethodCallSite};

@@ -11,7 +11,7 @@ mod support;
 
 pub(crate) use self::{
     pass::BodyResolutionPass,
-    query::TypeRefUseSite,
+    query::{CallSite, MethodCallSite, TypeRefUseSite},
     source::{BodyQuerySource, BodyResolutionProviders},
 };
 
