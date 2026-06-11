@@ -1,35 +1,35 @@
-//! Receiver-based function lookup for a body use site.
+//! Method lookup for body receiver use sites.
 //!
 //! A body has two item layers: target-visible semantic items and the active body's local item
 //! overlay. Method lookup should not care which layer produced an impl candidate after visibility
 //! has been decided, so this query merges both layers before returning ref-level candidates.
 
-use rg_ir_model::{AssocItemId, FunctionRef, ImplRef};
+use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner};
 use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
-use rg_ty::{ImplMatcher, MemberMethodCandidateRef, MemberMethodOrigin, NominalTy, Ty, TypeSubst};
+use rg_ty::{
+    AutoderefMode, ImplMatcher, MemberMethodCandidateRef, MemberMethodOrigin, NominalTy, Ty,
+    TypeSubst,
+};
 
 use crate::resolution::{BodyQuerySource, BodyResolutionContext};
 
 use super::BodyLocalItemQuery;
 
-pub struct BodyReceiverFunctionQuery<'query, D, I> {
+pub struct BodyMethodQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
-/// Inherent function found by matching an impl whose `Self` type is structural.
-///
-/// The candidate carries the adjusted receiver type and substitutions because structural impls
-/// cannot recover that context from a nominal type definition later.
+/// Method candidate selected by body-aware receiver lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BodyStructuralReceiverFunctionCandidate {
+pub(crate) struct BodyMethodCandidate {
     function: FunctionRef,
     receiver_ty: Ty,
     subst: TypeSubst,
 }
 
-impl BodyStructuralReceiverFunctionCandidate {
+impl BodyMethodCandidate {
     pub(crate) fn function(&self) -> FunctionRef {
         self.function
     }
@@ -43,7 +43,7 @@ impl BodyStructuralReceiverFunctionCandidate {
     }
 }
 
-impl<'query, D, I> BodyReceiverFunctionQuery<'query, D, I>
+impl<'query, D, I> BodyMethodQuery<'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
@@ -60,15 +60,15 @@ where
         for candidate in self
             .context
             .autoderef()
-            .candidates(rg_ty::AutoderefMode::MethodReceiver, ty)
+            .candidates(AutoderefMode::MethodReceiver, ty)
         {
             let candidate = candidate?;
             for receiver_ty in candidate.ty().as_nominals() {
-                for method in self.function_candidates_for_receiver(receiver_ty, None)? {
+                for method in self.nominal_method_candidates(receiver_ty, None)? {
                     Self::push_candidate(&mut candidates, method);
                 }
             }
-            for method in self.structural_function_candidates_for_receiver(candidate.ty(), None)? {
+            for method in self.structural_method_candidates(candidate.ty(), None)? {
                 Self::push_candidate(
                     &mut candidates,
                     MemberMethodCandidateRef::inherent(method.function()),
@@ -79,19 +79,76 @@ where
         Ok(candidates)
     }
 
-    pub(crate) fn function_refs_for_receiver(
+    /// Returns named method candidates selected at the first autoderef depth with matches.
+    pub(crate) fn named_method_candidates_for_ty(
         &self,
-        receiver_ty: &NominalTy,
-        method_name: Option<&str>,
-    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
-        let mut functions = UniqueVec::new();
-        for candidate in self.function_candidates_for_receiver(receiver_ty, method_name)? {
-            functions.push(candidate.function());
+        receiver_ty: &Ty,
+        method_name: &str,
+    ) -> Result<Vec<BodyMethodCandidate>, PackageStoreError> {
+        let item_query = self.context.item_query();
+        let mut current_depth = None;
+        let mut candidates = Vec::new();
+
+        for candidate in self
+            .context
+            .autoderef()
+            .candidates(AutoderefMode::MethodReceiver, receiver_ty)
+        {
+            let candidate = candidate?;
+            // Method calls select the first autoderef depth that has matching methods. Completion
+            // can be more generous, but call inference must not mix receiver substitutions across
+            // different depths.
+            if current_depth.is_some_and(|depth| depth != candidate.depth())
+                && !candidates.is_empty()
+            {
+                return Ok(candidates);
+            }
+            current_depth = Some(candidate.depth());
+
+            for nominal_ty in candidate.ty().as_nominals() {
+                for method in self.nominal_method_candidates(nominal_ty, Some(method_name))? {
+                    let function_ref = method.function();
+                    let Some(function_data) = item_query.function_data(function_ref)? else {
+                        continue;
+                    };
+                    if function_data.name != method_name || !function_data.has_self_receiver() {
+                        continue;
+                    }
+
+                    candidates.push(BodyMethodCandidate {
+                        function: function_ref,
+                        receiver_ty: Ty::nominal([nominal_ty.clone()].into_iter().collect()),
+                        subst: self.nominal_method_subst(
+                            function_ref,
+                            function_data.owner,
+                            nominal_ty,
+                        )?,
+                    });
+                }
+            }
+
+            for structural in
+                self.structural_method_candidates(candidate.ty(), Some(method_name))?
+            {
+                let Some(function_data) = item_query.function_data(structural.function)? else {
+                    continue;
+                };
+                if function_data.name != method_name || !function_data.has_self_receiver() {
+                    continue;
+                }
+
+                candidates.push(BodyMethodCandidate {
+                    function: structural.function,
+                    receiver_ty: structural.receiver_ty,
+                    subst: structural.subst,
+                });
+            }
         }
-        Ok(functions)
+
+        Ok(candidates)
     }
 
-    pub(super) fn function_candidates_for_receiver(
+    fn nominal_method_candidates(
         &self,
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
@@ -149,11 +206,11 @@ where
         Ok(candidates)
     }
 
-    pub(crate) fn structural_function_candidates_for_receiver(
+    fn structural_method_candidates(
         &self,
         receiver_ty: &Ty,
         method_name: Option<&str>,
-    ) -> Result<Vec<BodyStructuralReceiverFunctionCandidate>, PackageStoreError> {
+    ) -> Result<Vec<BodyMethodCandidate>, PackageStoreError> {
         // Nominal receivers are handled by the indexed path. Scanning visible impls is reserved
         // for shaped builtin types such as `[T]`, where there is no `TypeDefRef` key to query.
         if !Self::receiver_ty_uses_structural_impl_lookup(receiver_ty) {
@@ -193,7 +250,7 @@ where
         impl_ref: ImplRef,
         receiver_ty: &Ty,
         method_name: Option<&str>,
-        candidates: &mut Vec<BodyStructuralReceiverFunctionCandidate>,
+        candidates: &mut Vec<BodyMethodCandidate>,
     ) -> Result<(), PackageStoreError> {
         let Some(impl_data) = item_query.impl_data(impl_ref)? else {
             return Ok(());
@@ -223,7 +280,7 @@ where
             }
             Self::push_structural_candidate(
                 candidates,
-                BodyStructuralReceiverFunctionCandidate {
+                BodyMethodCandidate {
                     function,
                     receiver_ty: receiver_ty.clone(),
                     subst: subst.clone(),
@@ -244,10 +301,8 @@ where
         receiver_ty: &NominalTy,
         method_name: Option<&str>,
     ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
-        match method_name {
-            Some(name) => body_items.inherent_functions_for_type_and_name(receiver_ty.def, name),
-            None => body_items.inherent_functions_for_type(receiver_ty.def),
-        }
+        let functions = body_items.inherent_functions_for_type(receiver_ty.def)?;
+        self.filter_functions_by_name(functions, method_name)
     }
 
     fn semantic_inherent_functions(
@@ -272,6 +327,36 @@ where
                 self.filter_functions_by_name(functions, method_name)
             }
         }
+    }
+
+    fn nominal_method_subst(
+        &self,
+        function_ref: FunctionRef,
+        owner: ItemOwner,
+        receiver_ty: &NominalTy,
+    ) -> Result<TypeSubst, PackageStoreError> {
+        let mut subst = self
+            .context
+            .item_query()
+            .generic_params_for_type_def(receiver_ty.def)?
+            .map(|generics| TypeSubst::from_generics(generics, &receiver_ty.args))
+            .unwrap_or_else(TypeSubst::new);
+
+        if let ItemOwner::Impl(impl_id) = owner {
+            let item_query = self.context.item_query();
+            if let Some(impl_data) = item_query.impl_data(ImplRef {
+                origin: function_ref.origin,
+                id: impl_id,
+            })? {
+                subst.extend(
+                    self.context
+                        .impl_matcher()
+                        .impl_self_subst_for_impl(impl_data, receiver_ty),
+                );
+            }
+        }
+
+        Ok(subst)
     }
 
     fn filter_functions_by_name(
@@ -312,8 +397,8 @@ where
     }
 
     fn push_structural_candidate(
-        candidates: &mut Vec<BodyStructuralReceiverFunctionCandidate>,
-        candidate: BodyStructuralReceiverFunctionCandidate,
+        candidates: &mut Vec<BodyMethodCandidate>,
+        candidate: BodyMethodCandidate,
     ) {
         if !candidates.iter().any(|existing| {
             existing.function == candidate.function && existing.subst == candidate.subst

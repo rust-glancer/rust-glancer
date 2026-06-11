@@ -66,25 +66,6 @@ where
         Ok(functions)
     }
 
-    pub(super) fn inherent_functions_for_type_and_name(
-        &self,
-        ty: TypeDefRef,
-        name: &str,
-    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
-        let mut functions = UniqueVec::new();
-        let item_query = self.context.item_query();
-        for function in self.inherent_functions_for_type(ty)? {
-            let Some(function_data) = item_query.function_data(function)? else {
-                continue;
-            };
-            if function_data.name == name {
-                functions.push(function);
-            }
-        }
-
-        Ok(functions)
-    }
-
     pub(super) fn trait_impls_for_type(
         &self,
         ty: TypeDefRef,

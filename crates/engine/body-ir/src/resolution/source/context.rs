@@ -15,7 +15,7 @@ use crate::ir::body::ResolvedBodyData;
 
 use crate::resolution::query::{
     BodyAssociatedValueQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyLocalItemQuery,
-    BodyReceiverFunctionQuery, BodyTypePathQuery, BodyValuePathQuery,
+    BodyMethodQuery, BodyTypePathQuery, BodyValuePathQuery,
 };
 
 use super::BodyQuerySource;
@@ -112,8 +112,8 @@ where
         BodyLocalItemQuery::new(*self)
     }
 
-    pub fn receiver_functions(&self) -> BodyReceiverFunctionQuery<'a, D, I> {
-        BodyReceiverFunctionQuery::new(*self)
+    pub fn methods(&self) -> BodyMethodQuery<'a, D, I> {
+        BodyMethodQuery::new(*self)
     }
 
     pub(crate) fn impl_matcher(

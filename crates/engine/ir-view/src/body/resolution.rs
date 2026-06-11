@@ -77,7 +77,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
 
         Ok(Some(
             BodyResolutionContext::new(self.db, self.db, body_ref, body)
-                .receiver_functions()
+                .methods()
                 .method_candidates_for_ty(ty)?,
         ))
     }

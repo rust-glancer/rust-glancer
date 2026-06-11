@@ -3,14 +3,13 @@ mod body_items;
 mod call;
 mod field;
 mod function;
-mod receiver_items;
+mod method;
 mod type_path;
 mod type_ref;
 mod value_path;
 
 pub use self::{
-    receiver_items::BodyReceiverFunctionQuery, type_path::BodyTypePathQuery,
-    value_path::BodyValuePathQuery,
+    method::BodyMethodQuery, type_path::BodyTypePathQuery, value_path::BodyValuePathQuery,
 };
 
 pub(crate) use self::{

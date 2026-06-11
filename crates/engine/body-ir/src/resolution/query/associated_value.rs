@@ -5,8 +5,8 @@
 //! `BodyValuePathQuery`.
 
 use rg_ir_model::{
-    AssocItemId, ConstRef, DefMapRef, ImplRef, ItemOwner, Path, ScopeId, TraitImplRef, TypeDefId,
-    identity::DeclarationRef,
+    AssocItemId, ConstRef, DefMapRef, FunctionRef, ImplRef, ItemOwner, Path, ScopeId, TraitImplRef,
+    TypeDefId, identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
@@ -116,20 +116,8 @@ where
         // deliberately optimistic, following the same "prefer useful candidates over false
         // negatives" policy as dot completion.
         let mut functions = UniqueVec::new();
-        let item_query = self.context.item_query();
         for nominal_ty in prefix_ty.as_nominals() {
-            for function_ref in self
-                .context
-                .receiver_functions()
-                .function_refs_for_receiver(nominal_ty, Some(last_segment))?
-            {
-                let Some(function_data) = item_query.function_data(function_ref)? else {
-                    continue;
-                };
-                if function_data.name == last_segment && !function_data.has_self_receiver() {
-                    functions.push(function_ref);
-                }
-            }
+            functions.extend(self.associated_function_items_for_type(nominal_ty, last_segment)?);
         }
 
         Ok((!functions.is_empty()).then_some((
@@ -202,6 +190,84 @@ where
         )?;
 
         Ok(items)
+    }
+
+    fn associated_function_items_for_type(
+        &self,
+        ty: &NominalTy,
+        name: &str,
+    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
+        let body_items = self.context.body_local_items();
+        let matcher = self.context.impl_matcher();
+        let mut functions = UniqueVec::new();
+
+        for function_ref in body_items.inherent_functions_for_type(ty.def)? {
+            if matcher.function_applies_to_receiver(function_ref, ty)? {
+                self.push_associated_function(&mut functions, function_ref, name)?;
+            }
+        }
+
+        if ty.def.origin.as_target_ref().is_some() {
+            for function_ref in self.semantic_inherent_function_items_for_type(ty, name)? {
+                if matcher.function_applies_to_receiver(function_ref, ty)? {
+                    self.push_associated_function(&mut functions, function_ref, name)?;
+                }
+            }
+        }
+
+        let body_trait_impls = body_items.trait_impls_for_type(ty.def)?;
+        for (function_ref, _) in matcher.trait_function_candidates_from_impls(
+            self.context.semantic_index(),
+            body_trait_impls,
+            ty,
+            Some(name),
+        )? {
+            self.push_associated_function(&mut functions, function_ref, name)?;
+        }
+
+        if ty.def.origin.as_target_ref().is_some() {
+            for (function_ref, _) in matcher.trait_function_candidates_for_receiver(
+                self.context.semantic_index(),
+                ty,
+                Some(name),
+            )? {
+                self.push_associated_function(&mut functions, function_ref, name)?;
+            }
+        }
+
+        Ok(functions)
+    }
+
+    fn semantic_inherent_function_items_for_type(
+        &self,
+        ty: &NominalTy,
+        name: &str,
+    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
+        match self.context.semantic_index() {
+            Some(index) => Ok(index
+                .inherent_functions_for_type_and_name(ty.def, name)
+                .cloned()
+                .unwrap_or_default()),
+            None => self
+                .context
+                .target_items()
+                .inherent_functions_for_type(ty.def),
+        }
+    }
+
+    fn push_associated_function(
+        &self,
+        functions: &mut UniqueVec<FunctionRef>,
+        function_ref: FunctionRef,
+        name: &str,
+    ) -> Result<(), PackageStoreError> {
+        let Some(function_data) = self.context.item_query().function_data(function_ref)? else {
+            return Ok(());
+        };
+        if function_data.name == name && !function_data.has_self_receiver() {
+            functions.push(function_ref);
+        }
+        Ok(())
     }
 
     fn push_associated_trait_value_items_for_impls(

@@ -5,17 +5,14 @@
 //! expression traversal stay focused on expression shapes.
 
 use rg_ir_model::{
-    DefId, ExprData, ExprId, FunctionRef, ImplRef, ItemOwner, ScopeId, SemanticItemRef,
+    DefId, ExprData, ExprId, FunctionRef, ScopeId, SemanticItemRef,
     identity::DeclarationRef,
     items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
-use rg_ty::{
-    AutoderefMode, CallArgInference, CallArgMapping, NominalTy, Ty, TypeSubst,
-    function_generic_shadow_subst,
-};
+use rg_ty::{CallArgInference, CallArgMapping, Ty, TypeSubst, function_generic_shadow_subst};
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 use crate::{ir::ExprKind, ir::resolved::BodyResolution};
@@ -301,109 +298,25 @@ where
         site: MethodCallSite<'_>,
     ) -> Result<ResolvedCallTargets, PackageStoreError> {
         let receiver_ty = self.context.body().expr_ty_unchecked(site.receiver);
-        let item_query = self.context.item_query();
-        let mut current_depth = None;
         let mut targets = ResolvedCallTargets::new();
 
         for candidate in self
             .context
-            .autoderef()
-            .candidates(AutoderefMode::MethodReceiver, receiver_ty)
+            .methods()
+            .named_method_candidates_for_ty(receiver_ty, site.name)?
         {
-            let candidate = candidate?;
-            // Method lookup stops at the first autoderef depth that has matches. Keep expected
-            // types tied to that same selected depth so later candidates cannot leak inward.
-            if current_depth.is_some_and(|depth| depth != candidate.depth()) && !targets.is_empty()
-            {
-                return Ok(targets);
-            }
-            current_depth = Some(candidate.depth());
-
-            for nominal_ty in candidate.ty().as_nominals() {
-                for function_ref in self
-                    .context
-                    .receiver_functions()
-                    .function_refs_for_receiver(nominal_ty, Some(site.name))?
-                {
-                    let Some(function_data) = item_query.function_data(function_ref)? else {
-                        continue;
-                    };
-                    if function_data.name != site.name || !function_data.has_self_receiver() {
-                        continue;
-                    }
-
-                    let receiver =
-                        self.nominal_receiver(function_ref, function_data.owner, nominal_ty)?;
-                    targets.push(ResolvedCallTarget::method_call(
-                        function_ref,
-                        site.scope,
-                        site.explicit_args,
-                        receiver,
-                    ));
-                }
-            }
-
-            // Structural receiver methods, such as slice methods, carry their receiver
-            // substitution in the candidate because there is no nominal type key to reconstruct.
-            for structural in self
-                .context
-                .receiver_functions()
-                .structural_function_candidates_for_receiver(candidate.ty(), Some(site.name))?
-            {
-                let function_ref = structural.function();
-                let Some(function_data) = item_query.function_data(function_ref)? else {
-                    continue;
-                };
-                if function_data.name != site.name || !function_data.has_self_receiver() {
-                    continue;
-                }
-
-                targets.push(ResolvedCallTarget::method_call(
-                    function_ref,
-                    site.scope,
-                    site.explicit_args,
-                    MethodReceiver {
-                        self_ty: structural.receiver_ty().clone(),
-                        subst: structural.subst().clone(),
-                    },
-                ));
-            }
+            targets.push(ResolvedCallTarget::method_call(
+                candidate.function(),
+                site.scope,
+                site.explicit_args,
+                MethodReceiver {
+                    self_ty: candidate.receiver_ty().clone(),
+                    subst: candidate.subst().clone(),
+                },
+            ));
         }
 
         Ok(targets)
-    }
-
-    fn nominal_receiver(
-        &self,
-        function_ref: FunctionRef,
-        owner: ItemOwner,
-        receiver_ty: &NominalTy,
-    ) -> Result<MethodReceiver, PackageStoreError> {
-        let mut subst = self
-            .context
-            .item_query()
-            .generic_params_for_type_def(receiver_ty.def)?
-            .map(|generics| TypeSubst::from_generics(generics, &receiver_ty.args))
-            .unwrap_or_else(TypeSubst::new);
-
-        if let ItemOwner::Impl(impl_id) = owner {
-            let item_query = self.context.item_query();
-            if let Some(impl_data) = item_query.impl_data(ImplRef {
-                origin: function_ref.origin,
-                id: impl_id,
-            })? {
-                subst.extend(
-                    self.context
-                        .impl_matcher()
-                        .impl_self_subst_for_impl(impl_data, receiver_ty),
-                );
-            }
-        }
-
-        Ok(MethodReceiver {
-            self_ty: Ty::nominal([receiver_ty.clone()].into_iter().collect()),
-            subst,
-        })
     }
 
     fn declaration_function(

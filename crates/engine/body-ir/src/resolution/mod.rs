@@ -16,6 +16,6 @@ pub(crate) use self::{
 };
 
 pub use self::{
-    query::{BodyReceiverFunctionQuery, BodyTypePathQuery, BodyValuePathQuery},
+    query::{BodyMethodQuery, BodyTypePathQuery, BodyValuePathQuery},
     source::BodyResolutionContext,
 };
