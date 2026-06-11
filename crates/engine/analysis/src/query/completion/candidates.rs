@@ -12,18 +12,18 @@ use rg_ir_storage::ItemStoreQuery;
 use rg_ir_view::{
     IndexedViewDb, SymbolKind,
     lookup::name::{ModuleScopeName, NameLookupView, NameNamespace, NameOrigin},
+    member::{MemberMethodCandidate, MemberUseSite, MemberView},
     source::{IndexedNameNamespace, IndexedQualifiedPathScope, IndexedUnqualifiedNameScope},
     ty::TyView,
     ty::locals::{BodyLexicalName, BodyNameNamespace, BodyNameScope, BodyView},
 };
-use rg_ty::Ty;
+use rg_ty::{MemberMethodOrigin, Ty};
 
 use crate::{
     completion_site::{
         DotCompletionSite, PathCompletionSite, RecordFieldCompletionSite, UnqualifiedCompletionSite,
     },
     model::{CompletionApplicability, CompletionKind, CompletionTarget},
-    query::member::{MemberMethodCandidate, MemberMethodOrigin, MemberUseSite, MemberView},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

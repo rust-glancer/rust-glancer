@@ -10,6 +10,7 @@ pub mod db;
 pub mod display;
 pub mod item;
 pub mod lookup;
+pub mod member;
 pub mod source;
 pub mod symbol;
 pub mod ty;

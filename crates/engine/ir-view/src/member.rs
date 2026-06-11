@@ -1,7 +1,9 @@
-//! Member data adapter for editor-facing queries.
+//! Member data projections for editor-facing queries.
 //!
-//! `rg_ty::MemberQuery` returns stable refs. Completion and hover still need borrowed item data,
-//! docs, and display paths, so this module keeps that projection close to the analysis features.
+//! `rg_ty::MemberQuery` returns stable refs. Completion, hover, and declaration details also need
+//! borrowed item data, docs, display paths, and body-local method lookup. This view keeps that
+//! cross-layer projection behind the view facade instead of exposing body-resolution internals to
+//! analysis queries.
 
 use rg_body_ir::BodyResolutionContext;
 use rg_ir_model::Path;
@@ -11,37 +13,36 @@ use rg_ir_model::{
     hir::items::{FieldData, FunctionData},
 };
 use rg_ir_storage::{ItemStoreQuery, TargetItemQuery};
-use rg_ir_view::{IndexedViewDb, item::path::PathView};
-pub(crate) use rg_ty::MemberMethodOrigin;
+use rg_ty::MemberMethodOrigin;
 use rg_ty::{ItemPathQuery, MemberMethodCandidateRef, MemberQuery, Ty};
 
-use crate::SymbolKind;
+use crate::{IndexedViewDb, SymbolKind, item::path::PathView};
 
 /// Borrowed data for one resolved field, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MemberField<'a> {
+pub struct MemberField<'a> {
     field: FieldRef,
     data: FieldData<'a>,
 }
 
 impl<'a> MemberField<'a> {
-    pub(crate) fn field_ref(&self) -> FieldRef {
+    pub fn field_ref(&self) -> FieldRef {
         self.field
     }
 
-    pub(crate) fn key(&self) -> Option<&'a FieldKey> {
+    pub fn key(&self) -> Option<&'a FieldKey> {
         self.data.field.key.as_ref()
     }
 
-    pub(crate) fn data(&self) -> FieldData<'a> {
+    pub fn data(&self) -> FieldData<'a> {
         self.data
     }
 
-    pub(crate) fn display_path(&self, paths: &PathView<'_, '_>) -> anyhow::Result<Option<String>> {
+    pub fn display_path(&self, paths: &PathView<'_, '_>) -> anyhow::Result<Option<String>> {
         paths.type_def_path(self.field.owner)
     }
 
-    pub(crate) fn docs_text(&self) -> Option<String> {
+    pub fn docs_text(&self) -> Option<String> {
         self.docs().map(Documentation::text)
     }
 
@@ -52,44 +53,44 @@ impl<'a> MemberField<'a> {
 
 /// Borrowed data for one resolved function, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MemberFunction<'a> {
+pub struct MemberFunction<'a> {
     function: FunctionRef,
     data: &'a FunctionData,
 }
 
 impl<'a> MemberFunction<'a> {
-    pub(crate) fn function_ref(&self) -> FunctionRef {
+    pub fn function_ref(&self) -> FunctionRef {
         self.function
     }
 
-    pub(crate) fn name(&self) -> &'a str {
+    pub fn name(&self) -> &'a str {
         self.data.name.as_str()
     }
 
-    pub(crate) fn params(&self) -> &'a [ParamItem] {
+    pub fn params(&self) -> &'a [ParamItem] {
         self.data.signature.params()
     }
 
-    pub(crate) fn data(&self) -> &'a FunctionData {
+    pub fn data(&self) -> &'a FunctionData {
         self.data
     }
 
-    pub(crate) fn display_path(&self, paths: &PathView<'_, '_>) -> anyhow::Result<Option<String>> {
+    pub fn display_path(&self, paths: &PathView<'_, '_>) -> anyhow::Result<Option<String>> {
         paths.function_path(self.function)
     }
 
-    pub(crate) fn symbol_kind(&self) -> SymbolKind {
+    pub fn symbol_kind(&self) -> SymbolKind {
         match self.data.owner {
             ItemOwner::Module(_) => SymbolKind::Function,
             ItemOwner::Trait(_) | ItemOwner::Impl(_) => SymbolKind::Method,
         }
     }
 
-    pub(crate) fn docs_text(&self) -> Option<String> {
+    pub fn docs_text(&self) -> Option<String> {
         self.docs().map(Documentation::text)
     }
 
-    pub(crate) fn has_self_receiver(&self) -> bool {
+    pub fn has_self_receiver(&self) -> bool {
         self.data.has_self_receiver()
     }
 
@@ -100,47 +101,47 @@ impl<'a> MemberFunction<'a> {
 
 /// One method candidate with enough origin information for UI ranking and labels.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct MemberMethodCandidate<'a> {
+pub struct MemberMethodCandidate<'a> {
     function: MemberFunction<'a>,
     origin: MemberMethodOrigin,
 }
 
 impl<'a> MemberMethodCandidate<'a> {
-    pub(crate) fn function(&self) -> MemberFunction<'a> {
+    pub fn function(&self) -> MemberFunction<'a> {
         self.function
     }
 
-    pub(crate) fn origin(&self) -> MemberMethodOrigin {
+    pub fn origin(&self) -> MemberMethodOrigin {
         self.origin
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum MemberUseSite {
+pub enum MemberUseSite {
     Target(TargetRef),
     Body(BodyRef),
 }
 
 impl MemberUseSite {
-    pub(crate) fn target(target: TargetRef) -> Self {
+    pub fn target(target: TargetRef) -> Self {
         Self::Target(target)
     }
 
-    pub(crate) fn body(body: BodyRef) -> Self {
+    pub fn body(body: BodyRef) -> Self {
         Self::Body(body)
     }
 }
 
-pub(crate) struct MemberView<'a, 'db> {
+pub struct MemberView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> MemberView<'a, 'db> {
-    pub(crate) fn new(db: &'a IndexedViewDb<'db>) -> Self {
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
         Self { db }
     }
 
-    pub(crate) fn field_candidates_for_ty<'view>(
+    pub fn field_candidates_for_ty<'view>(
         &'view self,
         use_site: TargetRef,
         ty: &Ty,
@@ -159,7 +160,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(fields)
     }
 
-    pub(crate) fn field_candidates_for_body_type_path<'view>(
+    pub fn field_candidates_for_body_type_path<'view>(
         &'view self,
         body: BodyRef,
         scope: ScopeId,
@@ -193,22 +194,19 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(fields)
     }
 
-    pub(crate) fn field(&self, field: FieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
+    pub fn field(&self, field: FieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
         Ok(ItemStoreQuery::new(self.db)
             .field_data(field)?
             .map(|data| MemberField { field, data }))
     }
 
-    pub(crate) fn function(
-        &self,
-        function: FunctionRef,
-    ) -> anyhow::Result<Option<MemberFunction<'_>>> {
+    pub fn function(&self, function: FunctionRef) -> anyhow::Result<Option<MemberFunction<'_>>> {
         Ok(ItemStoreQuery::new(self.db)
             .function_data(function)?
             .map(|data| MemberFunction { function, data }))
     }
 
-    pub(crate) fn method_candidates_for_ty<'view>(
+    pub fn method_candidates_for_ty<'view>(
         &'view self,
         use_site: MemberUseSite,
         ty: &Ty,

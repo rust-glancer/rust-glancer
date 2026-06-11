@@ -9,7 +9,6 @@ pub(crate) mod completion;
 pub(crate) mod declaration_details;
 pub(crate) mod hover;
 pub(crate) mod inlay_hints;
-pub(crate) mod member;
 pub(crate) mod navigation;
 pub(crate) mod references;
 pub(crate) mod rename;

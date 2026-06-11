@@ -10,9 +10,11 @@ use rg_ir_model::{
     identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery};
-use rg_ir_view::{IndexedViewDb, display::signature::SignatureRenderer, item::path::PathView};
+use rg_ir_view::{
+    IndexedViewDb, display::signature::SignatureRenderer, item::path::PathView, member::MemberView,
+};
 
-use crate::{SymbolKind, query::member::MemberView};
+use crate::SymbolKind;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct DeclarationDetailsContext {
