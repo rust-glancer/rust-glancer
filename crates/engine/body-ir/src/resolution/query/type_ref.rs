@@ -60,14 +60,12 @@ where
             TypeRefUseSite::Module(module) => self.resolve_in_module(ty, module),
             TypeRefUseSite::OwnerContext(context) => self.resolve_in_owner_context(ty, context),
             TypeRefUseSite::Function(function) => {
-                let type_paths = self.context.type_path_query();
-                let context = type_paths
-                    .context_for_function(function, self.context.body().owner_module())?;
+                let context = self.context.type_contexts().for_function(function)?;
                 self.with_use_site(TypeRefUseSite::OwnerContext(context))
                     .resolve(ty)
             }
             TypeRefUseSite::BodyOwner => {
-                let context = self.context.type_path_query().context_for_body_owner()?;
+                let context = self.context.type_contexts().for_body_owner()?;
                 self.with_use_site(TypeRefUseSite::OwnerContext(context))
                     .resolve(ty)
             }
@@ -134,9 +132,9 @@ where
             return Ok(ty);
         }
         if path.is_self_type() {
-            let type_paths = self.context.type_path_query();
-            let context = type_paths.context_for_body_owner()?;
-            let self_tys = type_paths.self_nominal_tys_for_context(context)?;
+            let type_contexts = self.context.type_contexts();
+            let context = type_contexts.for_body_owner()?;
+            let self_tys = type_contexts.nominal_self_tys_for_context(context)?;
             return Ok(Ty::self_ty(self_tys));
         }
 
@@ -168,8 +166,8 @@ where
         if path.is_self_type() {
             let self_tys = self
                 .context
-                .type_path_query()
-                .self_nominal_tys_for_context(context)?;
+                .type_contexts()
+                .nominal_self_tys_for_context(context)?;
             return Ok(Ty::self_ty(self_tys));
         }
 

@@ -26,10 +26,9 @@ where
         &self,
         function: FunctionRef,
     ) -> Result<UniqueVec<NominalTy>, PackageStoreError> {
-        let type_paths = self.context.type_path_query();
-        let context =
-            type_paths.context_for_function(function, self.context.body().owner_module())?;
-        type_paths.self_nominal_tys_for_context(context)
+        let type_contexts = self.context.type_contexts();
+        let context = type_contexts.for_function(function)?;
+        type_contexts.nominal_self_tys_for_context(context)
     }
 
     /// Returns the explicitly declared return type for a function body, if one was written.

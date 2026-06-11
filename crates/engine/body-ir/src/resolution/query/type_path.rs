@@ -4,16 +4,14 @@
 //! query checks those scopes first and then falls back to the semantic/def-map context.
 
 use rg_ir_model::{
-    AssocItemId, DefId, DefMapRef, FunctionRef, ImplRef, ItemOwner, ModuleId, ModuleRef, Path,
-    PathSegment, ScopeId, SemanticItemRef, TypeAliasRef, TypePathResolution,
+    AssocItemId, DefId, DefMapRef, ImplRef, ItemOwner, ModuleId, ModuleRef, Path, PathSegment,
+    ScopeId, SemanticItemRef, TypeAliasRef, TypePathResolution,
     items::{TypePath, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, NameResolutionFilter, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
 use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
-
-use crate::ir::BodyOwner;
 
 use crate::resolution::BodyResolutionContext;
 
@@ -58,7 +56,7 @@ where
         }
 
         let item_paths = self.context.item_paths();
-        let context = self.context_for_body_owner()?;
+        let context = self.context.type_contexts().for_body_owner()?;
         let resolution = item_paths.resolve_type_path(context, path)?;
         if !matches!(resolution, TypePathResolution::Unknown) {
             return Ok(resolution);
@@ -76,75 +74,6 @@ where
             },
             path,
         )
-    }
-
-    pub(super) fn self_nominal_tys_for_context(
-        &self,
-        context: TypePathContext,
-    ) -> Result<UniqueVec<NominalTy>, PackageStoreError> {
-        let Some(impl_ref) = context.impl_ref else {
-            return Ok(UniqueVec::new());
-        };
-        let item_query = self.context.item_query();
-        let Some(impl_data) = item_query.impl_data(impl_ref)? else {
-            return Ok(UniqueVec::new());
-        };
-
-        let item_paths = self.context.item_paths();
-        let resolved = item_paths.resolve_type_ref(
-            &impl_data.self_ty,
-            context,
-            Ty::Unknown,
-            &TypeSubst::new(),
-        )?;
-
-        let mut self_tys = UniqueVec::new();
-        for ty in resolved.as_nominals() {
-            if impl_data.resolved_self_tys.contains(&ty.def) {
-                self_tys.push(ty.clone());
-            }
-        }
-
-        if self_tys.is_empty() {
-            self_tys.extend(
-                impl_data
-                    .resolved_self_tys
-                    .iter()
-                    .copied()
-                    .map(NominalTy::bare),
-            );
-        }
-
-        Ok(self_tys)
-    }
-
-    pub(super) fn context_for_function(
-        &self,
-        function: FunctionRef,
-        fallback_module: ModuleRef,
-    ) -> Result<TypePathContext, PackageStoreError> {
-        Ok(self
-            .context
-            .item_query()
-            .type_path_context_for_function(function)?
-            .unwrap_or_else(|| TypePathContext::module(fallback_module)))
-    }
-
-    pub(super) fn context_for_body_owner(&self) -> Result<TypePathContext, PackageStoreError> {
-        let fallback_module = self.context.body().owner_module();
-        match self.context.body().owner() {
-            BodyOwner::Function(function) => self.context_for_function(function, fallback_module),
-            BodyOwner::Const(const_ref) => {
-                let item_query = self.context.item_query();
-                let Some(data) = item_query.const_data(const_ref)? else {
-                    return Ok(TypePathContext::module(fallback_module));
-                };
-                item_query
-                    .type_path_context_for_owner(const_ref.origin, data.owner)?
-                    .map_or_else(|| Ok(TypePathContext::module(fallback_module)), Ok)
-            }
-            BodyOwner::Static(_) => Ok(TypePathContext::module(fallback_module)),
-        }
     }
 
     fn resolve_body_type_items_from_def_map(

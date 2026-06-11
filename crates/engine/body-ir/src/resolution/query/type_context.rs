@@ -1,0 +1,94 @@
+//! Type-resolution context helpers for body-owned items.
+//!
+//! Type refs and paths both need to know which module/impl context anchors lookup. The same
+//! context also determines the meaning of type-level `Self` inside an impl.
+
+use rg_ir_model::FunctionRef;
+use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
+use rg_package_store::PackageStoreError;
+use rg_std::UniqueVec;
+use rg_ty::{NominalTy, Ty, TypeSubst};
+
+use crate::{ir::BodyOwner, resolution::BodyResolutionContext};
+
+pub(crate) struct BodyTypeContextQuery<'query, D, I> {
+    context: BodyResolutionContext<'query, D, I>,
+}
+
+impl<'query, D, I> BodyTypeContextQuery<'query, D, I>
+where
+    D: DefMapSource<Error = PackageStoreError> + Copy,
+    I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
+{
+    pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
+        Self { context }
+    }
+
+    pub(crate) fn for_function(
+        &self,
+        function: FunctionRef,
+    ) -> Result<TypePathContext, PackageStoreError> {
+        let fallback_module = self.context.body().owner_module();
+        Ok(self
+            .context
+            .item_query()
+            .type_path_context_for_function(function)?
+            .unwrap_or_else(|| TypePathContext::module(fallback_module)))
+    }
+
+    pub(crate) fn for_body_owner(&self) -> Result<TypePathContext, PackageStoreError> {
+        let fallback_module = self.context.body().owner_module();
+        match self.context.body().owner() {
+            BodyOwner::Function(function) => self.for_function(function),
+            BodyOwner::Const(const_ref) => {
+                let item_query = self.context.item_query();
+                let Some(data) = item_query.const_data(const_ref)? else {
+                    return Ok(TypePathContext::module(fallback_module));
+                };
+                item_query
+                    .type_path_context_for_owner(const_ref.origin, data.owner)?
+                    .map_or_else(|| Ok(TypePathContext::module(fallback_module)), Ok)
+            }
+            BodyOwner::Static(_) => Ok(TypePathContext::module(fallback_module)),
+        }
+    }
+
+    pub(crate) fn nominal_self_tys_for_context(
+        &self,
+        context: TypePathContext,
+    ) -> Result<UniqueVec<NominalTy>, PackageStoreError> {
+        let Some(impl_ref) = context.impl_ref else {
+            return Ok(UniqueVec::new());
+        };
+        let item_query = self.context.item_query();
+        let Some(impl_data) = item_query.impl_data(impl_ref)? else {
+            return Ok(UniqueVec::new());
+        };
+
+        let resolved = self.context.item_paths().resolve_type_ref(
+            &impl_data.self_ty,
+            context,
+            Ty::Unknown,
+            &TypeSubst::new(),
+        )?;
+
+        let mut self_tys = UniqueVec::new();
+        for ty in resolved.as_nominals() {
+            if impl_data.resolved_self_tys.contains(&ty.def) {
+                self_tys.push(ty.clone());
+            }
+        }
+
+        if self_tys.is_empty() {
+            self_tys.extend(
+                impl_data
+                    .resolved_self_tys
+                    .iter()
+                    .copied()
+                    .map(NominalTy::bare),
+            );
+        }
+
+        Ok(self_tys)
+    }
+}
