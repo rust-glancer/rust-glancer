@@ -202,10 +202,7 @@ where
             && binding_data.name.as_deref() == Some("self")
             && let Some(function) = self.body.function_owner()
         {
-            let self_tys = self
-                .context()
-                .type_path_query()
-                .self_nominal_tys_for_function(function)?;
+            let self_tys = self.context().functions().self_nominal_tys(function)?;
             let ty = Ty::self_ty(self_tys);
             return Ok(match kind {
                 BodySelfParamKind::Value => ty,

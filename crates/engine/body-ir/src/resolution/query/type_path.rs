@@ -90,14 +90,6 @@ where
         )
     }
 
-    pub(crate) fn self_nominal_tys_for_function(
-        &self,
-        function: FunctionRef,
-    ) -> Result<UniqueVec<NominalTy>, PackageStoreError> {
-        let context = self.context_for_function(function, self.context.body().owner_module())?;
-        self.self_nominal_tys_for_context(context)
-    }
-
     /// Resolves the declared payload type for an enum variant field.
     pub(crate) fn variant_field_ty_for_enum_variant(
         &self,

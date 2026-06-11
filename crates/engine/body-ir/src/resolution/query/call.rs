@@ -503,8 +503,8 @@ where
                 None => Ty::self_ty(
                     self.query
                         .context
-                        .type_path_query()
-                        .self_nominal_tys_for_function(self.target.function)?,
+                        .functions()
+                        .self_nominal_tys(self.target.function)?,
                 ),
             });
         }

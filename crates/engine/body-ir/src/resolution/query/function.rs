@@ -3,7 +3,8 @@
 use rg_ir_model::FunctionRef;
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{Ty, function_generic_shadow_subst};
+use rg_std::UniqueVec;
+use rg_ty::{NominalTy, Ty, function_generic_shadow_subst};
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
@@ -18,6 +19,17 @@ where
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
+    }
+
+    /// Returns the nominal `Self` types visible from a function's owner context.
+    pub(crate) fn self_nominal_tys(
+        &self,
+        function: FunctionRef,
+    ) -> Result<UniqueVec<NominalTy>, PackageStoreError> {
+        let type_paths = self.context.type_path_query();
+        let context =
+            type_paths.context_for_function(function, self.context.body().owner_module())?;
+        type_paths.self_nominal_tys_for_context(context)
     }
 
     /// Returns the explicitly declared return type for a function body, if one was written.
@@ -39,11 +51,7 @@ where
         let subst = function_generic_shadow_subst(function_data.signature.generics());
 
         if ret_ty.is_self_type() {
-            return Ok(Some(Ty::self_ty(
-                self.context
-                    .type_path_query()
-                    .self_nominal_tys_for_function(function_ref)?,
-            )));
+            return Ok(Some(Ty::self_ty(self.self_nominal_tys(function_ref)?)));
         }
 
         self.context
