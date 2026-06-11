@@ -4,7 +4,6 @@
 //! rules that turn paths, declaration refs, and body resolutions into canonical declaration
 //! identities.
 
-use rg_body_ir::BodyResolutionContext;
 use rg_ir_model::Path;
 use rg_ir_model::items::FieldKey;
 use rg_ir_model::{
@@ -14,7 +13,7 @@ use rg_ir_model::{
 use rg_ir_storage::{DefMapQuery, ItemStoreQuery, TypePathContext};
 use rg_ty::ItemPathQuery;
 
-use crate::IndexedViewDb;
+use crate::{IndexedViewDb, body::BodyResolutionView};
 
 pub struct ResolutionView<'a, 'db>(&'a IndexedViewDb<'db>);
 
@@ -114,9 +113,11 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         let Some(body) = self.0.body_ir.body_data(body_ref)? else {
             return Ok(Vec::new());
         };
-        let resolution = BodyResolutionContext::new(self.0, self.0, body_ref, body)
-            .type_path_query()
-            .resolve_in_scope(scope, path)?;
+        let Some(resolution) =
+            BodyResolutionView::new(self.0).type_path_resolution(body_ref, scope, path)?
+        else {
+            return Ok(Vec::new());
+        };
 
         let declarations = self.declarations_for_body_type_path_resolution(resolution);
         if !declarations.is_empty() {
@@ -132,12 +133,8 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
-            return Ok(Vec::new());
-        };
-        let declarations = BodyResolutionContext::new(self.0, self.0, body_ref, body)
-            .value_paths()
-            .resolve_nonlocal_path_declarations(scope, path)?;
+        let declarations = BodyResolutionView::new(self.0)
+            .nonlocal_value_path_declarations(body_ref, scope, path)?;
         self.canonical_declarations(declarations)
     }
 
@@ -148,12 +145,11 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         owner: &Path,
         key: &FieldKey,
     ) -> anyhow::Result<Vec<DeclarationRef>> {
-        let Some(body) = self.0.body_ir.body_data(body_ref)? else {
+        let Some(resolution) =
+            BodyResolutionView::new(self.0).type_path_resolution(body_ref, scope, owner)?
+        else {
             return Ok(Vec::new());
         };
-        let resolution = BodyResolutionContext::new(self.0, self.0, body_ref, body)
-            .type_path_query()
-            .resolve_in_scope(scope, owner)?;
 
         let (TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types)) =
             resolution

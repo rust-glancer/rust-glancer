@@ -5,7 +5,6 @@
 //! cross-layer projection behind the view facade instead of exposing body-resolution internals to
 //! analysis queries.
 
-use rg_body_ir::BodyResolutionContext;
 use rg_ir_model::Path;
 use rg_ir_model::items::{Documentation, FieldKey, ParamItem};
 use rg_ir_model::{
@@ -16,7 +15,7 @@ use rg_ir_storage::{ItemStoreQuery, TargetItemQuery};
 use rg_ty::MemberMethodOrigin;
 use rg_ty::{ItemPathQuery, MemberMethodCandidateRef, MemberQuery, Ty};
 
-use crate::{IndexedViewDb, SymbolKind, item::path::PathView};
+use crate::{IndexedViewDb, SymbolKind, body::BodyResolutionView, item::path::PathView};
 
 /// Borrowed data for one resolved field, independent from the storage layer it came from.
 #[derive(Debug, Clone, Copy)]
@@ -166,12 +165,11 @@ impl<'a, 'db> MemberView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Vec<MemberField<'view>>> {
-        let Some(body_data) = self.db.body_data(body)? else {
+        let Some(resolution) =
+            BodyResolutionView::new(self.db).type_path_resolution(body, scope, path)?
+        else {
             return Ok(Vec::new());
         };
-        let resolution = BodyResolutionContext::new(self.db, self.db, body, body_data)
-            .type_path_query()
-            .resolve_in_scope(scope, path)?;
 
         let mut fields = Vec::new();
         let member_query = MemberQuery::new(
@@ -242,16 +240,14 @@ impl<'a, 'db> MemberView<'a, 'db> {
         body: BodyRef,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
-        let Some(body_data) = self.db.body_data(body)? else {
+        let Some(candidates) =
+            BodyResolutionView::new(self.db).receiver_method_candidates_for_ty(body, ty)?
+        else {
             return self.method_candidates_for_ty(MemberUseSite::target(body.target), ty);
         };
 
-        let body_context = BodyResolutionContext::new(self.db, self.db, body, body_data);
         let mut methods = Vec::new();
-        for candidate in body_context
-            .receiver_functions()
-            .method_candidates_for_ty(ty)?
-        {
+        for candidate in candidates {
             let Some(function) = self.function(candidate.function())? else {
                 continue;
             };

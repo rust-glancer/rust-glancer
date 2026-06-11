@@ -5,7 +5,6 @@
 
 pub mod locals;
 
-use rg_body_ir::BodyResolutionContext;
 use rg_ir_model::{
     BodyRef, EnumVariantRef, FieldRef, Path, ScopeId, SemanticItemRef, TypePathResolution,
     identity::DeclarationRef, identity::ExprRef, items::PrimitiveTy,
@@ -13,7 +12,7 @@ use rg_ir_model::{
 use rg_ir_storage::{ItemStoreQuery, TypePathContext};
 use rg_ty::{ItemPathQuery, NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
 
-use crate::{IndexedViewDb, ty::locals::BodyView};
+use crate::{IndexedViewDb, body::BodyResolutionView, ty::locals::BodyView};
 
 pub struct TyView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
@@ -88,12 +87,9 @@ impl<'a, 'db> TyView<'a, 'db> {
         scope: ScopeId,
         path: &Path,
     ) -> anyhow::Result<Ty> {
-        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
-            return Ok(Ty::Unknown);
-        };
-        let resolution = BodyResolutionContext::new(self.db, self.db, body_ref, body)
-            .type_path_query()
-            .resolve_in_scope(scope, path)?;
+        let resolution = BodyResolutionView::new(self.db)
+            .type_path_resolution(body_ref, scope, path)?
+            .unwrap_or(TypePathResolution::Unknown);
         if matches!(resolution, TypePathResolution::Unknown)
             && let Some(primitive) = path.single_name().and_then(PrimitiveTy::from_name)
         {
@@ -111,13 +107,7 @@ impl<'a, 'db> TyView<'a, 'db> {
     ) -> anyhow::Result<Ty> {
         // Value-path type queries should use the same Body IR resolver as the main body pass, so
         // enum variants and associated functions agree between snapshots and cursor queries.
-        let Some(body) = self.db.body_ir.body_data(body_ref)? else {
-            return Ok(Ty::Unknown);
-        };
-        let ty = BodyResolutionContext::new(self.db, self.db, body_ref, body)
-            .value_paths()
-            .resolve_nonlocal_path_ty(scope, path)?;
-        Ok(ty)
+        BodyResolutionView::new(self.db).nonlocal_value_path_ty(body_ref, scope, path)
     }
 
     fn ty_for_field(&self, field: FieldRef) -> anyhow::Result<Option<Ty>> {

@@ -1,8 +1,7 @@
 //! Goto-implementation query flow.
 
-use rg_body_ir::ExprKind;
 use rg_ir_model::{
-    FunctionRef, SemanticItemRef, TargetRef,
+    ExprKind, FunctionRef, SemanticItemRef, TargetRef,
     identity::{DeclarationRef, ExprRef},
 };
 use rg_ir_storage::{ItemStoreQuery, TargetItemQuery};
