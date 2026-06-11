@@ -383,9 +383,10 @@ where
             return Ok(Vec::new());
         };
         let subst = self.base_subst(function_data.signature.generics())?;
-        let type_paths = self.query.context.type_path_query();
-        let param_resolver = type_paths
-            .type_ref(TypeRefUseSite::Function(self.target.function))
+        let param_resolver = self
+            .query
+            .context
+            .type_refs(TypeRefUseSite::Function(self.target.function))
             .with_subst(&subst);
 
         // Keep one expected type per written argument. Missing parameter annotations are not
@@ -485,8 +486,10 @@ where
 
         // Function turbofish arguments are supplied at the call site, so names inside them must
         // resolve from the body scope where the call was written.
-        let type_paths = self.query.context.type_path_query();
-        let arg_resolver = type_paths.type_ref(TypeRefUseSite::Scope(self.target.site_scope));
+        let arg_resolver = self
+            .query
+            .context
+            .type_refs(TypeRefUseSite::Scope(self.target.site_scope));
         let generic_args = self
             .target
             .explicit_args
@@ -511,8 +514,7 @@ where
 
         self.query
             .context
-            .type_path_query()
-            .type_ref(TypeRefUseSite::Function(self.target.function))
+            .type_refs(TypeRefUseSite::Function(self.target.function))
             .with_subst(subst)
             .resolve(ret_ty)
     }

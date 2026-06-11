@@ -55,8 +55,7 @@ where
         }
 
         self.context
-            .type_path_query()
-            .type_ref(TypeRefUseSite::Function(function_ref))
+            .type_refs(TypeRefUseSite::Function(function_ref))
             .with_subst(&subst)
             .resolve(ret_ty)
             .map(Some)

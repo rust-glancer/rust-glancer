@@ -183,8 +183,7 @@ where
         if let Some(annotation) = annotation {
             let ty = self
                 .context()
-                .type_path_query()
-                .type_ref(TypeRefUseSite::Scope(scope))
+                .type_refs(TypeRefUseSite::Scope(scope))
                 .resolve(annotation)?;
             if !matches!(ty, Ty::Unknown) {
                 return Ok(ty);
@@ -610,8 +609,7 @@ where
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .context()
-                .type_path_query()
-                .type_ref(TypeRefUseSite::Scope(binding_data.scope))
+                .type_refs(TypeRefUseSite::Scope(binding_data.scope))
                 .resolve(annotation);
         }
 

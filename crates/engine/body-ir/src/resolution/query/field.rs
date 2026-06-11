@@ -164,8 +164,7 @@ where
 
         let ty = self
             .context
-            .type_path_query()
-            .type_ref(TypeRefUseSite::Module(field_data.owner_module))
+            .type_refs(TypeRefUseSite::Module(field_data.owner_module))
             .with_subst(&self.semantic_type_subst(owner_ty)?)
             .resolve(&field_data.field.ty)?;
 
@@ -198,8 +197,7 @@ where
 
         Ok(Some(
             self.context
-                .type_path_query()
-                .type_ref(TypeRefUseSite::Module(variant_data.owner_module))
+                .type_refs(TypeRefUseSite::Module(variant_data.owner_module))
                 .with_subst(&self.semantic_type_subst(enum_ty)?)
                 .resolve(&field.ty)?,
         ))

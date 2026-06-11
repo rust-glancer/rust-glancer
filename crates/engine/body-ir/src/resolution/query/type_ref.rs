@@ -14,7 +14,9 @@ use rg_package_store::PackageStoreError;
 use rg_std::UniqueVec;
 use rg_ty::{GenericArg, RefMutability, Ty, TypeSubst};
 
-use super::type_path::{BodyTypePathQuery, prefix_type_ref, split_associated_path};
+use crate::resolution::BodyResolutionContext;
+
+use super::type_path::{prefix_type_ref, split_associated_path};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TypeRefUseSite {
@@ -25,23 +27,23 @@ pub(crate) enum TypeRefUseSite {
     BodyOwner,
 }
 
-pub(crate) struct TypeRefResolutionQuery<'resolver, 'query, D, I> {
-    resolver: &'resolver BodyTypePathQuery<'query, D, I>,
+pub(crate) struct TypeRefResolutionQuery<'query, D, I> {
+    context: BodyResolutionContext<'query, D, I>,
     use_site: TypeRefUseSite,
     subst: TypeSubst,
 }
 
-impl<'resolver, 'query, D, I> TypeRefResolutionQuery<'resolver, 'query, D, I>
+impl<'query, D, I> TypeRefResolutionQuery<'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    pub(super) fn new(
-        resolver: &'resolver BodyTypePathQuery<'query, D, I>,
+    pub(crate) fn new(
+        context: BodyResolutionContext<'query, D, I>,
         use_site: TypeRefUseSite,
     ) -> Self {
         Self {
-            resolver,
+            context,
             use_site,
             subst: TypeSubst::new(),
         }
@@ -58,15 +60,14 @@ where
             TypeRefUseSite::Module(module) => self.resolve_in_module(ty, module),
             TypeRefUseSite::OwnerContext(context) => self.resolve_in_owner_context(ty, context),
             TypeRefUseSite::Function(function) => {
-                let context = self.resolver.context_for_function(
-                    function,
-                    self.resolver.context().body().owner_module(),
-                )?;
+                let type_paths = self.context.type_path_query();
+                let context = type_paths
+                    .context_for_function(function, self.context.body().owner_module())?;
                 self.with_use_site(TypeRefUseSite::OwnerContext(context))
                     .resolve(ty)
             }
             TypeRefUseSite::BodyOwner => {
-                let context = self.resolver.context_for_body_owner()?;
+                let context = self.context.type_path_query().context_for_body_owner()?;
                 self.with_use_site(TypeRefUseSite::OwnerContext(context))
                     .resolve(ty)
             }
@@ -75,7 +76,7 @@ where
 
     fn with_use_site(&self, use_site: TypeRefUseSite) -> Self {
         Self {
-            resolver: self.resolver,
+            context: self.context,
             use_site,
             subst: self.subst.clone(),
         }
@@ -89,10 +90,10 @@ where
     }
 
     fn resolve_in_module(&self, ty: &TypeRef, module: ModuleRef) -> Result<Ty, PackageStoreError> {
-        let body_context = self.resolver.context();
-        if let Some(scope) = body_context
+        if let Some(scope) = self
+            .context
             .body()
-            .scope_for_module(body_context.body_ref(), module)
+            .scope_for_module(self.context.body_ref(), module)
         {
             return self.with_use_site(TypeRefUseSite::Scope(scope)).resolve(ty);
         }
@@ -109,7 +110,7 @@ where
         ty: &TypeRef,
         context: TypePathContext,
     ) -> Result<Ty, PackageStoreError> {
-        if context.module.origin == DefMapRef::Body(self.resolver.context().body_ref()) {
+        if context.module.origin == DefMapRef::Body(self.context.body_ref()) {
             return self
                 .with_use_site(TypeRefUseSite::Module(context.module))
                 .resolve(ty);
@@ -133,8 +134,9 @@ where
             return Ok(ty);
         }
         if path.is_self_type() {
-            let context = self.resolver.context_for_body_owner()?;
-            let self_tys = self.resolver.self_nominal_tys_for_context(context)?;
+            let type_paths = self.context.type_path_query();
+            let context = type_paths.context_for_body_owner()?;
+            let self_tys = type_paths.self_nominal_tys_for_context(context)?;
             return Ok(Ty::self_ty(self_tys));
         }
 
@@ -143,7 +145,10 @@ where
             return Ok(ty);
         }
 
-        let resolution = self.resolver.resolve_in_scope(scope, &path)?;
+        let resolution = self
+            .context
+            .type_path_query()
+            .resolve_in_scope(scope, &path)?;
         self.ty_from_resolution(original_ty, &path, resolution, args)
     }
 
@@ -161,7 +166,10 @@ where
             return Ok(ty);
         }
         if path.is_self_type() {
-            let self_tys = self.resolver.self_nominal_tys_for_context(context)?;
+            let self_tys = self
+                .context
+                .type_path_query()
+                .self_nominal_tys_for_context(context)?;
             return Ok(Ty::self_ty(self_tys));
         }
 
@@ -175,12 +183,9 @@ where
         ty: &TypeRef,
         context: TypePathContext,
     ) -> Result<Ty, PackageStoreError> {
-        self.resolver.context().item_paths().resolve_type_ref(
-            ty,
-            context,
-            Ty::syntax(ty.clone()),
-            &self.subst,
-        )
+        self.context
+            .item_paths()
+            .resolve_type_ref(ty, context, Ty::syntax(ty.clone()), &self.subst)
     }
 
     fn resolve_structural_type(&self, ty: &TypeRef) -> Result<Ty, PackageStoreError> {
@@ -220,8 +225,7 @@ where
                 return Ok(TypePathResolution::Unknown);
             };
             let types = self
-                .resolver
-                .context()
+                .context
                 .item_query()
                 .impl_data(impl_ref)?
                 .map(|data| data.resolved_self_tys.clone())
@@ -239,7 +243,11 @@ where
                 Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
             let mut aliases = UniqueVec::new();
             for ty in prefix_ty.as_nominals() {
-                if let Some(alias) = self.resolver.associated_type_alias_for_type(ty, name)? {
+                if let Some(alias) = self
+                    .context
+                    .type_path_query()
+                    .associated_type_alias_for_type(ty, name)?
+                {
                     aliases.push(alias);
                 }
             }
@@ -249,9 +257,13 @@ where
         }
 
         let body_items = self
-            .resolver
+            .context
+            .type_path_query()
             .resolve_body_type_items_from_module(context.module, path)?;
-        Ok(self.resolver.type_resolution_from_items(body_items))
+        Ok(self
+            .context
+            .type_path_query()
+            .type_resolution_from_items(body_items))
     }
 
     fn ty_from_local_associated_type_path(
@@ -272,11 +284,16 @@ where
             .resolve(&prefix_ty_ref)?;
 
         for ty in prefix_ty.as_nominals() {
-            let Some(alias_ref) = self.resolver.associated_type_alias_for_type(ty, name)? else {
+            let Some(alias_ref) = self
+                .context
+                .type_path_query()
+                .associated_type_alias_for_type(ty, name)?
+            else {
                 continue;
             };
             return self
-                .resolver
+                .context
+                .type_path_query()
                 .ty_from_associated_type_alias(alias_ref, ty, args)
                 .map(Some);
         }
@@ -292,9 +309,11 @@ where
         args: Vec<GenericArg>,
     ) -> Result<Ty, PackageStoreError> {
         if let TypePathResolution::TypeAliases(aliases) = &resolution {
-            return self
-                .resolver
-                .ty_from_type_aliases(aliases.as_slice(), &args, &self.subst);
+            return self.context.type_path_query().ty_from_type_aliases(
+                aliases.as_slice(),
+                &args,
+                &self.subst,
+            );
         }
         let is_unknown = matches!(resolution, TypePathResolution::Unknown);
         Ok(

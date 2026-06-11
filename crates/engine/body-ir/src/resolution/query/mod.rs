@@ -13,8 +13,11 @@ pub use self::{
 };
 
 pub(crate) use self::{
-    associated_item::BodyAssociatedItemQuery, body_items::BodyLocalItemQuery,
-    field::BodyFieldQuery, function::BodyFunctionQuery, type_ref::TypeRefUseSite,
+    associated_item::BodyAssociatedItemQuery,
+    body_items::BodyLocalItemQuery,
+    field::BodyFieldQuery,
+    function::BodyFunctionQuery,
+    type_ref::{TypeRefResolutionQuery, TypeRefUseSite},
 };
 
 pub(crate) use self::call::{BodyCallQuery, CallSite, MethodCallSite};

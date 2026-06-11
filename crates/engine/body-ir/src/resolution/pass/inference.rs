@@ -172,8 +172,7 @@ where
         let expected_ty = self
             .pass
             .context()
-            .type_path_query()
-            .type_ref(TypeRefUseSite::Scope(scope))
+            .type_refs(TypeRefUseSite::Scope(scope))
             .resolve(&annotation)?;
         self.constrain_expr_with_expected(initializer, &expected_ty);
 

@@ -237,8 +237,8 @@ impl<'target> TargetBodyBuildState<'target> {
                     self.target,
                     &self.body_local_items,
                 );
-                let type_paths =
-                    BodyResolutionContext::new(&source, &source, body_ref, body).type_path_query();
+                let context = BodyResolutionContext::new(&source, &source, body_ref, body);
+                let type_paths = context.type_path_query();
                 let mut resolved_headers = Vec::new();
                 for (impl_id, owner, self_ty, trait_ref) in impl_headers {
                     if owner.origin != DefMapRef::Body(body_ref) {
@@ -249,8 +249,8 @@ impl<'target> TargetBodyBuildState<'target> {
                         continue;
                     };
 
-                    let ty = type_paths
-                        .type_ref(TypeRefUseSite::Scope(scope))
+                    let ty = context
+                        .type_refs(TypeRefUseSite::Scope(scope))
                         .resolve(&self_ty)?;
                     let mut resolved_self_tys = UniqueVec::new();
                     for nominal in ty.as_nominals() {

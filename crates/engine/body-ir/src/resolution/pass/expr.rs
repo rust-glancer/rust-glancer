@@ -82,8 +82,7 @@ where
                 let ty = self
                     .pass
                     .context()
-                    .type_path_query()
-                    .type_ref(TypeRefUseSite::Scope(
+                    .type_refs(TypeRefUseSite::Scope(
                         self.pass.body.expr_unchecked(expr).scope,
                     ))
                     .resolve(&ty)?;

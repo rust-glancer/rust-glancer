@@ -17,7 +17,7 @@ use crate::ir::BodyOwner;
 
 use crate::resolution::BodyResolutionContext;
 
-use super::type_ref::{TypeRefResolutionQuery, TypeRefUseSite};
+use super::type_ref::TypeRefUseSite;
 
 pub struct BodyTypePathQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
@@ -30,17 +30,6 @@ where
 {
     pub(crate) fn new(context: BodyResolutionContext<'query, D, I>) -> Self {
         Self { context }
-    }
-
-    pub(crate) fn type_ref(
-        &self,
-        use_site: TypeRefUseSite,
-    ) -> TypeRefResolutionQuery<'_, 'query, D, I> {
-        TypeRefResolutionQuery::new(self, use_site)
-    }
-
-    pub(super) fn context(&self) -> BodyResolutionContext<'query, D, I> {
-        self.context
     }
 
     pub fn resolve_in_scope(
@@ -300,7 +289,8 @@ where
         let context = item_query
             .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
             .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
-        self.type_ref(TypeRefUseSite::OwnerContext(context))
+        self.context
+            .type_refs(TypeRefUseSite::OwnerContext(context))
             .with_subst(&alias_subst)
             .resolve(aliased_ty)
     }
@@ -390,7 +380,8 @@ where
         let context = item_query
             .type_path_context_for_owner(alias_ref.origin, alias_data.owner)?
             .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
-        self.type_ref(TypeRefUseSite::OwnerContext(context))
+        self.context
+            .type_refs(TypeRefUseSite::OwnerContext(context))
             .with_subst(&alias_subst)
             .resolve(aliased_ty)
     }

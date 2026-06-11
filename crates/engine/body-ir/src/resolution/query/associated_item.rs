@@ -485,8 +485,7 @@ where
             .type_path_context_for_owner(const_ref.origin, owner)?
             .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
         self.context
-            .type_path_query()
-            .type_ref(TypeRefUseSite::OwnerContext(context))
+            .type_refs(TypeRefUseSite::OwnerContext(context))
             .with_subst(&subst)
             .resolve(ty)
     }
