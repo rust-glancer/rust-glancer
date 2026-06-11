@@ -14,7 +14,7 @@ use rg_ty::{Autoderef, ImplMatcher, ItemPathQuery, IterationItemResolver};
 use crate::ir::body::ResolvedBodyData;
 
 use crate::resolution::query::{
-    BodyAssociatedValueQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyLocalItemQuery,
+    BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyLocalItemQuery,
     BodyMethodQuery, BodyTypePathQuery, BodyValuePathQuery,
 };
 
@@ -92,8 +92,8 @@ where
         BodyValuePathQuery::new(*self)
     }
 
-    pub(crate) fn associated_values(&self) -> BodyAssociatedValueQuery<'a, D, I> {
-        BodyAssociatedValueQuery::new(*self)
+    pub(crate) fn associated_items(&self) -> BodyAssociatedItemQuery<'a, D, I> {
+        BodyAssociatedItemQuery::new(*self)
     }
 
     pub(crate) fn calls(&self) -> BodyCallQuery<'a, D, I> {

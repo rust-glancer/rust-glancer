@@ -1,8 +1,8 @@
 //! Read-only value-path resolution for Body IR.
 //!
 //! This module resolves expressions that name values: bindings, consts, statics, constructors,
-//! enum variants, and associated value items. It does not mutate body facts; callers decide
-//! whether the resolved value should be written back into a body.
+//! enum variants, and associated items in value position. It does not mutate body facts; callers
+//! decide whether the resolved value should be written back into a body.
 
 use rg_ir_model::{
     BindingId, ConstRef, DefId, DefMapRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef,
@@ -138,7 +138,7 @@ where
         if let Some((prefix, last_segment)) = split_associated_path(path) {
             if let Some((resolution, ty)) =
                 self.context
-                    .associated_values()
+                    .associated_items()
                     .resolve_path(scope, &prefix, last_segment)?
             {
                 return Ok((resolution, ty));

@@ -1,4 +1,4 @@
-mod associated_value;
+mod associated_item;
 mod body_items;
 mod call;
 mod field;
@@ -13,7 +13,7 @@ pub use self::{
 };
 
 pub(crate) use self::{
-    associated_value::BodyAssociatedValueQuery, body_items::BodyLocalItemQuery,
+    associated_item::BodyAssociatedItemQuery, body_items::BodyLocalItemQuery,
     field::BodyFieldQuery, function::BodyFunctionQuery, type_ref::TypeRefUseSite,
 };
 

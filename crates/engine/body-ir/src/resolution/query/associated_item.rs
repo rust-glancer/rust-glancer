@@ -1,12 +1,12 @@
-//! Read-only associated-value path resolution for Body IR.
+//! Read-only associated item path resolution for Body IR.
 //!
-//! This query owns `Type::value` lookup: enum variants, inherent associated consts, trait
-//! associated consts, and static associated functions. Ordinary lexical/module value paths stay in
+//! This query owns `Type::item` lookup in value position: enum variants, associated consts, and
+//! associated functions. Ordinary lexical/module value paths stay in
 //! `BodyValuePathQuery`.
 
 use rg_ir_model::{
-    AssocItemId, ConstRef, DefMapRef, FunctionRef, ImplRef, ItemOwner, Path, ScopeId, TraitImplRef,
-    TypeDefId, identity::DeclarationRef,
+    AssocItemId, ConstRef, DefMapRef, EnumVariantRef, FunctionRef, ImplRef, ItemOwner, Path,
+    ScopeId, TraitImplRef, TypeDefId, identity::DeclarationRef,
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
@@ -18,11 +18,18 @@ use crate::{
     resolution::{BodyResolutionContext, TypeRefUseSite, support::unique_ty_or_unknown},
 };
 
-pub(crate) struct BodyAssociatedValueQuery<'query, D, I> {
+pub(crate) struct BodyAssociatedItemQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
-impl<'query, D, I> BodyAssociatedValueQuery<'query, D, I>
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum BodyAssociatedItemCandidate {
+    EnumVariant(EnumVariantRef, Ty),
+    Const(ConstRef, Ty),
+    Function(FunctionRef),
+}
+
+impl<'query, D, I> BodyAssociatedItemQuery<'query, D, I>
 where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
@@ -37,7 +44,7 @@ where
         prefix: &Path,
         last_segment: &str,
     ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
-        // Associated value paths are resolved as "type prefix + value member". This keeps
+        // Associated item paths are resolved as "type prefix + value member". This keeps
         // `Action::Start` distinct from a module path while also handling `Widget::new` through
         // the same type-substitution rules used by method calls.
         let prefix_resolution = self
@@ -50,41 +57,24 @@ where
         // First treat the final segment as an enum variant. Variants are not ordinary associated
         // functions in either Semantic IR or Body IR, but value paths use the same syntax for
         // `Action::Start` and `Widget::new`, so they need an explicit pass.
-        let mut variants = UniqueVec::new();
-        let mut variant_tys = UniqueVec::new();
+        let mut variants = Vec::new();
         for nominal_ty in prefix_ty.as_nominals() {
-            if !matches!(nominal_ty.def.id, TypeDefId::Enum(_)) {
-                continue;
+            if let Some(candidate) =
+                self.enum_variant_candidate_for_type(nominal_ty, last_segment)?
+            {
+                variants.push(candidate);
             }
-            let Some(variant_ref) = self
-                .context
-                .item_query()
-                .enum_variant_ref_for_type_def(nominal_ty.def, last_segment)?
-            else {
-                continue;
-            };
-            variants.push(variant_ref);
-            variant_tys.push(Ty::nominal([nominal_ty.clone()].into_iter().collect()));
         }
 
         if !variants.is_empty() {
-            let ty = unique_ty_or_unknown(variant_tys);
-            return Ok(Some((
-                BodyResolution::Declarations(
-                    variants.into_iter().map(DeclarationRef::from).collect(),
-                ),
-                ty,
-            )));
+            return Ok(Some(Self::enum_variant_resolution(variants)));
         }
 
         for nominal_ty in prefix_ty.as_nominals() {
-            if let Some((const_ref, ty)) =
-                self.semantic_associated_value_item_for_type(nominal_ty, last_segment)?
+            if let Some(candidate) =
+                self.inherent_associated_const_candidate_for_type(nominal_ty, last_segment)?
             {
-                return Ok(Some((
-                    BodyResolution::Declarations([const_ref.into()].into_iter().collect()),
-                    ty,
-                )));
+                return Ok(Some(Self::const_resolution([candidate])));
             }
         }
 
@@ -92,46 +82,113 @@ where
         // `Type` has a visible trait impl, then reads the matching const item from that impl or
         // falls back to the trait declaration. This mirrors trait method lookup without pretending
         // to be a full trait solver.
-        let mut trait_consts = UniqueVec::new();
-        let mut trait_const_tys = UniqueVec::new();
+        let mut trait_consts = Vec::new();
         for nominal_ty in prefix_ty.as_nominals() {
-            for (const_ref, ty) in
-                self.semantic_associated_trait_value_items_for_type(nominal_ty, last_segment)?
-            {
-                trait_consts.push(const_ref);
-                trait_const_tys.push(ty);
-            }
+            trait_consts
+                .extend(self.trait_associated_const_candidates_for_type(nominal_ty, last_segment)?);
         }
 
         if !trait_consts.is_empty() {
-            return Ok(Some((
-                BodyResolution::Declarations(
-                    trait_consts.into_iter().map(DeclarationRef::from).collect(),
-                ),
-                unique_ty_or_unknown(trait_const_tys),
-            )));
+            return Ok(Some(Self::const_resolution(trait_consts)));
         }
 
         // Inherent associated functions are exact candidates. Trait-associated functions are kept
         // deliberately optimistic, following the same "prefer useful candidates over false
         // negatives" policy as dot completion.
-        let mut functions = UniqueVec::new();
+        let mut functions = Vec::new();
         for nominal_ty in prefix_ty.as_nominals() {
-            functions.extend(self.associated_function_items_for_type(nominal_ty, last_segment)?);
+            functions
+                .extend(self.associated_function_candidates_for_type(nominal_ty, last_segment)?);
         }
 
-        Ok((!functions.is_empty()).then_some((
-            BodyResolution::Declarations(functions.into_iter().map(DeclarationRef::from).collect()),
-            Ty::Unknown,
-        )))
+        Ok((!functions.is_empty()).then_some(Self::function_resolution(functions)))
     }
 
-    fn semantic_associated_value_item_for_type(
+    fn enum_variant_resolution(
+        candidates: impl IntoIterator<Item = BodyAssociatedItemCandidate>,
+    ) -> (BodyResolution, Ty) {
+        let mut variants = UniqueVec::new();
+        let mut tys = UniqueVec::new();
+
+        for candidate in candidates {
+            let BodyAssociatedItemCandidate::EnumVariant(variant_ref, ty) = candidate else {
+                continue;
+            };
+            variants.push(variant_ref);
+            tys.push(ty);
+        }
+
+        (
+            BodyResolution::Declarations(variants.into_iter().map(DeclarationRef::from).collect()),
+            unique_ty_or_unknown(tys),
+        )
+    }
+
+    fn const_resolution(
+        candidates: impl IntoIterator<Item = BodyAssociatedItemCandidate>,
+    ) -> (BodyResolution, Ty) {
+        let mut consts = UniqueVec::new();
+        let mut tys = UniqueVec::new();
+
+        for candidate in candidates {
+            let BodyAssociatedItemCandidate::Const(const_ref, ty) = candidate else {
+                continue;
+            };
+            consts.push(const_ref);
+            tys.push(ty);
+        }
+
+        (
+            BodyResolution::Declarations(consts.into_iter().map(DeclarationRef::from).collect()),
+            unique_ty_or_unknown(tys),
+        )
+    }
+
+    fn function_resolution(
+        candidates: impl IntoIterator<Item = BodyAssociatedItemCandidate>,
+    ) -> (BodyResolution, Ty) {
+        let mut functions = UniqueVec::new();
+
+        for candidate in candidates {
+            let BodyAssociatedItemCandidate::Function(function_ref) = candidate else {
+                continue;
+            };
+            functions.push(function_ref);
+        }
+
+        (
+            BodyResolution::Declarations(functions.into_iter().map(DeclarationRef::from).collect()),
+            Ty::Unknown,
+        )
+    }
+
+    fn enum_variant_candidate_for_type(
         &self,
         ty: &NominalTy,
         name: &str,
-    ) -> Result<Option<(ConstRef, Ty)>, PackageStoreError> {
-        if let Some(item) = self.associated_value_item_for_impls(
+    ) -> Result<Option<BodyAssociatedItemCandidate>, PackageStoreError> {
+        if !matches!(ty.def.id, TypeDefId::Enum(_)) {
+            return Ok(None);
+        }
+
+        Ok(self
+            .context
+            .item_query()
+            .enum_variant_ref_for_type_def(ty.def, name)?
+            .map(|variant_ref| {
+                BodyAssociatedItemCandidate::EnumVariant(
+                    variant_ref,
+                    Ty::nominal([ty.clone()].into_iter().collect()),
+                )
+            }))
+    }
+
+    fn inherent_associated_const_candidate_for_type(
+        &self,
+        ty: &NominalTy,
+        name: &str,
+    ) -> Result<Option<BodyAssociatedItemCandidate>, PackageStoreError> {
+        if let Some(item) = self.associated_const_candidate_for_impls(
             self.context
                 .body_local_items()
                 .inherent_impls_for_type(ty.def)?,
@@ -145,7 +202,7 @@ where
             return Ok(None);
         }
 
-        self.associated_value_item_for_impls(
+        self.associated_const_candidate_for_impls(
             self.context
                 .target_items()
                 .inherent_impls_for_type(ty.def)?,
@@ -154,14 +211,14 @@ where
         )
     }
 
-    fn semantic_associated_trait_value_items_for_type(
+    fn trait_associated_const_candidates_for_type(
         &self,
         ty: &NominalTy,
         name: &str,
-    ) -> Result<Vec<(ConstRef, Ty)>, PackageStoreError> {
+    ) -> Result<Vec<BodyAssociatedItemCandidate>, PackageStoreError> {
         let mut items = Vec::new();
 
-        self.push_associated_trait_value_items_for_impls(
+        self.push_trait_associated_const_candidates_for_impls(
             &mut items,
             self.context
                 .body_local_items()
@@ -182,7 +239,7 @@ where
                 .unwrap_or_default(),
             None => target_items.trait_impls_for_type(ty.def)?,
         };
-        self.push_associated_trait_value_items_for_impls(
+        self.push_trait_associated_const_candidates_for_impls(
             &mut items,
             semantic_trait_impls,
             ty,
@@ -192,14 +249,14 @@ where
         Ok(items)
     }
 
-    fn associated_function_items_for_type(
+    fn associated_function_candidates_for_type(
         &self,
         ty: &NominalTy,
         name: &str,
-    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
+    ) -> Result<Vec<BodyAssociatedItemCandidate>, PackageStoreError> {
         let body_items = self.context.body_local_items();
         let matcher = self.context.impl_matcher();
-        let mut functions = UniqueVec::new();
+        let mut functions = Vec::new();
 
         for function_ref in body_items.inherent_functions_for_type(ty.def)? {
             if matcher.function_applies_to_receiver(function_ref, ty)? {
@@ -257,7 +314,7 @@ where
 
     fn push_associated_function(
         &self,
-        functions: &mut UniqueVec<FunctionRef>,
+        functions: &mut Vec<BodyAssociatedItemCandidate>,
         function_ref: FunctionRef,
         name: &str,
     ) -> Result<(), PackageStoreError> {
@@ -265,14 +322,17 @@ where
             return Ok(());
         };
         if function_data.name == name && !function_data.has_self_receiver() {
-            functions.push(function_ref);
+            let candidate = BodyAssociatedItemCandidate::Function(function_ref);
+            if !functions.contains(&candidate) {
+                functions.push(candidate);
+            }
         }
         Ok(())
     }
 
-    fn push_associated_trait_value_items_for_impls(
+    fn push_trait_associated_const_candidates_for_impls(
         &self,
-        items: &mut Vec<(ConstRef, Ty)>,
+        items: &mut Vec<BodyAssociatedItemCandidate>,
         trait_impls: UniqueVec<TraitImplRef>,
         ty: &NominalTy,
         name: &str,
@@ -314,7 +374,15 @@ where
             let Some(candidate) = candidate else {
                 continue;
             };
-            if !items.iter().any(|(existing, _)| *existing == candidate.0) {
+            if !items.iter().any(|existing| {
+                matches!(
+                    (existing, &candidate),
+                    (
+                        BodyAssociatedItemCandidate::Const(existing, _),
+                        BodyAssociatedItemCandidate::Const(candidate, _)
+                    ) if existing == candidate
+                )
+            }) {
                 items.push(candidate);
             }
         }
@@ -322,12 +390,12 @@ where
         Ok(())
     }
 
-    fn associated_value_item_for_impls(
+    fn associated_const_candidate_for_impls(
         &self,
         impls: UniqueVec<ImplRef>,
         ty: &NominalTy,
         name: &str,
-    ) -> Result<Option<(ConstRef, Ty)>, PackageStoreError> {
+    ) -> Result<Option<BodyAssociatedItemCandidate>, PackageStoreError> {
         let item_query = self.context.item_query();
         for impl_ref in impls {
             let Some(impl_data) = item_query.impl_data(impl_ref)? else {
@@ -357,7 +425,7 @@ where
         assoc_items: &[AssocItemId],
         receiver_ty: &NominalTy,
         name: &str,
-    ) -> Result<Option<(ConstRef, Ty)>, PackageStoreError> {
+    ) -> Result<Option<BodyAssociatedItemCandidate>, PackageStoreError> {
         let item_query = self.context.item_query();
         for item in assoc_items {
             let AssocItemId::Const(id) = item else {
@@ -368,7 +436,7 @@ where
                 continue;
             };
             if const_data.name == name {
-                return Ok(Some((
+                return Ok(Some(BodyAssociatedItemCandidate::Const(
                     const_ref,
                     self.semantic_const_ty_for_receiver(const_ref, const_data.owner, receiver_ty)?,
                 )));
