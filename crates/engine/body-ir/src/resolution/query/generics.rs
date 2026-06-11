@@ -1,8 +1,4 @@
-//! Generic substitution helpers for body-aware item projection.
-//!
-//! Field, associated const, and associated type projection all need the same receiver-driven
-//! generic bindings. Explicit generic arguments also produce substitutions, while the type parts
-//! inside those arguments still resolve through the type-ref query.
+//! Generic substitution helpers.
 
 use rg_ir_model::{
     DefMapRef, ImplRef, ItemOwner,
@@ -14,6 +10,9 @@ use rg_ty::{GenericArg, NominalTy, TypeSubst};
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
+/// Builds generic substitutions.
+///
+/// Type syntax inside generic args is resolved by `TypeRefResolutionQuery`.
 pub(crate) struct BodyGenericsQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -27,6 +26,7 @@ where
         Self { context }
     }
 
+    /// Use a concrete nominal type's args to bind its generic params.
     pub(crate) fn subst_for_nominal_ty(
         &self,
         ty: &NominalTy,
@@ -39,6 +39,9 @@ where
             .unwrap_or_else(TypeSubst::new))
     }
 
+    /// Build subst for projecting an associated item on a receiver type.
+    ///
+    /// Impl owners also bind impl generics from the matched receiver.
     pub(crate) fn subst_for_receiver_owner(
         &self,
         origin: DefMapRef,
@@ -65,6 +68,7 @@ where
         Ok(subst)
     }
 
+    /// Bind written generic args, such as turbofish args, to declaration params.
     pub(crate) fn subst_for_explicit_args(
         &self,
         generics: &GenericParams,

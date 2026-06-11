@@ -1,8 +1,4 @@
-//! Method lookup for body receiver use sites.
-//!
-//! A body has two item layers: target-visible semantic items and the active body's local item
-//! overlay. Method lookup should not care which layer produced an impl candidate after visibility
-//! has been decided, so this query merges both layers before returning ref-level candidates.
+//! Method lookup for receiver types.
 
 use rg_ir_model::{AssocItemId, FunctionRef, ImplRef, ItemOwner};
 use rg_ir_storage::{DefMapSource, ItemStoreQuery, ItemStoreSource};
@@ -17,11 +13,12 @@ use crate::resolution::{BodyQuerySource, BodyResolutionContext};
 
 use super::BodyLocalItemQuery;
 
+/// Resolves methods for receiver types.
 pub struct BodyMethodQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
-/// Method candidate selected by body-aware receiver lookup.
+/// Method candidate selected by receiver lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BodyMethodCandidate {
     function: FunctionRef,
@@ -30,14 +27,17 @@ pub(crate) struct BodyMethodCandidate {
 }
 
 impl BodyMethodCandidate {
+    /// Return the selected method function.
     pub(crate) fn function(&self) -> FunctionRef {
         self.function
     }
 
+    /// Return the receiver type used for this candidate.
     pub(crate) fn receiver_ty(&self) -> &Ty {
         &self.receiver_ty
     }
 
+    /// Return substitutions derived from the receiver and impl owner.
     pub(crate) fn subst(&self) -> &TypeSubst {
         &self.subst
     }
@@ -52,6 +52,7 @@ where
         Self { context }
     }
 
+    /// Return all methods that can be reached from this receiver type.
     pub fn method_candidates_for_ty(
         &self,
         ty: &Ty,
@@ -79,7 +80,7 @@ where
         Ok(candidates)
     }
 
-    /// Returns named method candidates selected at the first autoderef depth with matches.
+    /// Return named method candidates at the first matching autoderef depth.
     pub(crate) fn named_method_candidates_for_ty(
         &self,
         receiver_ty: &Ty,
@@ -148,6 +149,7 @@ where
         Ok(candidates)
     }
 
+    /// Collect inherent and trait methods for a nominal receiver.
     fn nominal_method_candidates(
         &self,
         receiver_ty: &NominalTy,
@@ -206,6 +208,7 @@ where
         Ok(candidates)
     }
 
+    /// Scan visible structural impls for builtin-shaped receiver types.
     fn structural_method_candidates(
         &self,
         receiver_ty: &Ty,
@@ -243,6 +246,7 @@ where
         Ok(candidates)
     }
 
+    /// Add self-receiver functions from one structural impl when it applies.
     fn push_structural_inherent_functions_for_impl(
         &self,
         item_query: &ItemStoreQuery<'query, BodyQuerySource<'query, D, I>>,
@@ -291,10 +295,12 @@ where
         Ok(())
     }
 
+    /// Return whether this receiver has no nominal type-def key for impl lookup.
     fn receiver_ty_uses_structural_impl_lookup(ty: &Ty) -> bool {
         matches!(ty, Ty::Tuple(_) | Ty::Array { .. } | Ty::Slice(_))
     }
 
+    /// Read body-local inherent functions, optionally filtered by name.
     fn body_inherent_functions(
         &self,
         body_items: &BodyLocalItemQuery<'query, D, I>,
@@ -305,6 +311,7 @@ where
         self.filter_functions_by_name(functions, method_name)
     }
 
+    /// Read target-visible inherent functions, optionally filtered by name.
     fn semantic_inherent_functions(
         &self,
         receiver_ty: &NominalTy,
@@ -329,6 +336,7 @@ where
         }
     }
 
+    /// Build receiver subst for a nominal method candidate.
     fn nominal_method_subst(
         &self,
         function_ref: FunctionRef,
@@ -340,6 +348,7 @@ where
             .subst_for_receiver_owner(function_ref.origin, owner, receiver_ty)
     }
 
+    /// Keep functions whose item data has the requested name.
     fn filter_functions_by_name(
         &self,
         functions: UniqueVec<FunctionRef>,
@@ -362,6 +371,7 @@ where
         Ok(retained)
     }
 
+    /// Deduplicate a method candidate and keep the stronger origin.
     fn push_candidate(
         candidates: &mut Vec<MemberMethodCandidateRef>,
         candidate: MemberMethodCandidateRef,
@@ -377,6 +387,7 @@ where
         *existing = Self::merge_candidates(*existing, candidate);
     }
 
+    /// Deduplicate a structural candidate by function and subst.
     fn push_structural_candidate(
         candidates: &mut Vec<BodyMethodCandidate>,
         candidate: BodyMethodCandidate,
@@ -388,6 +399,7 @@ where
         }
     }
 
+    /// Merge duplicate candidates from inherent and trait lookup.
     fn merge_candidates(
         left: MemberMethodCandidateRef,
         right: MemberMethodCandidateRef,

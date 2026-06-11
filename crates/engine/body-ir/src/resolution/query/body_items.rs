@@ -1,9 +1,4 @@
-//! Body-local item queries that do not fit target-scoped semantic lookup.
-//!
-//! `TargetItemQuery` models items visible from a target. Impl blocks written in bodies have their
-//! headers resolved from body scope, but method lookup treats the resulting impl facts as ordinary
-//! impl candidates. This helper keeps that body overlay explicit instead of broadening the
-//! target-level semantic index.
+//! Body-local item lookup for body-aware resolution.
 
 use rg_ir_model::{AssocItemId, DefMapRef, FunctionRef, ImplRef, TraitImplRef, TypeDefRef};
 use rg_ir_storage::{DefMapSource, ItemStore, ItemStoreSource};
@@ -12,6 +7,7 @@ use rg_std::UniqueVec;
 
 use crate::resolution::BodyResolutionContext;
 
+/// Finds items declared in bodies, such as local impls and their methods.
 pub(crate) struct BodyLocalItemQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -25,6 +21,7 @@ where
         Self { context }
     }
 
+    /// Return body-local inherent impls whose `Self` resolves to this type.
     pub(super) fn inherent_impls_for_type(
         &self,
         ty: TypeDefRef,
@@ -43,6 +40,7 @@ where
         Ok(impls)
     }
 
+    /// Return body-local inherent functions for this type.
     pub(super) fn inherent_functions_for_type(
         &self,
         ty: TypeDefRef,
@@ -66,6 +64,7 @@ where
         Ok(functions)
     }
 
+    /// Return body-local trait impls whose `Self` resolves to this type.
     pub(super) fn trait_impls_for_type(
         &self,
         ty: TypeDefRef,
@@ -89,6 +88,7 @@ where
         Ok(trait_impls)
     }
 
+    /// Gather body item stores that can affect the current body lookup.
     fn body_lookup_stores(&self) -> Result<Vec<&'query ItemStore>, PackageStoreError> {
         let mut origins = UniqueVec::new();
 

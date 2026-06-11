@@ -1,8 +1,4 @@
-//! Read-only value-path resolution for Body IR.
-//!
-//! This module resolves expressions that name values: bindings, consts, statics, constructors,
-//! enum variants, and associated items in value position. It does not mutate body facts; callers
-//! decide whether the resolved value should be written back into a body.
+//! Value-path lookup.
 
 use rg_ir_model::{
     BindingId, ConstRef, DefId, DefMapRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef,
@@ -18,20 +14,12 @@ use rg_ty::{NominalTy, Ty};
 use crate::ir::resolved::BodyResolution;
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite, support::unique_ty_or_unknown};
 
-/// Resolves body value paths without mutating the body.
-///
-/// The main pass uses this during the fixed-point pass, and analysis reuses it for cursor
-/// queries over path prefixes. Keeping it read-only avoids cloning bodies just to answer
-/// goto-definition/type-at for `Type::assoc` or `Enum::Variant` segments.
+/// Resolves paths in the value namespace without mutating the body.
 pub struct BodyValuePathQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
-/// One declaration that can satisfy an unqualified value path inside a body scope.
-///
-/// Rust shares bindings and item-like declarations in the value namespace. Keeping them under one
-/// enum lets lookup stay scope-ordered instead of accidentally searching one category through every
-/// parent scope before the next category.
+/// One declaration that can satisfy a value name inside a body scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BodyValueName {
     Binding(BindingId),
@@ -47,6 +35,7 @@ where
         Self { context }
     }
 
+    /// Find declarations for a path without considering ordinary local bindings.
     pub fn resolve_nonlocal_path_declarations(
         &self,
         scope: ScopeId,
@@ -56,6 +45,7 @@ where
         Ok(resolution.declarations(self.context.body_ref()))
     }
 
+    /// Find the type of a path without considering ordinary local bindings.
     pub fn resolve_nonlocal_path_ty(
         &self,
         scope: ScopeId,
@@ -65,6 +55,7 @@ where
         Ok(ty)
     }
 
+    /// Resolve a path without considering ordinary local bindings.
     pub(crate) fn resolve_nonlocal_path_expr(
         &self,
         scope: ScopeId,
@@ -73,6 +64,9 @@ where
         self.resolve_path_expr(scope, path, None)
     }
 
+    /// Resolve a value path from a body scope.
+    ///
+    /// `visible_bindings` caps which local bindings are visible for local queries.
     pub(crate) fn resolve_path_expr(
         &self,
         scope: ScopeId,
@@ -167,6 +161,7 @@ where
         ))
     }
 
+    /// Search one value name through parent scopes, with an optional local binding cutoff.
     fn resolve_single_segment_value_name(
         &self,
         start_scope: ScopeId,
@@ -224,6 +219,7 @@ where
         Ok(None)
     }
 
+    /// Look up a path from the body owner module, then the fallback module.
     fn resolve_path_from_owner_modules(
         &self,
         path: &Path,
@@ -247,6 +243,7 @@ where
             .resolve_path(fallback_module, path)
     }
 
+    /// Resolve a multi-segment value path through the body def map.
     fn resolve_body_value_path_from_def_map(
         &self,
         scope: ScopeId,
@@ -266,6 +263,7 @@ where
         ))
     }
 
+    /// Keep only semantic items that belong to the value namespace.
     fn semantic_items_for_defs(
         &self,
         defs: Vec<DefId>,
@@ -295,6 +293,7 @@ where
         Ok(items)
     }
 
+    /// Convert one value-namespace match into body resolution and type.
     fn value_name_resolution(
         &self,
         value_name: BodyValueName,
@@ -344,6 +343,7 @@ where
         }
     }
 
+    /// Resolve the declared type of a const item.
     fn semantic_const_ty(&self, const_ref: ConstRef) -> Result<Ty, PackageStoreError> {
         let item_query = self.context.item_query();
         let Some(const_data) = item_query.const_data(const_ref)? else {
@@ -361,6 +361,7 @@ where
             .resolve(ty)
     }
 
+    /// Resolve the declared type of a static item.
     fn semantic_static_ty(&self, static_ref: StaticRef) -> Result<Ty, PackageStoreError> {
         let item_query = self.context.item_query();
         let Some(static_data) = item_query.static_data(static_ref)? else {
@@ -375,6 +376,7 @@ where
             .resolve(ty)
     }
 
+    /// Turn type-def declarations into a nominal type.
     fn nominal_ty_from_defs(&self, defs: &[DefId]) -> Result<Ty, PackageStoreError> {
         let mut type_defs = UniqueVec::new();
         for def in defs {

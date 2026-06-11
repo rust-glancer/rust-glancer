@@ -1,9 +1,4 @@
-//! Type-path resolution with body-local scope and owner-context awareness.
-//!
-//! Semantic IR can resolve module items, but body-local structs live in lexical scopes and
-//! body-local item signatures can be anchored to synthetic modules. This query owns those lookup
-//! rules so type-ref and value-path resolution can ask type-namespace questions without knowing
-//! how body modules fall back to their surrounding semantic module.
+//! Type-path lookup.
 
 use rg_ir_model::{
     DefId, DefMapRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef, TypePathResolution,
@@ -15,6 +10,9 @@ use rg_ty::Ty;
 
 use crate::resolution::BodyResolutionContext;
 
+/// Resolves paths in the type namespace.
+///
+/// Handles body scopes, body-local modules, and owner contexts.
 pub struct BodyTypePathQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -28,6 +26,7 @@ where
         Self { context }
     }
 
+    /// Resolve a path such as `Self` or `foo::bar` within a body scope.
     pub fn resolve_in_scope(
         &self,
         scope: ScopeId,
@@ -78,6 +77,7 @@ where
         )
     }
 
+    /// Resolve a path such as `Self` or `foo::bar` within an owner context.
     pub(crate) fn resolve_in_context(
         &self,
         context: TypePathContext,
@@ -122,6 +122,7 @@ where
         Ok(self.type_resolution_from_items(body_items))
     }
 
+    /// Resolve a lexical body type path from a scope.
     fn resolve_body_type_items_from_def_map(
         &self,
         scope: ScopeId,
@@ -140,6 +141,7 @@ where
         self.semantic_items_for_defs(result.resolved)
     }
 
+    /// Resolve a body-module type path, then try the fallback module.
     fn resolve_body_type_items_from_module(
         &self,
         module: ModuleRef,
@@ -163,6 +165,7 @@ where
         self.semantic_items_for_defs(result.resolved)
     }
 
+    /// Convert local defs into semantic item refs.
     fn semantic_items_for_defs(
         &self,
         defs: Vec<DefId>,
@@ -183,6 +186,7 @@ where
         Ok(items)
     }
 
+    /// Group semantic items into a type-namespace resolution.
     fn type_resolution_from_items(&self, items: UniqueVec<SemanticItemRef>) -> TypePathResolution {
         let mut type_defs = UniqueVec::new();
         let mut type_aliases = UniqueVec::new();

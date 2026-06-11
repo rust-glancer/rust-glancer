@@ -1,8 +1,4 @@
-//! Type alias projection for body-aware type resolution.
-//!
-//! Type paths can resolve to aliases, but turning an alias declaration into a concrete `Ty` needs
-//! owner context, generic arguments, and impl receiver substitution. Keeping that projection here
-//! prevents path lookup from becoming the home for type-alias lowering details.
+//! Type alias projection.
 
 use rg_ir_model::{AssocItemId, TypeAliasRef};
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
@@ -11,6 +7,9 @@ use rg_ty::{GenericArg, NominalTy, Ty, TypeSubst};
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
+/// Projects type aliases into concrete types.
+///
+/// Handles generic args and receiver substitutions.
 pub(crate) struct BodyTypeAliasQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -24,6 +23,7 @@ where
         Self { context }
     }
 
+    /// Apply alias generics when exactly one alias was resolved.
     pub(crate) fn ty_from_aliases(
         &self,
         aliases: &[TypeAliasRef],
@@ -44,7 +44,7 @@ where
         )
     }
 
-    /// Attempts to find the associated type alias with given name for the provided type.
+    /// Find an associated type alias with this name for the given type.
     pub(crate) fn associated_alias_for_type(
         &self,
         ty: &NominalTy,
@@ -88,6 +88,7 @@ where
         Ok(None)
     }
 
+    /// Project an associated alias using receiver substitutions.
     pub(crate) fn ty_from_associated_alias(
         &self,
         alias_ref: TypeAliasRef,
@@ -123,6 +124,7 @@ where
             .resolve(aliased_ty)
     }
 
+    /// Project one ordinary type alias into a type.
     fn ty_from_alias(
         &self,
         alias_ref: TypeAliasRef,

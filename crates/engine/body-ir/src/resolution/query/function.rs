@@ -8,6 +8,7 @@ use rg_ty::{NominalTy, Ty, function_generic_shadow_subst};
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
+/// Answers function-specific type questions.
 pub(crate) struct BodyFunctionQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -21,7 +22,7 @@ where
         Self { context }
     }
 
-    /// Returns the nominal `Self` types visible from a function's owner context.
+    /// Return the nominal `Self` types visible from a function's owner context.
     pub(crate) fn self_nominal_tys(
         &self,
         function: FunctionRef,
@@ -31,11 +32,9 @@ where
         type_contexts.nominal_self_tys_for_context(context)
     }
 
-    /// Returns the explicitly declared return type for a function body, if one was written.
+    /// Return the written `-> T`.
     ///
-    /// This is the expected type for `return expr` and the body tail. Functions without `-> T`
-    /// are left to ordinary expression typing so this pass does not erase useful invalid-code
-    /// facts by forcing an implicit `()`.
+    /// If no arrow was written, return `None` instead of forcing unit here.
     pub(crate) fn declared_return_ty(
         &self,
         function_ref: FunctionRef,

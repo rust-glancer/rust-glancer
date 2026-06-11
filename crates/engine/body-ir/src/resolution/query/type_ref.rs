@@ -1,9 +1,4 @@
-//! Type-ref resolution from an explicit body use site.
-//!
-//! `TypeRef` resolution is the same operation everywhere, but the lookup anchor changes: a let
-//! annotation starts from a body scope, an associated item signature starts from its owner context,
-//! and a field type starts from its declaring module. Keeping that anchor as data prevents the
-//! resolver API from growing one method per caller shape.
+//! Type-ref resolution.
 
 use rg_ir_model::{
     DefMapRef, FunctionRef, ModuleRef, Path, ScopeId, TypePathResolution,
@@ -16,6 +11,7 @@ use rg_ty::{GenericArg, NominalTy, RefMutability, Ty, TypeSubst};
 
 use crate::resolution::BodyResolutionContext;
 
+/// Place where a type ref was written.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TypeRefUseSite {
     Scope(ScopeId),
@@ -31,6 +27,9 @@ enum TypeRefAnchor {
     PlainContext(TypePathContext),
 }
 
+/// Resolves a type ref from the place where it was written.
+///
+/// Scope use sites look in body scope; owner use sites use the item's module/impl context.
 pub(crate) struct TypeRefResolutionQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
     use_site: TypeRefUseSite,
@@ -53,16 +52,19 @@ where
         }
     }
 
+    /// Apply substitutions while resolving this type ref.
     pub(crate) fn with_subst(mut self, subst: &TypeSubst) -> Self {
         self.subst = subst.clone();
         self
     }
 
+    /// Resolve a type ref into a type.
     pub(crate) fn resolve(&self, ty: &TypeRef) -> Result<Ty, PackageStoreError> {
         let anchor = self.anchor_for_use_site(self.use_site)?;
         self.resolve_at(ty, anchor)
     }
 
+    /// Normalize the caller-facing use site into an internal lookup anchor.
     fn anchor_for_use_site(
         &self,
         use_site: TypeRefUseSite,
@@ -78,6 +80,7 @@ where
         }
     }
 
+    /// Use body scope when a module maps to one; otherwise use module context.
     fn anchor_for_module(&self, module: ModuleRef) -> TypeRefAnchor {
         if let Some(scope) = self
             .context
@@ -94,6 +97,7 @@ where
         }
     }
 
+    /// Preserve impl context unless the current body module should become a scope.
     fn anchor_for_owner_context(&self, context: TypePathContext) -> TypeRefAnchor {
         if context.module.origin == DefMapRef::Body(self.context.body_ref()) {
             return self.anchor_for_module(context.module);
@@ -106,6 +110,7 @@ where
         }
     }
 
+    /// Resolve under one anchor so nested types keep the same lookup context.
     fn resolve_at(&self, ty: &TypeRef, anchor: TypeRefAnchor) -> Result<Ty, PackageStoreError> {
         if let TypeRefAnchor::PlainContext(context) = anchor {
             return self.resolve_in_plain_context(ty, context);
@@ -118,6 +123,7 @@ where
         self.resolve_path_at(ty, type_path, anchor)
     }
 
+    /// Resolve a path type, including substitutions and associated aliases.
     fn resolve_path_at(
         &self,
         original_ty: &TypeRef,
@@ -142,6 +148,7 @@ where
         self.ty_from_resolution(original_ty, &path, resolution, args)
     }
 
+    /// Find nominal `Self` candidates for this lookup anchor.
     fn self_tys_for_anchor(
         &self,
         anchor: TypeRefAnchor,
@@ -154,6 +161,7 @@ where
         type_contexts.nominal_self_tys_for_context(context)
     }
 
+    /// Ask the path resolver that matches the current anchor kind.
     fn resolve_type_path(
         &self,
         anchor: TypeRefAnchor,
@@ -173,6 +181,7 @@ where
         }
     }
 
+    /// Delegate non-body contexts to item-store type-ref resolution.
     fn resolve_in_plain_context(
         &self,
         ty: &TypeRef,
@@ -183,6 +192,7 @@ where
             .resolve_type_ref(ty, context, Ty::syntax(ty.clone()), &self.subst)
     }
 
+    /// Resolve structural types whose children may contain paths.
     fn resolve_structural_type(
         &self,
         ty: &TypeRef,
@@ -216,6 +226,7 @@ where
         }
     }
 
+    /// Resolve `Prefix::Alias` by first resolving `Prefix` as a type.
     fn ty_from_associated_alias_path(
         &self,
         type_path: &TypePath,
@@ -249,6 +260,7 @@ where
         Ok(None)
     }
 
+    /// Project a type-path lookup result into a type.
     fn ty_from_resolution(
         &self,
         original_ty: &TypeRef,
@@ -278,6 +290,7 @@ where
         )
     }
 
+    /// Resolve generic args from the final path segment.
     fn generic_args_from_type_path(
         &self,
         type_path: &TypePath,
@@ -294,6 +307,7 @@ where
         Ok(generic_args)
     }
 
+    /// Resolve one generic arg at this query's use site.
     pub(super) fn resolve_generic_arg(
         &self,
         arg: &ItemGenericArg,
@@ -302,6 +316,7 @@ where
         self.generic_arg_at(arg, anchor)
     }
 
+    /// Resolve the type parts of one generic arg under this anchor.
     fn generic_arg_at(
         &self,
         arg: &ItemGenericArg,
@@ -331,12 +346,14 @@ where
         }
     }
 
+    /// Replace a bare type parameter using the active subst.
     fn subst_for_single_segment(&self, path: &Path) -> Option<Ty> {
         path.single_name()
             .and_then(|name| self.subst.type_param(name))
     }
 }
 
+/// Return the type path without its final segment.
 fn prefix_type_ref(path: &TypePath) -> Option<TypeRef> {
     let prefix_len = path.segments.len().checked_sub(1)?;
     if prefix_len == 0 {

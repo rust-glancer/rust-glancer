@@ -1,7 +1,4 @@
-//! Type-resolution context helpers for body-owned items.
-//!
-//! Type refs and paths both need to know which module/impl context anchors lookup. The same
-//! context also determines the meaning of type-level `Self` inside an impl.
+//! Type-resolution context lookup.
 
 use rg_ir_model::FunctionRef;
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
@@ -11,6 +8,7 @@ use rg_ty::{NominalTy, Ty, TypeSubst};
 
 use crate::{ir::BodyOwner, resolution::BodyResolutionContext};
 
+/// Finds the module/impl context used for type resolution.
 pub(crate) struct BodyTypeContextQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -24,6 +22,7 @@ where
         Self { context }
     }
 
+    /// Find the module/impl context that anchors a function signature.
     pub(crate) fn for_function(
         &self,
         function: FunctionRef,
@@ -36,6 +35,7 @@ where
             .unwrap_or_else(|| TypePathContext::module(fallback_module)))
     }
 
+    /// Find the module/impl context that anchors the current body owner.
     pub(crate) fn for_body_owner(&self) -> Result<TypePathContext, PackageStoreError> {
         let fallback_module = self.context.body().owner_module();
         match self.context.body().owner() {
@@ -53,6 +53,7 @@ where
         }
     }
 
+    /// Resolve type-level `Self` inside an impl context.
     pub(crate) fn nominal_self_tys_for_context(
         &self,
         context: TypePathContext,

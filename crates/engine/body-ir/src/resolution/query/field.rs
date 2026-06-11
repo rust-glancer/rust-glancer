@@ -1,8 +1,4 @@
-//! Field access recovery for body expression resolution.
-//!
-//! Field lookup combines receiver autoderef, structural tuple fields, declared semantic fields,
-//! and owner-generic substitution. Keeping those dimensions together avoids spreading
-//! field-specific lookup rules through expression traversal.
+//! Field access resolution.
 
 use rg_ir_model::{
     EnumVariantRef, ExprId, FieldRef, TypeDefId,
@@ -25,6 +21,7 @@ enum ResolvedFieldTarget {
     Structural { ty: Ty },
 }
 
+/// Declared field selected from a nominal owner type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DeclaredFieldTarget {
     field: FieldRef,
@@ -32,28 +29,32 @@ pub(crate) struct DeclaredFieldTarget {
 }
 
 impl DeclaredFieldTarget {
+    /// Return the field type if the declaration was available.
     pub(crate) fn ty(&self) -> Option<&Ty> {
         self.ty.as_ref()
     }
 }
 
-/// Field lookup result at the first autoderef depth that produced any field target.
+/// Field lookup result at the selected autoderef depth.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedFieldTargets {
     targets: UniqueVec<ResolvedFieldTarget>,
 }
 
 impl ResolvedFieldTargets {
+    /// Start with no field targets.
     fn new() -> Self {
         Self {
             targets: UniqueVec::new(),
         }
     }
 
+    /// Return whether field lookup found no targets.
     pub(crate) fn is_empty(&self) -> bool {
         self.targets.is_empty()
     }
 
+    /// Return declarations for named fields, or unknown for structural fields.
     pub(crate) fn resolution(&self) -> BodyResolution {
         let mut fields = UniqueVec::new();
         for target in &self.targets {
@@ -70,6 +71,7 @@ impl ResolvedFieldTargets {
         }
     }
 
+    /// Return the unique field type, or unknown for zero or multiple types.
     pub(crate) fn ty(&self) -> Ty {
         let mut tys = UniqueVec::new();
         for target in &self.targets {
@@ -89,15 +91,18 @@ impl ResolvedFieldTargets {
         unique_ty_or_unknown(tys)
     }
 
+    /// Add a declared field target.
     fn push_declared(&mut self, target: DeclaredFieldTarget) {
         self.targets.push(ResolvedFieldTarget::Declared(target));
     }
 
+    /// Add a structural field type with no declaration.
     fn push_structural_ty(&mut self, ty: Ty) {
         self.targets.push(ResolvedFieldTarget::Structural { ty });
     }
 }
 
+/// Resolves field access for nominal and structural receiver types.
 pub(crate) struct BodyFieldQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -111,6 +116,7 @@ where
         Self { context }
     }
 
+    /// Resolve a field access expression through receiver autoderef.
     pub(crate) fn resolve(
         &self,
         base: ExprId,
@@ -146,6 +152,7 @@ where
         Ok(targets)
     }
 
+    /// Resolve a declared field directly from its owner type.
     pub(crate) fn declared(
         &self,
         owner_ty: &NominalTy,
@@ -174,6 +181,7 @@ where
         }))
     }
 
+    /// Return the type of an enum variant field for a known enum type.
     pub(crate) fn enum_variant_field_ty(
         &self,
         enum_ty: &NominalTy,
@@ -203,6 +211,7 @@ where
         ))
     }
 
+    /// Read a tuple field type from a structural tuple receiver.
     fn structural_field_ty(ty: &Ty, field: &FieldKey) -> Option<Ty> {
         match (ty, field) {
             (Ty::Tuple(fields), FieldKey::Tuple(index)) => fields.get(*index).cloned(),
@@ -210,6 +219,7 @@ where
         }
     }
 
+    /// Find a named or tuple field inside a variant declaration.
     fn variant_field<'field>(
         fields: &'field FieldList,
         key: &FieldKey,

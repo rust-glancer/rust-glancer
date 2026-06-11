@@ -1,8 +1,4 @@
-//! Read-only associated item path resolution for Body IR.
-//!
-//! This query owns `Type::item` lookup in value position: enum variants, associated consts, and
-//! associated functions. Ordinary lexical/module value paths stay in
-//! `BodyValuePathQuery`.
+//! Associated item lookup in value position.
 
 use rg_ir_model::{
     AssocItemId, ConstRef, DefMapRef, EnumVariantRef, FunctionRef, ImplRef, ItemOwner, Path,
@@ -18,6 +14,9 @@ use crate::{
     resolution::{BodyResolutionContext, TypeRefUseSite, support::unique_ty_or_unknown},
 };
 
+/// Resolves `Type::item` paths in value position.
+///
+/// Covers enum variants, associated consts, and associated functions.
 pub(crate) struct BodyAssociatedItemQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -38,6 +37,7 @@ where
         Self { context }
     }
 
+    /// Resolve an associated value path from a type prefix and a final item name.
     pub(crate) fn resolve_path(
         &self,
         scope: ScopeId,
@@ -104,6 +104,7 @@ where
         Ok((!functions.is_empty()).then_some(Self::function_resolution(functions)))
     }
 
+    /// Collect variant declarations and their resulting enum type.
     fn enum_variant_resolution(
         candidates: impl IntoIterator<Item = BodyAssociatedItemCandidate>,
     ) -> (BodyResolution, Ty) {
@@ -124,6 +125,7 @@ where
         )
     }
 
+    /// Collect const declarations and collapse their types.
     fn const_resolution(
         candidates: impl IntoIterator<Item = BodyAssociatedItemCandidate>,
     ) -> (BodyResolution, Ty) {
@@ -144,6 +146,7 @@ where
         )
     }
 
+    /// Collect function declarations; call projection owns their result type.
     fn function_resolution(
         candidates: impl IntoIterator<Item = BodyAssociatedItemCandidate>,
     ) -> (BodyResolution, Ty) {
@@ -162,6 +165,7 @@ where
         )
     }
 
+    /// Find an enum variant constructor for an enum receiver type.
     fn enum_variant_candidate_for_type(
         &self,
         ty: &NominalTy,
@@ -183,6 +187,7 @@ where
             }))
     }
 
+    /// Find an inherent associated const in body-local then target impls.
     fn inherent_associated_const_candidate_for_type(
         &self,
         ty: &NominalTy,
@@ -211,6 +216,7 @@ where
         )
     }
 
+    /// Find associated consts from applicable trait impls.
     fn trait_associated_const_candidates_for_type(
         &self,
         ty: &NominalTy,
@@ -249,6 +255,7 @@ where
         Ok(items)
     }
 
+    /// Find static associated functions from inherent and trait impls.
     fn associated_function_candidates_for_type(
         &self,
         ty: &NominalTy,
@@ -295,6 +302,7 @@ where
         Ok(functions)
     }
 
+    /// Read target-visible inherent functions, using the index when available.
     fn semantic_inherent_function_items_for_type(
         &self,
         ty: &NominalTy,
@@ -312,6 +320,7 @@ where
         }
     }
 
+    /// Add a function only if it is static and has the requested name.
     fn push_associated_function(
         &self,
         functions: &mut Vec<BodyAssociatedItemCandidate>,
@@ -330,6 +339,7 @@ where
         Ok(())
     }
 
+    /// Add consts from applicable impl items, or their trait declarations.
     fn push_trait_associated_const_candidates_for_impls(
         &self,
         items: &mut Vec<BodyAssociatedItemCandidate>,
@@ -390,6 +400,7 @@ where
         Ok(())
     }
 
+    /// Find the first matching associated const across inherent impls.
     fn associated_const_candidate_for_impls(
         &self,
         impls: UniqueVec<ImplRef>,
@@ -419,6 +430,7 @@ where
         Ok(None)
     }
 
+    /// Find a const item by name and project its receiver type.
     fn associated_const_from_items(
         &self,
         origin: DefMapRef,
@@ -446,6 +458,7 @@ where
         Ok(None)
     }
 
+    /// Resolve an associated const type for a concrete receiver.
     fn semantic_const_ty_for_receiver(
         &self,
         const_ref: ConstRef,
