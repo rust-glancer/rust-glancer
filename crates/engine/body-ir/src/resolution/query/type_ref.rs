@@ -136,7 +136,12 @@ where
         }
 
         let args = self.generic_args_from_type_path(type_path)?;
-        if let Some(ty) = self.ty_from_local_associated_type_path(type_path, &path, scope, &args)? {
+        if let Some(ty) = self.ty_from_associated_alias_path(
+            type_path,
+            &path,
+            TypeRefUseSite::Scope(scope),
+            &args,
+        )? {
             return Ok(ty);
         }
 
@@ -169,6 +174,15 @@ where
         }
 
         let args = self.generic_args_from_type_path(type_path)?;
+        if let Some(ty) = self.ty_from_associated_alias_path(
+            type_path,
+            &path,
+            TypeRefUseSite::OwnerContext(context),
+            &args,
+        )? {
+            return Ok(ty);
+        }
+
         let resolution = self
             .context
             .type_path_query()
@@ -213,11 +227,11 @@ where
         }
     }
 
-    fn ty_from_local_associated_type_path(
+    fn ty_from_associated_alias_path(
         &self,
         type_path: &TypePath,
         path: &Path,
-        scope: ScopeId,
+        prefix_use_site: TypeRefUseSite,
         args: &[GenericArg],
     ) -> Result<Option<Ty>, PackageStoreError> {
         let Some((_, name)) = path.split_prefix_name() else {
@@ -227,7 +241,7 @@ where
             return Ok(None);
         };
         let prefix_ty = self
-            .with_use_site(TypeRefUseSite::Scope(scope))
+            .with_use_site(prefix_use_site)
             .resolve(&prefix_ty_ref)?;
 
         for ty in prefix_ty.as_nominals() {
