@@ -30,7 +30,7 @@ use super::{
 pub(crate) struct BodyResolutionPass<'query, 'body, D, I> {
     pub(super) providers: BodyResolutionProviders<'query, D, I>,
     pub(super) body: &'body mut ResolvedBodyData,
-    pub(super) inference: Option<BodyInferenceCtx>,
+    pub(super) inference: BodyInferenceCtx,
 }
 
 impl<'query, 'body, D, I> BodyResolutionPass<'query, 'body, D, I>
@@ -44,17 +44,20 @@ where
         semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
         body: &'body mut ResolvedBodyData,
-    ) -> Self {
-        Self {
-            providers: BodyResolutionProviders::new(
-                def_maps,
-                item_stores,
-                semantic_index,
-                body_ref,
-            ),
+    ) -> Result<Self, PackageStoreError> {
+        let providers =
+            BodyResolutionProviders::new(def_maps, item_stores, semantic_index, body_ref);
+
+        // Pattern materialization rewrites pending binding ids into the final binding arena.
+        // Every later resolution step, including inference storage, assumes that stable shape.
+        PatternBindingMaterializationPass::new(providers, body).materialize()?;
+        let inference = BodyInferenceCtx::new(body.exprs().len(), body.bindings().len());
+
+        Ok(Self {
+            providers,
             body,
-            inference: None,
-        }
+            inference,
+        })
     }
 
     pub(super) fn context<'source>(
@@ -64,8 +67,6 @@ where
     }
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
-        self.materialize_pattern_bindings()?;
-        self.initialize_inference();
         self.resolve_bindings()?;
 
         // Pattern propagation can unlock later expression types, and those expressions can then
@@ -91,10 +92,6 @@ where
 
         InferenceResolutionPass::new(self).run()?;
         Ok(())
-    }
-
-    fn materialize_pattern_bindings(&mut self) -> Result<(), PackageStoreError> {
-        PatternBindingMaterializationPass::new(self.providers, self.body).materialize()
     }
 
     fn resolve_bindings(&mut self) -> Result<(), PackageStoreError> {
@@ -128,32 +125,24 @@ where
     }
 
     pub(super) fn set_expr_ty(&mut self, expr: ExprId, ty: Ty) {
-        if let Some(inference) = &mut self.inference {
-            inference.set_expr_ty(expr, &ty);
-        }
+        self.inference.set_expr_ty(expr, &ty);
         self.body.set_expr_ty(expr, ty);
     }
 
     pub(super) fn set_expr_integer_var(&mut self, expr: ExprId) {
-        if let Some(inference) = &mut self.inference {
-            inference.set_expr_integer_var(expr);
-        }
+        self.inference.set_expr_integer_var(expr);
         self.body
             .set_expr_ty(expr, Ty::Primitive(PrimitiveTy::DEFAULT_INT));
     }
 
     pub(super) fn set_expr_float_var(&mut self, expr: ExprId) {
-        if let Some(inference) = &mut self.inference {
-            inference.set_expr_float_var(expr);
-        }
+        self.inference.set_expr_float_var(expr);
         self.body
             .set_expr_ty(expr, Ty::Primitive(PrimitiveTy::DEFAULT_FLOAT));
     }
 
     pub(super) fn set_expr_tuple_from_fields(&mut self, expr: ExprId, fields: &[ExprId]) {
-        if let Some(inference) = &mut self.inference {
-            inference.set_expr_tuple_from_fields(expr, fields);
-        }
+        self.inference.set_expr_tuple_from_fields(expr, fields);
         self.body.set_expr_ty(
             expr,
             Ty::tuple(
@@ -171,13 +160,11 @@ where
         elements: &[ExprId],
         ty: Ty,
     ) {
-        if let Some(inference) = &mut self.inference {
-            inference.set_expr_array_from_elements(
-                expr,
-                elements,
-                Some(elements.len().to_string()),
-            );
-        }
+        self.inference.set_expr_array_from_elements(
+            expr,
+            elements,
+            Some(elements.len().to_string()),
+        );
         self.body.set_expr_ty(expr, ty);
     }
 
@@ -188,20 +175,16 @@ where
         len_text: Option<&str>,
         ty: Ty,
     ) {
-        if let Some(inference) = &mut self.inference {
-            inference.set_expr_repeat_array_from_initializer(
-                expr,
-                initializer,
-                len_text.map(str::to_owned),
-            );
-        }
+        self.inference.set_expr_repeat_array_from_initializer(
+            expr,
+            initializer,
+            len_text.map(str::to_owned),
+        );
         self.body.set_expr_ty(expr, ty);
     }
 
     pub(super) fn set_expr_facts(&mut self, expr: ExprId, resolution: BodyResolution, ty: Ty) {
-        if let Some(inference) = &mut self.inference {
-            inference.set_expr_ty(expr, &ty);
-        }
+        self.inference.set_expr_ty(expr, &ty);
         self.body.set_expr_facts(expr, resolution, ty);
     }
 
@@ -213,26 +196,14 @@ where
         inner: Option<ExprId>,
         ty: Ty,
     ) {
-        if let Some(inference) = &mut self.inference {
-            inference.set_expr_wrapper_from_inner(expr, kind, inner, &ty);
-        }
+        self.inference
+            .set_expr_wrapper_from_inner(expr, kind, inner, &ty);
         self.body.set_expr_facts(expr, resolution, ty);
     }
 
     fn set_binding_ty(&mut self, binding: BindingId, ty: Ty) {
-        if let Some(inference) = &mut self.inference {
-            inference.set_binding_ty(binding, &ty);
-        }
+        self.inference.set_binding_ty(binding, &ty);
         self.body.set_binding_ty(binding, ty);
-    }
-
-    fn initialize_inference(&mut self) {
-        // Binding materialization may compact pending pattern slots. Size inference storage only
-        // after that step so its local ids mirror the final body facts.
-        self.inference = Some(BodyInferenceCtx::new(
-            self.body.exprs().len(),
-            self.body.bindings().len(),
-        ));
     }
 
     fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {

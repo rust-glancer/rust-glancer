@@ -78,16 +78,15 @@ where
 
     /// Refresh expression facts that copied child facts before instantiation.
     fn refresh_inference_dependent_expr_facts(&mut self) {
-        let Some(inference) = &mut self.pass.inference else {
-            return;
-        };
-
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
             let kind = self.pass.body.expr_unchecked(expr).kind.clone();
             match kind {
-                ExprKind::Tuple { fields } => inference.set_expr_tuple_from_fields(expr, &fields),
-                ExprKind::Array { elements } => inference.set_expr_array_from_elements(
+                ExprKind::Tuple { fields } => self
+                    .pass
+                    .inference
+                    .set_expr_tuple_from_fields(expr, &fields),
+                ExprKind::Array { elements } => self.pass.inference.set_expr_array_from_elements(
                     expr,
                     &elements,
                     Some(elements.len().to_string()),
@@ -97,11 +96,20 @@ where
                     len_text,
                     ..
                 } => {
-                    inference.set_expr_repeat_array_from_initializer(expr, initializer, len_text);
+                    self.pass.inference.set_expr_repeat_array_from_initializer(
+                        expr,
+                        initializer,
+                        len_text,
+                    );
                 }
                 ExprKind::Wrapper { kind, inner } => {
                     let fallback_ty = self.pass.body.expr_ty_unchecked(expr).clone();
-                    inference.set_expr_wrapper_from_inner(expr, kind, inner, &fallback_ty);
+                    self.pass.inference.set_expr_wrapper_from_inner(
+                        expr,
+                        kind,
+                        inner,
+                        &fallback_ty,
+                    );
                 }
                 _ => {}
             }
@@ -139,10 +147,7 @@ where
                 return Ok(());
             }
 
-            let Some(inference) = &mut self.pass.inference else {
-                return Ok(());
-            };
-            inference.instantiate_expr_generic_return_ty(
+            self.pass.inference.instantiate_expr_generic_return_ty(
                 call,
                 ret_ty,
                 projection.return_ty(),
@@ -395,9 +400,7 @@ where
             return;
         }
 
-        if let Some(inference) = &mut self.pass.inference {
-            inference.constrain_expr_ty(expr, expected_ty);
-        }
+        self.pass.inference.constrain_expr_ty(expr, expected_ty);
 
         let kind = self.pass.body.expr_unchecked(expr).kind.clone();
         match (kind, expected_ty) {
@@ -467,23 +470,17 @@ where
     /// Downstream queries only read `Ty`, so unresolved variables are defaulted or erased here
     /// before the resolved body leaves this pass.
     fn finalize_facts(&mut self) {
-        let Some(inference) = self.pass.inference.take() else {
-            return;
-        };
-
         // Persist the inference view back into Body IR so downstream queries see ordinary `Ty`
         // facts. Unsolved numeric variables become defaults; conflicts become `<unknown>`.
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
-            self.pass
-                .body
-                .set_expr_ty(expr, inference.finalize_expr_ty(expr));
+            let ty = self.pass.inference.finalize_expr_ty(expr);
+            self.pass.body.set_expr_ty(expr, ty);
         }
         for binding_idx in 0..self.pass.body.bindings().len() {
             let binding = BindingId(binding_idx);
-            self.pass
-                .body
-                .set_binding_ty(binding, inference.finalize_binding_ty(binding));
+            let ty = self.pass.inference.finalize_binding_ty(binding);
+            self.pass.body.set_binding_ty(binding, ty);
         }
     }
 }

@@ -305,7 +305,7 @@ impl<'target> TargetBodyBuildState<'target> {
                 target,
                 body: BodyId(body_idx),
             };
-            BodyResolutionPass::new(&source, &source, semantic_index, body_ref, body).resolve()?;
+            BodyResolutionPass::new(&source, &source, semantic_index, body_ref, body)?.resolve()?;
         }
 
         Ok(())
