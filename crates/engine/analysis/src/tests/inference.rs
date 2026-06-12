@@ -616,6 +616,72 @@ pub fn use_it() {
 }
 
 #[test]
+fn carries_generic_variables_through_simple_bindings() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_simple_binding_generic_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub struct Vec<T> {
+    value: T,
+}
+
+impl<T> Vec<T> {
+    pub fn new() -> Self {}
+}
+
+pub fn use_it() {
+    let values = Vec::new()$type_initializer$;
+    let typed: Vec<User> = values$type_constrained_read$;
+    let alias = values$type_alias_read$;
+    let later: Vec<User> = alias$type_alias_constrained_read$;
+    let wrapped = (Vec::new(),)$type_wrapped_initializer$;
+    let wrapped_later: (Vec<User>,) = wrapped$type_wrapped_read$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("binding initializer generic result", "type_initializer"),
+            AnalysisQuery::ty(
+                "binding read constrained by annotation",
+                "type_constrained_read",
+            ),
+            AnalysisQuery::ty("binding read through alias", "type_alias_read"),
+            AnalysisQuery::ty(
+                "alias read constrained by annotation",
+                "type_alias_constrained_read",
+            ),
+            AnalysisQuery::ty("wrapped binding initializer", "type_wrapped_initializer"),
+            AnalysisQuery::ty("wrapped binding read", "type_wrapped_read"),
+        ],
+        expect![[r#"
+            binding initializer generic result
+            - nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>
+
+            binding read constrained by annotation
+            - nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>
+
+            binding read through alias
+            - nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>
+
+            alias read constrained by annotation
+            - nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>
+
+            wrapped binding initializer
+            - (nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>,)
+
+            wrapped binding read
+            - (nominal struct analysis_simple_binding_generic_inference[lib]::crate::Vec<nominal struct analysis_simple_binding_generic_inference[lib]::crate::User>,)
+        "#]],
+    );
+}
+
+#[test]
 fn applies_explicit_enum_prefix_generics_to_payload_expected_types() {
     check_analysis_queries(
         r#"

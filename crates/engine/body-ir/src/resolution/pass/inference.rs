@@ -5,7 +5,7 @@
 //! Body IR.
 
 use rg_ir_model::{
-    BindingId, ExprId, ScopeId, StmtId,
+    BindingId, ExprId, PatId, ScopeId, StmtId,
     identity::DeclarationRef,
     items::{FieldKey, TypeRef},
 };
@@ -14,7 +14,7 @@ use rg_package_store::PackageStoreError;
 use rg_ty::Ty;
 
 use crate::{
-    ir::{ExprKind, ExprWrapperKind, RecordExprField, StmtKind, resolved::BodyResolution},
+    ir::{ExprKind, ExprWrapperKind, PatKind, RecordExprField, StmtKind, resolved::BodyResolution},
     resolution::TypeRefUseSite,
 };
 
@@ -57,7 +57,8 @@ where
 
     /// Instantiate all inference facts that ordinary `Ty` cannot represent.
     fn instantiate_inference_facts(&mut self) -> Result<(), PackageStoreError> {
-        self.instantiate_generic_call_return_facts()
+        self.instantiate_generic_call_return_facts()?;
+        Ok(())
     }
 
     /// Instantiate generic call returns such as `Vec<T>` as `Vec<?T>`.
@@ -78,6 +79,92 @@ where
 
     /// Refresh expression facts that copied child facts before instantiation.
     fn refresh_inference_dependent_expr_facts(&mut self) {
+        self.refresh_shape_expr_facts();
+        self.refresh_binding_flow_facts();
+        self.refresh_shape_expr_facts();
+        self.refresh_binding_flow_facts();
+    }
+
+    /// Refresh simple binding initializers and local path reads until they agree.
+    fn refresh_binding_flow_facts(&mut self) {
+        // Binding reads and binding initializers can form short chains such as
+        // `let second = first;`. Iterate over this narrow graph so every slot shares the same
+        // inference vars before expected-type constraints run.
+        let max_passes = self.pass.body.bindings().len() + self.pass.body.exprs().len() + 1;
+        for _ in 0..max_passes {
+            let mut changed = false;
+            changed |= self.link_simple_let_binding_initializers();
+            changed |= self.refresh_binding_path_expr_facts();
+            if !changed {
+                break;
+            }
+        }
+    }
+
+    /// Link unannotated `let name = expr` bindings to the initializer inference slot.
+    fn link_simple_let_binding_initializers(&mut self) -> bool {
+        let mut changed = false;
+
+        for statement_idx in 0..self.pass.body.statements().len() {
+            let StmtKind::Let {
+                pat: Some(pat),
+                annotation: None,
+                initializer: Some(initializer),
+                ..
+            } = self
+                .pass
+                .body
+                .statement_unchecked(StmtId(statement_idx))
+                .kind
+                .clone()
+            else {
+                continue;
+            };
+            changed |= self.link_simple_let_binding_initializer(pat, initializer);
+        }
+
+        for expr_idx in 0..self.pass.body.exprs().len() {
+            let expr = ExprId(expr_idx);
+            let ExprKind::Let {
+                pat: Some(pat),
+                initializer: Some(initializer),
+                ..
+            } = self.pass.body.expr_unchecked(expr).kind.clone()
+            else {
+                continue;
+            };
+            changed |= self.link_simple_let_binding_initializer(pat, initializer);
+        }
+
+        changed
+    }
+
+    fn link_simple_let_binding_initializer(&mut self, pat: PatId, initializer: ExprId) -> bool {
+        let Some(binding) = self.simple_binding_pat(pat) else {
+            return false;
+        };
+
+        self.pass
+            .inference
+            .set_binding_from_expr(binding, initializer)
+    }
+
+    /// Refresh path expressions that read local bindings after binding slots changed.
+    fn refresh_binding_path_expr_facts(&mut self) -> bool {
+        let mut changed = false;
+
+        for expr_idx in 0..self.pass.body.exprs().len() {
+            let expr = ExprId(expr_idx);
+            if let BodyResolution::Binding(binding) = self.pass.body.expr_resolution(expr) {
+                changed |= self.pass.inference.set_expr_from_binding(expr, *binding);
+            }
+        }
+
+        changed
+    }
+
+    /// Refresh expression facts that depend on child inference slots.
+    fn refresh_shape_expr_facts(&mut self) {
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
             let kind = self.pass.body.expr_unchecked(expr).kind.clone();
@@ -114,6 +201,21 @@ where
                 _ => {}
             }
         }
+    }
+
+    /// Return the binding for a plain `let name = ...` pattern.
+    fn simple_binding_pat(&self, pat: PatId) -> Option<BindingId> {
+        let data = self.pass.body.pat(pat)?;
+        let PatKind::Binding {
+            binding: Some(binding),
+            subpat: None,
+            ..
+        } = &data.kind
+        else {
+            return None;
+        };
+
+        Some(*binding)
     }
 
     /// Instantiate one generic call return when it still contains unknown type params.

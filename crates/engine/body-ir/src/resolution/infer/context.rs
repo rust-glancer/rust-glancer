@@ -152,6 +152,28 @@ impl BodyInferenceCtx {
         self.binding_tys[binding.0] = InferTy::from_ty(ty);
     }
 
+    /// Copy an initializer slot into a binding, preserving shared inference vars.
+    pub(crate) fn set_binding_from_expr(&mut self, binding: BindingId, expr: ExprId) -> bool {
+        let ty = self.expr_tys[expr.0].clone();
+        if self.binding_tys[binding.0] == ty {
+            return false;
+        }
+
+        self.binding_tys[binding.0] = ty;
+        true
+    }
+
+    /// Copy a binding slot into a path expression that reads it.
+    pub(crate) fn set_expr_from_binding(&mut self, expr: ExprId, binding: BindingId) -> bool {
+        let ty = self.binding_tys[binding.0].clone();
+        if self.expr_tys[expr.0] == ty {
+            return false;
+        }
+
+        self.expr_tys[expr.0] = ty;
+        true
+    }
+
     pub(crate) fn constrain_expr_ty(&mut self, expr: ExprId, expected_ty: &Ty) -> bool {
         self.table.unify(
             &self.expr_tys[expr.0].clone(),

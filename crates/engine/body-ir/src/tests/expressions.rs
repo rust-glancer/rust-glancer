@@ -738,7 +738,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
             - v2 param value `value`: u8 => u8 @ 9:55-9:60
             - v3 param user `user`: User => nominal struct body_common_expr_fixture[lib]::crate::User @ 9:66-9:70
             - v4 let tuple `tuple` => (u8, u8) @ 10:9-10:14
-            - v5 let array `array` => <unknown> @ 11:9-11:14
+            - v5 let array `array` => [u8; 3] @ 11:9-11:14
             - v6 let repeat `repeat` => [u8; 3] @ 12:9-12:15
             - v7 let indexed `indexed` => u8 @ 13:9-13:16
             - v8 let exclusive `exclusive` => <unknown> @ 14:9-14:18
