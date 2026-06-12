@@ -2,22 +2,22 @@ use rg_ir_model::items::{
     GenericArg as ItemGenericArg, GenericParams, Mutability, TypePath, TypeRef,
 };
 use rg_text::Name;
-use rg_ty::{GenericArg, NominalTy, RefMutability, Ty};
 
 use super::{
     model::{InferGenericArg, InferNominalTy, InferTy},
     table::InferenceTable,
 };
+use crate::{GenericArg, NominalTy, RefMutability, Ty};
 
 /// Instantiates function type params as variables inside a projected call return.
-pub(super) struct GenericReturnInstantiationBuilder<'table> {
+pub struct GenericReturnInstantiationBuilder<'table> {
     table: &'table mut InferenceTable,
     params: Vec<(Name, Option<InferTy>)>,
     used_type_vars: bool,
 }
 
 impl<'table> GenericReturnInstantiationBuilder<'table> {
-    pub(super) fn new(table: &'table mut InferenceTable, generics: &GenericParams) -> Self {
+    pub fn new(table: &'table mut InferenceTable, generics: &GenericParams) -> Self {
         Self {
             table,
             params: generics
@@ -29,11 +29,11 @@ impl<'table> GenericReturnInstantiationBuilder<'table> {
         }
     }
 
-    pub(super) fn used_type_vars(&self) -> bool {
+    pub fn used_type_vars(&self) -> bool {
         self.used_type_vars
     }
 
-    pub(super) fn ty_from_return(&mut self, ret_ty: &TypeRef, resolved_ty: &Ty) -> InferTy {
+    pub fn ty_from_return(&mut self, ret_ty: &TypeRef, resolved_ty: &Ty) -> InferTy {
         if let Some(var) = self.var_for_plain_type_param(ret_ty) {
             return var;
         }

@@ -2,16 +2,16 @@ use rg_ir_model::items::TypeRef;
 use rg_ir_model::{TraitRef, TypeDefRef};
 use rg_std::UniqueVec;
 use rg_text::Name;
-use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, PrimitiveTy, RefMutability, Ty};
 
 use super::table::{InferVarId, InferVarKind};
+use crate::{GenericArg, NominalTy, OpaqueTraitBound, PrimitiveTy, RefMutability, Ty};
 
 /// Inference-aware mirror of `Ty`.
 ///
-/// This type is transient and body-local. It can carry variables inside the same shapes persisted
-/// `Ty` already supports, then finalize back to `Ty` once the body pass is done.
+/// This type is transient solver state. It can carry variables inside the same shapes persisted
+/// `Ty` already supports, then finalize back to `Ty` once inference is done.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum InferTy {
+pub enum InferTy {
     Unit,
     Never,
     Primitive(PrimitiveTy),
@@ -38,7 +38,7 @@ pub(super) enum InferTy {
 }
 
 impl InferTy {
-    pub(super) fn from_ty(ty: &Ty) -> Self {
+    pub fn from_ty(ty: &Ty) -> Self {
         match ty {
             Ty::Unit => Self::Unit,
             Ty::Never => Self::Never,
@@ -94,9 +94,9 @@ impl InferTy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct InferNominalTy {
-    pub(super) def: TypeDefRef,
-    pub(super) args: Vec<InferGenericArg>,
+pub struct InferNominalTy {
+    pub def: TypeDefRef,
+    pub args: Vec<InferGenericArg>,
 }
 
 impl InferNominalTy {
@@ -109,9 +109,9 @@ impl InferNominalTy {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct InferOpaqueTraitBound {
-    pub(super) trait_ref: TraitRef,
-    pub(super) args: Vec<InferGenericArg>,
+pub struct InferOpaqueTraitBound {
+    pub trait_ref: TraitRef,
+    pub args: Vec<InferGenericArg>,
 }
 
 impl InferOpaqueTraitBound {
@@ -124,7 +124,7 @@ impl InferOpaqueTraitBound {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum InferGenericArg {
+pub enum InferGenericArg {
     Type(Box<InferTy>),
     Lifetime(String),
     Const(String),

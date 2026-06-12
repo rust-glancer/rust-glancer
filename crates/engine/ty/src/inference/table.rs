@@ -1,10 +1,10 @@
 use rg_std::UniqueVec;
-use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, PrimitiveTy, Ty};
 
 use super::model::{InferGenericArg, InferNominalTy, InferOpaqueTraitBound, InferTy};
+use crate::{GenericArg, NominalTy, OpaqueTraitBound, PrimitiveTy, Ty};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(super) struct InferVarId(u32);
+pub struct InferVarId(u32);
 
 impl InferVarId {
     fn index(self) -> usize {
@@ -81,7 +81,7 @@ impl UnifyResult {
     }
 }
 
-/// Tiny body-local constraint table for inference variables.
+/// Tiny constraint table for inference variables.
 ///
 /// The table owns variable slots like:
 ///
@@ -101,24 +101,24 @@ impl UnifyResult {
 /// impl Iterator<Item = ?T>
 /// ```
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub(super) struct InferenceTable {
+pub struct InferenceTable {
     slots: Vec<InferVarSlot>,
 }
 
 impl InferenceTable {
-    pub(super) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
-    pub(super) fn new_type_var(&mut self) -> InferTy {
+    pub fn new_type_var(&mut self) -> InferTy {
         InferTy::Var(self.alloc_var(InferVarKind::Type))
     }
 
-    pub(super) fn new_integer_var(&mut self) -> InferTy {
+    pub fn new_integer_var(&mut self) -> InferTy {
         InferTy::IntegerVar(self.alloc_var(InferVarKind::Integer))
     }
 
-    pub(super) fn new_float_var(&mut self) -> InferTy {
+    pub fn new_float_var(&mut self) -> InferTy {
         InferTy::FloatVar(self.alloc_var(InferVarKind::Float))
     }
 
@@ -140,11 +140,11 @@ impl InferenceTable {
     /// - Conflicts finalize to `Ty::Unknown`.
     /// - Unsolved type vars finalize to `Ty::Unknown`.
     /// - Unsolved numeric vars finalize to the existing defaults: `i32` / `f64`.
-    pub(super) fn unify(&mut self, lhs: &InferTy, rhs: &InferTy) -> bool {
+    pub fn unify(&mut self, lhs: &InferTy, rhs: &InferTy) -> bool {
         self.unify_ty(lhs, rhs).changed_flag()
     }
 
-    pub(super) fn finalize(&self, ty: &InferTy) -> Ty {
+    pub fn finalize(&self, ty: &InferTy) -> Ty {
         self.finalize_ty(ty, &mut Vec::new())
     }
 

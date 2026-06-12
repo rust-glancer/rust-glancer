@@ -1,9 +1,8 @@
 use rg_ir_model::items::{GenericParams, TypeRef};
 use rg_ir_model::{BindingId, ExprId, ExprWrapperKind};
-use rg_ty::Ty;
-
-use super::{
-    instantiate::GenericReturnInstantiationBuilder, model::InferTy, table::InferenceTable,
+use rg_ty::{
+    Ty,
+    inference::{GenericReturnInstantiationBuilder, InferTy, InferenceTable},
 };
 
 pub(crate) struct BodyInferenceCtx {

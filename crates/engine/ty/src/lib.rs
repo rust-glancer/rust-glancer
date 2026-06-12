@@ -7,6 +7,7 @@ mod deref;
 mod generic_arg;
 mod impl_match;
 mod implementation;
+pub mod inference;
 mod item_path;
 mod iteration;
 mod member;
