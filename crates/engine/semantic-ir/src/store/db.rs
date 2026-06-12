@@ -4,7 +4,7 @@ use rg_def_map::PackageSlot;
 use rg_ir_model::{ImplRef, TraitRef, TypeDefRef};
 use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_package_store::{PackageLoader, PackageStore, PackageSubset};
-use rg_std::{MemorySize, Shrink, UniqueVec};
+use rg_std::{ExpectedUnique, MemorySize, Shrink};
 
 use crate::{
     PackageIr, SemanticIrReadTxn, SemanticIrStats,
@@ -150,13 +150,13 @@ impl SemanticIrDbMutator<'_> {
     pub(crate) fn set_impl_header_facts(
         &mut self,
         impl_ref: ImplRef,
-        resolved_self_tys: UniqueVec<TypeDefRef>,
-        resolved_trait_refs: UniqueVec<TraitRef>,
+        resolved_self_ty: ExpectedUnique<TypeDefRef>,
+        resolved_trait_ref: ExpectedUnique<TraitRef>,
     ) -> Option<()> {
         let target = impl_ref.origin.as_target_ref()?;
         self.package_mut(target.package)?
             .target_mut(target.target)?
-            .set_impl_header_facts(impl_ref.id, resolved_self_tys, resolved_trait_refs)
+            .set_impl_header_facts(impl_ref.id, resolved_self_ty, resolved_trait_ref)
     }
 
     fn package_mut(&mut self, package: PackageSlot) -> Option<&mut PackageIr> {

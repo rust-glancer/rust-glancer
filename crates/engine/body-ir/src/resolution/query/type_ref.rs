@@ -6,8 +6,8 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
-use rg_std::UniqueVec;
-use rg_ty::{GenericArg, NominalTy, RefMutability, Ty, TypeSubst};
+use rg_std::ExpectedUnique;
+use rg_ty::{ExpectedNominalTyExt, GenericArg, NominalTy, RefMutability, Ty, TypeSubst};
 
 use crate::resolution::BodyResolutionContext;
 
@@ -135,8 +135,7 @@ where
             return Ok(ty);
         }
         if path.is_self_type() {
-            let self_tys = self.self_tys_for_anchor(anchor)?;
-            return Ok(Ty::self_ty(self_tys));
+            return Ok(self.self_ty_for_anchor(anchor)?.into_self_ty());
         }
 
         let args = self.generic_args_from_type_path(type_path, anchor)?;
@@ -149,16 +148,16 @@ where
     }
 
     /// Find nominal `Self` candidates for this lookup anchor.
-    fn self_tys_for_anchor(
+    fn self_ty_for_anchor(
         &self,
         anchor: TypeRefAnchor,
-    ) -> Result<UniqueVec<NominalTy>, PackageStoreError> {
+    ) -> Result<ExpectedUnique<NominalTy>, PackageStoreError> {
         let type_contexts = self.context.type_contexts();
         let context = match anchor {
             TypeRefAnchor::Scope(_) => type_contexts.for_body_owner()?,
             TypeRefAnchor::BodyContext(context) | TypeRefAnchor::PlainContext(context) => context,
         };
-        type_contexts.nominal_self_tys_for_context(context)
+        type_contexts.nominal_self_ty_for_context(context)
     }
 
     /// Ask the path resolver that matches the current anchor kind.
@@ -268,12 +267,11 @@ where
         resolution: TypePathResolution,
         args: Vec<GenericArg>,
     ) -> Result<Ty, PackageStoreError> {
-        if let TypePathResolution::TypeAliases(aliases) = &resolution {
-            return self.context.type_aliases().ty_from_aliases(
-                aliases.as_slice(),
-                &args,
-                &self.subst,
-            );
+        if let TypePathResolution::TypeAlias(alias) = &resolution {
+            return self
+                .context
+                .type_aliases()
+                .ty_from_alias(*alias, &args, &self.subst);
         }
         let is_unknown = matches!(resolution, TypePathResolution::Unknown);
         Ok(

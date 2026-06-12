@@ -198,16 +198,12 @@ impl<'a, 'db> MemberView<'a, 'db> {
             ItemPathQuery::new(self.db, self.db),
             TargetItemQuery::new(self.db, self.db, body.target),
         );
-        if let TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types) =
-            resolution
-        {
-            for ty in types {
-                for field_ref in member_query.fields_for_type_def(ty)? {
-                    let Some(field) = self.field(field_ref)? else {
-                        continue;
-                    };
-                    fields.push(field);
-                }
+        if let TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty) = resolution {
+            for field_ref in member_query.fields_for_type_def(ty)? {
+                let Some(field) = self.field(field_ref)? else {
+                    continue;
+                };
+                fields.push(field);
             }
         }
 
@@ -246,27 +242,24 @@ impl<'a, 'db> MemberView<'a, 'db> {
         else {
             return Ok(Vec::new());
         };
-        let (TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types)) =
-            resolution
+        let (TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty)) = resolution
         else {
             return Ok(Vec::new());
         };
 
         let item_query = ItemStoreQuery::new(self.db);
         let mut variants = Vec::new();
-        for ty in types {
-            let TypeDefId::Enum(enum_id) = ty.id else {
-                continue;
-            };
-            let Some(data) = item_query.enum_data_for_type_def(ty)? else {
-                continue;
-            };
-            variants.extend((0..data.variants.len()).map(|index| EnumVariantRef {
-                origin: ty.origin,
-                enum_id,
-                index,
-            }));
-        }
+        let TypeDefId::Enum(enum_id) = ty.id else {
+            return Ok(Vec::new());
+        };
+        let Some(data) = item_query.enum_data_for_type_def(ty)? else {
+            return Ok(Vec::new());
+        };
+        variants.extend((0..data.variants.len()).map(|index| EnumVariantRef {
+            origin: ty.origin,
+            enum_id,
+            index,
+        }));
         Ok(variants)
     }
 

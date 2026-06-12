@@ -9,7 +9,7 @@ use rg_ir_model::{
     DefId, ModuleRef, Path, SemanticItemRef, TraitRef, TypeDefRef, TypePathResolution,
 };
 use rg_ir_storage::{DefMapQuery, DefMapSource, ItemStoreQuery, ItemStoreSource, TypePathContext};
-use rg_std::UniqueVec;
+use rg_std::{ExpectedUnique, UniqueVec};
 
 use crate::{GenericArg, OpaqueTraitBound, PrimitiveTy, RefMutability, Ty, TypeSubst};
 
@@ -121,29 +121,25 @@ where
             let Some(impl_ref) = context.impl_ref else {
                 return Ok(TypePathResolution::Unknown);
             };
-            let types = self
-                .items
-                .impl_data(impl_ref)?
-                .map(|data| data.resolved_self_tys.clone())
-                .unwrap_or_default();
-            return Ok(if types.is_empty() {
-                TypePathResolution::Unknown
-            } else {
-                TypePathResolution::SelfType(types)
-            });
+            if let Some(data) = self.items.impl_data(impl_ref)? {
+                return Ok(TypePathResolution::self_type(data.resolved_self_ty.clone()));
+            }
+            return Ok(TypePathResolution::Unknown);
         }
 
-        let type_defs = self.type_defs_for_path(context.module, path)?;
-        if type_defs.is_empty() {
-            let traits = self.traits_for_path(context.module, path)?;
-            Ok(if traits.is_empty() {
-                TypePathResolution::Unknown
-            } else {
-                TypePathResolution::Traits(traits)
-            })
-        } else {
-            Ok(TypePathResolution::TypeDefs(type_defs))
+        let mut type_defs = ExpectedUnique::new();
+        for type_def in self.type_defs_for_path(context.module, path)? {
+            type_defs.push(type_def);
         }
+        if !type_defs.is_empty() {
+            return Ok(TypePathResolution::type_def(type_defs));
+        }
+
+        let mut traits = ExpectedUnique::new();
+        for trait_ref in self.traits_for_path(context.module, path)? {
+            traits.push(trait_ref);
+        }
+        Ok(TypePathResolution::trait_ref(traits))
     }
 
     /// Resolves a type-position path into canonical item refs, preserving `Self` handling.
@@ -155,14 +151,9 @@ where
         if path.is_self_type() {
             if let Some(impl_ref) = context.impl_ref
                 && let Some(data) = self.items.impl_data(impl_ref)?
+                && let Some(ty) = data.resolved_self_ty.as_option()
             {
-                let items = data
-                    .resolved_self_tys
-                    .iter()
-                    .copied()
-                    .map(SemanticItemRef::from)
-                    .collect();
-                return Ok(items);
+                return Ok([SemanticItemRef::from(*ty)].into_iter().collect());
             } else {
                 return Ok(UniqueVec::new());
             };
@@ -288,18 +279,13 @@ where
         for bound in bounds {
             match bound {
                 TypeBound::Trait(TypeRef::Path(bound_path)) => {
-                    let TypePathResolution::Traits(traits) =
+                    let TypePathResolution::Trait(trait_ref) =
                         self.resolve_type_path(context, &Path::from_type_path(bound_path))?
                     else {
                         continue;
                     };
                     let args = self.generic_args_from_type_path(bound_path, context, subst)?;
-                    for trait_ref in traits {
-                        opaque_bounds.push(OpaqueTraitBound {
-                            trait_ref,
-                            args: args.clone(),
-                        });
-                    }
+                    opaque_bounds.push(OpaqueTraitBound { trait_ref, args });
                 }
                 TypeBound::Trait(_) | TypeBound::Lifetime(_) | TypeBound::Unsupported(_) => {}
             }

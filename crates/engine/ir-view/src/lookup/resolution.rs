@@ -171,22 +171,19 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
             return Ok(Vec::new());
         };
 
-        let (TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types)) =
-            resolution
+        let (TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty)) = resolution
         else {
             return Ok(Vec::new());
         };
 
         let item_query = ItemStoreQuery::new(self.0);
         let mut declarations = Vec::new();
-        for ty in types {
-            for field in item_query.fields_for_type(ty)? {
-                let Some(data) = item_query.field_data(field)? else {
-                    continue;
-                };
-                if data.field.key.as_ref() == Some(key) {
-                    declarations.push(DeclarationRef::from(field));
-                }
+        for field in item_query.fields_for_type(ty)? {
+            let Some(data) = item_query.field_data(field)? else {
+                continue;
+            };
+            if data.field.key.as_ref() == Some(key) {
+                declarations.push(DeclarationRef::from(field));
             }
         }
         Ok(declarations)
@@ -207,15 +204,11 @@ impl<'a, 'db> ResolutionView<'a, 'db> {
         resolution: TypePathResolution,
     ) -> Vec<DeclarationRef> {
         match resolution {
-            TypePathResolution::SelfType(types) | TypePathResolution::TypeDefs(types) => {
-                types.into_iter().map(DeclarationRef::from).collect()
+            TypePathResolution::SelfType(ty) | TypePathResolution::TypeDef(ty) => {
+                vec![DeclarationRef::from(ty)]
             }
-            TypePathResolution::TypeAliases(aliases) => {
-                aliases.into_iter().map(DeclarationRef::from).collect()
-            }
-            TypePathResolution::Traits(traits) => {
-                traits.into_iter().map(DeclarationRef::from).collect()
-            }
+            TypePathResolution::TypeAlias(alias) => vec![DeclarationRef::from(alias)],
+            TypePathResolution::Trait(trait_ref) => vec![DeclarationRef::from(trait_ref)],
             TypePathResolution::Unknown => Vec::new(),
         }
     }

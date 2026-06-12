@@ -10,10 +10,10 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_std::UniqueVec;
+use rg_std::ExpectedUnique;
 use rg_ty::{
-    AutoderefMode, NominalTy, ReferencePeelingCandidates, Ty, ty_for_binary, ty_for_literal,
-    ty_for_unary,
+    AutoderefMode, ExpectedTyExt, NominalTy, ReferencePeelingCandidates, Ty, ty_for_binary,
+    ty_for_literal, ty_for_unary,
 };
 
 use crate::{
@@ -89,16 +89,13 @@ where
                 self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::Match { arms, .. } => {
-                let mut arm_tys = UniqueVec::new();
+                let mut arm_tys = ExpectedUnique::new();
                 for arm in arms {
                     if let Some(expr) = arm.expr {
                         arm_tys.push(self.pass.body.expr_ty_unchecked(expr).clone());
                     }
                 }
-                let ty = match arm_tys.as_slice() {
-                    [ty] => ty.clone(),
-                    [] | [_, ..] => Ty::Unknown,
-                };
+                let ty = arm_tys.into_ty();
                 self.pass.set_expr_ty(expr, ty);
             }
             ExprKind::If {
@@ -108,16 +105,13 @@ where
             } => {
                 let ty = match else_branch {
                     Some(else_branch) => {
-                        let mut branch_tys = UniqueVec::new();
+                        let mut branch_tys = ExpectedUnique::new();
                         if let Some(then_branch) = then_branch {
                             branch_tys.push(self.pass.body.expr_ty_unchecked(then_branch).clone());
                         }
                         branch_tys.push(self.pass.body.expr_ty_unchecked(else_branch).clone());
 
-                        match branch_tys.as_slice() {
-                            [ty] => ty.clone(),
-                            [] | [_, ..] => Ty::Unknown,
-                        }
+                        branch_tys.into_ty()
                     }
                     None => Ty::Unit,
                 };
@@ -241,7 +235,7 @@ where
             return Ty::Unknown;
         }
 
-        let mut element_tys = UniqueVec::new();
+        let mut element_tys = ExpectedUnique::new();
         for element in elements {
             let element_ty = self.pass.body.expr_ty_unchecked(*element).clone();
             if matches!(element_ty, Ty::Unknown) {
@@ -250,10 +244,9 @@ where
             element_tys.push(element_ty);
         }
 
-        match element_tys.as_slice() {
-            [element_ty] => Ty::array(element_ty.clone(), Some(elements.len().to_string())),
-            [] | [_, ..] => Ty::Unknown,
-        }
+        element_tys
+            .map(|element_ty| Ty::array(element_ty, Some(elements.len().to_string())))
+            .into_ty()
     }
 
     fn repeat_array_expr_ty(&self, initializer: Option<ExprId>, len_text: Option<&str>) -> Ty {
@@ -296,28 +289,24 @@ where
             .type_path_query()
             .resolve_in_scope(scope, path)?
         {
-            TypePathResolution::SelfType(types) => {
+            TypePathResolution::SelfType(type_def) => {
                 return Ok((
                     BodyResolution::Unknown,
-                    Ty::self_ty(types.into_iter().map(NominalTy::bare).collect()),
+                    Ty::self_ty(NominalTy::bare(type_def)),
                 ));
             }
-            TypePathResolution::TypeDefs(types) => {
-                let types = types
-                    .into_iter()
-                    .filter(|ty| ty.origin == DefMapRef::Body(self.pass.providers.body_ref()))
-                    .collect::<Vec<_>>();
-                if !types.is_empty() {
+            TypePathResolution::TypeDef(type_def) => {
+                if type_def.origin == DefMapRef::Body(self.pass.providers.body_ref()) {
                     return Ok((
                         BodyResolution::Declarations(
-                            types.iter().copied().map(DeclarationRef::from).collect(),
+                            [DeclarationRef::from(type_def)].into_iter().collect(),
                         ),
-                        Ty::nominal(types.into_iter().map(NominalTy::bare).collect()),
+                        Ty::nominal(NominalTy::bare(type_def)),
                     ));
                 }
             }
-            TypePathResolution::TypeAliases(_)
-            | TypePathResolution::Traits(_)
+            TypePathResolution::TypeAlias(_)
+            | TypePathResolution::Trait(_)
             | TypePathResolution::Unknown => {}
         }
 
@@ -390,7 +379,7 @@ where
     }
 
     fn explicit_deref_ty(&self, inner: ExprId) -> Result<Ty, PackageStoreError> {
-        let mut candidates = UniqueVec::new();
+        let mut candidates = ExpectedUnique::new();
         for candidate in self.pass.context().autoderef().candidates(
             AutoderefMode::ExplicitDeref,
             self.pass.body.expr_ty_unchecked(inner),
@@ -398,9 +387,6 @@ where
             candidates.push(candidate?.ty().clone());
         }
 
-        Ok(match candidates.as_slice() {
-            [ty] => ty.clone(),
-            [] | [_, ..] => Ty::Unknown,
-        })
+        Ok(candidates.into_ty())
     }
 }

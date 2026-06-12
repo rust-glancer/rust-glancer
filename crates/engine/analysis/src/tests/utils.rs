@@ -1092,22 +1092,8 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                 bounds.sort();
                 format!("impl {}", bounds.join(" + "))
             }
-            Ty::Nominal(types) => {
-                let mut types = types
-                    .iter()
-                    .map(|ty| self.render_body_nominal_ty(ty))
-                    .collect::<Vec<_>>();
-                types.sort();
-                format!("nominal {}", types.join(" | "))
-            }
-            Ty::SelfTy(types) => {
-                let mut types = types
-                    .iter()
-                    .map(|ty| self.render_body_nominal_ty(ty))
-                    .collect::<Vec<_>>();
-                types.sort();
-                format!("Self {}", types.join(" | "))
-            }
+            Ty::Nominal(ty) => format!("nominal {}", self.render_body_nominal_ty(ty)),
+            Ty::SelfTy(ty) => format!("Self {}", self.render_body_nominal_ty(ty)),
             Ty::Unknown => "<unknown>".to_string(),
         }
     }

@@ -3,8 +3,8 @@
 use rg_ir_model::FunctionRef;
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_std::UniqueVec;
-use rg_ty::{NominalTy, Ty, function_generic_shadow_subst};
+use rg_std::ExpectedUnique;
+use rg_ty::{ExpectedNominalTyExt, NominalTy, Ty, function_generic_shadow_subst};
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
@@ -22,14 +22,14 @@ where
         Self { context }
     }
 
-    /// Return the nominal `Self` types visible from a function's owner context.
-    pub(crate) fn self_nominal_tys(
+    /// Return the nominal `Self` type visible from a function's owner context.
+    pub(crate) fn self_nominal_ty(
         &self,
         function: FunctionRef,
-    ) -> Result<UniqueVec<NominalTy>, PackageStoreError> {
+    ) -> Result<ExpectedUnique<NominalTy>, PackageStoreError> {
         let type_contexts = self.context.type_contexts();
         let context = type_contexts.for_function(function)?;
-        type_contexts.nominal_self_tys_for_context(context)
+        type_contexts.nominal_self_ty_for_context(context)
     }
 
     /// Return the written `-> T`.
@@ -49,7 +49,7 @@ where
         let subst = function_generic_shadow_subst(function_data.signature.generics());
 
         if ret_ty.is_self_type() {
-            return Ok(Some(Ty::self_ty(self.self_nominal_tys(function_ref)?)));
+            return Ok(Some(self.self_nominal_ty(function_ref)?.into_self_ty()));
         }
 
         self.context

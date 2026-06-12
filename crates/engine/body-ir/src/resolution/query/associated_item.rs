@@ -6,12 +6,12 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
-use rg_std::UniqueVec;
-use rg_ty::{NominalTy, Ty};
+use rg_std::{ExpectedUnique, UniqueVec};
+use rg_ty::{ExpectedTyExt, NominalTy, Ty};
 
 use crate::{
     ir::resolved::BodyResolution,
-    resolution::{BodyResolutionContext, TypeRefUseSite, support::unique_ty_or_unknown},
+    resolution::{BodyResolutionContext, TypeRefUseSite},
 };
 
 /// Resolves `Type::item` paths in value position.
@@ -109,7 +109,7 @@ where
         candidates: impl IntoIterator<Item = BodyAssociatedItemCandidate>,
     ) -> (BodyResolution, Ty) {
         let mut variants = UniqueVec::new();
-        let mut tys = UniqueVec::new();
+        let mut tys = ExpectedUnique::new();
 
         for candidate in candidates {
             let BodyAssociatedItemCandidate::EnumVariant(variant_ref, ty) = candidate else {
@@ -121,7 +121,7 @@ where
 
         (
             BodyResolution::Declarations(variants.into_iter().map(DeclarationRef::from).collect()),
-            unique_ty_or_unknown(tys),
+            tys.into_ty(),
         )
     }
 
@@ -130,7 +130,7 @@ where
         candidates: impl IntoIterator<Item = BodyAssociatedItemCandidate>,
     ) -> (BodyResolution, Ty) {
         let mut consts = UniqueVec::new();
-        let mut tys = UniqueVec::new();
+        let mut tys = ExpectedUnique::new();
 
         for candidate in candidates {
             let BodyAssociatedItemCandidate::Const(const_ref, ty) = candidate else {
@@ -142,7 +142,7 @@ where
 
         (
             BodyResolution::Declarations(consts.into_iter().map(DeclarationRef::from).collect()),
-            unique_ty_or_unknown(tys),
+            tys.into_ty(),
         )
     }
 
@@ -180,10 +180,7 @@ where
             .item_query()
             .enum_variant_ref_for_type_def(ty.def, name)?
             .map(|variant_ref| {
-                BodyAssociatedItemCandidate::EnumVariant(
-                    variant_ref,
-                    Ty::nominal([ty.clone()].into_iter().collect()),
-                )
+                BodyAssociatedItemCandidate::EnumVariant(variant_ref, Ty::nominal(ty.clone()))
             }))
     }
 
@@ -474,7 +471,7 @@ where
         };
 
         if ty.is_self_type() {
-            return Ok(Ty::nominal([receiver_ty.clone()].into_iter().collect()));
+            return Ok(Ty::nominal(receiver_ty.clone()));
         }
 
         let subst = self.context.generics().subst_for_receiver_owner(

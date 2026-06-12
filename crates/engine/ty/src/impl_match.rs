@@ -104,7 +104,7 @@ where
         impl_data: &ImplData,
         receiver_ty: &NominalTy,
     ) -> Result<bool, D::Error> {
-        if !impl_data.resolved_self_tys.contains(&receiver_ty.def) {
+        if !impl_data.resolved_self_ty.is(&receiver_ty.def) {
             return Ok(false);
         }
 
@@ -161,10 +161,8 @@ where
         let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
         };
-        if !impl_data.resolved_self_tys.contains(&receiver_ty.def)
-            || !impl_data
-                .resolved_trait_refs
-                .contains(&trait_impl.trait_ref)
+        if !impl_data.resolved_self_ty.is(&receiver_ty.def)
+            || !impl_data.resolved_trait_ref.is(&trait_impl.trait_ref)
         {
             return Ok(None);
         }
@@ -203,10 +201,8 @@ where
         let Some(impl_data) = item_query.impl_data(trait_impl.impl_ref)? else {
             return Ok(None);
         };
-        if !impl_data.resolved_self_tys.contains(&receiver_ty.def)
-            || !impl_data
-                .resolved_trait_refs
-                .contains(&trait_impl.trait_ref)
+        if !impl_data.resolved_self_ty.is(&receiver_ty.def)
+            || !impl_data.resolved_trait_ref.is(&trait_impl.trait_ref)
         {
             return Ok(None);
         }
@@ -225,9 +221,7 @@ where
         impl_data: &ImplData,
         receiver_ty: &Ty,
     ) -> Result<Option<TypeSubst>, D::Error> {
-        if !impl_data
-            .resolved_trait_refs
-            .contains(&trait_impl.trait_ref)
+        if !impl_data.resolved_trait_ref.is(&trait_impl.trait_ref)
             || !Self::impl_header_is_projectable(impl_data)
             || impl_data.self_ty.type_param_name().is_some_and(|name| {
                 Self::impl_type_param_names(&impl_data.generics).contains(&name.as_str())
@@ -771,9 +765,9 @@ where
             .unwrap_or(&[]);
 
         match self.item_paths.resolve_type_path(context, &path)? {
-            TypePathResolution::TypeDefs(type_defs) | TypePathResolution::SelfType(type_defs) => {
+            TypePathResolution::TypeDef(type_def) | TypePathResolution::SelfType(type_def) => {
                 for nominal in receiver_ty.as_nominals() {
-                    if !type_defs.contains(&nominal.def) {
+                    if nominal.def != type_def {
                         continue;
                     }
                     if self.projection_generic_args_match_ty_args(
@@ -789,8 +783,8 @@ where
                 }
                 Ok(false)
             }
-            TypePathResolution::TypeAliases(_)
-            | TypePathResolution::Traits(_)
+            TypePathResolution::TypeAlias(_)
+            | TypePathResolution::Trait(_)
             | TypePathResolution::Unknown => {
                 if let Some(name) = impl_path.single_name()
                     && params.types.contains(&name.as_str())

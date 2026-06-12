@@ -52,23 +52,9 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
                     .collect::<anyhow::Result<Vec<_>>>()?;
                 Ok((!bounds.is_empty()).then(|| format!("impl {}", bounds.join(" + "))))
             }
-            Ty::Nominal(types) | Ty::SelfTy(types) => {
-                let mut labels = Vec::new();
-                for ty in types {
-                    if let Some(label) = self.render_nominal(ty)? {
-                        labels.push(label);
-                    }
-                }
-                Ok(Self::render_joined(labels.into_iter()))
-            }
+            Ty::Nominal(ty) | Ty::SelfTy(ty) => self.render_nominal(ty),
             Ty::Unknown => Ok(None),
         }
-    }
-
-    fn render_joined(labels: impl Iterator<Item = String>) -> Option<String> {
-        let mut labels = labels.collect::<Vec<_>>();
-        labels.sort();
-        (!labels.is_empty()).then(|| labels.join(" | "))
     }
 
     fn render_nominal(&self, ty: &NominalTy) -> anyhow::Result<Option<String>> {

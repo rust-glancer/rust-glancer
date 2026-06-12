@@ -205,7 +205,7 @@ impl InferenceTable {
     ///
     /// - `Unknown` does not solve variables.
     /// - Different nominal definitions conflict.
-    /// - Ambiguous nominal sets do not solve.
+    /// - Opaque bounds only use one clear same-trait pair as evidence.
     /// - Conflicts finalize to `Ty::Unknown`.
     /// - Unsolved type vars finalize to `Ty::Unknown`.
     /// - Unsolved numeric vars finalize to the existing defaults: `i32` / `f64`.
@@ -285,9 +285,9 @@ impl InferenceTable {
                     inner: rhs_inner,
                 },
             ) if lhs_mutability == rhs_mutability => self.unify_ty(lhs_inner, rhs_inner),
-            (InferTy::Nominal(lhs_types), InferTy::Nominal(rhs_types))
-            | (InferTy::SelfTy(lhs_types), InferTy::SelfTy(rhs_types)) => {
-                self.unify_nominal_sets(lhs_types, rhs_types)
+            (InferTy::Nominal(lhs_ty), InferTy::Nominal(rhs_ty))
+            | (InferTy::SelfTy(lhs_ty), InferTy::SelfTy(rhs_ty)) => {
+                self.unify_nominal_ty(lhs_ty, rhs_ty)
             }
             (InferTy::Opaque { bounds: lhs_bounds }, InferTy::Opaque { bounds: rhs_bounds }) => {
                 self.unify_opaque_bounds(lhs_bounds, rhs_bounds)
@@ -388,16 +388,8 @@ impl InferenceTable {
         }
     }
 
-    fn unify_nominal_sets(
-        &mut self,
-        lhs_types: &UniqueVec<InferNominalTy>,
-        rhs_types: &UniqueVec<InferNominalTy>,
-    ) -> UnifyResult {
-        // Nominal candidate sets can be ambiguous. Only one clear same-definition pair lets us
-        // descend into generic arguments without accidentally picking a candidate.
-        let ([lhs], [rhs]) = (lhs_types.as_slice(), rhs_types.as_slice()) else {
-            return UnifyResult::compatible();
-        };
+    fn unify_nominal_ty(&mut self, lhs: &InferNominalTy, rhs: &InferNominalTy) -> UnifyResult {
+        // Same-definition nominal types can pass evidence through their generic arguments.
         if lhs.def != rhs.def {
             return UnifyResult::conflict();
         }
@@ -494,11 +486,10 @@ impl InferenceTable {
                     .iter()
                     .any(|arg| self.generic_arg_contains_var(arg, needle))
             }),
-            InferTy::Nominal(types) | InferTy::SelfTy(types) => types.iter().any(|ty| {
-                ty.args
-                    .iter()
-                    .any(|arg| self.generic_arg_contains_var(arg, needle))
-            }),
+            InferTy::Nominal(ty) | InferTy::SelfTy(ty) => ty
+                .args
+                .iter()
+                .any(|arg| self.generic_arg_contains_var(arg, needle)),
             InferTy::Unit
             | InferTy::Never
             | InferTy::Primitive(_)
@@ -552,18 +543,8 @@ impl InferenceTable {
                     .collect(),
             ),
             InferTy::Syntax(ty) => Ty::syntax(ty.as_ref().clone()),
-            InferTy::Nominal(types) => Ty::nominal(
-                types
-                    .iter()
-                    .map(|ty| self.finalize_nominal_ty(ty, active_vars))
-                    .collect(),
-            ),
-            InferTy::SelfTy(types) => Ty::self_ty(
-                types
-                    .iter()
-                    .map(|ty| self.finalize_nominal_ty(ty, active_vars))
-                    .collect(),
-            ),
+            InferTy::Nominal(ty) => Ty::nominal(self.finalize_nominal_ty(ty, active_vars)),
+            InferTy::SelfTy(ty) => Ty::self_ty(self.finalize_nominal_ty(ty, active_vars)),
             InferTy::Var(id) => self.finalize_var(*id, InferVarKind::Type, active_vars),
             InferTy::IntegerVar(id) => self.finalize_var(*id, InferVarKind::Integer, active_vars),
             InferTy::FloatVar(id) => self.finalize_var(*id, InferVarKind::Float, active_vars),
@@ -701,8 +682,8 @@ pub(super) enum InferTy {
         bounds: UniqueVec<InferOpaqueTraitBound>,
     },
     Syntax(Box<TypeRef>),
-    Nominal(UniqueVec<InferNominalTy>),
-    SelfTy(UniqueVec<InferNominalTy>),
+    Nominal(InferNominalTy),
+    SelfTy(InferNominalTy),
     Var(InferVarId),
     IntegerVar(InferVarId),
     FloatVar(InferVarId),
@@ -732,12 +713,8 @@ impl InferTy {
                     .collect(),
             },
             Ty::Syntax(ty) => Self::Syntax(Box::new(ty.clone())),
-            Ty::Nominal(types) => {
-                Self::Nominal(types.iter().map(InferNominalTy::from_nominal_ty).collect())
-            }
-            Ty::SelfTy(types) => {
-                Self::SelfTy(types.iter().map(InferNominalTy::from_nominal_ty).collect())
-            }
+            Ty::Nominal(ty) => Self::Nominal(InferNominalTy::from_nominal_ty(ty)),
+            Ty::SelfTy(ty) => Self::SelfTy(InferNominalTy::from_nominal_ty(ty)),
             Ty::Unknown => Self::Unknown,
         }
     }
@@ -857,22 +834,18 @@ mod tests {
     }
 
     fn user_ty() -> Ty {
-        Ty::nominal([NominalTy::bare(type_def(0))].into_iter().collect())
+        Ty::nominal(NominalTy::bare(type_def(0)))
     }
 
     fn project_ty() -> Ty {
-        Ty::nominal([NominalTy::bare(type_def(1))].into_iter().collect())
+        Ty::nominal(NominalTy::bare(type_def(1)))
     }
 
     fn vec_ty(inner: InferTy) -> InferTy {
-        InferTy::Nominal(
-            [InferNominalTy {
-                def: type_def(10),
-                args: vec![InferGenericArg::Type(Box::new(inner))],
-            }]
-            .into_iter()
-            .collect(),
-        )
+        InferTy::Nominal(InferNominalTy {
+            def: type_def(10),
+            args: vec![InferGenericArg::Type(Box::new(inner))],
+        })
     }
 
     #[test]
@@ -925,14 +898,10 @@ mod tests {
 
         assert_eq!(
             table.finalize(&vec_ty(element)),
-            Ty::nominal(
-                [NominalTy {
-                    def: type_def(10),
-                    args: vec![GenericArg::Type(Box::new(user_ty()))],
-                }]
-                .into_iter()
-                .collect()
-            )
+            Ty::nominal(NominalTy {
+                def: type_def(10),
+                args: vec![GenericArg::Type(Box::new(user_ty()))],
+            })
         );
     }
 
@@ -948,7 +917,7 @@ mod tests {
 
         assert_eq!(
             table.finalize(&element),
-            Ty::nominal([NominalTy::bare(type_def(0))].into_iter().collect())
+            Ty::nominal(NominalTy::bare(type_def(0)))
         );
     }
 

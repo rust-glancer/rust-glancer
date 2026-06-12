@@ -3,7 +3,7 @@ use crate::items::{
     TypeBound, TypeRef, VisibilityLevel,
 };
 use rg_parse::{FileId, Span};
-use rg_std::{MemorySize, Shrink, UniqueVec};
+use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -107,8 +107,8 @@ impl TraitData {
 
 /// Impl block header and associated items.
 ///
-/// `resolved_*` fields are intentionally lossy and optimistic: they record all type/trait targets
-/// that our current path resolver can identify, without attempting a real trait solver.
+/// `resolved_*` fields are intentionally lossy: invalid or ambiguous headers stay visible until
+/// query code decides whether it needs a single known target.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct ImplData {
     pub local_impl: LocalImplRef,
@@ -117,8 +117,8 @@ pub struct ImplData {
     pub generics: GenericParams,
     pub trait_ref: Option<TypeRef>,
     pub self_ty: TypeRef,
-    pub resolved_self_tys: UniqueVec<TypeDefRef>,
-    pub resolved_trait_refs: UniqueVec<TraitRef>,
+    pub resolved_self_ty: ExpectedUnique<TypeDefRef>,
+    pub resolved_trait_ref: ExpectedUnique<TraitRef>,
     pub items: Vec<AssocItemId>,
     pub is_unsafe: bool,
 }

@@ -118,7 +118,7 @@ where
 
                     candidates.push(BodyMethodCandidate {
                         function: function_ref,
-                        receiver_ty: Ty::nominal([nominal_ty.clone()].into_iter().collect()),
+                        receiver_ty: Ty::nominal(nominal_ty.clone()),
                         subst: self.nominal_method_subst(
                             function_ref,
                             function_data.owner,

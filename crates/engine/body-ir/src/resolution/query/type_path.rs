@@ -5,7 +5,7 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, NameResolutionFilter, TypePathContext};
 use rg_package_store::PackageStoreError;
-use rg_std::UniqueVec;
+use rg_std::{ExpectedUnique, UniqueVec};
 use rg_ty::Ty;
 
 use crate::resolution::BodyResolutionContext;
@@ -36,7 +36,7 @@ where
             let prefix_resolution = self.resolve_in_scope(scope, &prefix)?;
             let prefix_ty =
                 Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
-            let mut aliases = UniqueVec::new();
+            let mut aliases = ExpectedUnique::new();
             for ty in prefix_ty.as_nominals() {
                 if let Some(alias) = self
                     .context
@@ -47,7 +47,7 @@ where
                 }
             }
             if !aliases.is_empty() {
-                return Ok(TypePathResolution::TypeAliases(aliases));
+                return Ok(TypePathResolution::type_alias(aliases));
             }
         }
 
@@ -88,22 +88,19 @@ where
         }
 
         if path.is_self_type() {
-            let self_tys = self
+            let candidate = self
                 .context
                 .type_contexts()
-                .nominal_self_tys_for_context(context)?;
-            return Ok(if self_tys.is_empty() {
-                TypePathResolution::Unknown
-            } else {
-                TypePathResolution::SelfType(self_tys.into_iter().map(|ty| ty.def).collect())
-            });
+                .nominal_self_ty_for_context(context)?
+                .map(|ty| ty.def);
+            return Ok(TypePathResolution::self_type(candidate));
         }
 
         if let Some((prefix, name)) = path.split_prefix_name() {
             let prefix_resolution = self.resolve_in_context(context, &prefix)?;
             let prefix_ty =
                 Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
-            let mut aliases = UniqueVec::new();
+            let mut aliases = ExpectedUnique::new();
             for ty in prefix_ty.as_nominals() {
                 if let Some(alias) = self
                     .context
@@ -114,7 +111,7 @@ where
                 }
             }
             if !aliases.is_empty() {
-                return Ok(TypePathResolution::TypeAliases(aliases));
+                return Ok(TypePathResolution::type_alias(aliases));
             }
         }
 
@@ -188,9 +185,9 @@ where
 
     /// Group semantic items into a type-namespace resolution.
     fn type_resolution_from_items(&self, items: UniqueVec<SemanticItemRef>) -> TypePathResolution {
-        let mut type_defs = UniqueVec::new();
-        let mut type_aliases = UniqueVec::new();
-        let mut traits = UniqueVec::new();
+        let mut type_defs = ExpectedUnique::new();
+        let mut type_aliases = ExpectedUnique::new();
+        let mut traits = ExpectedUnique::new();
         for item in items {
             match item {
                 SemanticItemRef::TypeDef(type_def) => {
@@ -210,11 +207,11 @@ where
         }
 
         if !type_defs.is_empty() {
-            TypePathResolution::TypeDefs(type_defs)
+            TypePathResolution::type_def(type_defs)
         } else if !type_aliases.is_empty() {
-            TypePathResolution::TypeAliases(type_aliases)
+            TypePathResolution::type_alias(type_aliases)
         } else if !traits.is_empty() {
-            TypePathResolution::Traits(traits)
+            TypePathResolution::trait_ref(traits)
         } else {
             TypePathResolution::Unknown
         }

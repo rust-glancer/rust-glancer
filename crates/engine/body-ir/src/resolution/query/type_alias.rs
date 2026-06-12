@@ -23,27 +23,6 @@ where
         Self { context }
     }
 
-    /// Apply alias generics when exactly one alias was resolved.
-    pub(crate) fn ty_from_aliases(
-        &self,
-        aliases: &[TypeAliasRef],
-        args: &[GenericArg],
-        subst: &TypeSubst,
-    ) -> Result<Ty, PackageStoreError> {
-        if aliases.len() != 1 {
-            return Ok(Ty::Unknown);
-        }
-
-        self.ty_from_alias(
-            aliases
-                .first()
-                .copied()
-                .expect("one alias should exist after length check"),
-            args,
-            subst,
-        )
-    }
-
     /// Find an associated type alias with this name for the given type.
     pub(crate) fn associated_alias_for_type(
         &self,
@@ -103,7 +82,7 @@ where
             return Ok(Ty::Unknown);
         };
         if aliased_ty.is_self_type() {
-            return Ok(Ty::nominal([receiver_ty.clone()].into_iter().collect()));
+            return Ok(Ty::nominal(receiver_ty.clone()));
         }
 
         let mut alias_subst = self.context.generics().subst_for_receiver_owner(
@@ -125,7 +104,7 @@ where
     }
 
     /// Project one ordinary type alias into a type.
-    fn ty_from_alias(
+    pub(crate) fn ty_from_alias(
         &self,
         alias_ref: TypeAliasRef,
         args: &[GenericArg],

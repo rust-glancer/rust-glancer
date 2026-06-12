@@ -7,12 +7,12 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_std::UniqueVec;
-use rg_ty::{AutoderefMode, NominalTy, Ty};
+use rg_std::{ExpectedUnique, UniqueVec};
+use rg_ty::{AutoderefMode, ExpectedTyExt, NominalTy, Ty};
 
 use crate::{
     ir::resolved::BodyResolution,
-    resolution::{BodyResolutionContext, TypeRefUseSite, support::unique_ty_or_unknown},
+    resolution::{BodyResolutionContext, TypeRefUseSite},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +73,7 @@ impl ResolvedFieldTargets {
 
     /// Return the unique field type, or unknown for zero or multiple types.
     pub(crate) fn ty(&self) -> Ty {
-        let mut tys = UniqueVec::new();
+        let mut tys = ExpectedUnique::new();
         for target in &self.targets {
             match target {
                 ResolvedFieldTarget::Declared(target) => {
@@ -88,7 +88,7 @@ impl ResolvedFieldTargets {
             }
         }
 
-        unique_ty_or_unknown(tys)
+        tys.into_ty()
     }
 
     /// Add a declared field target.

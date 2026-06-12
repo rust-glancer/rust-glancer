@@ -20,7 +20,7 @@ use rg_item_tree::{
     ConstItem, FunctionItem, ImplItem, ItemKind, ItemNode, ItemTreeId, StaticItem, TraitItem,
     TypeAliasItem,
 };
-use rg_std::UniqueVec;
+use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 /// Reads item-tree-shaped payloads from the storage layer named by an `ItemSource`.
@@ -231,8 +231,8 @@ where
             generics: impl_item.generics.clone(),
             trait_ref: impl_item.trait_ref.clone(),
             self_ty: impl_item.self_ty.clone(),
-            resolved_self_tys: UniqueVec::new(),
-            resolved_trait_refs: UniqueVec::new(),
+            resolved_self_ty: ExpectedUnique::new(),
+            resolved_trait_ref: ExpectedUnique::new(),
             items: Vec::new(),
             is_unsafe: impl_item.is_unsafe,
         });

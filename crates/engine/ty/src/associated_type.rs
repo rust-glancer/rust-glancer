@@ -9,7 +9,7 @@ use rg_ir_model::{
     hir::items::ImplData,
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TargetItemQuery, TypePathContext};
-use rg_std::UniqueVec;
+use rg_std::{ExpectedUnique, UniqueVec};
 
 use crate::{GenericArg, ItemPathQuery, OpaqueTraitBound, Ty, TypeSubst};
 
@@ -49,11 +49,13 @@ where
         context: TypePathContext,
         trait_path: &Path,
     ) -> Result<UniqueVec<TraitRef>, D::Error> {
-        let TypePathResolution::Traits(traits) =
+        let TypePathResolution::Trait(trait_ref) =
             self.item_paths.resolve_type_path(context, trait_path)?
         else {
             return Ok(UniqueVec::new());
         };
+        let mut traits = UniqueVec::new();
+        traits.push(trait_ref);
         Ok(traits)
     }
 
@@ -163,7 +165,7 @@ where
 
     pub(crate) fn push_associated_types_from_opaque_bounds(
         &self,
-        candidates: &mut UniqueVec<Ty>,
+        candidates: &mut ExpectedUnique<Ty>,
         bounds: &UniqueVec<OpaqueTraitBound>,
         canonical_traits: &UniqueVec<TraitRef>,
         assoc_name: &str,

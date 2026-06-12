@@ -12,10 +12,12 @@ use rg_ir_model::{
 use rg_ir_storage::{
     DefMapSource, ItemLookupIndex, ItemStoreSource, TargetItemQuery, TypePathContext,
 };
-use rg_std::UniqueVec;
+use rg_std::{ExpectedUnique, UniqueVec};
 use rg_text::Name;
 
-use crate::{ImplMatcher, ItemPathQuery, Ty, associated_type::AssociatedTypeProjector};
+use crate::{
+    ExpectedTyExt, ImplMatcher, ItemPathQuery, Ty, associated_type::AssociatedTypeProjector,
+};
 
 /// Resolves the associated `Item` type for applicable iterator-shaped trait impls.
 #[derive(Clone)]
@@ -76,7 +78,7 @@ where
         let projector = AssociatedTypeProjector::new(&self.item_paths, &self.target_items);
         let matcher = ImplMatcher::new(self.item_paths.clone(), self.target_items.clone());
         let canonical_traits = self.canonical_trait_refs_from_use_site(&projector, trait_kind)?;
-        let mut candidates = UniqueVec::new();
+        let mut candidates = ExpectedUnique::new();
         if let Ty::Opaque { bounds } = ty {
             projector.push_associated_types_from_opaque_bounds(
                 &mut candidates,
@@ -117,7 +119,7 @@ where
             candidates.push(item_ty);
         }
 
-        Ok(Ty::one_or_unknown(candidates))
+        Ok(candidates.into_ty())
     }
 
     fn trait_impl_candidates(
@@ -155,19 +157,18 @@ where
                     continue;
                 }
 
-                for trait_ref in &impl_data.resolved_trait_refs {
-                    let trait_impl = TraitImplRef {
-                        impl_ref,
-                        trait_ref: *trait_ref,
-                    };
-                    if !self
-                        .is_canonical_trait_impl(projector, trait_impl, impl_data, trait_kind)?
-                    {
-                        continue;
-                    }
-
-                    candidates.push(trait_impl);
+                let Some(trait_ref) = impl_data.resolved_trait_ref.as_option() else {
+                    continue;
+                };
+                let trait_impl = TraitImplRef {
+                    impl_ref,
+                    trait_ref: *trait_ref,
+                };
+                if !self.is_canonical_trait_impl(projector, trait_impl, impl_data, trait_kind)? {
+                    continue;
                 }
+
+                candidates.push(trait_impl);
             }
         }
 

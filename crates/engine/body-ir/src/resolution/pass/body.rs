@@ -6,7 +6,7 @@
 use rg_ir_model::{BindingId, BodyRef, ExprId};
 use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{PrimitiveTy, Ty};
+use rg_ty::{ExpectedNominalTyExt, PrimitiveTy, Ty};
 
 use crate::{
     ir::body::ResolvedBodyData,
@@ -201,8 +201,11 @@ where
             && binding_data.name.as_deref() == Some("self")
             && let Some(function) = self.body.function_owner()
         {
-            let self_tys = self.context().functions().self_nominal_tys(function)?;
-            let ty = Ty::self_ty(self_tys);
+            let ty = self
+                .context()
+                .functions()
+                .self_nominal_ty(function)?
+                .into_self_ty();
             return Ok(match kind {
                 BodySelfParamKind::Value => ty,
                 BodySelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),

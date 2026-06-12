@@ -5,8 +5,8 @@
 //! `Try` trait, or `Future::Output` projection.
 
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
-use rg_std::UniqueVec;
-use rg_ty::{GenericArg, Ty};
+use rg_std::ExpectedUnique;
+use rg_ty::{ExpectedTyExt, GenericArg, Ty};
 
 use crate::ir::ExprWrapperKind;
 
@@ -43,7 +43,7 @@ where
     }
 
     fn try_output_ty(&self, ty: &Ty) -> Ty {
-        let mut outputs = UniqueVec::new();
+        let mut outputs = ExpectedUnique::new();
         let item_query = self.context.item_query();
 
         for nominal in ty.as_nominals() {
@@ -57,7 +57,7 @@ where
             }
         }
 
-        Ty::one_or_unknown(outputs)
+        outputs.into_ty()
     }
 }
 

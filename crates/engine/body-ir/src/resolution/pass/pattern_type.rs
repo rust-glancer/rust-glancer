@@ -10,7 +10,7 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_std::UniqueVec;
+use rg_std::ExpectedUnique;
 use rg_ty::{ReferencePeelingCandidates, Ty};
 
 use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
@@ -288,7 +288,7 @@ where
         variant_name: &str,
         field_key: &FieldKey,
     ) -> Result<Option<Ty>, PackageStoreError> {
-        let mut candidates = UniqueVec::new();
+        let mut candidates = ExpectedUnique::new();
 
         // Pattern propagation peels only reference wrappers so enum payload inference remains
         // useful without opting into receiver autoderef or future trait-backed deref.
@@ -317,10 +317,7 @@ where
             }
         }
 
-        match candidates.as_slice() {
-            [ty] => Ok(Some(ty.clone())),
-            [] | [_, ..] => Ok(None),
-        }
+        Ok(candidates.into_option())
     }
 
     fn push_binding_ty_update(

@@ -7,8 +7,11 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_std::UniqueVec;
-use rg_ty::{CallArgInference, CallArgMapping, Ty, TypeSubst, function_generic_shadow_subst};
+use rg_std::{ExpectedUnique, UniqueVec};
+use rg_ty::{
+    CallArgInference, CallArgMapping, ExpectedNominalTyExt, ExpectedTyExt, Ty, TypeSubst,
+    function_generic_shadow_subst,
+};
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 use crate::{ir::ExprKind, ir::resolved::BodyResolution};
@@ -166,15 +169,12 @@ impl ResolvedCallTargets {
         D: DefMapSource<Error = PackageStoreError> + Copy,
         I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
     {
-        let mut return_tys = UniqueVec::new();
+        let mut return_tys = ExpectedUnique::new();
         for target in &self.targets {
             return_tys.push(calls.signature(target).return_ty(args)?);
         }
 
-        Ok(match return_tys.as_slice() {
-            [ty] => ty.clone(),
-            [] | [_, ..] => Ty::Unknown,
-        })
+        Ok(return_tys.into_ty())
     }
 
     /// Add one target, preserving uniqueness.
@@ -516,12 +516,12 @@ where
         if ret_ty.is_self_type() {
             return Ok(match self.target.receiver.self_ty() {
                 Some(self_ty) => self_ty,
-                None => Ty::self_ty(
-                    self.query
-                        .context
-                        .functions()
-                        .self_nominal_tys(self.target.function)?,
-                ),
+                None => self
+                    .query
+                    .context
+                    .functions()
+                    .self_nominal_ty(self.target.function)?
+                    .into_self_ty(),
             });
         }
 

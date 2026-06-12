@@ -18,8 +18,8 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, NameResolutionFilter};
 use rg_package_store::PackageStoreError;
-use rg_std::UniqueVec;
-use rg_ty::{ReferencePeelingCandidates, Ty};
+use rg_std::ExpectedUnique;
+use rg_ty::{ExpectedNominalTyExt, ReferencePeelingCandidates, Ty};
 
 use crate::{
     BodyPath,
@@ -378,7 +378,7 @@ where
     ) -> Result<Option<Ty>, PackageStoreError> {
         let def_map_path = path.and_then(|path| path.as_def_map_path());
         let variant_name = Self::pattern_path_last_name(def_map_path.as_ref());
-        let mut candidates = UniqueVec::new();
+        let mut candidates = ExpectedUnique::new();
 
         // Pattern fields are checked against the type of the field they destructure. This matters
         // before final binding materialization because `None` in `User { value: None }` only makes
@@ -421,10 +421,7 @@ where
             }
         }
 
-        Ok(match candidates.as_slice() {
-            [ty] => Some(ty.clone()),
-            [] | [_, ..] => None,
-        })
+        Ok(candidates.into_option())
     }
 
     fn path_is_unit_variant_pattern(
@@ -617,8 +614,11 @@ where
             && binding_data.name.as_deref() == Some("self")
             && let Some(function) = self.body.function_owner()
         {
-            let self_tys = self.context().functions().self_nominal_tys(function)?;
-            let ty = Ty::self_ty(self_tys);
+            let ty = self
+                .context()
+                .functions()
+                .self_nominal_ty(function)?
+                .into_self_ty();
             return Ok(match kind {
                 BodySelfParamKind::Value => ty,
                 BodySelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),

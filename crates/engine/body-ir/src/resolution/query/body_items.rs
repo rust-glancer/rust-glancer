@@ -30,7 +30,7 @@ where
 
         for store in self.body_lookup_stores()? {
             for (impl_ref, impl_data) in store.impls_with_refs() {
-                if impl_data.trait_ref.is_some() || !impl_data.resolved_self_tys.contains(&ty) {
+                if impl_data.trait_ref.is_some() || !impl_data.resolved_self_ty.is(&ty) {
                     continue;
                 }
                 impls.push(impl_ref);
@@ -73,15 +73,16 @@ where
 
         for store in self.body_lookup_stores()? {
             for (impl_ref, impl_data) in store.impls_with_refs() {
-                if impl_data.trait_ref.is_none() || !impl_data.resolved_self_tys.contains(&ty) {
+                if impl_data.trait_ref.is_none() || !impl_data.resolved_self_ty.is(&ty) {
                     continue;
                 }
-                for trait_ref in &impl_data.resolved_trait_refs {
-                    trait_impls.push(TraitImplRef {
-                        impl_ref,
-                        trait_ref: *trait_ref,
-                    });
-                }
+                let Some(trait_ref) = impl_data.resolved_trait_ref.as_option() else {
+                    continue;
+                };
+                trait_impls.push(TraitImplRef {
+                    impl_ref,
+                    trait_ref: *trait_ref,
+                });
             }
         }
 

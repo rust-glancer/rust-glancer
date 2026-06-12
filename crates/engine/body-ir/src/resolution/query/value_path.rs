@@ -8,11 +8,11 @@ use rg_ir_storage::{
     DefMapSource, ItemStoreSource, NameResolutionFilter, ResolvePathResult, TypePathContext,
 };
 use rg_package_store::PackageStoreError;
-use rg_std::UniqueVec;
-use rg_ty::{NominalTy, Ty};
+use rg_std::{ExpectedUnique, UniqueVec};
+use rg_ty::{ExpectedNominalTyExt, ExpectedTyExt, NominalTy, Ty};
 
 use crate::ir::resolved::BodyResolution;
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite, support::unique_ty_or_unknown};
+use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
 /// Resolves paths in the value namespace without mutating the body.
 pub struct BodyValuePathQuery<'query, D, I> {
@@ -89,41 +89,29 @@ where
             .type_path_query()
             .resolve_in_scope(scope, path)?
         {
-            TypePathResolution::SelfType(types) => {
+            TypePathResolution::SelfType(type_def) => {
                 return Ok((
                     BodyResolution::Unknown,
-                    Ty::self_ty(types.into_iter().map(NominalTy::bare).collect()),
+                    Ty::self_ty(NominalTy::bare(type_def)),
                 ));
             }
-            TypePathResolution::TypeDefs(types) => {
-                let mut constructors = UniqueVec::new();
-                for type_def in types
-                    .into_iter()
-                    .filter(|ty| ty.origin == DefMapRef::Body(self.context.body_ref()))
-                {
-                    if self
+            TypePathResolution::TypeDef(type_def) => {
+                if type_def.origin == DefMapRef::Body(self.context.body_ref())
+                    && self
                         .context
                         .item_query()
                         .type_def_has_value_constructor(type_def)?
-                    {
-                        constructors.push(type_def);
-                    }
-                }
-
-                if !constructors.is_empty() {
-                    let declarations = constructors
-                        .iter()
-                        .copied()
-                        .map(DeclarationRef::from)
-                        .collect();
+                {
                     return Ok((
-                        BodyResolution::Declarations(declarations),
-                        Ty::nominal(constructors.into_iter().map(NominalTy::bare).collect()),
+                        BodyResolution::Declarations(
+                            [DeclarationRef::from(type_def)].into_iter().collect(),
+                        ),
+                        Ty::nominal(NominalTy::bare(type_def)),
                     ));
                 }
             }
-            TypePathResolution::TypeAliases(_)
-            | TypePathResolution::Traits(_)
+            TypePathResolution::TypeAlias(_)
+            | TypePathResolution::Trait(_)
             | TypePathResolution::Unknown => {}
         }
 
@@ -306,7 +294,7 @@ where
             BodyValueName::SemanticItems(items) => {
                 let mut functions = UniqueVec::new();
                 let mut declarations = UniqueVec::new();
-                let mut tys = UniqueVec::new();
+                let mut tys = ExpectedUnique::new();
 
                 for item in items {
                     match item {
@@ -331,7 +319,7 @@ where
                 if !declarations.is_empty() {
                     return Ok(Some((
                         BodyResolution::Declarations(declarations),
-                        unique_ty_or_unknown(tys),
+                        tys.into_ty(),
                     )));
                 }
                 if !functions.is_empty() {
@@ -378,7 +366,7 @@ where
 
     /// Turn type-def declarations into a nominal type.
     fn nominal_ty_from_defs(&self, defs: &[DefId]) -> Result<Ty, PackageStoreError> {
-        let mut type_defs = UniqueVec::new();
+        let mut type_defs = ExpectedUnique::new();
         for def in defs {
             let DefId::Local(local_def) = def else {
                 continue;
@@ -390,13 +378,9 @@ where
             else {
                 continue;
             };
-            type_defs.push(type_def);
+            type_defs.push(NominalTy::bare(type_def));
         }
 
-        Ok(if type_defs.is_empty() {
-            Ty::Unknown
-        } else {
-            Ty::nominal(type_defs.into_iter().map(NominalTy::bare).collect())
-        })
+        Ok(type_defs.into_nominal_ty())
     }
 }
