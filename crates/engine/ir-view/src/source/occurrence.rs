@@ -191,12 +191,12 @@ pub enum IndexedTypePathScope {
 }
 
 pub struct SourceOccurrenceView<'a, 'db> {
-    analysis: &'a IndexedViewDb<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self { analysis }
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub fn occurrences_at(
@@ -207,24 +207,16 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
 
-        for candidate in self
-            .analysis
-            .body_ir
-            .cursor_candidates(target, file_id, offset)?
-        {
+        for candidate in self.db.body_ir.cursor_candidates(target, file_id, offset)? {
             if let Some(occurrence) = self.body_occurrence(target, candidate, Some(file_id))? {
                 occurrences.push(occurrence);
             }
         }
-        for candidate in self
-            .analysis
-            .def_map
-            .cursor_candidates(target, file_id, offset)?
-        {
+        for candidate in self.db.def_map.cursor_candidates(target, file_id, offset)? {
             occurrences.push(Self::def_map_occurrence(target, candidate));
         }
         for candidate in self
-            .analysis
+            .db
             .semantic_ir
             .signature_cursor_candidates(target, file_id, offset)?
         {
@@ -243,16 +235,16 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
 
-        for candidate in self.analysis.def_map.source_candidates(target, file_id)? {
+        for candidate in self.db.def_map.source_candidates(target, file_id)? {
             occurrences.push(Self::def_map_occurrence(target, candidate));
         }
-        for candidate in self.analysis.body_ir.source_candidates(target, file_id)? {
+        for candidate in self.db.body_ir.source_candidates(target, file_id)? {
             if let Some(occurrence) = self.body_occurrence(target, candidate, file_id)? {
                 occurrences.push(occurrence);
             }
         }
         for candidate in self
-            .analysis
+            .db
             .semantic_ir
             .signature_source_candidates(target, file_id)?
         {
@@ -349,7 +341,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         let span = candidate.span();
         let occurrence = match candidate {
             BodyCursorCandidate::Body { body, .. } => {
-                let Some(data) = self.analysis.body_ir.body_data(body)? else {
+                let Some(data) = self.db.body_ir.body_data(body)? else {
                     return Ok(None);
                 };
                 let Some(_) = data.function_owner() else {
@@ -379,7 +371,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                         pat_span,
                         binding_name_span,
                     } => {
-                        let file_id = match self.analysis.body_ir.body_data(body)? {
+                        let file_id = match self.db.body_ir.body_data(body)? {
                             Some(body_data) => match body_data.binding(binding) {
                                 Some(data) => data.source.file_id,
                                 None => {
@@ -412,7 +404,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 }
             }
             BodyCursorCandidate::Expr { body, expr, .. } => {
-                let file_id = match self.analysis.body_ir.body_data(body)? {
+                let file_id = match self.db.body_ir.body_data(body)? {
                     Some(body_data) => match body_data.expr(expr) {
                         Some(data) => data.source.file_id,
                         None => {
@@ -546,7 +538,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     ) -> anyhow::Result<Option<IndexedSourceOccurrence>> {
         // Some scanner families know only the selected span. Use the declaration projection for
         // canonical file ownership, and fall back to the cursor file for point lookups.
-        let file_id = match DeclarationView::new(self.analysis).declaration(declaration)? {
+        let file_id = match DeclarationView::new(self.db).declaration(declaration)? {
             Some(declaration) => declaration.file_id(),
             None => {
                 let Some(file_id) = fallback_file_id else {

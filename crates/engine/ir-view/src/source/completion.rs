@@ -152,12 +152,12 @@ impl IndexedRecordFieldListSite {
 }
 
 pub struct SourceCompletionView<'a, 'db> {
-    analysis: &'a IndexedViewDb<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> SourceCompletionView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self { analysis }
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
     pub fn member_access_site_at(
@@ -167,7 +167,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Option<IndexedMemberAccessSite>> {
         Ok(self
-            .analysis
+            .db
             .body_ir
             .dot_completion_site(target, file_id, offset)?
             .map(|site| IndexedMemberAccessSite {
@@ -183,7 +183,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Option<IndexedQualifiedPathSite>> {
         Ok(self
-            .analysis
+            .db
             .body_ir
             .path_completion_site(target, file_id, offset)?
             .map(|site| IndexedQualifiedPathSite {
@@ -203,7 +203,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Option<IndexedQualifiedPathSite>> {
         Ok(self
-            .analysis
+            .db
             .def_map
             .path_completion_site(target, file_id, offset)?
             .map(|site| IndexedQualifiedPathSite {
@@ -222,7 +222,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Option<IndexedUnqualifiedNameSite>> {
         Ok(self
-            .analysis
+            .db
             .body_ir
             .unqualified_completion_site(target, file_id, offset)?
             .map(|site| IndexedUnqualifiedNameSite {
@@ -243,7 +243,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Option<IndexedUnqualifiedNameSite>> {
         Ok(self
-            .analysis
+            .db
             .def_map
             .unqualified_completion_site(target, file_id, offset)?
             .map(|site| IndexedUnqualifiedNameSite {
@@ -261,7 +261,7 @@ impl<'a, 'db> SourceCompletionView<'a, 'db> {
         offset: u32,
     ) -> anyhow::Result<Option<IndexedRecordFieldListSite>> {
         Ok(self
-            .analysis
+            .db
             .body_ir
             .record_field_completion_site(target, file_id, offset)?
             .map(|site| IndexedRecordFieldListSite {
