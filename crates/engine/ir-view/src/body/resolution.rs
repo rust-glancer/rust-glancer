@@ -10,6 +10,7 @@ use rg_ty::{MemberMethodCandidateRef, Ty};
 
 use crate::IndexedViewDb;
 
+/// Runs body-aware resolution queries for view projections.
 pub(crate) struct BodyResolutionView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -19,6 +20,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         Self { db }
     }
 
+    /// Resolve a type path in a body scope.
     pub(crate) fn type_path_resolution(
         &self,
         body_ref: BodyRef,
@@ -36,6 +38,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
         ))
     }
 
+    /// Find declarations for a body value path without local binding ordering.
     pub(crate) fn nonlocal_value_path_declarations(
         &self,
         body_ref: BodyRef,
@@ -51,6 +54,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             .resolve_nonlocal_path_declarations(scope, path)?)
     }
 
+    /// Resolve the type of a body value path without local binding ordering.
     pub(crate) fn nonlocal_value_path_ty(
         &self,
         body_ref: BodyRef,
@@ -66,6 +70,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             .resolve_nonlocal_path_ty(scope, path)?)
     }
 
+    /// Return body-aware method refs for a receiver type.
     pub(crate) fn method_candidate_refs_for_ty(
         &self,
         body_ref: BodyRef,

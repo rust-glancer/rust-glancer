@@ -79,6 +79,7 @@ pub struct IndexedSourceOccurrence {
 }
 
 impl IndexedSourceOccurrence {
+    /// Split the occurrence into transport-neutral parts.
     pub fn into_parts(
         self,
     ) -> (
@@ -99,6 +100,7 @@ impl IndexedSourceOccurrence {
         )
     }
 
+    /// Build a plain declaration occurrence.
     fn declaration(
         fact: IndexedSourceFact,
         target: TargetRef,
@@ -108,6 +110,7 @@ impl IndexedSourceOccurrence {
         Self::declaration_with_surface(fact, target, file_id, span, IndexedSourceSurface::Plain)
     }
 
+    /// Build a declaration occurrence with special source-surface handling.
     fn declaration_with_surface(
         fact: IndexedSourceFact,
         target: TargetRef,
@@ -125,10 +128,12 @@ impl IndexedSourceOccurrence {
         }
     }
 
+    /// Build a plain reference occurrence.
     fn reference(fact: IndexedSourceFact, target: TargetRef, file_id: FileId, span: Span) -> Self {
         Self::reference_with_surface(fact, target, file_id, span, IndexedSourceSurface::Plain)
     }
 
+    /// Build a reference occurrence with special source-surface handling.
     fn reference_with_surface(
         fact: IndexedSourceFact,
         target: TargetRef,
@@ -146,6 +151,7 @@ impl IndexedSourceOccurrence {
         }
     }
 
+    /// Build an occurrence that is neither a declaration nor a reference.
     fn structural(fact: IndexedSourceFact, target: TargetRef, file_id: FileId, span: Span) -> Self {
         Self {
             fact,
@@ -190,6 +196,7 @@ pub enum IndexedTypePathScope {
     Body(LexicalScopeRef),
 }
 
+/// Finds declaration, reference, and structural source occurrences.
 pub struct SourceOccurrenceView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -199,6 +206,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Self { db }
     }
 
+    /// Return occurrences that touch one cursor offset.
     pub fn occurrences_at(
         &self,
         target: TargetRef,
@@ -228,6 +236,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Ok(occurrences)
     }
 
+    /// Return occurrences in a target, optionally restricted to one file.
     pub fn occurrences_in_target(
         &self,
         target: TargetRef,
@@ -256,6 +265,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Ok(occurrences)
     }
 
+    /// Convert a DefMap scanner candidate into a source occurrence.
     fn def_map_occurrence(
         target: TargetRef,
         candidate: DefMapCursorCandidate,
@@ -294,6 +304,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         }
     }
 
+    /// Convert a Semantic IR scanner candidate into a source occurrence.
     fn semantic_occurrence(
         &self,
         target: TargetRef,
@@ -332,6 +343,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Ok(occurrence)
     }
 
+    /// Convert a Body IR scanner candidate into a source occurrence.
     fn body_occurrence(
         &self,
         target: TargetRef,
@@ -529,6 +541,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Ok(occurrence)
     }
 
+    /// Build a declaration occurrence using declaration data for file ownership.
     fn declaration_occurrence(
         &self,
         declaration: DeclarationRef,

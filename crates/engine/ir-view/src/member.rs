@@ -137,6 +137,7 @@ impl<'a> MemberMethodCandidate<'a> {
     }
 }
 
+/// Place where member lookup is requested.
 #[derive(Debug, Clone, Copy)]
 pub enum MemberUseSite {
     Target(TargetRef),
@@ -153,6 +154,7 @@ impl MemberUseSite {
     }
 }
 
+/// Projects member refs into field, function, and method view data.
 pub struct MemberView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -162,6 +164,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Self { db }
     }
 
+    /// Return fields visible for a type at a target use site.
     pub fn field_candidates_for_ty<'view>(
         &'view self,
         use_site: TargetRef,
@@ -181,6 +184,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(fields)
     }
 
+    /// Resolve a body type path and return its declared fields.
     pub fn field_candidates_for_body_type_path<'view>(
         &'view self,
         body: BodyRef,
@@ -210,18 +214,21 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(fields)
     }
 
+    /// Return borrowed data for one field.
     pub fn field(&self, field: FieldRef) -> anyhow::Result<Option<MemberField<'_>>> {
         Ok(ItemStoreQuery::new(self.db)
             .field_data(field)?
             .map(|data| MemberField { field, data }))
     }
 
+    /// Return borrowed data for one function.
     pub fn function(&self, function: FunctionRef) -> anyhow::Result<Option<MemberFunction<'_>>> {
         Ok(ItemStoreQuery::new(self.db)
             .function_data(function)?
             .map(|data| MemberFunction { function, data }))
     }
 
+    /// Return borrowed data for one enum variant.
     pub fn enum_variant(
         &self,
         variant: EnumVariantRef,
@@ -231,6 +238,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
             .map(|data| MemberEnumVariant { variant, data }))
     }
 
+    /// Resolve a body type path and return its enum variants.
     pub fn enum_variant_candidates_for_body_type_path(
         &self,
         body: BodyRef,
@@ -263,6 +271,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(variants)
     }
 
+    /// Return methods visible for a type at a target or body use site.
     pub fn method_candidates_for_ty<'view>(
         &'view self,
         use_site: MemberUseSite,
@@ -272,6 +281,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         self.method_candidates_from_refs(candidates)
     }
 
+    /// Return method refs before loading borrowed function data.
     fn method_candidate_refs_for_ty(
         &self,
         use_site: MemberUseSite,
@@ -283,6 +293,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         }
     }
 
+    /// Return target-level method refs.
     fn target_method_candidate_refs_for_ty(
         &self,
         use_site: TargetRef,
@@ -295,6 +306,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(member_query.method_candidates_for_ty(ty)?)
     }
 
+    /// Return body-aware method refs, falling back to target-level refs if the body is absent.
     fn body_method_candidate_refs_for_ty(
         &self,
         body: BodyRef,
@@ -310,6 +322,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(candidates)
     }
 
+    /// Load function data for method refs and keep candidates whose functions still exist.
     fn method_candidates_from_refs<'view>(
         &'view self,
         candidates: Vec<MemberMethodCandidateRef>,
@@ -325,6 +338,7 @@ impl<'a, 'db> MemberView<'a, 'db> {
         Ok(methods)
     }
 
+    /// Combine borrowed function data with lookup origin.
     fn method_candidate<'view>(
         function: MemberFunction<'view>,
         candidate: MemberMethodCandidateRef,

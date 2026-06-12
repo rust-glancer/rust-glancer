@@ -11,6 +11,7 @@ use rg_ir_storage::{
 
 use crate::{IndexedViewDb, SymbolKind};
 
+/// Namespace where a visible name can be used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NameNamespace {
     Types,
@@ -28,6 +29,7 @@ impl From<ScopeNamespace> for NameNamespace {
     }
 }
 
+/// Where a visible module-scope name came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NameOrigin {
     ModuleScope,
@@ -45,6 +47,7 @@ impl From<VisibleScopeOrigin> for NameOrigin {
     }
 }
 
+/// One name visible from a module scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModuleScopeName {
     label: String,
@@ -86,6 +89,7 @@ impl ModuleScopeName {
     }
 }
 
+/// Looks up visible names and returns declaration-shaped view facts.
 pub struct NameLookupView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -95,6 +99,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         Self { db }
     }
 
+    /// Return names visible through a module qualifier such as `foo::`.
     pub fn module_names_for_path(
         &self,
         importing_module: ModuleRef,
@@ -122,6 +127,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         Ok(names)
     }
 
+    /// Return names visible without a qualifier in a module.
     pub fn unqualified_module_names(
         &self,
         module: ModuleRef,
@@ -135,6 +141,7 @@ impl<'a, 'db> NameLookupView<'a, 'db> {
         Ok(names)
     }
 
+    /// Convert one DefMap-visible name into the declaration facts exposed by view.
     fn module_scope_name(
         &self,
         visible_def: VisibleScopeDef,

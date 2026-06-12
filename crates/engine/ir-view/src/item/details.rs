@@ -17,6 +17,7 @@ use crate::{
     member::MemberView,
 };
 
+/// Extra facts needed to render declaration details.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DeclarationDetailsContext {
     module_display_name: Option<String>,
@@ -30,6 +31,7 @@ impl DeclarationDetailsContext {
     }
 }
 
+/// Presentation facts for one declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclarationDetails {
     kind: SymbolKind,
@@ -56,6 +58,7 @@ impl DeclarationDetails {
     }
 }
 
+/// Builds hover/detail facts for declaration refs.
 pub struct DeclarationDetailsView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -65,6 +68,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         Self { db }
     }
 
+    /// Return details for one declaration.
     pub fn details_for_declaration(
         &self,
         declaration: DeclarationRef,
@@ -80,6 +84,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }
     }
 
+    /// Return details for a local body binding.
     fn body_binding_details(
         &self,
         binding_ref: BodyBindingRef,
@@ -103,6 +108,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }))
     }
 
+    /// Route a semantic item to its detail builder.
     fn semantic_item_details(
         &self,
         item: SemanticItemRef,
@@ -118,6 +124,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }
     }
 
+    /// Return details for a struct, enum, or union.
     fn type_def_details(&self, ty: TypeDefRef) -> anyhow::Result<Option<DeclarationDetails>> {
         let item_query = ItemStoreQuery::new(self.db);
         let Some(items) = item_query.item_store_for_origin(ty.origin)? else {
@@ -161,6 +168,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }
     }
 
+    /// Return details for a trait.
     fn trait_details(&self, trait_ref: TraitRef) -> anyhow::Result<Option<DeclarationDetails>> {
         let Some(data) = ItemStoreQuery::new(self.db).trait_data(trait_ref)? else {
             return Ok(None);
@@ -173,6 +181,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }))
     }
 
+    /// Return details for a function or method.
     fn function_details(
         &self,
         function: FunctionRef,
@@ -189,6 +198,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }))
     }
 
+    /// Return details for a field.
     fn field_details(&self, field: FieldRef) -> anyhow::Result<Option<DeclarationDetails>> {
         let members = MemberView::new(self.db);
         let Some(field) = members.field(field)? else {
@@ -202,6 +212,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }))
     }
 
+    /// Return details for an enum variant.
     fn enum_variant_details(
         &self,
         variant: EnumVariantRef,
@@ -217,6 +228,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }))
     }
 
+    /// Return details for a type alias.
     fn type_alias_details(
         &self,
         type_alias_ref: TypeAliasRef,
@@ -232,6 +244,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }))
     }
 
+    /// Return details for a const item.
     fn const_details(&self, const_ref: ConstRef) -> anyhow::Result<Option<DeclarationDetails>> {
         let Some(data) = ItemStoreQuery::new(self.db).const_data(const_ref)? else {
             return Ok(None);
@@ -244,6 +257,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }))
     }
 
+    /// Return details for a static item.
     fn static_details(&self, static_ref: StaticRef) -> anyhow::Result<Option<DeclarationDetails>> {
         let Some(data) = ItemStoreQuery::new(self.db).static_data(static_ref)? else {
             return Ok(None);
@@ -256,6 +270,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }))
     }
 
+    /// Return details for a module.
     fn module_details(
         &self,
         module_ref: ModuleRef,
@@ -278,6 +293,7 @@ impl<'a, 'db> DeclarationDetailsView<'a, 'db> {
         }))
     }
 
+    /// Return details for a DefMap local item.
     fn local_def_details(
         &self,
         local_def_ref: LocalDefRef,

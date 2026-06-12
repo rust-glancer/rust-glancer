@@ -12,6 +12,7 @@ use rg_ty::{ImplementationQuery, ItemPathQuery, Ty};
 
 use crate::{IndexedViewDb, lookup::resolution::ResolutionView};
 
+/// Finds implementation declarations for types, traits, and methods.
 pub struct ImplementationView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -21,6 +22,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         Self { db }
     }
 
+    /// Return impl methods that may implement a resolved method call.
     pub fn method_call_implementations(
         &self,
         expr: ExprRef,
@@ -60,6 +62,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         Ok(Some(implementations))
     }
 
+    /// Return implementations related to a declaration.
     pub fn implementations_for_declaration(
         &self,
         use_site: TargetRef,
@@ -132,6 +135,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         Ok(implementations)
     }
 
+    /// Return impl blocks that apply to a type.
     pub fn implementations_for_ty(
         &self,
         use_site: TargetRef,
@@ -145,6 +149,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         Ok(implementations)
     }
 
+    /// Build the lower implementation query for one target.
     fn implementation_query(
         &self,
         use_site: TargetRef,
@@ -155,6 +160,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         )
     }
 
+    /// Extract a function ref from a declaration when it denotes a function.
     fn function_ref_for_declaration(
         &self,
         declaration: DeclarationRef,
@@ -175,6 +181,7 @@ impl<'a, 'db> ImplementationView<'a, 'db> {
         }
     }
 
+    /// Push a declaration once, preserving discovery order.
     fn push_unique(declarations: &mut Vec<DeclarationRef>, declaration: DeclarationRef) {
         if !declarations.contains(&declaration) {
             declarations.push(declaration);

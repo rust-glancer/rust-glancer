@@ -18,9 +18,11 @@ use crate::{IndexedViewDb, display::ty_label::TypeRenderer};
 
 const MEMBER_PREVIEW_LIMIT: usize = 5;
 
+/// Renders compact Rust-like declaration signatures.
 pub struct SignatureRenderer;
 
 impl SignatureRenderer {
+    /// Render a struct signature.
     pub fn struct_signature(data: &StructData) -> String {
         let header = format!(
             "{}struct {}{}{}",
@@ -32,6 +34,7 @@ impl SignatureRenderer {
         item_with_fields(header, &data.fields)
     }
 
+    /// Render a union signature.
     pub fn union_signature(data: &UnionData) -> String {
         let header = format!(
             "{}union {}{}{}",
@@ -43,6 +46,7 @@ impl SignatureRenderer {
         item_with_record_fields(header, &data.fields)
     }
 
+    /// Render an enum signature.
     pub fn enum_signature(data: &EnumData) -> String {
         let header = format!(
             "{}enum {}{}{}",
@@ -61,6 +65,7 @@ impl SignatureRenderer {
         )
     }
 
+    /// Render a trait signature.
     pub fn trait_signature(data: &TraitData) -> String {
         let unsafe_prefix = if data.is_unsafe { "unsafe " } else { "" };
         let super_traits = if data.super_traits.is_empty() {
@@ -85,6 +90,7 @@ impl SignatureRenderer {
         )
     }
 
+    /// Render a function or method signature.
     pub fn function_signature(data: &FunctionData) -> String {
         format!(
             "{}{}",
@@ -99,6 +105,7 @@ impl SignatureRenderer {
         )
     }
 
+    /// Render a type alias signature.
     pub fn type_alias_signature(data: &TypeAliasData) -> String {
         format!(
             "{}{}",
@@ -112,6 +119,7 @@ impl SignatureRenderer {
         )
     }
 
+    /// Render a const signature.
     pub fn const_signature(data: &ConstData) -> String {
         format!(
             "{}{}",
@@ -120,6 +128,7 @@ impl SignatureRenderer {
         )
     }
 
+    /// Render a static signature.
     pub fn static_signature(data: &StaticData) -> String {
         format!(
             "{}{}",
@@ -128,10 +137,12 @@ impl SignatureRenderer {
         )
     }
 
+    /// Render a field signature.
     pub fn field_signature(data: FieldData<'_>) -> Option<String> {
         field_signature(data.field)
     }
 
+    /// Render an enum variant signature.
     pub fn enum_variant_signature(variant: &EnumVariantItem) -> String {
         match &variant.fields {
             FieldList::Named(fields) if fields.is_empty() => format!("{} {{}}", variant.name),
@@ -149,6 +160,7 @@ impl SignatureRenderer {
         }
     }
 
+    /// Render a body binding signature.
     pub fn binding_signature(
         db: &IndexedViewDb<'_>,
         data: &BindingData,

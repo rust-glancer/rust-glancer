@@ -75,6 +75,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         Self { db }
     }
 
+    /// Return source facts for one declaration ref.
     pub fn declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<Declaration>> {
         match declaration {
             DeclarationRef::Module(module_ref) => self.module(module_ref),
@@ -86,6 +87,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }
     }
 
+    /// Return the file backing a root module.
     pub fn root_module_file(&self, module_ref: ModuleRef) -> anyhow::Result<Option<FileId>> {
         let def_maps = DefMapQuery::new(self.db);
         let Some(module) = def_maps.module_data(module_ref)? else {
@@ -97,6 +99,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         Ok(Some(file_id))
     }
 
+    /// Return declaration facts for an inline or out-of-line module declaration.
     fn module(&self, module_ref: ModuleRef) -> anyhow::Result<Option<Declaration>> {
         let def_maps = DefMapQuery::new(self.db);
         let Some(module) = def_maps.module_data(module_ref)? else {
@@ -128,6 +131,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }))
     }
 
+    /// Return declaration facts for a DefMap local item.
     fn local_def(&self, local_def: LocalDefRef) -> anyhow::Result<Option<Declaration>> {
         let def_maps = DefMapQuery::new(self.db);
         let Some(data) = def_maps.local_def_data(local_def)? else {
@@ -144,6 +148,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }))
     }
 
+    /// Return declaration facts for a semantic item.
     fn semantic_item(&self, item: SemanticItemRef) -> anyhow::Result<Option<Declaration>> {
         let Some(view) = ItemStoreQuery::new(self.db).semantic_item_view(item)? else {
             return Ok(None);
@@ -209,6 +214,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }
     }
 
+    /// Return declaration facts for a body binding.
     fn body_binding(&self, binding_ref: BodyBindingRef) -> anyhow::Result<Option<Declaration>> {
         let Some(body) = self.db.body_ir.body_data(binding_ref.body)? else {
             return Ok(None);
@@ -231,6 +237,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }))
     }
 
+    /// Return declaration facts for an enum variant.
     fn semantic_enum_variant(
         &self,
         variant_ref: EnumVariantRef,
@@ -249,6 +256,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }))
     }
 
+    /// Return declaration facts for a declared field.
     fn semantic_field(&self, field: FieldRef) -> anyhow::Result<Option<Declaration>> {
         let Some(data) = ItemStoreQuery::new(self.db).field_data(field)? else {
             return Ok(None);
@@ -267,6 +275,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }))
     }
 
+    /// Return declaration facts for a function or method.
     fn semantic_function(&self, function: FunctionRef) -> anyhow::Result<Option<Declaration>> {
         let Some(data) = ItemStoreQuery::new(self.db).function_data(function)? else {
             return Ok(None);
@@ -285,6 +294,7 @@ impl<'a, 'db> DeclarationView<'a, 'db> {
         }))
     }
 
+    /// Render the label used when an impl itself is the declaration.
     fn impl_label(self_ty: &TypeRef, trait_ref: Option<&TypeRef>) -> String {
         match trait_ref {
             Some(trait_ref) => format!("impl {trait_ref} for {self_ty}"),

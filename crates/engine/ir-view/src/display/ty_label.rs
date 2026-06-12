@@ -9,6 +9,7 @@ use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
 
 use crate::{IndexedViewDb, item::path::PathView};
 
+/// Renders compact user-facing labels for `Ty`.
 pub struct TypeRenderer<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> TypeRenderer<'a, 'db> {
@@ -16,6 +17,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         Self(db)
     }
 
+    /// Render a type, returning `None` for unknown types.
     pub fn render(&self, ty: &Ty) -> anyhow::Result<Option<String>> {
         match ty {
             Ty::Unit => Ok(Some("()".to_string())),
@@ -57,6 +59,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         }
     }
 
+    /// Render a nominal type by declared name and generic arguments.
     fn render_nominal(&self, ty: &NominalTy) -> anyhow::Result<Option<String>> {
         let Some(name) = ItemStoreQuery::new(self.0).type_def_name(ty.def)? else {
             return Ok(None);
@@ -68,6 +71,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         )))
     }
 
+    /// Render one bound inside an `impl Trait` type.
     fn render_opaque_bound(&self, bound: &OpaqueTraitBound) -> anyhow::Result<String> {
         let trait_path = PathView::new(self.0)
             .trait_path(bound.trait_ref)?
@@ -78,6 +82,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         ))
     }
 
+    /// Render generic arguments including surrounding angle brackets.
     fn render_generic_args(&self, args: &[GenericArg]) -> anyhow::Result<String> {
         if args.is_empty() {
             return Ok(String::new());
@@ -91,6 +96,7 @@ impl<'a, 'db> TypeRenderer<'a, 'db> {
         Ok(format!("<{}>", rendered.join(", ")))
     }
 
+    /// Render one generic argument.
     fn render_generic_arg(&self, arg: &GenericArg) -> anyhow::Result<String> {
         match arg {
             GenericArg::Type(ty) => Ok(self.render(ty)?.unwrap_or_else(|| "_".to_string())),

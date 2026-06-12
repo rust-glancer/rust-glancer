@@ -16,6 +16,7 @@ use crate::{
     IndexedViewDb, body::BodyResolutionView, source::IndexedTypePathScope, ty::locals::BodyView,
 };
 
+/// Projects indexed declarations and body facts into `Ty`.
 pub struct TyView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -25,10 +26,12 @@ impl<'a, 'db> TyView<'a, 'db> {
         Self { db }
     }
 
+    /// Return the resolved body type for an expression.
     pub fn ty_for_expr(&self, expr: ExprRef) -> anyhow::Result<Option<Ty>> {
         self.body_view().expr_ty(expr.body_ir(), expr.expr_id())
     }
 
+    /// Return declaration refs represented by a type, peeling references first.
     pub fn declarations_for_ty(&self, ty: &Ty) -> Vec<DeclarationRef> {
         let mut declarations = Vec::new();
         for candidate in ReferencePeelingCandidates::new(ty) {
@@ -42,6 +45,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         declarations
     }
 
+    /// Project a declaration into its type when that question is meaningful.
     pub fn ty_for_declaration(&self, declaration: DeclarationRef) -> anyhow::Result<Option<Ty>> {
         match declaration {
             DeclarationRef::Module(_) => Ok(None),
@@ -70,6 +74,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         }
     }
 
+    /// Resolve a signature type path into `Ty`.
     pub fn ty_for_type_path(&self, context: TypePathContext, path: &Path) -> anyhow::Result<Ty> {
         let resolution = ItemPathQuery::new(self.db, self.db).resolve_type_path(context, path)?;
         if matches!(resolution, TypePathResolution::Unknown)
@@ -81,6 +86,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         Ok(Self::type_path_resolution_to_ty(resolution))
     }
 
+    /// Resolve a type path from either signature or body source.
     pub fn ty_for_indexed_type_path(
         &self,
         scope: IndexedTypePathScope,
@@ -94,6 +100,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         }
     }
 
+    /// Resolve a body type path into `Ty`.
     pub fn ty_for_body_type_path(
         &self,
         body_ref: BodyRef,
@@ -112,6 +119,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         Ok(Self::type_path_resolution_to_ty(resolution))
     }
 
+    /// Resolve a body value path into its expression type.
     pub fn ty_for_body_value_path(
         &self,
         body_ref: BodyRef,
@@ -123,6 +131,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         BodyResolutionView::new(self.db).nonlocal_value_path_ty(body_ref, scope, path)
     }
 
+    /// Resolve the declared type of a field.
     fn ty_for_field(&self, field: FieldRef) -> anyhow::Result<Option<Ty>> {
         // Field declarations live in the shared item store, but view callers expect the small
         // `Ty` vocabulary used by body/member analysis.
@@ -138,6 +147,7 @@ impl<'a, 'db> TyView<'a, 'db> {
         )?))
     }
 
+    /// Return the owning enum type for an enum variant constructor.
     fn ty_for_enum_variant(&self, variant: EnumVariantRef) -> anyhow::Result<Option<Ty>> {
         let Some(data) = ItemStoreQuery::new(self.db).enum_variant_data(variant)? else {
             return Ok(None);
@@ -145,10 +155,12 @@ impl<'a, 'db> TyView<'a, 'db> {
         Ok(Some(Ty::nominal(NominalTy::bare(data.owner))))
     }
 
+    /// Convert a type-path result to `Ty`, using unknown for non-type values.
     fn type_path_resolution_to_ty(resolution: TypePathResolution) -> Ty {
         Ty::from_type_path_resolution(resolution, Vec::new()).unwrap_or(Ty::Unknown)
     }
 
+    /// Open the body-local type view.
     fn body_view(&self) -> BodyView<'a, 'db> {
         BodyView::new(self.db)
     }
