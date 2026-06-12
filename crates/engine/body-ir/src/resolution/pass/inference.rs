@@ -71,14 +71,27 @@ where
 
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
-            let ExprKind::Tuple { fields } = self.pass.body.expr_unchecked(expr).kind.clone()
-            else {
-                continue;
-            };
-
-            // Tuple facts embed field facts by value. Once generic call results have been seeded
-            // as variables, rebuild the tuple so outer tuple constraints can solve those fields.
-            inference.set_expr_tuple_from_fields(expr, &fields);
+            let kind = self.pass.body.expr_unchecked(expr).kind.clone();
+            match kind {
+                ExprKind::Tuple { fields } => inference.set_expr_tuple_from_fields(expr, &fields),
+                ExprKind::Array { elements } => inference.set_expr_array_from_elements(
+                    expr,
+                    &elements,
+                    Some(elements.len().to_string()),
+                ),
+                ExprKind::RepeatArray {
+                    initializer,
+                    len_text,
+                    ..
+                } => {
+                    inference.set_expr_repeat_array_from_initializer(expr, initializer, len_text);
+                }
+                ExprKind::Wrapper { kind, inner } => {
+                    let fallback_ty = self.pass.body.expr_ty_unchecked(expr).clone();
+                    inference.set_expr_wrapper_from_inner(expr, kind, inner, &fallback_ty);
+                }
+                _ => {}
+            }
         }
     }
 
@@ -362,8 +375,58 @@ where
                     self.constrain_expr_with_expected(field, expected_field);
                 }
             }
+            (ExprKind::Array { elements }, Ty::Array { inner, len })
+                if Self::array_len_matches_count(len, elements.len()) =>
+            {
+                for element in elements {
+                    self.constrain_expr_with_expected(element, inner);
+                }
+            }
+            (
+                ExprKind::RepeatArray {
+                    initializer: Some(initializer),
+                    len_text,
+                    ..
+                },
+                Ty::Array { inner, len },
+            ) if Self::array_len_matches_text(len, len_text.as_deref()) => {
+                self.constrain_expr_with_expected(initializer, inner);
+            }
+            (
+                ExprKind::Wrapper {
+                    kind: ExprWrapperKind::Paren | ExprWrapperKind::Await,
+                    inner: Some(inner),
+                },
+                _,
+            ) => {
+                self.constrain_expr_with_expected(inner, expected_ty);
+            }
+            (
+                ExprKind::Wrapper {
+                    kind: ExprWrapperKind::Ref { mutability },
+                    inner: Some(inner),
+                },
+                Ty::Reference {
+                    mutability: expected_mutability,
+                    inner: expected_inner,
+                },
+            ) if mutability == *expected_mutability => {
+                self.constrain_expr_with_expected(inner, expected_inner);
+            }
             _ => {}
         }
+    }
+
+    fn array_len_matches_count(expected_len: &Option<String>, element_count: usize) -> bool {
+        expected_len
+            .as_deref()
+            .is_none_or(|len| len == element_count.to_string())
+    }
+
+    fn array_len_matches_text(expected_len: &Option<String>, len_text: Option<&str>) -> bool {
+        expected_len
+            .as_deref()
+            .is_none_or(|expected| len_text.is_none_or(|actual| actual == expected))
     }
 
     /// Writes finalized inference facts back into the body.

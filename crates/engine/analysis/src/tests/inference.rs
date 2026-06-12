@@ -126,6 +126,75 @@ pub fn use_it() {
 }
 
 #[test]
+fn propagates_expected_types_through_transparent_and_array_expressions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_shape_expected_type_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub fn missing<T>() -> T {}
+
+pub fn use_it() {
+    let paren: User = (missing()$type_paren_inner$)$type_paren$;
+    let shared: &u64 = &1$type_ref_inner$;
+    let values: [u64; 2] = [1$type_array_left$, 2$type_array_right$]$type_array$;
+    let repeated: [u64; 2] = [1$type_repeat_inner$; 2]$type_repeat$;
+    let users: [User; 1] = [missing()$type_array_user$]$type_array_generic$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("paren generic call inner", "type_paren_inner"),
+            AnalysisQuery::ty("paren generic call expression", "type_paren"),
+            AnalysisQuery::ty("reference integer inner", "type_ref_inner"),
+            AnalysisQuery::ty("array left integer", "type_array_left"),
+            AnalysisQuery::ty("array right integer", "type_array_right"),
+            AnalysisQuery::ty("array expression", "type_array"),
+            AnalysisQuery::ty("repeat array integer", "type_repeat_inner"),
+            AnalysisQuery::ty("repeat array expression", "type_repeat"),
+            AnalysisQuery::ty("array generic call", "type_array_user"),
+            AnalysisQuery::ty("array generic expression", "type_array_generic"),
+        ],
+        expect![[r#"
+            paren generic call inner
+            - nominal struct analysis_shape_expected_type_inference[lib]::crate::User
+
+            paren generic call expression
+            - nominal struct analysis_shape_expected_type_inference[lib]::crate::User
+
+            reference integer inner
+            - u64
+
+            array left integer
+            - u64
+
+            array right integer
+            - u64
+
+            array expression
+            - [u64; 2]
+
+            repeat array integer
+            - u64
+
+            repeat array expression
+            - [u64; 2]
+
+            array generic call
+            - nominal struct analysis_shape_expected_type_inference[lib]::crate::User
+
+            array generic expression
+            - [nominal struct analysis_shape_expected_type_inference[lib]::crate::User; 1]
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_function_return_expected_types() {
     check_analysis_queries(
         r#"

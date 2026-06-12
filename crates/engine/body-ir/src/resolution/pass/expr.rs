@@ -64,7 +64,7 @@ where
             }
             ExprKind::Array { elements } => {
                 let ty = self.array_expr_ty(&elements);
-                self.pass.set_expr_ty(expr, ty);
+                self.pass.set_expr_array_from_elements(expr, &elements, ty);
             }
             ExprKind::RepeatArray {
                 initializer,
@@ -72,7 +72,12 @@ where
                 ..
             } => {
                 let ty = self.repeat_array_expr_ty(initializer, len_text.as_deref());
-                self.pass.set_expr_ty(expr, ty);
+                self.pass.set_expr_repeat_array_from_initializer(
+                    expr,
+                    initializer,
+                    len_text.as_deref(),
+                    ty,
+                );
             }
             ExprKind::Index { base, .. } => {
                 let ty = self.index_expr_ty(base);
@@ -155,7 +160,8 @@ where
             }
             ExprKind::Wrapper { kind, inner } => {
                 let (resolution, ty) = self.resolve_wrapper_expr(kind, inner);
-                self.pass.set_expr_facts(expr, resolution, ty);
+                self.pass
+                    .set_expr_wrapper_facts(expr, resolution, kind, inner, ty);
             }
             ExprKind::Unary {
                 op: Some(ExprUnaryOp::Deref),

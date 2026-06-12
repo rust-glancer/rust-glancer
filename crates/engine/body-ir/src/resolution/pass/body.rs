@@ -11,7 +11,7 @@ use rg_ty::{ExpectedNominalTyExt, PrimitiveTy, Ty};
 use crate::{
     ir::body::ResolvedBodyData,
     ir::resolved::BodyResolution,
-    ir::{BindingKind, BodySelfParamKind},
+    ir::{BindingKind, BodySelfParamKind, ExprWrapperKind},
 };
 
 use crate::resolution::{
@@ -165,9 +165,56 @@ where
         );
     }
 
+    pub(super) fn set_expr_array_from_elements(
+        &mut self,
+        expr: ExprId,
+        elements: &[ExprId],
+        ty: Ty,
+    ) {
+        if let Some(inference) = &mut self.inference {
+            inference.set_expr_array_from_elements(
+                expr,
+                elements,
+                Some(elements.len().to_string()),
+            );
+        }
+        self.body.set_expr_ty(expr, ty);
+    }
+
+    pub(super) fn set_expr_repeat_array_from_initializer(
+        &mut self,
+        expr: ExprId,
+        initializer: Option<ExprId>,
+        len_text: Option<&str>,
+        ty: Ty,
+    ) {
+        if let Some(inference) = &mut self.inference {
+            inference.set_expr_repeat_array_from_initializer(
+                expr,
+                initializer,
+                len_text.map(str::to_owned),
+            );
+        }
+        self.body.set_expr_ty(expr, ty);
+    }
+
     pub(super) fn set_expr_facts(&mut self, expr: ExprId, resolution: BodyResolution, ty: Ty) {
         if let Some(inference) = &mut self.inference {
             inference.set_expr_ty(expr, &ty);
+        }
+        self.body.set_expr_facts(expr, resolution, ty);
+    }
+
+    pub(super) fn set_expr_wrapper_facts(
+        &mut self,
+        expr: ExprId,
+        resolution: BodyResolution,
+        kind: ExprWrapperKind,
+        inner: Option<ExprId>,
+        ty: Ty,
+    ) {
+        if let Some(inference) = &mut self.inference {
+            inference.set_expr_wrapper_from_inner(expr, kind, inner, &ty);
         }
         self.body.set_expr_facts(expr, resolution, ty);
     }

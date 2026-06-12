@@ -5,7 +5,7 @@
 //! until local evidence solves `?T`.
 
 use rg_ir_model::items::TypeRef;
-use rg_ir_model::{BindingId, ExprId, TraitRef, TypeDefRef};
+use rg_ir_model::{BindingId, ExprId, ExprWrapperKind, TraitRef, TypeDefRef};
 use rg_std::UniqueVec;
 use rg_text::Name;
 use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, PrimitiveTy, RefMutability, Ty};
@@ -50,6 +50,71 @@ impl BodyInferenceCtx {
                 .map(|field| self.expr_tys[field.0].clone())
                 .collect(),
         );
+    }
+
+    pub(super) fn set_expr_array_from_elements(
+        &mut self,
+        expr: ExprId,
+        elements: &[ExprId],
+        len: Option<String>,
+    ) {
+        if elements.is_empty() {
+            self.expr_tys[expr.0] = InferTy::Unknown;
+            return;
+        }
+
+        // Array elements share one element type. Link every element slot through that type so
+        // sibling evidence and expected array types can solve literals and generic call results.
+        let element_ty = self.table.new_type_var();
+        for element in elements {
+            let evidence = self.expr_tys[element.0].clone();
+            self.table.unify(&element_ty, &evidence);
+        }
+
+        self.expr_tys[expr.0] = InferTy::Array {
+            inner: Box::new(element_ty),
+            len,
+        };
+    }
+
+    pub(super) fn set_expr_repeat_array_from_initializer(
+        &mut self,
+        expr: ExprId,
+        initializer: Option<ExprId>,
+        len: Option<String>,
+    ) {
+        let Some(initializer) = initializer else {
+            self.expr_tys[expr.0] = InferTy::Unknown;
+            return;
+        };
+
+        self.expr_tys[expr.0] = InferTy::Array {
+            inner: Box::new(self.expr_tys[initializer.0].clone()),
+            len,
+        };
+    }
+
+    pub(super) fn set_expr_wrapper_from_inner(
+        &mut self,
+        expr: ExprId,
+        kind: ExprWrapperKind,
+        inner: Option<ExprId>,
+        fallback_ty: &Ty,
+    ) {
+        let Some(inner) = inner else {
+            self.set_expr_ty(expr, fallback_ty);
+            return;
+        };
+        let inner_ty = self.expr_tys[inner.0].clone();
+
+        self.expr_tys[expr.0] = match kind {
+            ExprWrapperKind::Paren | ExprWrapperKind::Await => inner_ty,
+            ExprWrapperKind::Ref { mutability } => InferTy::Reference {
+                mutability,
+                inner: Box::new(inner_ty),
+            },
+            ExprWrapperKind::Try | ExprWrapperKind::Return => InferTy::from_ty(fallback_ty),
+        };
     }
 
     pub(super) fn set_binding_ty(&mut self, binding: BindingId, ty: &Ty) {

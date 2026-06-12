@@ -762,13 +762,13 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
                           expr e1 path user -> local v3 => nominal struct body_common_expr_fixture[lib]::crate::User @ 10:25-10:29
               stmt s1 let v5 @ 11:5-11:31
                 initializer
-                  expr e7 array => <unknown> @ 11:17-11:30
+                  expr e7 array => [u8; 3] @ 11:17-11:30
                     element
                       expr e4 path value -> local v2 => u8 @ 11:18-11:23
                     element
-                      expr e5 literal int `1` => i32 @ 11:25-11:26
+                      expr e5 literal int `1` => u8 @ 11:25-11:26
                     element
-                      expr e6 literal int `2` => i32 @ 11:28-11:29
+                      expr e6 literal int `2` => u8 @ 11:28-11:29
               stmt s2 let v6 @ 12:5-12:29
                 initializer
                   expr e10 repeat_array => [u8; 3] @ 12:18-12:28
