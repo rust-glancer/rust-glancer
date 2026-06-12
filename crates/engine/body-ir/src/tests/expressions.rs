@@ -640,15 +640,15 @@ pub fn use_it(user: User) {
             - s1 parent s0: v1, v2
             bindings
             - v0 param user `user`: User => nominal struct body_rich_path_fixture[lib]::crate::User @ 18:15-18:19
-            - v1 let variant `variant` => nominal enum body_rich_path_fixture[lib]::crate::Maybe @ 19:9-19:16
+            - v1 let variant `variant` => nominal enum body_rich_path_fixture[lib]::crate::Maybe<nominal struct body_rich_path_fixture[lib]::crate::User> @ 19:9-19:16
             - v2 let qualified `qualified` => <unknown> @ 20:9-20:18
             body
             expr e5 block s1 => () @ 18:27-21:2
               stmt s0 let v1 @ 19:5-19:45
                 initializer
-                  expr e2 call => nominal enum body_rich_path_fixture[lib]::crate::Maybe @ 19:19-19:44
+                  expr e2 call => nominal enum body_rich_path_fixture[lib]::crate::Maybe<nominal struct body_rich_path_fixture[lib]::crate::User> @ 19:19-19:44
                     callee
-                      expr e0 path Maybe::<User>::Some -> variant enum body_rich_path_fixture[lib]::crate::Maybe::Some => nominal enum body_rich_path_fixture[lib]::crate::Maybe @ 19:19-19:38
+                      expr e0 path Maybe::<User>::Some -> variant enum body_rich_path_fixture[lib]::crate::Maybe::Some => nominal enum body_rich_path_fixture[lib]::crate::Maybe<nominal struct body_rich_path_fixture[lib]::crate::User> @ 19:19-19:38
                     arg
                       expr e1 path user -> local v0 => nominal struct body_rich_path_fixture[lib]::crate::User @ 19:39-19:43
               stmt s1 let v2 @ 20:5-20:53
@@ -1034,13 +1034,13 @@ pub fn use_it() {
             - s0 parent <none>: <none>
             - s1 parent s0: v0, v1
             bindings
-            - v0 let widget `widget` => Self struct body_associated_path_fixture[lib]::crate::Widget @ 14:9-14:15
+            - v0 let widget `widget` => nominal struct body_associated_path_fixture[lib]::crate::Widget @ 14:9-14:15
             - v1 let action `action` => nominal enum body_associated_path_fixture[lib]::crate::Action @ 15:9-15:15
             body
             expr e5 block s1 => () @ 13:17-16:2
               stmt s0 let v0 @ 14:5-14:35
                 initializer
-                  expr e1 call => Self struct body_associated_path_fixture[lib]::crate::Widget @ 14:18-14:34
+                  expr e1 call => nominal struct body_associated_path_fixture[lib]::crate::Widget @ 14:18-14:34
                     callee
                       expr e0 path Widget::create -> fn impl Widget::create => <unknown> @ 14:18-14:32
               stmt s1 let v1 @ 15:5-15:44
@@ -1049,7 +1049,7 @@ pub fn use_it() {
                     callee
                       expr e2 path Action::Configure -> variant enum body_associated_path_fixture[lib]::crate::Action::Configure => nominal enum body_associated_path_fixture[lib]::crate::Action @ 15:18-15:35
                     arg
-                      expr e3 path widget -> local v0 => Self struct body_associated_path_fixture[lib]::crate::Widget @ 15:36-15:42
+                      expr e3 path widget -> local v0 => nominal struct body_associated_path_fixture[lib]::crate::Widget @ 15:36-15:42
 
 
             body b1 fn impl Widget::create @ 4:5-6:6

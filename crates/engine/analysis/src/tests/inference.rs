@@ -562,6 +562,93 @@ pub fn use_it(builder: Builder) {
 }
 
 #[test]
+fn propagates_associated_function_prefix_generics() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_associated_function_prefix_generic_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub struct Vec<T> {
+    value: T,
+}
+
+impl<T> Vec<T> {
+    pub fn new() -> Self {}
+}
+
+pub fn use_it() {
+    let inferred: Vec<User> = Vec::new()$type_inferred$;
+    let explicit = Vec::<User>::new()$type_explicit$;
+    let wildcard = Vec::<_>::new()$type_wildcard$;
+}
+"#,
+        &[
+            AnalysisQuery::ty(
+                "associated function inferred prefix generic",
+                "type_inferred",
+            ),
+            AnalysisQuery::ty(
+                "associated function explicit prefix generic",
+                "type_explicit",
+            ),
+            AnalysisQuery::ty(
+                "associated function wildcard prefix generic",
+                "type_wildcard",
+            ),
+        ],
+        expect![[r#"
+            associated function inferred prefix generic
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+
+            associated function explicit prefix generic
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
+
+            associated function wildcard prefix generic
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<<unknown>>
+        "#]],
+    );
+}
+
+#[test]
+fn applies_explicit_enum_prefix_generics_to_payload_expected_types() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_enum_prefix_generic_payload_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum Slot<T> {
+    Put(T),
+}
+
+pub fn use_it() {
+    let slot = Slot::<u64>::Put(1$type_payload$)$type_slot$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("enum variant explicit generic payload", "type_payload"),
+            AnalysisQuery::ty("enum variant explicit generic result", "type_slot"),
+        ],
+        expect![[r#"
+            enum variant explicit generic payload
+            - u64
+
+            enum variant explicit generic result
+            - nominal enum analysis_enum_prefix_generic_payload_inference[lib]::crate::Slot<u64>
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_record_field_initializer_expected_types() {
     check_analysis_queries(
         r#"

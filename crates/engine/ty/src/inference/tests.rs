@@ -6,7 +6,7 @@ use rg_ir_model::{
 use super::{InferTy, InferenceTable};
 use crate::{
     GenericArg, NominalTy, PrimitiveTy, Ty,
-    inference::{InferGenericArg, InferNominalTy},
+    inference::{InferGenericArg, InferNominalTy, UnknownTypeInstantiationBuilder},
 };
 
 fn type_def(index: usize) -> TypeDefRef {
@@ -31,6 +31,13 @@ fn vec_ty(inner: InferTy) -> InferTy {
     InferTy::Nominal(InferNominalTy {
         def: type_def(10),
         args: vec![InferGenericArg::Type(Box::new(inner))],
+    })
+}
+
+fn concrete_vec_ty(inner: Ty) -> Ty {
+    Ty::nominal(NominalTy {
+        def: type_def(10),
+        args: vec![GenericArg::Type(Box::new(inner))],
     })
 }
 
@@ -151,6 +158,30 @@ fn unifies_same_definition_nominal_generic_arguments() {
         table.finalize(&element),
         Ty::nominal(NominalTy::bare(type_def(0)))
     );
+}
+
+#[test]
+fn instantiates_unknowns_nested_inside_known_shapes() {
+    let mut table = InferenceTable::new();
+    let inferred = {
+        let mut builder = UnknownTypeInstantiationBuilder::new(&mut table);
+        let inferred = builder.ty_from_ty(&concrete_vec_ty(Ty::Unknown));
+        assert!(builder.used_type_vars());
+        inferred
+    };
+
+    assert!(table.unify(&inferred, &InferTy::from_ty(&concrete_vec_ty(user_ty()))));
+
+    assert_eq!(table.finalize(&inferred), concrete_vec_ty(user_ty()));
+}
+
+#[test]
+fn leaves_root_unknown_uninstantiated() {
+    let mut table = InferenceTable::new();
+    let mut builder = UnknownTypeInstantiationBuilder::new(&mut table);
+
+    assert_eq!(builder.ty_from_ty(&Ty::Unknown), InferTy::Unknown);
+    assert!(!builder.used_type_vars());
 }
 
 #[test]

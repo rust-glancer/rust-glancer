@@ -16,23 +16,26 @@ use rg_ty::{
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 use crate::{ir::ExprKind, ir::resolved::BodyResolution};
 
+use super::associated_item::BodyAssociatedFunctionCandidate;
+
 /// Function target selected by call syntax.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ResolvedCallTarget {
     function: FunctionRef,
     explicit_args: Vec<ItemGenericArg>,
     site_scope: ScopeId,
-    receiver: CallReceiver,
+    self_source: CallSelfSource,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum CallReceiver {
+enum CallSelfSource {
     None,
-    Method(MethodReceiver),
+    TypePrefix(CallSelf),
+    Receiver(CallSelf),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct MethodReceiver {
+struct CallSelf {
     self_ty: Ty,
     subst: TypeSubst,
 }
@@ -48,7 +51,7 @@ impl ResolvedCallTarget {
             function,
             explicit_args: explicit_args.to_vec(),
             site_scope,
-            receiver: CallReceiver::None,
+            self_source: CallSelfSource::None,
         }
     }
 
@@ -57,13 +60,28 @@ impl ResolvedCallTarget {
         function: FunctionRef,
         site_scope: ScopeId,
         explicit_args: &[ItemGenericArg],
-        receiver: MethodReceiver,
+        receiver: CallSelf,
     ) -> Self {
         Self {
             function,
             explicit_args: explicit_args.to_vec(),
             site_scope,
-            receiver: CallReceiver::Method(receiver),
+            self_source: CallSelfSource::Receiver(receiver),
+        }
+    }
+
+    /// Build target data for an associated function call with selected `Self`.
+    fn associated_function_call(
+        function: FunctionRef,
+        site_scope: ScopeId,
+        explicit_args: &[ItemGenericArg],
+        self_context: CallSelf,
+    ) -> Self {
+        Self {
+            function,
+            explicit_args: explicit_args.to_vec(),
+            site_scope,
+            self_source: CallSelfSource::TypePrefix(self_context),
         }
     }
 
@@ -78,12 +96,13 @@ impl ResolvedCallTarget {
     }
 }
 
-impl CallReceiver {
+impl CallSelfSource {
     /// Choose how written arguments line up with declared params.
     fn arg_mapping(&self) -> CallArgMapping {
         match self {
             Self::None => CallArgMapping::FunctionCall,
-            Self::Method(_) => CallArgMapping::MethodCall,
+            Self::TypePrefix(_) => CallArgMapping::FunctionCall,
+            Self::Receiver(_) => CallArgMapping::MethodCall,
         }
     }
 
@@ -91,7 +110,8 @@ impl CallReceiver {
     fn first_written_param_idx(&self) -> usize {
         match self {
             Self::None => 0,
-            Self::Method(_) => 1,
+            Self::TypePrefix(_) => 0,
+            Self::Receiver(_) => 1,
         }
     }
 
@@ -99,15 +119,19 @@ impl CallReceiver {
     fn base_subst(&self) -> TypeSubst {
         match self {
             Self::None => TypeSubst::new(),
-            Self::Method(receiver) => receiver.subst.clone(),
+            Self::TypePrefix(self_context) | Self::Receiver(self_context) => {
+                self_context.subst.clone()
+            }
         }
     }
 
-    /// Return concrete receiver `Self` when this is a method call.
+    /// Return concrete `Self` when this call was selected through a receiver or type prefix.
     fn self_ty(&self) -> Option<Ty> {
         match self {
             Self::None => None,
-            Self::Method(receiver) => Some(receiver.self_ty.clone()),
+            Self::TypePrefix(self_context) | Self::Receiver(self_context) => {
+                Some(self_context.self_ty.clone())
+            }
         }
     }
 }
@@ -206,6 +230,7 @@ pub(crate) struct CallProjection {
     declared_return_ty: Option<TypeRef>,
     function_generics: Option<GenericParams>,
     explicit_args: Vec<ItemGenericArg>,
+    selected_self_ty: Option<Ty>,
 }
 
 impl CallProjection {
@@ -216,6 +241,7 @@ impl CallProjection {
             declared_return_ty: None,
             function_generics: None,
             explicit_args: explicit_args.to_vec(),
+            selected_self_ty: None,
         }
     }
 
@@ -242,6 +268,11 @@ impl CallProjection {
     /// Return explicit generic arguments written at the call site.
     pub(crate) fn explicit_args(&self) -> &[ItemGenericArg] {
         &self.explicit_args
+    }
+
+    /// Return the `Self` type that selected this associated function or method.
+    pub(crate) fn selected_self_ty(&self) -> Option<&Ty> {
+        self.selected_self_ty.as_ref()
     }
 }
 
@@ -336,6 +367,11 @@ where
     fn function_targets(&self, callee: ExprId) -> Result<ResolvedCallTargets, PackageStoreError> {
         let mut targets = ResolvedCallTargets::new();
         let callee_data = self.context.body().expr_unchecked(callee);
+        let associated_targets = self.associated_function_targets(callee_data)?;
+        if !associated_targets.is_empty() {
+            return Ok(associated_targets);
+        }
+
         let BodyResolution::Declarations(declarations) =
             self.context.body().expr_resolution(callee)
         else {
@@ -355,6 +391,49 @@ where
         Ok(targets)
     }
 
+    /// Rebuild associated function targets with the typed path prefix preserved.
+    fn associated_function_targets(
+        &self,
+        callee_data: &ExprData,
+    ) -> Result<ResolvedCallTargets, PackageStoreError> {
+        let mut targets = ResolvedCallTargets::new();
+        let ExprKind::Path { path } = &callee_data.kind else {
+            return Ok(targets);
+        };
+        let Some((prefix_ty_ref, name)) = path.split_type_prefix_name() else {
+            return Ok(targets);
+        };
+
+        let prefix_ty = self
+            .context
+            .type_refs(TypeRefUseSite::Scope(callee_data.scope))
+            .resolve(&prefix_ty_ref)?;
+        for candidate in self
+            .context
+            .associated_items()
+            .function_candidates_for_type(&prefix_ty, name)?
+        {
+            targets.push(Self::associated_function_target(callee_data, candidate));
+        }
+
+        Ok(targets)
+    }
+
+    fn associated_function_target(
+        callee_data: &ExprData,
+        candidate: BodyAssociatedFunctionCandidate,
+    ) -> ResolvedCallTarget {
+        ResolvedCallTarget::associated_function_call(
+            candidate.function(),
+            callee_data.scope,
+            Self::explicit_callee_generic_args(callee_data),
+            CallSelf {
+                self_ty: candidate.self_ty().clone(),
+                subst: candidate.subst().clone(),
+            },
+        )
+    }
+
     /// Convert receiver method lookup into callable method targets.
     fn lookup_method(
         &self,
@@ -372,7 +451,7 @@ where
                 candidate.function(),
                 site.scope,
                 site.explicit_args,
-                MethodReceiver {
+                CallSelf {
                     self_ty: candidate.receiver_ty().clone(),
                     subst: candidate.subst().clone(),
                 },
@@ -459,7 +538,7 @@ where
             .signature
             .params()
             .iter()
-            .skip(self.target.receiver.first_written_param_idx())
+            .skip(self.target.self_source.first_written_param_idx())
             .map(|param| {
                 let Some(param_ty) = &param.ty else {
                     return Ok(Ty::Unknown);
@@ -479,7 +558,7 @@ where
                 generics,
                 function_data.signature.params(),
                 &arg_tys,
-                self.target.receiver.arg_mapping(),
+                self.target.self_source.arg_mapping(),
                 &return_subst,
             )
             .infer(),
@@ -497,12 +576,13 @@ where
             declared_return_ty,
             function_generics: generics.cloned(),
             explicit_args: self.target.explicit_args().to_vec(),
+            selected_self_ty: self.target.self_source.self_ty(),
         })
     }
 
     /// Combine receiver, shadow, and explicit generic substitutions.
     fn base_subst(&self, generics: Option<&GenericParams>) -> Result<TypeSubst, PackageStoreError> {
-        let mut subst = self.target.receiver.base_subst();
+        let mut subst = self.target.self_source.base_subst();
         subst.extend(function_generic_shadow_subst(generics));
         subst.extend(self.explicit_subst(generics)?);
         Ok(subst)
@@ -532,7 +612,7 @@ where
     /// Resolve the declared return type after call-specific substitutions.
     fn project_return(&self, subst: &TypeSubst, ret_ty: &TypeRef) -> Result<Ty, PackageStoreError> {
         if ret_ty.is_self_type() {
-            return Ok(match self.target.receiver.self_ty() {
+            return Ok(match self.target.self_source.self_ty() {
                 Some(self_ty) => self_ty,
                 None => self
                     .query

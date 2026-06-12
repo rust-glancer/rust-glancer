@@ -2,7 +2,9 @@ use rg_ir_model::items::{GenericParams, TypeRef};
 use rg_ir_model::{BindingId, ExprId, ExprWrapperKind};
 use rg_ty::{
     Ty,
-    inference::{GenericReturnInstantiationBuilder, InferTy, InferenceTable},
+    inference::{
+        GenericReturnInstantiationBuilder, InferTy, InferenceTable, UnknownTypeInstantiationBuilder,
+    },
 };
 
 pub(crate) struct BodyInferenceCtx {
@@ -35,6 +37,24 @@ impl BodyInferenceCtx {
         let (infer_ty, used_vars) = {
             let mut builder = GenericReturnInstantiationBuilder::new(&mut self.table, generics);
             let infer_ty = builder.ty_from_return(ret_ty, resolved_ty);
+            (infer_ty, builder.used_type_vars())
+        };
+
+        if used_vars {
+            self.expr_tys[expr.0] = infer_ty;
+        }
+        used_vars
+    }
+
+    /// Instantiate unknowns nested inside a selected call return shape.
+    pub(crate) fn instantiate_expr_nested_unknown_ty(&mut self, expr: ExprId, ty: &Ty) -> bool {
+        if matches!(ty, Ty::Unknown) {
+            return false;
+        }
+
+        let (infer_ty, used_vars) = {
+            let mut builder = UnknownTypeInstantiationBuilder::new(&mut self.table);
+            let infer_ty = builder.ty_from_ty(ty);
             (infer_ty, builder.used_type_vars())
         };
 

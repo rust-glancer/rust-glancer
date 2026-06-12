@@ -4,7 +4,7 @@
 //! expressions. The parent pass still drives ordering and binding propagation.
 
 use rg_ir_model::{
-    DefMapRef, ExprId, Path, ScopeId, TypePathResolution,
+    BodyPath, DefMapRef, ExprId, Path, ScopeId, TypePathResolution,
     identity::DeclarationRef,
     items::{FieldKey, GenericArg as ItemGenericArg},
 };
@@ -49,10 +49,7 @@ where
 
         match kind {
             ExprKind::Path { path } => {
-                let (resolution, ty) = match path.as_def_map_path() {
-                    Some(path) => self.resolve_path_expr(expr, &path)?,
-                    None => (BodyResolution::Unknown, Ty::Unknown),
-                };
+                let (resolution, ty) = self.resolve_body_path_expr(expr, &path)?;
                 self.pass.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::Call { callee, args } => {
@@ -234,6 +231,35 @@ where
             .context()
             .value_paths()
             .resolve_path_expr(scope, path, Some(visible_bindings))
+    }
+
+    fn resolve_body_path_expr(
+        &self,
+        expr: ExprId,
+        path: &BodyPath,
+    ) -> Result<(BodyResolution, Ty), PackageStoreError> {
+        let expr_data = self.pass.body.expr_unchecked(expr);
+
+        if let Some((prefix_ty_ref, last_segment)) = path.split_type_prefix_name() {
+            let prefix_ty = self
+                .pass
+                .context()
+                .type_refs(TypeRefUseSite::Scope(expr_data.scope))
+                .resolve(&prefix_ty_ref)?;
+            if let Some(result) = self
+                .pass
+                .context()
+                .associated_items()
+                .resolve_for_type(&prefix_ty, last_segment)?
+            {
+                return Ok(result);
+            }
+        }
+
+        match path.as_def_map_path() {
+            Some(path) => self.resolve_path_expr(expr, &path),
+            None => Ok((BodyResolution::Unknown, Ty::Unknown)),
+        }
     }
 
     fn array_expr_ty(&self, elements: &[ExprId]) -> Ty {

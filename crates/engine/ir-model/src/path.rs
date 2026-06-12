@@ -108,7 +108,10 @@ impl Path {
         last_segment_name(&self.segments).map(|name| name.to_string())
     }
 
-    /// Splits a multi-segment path into the prefix and final plain-name segment.
+    /// Splits the outermost `prefix::name` shape into `prefix` and `name`.
+    ///
+    /// Callers that need associated paths resolve the prefix separately; this only detaches the
+    /// final plain-name segment.
     pub fn split_prefix_name(&self) -> Option<(Self, &str)> {
         if self.segments.len() < 2 {
             return None;
@@ -355,6 +358,18 @@ mod tests {
                     ],
                 ),
                 Some(("api", "User")),
+            ),
+            (
+                "nested name path",
+                path(
+                    false,
+                    vec![
+                        PathSegment::Name(Name::new("api")),
+                        PathSegment::Name(Name::new("User")),
+                        PathSegment::Name(Name::new("Id")),
+                    ],
+                ),
+                Some(("api::User", "Id")),
             ),
             (
                 "absolute name path",

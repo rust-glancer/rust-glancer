@@ -134,6 +134,7 @@ where
             calls.signature(&target).project(args)?
         };
 
+        let mut instantiated = false;
         if projection.explicit_args().is_empty()
             && let Some(ret_ty) = projection.declared_return_ty()
             && let Some(generics) = projection.function_generics()
@@ -143,16 +144,23 @@ where
                 .iter()
                 .map(|param| param.name.as_str())
                 .collect::<Vec<_>>();
-            if !ret_ty.mentions_type_param(&type_params) {
-                return Ok(());
+            if ret_ty.mentions_type_param(&type_params) {
+                instantiated = self.pass.inference.instantiate_expr_generic_return_ty(
+                    call,
+                    ret_ty,
+                    projection.return_ty(),
+                    generics,
+                );
             }
+        }
 
-            self.pass.inference.instantiate_expr_generic_return_ty(
-                call,
-                ret_ty,
-                projection.return_ty(),
-                generics,
-            );
+        if !instantiated
+            && projection.selected_self_ty().is_some_and(Ty::has_unknown)
+            && projection.return_ty().has_unknown()
+        {
+            self.pass
+                .inference
+                .instantiate_expr_nested_unknown_ty(call, projection.return_ty());
         }
 
         Ok(())

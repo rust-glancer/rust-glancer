@@ -7,7 +7,7 @@ use rg_ir_model::{
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_std::{ExpectedUnique, UniqueVec};
-use rg_ty::{ExpectedTyExt, NominalTy, Ty};
+use rg_ty::{ExpectedTyExt, GenericArg, NominalTy, Ty, TypeSubst};
 
 use crate::{
     ir::resolved::BodyResolution,
@@ -25,7 +25,31 @@ pub(crate) struct BodyAssociatedItemQuery<'query, D, I> {
 enum BodyAssociatedItemCandidate {
     EnumVariant(EnumVariantRef, Ty),
     Const(ConstRef, Ty),
-    Function(FunctionRef),
+}
+
+/// Associated function selected through a concrete `Type::function` prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BodyAssociatedFunctionCandidate {
+    function: FunctionRef,
+    self_ty: Ty,
+    subst: TypeSubst,
+}
+
+impl BodyAssociatedFunctionCandidate {
+    /// Return the selected associated function.
+    pub(crate) fn function(&self) -> FunctionRef {
+        self.function
+    }
+
+    /// Return the `Self` type used to select the function.
+    pub(crate) fn self_ty(&self) -> &Ty {
+        &self.self_ty
+    }
+
+    /// Return substitutions derived from the selected `Self` type.
+    pub(crate) fn subst(&self) -> &TypeSubst {
+        &self.subst
+    }
 }
 
 impl<'query, D, I> BodyAssociatedItemQuery<'query, D, I>
@@ -53,12 +77,22 @@ where
             .resolve_in_scope(scope, prefix)?;
         let prefix_ty =
             Ty::from_type_path_resolution(prefix_resolution, Vec::new()).unwrap_or(Ty::Unknown);
+        self.resolve_for_type(&prefix_ty, last_segment)
+    }
+
+    /// Resolve an associated value path after its type prefix has already been typed.
+    pub(crate) fn resolve_for_type(
+        &self,
+        prefix_ty: &Ty,
+        last_segment: &str,
+    ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
+        let receiver_tys = self.receiver_tys_for_prefix(prefix_ty)?;
 
         // First treat the final segment as an enum variant. Variants are not ordinary associated
         // functions in either Semantic IR or Body IR, but value paths use the same syntax for
         // `Action::Start` and `Widget::new`, so they need an explicit pass.
         let mut variants = Vec::new();
-        for nominal_ty in prefix_ty.as_nominals() {
+        for nominal_ty in &receiver_tys {
             if let Some(candidate) =
                 self.enum_variant_candidate_for_type(nominal_ty, last_segment)?
             {
@@ -70,7 +104,7 @@ where
             return Ok(Some(Self::enum_variant_resolution(variants)));
         }
 
-        for nominal_ty in prefix_ty.as_nominals() {
+        for nominal_ty in &receiver_tys {
             if let Some(candidate) =
                 self.inherent_associated_const_candidate_for_type(nominal_ty, last_segment)?
             {
@@ -83,7 +117,7 @@ where
         // falls back to the trait declaration. This mirrors trait method lookup without pretending
         // to be a full trait solver.
         let mut trait_consts = Vec::new();
-        for nominal_ty in prefix_ty.as_nominals() {
+        for nominal_ty in &receiver_tys {
             trait_consts
                 .extend(self.trait_associated_const_candidates_for_type(nominal_ty, last_segment)?);
         }
@@ -96,12 +130,25 @@ where
         // deliberately optimistic, following the same "prefer useful candidates over false
         // negatives" policy as dot completion.
         let mut functions = Vec::new();
-        for nominal_ty in prefix_ty.as_nominals() {
+        for nominal_ty in &receiver_tys {
             functions
                 .extend(self.associated_function_candidates_for_type(nominal_ty, last_segment)?);
         }
 
         Ok((!functions.is_empty()).then_some(Self::function_resolution(functions)))
+    }
+
+    /// Return associated functions selected by a typed prefix.
+    pub(crate) fn function_candidates_for_type(
+        &self,
+        prefix_ty: &Ty,
+        name: &str,
+    ) -> Result<Vec<BodyAssociatedFunctionCandidate>, PackageStoreError> {
+        let mut functions = Vec::new();
+        for nominal_ty in self.receiver_tys_for_prefix(prefix_ty)? {
+            functions.extend(self.associated_function_candidates_for_type(&nominal_ty, name)?);
+        }
+        Ok(functions)
     }
 
     /// Collect variant declarations and their resulting enum type.
@@ -148,15 +195,12 @@ where
 
     /// Collect function declarations; call projection owns their result type.
     fn function_resolution(
-        candidates: impl IntoIterator<Item = BodyAssociatedItemCandidate>,
+        candidates: impl IntoIterator<Item = BodyAssociatedFunctionCandidate>,
     ) -> (BodyResolution, Ty) {
         let mut functions = UniqueVec::new();
 
-        for candidate in candidates {
-            let BodyAssociatedItemCandidate::Function(function_ref) = candidate else {
-                continue;
-            };
-            functions.push(function_ref);
+        for function in candidates {
+            functions.push(function.function());
         }
 
         (
@@ -257,21 +301,21 @@ where
         &self,
         ty: &NominalTy,
         name: &str,
-    ) -> Result<Vec<BodyAssociatedItemCandidate>, PackageStoreError> {
+    ) -> Result<Vec<BodyAssociatedFunctionCandidate>, PackageStoreError> {
         let body_items = self.context.body_local_items();
         let matcher = self.context.impl_matcher();
         let mut functions = Vec::new();
 
         for function_ref in body_items.inherent_functions_for_type(ty.def)? {
             if matcher.function_applies_to_receiver(function_ref, ty)? {
-                self.push_associated_function(&mut functions, function_ref, name)?;
+                self.push_associated_function(&mut functions, ty, function_ref, name)?;
             }
         }
 
         if ty.def.origin.as_target_ref().is_some() {
             for function_ref in self.semantic_inherent_function_items_for_type(ty, name)? {
                 if matcher.function_applies_to_receiver(function_ref, ty)? {
-                    self.push_associated_function(&mut functions, function_ref, name)?;
+                    self.push_associated_function(&mut functions, ty, function_ref, name)?;
                 }
             }
         }
@@ -283,7 +327,7 @@ where
             ty,
             Some(name),
         )? {
-            self.push_associated_function(&mut functions, function_ref, name)?;
+            self.push_associated_function(&mut functions, ty, function_ref, name)?;
         }
 
         if ty.def.origin.as_target_ref().is_some() {
@@ -292,7 +336,7 @@ where
                 ty,
                 Some(name),
             )? {
-                self.push_associated_function(&mut functions, function_ref, name)?;
+                self.push_associated_function(&mut functions, ty, function_ref, name)?;
             }
         }
 
@@ -320,7 +364,8 @@ where
     /// Add a function only if it is static and has the requested name.
     fn push_associated_function(
         &self,
-        functions: &mut Vec<BodyAssociatedItemCandidate>,
+        functions: &mut Vec<BodyAssociatedFunctionCandidate>,
+        receiver_ty: &NominalTy,
         function_ref: FunctionRef,
         name: &str,
     ) -> Result<(), PackageStoreError> {
@@ -328,12 +373,54 @@ where
             return Ok(());
         };
         if function_data.name == name && !function_data.has_self_receiver() {
-            let candidate = BodyAssociatedItemCandidate::Function(function_ref);
+            let candidate = BodyAssociatedFunctionCandidate {
+                function: function_ref,
+                self_ty: Ty::nominal(receiver_ty.clone()),
+                subst: self.context.generics().subst_for_receiver_owner(
+                    function_ref.origin,
+                    function_data.owner,
+                    receiver_ty,
+                )?,
+            };
             if !functions.contains(&candidate) {
                 functions.push(candidate);
             }
         }
         Ok(())
+    }
+
+    /// Preserve written args and treat omitted type args as inferable unknowns.
+    fn receiver_tys_for_prefix(&self, prefix_ty: &Ty) -> Result<Vec<NominalTy>, PackageStoreError> {
+        prefix_ty
+            .as_nominals()
+            .iter()
+            .map(|ty| self.receiver_ty_for_prefix(ty))
+            .collect()
+    }
+
+    fn receiver_ty_for_prefix(&self, ty: &NominalTy) -> Result<NominalTy, PackageStoreError> {
+        if !ty.args.is_empty() {
+            return Ok(ty.clone());
+        }
+        let Some(generics) = self
+            .context
+            .item_query()
+            .generic_params_for_type_def(ty.def)?
+        else {
+            return Ok(ty.clone());
+        };
+        if generics.types.is_empty() {
+            return Ok(ty.clone());
+        }
+
+        Ok(NominalTy {
+            def: ty.def,
+            args: generics
+                .types
+                .iter()
+                .map(|_| GenericArg::Type(Box::new(Ty::Unknown)))
+                .collect(),
+        })
     }
 
     /// Add consts from applicable impl items, or their trait declarations.
