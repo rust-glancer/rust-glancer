@@ -268,43 +268,52 @@ impl<'a, 'db> MemberView<'a, 'db> {
         use_site: MemberUseSite,
         ty: &Ty,
     ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
+        let candidates = self.method_candidate_refs_for_ty(use_site, ty)?;
+        self.method_candidates_from_refs(candidates)
+    }
+
+    fn method_candidate_refs_for_ty(
+        &self,
+        use_site: MemberUseSite,
+        ty: &Ty,
+    ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
         match use_site {
-            MemberUseSite::Target(target) => self.target_method_candidates_for_ty(target, ty),
-            MemberUseSite::Body(body) => self.body_method_candidates_for_ty(body, ty),
+            MemberUseSite::Target(target) => self.target_method_candidate_refs_for_ty(target, ty),
+            MemberUseSite::Body(body) => self.body_method_candidate_refs_for_ty(body, ty),
         }
     }
 
-    fn target_method_candidates_for_ty<'view>(
-        &'view self,
+    fn target_method_candidate_refs_for_ty(
+        &self,
         use_site: TargetRef,
         ty: &Ty,
-    ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
-        let mut methods = Vec::new();
+    ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
         let member_query = MemberQuery::new(
             ItemPathQuery::new(self.db, self.db),
             TargetItemQuery::new(self.db, self.db, use_site),
         );
-        for candidate in member_query.method_candidates_for_ty(ty)? {
-            let Some(function) = self.function(candidate.function())? else {
-                continue;
-            };
-            methods.push(Self::method_candidate(function, candidate));
-        }
-
-        Ok(methods)
+        Ok(member_query.method_candidates_for_ty(ty)?)
     }
 
-    fn body_method_candidates_for_ty<'view>(
-        &'view self,
+    fn body_method_candidate_refs_for_ty(
+        &self,
         body: BodyRef,
         ty: &Ty,
-    ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
+    ) -> anyhow::Result<Vec<MemberMethodCandidateRef>> {
         let Some(candidates) =
-            BodyResolutionView::new(self.db).receiver_method_candidates_for_ty(body, ty)?
+            BodyResolutionView::new(self.db).method_candidate_refs_for_ty(body, ty)?
         else {
-            return self.method_candidates_for_ty(MemberUseSite::target(body.target), ty);
+            // Missing body facts should not hide target-level methods from editor queries.
+            return self.target_method_candidate_refs_for_ty(body.target, ty);
         };
 
+        Ok(candidates)
+    }
+
+    fn method_candidates_from_refs<'view>(
+        &'view self,
+        candidates: Vec<MemberMethodCandidateRef>,
+    ) -> anyhow::Result<Vec<MemberMethodCandidate<'view>>> {
         let mut methods = Vec::new();
         for candidate in candidates {
             let Some(function) = self.function(candidate.function())? else {

@@ -66,7 +66,7 @@ impl<'a, 'db> BodyResolutionView<'a, 'db> {
             .resolve_nonlocal_path_ty(scope, path)?)
     }
 
-    pub(crate) fn receiver_method_candidates_for_ty(
+    pub(crate) fn method_candidate_refs_for_ty(
         &self,
         body_ref: BodyRef,
         ty: &Ty,
