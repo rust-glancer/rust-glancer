@@ -477,6 +477,91 @@ pub fn use_it(builder: Builder) {
 }
 
 #[test]
+fn propagates_expected_types_into_generic_call_result_shapes() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_generic_call_result_shape_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Error;
+
+pub struct Vec<T> {
+    value: T,
+}
+
+pub struct Option<T> {
+    value: T,
+}
+
+pub struct Result<T, E> {
+    ok: T,
+    err: E,
+}
+
+pub fn make_vec<T>() -> Vec<T> {}
+pub fn make_option<T>() -> Option<T> {}
+pub fn make_result<T, E>() -> Result<T, E> {}
+
+pub struct Factory;
+
+impl Factory {
+    pub fn make_vec<T>() -> Vec<T> {}
+}
+
+pub struct Builder;
+
+impl Builder {
+    pub fn build_vec<T>(&self) -> Vec<T> {}
+}
+
+pub fn use_it(builder: Builder) {
+    let free: Vec<User> = make_vec()$type_free$;
+    let associated: Vec<User> = Factory::make_vec()$type_associated$;
+    let method: Vec<User> = builder.build_vec()$type_method$;
+    let option: Option<User> = make_option()$type_option$;
+    let result: Result<User, Error> = make_result()$type_result$;
+    let unconstrained = make_vec()$type_unconstrained$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("free function generic return shape", "type_free"),
+            AnalysisQuery::ty(
+                "associated function generic return shape",
+                "type_associated",
+            ),
+            AnalysisQuery::ty("method generic return shape", "type_method"),
+            AnalysisQuery::ty("single-param generic return shape", "type_option"),
+            AnalysisQuery::ty("multi-param generic return shape", "type_result"),
+            AnalysisQuery::ty("unconstrained generic return shape", "type_unconstrained"),
+        ],
+        expect![[r#"
+            free function generic return shape
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User>
+
+            associated function generic return shape
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User>
+
+            method generic return shape
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User>
+
+            single-param generic return shape
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Option<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User>
+
+            multi-param generic return shape
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Result<nominal struct analysis_generic_call_result_shape_inference[lib]::crate::User, nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Error>
+
+            unconstrained generic return shape
+            - nominal struct analysis_generic_call_result_shape_inference[lib]::crate::Vec<<unknown>>
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_record_field_initializer_expected_types() {
     check_analysis_queries(
         r#"

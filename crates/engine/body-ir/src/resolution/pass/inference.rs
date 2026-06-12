@@ -40,21 +40,34 @@ where
     for<'source> &'source I: ItemStoreSource<'source, Error = PackageStoreError>,
 {
     pub(super) fn run(mut self) -> Result<(), PackageStoreError> {
-        self.seed_call_return_inference_facts()?;
+        // 1. Mark `T` as `?T` in contexts where local evidence may infer it later.
+        // Without this step, those positions stay as plain `Ty::Unknown`.
+        self.instantiate_inference_facts()?;
+
+        // 2. Propagate `?` markers through expressions that depend on instantiated children.
         self.refresh_inference_dependent_expr_facts();
+
+        // 3. Run inference: observe available evidence and solve `?T` where possible.
         self.constrain_expected_types()?;
+
+        // 4. Write inferred facts back into Body IR as ordinary `Ty` values.
         self.finalize_facts();
         Ok(())
     }
 
-    /// Seeds inference facts that ordinary `Ty` cannot represent during fixed-point resolution.
-    fn seed_call_return_inference_facts(&mut self) -> Result<(), PackageStoreError> {
+    /// Instantiate all inference facts that ordinary `Ty` cannot represent.
+    fn instantiate_inference_facts(&mut self) -> Result<(), PackageStoreError> {
+        self.instantiate_generic_call_return_facts()
+    }
+
+    /// Instantiate generic call returns such as `Vec<T>` as `Vec<?T>`.
+    fn instantiate_generic_call_return_facts(&mut self) -> Result<(), PackageStoreError> {
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
             let kind = self.pass.body.expr_unchecked(expr).kind.clone();
             match kind {
-                ExprKind::Call { .. } | ExprKind::MethodCall { .. } => {
-                    self.seed_call_return_inference_fact(expr)?
+                ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => {
+                    self.instantiate_generic_call_return_fact(expr, &args)?
                 }
                 _ => {}
             }
@@ -63,7 +76,7 @@ where
         Ok(())
     }
 
-    /// Rebuilds expression inference facts that copied child facts before late seeds existed.
+    /// Refresh expression facts that copied child facts before instantiation.
     fn refresh_inference_dependent_expr_facts(&mut self) {
         let Some(inference) = &mut self.pass.inference else {
             return;
@@ -95,21 +108,46 @@ where
         }
     }
 
-    fn seed_call_return_inference_fact(&mut self, call: ExprId) -> Result<(), PackageStoreError> {
-        if !matches!(self.pass.body.expr_ty_unchecked(call), Ty::Unknown) {
+    /// Instantiate one generic call return when it still contains unknown type params.
+    fn instantiate_generic_call_return_fact(
+        &mut self,
+        call: ExprId,
+        args: &[ExprId],
+    ) -> Result<(), PackageStoreError> {
+        if !self.pass.body.expr_ty_unchecked(call).has_unknown() {
             return Ok(());
         }
 
-        let should_seed_type_var = {
+        let projection = {
             let calls = self.pass.context().calls();
             let Some(target) = calls.target(call)? else {
                 return Ok(());
             };
-            calls.signature(&target).can_seed_return_inference()?
+            calls.signature(&target).project(args)?
         };
 
-        if should_seed_type_var && let Some(inference) = &mut self.pass.inference {
-            inference.set_expr_type_var(call);
+        if projection.explicit_args().is_empty()
+            && let Some(ret_ty) = projection.declared_return_ty()
+            && let Some(generics) = projection.function_generics()
+        {
+            let type_params = generics
+                .types
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>();
+            if !ret_ty.mentions_type_param(&type_params) {
+                return Ok(());
+            }
+
+            let Some(inference) = &mut self.pass.inference else {
+                return Ok(());
+            };
+            inference.instantiate_expr_generic_return_ty(
+                call,
+                ret_ty,
+                projection.return_ty(),
+                generics,
+            );
         }
 
         Ok(())
@@ -122,19 +160,19 @@ where
     ) -> Result<(), PackageStoreError> {
         // Only a single resolved function gives us trustworthy parameter evidence. Ambiguous calls
         // keep their already-computed return type but do not push expectations inward.
-        let param_tys = {
+        let projection = {
             let calls = self.pass.context().calls();
             let Some(target) = calls.target(call)? else {
                 return Ok(());
             };
-            calls.signature(&target).param_tys()?
+            calls.signature(&target).project(args)?
         };
-        if param_tys.len() != args.len() {
+        if projection.written_param_tys().len() != args.len() {
             return Ok(());
         }
 
-        for (arg, expected_ty) in args.iter().zip(param_tys) {
-            self.constrain_expr_with_expected(*arg, &expected_ty);
+        for (arg, expected_ty) in args.iter().zip(projection.written_param_tys()) {
+            self.constrain_expr_with_expected(*arg, expected_ty);
         }
 
         Ok(())
@@ -229,14 +267,14 @@ where
         else {
             return Ok(());
         };
-        let [DeclarationRef::EnumVariant(variant_ref)] = declarations.as_slice() else {
+        let (variant_ref, enum_ty) = if let [DeclarationRef::EnumVariant(variant_ref)] =
+            declarations.as_slice()
+            && let [enum_ty] = self.pass.body.expr_ty_unchecked(call).as_nominals()
+        {
+            (*variant_ref, enum_ty.clone())
+        } else {
             return Ok(());
         };
-        let variant_ref = *variant_ref;
-        let [enum_ty] = self.pass.body.expr_ty_unchecked(call).as_nominals() else {
-            return Ok(());
-        };
-        let enum_ty = enum_ty.clone();
 
         for (index, arg) in args.into_iter().enumerate() {
             // Enum tuple-variant constructors expose payload fields positionally at the call site.
@@ -311,7 +349,8 @@ where
     }
 
     fn constrain_root_tail_with_expected(&mut self, expected_ty: &Ty) {
-        let ExprKind::Block {
+        // `return expr` has type `!`; the wrapped expression is constrained separately below.
+        if let ExprKind::Block {
             tail: Some(tail), ..
         } = self
             .pass
@@ -319,16 +358,10 @@ where
             .expr_unchecked(self.pass.body.root_expr())
             .kind
             .clone()
-        else {
-            return;
-        };
-
-        // `return expr` has type `!`; the wrapped expression is constrained separately below.
-        if self.is_explicit_return_expr(tail) {
-            return;
+            && !self.is_explicit_return_expr(tail)
+        {
+            self.constrain_expr_with_expected(tail, expected_ty);
         }
-
-        self.constrain_expr_with_expected(tail, expected_ty);
     }
 
     fn constrain_explicit_returns_with_expected(&mut self, expected_ty: &Ty) {

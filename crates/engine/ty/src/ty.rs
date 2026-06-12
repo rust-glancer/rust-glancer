@@ -220,6 +220,22 @@ impl Ty {
         }
     }
 
+    /// Returns true when this type shape contains `Ty::Unknown`.
+    pub fn has_unknown(&self) -> bool {
+        match self {
+            Self::Tuple(fields) => fields.iter().any(Self::has_unknown),
+            Self::Array { inner, .. } | Self::Slice(inner) | Self::Reference { inner, .. } => {
+                inner.has_unknown()
+            }
+            Self::Opaque { bounds } => bounds
+                .iter()
+                .any(|bound| bound.args.iter().any(GenericArg::has_unknown)),
+            Self::Nominal(ty) | Self::SelfTy(ty) => ty.args.iter().any(GenericArg::has_unknown),
+            Self::Unknown => true,
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Syntax(_) => false,
+        }
+    }
+
     pub(crate) fn is_projectable(&self) -> bool {
         match self {
             Self::Unknown | Self::Syntax(_) => false,

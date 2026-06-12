@@ -171,7 +171,8 @@ impl ResolvedCallTargets {
     {
         let mut return_tys = ExpectedUnique::new();
         for target in &self.targets {
-            return_tys.push(calls.signature(target).return_ty(args)?);
+            let projection = calls.signature(target).project(args)?;
+            return_tys.push(projection.return_ty().clone());
         }
 
         Ok(return_tys.into_ty())
@@ -195,6 +196,53 @@ impl ResolvedCallTargets {
 pub(crate) struct CallSignature<'call, 'query, D, I> {
     query: &'call BodyCallQuery<'query, D, I>,
     target: &'call ResolvedCallTarget,
+}
+
+/// Signature facts projected for one selected call target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CallProjection {
+    written_param_tys: Vec<Ty>,
+    return_ty: Ty,
+    declared_return_ty: Option<TypeRef>,
+    function_generics: Option<GenericParams>,
+    explicit_args: Vec<ItemGenericArg>,
+}
+
+impl CallProjection {
+    fn unknown(explicit_args: &[ItemGenericArg]) -> Self {
+        Self {
+            written_param_tys: Vec::new(),
+            return_ty: Ty::Unknown,
+            declared_return_ty: None,
+            function_generics: None,
+            explicit_args: explicit_args.to_vec(),
+        }
+    }
+
+    /// Return parameter types for arguments written at the call site.
+    pub(crate) fn written_param_tys(&self) -> &[Ty] {
+        &self.written_param_tys
+    }
+
+    /// Return the projected call result type.
+    pub(crate) fn return_ty(&self) -> &Ty {
+        &self.return_ty
+    }
+
+    /// Return the declared return type syntax.
+    pub(crate) fn declared_return_ty(&self) -> Option<&TypeRef> {
+        self.declared_return_ty.as_ref()
+    }
+
+    /// Return the function generics visible in the signature.
+    pub(crate) fn function_generics(&self) -> Option<&GenericParams> {
+        self.function_generics.as_ref()
+    }
+
+    /// Return explicit generic arguments written at the call site.
+    pub(crate) fn explicit_args(&self) -> &[ItemGenericArg] {
+        &self.explicit_args
+    }
 }
 
 /// Resolves function and method calls.
@@ -391,22 +439,23 @@ where
     D: DefMapSource<Error = PackageStoreError> + Copy,
     I: ItemStoreSource<'query, Error = PackageStoreError> + Copy,
 {
-    /// Return declared parameter types for written call arguments.
-    pub(crate) fn param_tys(&self) -> Result<Vec<Ty>, PackageStoreError> {
+    /// Project written parameter types and result type for this selected call.
+    pub(crate) fn project(&self, args: &[ExprId]) -> Result<CallProjection, PackageStoreError> {
         let item_query = self.query.context.item_query();
         let Some(function_data) = item_query.function_data(self.target.function)? else {
-            return Ok(Vec::new());
+            return Ok(CallProjection::unknown(self.target.explicit_args()));
         };
-        let subst = self.base_subst(function_data.signature.generics())?;
+        let generics = function_data.signature.generics();
+        let base_subst = self.base_subst(generics)?;
         let param_resolver = self
             .query
             .context
             .type_refs(TypeRefUseSite::Function(self.target.function))
-            .with_subst(&subst);
+            .with_subst(&base_subst);
 
         // Keep one expected type per written argument. Missing parameter annotations are not
         // useful evidence, but `Unknown` preserves arity so the caller can still zip safely.
-        function_data
+        let written_param_tys = function_data
             .signature
             .params()
             .iter()
@@ -418,68 +467,37 @@ where
 
                 param_resolver.resolve(param_ty)
             })
-            .collect()
-    }
+            .collect::<Result<Vec<_>, _>>()?;
 
-    /// Return the projected call result type.
-    pub(crate) fn return_ty(&self, args: &[ExprId]) -> Result<Ty, PackageStoreError> {
-        let item_query = self.query.context.item_query();
-        let Some(function_data) = item_query.function_data(self.target.function)? else {
-            return Ok(Ty::Unknown);
-        };
-        let Some(ret_ty) = function_data.signature.ret_ty() else {
-            return Ok(Ty::Unit);
-        };
-
-        let mut subst = self.base_subst(function_data.signature.generics())?;
+        let mut return_subst = base_subst.clone();
         let arg_tys = args
             .iter()
             .map(|arg| self.query.context.body().expr_ty_unchecked(*arg).clone())
             .collect::<Vec<_>>();
-        subst.extend(
+        return_subst.extend(
             CallArgInference::new(
-                function_data.signature.generics(),
+                generics,
                 function_data.signature.params(),
                 &arg_tys,
                 self.target.receiver.arg_mapping(),
-                &subst,
+                &return_subst,
             )
             .infer(),
         );
 
-        self.project_return(&subst, ret_ty)
-    }
-
-    /// Return whether the call result should become a type variable.
-    pub(crate) fn can_seed_return_inference(&self) -> Result<bool, PackageStoreError> {
-        if !self.target.explicit_args().is_empty() {
-            return Ok(false);
-        }
-
-        let Some(function_data) = self
-            .query
-            .context
-            .item_query()
-            .function_data(self.target.function)?
-        else {
-            return Ok(false);
-        };
-        let Some(generics) = function_data.signature.generics() else {
-            return Ok(false);
-        };
-        let Some(ret_ty) = function_data.signature.ret_ty() else {
-            return Ok(false);
-        };
-        let Some(ret_name) = ret_ty.type_param_name() else {
-            return Ok(false);
+        let declared_return_ty = function_data.signature.ret_ty().cloned();
+        let return_ty = match declared_return_ty.as_ref() {
+            Some(ret_ty) => self.project_return(&return_subst, ret_ty)?,
+            None => Ty::Unit,
         };
 
-        // `fn make<T>() -> T` has no concrete `Ty` before expected-type constraints run, but
-        // inference can preserve the return as `?T` and let the outer expression solve it.
-        Ok(generics
-            .types
-            .iter()
-            .any(|param| param.name.as_str() == ret_name.as_str()))
+        Ok(CallProjection {
+            written_param_tys,
+            return_ty,
+            declared_return_ty,
+            function_generics: generics.cloned(),
+            explicit_args: self.target.explicit_args().to_vec(),
+        })
     }
 
     /// Combine receiver, shadow, and explicit generic substitutions.
