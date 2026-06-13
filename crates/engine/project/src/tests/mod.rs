@@ -1453,7 +1453,7 @@ pub struct Api;
     );
 
     assert!(fixture.package_cache_artifact_exists("dep"));
-    fixture.remove_cache_namespace();
+    fixture.remove_package_cache_artifacts();
     assert!(!fixture.package_cache_artifact_exists("dep"));
 
     let error = fixture.workspace_symbols_error("Api");
@@ -1670,7 +1670,7 @@ pub struct Api;
         PackageResidencyPolicy::WorkspaceResident,
     );
 
-    fixture.remove_cache_namespace();
+    fixture.remove_package_cache_artifacts();
 
     fixture.check_save(
         r#"

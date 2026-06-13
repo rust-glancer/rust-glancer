@@ -195,12 +195,16 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
     let cargo_metadata_config = state.cargo_metadata_config.clone();
     let body_ir_policy = state.body_ir_policy;
     let package_residency_policy = state.package_residency_policy;
-    let cache_store = state.cache_store.clone();
+    let cache_instance = state.cache_instance.clone();
     let memory_hooks = Arc::clone(&state.memory_hooks);
     let mut profiler = BuildProfiler::disabled();
-    let mut rebuilt = build::build_resident_state(
+
+    // Keep recovery in the original cache namespace. The environment that selected the target
+    // directory may have changed since the project was opened.
+    let rebuilt = build::build_resident_state(
         workspace,
         cargo_metadata_config,
+        cache_instance,
         body_ir_policy,
         package_residency_policy,
         StartupCacheLoad::Disabled,
@@ -210,9 +214,6 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
     )
     .context("while attempting to rebuild resident analysis project")?;
 
-    // Keep the original cache namespace. Recovery can happen while the process is alive, and the
-    // environment that selected the target directory may have changed since initialization.
-    rebuilt.cache_store = cache_store;
     *state = rebuilt;
 
     Ok(())

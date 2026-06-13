@@ -15,6 +15,7 @@ mod cached;
 mod codec;
 mod fingerprint;
 mod header;
+mod instance;
 mod payload;
 mod plan;
 mod store;
@@ -32,7 +33,7 @@ pub use self::{
     store::PackageCacheStore,
 };
 
-pub(crate) use self::store::PreparedPackageCacheWriter;
+pub(crate) use self::{instance::PackageCacheInstance, store::PreparedPackageCacheWriter};
 
 #[cfg(test)]
 mod tests;
