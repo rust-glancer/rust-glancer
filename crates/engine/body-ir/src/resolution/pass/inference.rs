@@ -5,17 +5,20 @@
 //! Body IR.
 
 use rg_ir_model::{
-    BindingId, ExprId, PatId, ScopeId, StmtId,
+    BindingId, EnumVariantRef, ExprId, PatId, ScopeId, StmtId,
     identity::DeclarationRef,
-    items::{FieldKey, TypeRef},
+    items::{FieldKey, FieldList, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::Ty;
+use rg_ty::{NominalTy, Ty, inference::InferTy};
 
 use crate::{
     ir::{ExprKind, ExprWrapperKind, PatKind, RecordExprField, StmtKind, resolved::BodyResolution},
-    resolution::{TypeRefUseSite, infer::BodyCallInference},
+    resolution::{
+        TypeRefUseSite,
+        infer::{BodyCallInference, InferTypeRefProjector, InferTypeSubst},
+    },
 };
 
 use super::body::BodyResolutionPass;
@@ -57,17 +60,28 @@ where
 
     /// Instantiate inference-only facts that ordinary `Ty` cannot represent.
     fn instantiate_inference_facts(&mut self) -> Result<(), PackageStoreError> {
-        self.instantiate_generic_call_return_facts()?;
+        self.instantiate_generic_call_result_facts()?;
         Ok(())
     }
 
-    /// Turn generic call returns such as `Vec<T>` into `Vec<?T>`.
-    fn instantiate_generic_call_return_facts(&mut self) -> Result<(), PackageStoreError> {
+    /// Turn generic call results such as `Vec<T>` or `Option<T>` into `Vec<?T>` / `Option<?T>`.
+    fn instantiate_generic_call_result_facts(&mut self) -> Result<(), PackageStoreError> {
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
             let kind = self.pass.body.expr_unchecked(expr).kind.clone();
             match kind {
-                ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => {
+                ExprKind::Call { callee, args } => {
+                    let context = self.pass.providers.context(self.pass.body);
+                    BodyCallInference::new(context).instantiate_return_fact(
+                        &mut self.pass.inference,
+                        expr,
+                        &args,
+                    )?;
+                    if let Some(callee) = callee {
+                        self.instantiate_enum_variant_call_result_fact(expr, callee);
+                    }
+                }
+                ExprKind::MethodCall { args, .. } => {
                     let context = self.pass.providers.context(self.pass.body);
                     BodyCallInference::new(context).instantiate_return_fact(
                         &mut self.pass.inference,
@@ -80,6 +94,22 @@ where
         }
 
         Ok(())
+    }
+
+    /// Turn enum variant constructor results such as `Option<unknown>` into `Option<?T>`.
+    fn instantiate_enum_variant_call_result_fact(&mut self, call: ExprId, callee: ExprId) {
+        let BodyResolution::Declarations(declarations) = self.pass.body.expr_resolution(callee)
+        else {
+            return;
+        };
+        let [DeclarationRef::EnumVariant(_)] = declarations.as_slice() else {
+            return;
+        };
+
+        let ty = self.pass.body.expr_ty_unchecked(call).clone();
+        self.pass
+            .inference
+            .instantiate_expr_nested_unknown_ty(call, &ty);
     }
 
     /// Rebuild copied expression facts after child slots may have gained `?T`.
@@ -376,9 +406,78 @@ where
             };
 
             self.constrain_expr_with_expected(arg, &expected_ty);
+            self.constrain_enum_variant_payload_infer_ty(
+                call,
+                arg,
+                &enum_ty,
+                variant_ref,
+                index,
+                &expected_ty,
+            )?;
         }
 
         Ok(())
+    }
+
+    /// Use payload args to solve enum generics carried by the constructor result.
+    ///
+    /// Example: `Option::Some(user)` links variant field `T` to result `Option<?T>`.
+    fn constrain_enum_variant_payload_infer_ty(
+        &mut self,
+        call: ExprId,
+        arg: ExprId,
+        enum_ty: &NominalTy,
+        variant_ref: EnumVariantRef,
+        field_index: usize,
+        resolved_field_ty: &Ty,
+    ) -> Result<(), PackageStoreError> {
+        let item_query = self.pass.context().item_query();
+        let Some(variant_data) = item_query.enum_variant_data(variant_ref)? else {
+            return Ok(());
+        };
+        let Some(field_ty) =
+            Self::tuple_variant_field_ty_ref(&variant_data.variant.fields, field_index).cloned()
+        else {
+            return Ok(());
+        };
+        let Some(generics) = item_query
+            .generic_params_for_type_def(enum_ty.def)?
+            .cloned()
+        else {
+            return Ok(());
+        };
+
+        let enum_infer_ty = self.pass.inference.expr_ty(call);
+        let infer_enum_args = match enum_infer_ty {
+            InferTy::Nominal(infer_enum_ty) | InferTy::SelfTy(infer_enum_ty)
+                if infer_enum_ty.def == enum_ty.def =>
+            {
+                infer_enum_ty.args
+            }
+            _ => return Ok(()),
+        };
+
+        let mut subst = InferTypeSubst::new();
+        subst.bind_type_params_from_infer_args(
+            &mut self.pass.inference,
+            &generics,
+            &infer_enum_args,
+        );
+
+        let expected_ty =
+            InferTypeRefProjector::new(&subst).ty_from_type_ref(&field_ty, resolved_field_ty);
+        self.pass
+            .inference
+            .constrain_expr_infer_ty(arg, &expected_ty);
+        Ok(())
+    }
+
+    /// Find a variant field type syntax by the call-site payload position.
+    fn tuple_variant_field_ty_ref(fields: &FieldList, index: usize) -> Option<&TypeRef> {
+        match fields {
+            FieldList::Tuple(fields) => fields.get(index).map(|field| &field.ty),
+            FieldList::Named(_) | FieldList::Unit => None,
+        }
     }
 
     /// Use record type and field key to push declared field types into initializers.

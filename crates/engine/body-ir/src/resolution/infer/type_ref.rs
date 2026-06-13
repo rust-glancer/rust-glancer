@@ -99,6 +99,27 @@ impl InferTypeSubst {
         }
     }
 
+    /// Bind declared type params from inferred args, e.g. `Option<?T>` gives `T = ?T`.
+    pub(crate) fn bind_type_params_from_infer_args(
+        &mut self,
+        inference: &mut BodyInferenceCtx,
+        generics: &GenericParams,
+        args: &[InferGenericArg],
+    ) {
+        let type_args = args.iter().filter_map(|arg| match arg {
+            InferGenericArg::Type(ty) => Some(ty.as_ref().clone()),
+            InferGenericArg::Lifetime(_)
+            | InferGenericArg::Const(_)
+            | InferGenericArg::FnTraitArgs { .. }
+            | InferGenericArg::AssocType { .. }
+            | InferGenericArg::Unsupported(_) => None,
+        });
+
+        for (param, ty) in generics.types.iter().zip(type_args) {
+            self.push(inference, param.name.clone(), ty);
+        }
+    }
+
     /// Return the visible binding for `T`, honoring later shadowing.
     fn get(&self, name: &str) -> Option<&InferTy> {
         self.0

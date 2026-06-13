@@ -864,6 +864,13 @@ pub fn unsuffixed_integer() {
     values.push(10);
     values$type_i32_read$;
 }
+
+pub fn conflicting() {
+    let mut values = Vec::new()$type_conflict_initializer$;
+    values.push(10u64);
+    values.push(false$type_conflict_arg$);
+    values$type_conflict_read$;
+}
 "#,
         &[
             AnalysisQuery::ty("user receiver initializer", "type_user_initializer"),
@@ -872,6 +879,12 @@ pub fn unsuffixed_integer() {
             AnalysisQuery::ty("u64 receiver read", "type_u64_read"),
             AnalysisQuery::ty("i32 receiver initializer", "type_i32_initializer"),
             AnalysisQuery::ty("i32 receiver read", "type_i32_read"),
+            AnalysisQuery::ty(
+                "conflicting receiver initializer",
+                "type_conflict_initializer",
+            ),
+            AnalysisQuery::ty("conflicting receiver argument", "type_conflict_arg"),
+            AnalysisQuery::ty("conflicting receiver read", "type_conflict_read"),
         ],
         expect![[r#"
             user receiver initializer
@@ -891,6 +904,15 @@ pub fn unsuffixed_integer() {
 
             i32 receiver read
             - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<i32>
+
+            conflicting receiver initializer
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<<unknown>>
+
+            conflicting receiver argument
+            - bool
+
+            conflicting receiver read
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<<unknown>>
         "#]],
     );
 }
@@ -945,11 +967,22 @@ pub struct Pair {
     nested: (u64, f32),
 }
 
-pub fn use_it() {
+pub struct User;
+
+pub struct UserPair {
+    left: User,
+}
+
+pub fn id<T>(value: T) -> T {}
+
+pub fn use_it(user: User) {
     let _pair = Pair {
         left: 1$type_left$,
         right: 1.0$type_right$,
         nested: (1$type_nested_int$, 1.0$type_nested_float$)$type_nested$,
+    };
+    let _user_pair = UserPair {
+        left: id(user)$type_user_field$,
     };
 }
 "#,
@@ -959,6 +992,7 @@ pub fn use_it() {
             AnalysisQuery::ty("record tuple integer field", "type_nested_int"),
             AnalysisQuery::ty("record tuple float field", "type_nested_float"),
             AnalysisQuery::ty("record tuple field initializer", "type_nested"),
+            AnalysisQuery::ty("record generic call field initializer", "type_user_field"),
         ],
         expect![[r#"
             record integer field initializer
@@ -975,6 +1009,52 @@ pub fn use_it() {
 
             record tuple field initializer
             - (u64, f32)
+
+            record generic call field initializer
+            - nominal struct analysis_record_field_expected_type_inference[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
+fn uses_enum_variant_payload_as_generic_evidence() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_enum_variant_generic_payload_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Error;
+
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+pub fn use_it(user: User, error: Error) {
+    let maybe = Option::Some(user)$type_maybe$;
+    let result = Result::Ok(error)$type_result$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("option generic variant result", "type_maybe"),
+            AnalysisQuery::ty("result generic variant result", "type_result"),
+        ],
+        expect![[r#"
+            option generic variant result
+            - nominal enum analysis_enum_variant_generic_payload_inference[lib]::crate::Option<nominal struct analysis_enum_variant_generic_payload_inference[lib]::crate::User>
+
+            result generic variant result
+            - nominal enum analysis_enum_variant_generic_payload_inference[lib]::crate::Result<nominal struct analysis_enum_variant_generic_payload_inference[lib]::crate::Error, <unknown>>
         "#]],
     );
 }
