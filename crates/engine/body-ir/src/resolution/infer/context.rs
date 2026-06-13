@@ -26,6 +26,10 @@ impl BodyInferenceCtx {
         self.expr_tys[expr.0] = InferTy::from_ty(ty);
     }
 
+    pub(crate) fn expr_ty(&self, expr: ExprId) -> InferTy {
+        self.expr_tys[expr.0].clone()
+    }
+
     /// Instantiate function type params inside a projected call return.
     pub(crate) fn instantiate_expr_generic_return_ty(
         &mut self,
@@ -179,6 +183,15 @@ impl BodyInferenceCtx {
             &self.expr_tys[expr.0].clone(),
             &InferTy::from_ty(expected_ty),
         )
+    }
+
+    pub(crate) fn constrain_expr_infer_ty(&mut self, expr: ExprId, expected_ty: &InferTy) -> bool {
+        self.table
+            .unify(&self.expr_tys[expr.0].clone(), expected_ty)
+    }
+
+    pub(crate) fn constrain_infer_tys(&mut self, lhs: &InferTy, rhs: &InferTy) -> bool {
+        self.table.unify(lhs, rhs)
     }
 
     pub(crate) fn finalize_expr_ty(&self, expr: ExprId) -> Ty {

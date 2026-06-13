@@ -5,13 +5,13 @@
 //! Body IR.
 
 use rg_ir_model::{
-    BindingId, ExprId, PatId, ScopeId, StmtId,
+    BindingId, ExprId, ImplRef, ItemOwner, PatId, ScopeId, StmtId,
     identity::DeclarationRef,
-    items::{FieldKey, TypeRef},
+    items::{FieldKey, GenericArg as ItemGenericArg, GenericParams, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::Ty;
+use rg_ty::{Ty, inference::InferTy};
 
 use crate::{
     ir::{ExprKind, ExprWrapperKind, PatKind, RecordExprField, StmtKind, resolved::BodyResolution},
@@ -19,6 +19,7 @@ use crate::{
 };
 
 use super::body::BodyResolutionPass;
+use crate::resolution::infer::{InferTypeRefProjector, InferTypeSubst};
 
 /// Collects body-local inference constraints that need the fixed-point facts to be available.
 ///
@@ -55,13 +56,13 @@ where
         Ok(())
     }
 
-    /// Instantiate all inference facts that ordinary `Ty` cannot represent.
+    /// Instantiate inference-only facts that ordinary `Ty` cannot represent.
     fn instantiate_inference_facts(&mut self) -> Result<(), PackageStoreError> {
         self.instantiate_generic_call_return_facts()?;
         Ok(())
     }
 
-    /// Instantiate generic call returns such as `Vec<T>` as `Vec<?T>`.
+    /// Turn generic call returns such as `Vec<T>` into `Vec<?T>`.
     fn instantiate_generic_call_return_facts(&mut self) -> Result<(), PackageStoreError> {
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
@@ -77,7 +78,7 @@ where
         Ok(())
     }
 
-    /// Refresh expression facts that copied child facts before instantiation.
+    /// Rebuild copied expression facts after child slots may have gained `?T`.
     fn refresh_inference_dependent_expr_facts(&mut self) {
         self.refresh_shape_expr_facts();
         self.refresh_binding_flow_facts();
@@ -85,7 +86,7 @@ where
         self.refresh_binding_flow_facts();
     }
 
-    /// Refresh simple binding initializers and local path reads until they agree.
+    /// Make `let second = first;` chains share one inference slot graph.
     fn refresh_binding_flow_facts(&mut self) {
         // Binding reads and binding initializers can form short chains such as
         // `let second = first;`. Iterate over this narrow graph so every slot shares the same
@@ -101,7 +102,7 @@ where
         }
     }
 
-    /// Link unannotated `let name = expr` bindings to the initializer inference slot.
+    /// Visit every unannotated `let name = expr` that can carry initializer evidence.
     fn link_simple_let_binding_initializers(&mut self) -> bool {
         let mut changed = false;
 
@@ -139,6 +140,7 @@ where
         changed
     }
 
+    /// Link one plain binding to its initializer, e.g. `let values = Vec::new()`.
     fn link_simple_let_binding_initializer(&mut self, pat: PatId, initializer: ExprId) -> bool {
         let Some(binding) = self.simple_binding_pat(pat) else {
             return false;
@@ -149,7 +151,7 @@ where
             .set_binding_from_expr(binding, initializer)
     }
 
-    /// Refresh path expressions that read local bindings after binding slots changed.
+    /// Copy binding slots back into local reads such as `values` or `alias`.
     fn refresh_binding_path_expr_facts(&mut self) -> bool {
         let mut changed = false;
 
@@ -163,7 +165,7 @@ where
         changed
     }
 
-    /// Refresh expression facts that depend on child inference slots.
+    /// Rebuild shapes such as `(?T,)`, `[?T; N]`, and `&?T` from child slots.
     fn refresh_shape_expr_facts(&mut self) {
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
@@ -218,7 +220,7 @@ where
         Some(*binding)
     }
 
-    /// Instantiate one generic call return when it still contains unknown type params.
+    /// Instantiate one call return, e.g. `Vec::new()` from `Vec<unknown>` to `Vec<?T>`.
     fn instantiate_generic_call_return_fact(
         &mut self,
         call: ExprId,
@@ -268,6 +270,9 @@ where
         Ok(())
     }
 
+    /// Use one selected call target to push projected parameter types into written args.
+    ///
+    /// Example: `take_user(value)` with `fn take_user(User)` makes `value` expect `User`.
     fn constrain_call_target_argument_expected_types(
         &mut self,
         call: ExprId,
@@ -293,7 +298,7 @@ where
         Ok(())
     }
 
-    /// Walks direct expected-type sources and lets expression hooks push them inward.
+    /// Visit all places that can provide expected types to already-created inference slots.
     fn constrain_expected_types(&mut self) -> Result<(), PackageStoreError> {
         for statement_idx in 0..self.pass.body.statements().len() {
             self.constrain_statement_expected_types(StmtId(statement_idx))?;
@@ -306,6 +311,7 @@ where
         Ok(())
     }
 
+    /// Route statement-level evidence, currently `let name: T = initializer`.
     fn constrain_statement_expected_types(
         &mut self,
         statement: StmtId,
@@ -325,7 +331,7 @@ where
         }
     }
 
-    /// Constrains an initializer expression from its explicit statement annotation.
+    /// Constrain an initializer from its explicit statement annotation.
     ///
     /// This intentionally only links the annotation to the initializer root expression. Nested
     /// expected-type propagation belongs in expression kind-specific rules.
@@ -345,6 +351,7 @@ where
         Ok(())
     }
 
+    /// Route expression-level evidence from calls, method calls, and record fields.
     fn constrain_expr_expected_types(&mut self, expr: ExprId) -> Result<(), PackageStoreError> {
         let kind = self.pass.body.expr_unchecked(expr).kind.clone();
         match kind {
@@ -352,6 +359,11 @@ where
                 callee: Some(callee),
                 args,
             } => self.constrain_call_argument_expected_types(expr, callee, args),
+            ExprKind::MethodCall {
+                receiver: Some(receiver),
+                args,
+                ..
+            } => self.constrain_method_call_argument_expected_types(expr, receiver, args),
             ExprKind::MethodCall { args, .. } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)
             }
@@ -362,6 +374,7 @@ where
         }
     }
 
+    /// Ordinary calls use target params, then enum constructors add payload field evidence.
     fn constrain_call_argument_expected_types(
         &mut self,
         call: ExprId,
@@ -372,6 +385,160 @@ where
         self.constrain_enum_variant_payload_expected_types(call, callee, args)
     }
 
+    /// Method calls use ordinary params plus receiver-carried generic evidence.
+    fn constrain_method_call_argument_expected_types(
+        &mut self,
+        method_call: ExprId,
+        receiver: ExprId,
+        args: Vec<ExprId>,
+    ) -> Result<(), PackageStoreError> {
+        self.constrain_call_target_argument_expected_types(method_call, &args)?;
+        self.constrain_receiver_generic_argument_expected_types(method_call, receiver, &args)
+    }
+
+    /// Use method args to solve receiver vars.
+    ///
+    /// Example: `values: Vec<?T>; values.push(user)` gives `push(value: T)` evidence `?T = User`.
+    fn constrain_receiver_generic_argument_expected_types(
+        &mut self,
+        method_call: ExprId,
+        receiver: ExprId,
+        args: &[ExprId],
+    ) -> Result<(), PackageStoreError> {
+        let target = {
+            let calls = self.pass.context().calls();
+            let Some(target) = calls.target(method_call)? else {
+                return Ok(());
+            };
+            target
+        };
+        let Some(function_data) = self
+            .pass
+            .context()
+            .item_query()
+            .function_data(target.function())?
+            .cloned()
+        else {
+            return Ok(());
+        };
+        if !function_data.has_self_receiver() {
+            return Ok(());
+        }
+
+        let projection = {
+            let calls = self.pass.context().calls();
+            calls.signature(&target).project(args)?
+        };
+        if projection.written_param_tys().len() != args.len() {
+            return Ok(());
+        }
+
+        let mut subst =
+            self.receiver_infer_subst(target.function().origin, &function_data.owner, receiver)?;
+        self.apply_function_generic_shadows(
+            &mut subst,
+            function_data.signature.generics(),
+            target.explicit_args(),
+            self.pass.body.expr_unchecked(method_call).scope,
+        )?;
+
+        let written_params = function_data.signature.params().iter().skip(1);
+        let projector = InferTypeRefProjector::new(&subst);
+        for ((arg, param), resolved_ty) in args
+            .iter()
+            .zip(written_params)
+            .zip(projection.written_param_tys())
+        {
+            let Some(param_ty) = &param.ty else {
+                continue;
+            };
+            let expected_ty = projector.ty_from_type_ref(param_ty, resolved_ty);
+            self.pass
+                .inference
+                .constrain_expr_infer_ty(*arg, &expected_ty);
+        }
+
+        Ok(())
+    }
+
+    /// Bind impl generics from the selected receiver slot: `impl<T> Vec<T>` + `Vec<?T>`.
+    fn receiver_infer_subst(
+        &mut self,
+        origin: rg_ir_model::DefMapRef,
+        owner: &ItemOwner,
+        receiver: ExprId,
+    ) -> Result<InferTypeSubst, PackageStoreError> {
+        let mut subst = InferTypeSubst::new();
+        let ItemOwner::Impl(impl_id) = owner else {
+            return Ok(subst);
+        };
+
+        let impl_ref = ImplRef {
+            origin,
+            id: *impl_id,
+        };
+        let Some(impl_data) = self
+            .pass
+            .context()
+            .item_query()
+            .impl_data(impl_ref)?
+            .cloned()
+        else {
+            return Ok(subst);
+        };
+
+        let receiver_ty = self.pass.inference.expr_ty(receiver);
+        subst.bind_type_ref(
+            &mut self.pass.inference,
+            &impl_data.self_ty,
+            &receiver_ty,
+            &impl_data.generics,
+        );
+
+        Ok(subst)
+    }
+
+    /// Function generics shadow impl generics; `::<User>` then fills function `T`.
+    fn apply_function_generic_shadows(
+        &mut self,
+        subst: &mut InferTypeSubst,
+        generics: Option<&GenericParams>,
+        explicit_args: &[ItemGenericArg],
+        scope: ScopeId,
+    ) -> Result<(), PackageStoreError> {
+        let Some(generics) = generics else {
+            return Ok(());
+        };
+
+        for param in &generics.types {
+            subst.push(
+                &mut self.pass.inference,
+                param.name.clone(),
+                InferTy::Unknown,
+            );
+        }
+
+        let explicit_subst = self.pass.context().generics().subst_for_explicit_args(
+            generics,
+            explicit_args,
+            TypeRefUseSite::Scope(scope),
+        )?;
+        for param in &generics.types {
+            if let Some(ty) = explicit_subst.type_param(param.name.as_str()) {
+                subst.push(
+                    &mut self.pass.inference,
+                    param.name.clone(),
+                    InferTy::from_ty(&ty),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Use known enum call result to push payload field types into tuple-variant args.
+    ///
+    /// Example: `Option::Some(value)` with expected `Option<User>` makes `value` expect `User`.
     fn constrain_enum_variant_payload_expected_types(
         &mut self,
         call: ExprId,
@@ -411,6 +578,7 @@ where
         Ok(())
     }
 
+    /// Use record type and field key to push declared field types into initializers.
     fn constrain_record_field_initializer_expected_types(
         &mut self,
         record: ExprId,
@@ -443,6 +611,7 @@ where
         Ok(())
     }
 
+    /// Use the declared function return type for the block tail and explicit returns.
     fn constrain_function_return_expected_types(&mut self) -> Result<(), PackageStoreError> {
         let Some(expected_ty) = self.explicit_function_return_ty()? else {
             return Ok(());
@@ -455,6 +624,7 @@ where
         Ok(())
     }
 
+    /// Resolve `fn f() -> T` for the body owner, if such annotation exists.
     fn explicit_function_return_ty(&self) -> Result<Option<Ty>, PackageStoreError> {
         let Some(function) = self.pass.body.function_owner() else {
             return Ok(None);
@@ -463,6 +633,7 @@ where
         self.pass.context().functions().declared_return_ty(function)
     }
 
+    /// Constrain the root block tail from the function return annotation.
     fn constrain_root_tail_with_expected(&mut self, expected_ty: &Ty) {
         // `return expr` has type `!`; the wrapped expression is constrained separately below.
         if let ExprKind::Block {
@@ -479,6 +650,7 @@ where
         }
     }
 
+    /// Constrain every `return expr` inner expression from the function return annotation.
     fn constrain_explicit_returns_with_expected(&mut self, expected_ty: &Ty) {
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
@@ -494,6 +666,7 @@ where
         }
     }
 
+    /// Return expressions have their own wrapper shape and are constrained separately.
     fn is_explicit_return_expr(&self, expr: ExprId) -> bool {
         matches!(
             self.pass.body.expr_unchecked(expr).kind,
@@ -504,7 +677,7 @@ where
         )
     }
 
-    /// Applies an expected type to one expression and descends through shapes that preserve it.
+    /// Apply an expected type and recurse through transparent shapes like tuples and refs.
     fn constrain_expr_with_expected(&mut self, expr: ExprId, expected_ty: &Ty) {
         if matches!(expected_ty, Ty::Unknown) {
             return;
@@ -563,12 +736,14 @@ where
         }
     }
 
+    /// Accept missing array length, otherwise match it against element count.
     fn array_len_matches_count(expected_len: &Option<String>, element_count: usize) -> bool {
         expected_len
             .as_deref()
             .is_none_or(|len| len == element_count.to_string())
     }
 
+    /// Accept missing array length, otherwise match it against repeat syntax text.
     fn array_len_matches_text(expected_len: &Option<String>, len_text: Option<&str>) -> bool {
         expected_len
             .as_deref()

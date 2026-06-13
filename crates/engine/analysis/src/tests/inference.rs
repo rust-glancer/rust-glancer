@@ -682,6 +682,76 @@ pub fn use_it() {
 }
 
 #[test]
+fn constrains_receiver_generic_variables_from_method_arguments() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_method_receiver_generic_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub struct Vec<T> {
+    value: T,
+}
+
+impl<T> Vec<T> {
+    pub fn new() -> Self {}
+    pub fn push(&mut self, value: T) {}
+}
+
+pub fn user_value(user: User) {
+    let mut values = Vec::new()$type_user_initializer$;
+    values.push(user);
+    values$type_user_read$;
+}
+
+pub fn suffixed_integer() {
+    let mut values = Vec::new()$type_u64_initializer$;
+    values.push(10u64);
+    values$type_u64_read$;
+}
+
+pub fn unsuffixed_integer() {
+    let mut values = Vec::new()$type_i32_initializer$;
+    values.push(10);
+    values$type_i32_read$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("user receiver initializer", "type_user_initializer"),
+            AnalysisQuery::ty("user receiver read", "type_user_read"),
+            AnalysisQuery::ty("u64 receiver initializer", "type_u64_initializer"),
+            AnalysisQuery::ty("u64 receiver read", "type_u64_read"),
+            AnalysisQuery::ty("i32 receiver initializer", "type_i32_initializer"),
+            AnalysisQuery::ty("i32 receiver read", "type_i32_read"),
+        ],
+        expect![[r#"
+            user receiver initializer
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User>
+
+            user receiver read
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User>
+
+            u64 receiver initializer
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<u64>
+
+            u64 receiver read
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<u64>
+
+            i32 receiver initializer
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<i32>
+
+            i32 receiver read
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<i32>
+        "#]],
+    );
+}
+
+#[test]
 fn applies_explicit_enum_prefix_generics_to_payload_expected_types() {
     check_analysis_queries(
         r#"
