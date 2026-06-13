@@ -562,6 +562,73 @@ pub fn use_it(builder: Builder) {
 }
 
 #[test]
+fn treats_explicit_call_wildcard_generics_as_inference_variables() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_explicit_call_wildcard_generic_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub struct Vec<T> {
+    value: T,
+}
+
+impl<T> Vec<T> {
+    pub fn push(&mut self, value: T) {}
+}
+
+pub fn make<T>() -> T {}
+
+pub fn use_it(user: User) {
+    let concrete = make::<Vec<User>>()$type_concrete$;
+    let direct: User = make::<_>()$type_direct$;
+    let annotated: Vec<User> = make::<Vec<_>>()$type_annotated$;
+    let mut later = make::<Vec<_>>()$type_later_initializer$;
+    later.push(user);
+    later$type_later_read$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("explicit concrete generic arg", "type_concrete"),
+            AnalysisQuery::ty(
+                "explicit root wildcard constrained by annotation",
+                "type_direct",
+            ),
+            AnalysisQuery::ty(
+                "explicit wildcard constrained by annotation",
+                "type_annotated",
+            ),
+            AnalysisQuery::ty("explicit wildcard initializer", "type_later_initializer"),
+            AnalysisQuery::ty(
+                "explicit wildcard read after method evidence",
+                "type_later_read",
+            ),
+        ],
+        expect![[r#"
+            explicit concrete generic arg
+            - nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::Vec<nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User>
+
+            explicit root wildcard constrained by annotation
+            - nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User
+
+            explicit wildcard constrained by annotation
+            - nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::Vec<nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User>
+
+            explicit wildcard initializer
+            - nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::Vec<nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User>
+
+            explicit wildcard read after method evidence
+            - nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::Vec<nominal struct analysis_explicit_call_wildcard_generic_inference[lib]::crate::User>
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_associated_function_prefix_generics() {
     check_analysis_queries(
         r#"

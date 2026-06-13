@@ -7,7 +7,10 @@ mod instantiate;
 mod model;
 mod table;
 
-pub use instantiate::{GenericReturnInstantiationBuilder, UnknownTypeInstantiationBuilder};
+pub use instantiate::{
+    ExplicitTypeArgInstantiationBuilder, GenericReturnInstantiationBuilder,
+    UnknownTypeInstantiationBuilder,
+};
 pub use model::{InferGenericArg, InferNominalTy, InferOpaqueTraitBound, InferTy};
 pub use table::{InferVarId, InferenceTable};
 

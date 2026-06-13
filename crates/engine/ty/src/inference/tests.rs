@@ -1,12 +1,15 @@
 use rg_ir_model::{
     DefMapRef, PackageSlot, StructId, TargetId, TargetRef, TypeDefId, TypeDefRef,
-    items::{FloatTy, SignedIntTy, UnsignedIntTy},
+    items::{FloatTy, SignedIntTy, TypeRef, UnsignedIntTy},
 };
 
 use super::{InferTy, InferenceTable};
 use crate::{
     GenericArg, NominalTy, PrimitiveTy, Ty,
-    inference::{InferGenericArg, InferNominalTy, UnknownTypeInstantiationBuilder},
+    inference::{
+        ExplicitTypeArgInstantiationBuilder, InferGenericArg, InferNominalTy,
+        UnknownTypeInstantiationBuilder,
+    },
 };
 
 fn type_def(index: usize) -> TypeDefRef {
@@ -182,6 +185,52 @@ fn leaves_root_unknown_uninstantiated() {
 
     assert_eq!(builder.ty_from_ty(&Ty::Unknown), InferTy::Unknown);
     assert!(!builder.used_type_vars());
+}
+
+#[test]
+fn explicit_type_arg_builder_instantiates_root_infer() {
+    let mut table = InferenceTable::new();
+    let inferred = {
+        let mut builder = ExplicitTypeArgInstantiationBuilder::new(&mut table);
+        let inferred = builder.ty_from_arg(&TypeRef::Infer, &Ty::Unknown);
+        assert!(builder.used_type_vars());
+        inferred
+    };
+
+    assert!(table.unify(&inferred, &InferTy::from_ty(&user_ty())));
+
+    assert_eq!(table.finalize(&inferred), user_ty());
+}
+
+#[test]
+fn explicit_type_arg_builder_instantiates_nested_infer() {
+    let mut table = InferenceTable::new();
+    let inferred = {
+        let mut builder = ExplicitTypeArgInstantiationBuilder::new(&mut table);
+        let inferred = builder.ty_from_arg(
+            &TypeRef::Tuple(vec![TypeRef::Infer]),
+            &Ty::Tuple(vec![Ty::Unknown]),
+        );
+        assert!(builder.used_type_vars());
+        inferred
+    };
+
+    assert!(table.unify(&inferred, &InferTy::from_ty(&Ty::Tuple(vec![user_ty()]))));
+
+    assert_eq!(table.finalize(&inferred), Ty::Tuple(vec![user_ty()]));
+}
+
+#[test]
+fn explicit_type_arg_builder_preserves_concrete_args() {
+    let mut table = InferenceTable::new();
+    let mut builder = ExplicitTypeArgInstantiationBuilder::new(&mut table);
+    let inferred = builder.ty_from_arg(
+        &TypeRef::Tuple(vec![TypeRef::Unit]),
+        &Ty::Tuple(vec![Ty::Unit]),
+    );
+
+    assert!(!builder.used_type_vars());
+    assert_eq!(table.finalize(&inferred), Ty::Tuple(vec![Ty::Unit]));
 }
 
 #[test]

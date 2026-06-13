@@ -3,7 +3,8 @@ use rg_ir_model::{BindingId, ExprId, ExprWrapperKind};
 use rg_ty::{
     Ty,
     inference::{
-        GenericReturnInstantiationBuilder, InferTy, InferenceTable, UnknownTypeInstantiationBuilder,
+        ExplicitTypeArgInstantiationBuilder, GenericReturnInstantiationBuilder, InferTy,
+        InferenceTable, UnknownTypeInstantiationBuilder,
     },
 };
 
@@ -24,6 +25,10 @@ impl BodyInferenceCtx {
 
     pub(crate) fn set_expr_ty(&mut self, expr: ExprId, ty: &Ty) {
         self.expr_tys[expr.0] = InferTy::from_ty(ty);
+    }
+
+    pub(crate) fn set_expr_infer_ty(&mut self, expr: ExprId, ty: InferTy) {
+        self.expr_tys[expr.0] = ty;
     }
 
     pub(crate) fn expr_ty(&self, expr: ExprId) -> InferTy {
@@ -48,6 +53,18 @@ impl BodyInferenceCtx {
             self.expr_tys[expr.0] = infer_ty;
         }
         used_vars
+    }
+
+    /// Instantiate explicit `_` slots inside a type arg such as `Vec<_>`.
+    pub(crate) fn instantiate_explicit_type_arg_ty(
+        &mut self,
+        arg_ty: &TypeRef,
+        resolved_ty: &Ty,
+    ) -> (InferTy, bool) {
+        let mut builder = ExplicitTypeArgInstantiationBuilder::new(&mut self.table);
+        let infer_ty = builder.ty_from_arg(arg_ty, resolved_ty);
+        let used_vars = builder.used_type_vars();
+        (infer_ty, used_vars)
     }
 
     /// Instantiate unknowns nested inside a selected call return shape.

@@ -5,7 +5,7 @@
 
 use rg_ir_model::{
     ExprId, ImplRef, ItemOwner, ScopeId,
-    items::{GenericArg as ItemGenericArg, GenericParams},
+    items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
@@ -50,6 +50,20 @@ where
         let projection = calls.signature(&target).project(args)?;
 
         let mut instantiated = false;
+        if !projection.explicit_args().is_empty()
+            && let Some(ret_ty) = projection.declared_return_ty()
+            && let Some(generics) = projection.function_generics()
+        {
+            instantiated = self.instantiate_explicit_type_arg_return_fact(
+                inference,
+                call,
+                ret_ty,
+                projection.return_ty(),
+                generics,
+                projection.explicit_args(),
+            )?;
+        }
+
         if projection.explicit_args().is_empty()
             && let Some(ret_ty) = projection.declared_return_ty()
             && let Some(generics) = projection.function_generics()
@@ -77,6 +91,49 @@ where
         }
 
         Ok(())
+    }
+
+    /// Instantiate explicit `_` args before projecting the call return.
+    fn instantiate_explicit_type_arg_return_fact(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        call: ExprId,
+        ret_ty: &TypeRef,
+        resolved_ret_ty: &Ty,
+        generics: &GenericParams,
+        explicit_args: &[ItemGenericArg],
+    ) -> Result<bool, PackageStoreError> {
+        let explicit_subst = self.context.generics().subst_for_explicit_args(
+            generics,
+            explicit_args,
+            TypeRefUseSite::Scope(self.context.body().expr_unchecked(call).scope),
+        )?;
+        let mut explicit_type_args = explicit_args.iter().filter_map(ItemGenericArg::type_ref);
+
+        let mut subst = InferTypeSubst::new();
+        let mut used_vars = false;
+        for param in &generics.types {
+            let Some(arg_ty) = explicit_type_args.next() else {
+                break;
+            };
+            let Some(resolved_ty) = explicit_subst.type_param(param.name.as_str()) else {
+                continue;
+            };
+
+            let (infer_ty, arg_used_vars) =
+                inference.instantiate_explicit_type_arg_ty(arg_ty, &resolved_ty);
+            used_vars |= arg_used_vars;
+            subst.push(inference, param.name.clone(), infer_ty);
+        }
+
+        if !used_vars {
+            return Ok(false);
+        }
+
+        let return_ty =
+            InferTypeRefProjector::new(&subst).ty_from_type_ref(ret_ty, resolved_ret_ty);
+        inference.set_expr_infer_ty(call, return_ty);
+        Ok(true)
     }
 
     /// Return expected types for written args from the unique selected call target.
