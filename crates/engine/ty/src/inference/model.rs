@@ -12,6 +12,11 @@ use crate::{GenericArg, NominalTy, OpaqueTraitBound, PrimitiveTy, RefMutability,
 /// `Ty` already supports, then finalize back to `Ty` once inference is done.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InferTy {
+    // Additions to `Ty`: to-be-inferred variables
+    Var(InferVarId),
+    IntegerVar(InferVarId),
+    FloatVar(InferVarId),
+    // Matches `Ty`
     Unit,
     Never,
     Primitive(PrimitiveTy),
@@ -31,9 +36,6 @@ pub enum InferTy {
     Syntax(Box<TypeRef>),
     Nominal(InferNominalTy),
     SelfTy(InferNominalTy),
-    Var(InferVarId),
-    IntegerVar(InferVarId),
-    FloatVar(InferVarId),
     Unknown,
 }
 
@@ -89,6 +91,27 @@ impl InferTy {
             InferVarKind::Type => Self::Var(id),
             InferVarKind::Integer => Self::IntegerVar(id),
             InferVarKind::Float => Self::FloatVar(id),
+        }
+    }
+
+    pub(super) fn contains_var(&self, needle: InferVarId) -> bool {
+        match self {
+            InferTy::Var(id) | InferTy::IntegerVar(id) | InferTy::FloatVar(id) => *id == needle,
+            InferTy::Tuple(fields) => fields.iter().any(|field| field.contains_var(needle)),
+            InferTy::Array { inner, .. }
+            | InferTy::Slice(inner)
+            | InferTy::Reference { inner, .. } => inner.contains_var(needle),
+            InferTy::Opaque { bounds } => bounds
+                .iter()
+                .any(|bound| bound.args.iter().any(|arg| arg.contains_var(needle))),
+            InferTy::Nominal(ty) | InferTy::SelfTy(ty) => {
+                ty.args.iter().any(|arg| arg.contains_var(needle))
+            }
+            InferTy::Unit
+            | InferTy::Never
+            | InferTy::Primitive(_)
+            | InferTy::Syntax(_)
+            | InferTy::Unknown => false,
         }
     }
 }
@@ -156,6 +179,21 @@ impl InferGenericArg {
                     .map(|ty| Box::new(InferTy::from_ty(ty.as_ref()))),
             },
             GenericArg::Unsupported(text) => Self::Unsupported(text.clone()),
+        }
+    }
+
+    pub(super) fn contains_var(&self, needle: InferVarId) -> bool {
+        match self {
+            InferGenericArg::Type(ty) => ty.contains_var(needle),
+            InferGenericArg::FnTraitArgs { params, ret } => {
+                params.iter().any(|param| param.contains_var(needle)) || ret.contains_var(needle)
+            }
+            InferGenericArg::AssocType { ty, .. } => {
+                ty.as_deref().is_some_and(|ty| ty.contains_var(needle))
+            }
+            InferGenericArg::Lifetime(_)
+            | InferGenericArg::Const(_)
+            | InferGenericArg::Unsupported(_) => false,
         }
     }
 }

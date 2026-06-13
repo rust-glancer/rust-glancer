@@ -250,13 +250,14 @@ impl InferenceTable {
 
         // Avoid recursive solutions such as `?T = Vec<?T>`. A variable equal to itself is fine,
         // but an actual cycle would make finalization order-dependent.
-        if self.ty_contains_var(evidence, id) {
-            return if matches!(evidence, InferTy::Var(var) | InferTy::IntegerVar(var) | InferTy::FloatVar(var) if *var == id)
+        if evidence.contains_var(id) {
+            let result = if matches!(evidence, InferTy::Var(var) | InferTy::IntegerVar(var) | InferTy::FloatVar(var) if *var == id)
             {
                 UnifyResult::compatible()
             } else {
                 self.mark_conflict(id)
             };
+            return result;
         }
 
         match self.slots[id.index()].value.clone() {
@@ -307,12 +308,14 @@ impl InferenceTable {
             InferVarKind::Integer => match evidence {
                 InferTy::Primitive(primitive) => primitive.is_integral(),
                 InferTy::IntegerVar(_) => true,
+                // If evidence is `Type`, it can later resolve to e.g. `u64`.
                 InferTy::Var(id) => self.slots[id.index()].kind == InferVarKind::Type,
                 _ => false,
             },
             InferVarKind::Float => match evidence {
                 InferTy::Primitive(primitive) => primitive.is_float(),
                 InferTy::FloatVar(_) => true,
+                // If evidence is `Type`, it can later resolve to e.g. `f64`.
                 InferTy::Var(id) => self.slots[id.index()].kind == InferVarKind::Type,
                 _ => false,
             },
@@ -406,55 +409,16 @@ impl InferenceTable {
         }
     }
 
-    fn ty_contains_var(&self, ty: &InferTy, needle: InferVarId) -> bool {
-        match ty {
-            InferTy::Var(id) | InferTy::IntegerVar(id) | InferTy::FloatVar(id) => *id == needle,
-            InferTy::Tuple(fields) => fields
-                .iter()
-                .any(|field| self.ty_contains_var(field, needle)),
-            InferTy::Array { inner, .. }
-            | InferTy::Slice(inner)
-            | InferTy::Reference { inner, .. } => self.ty_contains_var(inner, needle),
-            InferTy::Opaque { bounds } => bounds.iter().any(|bound| {
-                bound
-                    .args
-                    .iter()
-                    .any(|arg| self.generic_arg_contains_var(arg, needle))
-            }),
-            InferTy::Nominal(ty) | InferTy::SelfTy(ty) => ty
-                .args
-                .iter()
-                .any(|arg| self.generic_arg_contains_var(arg, needle)),
-            InferTy::Unit
-            | InferTy::Never
-            | InferTy::Primitive(_)
-            | InferTy::Syntax(_)
-            | InferTy::Unknown => false,
-        }
-    }
-
-    fn generic_arg_contains_var(&self, arg: &InferGenericArg, needle: InferVarId) -> bool {
-        match arg {
-            InferGenericArg::Type(ty) => self.ty_contains_var(ty, needle),
-            InferGenericArg::FnTraitArgs { params, ret } => {
-                params
-                    .iter()
-                    .any(|param| self.ty_contains_var(param, needle))
-                    || self.ty_contains_var(ret, needle)
-            }
-            InferGenericArg::AssocType { ty, .. } => ty
-                .as_deref()
-                .is_some_and(|ty| self.ty_contains_var(ty, needle)),
-            InferGenericArg::Lifetime(_)
-            | InferGenericArg::Const(_)
-            | InferGenericArg::Unsupported(_) => false,
-        }
-    }
-
     fn finalize_ty(&self, ty: &InferTy, active_vars: &mut Vec<InferVarId>) -> Ty {
         // Finalization is the only place inference variables become persisted `Ty` facts. Keep it
         // structural so partially solved containers retain the pieces we did learn.
         match ty {
+            // Variable is what can actually get finalized
+            InferTy::Var(id) => self.finalize_var(*id, InferVarKind::Type, active_vars),
+            InferTy::IntegerVar(id) => self.finalize_var(*id, InferVarKind::Integer, active_vars),
+            InferTy::FloatVar(id) => self.finalize_var(*id, InferVarKind::Float, active_vars),
+
+            // Everything else either stays the same or fills in the finalized variables
             InferTy::Unit => Ty::Unit,
             InferTy::Never => Ty::Never,
             InferTy::Primitive(primitive) => Ty::Primitive(*primitive),
@@ -480,9 +444,6 @@ impl InferenceTable {
             InferTy::Syntax(ty) => Ty::syntax(ty.as_ref().clone()),
             InferTy::Nominal(ty) => Ty::nominal(self.finalize_nominal_ty(ty, active_vars)),
             InferTy::SelfTy(ty) => Ty::self_ty(self.finalize_nominal_ty(ty, active_vars)),
-            InferTy::Var(id) => self.finalize_var(*id, InferVarKind::Type, active_vars),
-            InferTy::IntegerVar(id) => self.finalize_var(*id, InferVarKind::Integer, active_vars),
-            InferTy::FloatVar(id) => self.finalize_var(*id, InferVarKind::Float, active_vars),
             InferTy::Unknown => Ty::Unknown,
         }
     }
@@ -512,12 +473,12 @@ impl InferenceTable {
                 InferVarKind::Float => Ty::Primitive(PrimitiveTy::DEFAULT_FLOAT),
             },
             InferVarValue::Solved(ty) => {
-                // Numeric variables may only publish numeric primitives. If a bad link slipped
-                // through, finalization drops it rather than exposing a plausible wrong type.
                 active_vars.push(id);
                 let finalized = self.finalize_ty(ty, active_vars);
                 active_vars.pop();
 
+                // Numeric variables may only publish numeric primitives. If a bad link slipped
+                // through, finalization drops it rather than exposing a plausible wrong type.
                 match (kind, &finalized) {
                     (InferVarKind::Type, _) => finalized,
                     (InferVarKind::Integer, Ty::Primitive(primitive))
