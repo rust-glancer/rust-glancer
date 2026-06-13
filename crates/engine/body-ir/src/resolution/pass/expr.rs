@@ -4,7 +4,7 @@
 //! expressions. The parent pass still drives ordering and binding propagation.
 
 use rg_ir_model::{
-    BodyPath, DefMapRef, ExprId, Path, ScopeId, TypePathResolution,
+    BodyPath, DefMapRef, ExprId, Path, ScopeId, TypeDefRef, TypePathResolution,
     identity::DeclarationRef,
     items::{FieldKey, GenericArg as ItemGenericArg},
 };
@@ -12,8 +12,8 @@ use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{
-    AutoderefMode, ExpectedTyExt, NominalTy, ReferencePeelingCandidates, Ty, ty_for_binary,
-    ty_for_literal, ty_for_unary,
+    AutoderefMode, ExpectedTyExt, GenericArg, NominalTy, ReferencePeelingCandidates, Ty,
+    ty_for_binary, ty_for_literal, ty_for_unary,
 };
 
 use crate::{
@@ -130,7 +130,7 @@ where
                 self.pass.set_expr_facts(expr, resolution, ty);
             }
             ExprKind::Record { path, .. } => {
-                let (resolution, ty) = match path.as_ref().and_then(|path| path.as_def_map_path()) {
+                let (resolution, ty) = match path.as_ref() {
                     Some(path) => self.resolve_record_expr_path(
                         self.pass.body.expr_unchecked(expr).scope,
                         &path,
@@ -313,29 +313,30 @@ where
     fn resolve_record_expr_path(
         &self,
         scope: ScopeId,
-        path: &Path,
+        path: &BodyPath,
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
+        let Some(def_map_path) = path.as_def_map_path() else {
+            return Ok((BodyResolution::Unknown, Ty::Unknown));
+        };
+
         match self
             .pass
             .context()
             .type_path_query()
-            .resolve_in_scope(scope, path)?
+            .resolve_in_scope(scope, &def_map_path)?
         {
             TypePathResolution::SelfType(type_def) => {
                 return Ok((
                     BodyResolution::Unknown,
-                    Ty::self_ty(NominalTy::bare(type_def)),
+                    Ty::self_ty(self.record_nominal_ty(scope, path, type_def)?),
                 ));
             }
             TypePathResolution::TypeDef(type_def) => {
-                if type_def.origin == DefMapRef::Body(self.pass.providers.body_ref()) {
-                    return Ok((
-                        BodyResolution::Declarations(
-                            [DeclarationRef::from(type_def)].into_iter().collect(),
-                        ),
-                        Ty::nominal(NominalTy::bare(type_def)),
-                    ));
-                }
+                let declaration = self.record_declaration_for_type_def(type_def)?;
+                return Ok((
+                    BodyResolution::Declarations([declaration].into_iter().collect()),
+                    Ty::nominal(self.record_nominal_ty(scope, path, type_def)?),
+                ));
             }
             TypePathResolution::TypeAlias(_)
             | TypePathResolution::Trait(_)
@@ -345,7 +346,69 @@ where
         self.pass
             .context()
             .value_paths()
-            .resolve_nonlocal_path_expr(scope, path)
+            .resolve_nonlocal_path_expr(scope, &def_map_path)
+    }
+
+    /// Prefer the source local def for record constructors so navigation stays source-shaped.
+    fn record_declaration_for_type_def(
+        &self,
+        type_def: TypeDefRef,
+    ) -> Result<DeclarationRef, PackageStoreError> {
+        if type_def.origin == DefMapRef::Body(self.pass.providers.body_ref()) {
+            return Ok(DeclarationRef::from(type_def));
+        }
+
+        Ok(self
+            .pass
+            .context()
+            .item_query()
+            .local_def_for_type_def(type_def)?
+            .map(DeclarationRef::from)
+            .unwrap_or_else(|| DeclarationRef::from(type_def)))
+    }
+
+    /// Build a record constructor result type, filling omitted type args as inferable unknowns.
+    fn record_nominal_ty(
+        &self,
+        scope: ScopeId,
+        path: &BodyPath,
+        type_def: TypeDefRef,
+    ) -> Result<NominalTy, PackageStoreError> {
+        Ok(NominalTy {
+            def: type_def,
+            args: self.record_generic_args(scope, path, type_def)?,
+        })
+    }
+
+    /// Preserve explicit record args, otherwise create unknown slots for type params.
+    fn record_generic_args(
+        &self,
+        scope: ScopeId,
+        path: &BodyPath,
+        type_def: TypeDefRef,
+    ) -> Result<Vec<GenericArg>, PackageStoreError> {
+        if let Some(args) = path.last_segment_angle_args() {
+            return self
+                .pass
+                .context()
+                .type_refs(TypeRefUseSite::Scope(scope))
+                .resolve_generic_args(args);
+        }
+
+        let Some(generics) = self
+            .pass
+            .context()
+            .item_query()
+            .generic_params_for_type_def(type_def)?
+        else {
+            return Ok(Vec::new());
+        };
+
+        Ok(generics
+            .types
+            .iter()
+            .map(|_| GenericArg::Type(Box::new(Ty::Unknown)))
+            .collect())
     }
 
     fn resolve_field_expr(

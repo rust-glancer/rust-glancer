@@ -1017,6 +1017,63 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn uses_record_field_initializers_as_generic_evidence() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_record_generic_field_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+pub struct Error;
+
+pub struct Pair<T> {
+    left: T,
+}
+
+pub struct Pair2<T, E> {
+    left: T,
+    right: E,
+}
+
+pub struct Same<T> {
+    left: T,
+    right: T,
+}
+
+pub fn use_it(user: User, error: Error) {
+    let pair = Pair { left: user }$type_pair$;
+    let pair2 = Pair2 { left: user, right: error }$type_pair2$;
+    let explicit = Pair::<_> { left: error }$type_explicit$;
+    let conflict = Same { left: user, right: error }$type_conflict$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("record generic field result", "type_pair"),
+            AnalysisQuery::ty("record two generic field result", "type_pair2"),
+            AnalysisQuery::ty("record wildcard generic field result", "type_explicit"),
+            AnalysisQuery::ty("record conflicting generic field result", "type_conflict"),
+        ],
+        expect![[r#"
+            record generic field result
+            - nominal struct analysis_record_generic_field_inference[lib]::crate::Pair<nominal struct analysis_record_generic_field_inference[lib]::crate::User>
+
+            record two generic field result
+            - nominal struct analysis_record_generic_field_inference[lib]::crate::Pair2<nominal struct analysis_record_generic_field_inference[lib]::crate::User, nominal struct analysis_record_generic_field_inference[lib]::crate::Error>
+
+            record wildcard generic field result
+            - nominal struct analysis_record_generic_field_inference[lib]::crate::Pair<nominal struct analysis_record_generic_field_inference[lib]::crate::Error>
+
+            record conflicting generic field result
+            - nominal struct analysis_record_generic_field_inference[lib]::crate::Same<<unknown>>
+        "#]],
+    );
+}
+
+#[test]
 fn uses_enum_variant_payload_as_generic_evidence() {
     check_analysis_queries(
         r#"

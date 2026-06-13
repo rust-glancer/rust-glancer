@@ -7,7 +7,7 @@
 use rg_ir_model::{
     BindingId, EnumVariantRef, ExprId, PatId, ScopeId, StmtId,
     identity::DeclarationRef,
-    items::{FieldKey, FieldList, TypeRef},
+    items::{FieldKey, FieldList, GenericParams, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
@@ -61,6 +61,7 @@ where
     /// Instantiate inference-only facts that ordinary `Ty` cannot represent.
     fn instantiate_inference_facts(&mut self) -> Result<(), PackageStoreError> {
         self.instantiate_generic_call_result_facts()?;
+        self.instantiate_record_result_facts();
         Ok(())
     }
 
@@ -94,6 +95,26 @@ where
         }
 
         Ok(())
+    }
+
+    /// Turn record literal results such as `Pair<unknown>` into `Pair<?T>`.
+    fn instantiate_record_result_facts(&mut self) {
+        for expr_idx in 0..self.pass.body.exprs().len() {
+            let expr = ExprId(expr_idx);
+            if !matches!(
+                &self.pass.body.expr_unchecked(expr).kind,
+                ExprKind::Record { .. }
+            ) {
+                continue;
+            }
+
+            let ty = self.pass.body.expr_ty_unchecked(expr).clone();
+            if ty.has_unknown() {
+                self.pass
+                    .inference
+                    .instantiate_expr_nested_unknown_ty(expr, &ty);
+            }
+        }
     }
 
     /// Turn enum variant constructor results such as `Option<unknown>` into `Option<?T>`.
@@ -447,22 +468,9 @@ where
             return Ok(());
         };
 
-        let enum_infer_ty = self.pass.inference.expr_ty(call);
-        let infer_enum_args = match enum_infer_ty {
-            InferTy::Nominal(infer_enum_ty) | InferTy::SelfTy(infer_enum_ty)
-                if infer_enum_ty.def == enum_ty.def =>
-            {
-                infer_enum_ty.args
-            }
-            _ => return Ok(()),
-        };
-
-        let mut subst = InferTypeSubst::new();
-        subst.bind_type_params_from_infer_args(
-            &mut self.pass.inference,
-            &generics,
-            &infer_enum_args,
-        );
+        let subst = self
+            .infer_subst_for_nominal_expr(call, enum_ty, &generics)
+            .unwrap_or_else(InferTypeSubst::new);
 
         let expected_ty =
             InferTypeRefProjector::new(&subst).ty_from_type_ref(&field_ty, resolved_field_ty);
@@ -470,6 +478,28 @@ where
             .inference
             .constrain_expr_infer_ty(arg, &expected_ty);
         Ok(())
+    }
+
+    /// Bind generic params from a nominal expression result such as `Pair<?T>`.
+    fn infer_subst_for_nominal_expr(
+        &mut self,
+        expr: ExprId,
+        nominal_ty: &NominalTy,
+        generics: &GenericParams,
+    ) -> Option<InferTypeSubst> {
+        let infer_ty = self.pass.inference.expr_ty(expr);
+        let infer_args = match infer_ty {
+            InferTy::Nominal(infer_nominal_ty) | InferTy::SelfTy(infer_nominal_ty)
+                if infer_nominal_ty.def == nominal_ty.def =>
+            {
+                infer_nominal_ty.args
+            }
+            _ => return None,
+        };
+
+        let mut subst = InferTypeSubst::new();
+        subst.bind_type_params_from_infer_args(&mut self.pass.inference, generics, &infer_args);
+        Some(subst)
     }
 
     /// Find a variant field type syntax by the call-site payload position.
@@ -497,19 +527,62 @@ where
             };
             // Record field initializers are checked against the declared field type, with generic
             // arguments from the record type applied before the expectation reaches the value.
-            let Some(expected_ty) = self
+            let Some(target) = self
                 .pass
                 .context()
                 .fields()
                 .declared(&record_ty, &field.key)?
-                .and_then(|target| target.ty().cloned())
             else {
+                continue;
+            };
+            let Some(expected_ty) = target.ty().cloned() else {
                 continue;
             };
 
             self.constrain_expr_with_expected(value, &expected_ty);
+            if let Some(field_ty_ref) = target.ty_ref().cloned() {
+                self.constrain_record_field_initializer_infer_ty(
+                    record,
+                    value,
+                    &record_ty,
+                    &field_ty_ref,
+                    &expected_ty,
+                )?;
+            }
         }
 
+        Ok(())
+    }
+
+    /// Use field initializers to solve generics carried by the record result.
+    ///
+    /// Example: `Pair { left: user }` links field type `T` to result `Pair<?T>`.
+    fn constrain_record_field_initializer_infer_ty(
+        &mut self,
+        record: ExprId,
+        value: ExprId,
+        record_ty: &NominalTy,
+        field_ty: &TypeRef,
+        resolved_field_ty: &Ty,
+    ) -> Result<(), PackageStoreError> {
+        let Some(generics) = self
+            .pass
+            .context()
+            .item_query()
+            .generic_params_for_type_def(record_ty.def)?
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let Some(subst) = self.infer_subst_for_nominal_expr(record, record_ty, &generics) else {
+            return Ok(());
+        };
+
+        let expected_ty =
+            InferTypeRefProjector::new(&subst).ty_from_type_ref(field_ty, resolved_field_ty);
+        self.pass
+            .inference
+            .constrain_expr_infer_ty(value, &expected_ty);
         Ok(())
     }
 

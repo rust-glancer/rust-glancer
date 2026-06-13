@@ -314,6 +314,17 @@ where
         self.generic_arg_at(arg, anchor)
     }
 
+    /// Resolve generic args at this query's use site.
+    pub(crate) fn resolve_generic_args(
+        &self,
+        args: &[ItemGenericArg],
+    ) -> Result<Vec<GenericArg>, PackageStoreError> {
+        let anchor = self.anchor_for_use_site(self.use_site)?;
+        args.iter()
+            .map(|arg| self.generic_arg_at(arg, anchor))
+            .collect()
+    }
+
     /// Resolve the type parts of one generic arg under this anchor.
     fn generic_arg_at(
         &self,

@@ -3,7 +3,7 @@
 use rg_ir_model::{
     EnumVariantRef, ExprId, FieldRef, TypeDefId,
     identity::DeclarationRef,
-    items::{FieldItem, FieldKey, FieldList},
+    items::{FieldItem, FieldKey, FieldList, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
@@ -25,10 +25,16 @@ enum ResolvedFieldTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DeclaredFieldTarget {
     field: FieldRef,
+    ty_ref: Option<TypeRef>,
     ty: Option<Ty>,
 }
 
 impl DeclaredFieldTarget {
+    /// Return the declared field type syntax if the declaration was available.
+    pub(crate) fn ty_ref(&self) -> Option<&TypeRef> {
+        self.ty_ref.as_ref()
+    }
+
     /// Return the field type if the declaration was available.
     pub(crate) fn ty(&self) -> Option<&Ty> {
         self.ty.as_ref()
@@ -165,6 +171,7 @@ where
         let Some(field_data) = item_query.field_data(field_ref)? else {
             return Ok(Some(DeclaredFieldTarget {
                 field: field_ref,
+                ty_ref: None,
                 ty: None,
             }));
         };
@@ -177,6 +184,7 @@ where
 
         Ok(Some(DeclaredFieldTarget {
             field: field_ref,
+            ty_ref: Some(field_data.field.ty.clone()),
             ty: Some(ty),
         }))
     }
