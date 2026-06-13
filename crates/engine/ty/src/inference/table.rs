@@ -1,7 +1,8 @@
 use rg_std::UniqueVec;
 
+use super::family::InferToTyMapper;
 use super::model::{InferGenericArg, InferNominalTy, InferOpaqueTraitBound, InferTy};
-use crate::{GenericArg, NominalTy, OpaqueTraitBound, PrimitiveTy, Ty};
+use crate::{PrimitiveTy, Ty};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InferVarId(u32);
@@ -145,7 +146,7 @@ impl InferenceTable {
     }
 
     pub fn finalize(&self, ty: &InferTy) -> Ty {
-        self.finalize_ty(ty, &mut Vec::new())
+        TableFinalizer::new(self).map_infer_ty(ty)
     }
 
     fn alloc_var(&mut self, kind: InferVarKind) -> InferVarId {
@@ -408,58 +409,31 @@ impl InferenceTable {
             }
         }
     }
+}
 
-    fn finalize_ty(&self, ty: &InferTy, active_vars: &mut Vec<InferVarId>) -> Ty {
-        // Finalization is the only place inference variables become persisted `Ty` facts. Keep it
-        // structural so partially solved containers retain the pieces we did learn.
-        match ty {
-            // Variable is what can actually get finalized
-            InferTy::Var(id) => self.finalize_var(*id, InferVarKind::Type, active_vars),
-            InferTy::IntegerVar(id) => self.finalize_var(*id, InferVarKind::Integer, active_vars),
-            InferTy::FloatVar(id) => self.finalize_var(*id, InferVarKind::Float, active_vars),
+/// Finalizes inference variables while the shared mapper owns the surrounding type traversal.
+struct TableFinalizer<'table> {
+    table: &'table InferenceTable,
+    active_vars: Vec<InferVarId>,
+}
 
-            // Everything else either stays the same or fills in the finalized variables
-            InferTy::Unit => Ty::Unit,
-            InferTy::Never => Ty::Never,
-            InferTy::Primitive(primitive) => Ty::Primitive(*primitive),
-            InferTy::Tuple(fields) => Ty::tuple(
-                fields
-                    .iter()
-                    .map(|field| self.finalize_ty(field, active_vars))
-                    .collect(),
-            ),
-            InferTy::Array { inner, len } => {
-                Ty::array(self.finalize_ty(inner, active_vars), len.clone())
-            }
-            InferTy::Slice(inner) => Ty::slice(self.finalize_ty(inner, active_vars)),
-            InferTy::Reference { mutability, inner } => {
-                Ty::reference(*mutability, self.finalize_ty(inner, active_vars))
-            }
-            InferTy::Opaque { bounds } => Ty::opaque(
-                bounds
-                    .iter()
-                    .map(|bound| self.finalize_opaque_bound(bound, active_vars))
-                    .collect(),
-            ),
-            InferTy::Syntax(ty) => Ty::syntax(ty.as_ref().clone()),
-            InferTy::Nominal(ty) => Ty::nominal(self.finalize_nominal_ty(ty, active_vars)),
-            InferTy::SelfTy(ty) => Ty::self_ty(self.finalize_nominal_ty(ty, active_vars)),
-            InferTy::Unknown => Ty::Unknown,
+impl<'table> TableFinalizer<'table> {
+    fn new(table: &'table InferenceTable) -> Self {
+        Self {
+            table,
+            active_vars: Vec::new(),
         }
     }
+}
 
-    fn finalize_var(
-        &self,
-        id: InferVarId,
-        kind: InferVarKind,
-        active_vars: &mut Vec<InferVarId>,
-    ) -> Ty {
+impl InferToTyMapper for TableFinalizer<'_> {
+    fn map_var(&mut self, id: InferVarId, kind: InferVarKind) -> Ty {
         // A defensive cycle check keeps bad intermediate links from escaping as recursive types.
-        if active_vars.contains(&id) {
+        if self.active_vars.contains(&id) {
             return Ty::Unknown;
         }
 
-        let Some(slot) = self.slots.get(id.index()) else {
+        let Some(slot) = self.table.slots.get(id.index()) else {
             return Ty::Unknown;
         };
         if slot.kind != kind {
@@ -473,9 +447,9 @@ impl InferenceTable {
                 InferVarKind::Float => Ty::Primitive(PrimitiveTy::DEFAULT_FLOAT),
             },
             InferVarValue::Solved(ty) => {
-                active_vars.push(id);
-                let finalized = self.finalize_ty(ty, active_vars);
-                active_vars.pop();
+                self.active_vars.push(id);
+                let finalized = self.map_infer_ty(ty);
+                self.active_vars.pop();
 
                 // Numeric variables may only publish numeric primitives. If a bad link slipped
                 // through, finalization drops it rather than exposing a plausible wrong type.
@@ -493,64 +467,6 @@ impl InferenceTable {
                 }
             }
             InferVarValue::Conflict => Ty::Unknown,
-        }
-    }
-
-    fn finalize_nominal_ty(
-        &self,
-        ty: &InferNominalTy,
-        active_vars: &mut Vec<InferVarId>,
-    ) -> NominalTy {
-        NominalTy {
-            def: ty.def,
-            args: ty
-                .args
-                .iter()
-                .map(|arg| self.finalize_generic_arg(arg, active_vars))
-                .collect(),
-        }
-    }
-
-    fn finalize_opaque_bound(
-        &self,
-        bound: &InferOpaqueTraitBound,
-        active_vars: &mut Vec<InferVarId>,
-    ) -> OpaqueTraitBound {
-        OpaqueTraitBound {
-            trait_ref: bound.trait_ref,
-            args: bound
-                .args
-                .iter()
-                .map(|arg| self.finalize_generic_arg(arg, active_vars))
-                .collect(),
-        }
-    }
-
-    fn finalize_generic_arg(
-        &self,
-        arg: &InferGenericArg,
-        active_vars: &mut Vec<InferVarId>,
-    ) -> GenericArg {
-        match arg {
-            InferGenericArg::Type(ty) => {
-                GenericArg::Type(Box::new(self.finalize_ty(ty, active_vars)))
-            }
-            InferGenericArg::Lifetime(lifetime) => GenericArg::Lifetime(lifetime.clone()),
-            InferGenericArg::Const(value) => GenericArg::Const(value.clone()),
-            InferGenericArg::FnTraitArgs { params, ret } => GenericArg::FnTraitArgs {
-                params: params
-                    .iter()
-                    .map(|param| self.finalize_ty(param, active_vars))
-                    .collect(),
-                ret: Box::new(self.finalize_ty(ret, active_vars)),
-            },
-            InferGenericArg::AssocType { name, ty } => GenericArg::AssocType {
-                name: name.clone(),
-                ty: ty
-                    .as_deref()
-                    .map(|ty| Box::new(self.finalize_ty(ty, active_vars))),
-            },
-            InferGenericArg::Unsupported(text) => GenericArg::Unsupported(text.clone()),
         }
     }
 }

@@ -7,6 +7,7 @@ use rg_ir_model::items::{GenericArg as ItemGenericArg, TypePath, TypeRef};
 use rg_std::UniqueVec;
 
 use super::model::{InferGenericArg, InferNominalTy, InferOpaqueTraitBound, InferTy};
+use super::table::{InferVarId, InferVarKind};
 use crate::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
 
 /// Maps the resolved `Ty` family into the inference `InferTy` family.
@@ -241,4 +242,88 @@ pub trait TypeRefInferenceProjector {
             _ => InferGenericArg::from_arg(resolved_arg),
         }
     }
+}
+
+/// Maps the inference `InferTy` family back into the resolved `Ty` family.
+pub(super) trait InferToTyMapper {
+    /// Convert one inference-aware type, recursing through type-bearing children.
+    fn map_infer_ty(&mut self, ty: &InferTy) -> Ty {
+        match ty {
+            InferTy::Var(id) => self.map_var(*id, InferVarKind::Type),
+            InferTy::IntegerVar(id) => self.map_var(*id, InferVarKind::Integer),
+            InferTy::FloatVar(id) => self.map_var(*id, InferVarKind::Float),
+            InferTy::Unit => Ty::Unit,
+            InferTy::Never => Ty::Never,
+            InferTy::Primitive(primitive) => Ty::Primitive(*primitive),
+            InferTy::Tuple(fields) => Ty::tuple(
+                fields
+                    .iter()
+                    .map(|field| self.map_infer_ty(field))
+                    .collect(),
+            ),
+            InferTy::Array { inner, len } => Ty::array(self.map_infer_ty(inner), len.clone()),
+            InferTy::Slice(inner) => Ty::slice(self.map_infer_ty(inner)),
+            InferTy::Reference { mutability, inner } => {
+                Ty::reference(*mutability, self.map_infer_ty(inner))
+            }
+            InferTy::Opaque { bounds } => Ty::opaque(
+                bounds
+                    .iter()
+                    .map(|bound| self.map_infer_opaque_bound(bound))
+                    .collect(),
+            ),
+            InferTy::Syntax(ty) => Ty::syntax(ty.as_ref().clone()),
+            InferTy::Nominal(ty) => Ty::nominal(self.map_infer_nominal_ty(ty)),
+            InferTy::SelfTy(ty) => Ty::self_ty(self.map_infer_nominal_ty(ty)),
+            InferTy::Unknown => Ty::Unknown,
+        }
+    }
+
+    /// Convert nominal generic args through the same finalization policy.
+    fn map_infer_nominal_ty(&mut self, ty: &InferNominalTy) -> NominalTy {
+        NominalTy {
+            def: ty.def,
+            args: ty
+                .args
+                .iter()
+                .map(|arg| self.map_infer_generic_arg(arg))
+                .collect(),
+        }
+    }
+
+    /// Convert opaque-bound generic args through the same finalization policy.
+    fn map_infer_opaque_bound(&mut self, bound: &InferOpaqueTraitBound) -> OpaqueTraitBound {
+        OpaqueTraitBound {
+            trait_ref: bound.trait_ref,
+            args: bound
+                .args
+                .iter()
+                .map(|arg| self.map_infer_generic_arg(arg))
+                .collect(),
+        }
+    }
+
+    /// Convert one inference-aware generic arg back into the resolved type family.
+    fn map_infer_generic_arg(&mut self, arg: &InferGenericArg) -> GenericArg {
+        match arg {
+            InferGenericArg::Type(ty) => GenericArg::Type(Box::new(self.map_infer_ty(ty))),
+            InferGenericArg::Lifetime(lifetime) => GenericArg::Lifetime(lifetime.clone()),
+            InferGenericArg::Const(value) => GenericArg::Const(value.clone()),
+            InferGenericArg::FnTraitArgs { params, ret } => GenericArg::FnTraitArgs {
+                params: params
+                    .iter()
+                    .map(|param| self.map_infer_ty(param))
+                    .collect(),
+                ret: Box::new(self.map_infer_ty(ret)),
+            },
+            InferGenericArg::AssocType { name, ty } => GenericArg::AssocType {
+                name: name.clone(),
+                ty: ty.as_deref().map(|ty| Box::new(self.map_infer_ty(ty))),
+            },
+            InferGenericArg::Unsupported(text) => GenericArg::Unsupported(text.clone()),
+        }
+    }
+
+    /// Decide how an inference variable finalizes for this mapper.
+    fn map_var(&mut self, id: InferVarId, kind: InferVarKind) -> Ty;
 }
