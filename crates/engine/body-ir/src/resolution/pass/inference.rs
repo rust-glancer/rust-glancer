@@ -68,7 +68,12 @@ where
             let kind = self.pass.body.expr_unchecked(expr).kind.clone();
             match kind {
                 ExprKind::Call { args, .. } | ExprKind::MethodCall { args, .. } => {
-                    self.instantiate_generic_call_return_fact(expr, &args)?
+                    let context = self.pass.providers.context(self.pass.body);
+                    BodyCallInference::new(context).instantiate_return_fact(
+                        &mut self.pass.inference,
+                        expr,
+                        &args,
+                    )?;
                 }
                 _ => {}
             }
@@ -217,56 +222,6 @@ where
         };
 
         Some(*binding)
-    }
-
-    /// Instantiate one call return, e.g. `Vec::new()` from `Vec<unknown>` to `Vec<?T>`.
-    fn instantiate_generic_call_return_fact(
-        &mut self,
-        call: ExprId,
-        args: &[ExprId],
-    ) -> Result<(), PackageStoreError> {
-        if !self.pass.body.expr_ty_unchecked(call).has_unknown() {
-            return Ok(());
-        }
-
-        let projection = {
-            let calls = self.pass.context().calls();
-            let Some(target) = calls.target(call)? else {
-                return Ok(());
-            };
-            calls.signature(&target).project(args)?
-        };
-
-        let mut instantiated = false;
-        if projection.explicit_args().is_empty()
-            && let Some(ret_ty) = projection.declared_return_ty()
-            && let Some(generics) = projection.function_generics()
-        {
-            let type_params = generics
-                .types
-                .iter()
-                .map(|param| param.name.as_str())
-                .collect::<Vec<_>>();
-            if ret_ty.mentions_type_param(&type_params) {
-                instantiated = self.pass.inference.instantiate_expr_generic_return_ty(
-                    call,
-                    ret_ty,
-                    projection.return_ty(),
-                    generics,
-                );
-            }
-        }
-
-        if !instantiated
-            && projection.selected_self_ty().is_some_and(Ty::has_unknown)
-            && projection.return_ty().has_unknown()
-        {
-            self.pass
-                .inference
-                .instantiate_expr_nested_unknown_ty(call, projection.return_ty());
-        }
-
-        Ok(())
     }
 
     /// Use one selected call target to push projected parameter types into written args.

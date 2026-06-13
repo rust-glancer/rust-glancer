@@ -32,6 +32,53 @@ where
         Self { context }
     }
 
+    /// Instantiate one call return, e.g. `Vec::new()` from `Vec<unknown>` to `Vec<?T>`.
+    pub(crate) fn instantiate_return_fact(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        call: ExprId,
+        args: &[ExprId],
+    ) -> Result<(), PackageStoreError> {
+        if !self.context.body().expr_ty_unchecked(call).has_unknown() {
+            return Ok(());
+        }
+
+        let calls = self.context.calls();
+        let Some(target) = calls.target(call)? else {
+            return Ok(());
+        };
+        let projection = calls.signature(&target).project(args)?;
+
+        let mut instantiated = false;
+        if projection.explicit_args().is_empty()
+            && let Some(ret_ty) = projection.declared_return_ty()
+            && let Some(generics) = projection.function_generics()
+        {
+            let type_params = generics
+                .types
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>();
+            if ret_ty.mentions_type_param(&type_params) {
+                instantiated = inference.instantiate_expr_generic_return_ty(
+                    call,
+                    ret_ty,
+                    projection.return_ty(),
+                    generics,
+                );
+            }
+        }
+
+        if !instantiated
+            && projection.selected_self_ty().is_some_and(Ty::has_unknown)
+            && projection.return_ty().has_unknown()
+        {
+            inference.instantiate_expr_nested_unknown_ty(call, projection.return_ty());
+        }
+
+        Ok(())
+    }
+
     /// Return expected types for written args from the unique selected call target.
     pub(crate) fn argument_expected_tys(
         &self,
