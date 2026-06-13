@@ -5,21 +5,20 @@
 //! Body IR.
 
 use rg_ir_model::{
-    BindingId, ExprId, ImplRef, ItemOwner, PatId, ScopeId, StmtId,
+    BindingId, ExprId, PatId, ScopeId, StmtId,
     identity::DeclarationRef,
-    items::{FieldKey, GenericArg as ItemGenericArg, GenericParams, TypeRef},
+    items::{FieldKey, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{Ty, inference::InferTy};
+use rg_ty::Ty;
 
 use crate::{
     ir::{ExprKind, ExprWrapperKind, PatKind, RecordExprField, StmtKind, resolved::BodyResolution},
-    resolution::TypeRefUseSite,
+    resolution::{TypeRefUseSite, infer::BodyCallInference},
 };
 
 use super::body::BodyResolutionPass;
-use crate::resolution::infer::{InferTypeRefProjector, InferTypeSubst};
 
 /// Collects body-local inference constraints that need the fixed-point facts to be available.
 ///
@@ -278,21 +277,9 @@ where
         call: ExprId,
         args: &[ExprId],
     ) -> Result<(), PackageStoreError> {
-        // Only a single resolved function gives us trustworthy parameter evidence. Ambiguous calls
-        // keep their already-computed return type but do not push expectations inward.
-        let projection = {
-            let calls = self.pass.context().calls();
-            let Some(target) = calls.target(call)? else {
-                return Ok(());
-            };
-            calls.signature(&target).project(args)?
-        };
-        if projection.written_param_tys().len() != args.len() {
-            return Ok(());
-        }
-
-        for (arg, expected_ty) in args.iter().zip(projection.written_param_tys()) {
-            self.constrain_expr_with_expected(*arg, expected_ty);
+        let call_inference = BodyCallInference::new(self.pass.context());
+        for (arg, expected_ty) in call_inference.argument_expected_tys(call, args)? {
+            self.constrain_expr_with_expected(arg, &expected_ty);
         }
 
         Ok(())
@@ -358,12 +345,25 @@ where
             ExprKind::Call {
                 callee: Some(callee),
                 args,
-            } => self.constrain_call_argument_expected_types(expr, callee, args),
+            } => {
+                self.constrain_call_target_argument_expected_types(expr, &args)?;
+                self.constrain_enum_variant_payload_expected_types(expr, callee, args)
+            }
             ExprKind::MethodCall {
                 receiver: Some(receiver),
                 args,
                 ..
-            } => self.constrain_method_call_argument_expected_types(expr, receiver, args),
+            } => {
+                self.constrain_call_target_argument_expected_types(expr, &args)?;
+
+                let context = self.pass.providers.context(self.pass.body);
+                BodyCallInference::new(context).constrain_receiver_generic_arguments(
+                    &mut self.pass.inference,
+                    expr,
+                    receiver,
+                    &args,
+                )
+            }
             ExprKind::MethodCall { args, .. } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)
             }
@@ -372,168 +372,6 @@ where
             }
             _ => Ok(()),
         }
-    }
-
-    /// Ordinary calls use target params, then enum constructors add payload field evidence.
-    fn constrain_call_argument_expected_types(
-        &mut self,
-        call: ExprId,
-        callee: ExprId,
-        args: Vec<ExprId>,
-    ) -> Result<(), PackageStoreError> {
-        self.constrain_call_target_argument_expected_types(call, &args)?;
-        self.constrain_enum_variant_payload_expected_types(call, callee, args)
-    }
-
-    /// Method calls use ordinary params plus receiver-carried generic evidence.
-    fn constrain_method_call_argument_expected_types(
-        &mut self,
-        method_call: ExprId,
-        receiver: ExprId,
-        args: Vec<ExprId>,
-    ) -> Result<(), PackageStoreError> {
-        self.constrain_call_target_argument_expected_types(method_call, &args)?;
-        self.constrain_receiver_generic_argument_expected_types(method_call, receiver, &args)
-    }
-
-    /// Use method args to solve receiver vars.
-    ///
-    /// Example: `values: Vec<?T>; values.push(user)` gives `push(value: T)` evidence `?T = User`.
-    fn constrain_receiver_generic_argument_expected_types(
-        &mut self,
-        method_call: ExprId,
-        receiver: ExprId,
-        args: &[ExprId],
-    ) -> Result<(), PackageStoreError> {
-        let target = {
-            let calls = self.pass.context().calls();
-            let Some(target) = calls.target(method_call)? else {
-                return Ok(());
-            };
-            target
-        };
-        let Some(function_data) = self
-            .pass
-            .context()
-            .item_query()
-            .function_data(target.function())?
-            .cloned()
-        else {
-            return Ok(());
-        };
-        if !function_data.has_self_receiver() {
-            return Ok(());
-        }
-
-        let projection = {
-            let calls = self.pass.context().calls();
-            calls.signature(&target).project(args)?
-        };
-        if projection.written_param_tys().len() != args.len() {
-            return Ok(());
-        }
-
-        let mut subst =
-            self.receiver_infer_subst(target.function().origin, &function_data.owner, receiver)?;
-        self.apply_function_generic_shadows(
-            &mut subst,
-            function_data.signature.generics(),
-            target.explicit_args(),
-            self.pass.body.expr_unchecked(method_call).scope,
-        )?;
-
-        let written_params = function_data.signature.params().iter().skip(1);
-        let projector = InferTypeRefProjector::new(&subst);
-        for ((arg, param), resolved_ty) in args
-            .iter()
-            .zip(written_params)
-            .zip(projection.written_param_tys())
-        {
-            let Some(param_ty) = &param.ty else {
-                continue;
-            };
-            let expected_ty = projector.ty_from_type_ref(param_ty, resolved_ty);
-            self.pass
-                .inference
-                .constrain_expr_infer_ty(*arg, &expected_ty);
-        }
-
-        Ok(())
-    }
-
-    /// Bind impl generics from the selected receiver slot: `impl<T> Vec<T>` + `Vec<?T>`.
-    fn receiver_infer_subst(
-        &mut self,
-        origin: rg_ir_model::DefMapRef,
-        owner: &ItemOwner,
-        receiver: ExprId,
-    ) -> Result<InferTypeSubst, PackageStoreError> {
-        let mut subst = InferTypeSubst::new();
-        let ItemOwner::Impl(impl_id) = owner else {
-            return Ok(subst);
-        };
-
-        let impl_ref = ImplRef {
-            origin,
-            id: *impl_id,
-        };
-        let Some(impl_data) = self
-            .pass
-            .context()
-            .item_query()
-            .impl_data(impl_ref)?
-            .cloned()
-        else {
-            return Ok(subst);
-        };
-
-        let receiver_ty = self.pass.inference.expr_ty(receiver);
-        subst.bind_type_ref(
-            &mut self.pass.inference,
-            &impl_data.self_ty,
-            &receiver_ty,
-            &impl_data.generics,
-        );
-
-        Ok(subst)
-    }
-
-    /// Function generics shadow impl generics; `::<User>` then fills function `T`.
-    fn apply_function_generic_shadows(
-        &mut self,
-        subst: &mut InferTypeSubst,
-        generics: Option<&GenericParams>,
-        explicit_args: &[ItemGenericArg],
-        scope: ScopeId,
-    ) -> Result<(), PackageStoreError> {
-        let Some(generics) = generics else {
-            return Ok(());
-        };
-
-        for param in &generics.types {
-            subst.push(
-                &mut self.pass.inference,
-                param.name.clone(),
-                InferTy::Unknown,
-            );
-        }
-
-        let explicit_subst = self.pass.context().generics().subst_for_explicit_args(
-            generics,
-            explicit_args,
-            TypeRefUseSite::Scope(scope),
-        )?;
-        for param in &generics.types {
-            if let Some(ty) = explicit_subst.type_param(param.name.as_str()) {
-                subst.push(
-                    &mut self.pass.inference,
-                    param.name.clone(),
-                    InferTy::from_ty(&ty),
-                );
-            }
-        }
-
-        Ok(())
     }
 
     /// Use known enum call result to push payload field types into tuple-variant args.
