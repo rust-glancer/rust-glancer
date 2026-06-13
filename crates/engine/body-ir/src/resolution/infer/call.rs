@@ -221,7 +221,7 @@ where
             .params()
             .iter()
             .skip(target.first_written_param_idx());
-        let projector = InferTypeRefProjector::new(&subst);
+        let mut projector = InferTypeRefProjector::new(&subst);
         for ((arg, param), resolved_ty) in args
             .iter()
             .zip(written_params)
@@ -283,7 +283,7 @@ where
         )?;
 
         let written_params = function_data.signature.params().iter().skip(1);
-        let projector = InferTypeRefProjector::new(&subst);
+        let mut projector = InferTypeRefProjector::new(&subst);
         for ((arg, param), resolved_ty) in args
             .iter()
             .zip(written_params)

@@ -3,8 +3,9 @@ use rg_ir_model::{TraitRef, TypeDefRef};
 use rg_std::UniqueVec;
 use rg_text::Name;
 
+use super::family::{PlainTyToInferMapper, TyToInferMapper};
 use super::table::{InferVarId, InferVarKind};
-use crate::{GenericArg, NominalTy, OpaqueTraitBound, PrimitiveTy, RefMutability, Ty};
+use crate::{GenericArg, PrimitiveTy, RefMutability, Ty};
 
 /// Inference-aware mirror of `Ty`.
 ///
@@ -41,31 +42,8 @@ pub enum InferTy {
 
 impl InferTy {
     pub fn from_ty(ty: &Ty) -> Self {
-        match ty {
-            Ty::Unit => Self::Unit,
-            Ty::Never => Self::Never,
-            Ty::Primitive(primitive) => Self::Primitive(*primitive),
-            Ty::Tuple(fields) => Self::Tuple(fields.iter().map(Self::from_ty).collect()),
-            Ty::Array { inner, len } => Self::Array {
-                inner: Box::new(Self::from_ty(inner)),
-                len: len.clone(),
-            },
-            Ty::Slice(inner) => Self::Slice(Box::new(Self::from_ty(inner))),
-            Ty::Reference { mutability, inner } => Self::Reference {
-                mutability: *mutability,
-                inner: Box::new(Self::from_ty(inner)),
-            },
-            Ty::Opaque { bounds } => Self::Opaque {
-                bounds: bounds
-                    .iter()
-                    .map(InferOpaqueTraitBound::from_bound)
-                    .collect(),
-            },
-            Ty::Syntax(ty) => Self::Syntax(Box::new(ty.clone())),
-            Ty::Nominal(ty) => Self::Nominal(InferNominalTy::from_nominal_ty(ty)),
-            Ty::SelfTy(ty) => Self::SelfTy(InferNominalTy::from_nominal_ty(ty)),
-            Ty::Unknown => Self::Unknown,
-        }
+        let mut mapper = PlainTyToInferMapper;
+        mapper.map_ty(ty)
     }
 
     pub(super) fn var_id(&self) -> Option<InferVarId> {
@@ -122,28 +100,10 @@ pub struct InferNominalTy {
     pub args: Vec<InferGenericArg>,
 }
 
-impl InferNominalTy {
-    fn from_nominal_ty(ty: &NominalTy) -> Self {
-        Self {
-            def: ty.def,
-            args: ty.args.iter().map(InferGenericArg::from_arg).collect(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InferOpaqueTraitBound {
     pub trait_ref: TraitRef,
     pub args: Vec<InferGenericArg>,
-}
-
-impl InferOpaqueTraitBound {
-    fn from_bound(bound: &OpaqueTraitBound) -> Self {
-        Self {
-            trait_ref: bound.trait_ref,
-            args: bound.args.iter().map(InferGenericArg::from_arg).collect(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,22 +124,8 @@ pub enum InferGenericArg {
 
 impl InferGenericArg {
     pub(super) fn from_arg(arg: &GenericArg) -> Self {
-        match arg {
-            GenericArg::Type(ty) => Self::Type(Box::new(InferTy::from_ty(ty))),
-            GenericArg::Lifetime(lifetime) => Self::Lifetime(lifetime.clone()),
-            GenericArg::Const(value) => Self::Const(value.clone()),
-            GenericArg::FnTraitArgs { params, ret } => Self::FnTraitArgs {
-                params: params.iter().map(InferTy::from_ty).collect(),
-                ret: Box::new(InferTy::from_ty(ret)),
-            },
-            GenericArg::AssocType { name, ty } => Self::AssocType {
-                name: name.clone(),
-                ty: ty
-                    .as_ref()
-                    .map(|ty| Box::new(InferTy::from_ty(ty.as_ref()))),
-            },
-            GenericArg::Unsupported(text) => Self::Unsupported(text.clone()),
-        }
+        let mut mapper = PlainTyToInferMapper;
+        mapper.map_generic_arg(arg)
     }
 
     pub(super) fn contains_var(&self, needle: InferVarId) -> bool {
