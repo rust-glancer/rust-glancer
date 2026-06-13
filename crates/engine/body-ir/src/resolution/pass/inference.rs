@@ -224,20 +224,30 @@ where
         Some(*binding)
     }
 
-    /// Use one selected call target to push projected parameter types into written args.
+    /// Use one selected call target to push parameter evidence into written args.
     ///
-    /// Example: `take_user(value)` with `fn take_user(User)` makes `value` expect `User`.
+    /// `take_user(value)` makes `value` expect `User`; `id(user)` lets `T` become `User`.
     fn constrain_call_target_argument_expected_types(
         &mut self,
         call: ExprId,
         args: &[ExprId],
     ) -> Result<(), PackageStoreError> {
-        let call_inference = BodyCallInference::new(self.pass.context());
-        for (arg, expected_ty) in call_inference.argument_expected_tys(call, args)? {
+        // Concrete parameter types can immediately constrain literals and transparent shapes.
+        let concrete_expectations =
+            BodyCallInference::new(self.pass.context()).argument_expected_tys(call, args)?;
+        for (arg, expected_ty) in concrete_expectations {
             self.constrain_expr_with_expected(arg, &expected_ty);
         }
 
-        Ok(())
+        // Build a fresh field-split context after concrete constraints. Keeping the first context
+        // alive would immutably borrow the pass while we mutate the inference facts.
+        let context = self.pass.providers.context(self.pass.body);
+        // Generic parameter evidence needs the inference view so shared `?T` slots stay linked.
+        BodyCallInference::new(context).constrain_function_generic_arguments(
+            &mut self.pass.inference,
+            call,
+            args,
+        )
     }
 
     /// Visit all places that can provide expected types to already-created inference slots.

@@ -103,10 +103,32 @@ where
         generics: &GenericParams,
         explicit_args: &[ItemGenericArg],
     ) -> Result<bool, PackageStoreError> {
+        let scope = self.context.body().expr_unchecked(call).scope;
+        let (subst, used_vars) =
+            self.explicit_type_arg_infer_subst(inference, generics, explicit_args, scope)?;
+
+        if !used_vars {
+            return Ok(false);
+        }
+
+        let return_ty =
+            InferTypeRefProjector::new(&subst).ty_from_type_ref(ret_ty, resolved_ret_ty);
+        inference.set_expr_infer_ty(call, return_ty);
+        Ok(true)
+    }
+
+    /// Bind explicit type args, turning written `_` into inference vars.
+    fn explicit_type_arg_infer_subst(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        generics: &GenericParams,
+        explicit_args: &[ItemGenericArg],
+        scope: ScopeId,
+    ) -> Result<(InferTypeSubst, bool), PackageStoreError> {
         let explicit_subst = self.context.generics().subst_for_explicit_args(
             generics,
             explicit_args,
-            TypeRefUseSite::Scope(self.context.body().expr_unchecked(call).scope),
+            TypeRefUseSite::Scope(scope),
         )?;
         let mut explicit_type_args = explicit_args.iter().filter_map(ItemGenericArg::type_ref);
 
@@ -126,14 +148,7 @@ where
             subst.push(inference, param.name.clone(), infer_ty);
         }
 
-        if !used_vars {
-            return Ok(false);
-        }
-
-        let return_ty =
-            InferTypeRefProjector::new(&subst).ty_from_type_ref(ret_ty, resolved_ret_ty);
-        inference.set_expr_infer_ty(call, return_ty);
-        Ok(true)
+        Ok((subst, used_vars))
     }
 
     /// Return expected types for written args from the unique selected call target.
@@ -158,6 +173,68 @@ where
             .copied()
             .zip(projection.written_param_tys().iter().cloned())
             .collect())
+    }
+
+    /// Use call args to solve function generics shared with the call result.
+    ///
+    /// Example: `id(missing())` makes the arg and return share the same `?T`.
+    pub(crate) fn constrain_function_generic_arguments(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        call: ExprId,
+        args: &[ExprId],
+    ) -> Result<(), PackageStoreError> {
+        let calls = self.context.calls();
+        let Some(target) = calls.target(call)? else {
+            return Ok(());
+        };
+        let Some(function_data) = self
+            .context
+            .item_query()
+            .function_data(target.function())?
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let Some(generics) = function_data.signature.generics() else {
+            return Ok(());
+        };
+        if generics.types.is_empty() {
+            return Ok(());
+        }
+
+        let projection = calls.signature(&target).project(args)?;
+        if projection.written_param_tys().len() != args.len() {
+            return Ok(());
+        }
+
+        let scope = self.context.body().expr_unchecked(call).scope;
+        let (mut subst, _) =
+            self.explicit_type_arg_infer_subst(inference, generics, target.explicit_args(), scope)?;
+        if let Some(ret_ty) = function_data.signature.ret_ty() {
+            let return_ty = inference.expr_ty(call);
+            subst.bind_type_ref(inference, ret_ty, &return_ty, generics);
+        }
+
+        let written_params = function_data
+            .signature
+            .params()
+            .iter()
+            .skip(target.first_written_param_idx());
+        let projector = InferTypeRefProjector::new(&subst);
+        for ((arg, param), resolved_ty) in args
+            .iter()
+            .zip(written_params)
+            .zip(projection.written_param_tys())
+        {
+            let Some(param_ty) = &param.ty else {
+                continue;
+            };
+            let expected_ty = projector.ty_from_type_ref(param_ty, resolved_ty);
+            inference.constrain_expr_infer_ty(*arg, &expected_ty);
+        }
+
+        Ok(())
     }
 
     /// Use method args to solve receiver vars.

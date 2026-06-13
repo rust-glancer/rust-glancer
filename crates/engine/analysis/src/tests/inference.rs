@@ -629,6 +629,83 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn uses_call_arguments_as_function_generic_evidence() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_call_argument_generic_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub struct Vec<T> {
+    value: T,
+}
+
+pub fn id<T>(value: T) -> T {}
+pub fn wrap<T>(value: T) -> Vec<T> {}
+pub fn make_user() -> User {}
+pub fn missing<T>() -> T {}
+pub fn takes_vec(value: Vec<User>) {}
+
+pub fn use_it(user: User) {
+    let direct = id(user)$type_direct$;
+    let from_call = id(make_user())$type_from_call$;
+    let wrapped = wrap(user)$type_wrapped$;
+    let explicit = wrap::<_>(user)$type_explicit$;
+
+    let from_return: User = id(missing()$type_inner_from_return$)$type_outer_from_return$;
+    takes_vec(wrap::<_>(missing()$type_inner_from_arg$)$type_outer_arg$);
+}
+"#,
+        &[
+            AnalysisQuery::ty("direct generic arg", "type_direct"),
+            AnalysisQuery::ty("generic arg from call result", "type_from_call"),
+            AnalysisQuery::ty("wrapped generic arg", "type_wrapped"),
+            AnalysisQuery::ty("explicit wildcard generic arg", "type_explicit"),
+            AnalysisQuery::ty(
+                "inner generic call solved from return",
+                "type_inner_from_return",
+            ),
+            AnalysisQuery::ty(
+                "outer generic call solved from return",
+                "type_outer_from_return",
+            ),
+            AnalysisQuery::ty("inner generic call solved from arg", "type_inner_from_arg"),
+            AnalysisQuery::ty("outer generic call solved from arg", "type_outer_arg"),
+        ],
+        expect![[r#"
+            direct generic arg
+            - nominal struct analysis_call_argument_generic_inference[lib]::crate::User
+
+            generic arg from call result
+            - nominal struct analysis_call_argument_generic_inference[lib]::crate::User
+
+            wrapped generic arg
+            - nominal struct analysis_call_argument_generic_inference[lib]::crate::Vec<nominal struct analysis_call_argument_generic_inference[lib]::crate::User>
+
+            explicit wildcard generic arg
+            - nominal struct analysis_call_argument_generic_inference[lib]::crate::Vec<nominal struct analysis_call_argument_generic_inference[lib]::crate::User>
+
+            inner generic call solved from return
+            - nominal struct analysis_call_argument_generic_inference[lib]::crate::User
+
+            outer generic call solved from return
+            - nominal struct analysis_call_argument_generic_inference[lib]::crate::User
+
+            inner generic call solved from arg
+            - nominal struct analysis_call_argument_generic_inference[lib]::crate::User
+
+            outer generic call solved from arg
+            - nominal struct analysis_call_argument_generic_inference[lib]::crate::Vec<nominal struct analysis_call_argument_generic_inference[lib]::crate::User>
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_associated_function_prefix_generics() {
     check_analysis_queries(
         r#"

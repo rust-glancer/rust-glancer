@@ -94,6 +94,11 @@ impl ResolvedCallTarget {
     pub(crate) fn explicit_args(&self) -> &[ItemGenericArg] {
         &self.explicit_args
     }
+
+    /// Return the first signature param matched by written call args.
+    pub(crate) fn first_written_param_idx(&self) -> usize {
+        self.self_source.first_written_param_idx()
+    }
 }
 
 impl CallSelfSource {
