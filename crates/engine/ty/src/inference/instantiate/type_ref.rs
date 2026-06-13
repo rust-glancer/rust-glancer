@@ -7,14 +7,13 @@ use super::super::{
 };
 use crate::{GenericArg, NominalTy, Ty};
 
-/// Walks written type syntax together with the resolved type shape.
-trait TypeRefTyInstantiator {
-    /// Return a policy-specific type before the shared shape walk.
-    fn instantiate_special_ty(&mut self, written_ty: &TypeRef, resolved_ty: &Ty)
-    -> Option<InferTy>;
+/// Projects written type syntax through the resolved type shape.
+trait TypeRefInferenceProjector {
+    /// Replace syntax-only inference markers before the shared shape walk.
+    fn instantiate_written_ty(&mut self, written_ty: &TypeRef) -> Option<InferTy>;
 
-    fn ty_from_type_ref(&mut self, written_ty: &TypeRef, resolved_ty: &Ty) -> InferTy {
-        if let Some(ty) = self.instantiate_special_ty(written_ty, resolved_ty) {
+    fn project_ty(&mut self, written_ty: &TypeRef, resolved_ty: &Ty) -> InferTy {
+        if let Some(ty) = self.instantiate_written_ty(written_ty) {
             return ty;
         }
 
@@ -32,7 +31,7 @@ trait TypeRefTyInstantiator {
                         .iter()
                         .zip(resolved_fields)
                         .map(|(written_field, resolved_field)| {
-                            self.ty_from_type_ref(written_field, resolved_field)
+                            self.project_ty(written_field, resolved_field)
                         })
                         .collect(),
                 )
@@ -47,12 +46,12 @@ trait TypeRefTyInstantiator {
                     len: resolved_len,
                 },
             ) if written_len == resolved_len => InferTy::Array {
-                inner: Box::new(self.ty_from_type_ref(written_inner, resolved_inner)),
+                inner: Box::new(self.project_ty(written_inner, resolved_inner)),
                 len: written_len.clone(),
             },
-            (TypeRef::Slice(written_inner), Ty::Slice(resolved_inner)) => InferTy::Slice(Box::new(
-                self.ty_from_type_ref(written_inner, resolved_inner),
-            )),
+            (TypeRef::Slice(written_inner), Ty::Slice(resolved_inner)) => {
+                InferTy::Slice(Box::new(self.project_ty(written_inner, resolved_inner)))
+            }
 
             // References may hide inference positions after `Ty` has collapsed `&Unknown`.
             (
@@ -67,7 +66,7 @@ trait TypeRefTyInstantiator {
                 },
             ) if *mutability == *resolved_mutability => InferTy::Reference {
                 mutability: *resolved_mutability,
-                inner: Box::new(self.ty_from_type_ref(written_inner, resolved_inner)),
+                inner: Box::new(self.project_ty(written_inner, resolved_inner)),
             },
             (
                 TypeRef::Reference {
@@ -78,16 +77,16 @@ trait TypeRefTyInstantiator {
                 Ty::Unknown,
             ) => InferTy::Reference {
                 mutability: *mutability,
-                inner: Box::new(self.ty_from_type_ref(written_inner, &Ty::Unknown)),
+                inner: Box::new(self.project_ty(written_inner, &Ty::Unknown)),
             },
 
             // Nominal paths expose generic args where the policy may find variables.
             (TypeRef::Path(path), Ty::Nominal(ty)) => self
-                .nominal_ty_from_path(path, ty)
+                .project_nominal_ty(path, ty)
                 .map(InferTy::Nominal)
                 .unwrap_or_else(|| InferTy::from_ty(resolved_ty)),
             (TypeRef::Path(path), Ty::SelfTy(ty)) => self
-                .nominal_ty_from_path(path, ty)
+                .project_nominal_ty(path, ty)
                 .map(InferTy::SelfTy)
                 .unwrap_or_else(|| InferTy::from_ty(resolved_ty)),
 
@@ -95,7 +94,7 @@ trait TypeRefTyInstantiator {
         }
     }
 
-    fn nominal_ty_from_path(&mut self, path: &TypePath, ty: &NominalTy) -> Option<InferNominalTy> {
+    fn project_nominal_ty(&mut self, path: &TypePath, ty: &NominalTy) -> Option<InferNominalTy> {
         let segment = path.segments.last()?;
         if segment.args.len() != ty.args.len() {
             return None;
@@ -108,13 +107,13 @@ trait TypeRefTyInstantiator {
                 .iter()
                 .zip(&ty.args)
                 .map(|(written_arg, resolved_arg)| {
-                    self.generic_arg_from_type_ref_arg(written_arg, resolved_arg)
+                    self.project_generic_arg(written_arg, resolved_arg)
                 })
                 .collect(),
         })
     }
 
-    fn generic_arg_from_type_ref_arg(
+    fn project_generic_arg(
         &mut self,
         written_arg: &ItemGenericArg,
         resolved_arg: &GenericArg,
@@ -122,7 +121,7 @@ trait TypeRefTyInstantiator {
         match (written_arg, resolved_arg) {
             // Type args are direct type positions.
             (ItemGenericArg::Type(written_ty), GenericArg::Type(resolved_ty)) => {
-                InferGenericArg::Type(Box::new(self.ty_from_type_ref(written_ty, resolved_ty)))
+                InferGenericArg::Type(Box::new(self.project_ty(written_ty, resolved_ty)))
             }
 
             // Parenthesized `Fn*` args expose parameter and return type positions.
@@ -140,10 +139,10 @@ trait TypeRefTyInstantiator {
                     .iter()
                     .zip(resolved_params)
                     .map(|(written_param, resolved_param)| {
-                        self.ty_from_type_ref(written_param, resolved_param)
+                        self.project_ty(written_param, resolved_param)
                     })
                     .collect(),
-                ret: Box::new(self.ty_from_type_ref(ret, resolved_ret)),
+                ret: Box::new(self.project_ty(ret, resolved_ret)),
             },
 
             // Associated type equalities expose one named type position.
@@ -158,7 +157,7 @@ trait TypeRefTyInstantiator {
                 },
             ) if written_name == resolved_name => InferGenericArg::AssocType {
                 name: written_name.clone(),
-                ty: Some(Box::new(self.ty_from_type_ref(written_ty, resolved_ty))),
+                ty: Some(Box::new(self.project_ty(written_ty, resolved_ty))),
             },
 
             _ => InferGenericArg::from_arg(resolved_arg),
@@ -201,7 +200,7 @@ impl<'table> GenericReturnInstantiationBuilder<'table> {
     }
 
     pub fn ty_from_return(&mut self, ret_ty: &TypeRef, resolved_ty: &Ty) -> InferTy {
-        self.ty_from_type_ref(ret_ty, resolved_ty)
+        self.project_ty(ret_ty, resolved_ty)
     }
 
     fn var_for_plain_type_param(&mut self, ret_ty: &TypeRef) -> Option<InferTy> {
@@ -219,13 +218,9 @@ impl<'table> GenericReturnInstantiationBuilder<'table> {
     }
 }
 
-impl TypeRefTyInstantiator for GenericReturnInstantiationBuilder<'_> {
+impl TypeRefInferenceProjector for GenericReturnInstantiationBuilder<'_> {
     /// Instantiate return type params such as `T` in `fn make<T>() -> T`.
-    fn instantiate_special_ty(
-        &mut self,
-        written_ty: &TypeRef,
-        _resolved_ty: &Ty,
-    ) -> Option<InferTy> {
+    fn instantiate_written_ty(&mut self, written_ty: &TypeRef) -> Option<InferTy> {
         self.var_for_plain_type_param(written_ty)
     }
 }
@@ -258,17 +253,13 @@ impl<'table> ExplicitTypeArgInstantiationBuilder<'table> {
 
     /// Convert one explicit type arg into an inference-aware type.
     pub fn ty_from_arg(&mut self, arg_ty: &TypeRef, resolved_ty: &Ty) -> InferTy {
-        self.ty_from_type_ref(arg_ty, resolved_ty)
+        self.project_ty(arg_ty, resolved_ty)
     }
 }
 
-impl TypeRefTyInstantiator for ExplicitTypeArgInstantiationBuilder<'_> {
+impl TypeRefInferenceProjector for ExplicitTypeArgInstantiationBuilder<'_> {
     /// Instantiate written `_` slots in explicit args such as `make::<Vec<_>>()`.
-    fn instantiate_special_ty(
-        &mut self,
-        written_ty: &TypeRef,
-        _resolved_ty: &Ty,
-    ) -> Option<InferTy> {
+    fn instantiate_written_ty(&mut self, written_ty: &TypeRef) -> Option<InferTy> {
         if matches!(written_ty, TypeRef::Infer) {
             self.used_type_vars = true;
             return Some(self.table.new_type_var());
