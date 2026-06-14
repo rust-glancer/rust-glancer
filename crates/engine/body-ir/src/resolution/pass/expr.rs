@@ -460,7 +460,12 @@ where
         inner: Option<ExprId>,
     ) -> (BodyResolution, Ty) {
         let Some(inner) = inner else {
-            return (BodyResolution::Unknown, Ty::Unknown);
+            let ty = if matches!(kind, ExprWrapperKind::Return) {
+                Ty::Never
+            } else {
+                Ty::Unknown
+            };
+            return (BodyResolution::Unknown, ty);
         };
         let ty = TyNormalizer::new(self.pass.context())
             .ty_for_wrapper(kind, self.pass.body.expr_ty_unchecked(inner).clone());

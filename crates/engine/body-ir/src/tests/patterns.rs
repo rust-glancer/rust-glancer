@@ -51,7 +51,7 @@ pub fn use_it(maybe: Option<User>) {
                 else
                   expr e2 block s2 => () @ 9:34-9:45
                     stmt s0 expr; @ 9:36-9:43
-                      expr e1 wrapper return => <unknown> @ 9:36-9:42
+                      expr e1 wrapper return => ! @ 9:36-9:42
               tail
                 expr e6 match => nominal struct body_enum_pattern_fixture[lib]::crate::User @ 10:5-13:6
                   scrutinee

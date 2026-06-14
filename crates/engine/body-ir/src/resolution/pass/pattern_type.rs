@@ -87,6 +87,18 @@ where
                     let item_ty = iteration_items.into_iterator_item_for_ty(iterable_ty)?;
                     self.propagate_pat(pat, &item_ty, &mut updates)?;
                 }
+                ExprKind::Closure { scope, params, .. } => {
+                    for param in params {
+                        let (Some(pat), Some(annotation)) = (param.pat, param.annotation) else {
+                            continue;
+                        };
+                        let expected_ty = self
+                            .context
+                            .type_refs(TypeRefUseSite::Scope(scope))
+                            .resolve(&annotation)?;
+                        self.propagate_pat(pat, &expected_ty, &mut updates)?;
+                    }
+                }
                 ExprKind::Path { .. }
                 | ExprKind::Call { .. }
                 | ExprKind::Tuple { .. }
@@ -99,7 +111,6 @@ where
                 | ExprKind::Binary { .. }
                 | ExprKind::Assign { .. }
                 | ExprKind::If { .. }
-                | ExprKind::Closure { .. }
                 | ExprKind::Loop { .. }
                 | ExprKind::While { .. }
                 | ExprKind::For { .. }
