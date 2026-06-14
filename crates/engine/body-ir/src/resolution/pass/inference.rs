@@ -529,7 +529,7 @@ where
 
         let subst = self
             .infer_subst_for_nominal_expr(call, enum_ty, &generics)
-            .unwrap_or_else(InferTypeSubst::new);
+            .unwrap_or_default();
 
         let expected_ty =
             InferTypeRefProjector::new(&subst).ty_from_type_ref(&field_ty, resolved_field_ty);

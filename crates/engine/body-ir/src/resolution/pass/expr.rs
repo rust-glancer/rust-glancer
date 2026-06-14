@@ -133,7 +133,7 @@ where
                 let (resolution, ty) = match path.as_ref() {
                     Some(path) => self.resolve_record_expr_path(
                         self.pass.body.expr_unchecked(expr).scope,
-                        &path,
+                        path,
                     )?,
                     None => (BodyResolution::Unknown, Ty::Unknown),
                 };
