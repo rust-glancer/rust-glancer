@@ -171,6 +171,8 @@ impl ViewFixture {
 
     pub fn render_module_ref(&self, module_ref: ModuleRef) -> String {
         if let DefMapRef::Body(body_ref) = module_ref.origin {
+            // TODO: Preserve body-local module identity in fixture output. Distinct inline modules
+            // owned by the same body currently render as the same owner label.
             let owner = self
                 .resident_body_owner(body_ref)
                 .expect("body module owner should exist while rendering view fixture module");
@@ -255,6 +257,7 @@ impl ViewFixture {
                     trait_data.name
                 )
             }
+            // TODO: Render enough impl owner detail for snapshots to distinguish distinct impls.
             ItemOwner::Impl(_) => "impl".to_string(),
         }
     }

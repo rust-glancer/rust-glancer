@@ -400,6 +400,8 @@ where
             return Ok(Vec::new());
         };
 
+        // TODO: Omitted record constructor args should preserve non-type generic arity too.
+        // We need a deliberate placeholder shape for lifetimes and consts before adding that.
         Ok(generics
             .types
             .iter()
