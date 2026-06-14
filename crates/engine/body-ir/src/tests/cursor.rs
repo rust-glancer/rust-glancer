@@ -39,6 +39,38 @@ fn foo(baz: u8) -> u8 {
 }
 
 #[test]
+fn source_scan_exposes_qualified_value_path_prefixes_as_type_paths() {
+    check_source_candidates(
+        "Action",
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_cursor_qualified_value_prefix"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum Action {
+    Configure,
+}
+
+pub fn use_it(action: Action) {
+    let _action = Action::Configure;
+    match action {
+        Action::Configure => {}
+    }
+}
+"#,
+        expect![[r#"
+            type_path Action @ 6:19-6:25
+            type_path Action @ 8:9-8:15
+            value_path Action @ 6:19-6:25
+            value_path Action @ 8:9-8:15
+        "#]],
+    );
+}
+
+#[test]
 fn source_scan_includes_explicit_record_field_keys() {
     check_source_candidates(
         "name",

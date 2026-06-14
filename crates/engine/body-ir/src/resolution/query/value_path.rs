@@ -145,32 +145,21 @@ where
             return Ok((BodyResolution::Unknown, Ty::Unknown));
         }
 
-        // Consts/statics have declared value types. Use those before the type-constructor fallback
-        // below, which only knows how to turn type defs into nominal values.
-        let semantic_items = self.semantic_items_for_defs(result.resolved.clone())?;
-        let has_typed_values = semantic_items
-            .iter()
-            .any(|item| matches!(item, SemanticItemRef::Const(_) | SemanticItemRef::Static(_)));
-        if has_typed_values
-            && let Some((resolution, ty)) =
-                self.value_name_resolution(BodyValueName::SemanticItems(semantic_items))?
+        // Functions/consts/statics are true value items. Resolve them before the type-constructor
+        // fallback below, which only admits unit and tuple structs.
+        if let Some((resolution, ty)) =
+            self.semantic_value_resolution_from_defs(&result.resolved)?
         {
             return Ok((resolution, ty));
         }
 
         // Unit and tuple structs are type defs in DefMap, but value expressions should see their
         // constructor type.
-        let ty = self.nominal_ty_from_defs(&result.resolved)?;
-        Ok((
-            BodyResolution::Declarations(
-                result
-                    .resolved
-                    .into_iter()
-                    .map(DeclarationRef::from)
-                    .collect(),
-            ),
-            ty,
-        ))
+        let (declarations, ty) = self.constructor_resolution_from_defs(&result.resolved)?;
+        if declarations.is_empty() {
+            return Ok((BodyResolution::Unknown, Ty::Unknown));
+        }
+        Ok((BodyResolution::Declarations(declarations), ty))
     }
 
     /// Search one value name through parent scopes, with an optional local binding cutoff.
@@ -355,6 +344,59 @@ where
         }
     }
 
+    /// Resolve owner-module functions, consts, and statics before constructor fallback.
+    fn semantic_value_resolution_from_defs(
+        &self,
+        defs: &[DefId],
+    ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
+        let mut functions = UniqueVec::new();
+        let mut declarations = UniqueVec::new();
+        let mut tys = ExpectedUnique::new();
+
+        for def in defs {
+            let DefId::Local(local_def) = *def else {
+                continue;
+            };
+            let Some(item) = self
+                .context
+                .item_query()
+                .semantic_item_for_local_def(local_def)?
+            else {
+                continue;
+            };
+
+            match item {
+                SemanticItemRef::Function(_) => {
+                    functions.push(DeclarationRef::from(*def));
+                }
+                SemanticItemRef::Const(const_ref) => {
+                    declarations.push(DeclarationRef::from(const_ref));
+                    tys.push(self.semantic_const_ty(const_ref)?);
+                }
+                SemanticItemRef::Static(static_ref) => {
+                    declarations.push(DeclarationRef::from(static_ref));
+                    tys.push(self.semantic_static_ty(static_ref)?);
+                }
+                SemanticItemRef::TypeDef(_)
+                | SemanticItemRef::Trait(_)
+                | SemanticItemRef::Impl(_)
+                | SemanticItemRef::TypeAlias(_) => {}
+            }
+        }
+
+        if !declarations.is_empty() {
+            return Ok(Some((
+                BodyResolution::Declarations(declarations),
+                tys.into_ty(),
+            )));
+        }
+        if !functions.is_empty() {
+            return Ok(Some((BodyResolution::Declarations(functions), Ty::Unknown)));
+        }
+
+        Ok(None)
+    }
+
     /// Resolve the declared type of a const item.
     fn semantic_const_ty(&self, const_ref: ConstRef) -> Result<Ty, PackageStoreError> {
         let item_query = self.context.item_query();
@@ -388,8 +430,12 @@ where
             .resolve(ty)
     }
 
-    /// Turn type-def declarations into a nominal type.
-    fn nominal_ty_from_defs(&self, defs: &[DefId]) -> Result<Ty, PackageStoreError> {
+    /// Turn constructor-capable type defs into value declarations and their nominal type.
+    fn constructor_resolution_from_defs(
+        &self,
+        defs: &[DefId],
+    ) -> Result<(UniqueVec<DeclarationRef>, Ty), PackageStoreError> {
+        let mut declarations = UniqueVec::new();
         let mut type_defs = ExpectedUnique::new();
         for def in defs {
             let DefId::Local(local_def) = def else {
@@ -402,9 +448,17 @@ where
             else {
                 continue;
             };
+            if !self
+                .context
+                .item_query()
+                .type_def_has_value_constructor(type_def)?
+            {
+                continue;
+            }
+            declarations.push(DeclarationRef::from(*def));
             type_defs.push(NominalTy::bare(type_def));
         }
 
-        Ok(type_defs.into_nominal_ty())
+        Ok((declarations, type_defs.into_nominal_ty()))
     }
 }

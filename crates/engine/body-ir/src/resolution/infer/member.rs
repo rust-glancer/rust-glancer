@@ -9,7 +9,10 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{NominalTy, Ty, inference::InferTy};
+use rg_ty::{
+    NominalTy, Ty,
+    inference::{InferGenericArg, InferTy},
+};
 
 use crate::{ir::ExprKind, resolution::BodyResolutionContext};
 
@@ -111,14 +114,23 @@ where
         generics: &GenericParams,
     ) -> Option<InferTypeSubst> {
         let base_ty = inference.root_resolved_expr_ty(base);
-        let infer_args = match base_ty {
-            InferTy::Nominal(ty) | InferTy::SelfTy(ty) if ty.def == owner_ty.def => ty.args,
-            _ => return None,
-        };
+        let infer_args = Self::infer_args_for_owner(&base_ty, owner_ty)?;
 
         let mut subst = InferTypeSubst::new();
-        subst.bind_type_params_from_infer_args(inference, generics, &infer_args);
+        subst.bind_type_params_from_infer_args(inference, generics, infer_args);
         Some(subst)
+    }
+
+    /// Find owner generic args after reference autoderef, e.g. `&Boxed<?T>` -> `Boxed<?T>`.
+    fn infer_args_for_owner<'ty>(
+        ty: &'ty InferTy,
+        owner_ty: &NominalTy,
+    ) -> Option<&'ty [InferGenericArg]> {
+        match ty {
+            InferTy::Nominal(ty) | InferTy::SelfTy(ty) if ty.def == owner_ty.def => Some(&ty.args),
+            InferTy::Reference { inner, .. } => Self::infer_args_for_owner(inner, owner_ty),
+            _ => None,
+        }
     }
 
     /// Project `pair.0` from an inference-aware tuple, peeling explicit references.

@@ -97,12 +97,8 @@ where
         }
     }
 
-    /// Preserve impl context unless the current body module should become a scope.
+    /// Preserve item-owner context so `Self` means the impl owner, not the outer body owner.
     fn anchor_for_owner_context(&self, context: TypePathContext) -> TypeRefAnchor {
-        if context.module.origin == DefMapRef::Body(self.context.body_ref()) {
-            return self.anchor_for_module(context.module);
-        }
-
         if let DefMapRef::Body(_) = context.module.origin {
             TypeRefAnchor::BodyContext(context)
         } else {

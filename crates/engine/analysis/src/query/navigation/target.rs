@@ -71,7 +71,7 @@ impl<'a, 'db> NavigationTargetProjection<'a, 'db> {
                 kind: NavigationTargetKind::from(declaration.kind()),
                 name: declaration.name().to_string(),
                 file_id: declaration.file_id(),
-                span: Some(declaration.span()),
+                span: Some(declaration.selection_span()),
             }))
     }
 

@@ -70,10 +70,14 @@ impl ResolvedFieldTargets {
     pub(crate) fn resolution(&self) -> BodyResolution {
         let mut fields = UniqueVec::new();
         for target in &self.targets {
-            let ResolvedFieldTarget::Declared(target) = target else {
-                continue;
+            match target {
+                ResolvedFieldTarget::Declared(target) => {
+                    fields.push(target.field);
+                }
+                ResolvedFieldTarget::Structural { .. } => {
+                    return BodyResolution::Unknown;
+                }
             };
-            fields.push(target.field);
         }
 
         if fields.is_empty() {

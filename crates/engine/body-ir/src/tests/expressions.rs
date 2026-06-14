@@ -554,6 +554,135 @@ pub fn use_it(id: u8, name: u8) -> User {
 }
 
 #[test]
+fn value_paths_only_use_real_type_constructors() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_value_constructor_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Named {
+    pub value: u8,
+}
+
+pub struct Tuple(u8);
+pub struct Unit;
+
+pub fn use_it() {
+    let named = Named;
+    let tuple = Tuple;
+    let unit = Unit;
+}
+"#,
+        expect![[r#"
+            package body_value_constructor_fixture
+
+            body_value_constructor_fixture [lib]
+            body b0 fn body_value_constructor_fixture[lib]::crate::use_it @ 8:1-12:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v1, v2
+            bindings
+            - v0 let named `named` => <unknown> @ 9:9-9:14
+            - v1 let tuple `tuple` => nominal struct body_value_constructor_fixture[lib]::crate::Tuple @ 10:9-10:14
+            - v2 let unit `unit` => nominal struct body_value_constructor_fixture[lib]::crate::Unit @ 11:9-11:13
+            body
+            expr e3 block s1 => () @ 8:17-12:2
+              stmt s0 let v0 @ 9:5-9:23
+                initializer
+                  expr e0 path Named => <unknown> @ 9:17-9:22
+              stmt s1 let v1 @ 10:5-10:23
+                initializer
+                  expr e1 path Tuple -> item struct body_value_constructor_fixture[lib]::crate::Tuple => nominal struct body_value_constructor_fixture[lib]::crate::Tuple @ 10:17-10:22
+              stmt s2 let v2 @ 11:5-11:21
+                initializer
+                  expr e2 path Unit -> item struct body_value_constructor_fixture[lib]::crate::Unit => nominal struct body_value_constructor_fixture[lib]::crate::Unit @ 11:16-11:20
+        "#]],
+    );
+}
+
+#[test]
+fn mixed_declared_and_structural_field_targets_are_unresolved() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod ops {
+    pub trait Deref {
+        type Target;
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+
+//- /app/src/lib.rs
+pub struct DeclaredId;
+pub struct StructuralId;
+
+pub struct Pair(pub DeclaredId);
+
+pub struct Wrapper;
+
+impl core::ops::Deref for Wrapper {
+    type Target = Pair;
+}
+
+impl core::ops::Deref for Wrapper {
+    type Target = (StructuralId,);
+}
+
+pub fn use_it(wrapper: Wrapper) {
+    let field = wrapper.0;
+}
+"#,
+        expect![[r#"
+            package app
+
+            app [lib]
+            body b0 fn app[lib]::crate::use_it @ 16:1-18:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1
+            bindings
+            - v0 param wrapper `wrapper`: Wrapper => nominal struct app[lib]::crate::Wrapper @ 16:15-16:22
+            - v1 let field `field` => <unknown> @ 17:9-17:14
+            body
+            expr e2 block s1 => () @ 16:33-18:2
+              stmt s0 let v1 @ 17:5-17:27
+                initializer
+                  expr e1 field 0 => <unknown> @ 17:17-17:26
+                    base
+                      expr e0 path wrapper -> local v0 => nominal struct app[lib]::crate::Wrapper @ 17:17-17:24
+
+
+            package fake_core
+
+            fake_core [lib]
+        "#]],
+    );
+}
+
+#[test]
 fn preserves_reference_expression_mutability() {
     check_project_body_ir(
         r#"

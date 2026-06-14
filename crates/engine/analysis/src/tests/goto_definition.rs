@@ -106,6 +106,31 @@ pub fn use_it() {
 }
 
 #[test]
+fn named_module_targets_select_module_name() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_named_module_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod api {
+    pub struct User;
+}
+
+pub fn use_it(_: a$goto_module$pi::User) {}
+"#,
+        &[AnalysisQuery::goto("goto module", "goto_module")],
+        expect![[r#"
+            goto module
+            - module api @ 1:5-1:8
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_field_accesses_to_field_declarations() {
     check_analysis_queries(
         r#"
@@ -525,7 +550,7 @@ pub fn make(user: Us$goto_param$er) -> Us$goto_ret$er {
         ],
         expect![[r#"
             goto use module
-            - module api @ 1:1-4:2
+            - module api @ 1:5-1:8
 
             goto use path
             - struct User @ 3:16-3:20
