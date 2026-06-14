@@ -12,8 +12,8 @@ use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{
-    AutoderefMode, ExpectedTyExt, GenericArg, NominalTy, ReferencePeelingCandidates, Ty,
-    ty_for_binary, ty_for_literal, ty_for_unary,
+    AutoderefMode, ExpectedTyExt, GenericArg, NominalTy, PrimitiveTy, ReferencePeelingCandidates,
+    Ty, ty_for_binary, ty_for_literal, ty_for_unary,
 };
 
 use crate::{
@@ -197,14 +197,17 @@ where
             ExprKind::Assign { .. } => {
                 self.pass.set_expr_ty(expr, Ty::Unit);
             }
+            ExprKind::Let { .. } => {
+                self.pass
+                    .set_expr_ty(expr, Ty::Primitive(PrimitiveTy::Bool));
+            }
             ExprKind::Break { .. } | ExprKind::Continue { .. } => {
                 self.pass.set_expr_ty(expr, Ty::Never);
             }
             ExprKind::Yeet { .. } | ExprKind::Become { .. } => {
                 self.pass.set_expr_ty(expr, Ty::Never);
             }
-            ExprKind::Let { .. }
-            | ExprKind::Closure { .. }
+            ExprKind::Closure { .. }
             | ExprKind::Loop { .. }
             | ExprKind::Range { .. }
             | ExprKind::Cast { ty: None, .. }

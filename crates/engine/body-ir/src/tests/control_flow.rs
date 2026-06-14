@@ -56,7 +56,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
                   condition
                     expr e4 binary && => bool @ 15:8-15:52
                       lhs
-                        expr e1 let s2 v2 => <unknown> @ 15:8-15:35
+                        expr e1 let s2 v2 => bool @ 15:8-15:35
                           initializer
                             expr e0 path input -> local v0 => nominal enum body_if_let_fixture[lib]::crate::Maybe @ 15:30-15:35
                       rhs
@@ -237,7 +237,7 @@ pub fn walk(input: Maybe, items: Items) {
                       stmt s2 expr @ 11:9-14:10
                         expr e6 while => () @ 11:9-14:10
                           condition
-                            expr e1 let s3 v2 => <unknown> @ 11:15-11:44
+                            expr e1 let s3 v2 => bool @ 11:15-11:44
                               initializer
                                 expr e0 path input -> local v0 => nominal enum body_control_flow_fixture[lib]::crate::Maybe @ 11:39-11:44
                           body
