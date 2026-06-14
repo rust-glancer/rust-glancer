@@ -188,11 +188,11 @@ pub fn shadowed(ready: u8, value: u8) -> u8 {
             body
             expr e6 block s1 => <unknown> @ 7:44-15:2
               stmt s0 expr @ 8:5-11:6
-                expr e3 match => <unknown> @ 8:5-11:6
+                expr e3 match => u8 @ 8:5-11:6
                   scrutinee
                     expr e0 path value -> local v0 => u8 @ 8:11-8:16
                   arm s2
-                    expr e1 literal int `0` => i32 @ 9:18-9:19
+                    expr e1 literal int `0` => u8 @ 9:18-9:19
                   arm s3
                     expr e2 path other -> local v2 => u8 @ 10:18-10:23
               stmt s1 let v3 @ 13:5-13:28
@@ -213,15 +213,15 @@ pub fn shadowed(ready: u8, value: u8) -> u8 {
             - v1 param value `value`: u8 => u8 @ 17:28-17:33
             - v2 let ready `ready` => u8 @ 19:9-19:14
             body
-            expr e4 block s1 => <unknown> @ 17:45-22:2
+            expr e4 block s1 => u8 @ 17:45-22:2
               tail
-                expr e3 match => <unknown> @ 18:5-21:6
+                expr e3 match => u8 @ 18:5-21:6
                   scrutinee
                     expr e0 path value -> local v1 => u8 @ 18:11-18:16
                   arm s2
                     expr e1 path ready -> local v2 => u8 @ 19:18-19:23
                   arm s3
-                    expr e2 literal int `0` => i32 @ 20:14-20:15
+                    expr e2 literal int `0` => u8 @ 20:14-20:15
 
 
             body b2 const body_pattern_resolution_fixture[lib]::crate::ready @ 1:1-1:25

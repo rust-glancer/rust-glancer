@@ -247,7 +247,7 @@ where
         Ok(changed)
     }
 
-    /// Rebuild shapes such as `(?T,)`, `[?T; N]`, and `&?T` from child slots.
+    /// Rebuild shapes such as `(?T,)`, `[?T; N]`, `&?T`, or branch results from child slots.
     fn refresh_shape_expr_facts(&mut self) {
         for expr_idx in 0..self.pass.body.exprs().len() {
             let expr = ExprId(expr_idx);
@@ -280,6 +280,24 @@ where
                         kind,
                         inner,
                         &fallback_ty,
+                    );
+                }
+                ExprKind::Block { tail, .. } => {
+                    self.pass.inference.set_expr_block_from_tail(expr, tail);
+                }
+                ExprKind::If {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    self.pass
+                        .inference
+                        .set_expr_if_from_branches(expr, then_branch, else_branch);
+                }
+                ExprKind::Match { arms, .. } => {
+                    self.pass.inference.set_expr_match_from_arms(
+                        expr,
+                        arms.into_iter().filter_map(|arm| arm.expr),
                     );
                 }
                 _ => {}
@@ -734,8 +752,47 @@ where
             ) if mutability == *expected_mutability => {
                 self.constrain_expr_with_expected(inner, expected_inner);
             }
+            (ExprKind::Block { tail, .. }, _) => {
+                self.constrain_optional_result_expr_with_expected(tail, expected_ty);
+            }
+            (
+                ExprKind::If {
+                    then_branch,
+                    else_branch: Some(else_branch),
+                    ..
+                },
+                _,
+            ) => {
+                self.constrain_optional_result_expr_with_expected(then_branch, expected_ty);
+                self.constrain_result_expr_with_expected(else_branch, expected_ty);
+            }
+            (ExprKind::Match { arms, .. }, _) => {
+                for arm in arms {
+                    self.constrain_optional_result_expr_with_expected(arm.expr, expected_ty);
+                }
+            }
             _ => {}
         }
+    }
+
+    /// Constrain an optional expression that contributes to its parent result.
+    fn constrain_optional_result_expr_with_expected(
+        &mut self,
+        expr: Option<ExprId>,
+        expected_ty: &Ty,
+    ) {
+        if let Some(expr) = expr {
+            self.constrain_result_expr_with_expected(expr, expected_ty);
+        }
+    }
+
+    /// Constrain a result expression, skipping explicit `return expr` wrappers.
+    fn constrain_result_expr_with_expected(&mut self, expr: ExprId, expected_ty: &Ty) {
+        if self.is_explicit_return_expr(expr) {
+            return;
+        }
+
+        self.constrain_expr_with_expected(expr, expected_ty);
     }
 
     /// Accept missing array length, otherwise match it against element count.

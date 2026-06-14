@@ -178,6 +178,59 @@ impl BodyInferenceCtx {
         };
     }
 
+    pub(crate) fn set_expr_block_from_tail(&mut self, expr: ExprId, tail: Option<ExprId>) {
+        self.expr_tys[expr.0] = tail
+            .map(|tail| self.expr_tys[tail.0].clone())
+            .unwrap_or(InferTy::Unit);
+    }
+
+    pub(crate) fn set_expr_if_from_branches(
+        &mut self,
+        expr: ExprId,
+        then_branch: Option<ExprId>,
+        else_branch: Option<ExprId>,
+    ) {
+        let Some(else_branch) = else_branch else {
+            self.expr_tys[expr.0] = InferTy::Unit;
+            return;
+        };
+
+        self.set_expr_common_result_from_exprs(expr, then_branch.into_iter().chain([else_branch]));
+    }
+
+    pub(crate) fn set_expr_match_from_arms(
+        &mut self,
+        expr: ExprId,
+        arms: impl Iterator<Item = ExprId>,
+    ) {
+        self.set_expr_common_result_from_exprs(expr, arms);
+    }
+
+    fn set_expr_common_result_from_exprs(
+        &mut self,
+        expr: ExprId,
+        result_exprs: impl Iterator<Item = ExprId>,
+    ) {
+        // Branch-like expressions need one shared result slot: every branch can provide evidence,
+        // and an expected type on the parent must also flow back into every branch.
+        let result_ty = self.table.new_type_var();
+        let mut has_result = false;
+        for result_expr in result_exprs {
+            has_result = true;
+            self.table
+                .unify(&result_ty, &self.expr_tys[result_expr.0].clone());
+        }
+
+        self.expr_tys[expr.0] = if has_result {
+            result_ty
+        } else {
+            // Note that we don't handle "empty blocks" but "lack of blocks" here,
+            // "empty blocks" are handled separately -- these are real exprs that resolve to unit,
+            // while here we are dealing with incomplete code like `match` with no arms.
+            InferTy::Unknown
+        };
+    }
+
     pub(crate) fn set_binding_ty(&mut self, binding: BindingId, ty: &Ty) {
         self.binding_tys[binding.0] = InferTy::from_ty(ty);
     }

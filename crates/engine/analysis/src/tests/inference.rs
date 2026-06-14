@@ -562,6 +562,79 @@ pub fn use_it(builder: Builder) {
 }
 
 #[test]
+fn propagates_expected_types_through_result_expressions() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_result_expression_expected_type_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub enum Kind {
+    A,
+    B,
+}
+
+pub fn id<T>(value: T) -> T {}
+
+pub fn missing<T>() -> T {}
+
+pub fn use_it(flag: bool, kind: Kind, user: User) {
+    let block_user: User = { id(missing())$type_block_inner$ }$type_block$;
+    let if_user: User = if flag {
+        id(missing())$type_if_then$
+    } else {
+        user$type_if_else$
+    }$type_if$;
+    let match_user: User = match kind {
+        Kind::A => id(missing())$type_match_a$,
+        Kind::B => user$type_match_b$,
+    }$type_match$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("block generic call result", "type_block_inner"),
+            AnalysisQuery::ty("block expression", "type_block"),
+            AnalysisQuery::ty("if then generic call result", "type_if_then"),
+            AnalysisQuery::ty("if else result", "type_if_else"),
+            AnalysisQuery::ty("if expression", "type_if"),
+            AnalysisQuery::ty("match arm generic call result", "type_match_a"),
+            AnalysisQuery::ty("match arm known result", "type_match_b"),
+            AnalysisQuery::ty("match expression", "type_match"),
+        ],
+        expect![[r#"
+            block generic call result
+            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
+
+            block expression
+            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
+
+            if then generic call result
+            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
+
+            if else result
+            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
+
+            if expression
+            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
+
+            match arm generic call result
+            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
+
+            match arm known result
+            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
+
+            match expression
+            - nominal struct analysis_result_expression_expected_type_inference[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
 fn treats_explicit_call_wildcard_generics_as_inference_variables() {
     check_analysis_queries(
         r#"
