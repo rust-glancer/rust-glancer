@@ -36,6 +36,17 @@ impl InferTypeSubst {
         self.0.push((name, ty));
     }
 
+    /// Let function generics hide same-named impl generics while staying inferable.
+    pub(crate) fn shadow_type_params(
+        &mut self,
+        inference: &mut BodyInferenceCtx,
+        generics: &GenericParams,
+    ) {
+        for param in &generics.types {
+            self.0.push((param.name.clone(), inference.new_type_var()));
+        }
+    }
+
     /// Bind type params by matching declaration syntax against inference evidence.
     ///
     /// Example: `Vec<T>` matched with `Vec<?T>` binds `T = ?T`.

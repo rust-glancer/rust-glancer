@@ -99,6 +99,11 @@ impl ResolvedCallTarget {
     pub(crate) fn first_written_param_idx(&self) -> usize {
         self.self_source.first_written_param_idx()
     }
+
+    /// Return whether this static call was selected through a type prefix.
+    pub(crate) fn has_type_prefix_self_source(&self) -> bool {
+        matches!(self.self_source, CallSelfSource::TypePrefix(_))
+    }
 }
 
 impl CallSelfSource {

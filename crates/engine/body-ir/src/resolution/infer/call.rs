@@ -196,22 +196,31 @@ where
         else {
             return Ok(());
         };
-        let Some(generics) = function_data.signature.generics() else {
-            return Ok(());
-        };
-        if generics.types.is_empty() {
-            return Ok(());
-        }
-
         let projection = calls.signature(&target).project(args)?;
         if projection.written_param_tys().len() != args.len() {
             return Ok(());
         }
 
         let scope = self.context.body().expr_unchecked(call).scope;
-        let (mut subst, _) =
-            self.explicit_type_arg_infer_subst(inference, generics, target.explicit_args(), scope)?;
-        if let Some(ret_ty) = function_data.signature.ret_ty() {
+        let mut subst = self.type_prefix_impl_infer_subst(
+            inference,
+            call,
+            target.has_type_prefix_self_source(),
+            target.function().origin,
+            &function_data.owner,
+            function_data.signature.ret_ty(),
+        )?;
+        self.apply_function_generic_shadows(
+            inference,
+            &mut subst,
+            function_data.signature.generics(),
+            target.explicit_args(),
+            scope,
+        )?;
+
+        if let Some(generics) = function_data.signature.generics()
+            && let Some(ret_ty) = function_data.signature.ret_ty()
+        {
             let return_ty = inference.expr_ty(call);
             subst.bind_type_ref(inference, ret_ty, &return_ty, generics);
         }
@@ -235,6 +244,49 @@ where
         }
 
         Ok(())
+    }
+
+    /// Bind impl generics for a static `Type::function` call from its result slot.
+    ///
+    /// Example: `Vec::singleton(user): Vec<?T>` gives `impl<T> Vec<T>` evidence `T = ?T`.
+    fn type_prefix_impl_infer_subst(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        call: ExprId,
+        has_type_prefix_self_source: bool,
+        origin: rg_ir_model::DefMapRef,
+        owner: &ItemOwner,
+        ret_ty: Option<&TypeRef>,
+    ) -> Result<InferTypeSubst, PackageStoreError> {
+        let mut subst = InferTypeSubst::new();
+        if !has_type_prefix_self_source {
+            return Ok(subst);
+        }
+
+        let ItemOwner::Impl(impl_id) = owner else {
+            return Ok(subst);
+        };
+
+        let impl_ref = ImplRef {
+            origin,
+            id: *impl_id,
+        };
+        let Some(impl_data) = self.context.item_query().impl_data(impl_ref)?.cloned() else {
+            return Ok(subst);
+        };
+
+        let return_ty = inference.root_resolved_expr_ty(call);
+        subst.bind_type_ref(
+            inference,
+            &impl_data.self_ty,
+            &return_ty,
+            &impl_data.generics,
+        );
+        if let Some(ret_ty) = ret_ty {
+            subst.bind_type_ref(inference, ret_ty, &return_ty, &impl_data.generics);
+        }
+
+        Ok(subst)
     }
 
     /// Use method args to solve receiver vars.
@@ -331,7 +383,7 @@ where
         Ok(subst)
     }
 
-    /// Function generics shadow impl generics; `::<User>` then fills function `T`.
+    /// Function generics shadow impl generics; `::<User>` or return evidence then fills `T`.
     fn apply_function_generic_shadows(
         &self,
         inference: &mut BodyInferenceCtx,
@@ -344,9 +396,7 @@ where
             return Ok(());
         };
 
-        for param in &generics.types {
-            subst.push(inference, param.name.clone(), InferTy::Unknown);
-        }
+        subst.shadow_type_params(inference, generics);
 
         let explicit_subst = self.context.generics().subst_for_explicit_args(
             generics,

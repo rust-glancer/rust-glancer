@@ -775,7 +775,7 @@ pub fn use_it(mut pair: (u8, u8), mut slots: [u8; 3], value: u8, user: User) {
             - v14 let binary `binary` => bool @ 20:9-20:15
             - v15 let hole `hole` => <unknown> @ 23:9-23:13
             body
-            expr e66 block s1 => () @ 9:78-27:2
+            expr e66 block s1 => ! @ 9:78-27:2
               stmt s0 let v4 @ 10:5-10:34
                 initializer
                   expr e3 tuple => (u8, u8) @ 10:17-10:33

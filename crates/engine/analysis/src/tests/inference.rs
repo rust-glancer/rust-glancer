@@ -797,12 +797,14 @@ pub struct Vec<T> {
 
 impl<T> Vec<T> {
     pub fn new() -> Self {}
+    pub fn singleton(value: T) -> Self {}
 }
 
-pub fn use_it() {
+pub fn use_it(user: User) {
     let inferred: Vec<User> = Vec::new()$type_inferred$;
     let explicit = Vec::<User>::new()$type_explicit$;
     let wildcard = Vec::<_>::new()$type_wildcard$;
+    let singleton = Vec::singleton(user)$type_singleton$;
 }
 "#,
         &[
@@ -818,6 +820,10 @@ pub fn use_it() {
                 "associated function wildcard prefix generic",
                 "type_wildcard",
             ),
+            AnalysisQuery::ty(
+                "associated function impl generic argument",
+                "type_singleton",
+            ),
         ],
         expect![[r#"
             associated function inferred prefix generic
@@ -828,6 +834,9 @@ pub fn use_it() {
 
             associated function wildcard prefix generic
             - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<<unknown>>
+
+            associated function impl generic argument
+            - nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::Vec<nominal struct analysis_associated_function_prefix_generic_inference[lib]::crate::User>
         "#]],
     );
 }

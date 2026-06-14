@@ -49,7 +49,7 @@ pub fn use_it(maybe: Option<User>) {
                 initializer
                   expr e0 path maybe -> local v0 => nominal enum body_enum_pattern_fixture[lib]::crate::Option<nominal struct body_enum_pattern_fixture[lib]::crate::User> @ 9:23-9:28
                 else
-                  expr e2 block s2 => () @ 9:34-9:45
+                  expr e2 block s2 => ! @ 9:34-9:45
                     stmt s0 expr; @ 9:36-9:43
                       expr e1 wrapper return => ! @ 9:36-9:42
               tail

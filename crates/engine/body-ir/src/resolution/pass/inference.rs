@@ -287,8 +287,20 @@ where
                         &fallback_ty,
                     );
                 }
-                ExprKind::Block { tail, .. } => {
-                    self.pass.inference.set_expr_block_from_tail(expr, tail);
+                ExprKind::Block {
+                    statements, tail, ..
+                } => {
+                    // If code has no tail, we want to prevent it from resolving to `()` if it
+                    // actually resolved to `!`.
+                    // At the same time we don't try to be overly smart and catch cases such as
+                    // `return false; 42` (e.g. block de facto resolves to `!` but has a tail),
+                    // since it's still valid rust and it typechecks. Compiler will warn user
+                    // about dead code anyway.
+                    if tail.is_none() && self.tailless_block_final_statement_diverges(&statements) {
+                        self.pass.inference.set_expr_infer_ty(expr, InferTy::Never);
+                    } else {
+                        self.pass.inference.set_expr_block_from_tail(expr, tail);
+                    }
                 }
                 ExprKind::If {
                     then_branch,
@@ -308,6 +320,35 @@ where
                 _ => {}
             }
         }
+    }
+
+    /// Treat tail-less `{ return value; }`-style blocks as diverging.
+    fn tailless_block_final_statement_diverges(&self, statements: &[StmtId]) -> bool {
+        let Some(statement) = statements.last() else {
+            return false;
+        };
+        let StmtKind::Expr { expr, .. } = self.pass.body.statement_unchecked(*statement).kind
+        else {
+            return false;
+        };
+
+        match self.pass.body.expr_unchecked(expr).kind {
+            ExprKind::Break { value: Some(_), .. } => return false,
+            ExprKind::Wrapper {
+                kind: ExprWrapperKind::Return,
+                ..
+            }
+            | ExprKind::Break { value: None, .. }
+            | ExprKind::Continue { .. }
+            | ExprKind::Yeet { .. }
+            | ExprKind::Become { .. } => return true,
+            _ => {}
+        }
+
+        matches!(
+            self.pass.inference.root_resolved_expr_ty(expr),
+            InferTy::Never
+        )
     }
 
     /// Use one selected call target to push parameter evidence into written args.

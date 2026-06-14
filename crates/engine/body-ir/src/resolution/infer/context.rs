@@ -106,6 +106,10 @@ impl BodyInferenceCtx {
         self.expr_tys[expr.0] = self.table.new_float_var();
     }
 
+    pub(crate) fn new_type_var(&mut self) -> InferTy {
+        self.table.new_type_var()
+    }
+
     pub(crate) fn set_expr_tuple_from_fields(&mut self, expr: ExprId, fields: &[ExprId]) {
         // Tuple expressions carry child slots by value so later expected-type constraints can
         // descend through the tuple and solve literals or variables nested inside each field.
@@ -215,18 +219,27 @@ impl BodyInferenceCtx {
         expr: ExprId,
         result_exprs: impl Iterator<Item = ExprId>,
     ) {
-        // Branch-like expressions need one shared result slot: every branch can provide evidence,
-        // and an expected type on the parent must also flow back into every branch.
+        // Branch-like expressions need one shared result slot. Diverging branches have type `!`,
+        // but they do not produce a value that should conflict with the other branches.
         let result_ty = self.table.new_type_var();
         let mut has_result = false;
+        let mut has_value_result = false;
         for result_expr in result_exprs {
             has_result = true;
+            let branch_ty = self.table.resolve_root_var(&self.expr_tys[result_expr.0]);
+            if matches!(branch_ty, InferTy::Never) {
+                continue;
+            }
+
+            has_value_result = true;
             self.table
                 .unify(&result_ty, &self.expr_tys[result_expr.0].clone());
         }
 
-        self.expr_tys[expr.0] = if has_result {
+        self.expr_tys[expr.0] = if has_value_result {
             result_ty
+        } else if has_result {
+            InferTy::Never
         } else {
             // Note that we don't handle "empty blocks" but "lack of blocks" here,
             // "empty blocks" are handled separately -- these are real exprs that resolve to unit,
