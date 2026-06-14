@@ -174,7 +174,7 @@ where
                 self.propagate_tuple_variant(path.as_ref(), &fields, expected_ty, updates)
             }
             PatKind::Record { path, fields, .. } => {
-                self.propagate_record_variant(path.as_ref(), &fields, expected_ty, updates)
+                self.propagate_record_pat(path.as_ref(), &fields, expected_ty, updates)
             }
             PatKind::Tuple { fields } => self.propagate_tuple_pat(&fields, expected_ty, updates),
             PatKind::Slice { fields } => self.propagate_slice_pat(&fields, expected_ty, updates),
@@ -280,24 +280,72 @@ where
         Ok(())
     }
 
-    fn propagate_record_variant(
+    fn propagate_record_pat(
         &self,
         path: Option<&BodyPath>,
         fields: &[RecordPatField],
         expected_ty: &Ty,
         updates: &mut Vec<(BindingId, Ty)>,
     ) -> Result<(), PackageStoreError> {
-        let def_map_path = path.and_then(|path| path.as_def_map_path());
-        let Some(variant_name) = variant_name(def_map_path.as_ref()) else {
-            return Ok(());
-        };
-
         for field in fields {
-            if let Some(field_ty) = self.variant_field_ty(expected_ty, variant_name, &field.key)? {
+            if let Some(field_ty) = self.pattern_field_ty(path, expected_ty, &field.key)? {
                 self.propagate_pat(field.pat, &field_ty, updates)?;
             }
         }
         Ok(())
+    }
+
+    fn pattern_field_ty(
+        &self,
+        path: Option<&BodyPath>,
+        expected_ty: &Ty,
+        field_key: &FieldKey,
+    ) -> Result<Option<Ty>, PackageStoreError> {
+        let def_map_path = path.and_then(|path| path.as_def_map_path());
+        let variant_name = variant_name(def_map_path.as_ref());
+        let mut candidates = ExpectedUnique::new();
+
+        // Record patterns project a field out of the expected nominal type. References are peeled
+        // here as pattern matching does, without using receiver autoderef.
+        for candidate in ReferencePeelingCandidates::new(expected_ty) {
+            for nominal_ty in candidate.ty().as_nominals() {
+                match nominal_ty.def.id {
+                    TypeDefId::Struct(_) | TypeDefId::Union(_) => {
+                        if let Some(field_ty) = self
+                            .context
+                            .fields()
+                            .declared(nominal_ty, field_key)?
+                            .and_then(|target| target.ty().cloned())
+                        {
+                            candidates.push(field_ty);
+                        }
+                    }
+                    TypeDefId::Enum(_) => {
+                        let Some(variant_name) = variant_name else {
+                            continue;
+                        };
+                        let Some(variant_ref) = self
+                            .context
+                            .item_query()
+                            .enum_variant_ref_for_type_def(nominal_ty.def, variant_name)?
+                        else {
+                            continue;
+                        };
+                        let Some(field_ty) = self.context.fields().enum_variant_field_ty(
+                            nominal_ty,
+                            variant_ref,
+                            field_key,
+                        )?
+                        else {
+                            continue;
+                        };
+                        candidates.push(field_ty);
+                    }
+                }
+            }
+        }
+
+        Ok(candidates.into_option())
     }
 
     fn variant_field_ty(

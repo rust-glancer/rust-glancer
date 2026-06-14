@@ -112,8 +112,8 @@ pub fn destructure(
             - v5 let from_param `from_param`: UserId => nominal struct body_destructure_fixture[lib]::crate::UserId @ 14:9-14:19
             - v6 let left `left` => nominal struct body_destructure_fixture[lib]::crate::UserId @ 15:10-15:14
             - v7 let right `right` => nominal struct body_destructure_fixture[lib]::crate::UserId @ 15:16-15:21
-            - v8 let field_left `field_left` => <unknown> @ 16:22-16:32
-            - v9 let right `right` => <unknown> @ 16:34-16:39
+            - v8 let field_left `field_left` => nominal struct body_destructure_fixture[lib]::crate::UserId @ 16:22-16:32
+            - v9 let right `right` => nominal struct body_destructure_fixture[lib]::crate::UserId @ 16:34-16:39
             - v10 let borrowed_left `borrowed_left` => nominal struct body_destructure_fixture[lib]::crate::UserId @ 17:11-17:24
             - v11 let borrowed_right `borrowed_right` => nominal struct body_destructure_fixture[lib]::crate::UserId @ 17:26-17:40
             body
@@ -184,9 +184,9 @@ pub fn shadowed(ready: u8, value: u8) -> u8 {
             - v0 param value `value`: u8 => u8 @ 7:15-7:20
             - v1 param user `user`: User => nominal struct body_pattern_resolution_fixture[lib]::crate::User @ 7:26-7:30
             - v2 let other `other` => u8 @ 10:9-10:14
-            - v3 let ID `ID` => <unknown> @ 13:16-13:18
+            - v3 let ID `ID` => u8 @ 13:16-13:18
             body
-            expr e6 block s1 => <unknown> @ 7:44-15:2
+            expr e6 block s1 => u8 @ 7:44-15:2
               stmt s0 expr @ 8:5-11:6
                 expr e3 match => u8 @ 8:5-11:6
                   scrutinee
@@ -199,7 +199,7 @@ pub fn shadowed(ready: u8, value: u8) -> u8 {
                 initializer
                   expr e4 path user -> local v1 => nominal struct body_pattern_resolution_fixture[lib]::crate::User @ 13:23-13:27
               tail
-                expr e5 path ID -> local v3 => <unknown> @ 14:5-14:7
+                expr e5 path ID -> local v3 => u8 @ 14:5-14:7
 
 
             body b1 fn body_pattern_resolution_fixture[lib]::crate::shadowed @ 17:1-22:2
