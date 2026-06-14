@@ -11,12 +11,13 @@ pub mod path;
 mod resolution;
 
 pub use self::hir::body::{
-    BindingData, BindingKind, BodyData, BodyOwner, BodyPath, BodyPathSegment, BodyPathSegmentArgs,
-    BodyPathSegmentKind, BodySelfParamKind, BodySource, BodySourceItems, ClosureCapture,
-    ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprKind,
-    ExprRangeKind, ExprUnaryOp, ExprWrapperKind, FunctionParamData, LabelData, LiteralKind,
-    MatchArmData, PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordExprField,
-    RecordExprSpread, RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
+    BindingData, BindingKind, BodyAssociatedPathPrefix, BodyData, BodyOwner, BodyPath,
+    BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodySelfParamKind, BodySource,
+    BodySourceItems, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp,
+    ExprBlockKind, ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind,
+    FunctionParamData, LabelData, LiteralKind, MatchArmData, PatBindingMode, PatData, PatKind,
+    PatMutability, PatRangeKind, RecordExprField, RecordExprSpread, RecordFieldSyntax,
+    RecordPatField, ScopeData, StmtData, StmtKind,
 };
 pub use self::ids::{
     TargetId,

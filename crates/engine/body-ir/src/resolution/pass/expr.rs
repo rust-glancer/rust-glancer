@@ -243,20 +243,13 @@ where
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
         let expr_data = self.pass.body.expr_unchecked(expr);
 
-        if let Some((prefix_ty_ref, last_segment)) = path.split_type_prefix_name() {
-            let prefix_ty = self
-                .pass
-                .context()
-                .type_refs(TypeRefUseSite::Scope(expr_data.scope))
-                .resolve(&prefix_ty_ref)?;
-            if let Some(result) = self
-                .pass
-                .context()
-                .associated_items()
-                .resolve_for_type(&prefix_ty, last_segment)?
-            {
-                return Ok(result);
-            }
+        if let Some(result) = self
+            .pass
+            .context()
+            .associated_items()
+            .resolve_body_path(expr_data.scope, path)?
+        {
+            return Ok(result);
         }
 
         match path.as_def_map_path() {

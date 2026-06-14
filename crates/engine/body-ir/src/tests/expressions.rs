@@ -614,6 +614,7 @@ pub enum Maybe<T> {
 }
 
 pub struct User;
+pub struct Project;
 
 pub trait Factory<T> {
     fn make() -> T;
@@ -625,48 +626,72 @@ impl Factory<User> for User {
     }
 }
 
+impl Factory<Project> for User {
+    fn make() -> Project {
+        Project
+    }
+}
+
 pub fn use_it(user: User) {
     let variant = Maybe::<User>::Some(user);
-    let qualified = <User as Factory<User>>::make();
+    let qualified_user = <User as Factory<User>>::make();
+    let qualified_project = <User as Factory<Project>>::make();
 }
 "#,
         expect![[r#"
             package body_rich_path_fixture
 
             body_rich_path_fixture [lib]
-            body b0 fn body_rich_path_fixture[lib]::crate::use_it @ 18:1-21:2
+            body b0 fn body_rich_path_fixture[lib]::crate::use_it @ 25:1-29:2
             scopes
             - s0 parent <none>: v0
-            - s1 parent s0: v1, v2
+            - s1 parent s0: v1, v2, v3
             bindings
-            - v0 param user `user`: User => nominal struct body_rich_path_fixture[lib]::crate::User @ 18:15-18:19
-            - v1 let variant `variant` => nominal enum body_rich_path_fixture[lib]::crate::Maybe<nominal struct body_rich_path_fixture[lib]::crate::User> @ 19:9-19:16
-            - v2 let qualified `qualified` => <unknown> @ 20:9-20:18
+            - v0 param user `user`: User => nominal struct body_rich_path_fixture[lib]::crate::User @ 25:15-25:19
+            - v1 let variant `variant` => nominal enum body_rich_path_fixture[lib]::crate::Maybe<nominal struct body_rich_path_fixture[lib]::crate::User> @ 26:9-26:16
+            - v2 let qualified_user `qualified_user` => nominal struct body_rich_path_fixture[lib]::crate::User @ 27:9-27:23
+            - v3 let qualified_project `qualified_project` => nominal struct body_rich_path_fixture[lib]::crate::Project @ 28:9-28:26
             body
-            expr e5 block s1 => () @ 18:27-21:2
-              stmt s0 let v1 @ 19:5-19:45
+            expr e7 block s1 => () @ 25:27-29:2
+              stmt s0 let v1 @ 26:5-26:45
                 initializer
-                  expr e2 call => nominal enum body_rich_path_fixture[lib]::crate::Maybe<nominal struct body_rich_path_fixture[lib]::crate::User> @ 19:19-19:44
+                  expr e2 call => nominal enum body_rich_path_fixture[lib]::crate::Maybe<nominal struct body_rich_path_fixture[lib]::crate::User> @ 26:19-26:44
                     callee
-                      expr e0 path Maybe::<User>::Some -> variant enum body_rich_path_fixture[lib]::crate::Maybe::Some => nominal enum body_rich_path_fixture[lib]::crate::Maybe<nominal struct body_rich_path_fixture[lib]::crate::User> @ 19:19-19:38
+                      expr e0 path Maybe::<User>::Some -> variant enum body_rich_path_fixture[lib]::crate::Maybe::Some => nominal enum body_rich_path_fixture[lib]::crate::Maybe<nominal struct body_rich_path_fixture[lib]::crate::User> @ 26:19-26:38
                     arg
-                      expr e1 path user -> local v0 => nominal struct body_rich_path_fixture[lib]::crate::User @ 19:39-19:43
-              stmt s1 let v2 @ 20:5-20:53
+                      expr e1 path user -> local v0 => nominal struct body_rich_path_fixture[lib]::crate::User @ 26:39-26:43
+              stmt s1 let v2 @ 27:5-27:58
                 initializer
-                  expr e4 call => <unknown> @ 20:21-20:52
+                  expr e4 call => nominal struct body_rich_path_fixture[lib]::crate::User @ 27:26-27:57
                     callee
-                      expr e3 path <User as Factory<User>>::make => <unknown> @ 20:21-20:50
+                      expr e3 path <User as Factory<User>>::make -> fn trait body_rich_path_fixture[lib]::crate::Factory::make => <unknown> @ 27:26-27:55
+              stmt s2 let v3 @ 28:5-28:64
+                initializer
+                  expr e6 call => nominal struct body_rich_path_fixture[lib]::crate::Project @ 28:29-28:63
+                    callee
+                      expr e5 path <User as Factory<Project>>::make -> fn trait body_rich_path_fixture[lib]::crate::Factory::make => <unknown> @ 28:29-28:61
 
 
-            body b1 fn impl Factory<User> for User::make @ 13:5-15:6
+            body b1 fn impl Factory<User> for User::make @ 14:5-16:6
             scopes
             - s0 parent <none>: <none>
             - s1 parent s0: <none>
             bindings
             body
-            expr e1 block s1 => nominal struct body_rich_path_fixture[lib]::crate::User @ 13:23-15:6
+            expr e1 block s1 => nominal struct body_rich_path_fixture[lib]::crate::User @ 14:23-16:6
               tail
-                expr e0 path User -> item struct body_rich_path_fixture[lib]::crate::User => nominal struct body_rich_path_fixture[lib]::crate::User @ 14:9-14:13
+                expr e0 path User -> item struct body_rich_path_fixture[lib]::crate::User => nominal struct body_rich_path_fixture[lib]::crate::User @ 15:9-15:13
+
+
+            body b2 fn impl Factory<Project> for User::make @ 20:5-22:6
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e1 block s1 => nominal struct body_rich_path_fixture[lib]::crate::Project @ 20:26-22:6
+              tail
+                expr e0 path Project -> item struct body_rich_path_fixture[lib]::crate::Project => nominal struct body_rich_path_fixture[lib]::crate::Project @ 21:9-21:16
         "#]],
     );
 }

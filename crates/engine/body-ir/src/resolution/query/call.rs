@@ -405,18 +405,10 @@ where
         let ExprKind::Path { path } = &callee_data.kind else {
             return Ok(targets);
         };
-        let Some((prefix_ty_ref, name)) = path.split_type_prefix_name() else {
-            return Ok(targets);
-        };
-
-        let prefix_ty = self
-            .context
-            .type_refs(TypeRefUseSite::Scope(callee_data.scope))
-            .resolve(&prefix_ty_ref)?;
         for candidate in self
             .context
             .associated_items()
-            .function_candidates_for_type(&prefix_ty, name)?
+            .function_candidates_for_body_path(callee_data.scope, path)?
         {
             targets.push(Self::associated_function_target(callee_data, candidate));
         }

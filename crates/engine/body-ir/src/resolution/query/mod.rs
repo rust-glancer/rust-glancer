@@ -5,6 +5,7 @@ mod field;
 mod function;
 mod generics;
 mod method;
+mod traits;
 mod type_alias;
 mod type_context;
 mod type_path;
@@ -21,6 +22,7 @@ pub(crate) use self::{
     field::BodyFieldQuery,
     function::BodyFunctionQuery,
     generics::BodyGenericsQuery,
+    traits::BodyTraitQuery,
     type_alias::BodyTypeAliasQuery,
     type_context::BodyTypeContextQuery,
     type_ref::{TypeRefResolutionQuery, TypeRefUseSite},

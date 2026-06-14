@@ -15,7 +15,7 @@ use crate::ir::body::ResolvedBodyData;
 
 use crate::resolution::query::{
     BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
-    BodyLocalItemQuery, BodyMethodQuery, BodyTypeAliasQuery, BodyTypeContextQuery,
+    BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery, BodyTypeAliasQuery, BodyTypeContextQuery,
     BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery, TypeRefUseSite,
 };
 
@@ -111,6 +111,10 @@ where
 
     pub(crate) fn associated_items(&self) -> BodyAssociatedItemQuery<'a, D, I> {
         BodyAssociatedItemQuery::new(*self)
+    }
+
+    pub(crate) fn traits(&self) -> BodyTraitQuery<'a, D, I> {
+        BodyTraitQuery::new(*self)
     }
 
     pub(crate) fn calls(&self) -> BodyCallQuery<'a, D, I> {

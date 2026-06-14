@@ -29,7 +29,10 @@ pub use self::{
     literal::LiteralKind,
     owner::BodyOwner,
     pat::{PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordPatField},
-    path::{BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind},
+    path::{
+        BodyAssociatedPathPrefix, BodyPath, BodyPathSegment, BodyPathSegmentArgs,
+        BodyPathSegmentKind,
+    },
     record::RecordFieldSyntax,
     scope::ScopeData,
     source::BodySource,
