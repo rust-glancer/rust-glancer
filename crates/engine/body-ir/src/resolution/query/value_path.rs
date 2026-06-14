@@ -73,6 +73,8 @@ where
         path: &Path,
         visible_bindings: Option<usize>,
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
+        // Single-segment paths are the only ones that can resolve to local bindings. They also
+        // need lexical item lookup, so handle them before type-shaped paths.
         if let Some(name) = path.single_name() {
             if let Some((resolution, ty)) =
                 self.resolve_single_segment_value_name(scope, name, visible_bindings)?
@@ -115,6 +117,8 @@ where
             | TypePathResolution::Unknown => {}
         }
 
+        // Associated value paths are split at the last segment: `Type::VALUE` resolves the
+        // `Type` prefix first, then asks associated-item lookup for `VALUE`.
         if let Some((prefix, last_segment)) = path.split_prefix_name() {
             if let Some((resolution, ty)) =
                 self.context
@@ -125,6 +129,8 @@ where
             }
         }
 
+        // Multi-segment body paths can name body-local values nested in local modules. Single
+        // names already took the lexical route above.
         if path.single_name().is_none()
             && let Some((resolution, ty)) =
                 self.resolve_body_value_path_from_def_map(scope, path)?
@@ -132,10 +138,28 @@ where
             return Ok((resolution, ty));
         }
 
+        // Finally, look from the semantic owner module. This covers ordinary module items and
+        // initializer bodies whose owner/fallback modules are outside the body def map.
         let result = self.resolve_path_from_owner_modules(path)?;
         if result.resolved.is_empty() {
             return Ok((BodyResolution::Unknown, Ty::Unknown));
         }
+
+        // Consts/statics have declared value types. Use those before the type-constructor fallback
+        // below, which only knows how to turn type defs into nominal values.
+        let semantic_items = self.semantic_items_for_defs(result.resolved.clone())?;
+        let has_typed_values = semantic_items
+            .iter()
+            .any(|item| matches!(item, SemanticItemRef::Const(_) | SemanticItemRef::Static(_)));
+        if has_typed_values
+            && let Some((resolution, ty)) =
+                self.value_name_resolution(BodyValueName::SemanticItems(semantic_items))?
+        {
+            return Ok((resolution, ty));
+        }
+
+        // Unit and tuple structs are type defs in DefMap, but value expressions should see their
+        // constructor type.
         let ty = self.nominal_ty_from_defs(&result.resolved)?;
         Ok((
             BodyResolution::Declarations(

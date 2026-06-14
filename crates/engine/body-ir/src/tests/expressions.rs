@@ -1136,7 +1136,7 @@ pub static CURRENT: u32 = LIMIT;
             - s0 parent <none>: <none>
             bindings
             body
-            expr e0 path LIMIT -> item const body_item_initializer_fixture[lib]::crate::LIMIT => <unknown> @ 2:27-2:32
+            expr e0 path LIMIT -> const body_item_initializer_fixture[lib]::crate::LIMIT => u32 @ 2:27-2:32
         "#]],
     );
 }
