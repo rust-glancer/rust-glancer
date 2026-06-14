@@ -5,7 +5,7 @@
 //! Body IR.
 
 use rg_ir_model::{
-    BindingId, EnumVariantRef, ExprId, PatId, ScopeId, StmtId,
+    BindingId, EnumVariantRef, ExprId, ScopeId, StmtId,
     identity::DeclarationRef,
     items::{FieldKey, FieldList, GenericParams, TypeRef},
 };
@@ -14,10 +14,13 @@ use rg_package_store::PackageStoreError;
 use rg_ty::{NominalTy, Ty, inference::InferTy};
 
 use crate::{
-    ir::{ExprKind, ExprWrapperKind, PatKind, RecordExprField, StmtKind, resolved::BodyResolution},
+    ir::{ExprKind, ExprWrapperKind, RecordExprField, StmtKind, resolved::BodyResolution},
     resolution::{
         TypeRefUseSite,
-        infer::{BodyCallInference, BodyMemberInference, InferTypeRefProjector, InferTypeSubst},
+        infer::{
+            BodyCallInference, BodyMemberInference, BodyPatternInference, InferTypeRefProjector,
+            InferTypeSubst,
+        },
     },
 };
 
@@ -159,7 +162,7 @@ where
         let max_passes = self.pass.body.bindings().len() + self.pass.body.exprs().len() + 1;
         for _ in 0..max_passes {
             let mut changed = false;
-            changed |= self.link_simple_let_binding_initializers();
+            changed |= self.link_let_binding_initializers();
             changed |= self.refresh_binding_path_expr_facts();
             any_changed |= changed;
             if !changed {
@@ -170,8 +173,10 @@ where
         any_changed
     }
 
-    /// Visit every unannotated `let name = expr` that can carry initializer evidence.
-    fn link_simple_let_binding_initializers(&mut self) -> bool {
+    /// Visit every unannotated `let pat = expr` that can carry initializer evidence.
+    fn link_let_binding_initializers(&mut self) -> bool {
+        let context = self.pass.providers.context(self.pass.body);
+        let pattern_inference = BodyPatternInference::new(context);
         let mut changed = false;
 
         for statement_idx in 0..self.pass.body.statements().len() {
@@ -189,7 +194,11 @@ where
             else {
                 continue;
             };
-            changed |= self.link_simple_let_binding_initializer(pat, initializer);
+            changed |= pattern_inference.link_initializer_pattern(
+                &mut self.pass.inference,
+                pat,
+                initializer,
+            );
         }
 
         for expr_idx in 0..self.pass.body.exprs().len() {
@@ -202,21 +211,14 @@ where
             else {
                 continue;
             };
-            changed |= self.link_simple_let_binding_initializer(pat, initializer);
+            changed |= pattern_inference.link_initializer_pattern(
+                &mut self.pass.inference,
+                pat,
+                initializer,
+            );
         }
 
         changed
-    }
-
-    /// Link one plain binding to its initializer, e.g. `let values = Vec::new()`.
-    fn link_simple_let_binding_initializer(&mut self, pat: PatId, initializer: ExprId) -> bool {
-        let Some(binding) = self.simple_binding_pat(pat) else {
-            return false;
-        };
-
-        self.pass
-            .inference
-            .set_binding_from_expr(binding, initializer)
     }
 
     /// Copy binding slots back into local reads such as `values` or `alias`.
@@ -303,21 +305,6 @@ where
                 _ => {}
             }
         }
-    }
-
-    /// Return the binding for a plain `let name = ...` pattern.
-    fn simple_binding_pat(&self, pat: PatId) -> Option<BindingId> {
-        let data = self.pass.body.pat(pat)?;
-        let PatKind::Binding {
-            binding: Some(binding),
-            subpat: None,
-            ..
-        } = &data.kind
-        else {
-            return None;
-        };
-
-        Some(*binding)
     }
 
     /// Use one selected call target to push parameter evidence into written args.

@@ -114,8 +114,8 @@ pub fn destructure(
             - v7 let right `right` => nominal struct body_destructure_fixture[lib]::crate::UserId @ 15:16-15:21
             - v8 let field_left `field_left` => <unknown> @ 16:22-16:32
             - v9 let right `right` => <unknown> @ 16:34-16:39
-            - v10 let borrowed_left `borrowed_left` => <unknown> @ 17:11-17:24
-            - v11 let borrowed_right `borrowed_right` => <unknown> @ 17:26-17:40
+            - v10 let borrowed_left `borrowed_left` => nominal struct body_destructure_fixture[lib]::crate::UserId @ 17:11-17:24
+            - v11 let borrowed_right `borrowed_right` => nominal struct body_destructure_fixture[lib]::crate::UserId @ 17:26-17:40
             body
             expr e5 block s1 => nominal struct body_destructure_fixture[lib]::crate::UserId @ 13:13-19:2
               stmt s0 let v5: UserId @ 14:5-14:41

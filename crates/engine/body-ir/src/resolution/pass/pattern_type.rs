@@ -11,9 +11,9 @@ use rg_ir_model::{
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
-use rg_ty::{ReferencePeelingCandidates, Ty};
+use rg_ty::{RefMutability, ReferencePeelingCandidates, Ty};
 
-use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
+use crate::ir::{ExprKind, PatKind, PatMutability, RecordPatField, StmtKind};
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
 pub(super) struct PatternTypePropagationPass<'query, D, I> {
@@ -184,9 +184,10 @@ where
                 }
                 Ok(())
             }
-            PatKind::Ref { pat, .. } | PatKind::Box { pat } => {
-                self.propagate_pat(pat, expected_ty, updates)
+            PatKind::Ref { mutability, pat } => {
+                self.propagate_ref_pat(pat, mutability, expected_ty, updates)
             }
+            PatKind::Box { pat } => self.propagate_pat(pat, expected_ty, updates),
             PatKind::Path { .. }
             | PatKind::Rest
             | PatKind::Literal { .. }
@@ -239,6 +240,23 @@ where
             self.propagate_pat(*field, element_ty, updates)?;
         }
         Ok(())
+    }
+
+    fn propagate_ref_pat(
+        &self,
+        pat: PatId,
+        pat_mutability: PatMutability,
+        expected_ty: &Ty,
+        updates: &mut Vec<(BindingId, Ty)>,
+    ) -> Result<(), PackageStoreError> {
+        let Some((inner_ty, mutability)) = expected_ty.reference_inner() else {
+            return Ok(());
+        };
+        if mutability != Self::ref_mutability(pat_mutability) {
+            return Ok(());
+        }
+
+        self.propagate_pat(pat, inner_ty, updates)
     }
 
     fn propagate_tuple_variant(
@@ -341,6 +359,13 @@ where
         }
 
         updates.push((binding, ty));
+    }
+
+    fn ref_mutability(mutability: PatMutability) -> RefMutability {
+        match mutability {
+            PatMutability::Shared => RefMutability::Shared,
+            PatMutability::Mut => RefMutability::Mutable,
+        }
     }
 }
 

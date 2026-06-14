@@ -44,6 +44,10 @@ impl BodyInferenceCtx {
         self.table.resolve_root_var(&self.expr_tys[expr.0])
     }
 
+    pub(crate) fn root_resolved_ty(&self, ty: &InferTy) -> InferTy {
+        self.table.resolve_root_var(ty)
+    }
+
     /// Instantiate function type params inside a projected call return.
     pub(crate) fn instantiate_expr_generic_return_ty(
         &mut self,
@@ -235,11 +239,12 @@ impl BodyInferenceCtx {
         self.binding_tys[binding.0] = InferTy::from_ty(ty);
     }
 
-    /// Copy an initializer slot into a binding, preserving shared inference vars.
-    pub(crate) fn set_binding_from_expr(&mut self, binding: BindingId, expr: ExprId) -> bool {
-        let ty = self.expr_tys[expr.0].clone();
-        if self.binding_tys[binding.0] == ty {
-            return false;
+    /// Set a binding to an inference-aware type, preserving any previous evidence.
+    pub(crate) fn set_binding_infer_ty(&mut self, binding: BindingId, ty: InferTy) -> bool {
+        let previous_ty = self.binding_tys[binding.0].clone();
+        let changed = self.table.unify(&previous_ty, &ty);
+        if previous_ty == ty {
+            return changed;
         }
 
         self.binding_tys[binding.0] = ty;

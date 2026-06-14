@@ -1081,6 +1081,79 @@ pub fn array_index(user: User) {
 }
 
 #[test]
+fn carries_generic_variables_through_structural_patterns() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_structural_pattern_generic_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub struct Vec<T> {
+    value: T,
+}
+
+impl<T> Vec<T> {
+    pub fn new() -> Self {}
+    pub fn push(&mut self, value: T) {}
+}
+
+pub fn tuple_pattern(user: User) {
+    let (values,) = (Vec::new(),)$type_tuple_initializer$;
+    values.push(user);
+    values$type_tuple_read$;
+}
+
+pub fn reference_pattern(user: User) {
+    let &(values,) = (&(Vec::new(),))$type_reference_initializer$;
+    values.push(user);
+    values$type_reference_read$;
+}
+
+pub fn slice_pattern(user: User) {
+    let [values, ..] = [Vec::new()]$type_slice_initializer$;
+    values.push(user);
+    values$type_slice_read$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("tuple pattern initializer", "type_tuple_initializer"),
+            AnalysisQuery::ty("tuple pattern binding read", "type_tuple_read"),
+            AnalysisQuery::ty(
+                "reference pattern initializer",
+                "type_reference_initializer",
+            ),
+            AnalysisQuery::ty("reference pattern binding read", "type_reference_read"),
+            AnalysisQuery::ty("slice pattern initializer", "type_slice_initializer"),
+            AnalysisQuery::ty("slice pattern binding read", "type_slice_read"),
+        ],
+        expect![[r#"
+            tuple pattern initializer
+            - (nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>,)
+
+            tuple pattern binding read
+            - nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>
+
+            reference pattern initializer
+            - &(nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>,)
+
+            reference pattern binding read
+            - nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>
+
+            slice pattern initializer
+            - [nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>; 1]
+
+            slice pattern binding read
+            - nominal struct analysis_structural_pattern_generic_inference[lib]::crate::Vec<nominal struct analysis_structural_pattern_generic_inference[lib]::crate::User>
+        "#]],
+    );
+}
+
+#[test]
 fn applies_explicit_enum_prefix_generics_to_payload_expected_types() {
     check_analysis_queries(
         r#"
