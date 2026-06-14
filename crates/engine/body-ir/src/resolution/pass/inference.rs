@@ -17,7 +17,7 @@ use crate::{
     ir::{ExprKind, ExprWrapperKind, PatKind, RecordExprField, StmtKind, resolved::BodyResolution},
     resolution::{
         TypeRefUseSite,
-        infer::{BodyCallInference, InferTypeRefProjector, InferTypeSubst},
+        infer::{BodyCallInference, BodyMemberInference, InferTypeRefProjector, InferTypeSubst},
     },
 };
 
@@ -48,7 +48,7 @@ where
         self.instantiate_inference_facts()?;
 
         // 2. Propagate `?` markers through expressions that depend on instantiated children.
-        self.refresh_inference_dependent_expr_facts();
+        self.refresh_inference_dependent_expr_facts()?;
 
         // 3. Run inference: observe available evidence and solve `?T` where possible.
         self.constrain_expected_types()?;
@@ -134,27 +134,40 @@ where
     }
 
     /// Rebuild copied expression facts after child slots may have gained `?T`.
-    fn refresh_inference_dependent_expr_facts(&mut self) {
-        self.refresh_shape_expr_facts();
-        self.refresh_binding_flow_facts();
-        self.refresh_shape_expr_facts();
-        self.refresh_binding_flow_facts();
+    fn refresh_inference_dependent_expr_facts(&mut self) -> Result<(), PackageStoreError> {
+        let max_passes = self.pass.body.bindings().len() + self.pass.body.exprs().len() + 1;
+        for _ in 0..max_passes {
+            self.refresh_shape_expr_facts();
+
+            let mut changed = false;
+            changed |= self.refresh_member_projection_facts()?;
+            changed |= self.refresh_binding_flow_facts();
+            if !changed {
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     /// Make `let second = first;` chains share one inference slot graph.
-    fn refresh_binding_flow_facts(&mut self) {
+    fn refresh_binding_flow_facts(&mut self) -> bool {
         // Binding reads and binding initializers can form short chains such as
         // `let second = first;`. Iterate over this narrow graph so every slot shares the same
         // inference vars before expected-type constraints run.
+        let mut any_changed = false;
         let max_passes = self.pass.body.bindings().len() + self.pass.body.exprs().len() + 1;
         for _ in 0..max_passes {
             let mut changed = false;
             changed |= self.link_simple_let_binding_initializers();
             changed |= self.refresh_binding_path_expr_facts();
+            any_changed |= changed;
             if !changed {
                 break;
             }
         }
+
+        any_changed
     }
 
     /// Visit every unannotated `let name = expr` that can carry initializer evidence.
@@ -218,6 +231,20 @@ where
         }
 
         changed
+    }
+
+    /// Rebuild field and index expressions that project out of inference-aware bases.
+    fn refresh_member_projection_facts(&mut self) -> Result<bool, PackageStoreError> {
+        let context = self.pass.providers.context(self.pass.body);
+        let member_inference = BodyMemberInference::new(context);
+        let mut changed = false;
+
+        for expr_idx in 0..self.pass.body.exprs().len() {
+            changed |= member_inference
+                .refresh_projection_fact(&mut self.pass.inference, ExprId(expr_idx))?;
+        }
+
+        Ok(changed)
     }
 
     /// Rebuild shapes such as `(?T,)`, `[?T; N]`, and `&?T` from child slots.

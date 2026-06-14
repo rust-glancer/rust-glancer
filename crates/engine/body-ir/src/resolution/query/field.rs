@@ -24,12 +24,18 @@ enum ResolvedFieldTarget {
 /// Declared field selected from a nominal owner type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DeclaredFieldTarget {
+    owner_ty: NominalTy,
     field: FieldRef,
     ty_ref: Option<TypeRef>,
     ty: Option<Ty>,
 }
 
 impl DeclaredFieldTarget {
+    /// Return the nominal owner type that selected this field.
+    pub(crate) fn owner_ty(&self) -> &NominalTy {
+        &self.owner_ty
+    }
+
     /// Return the declared field type syntax if the declaration was available.
     pub(crate) fn ty_ref(&self) -> Option<&TypeRef> {
         self.ty_ref.as_ref()
@@ -95,6 +101,14 @@ impl ResolvedFieldTargets {
         }
 
         tys.into_ty()
+    }
+
+    /// Return the declared target only when field lookup is unambiguous.
+    pub(crate) fn single_declared(&self) -> Option<&DeclaredFieldTarget> {
+        match self.targets.as_slice() {
+            [ResolvedFieldTarget::Declared(target)] => Some(target),
+            _ => None,
+        }
     }
 
     /// Add a declared field target.
@@ -170,6 +184,7 @@ where
         };
         let Some(field_data) = item_query.field_data(field_ref)? else {
             return Ok(Some(DeclaredFieldTarget {
+                owner_ty: owner_ty.clone(),
                 field: field_ref,
                 ty_ref: None,
                 ty: None,
@@ -183,6 +198,7 @@ where
             .resolve(&field_data.field.ty)?;
 
         Ok(Some(DeclaredFieldTarget {
+            owner_ty: owner_ty.clone(),
             field: field_ref,
             ty_ref: Some(field_data.field.ty.clone()),
             ty: Some(ty),

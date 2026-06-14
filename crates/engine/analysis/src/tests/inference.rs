@@ -918,6 +918,96 @@ pub fn conflicting() {
 }
 
 #[test]
+fn carries_generic_variables_through_member_projections() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_member_projection_generic_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub struct Boxed<T> {
+    value: T,
+}
+
+impl<T> Boxed<T> {
+    pub fn new() -> Self {}
+}
+
+pub struct Vec<T> {
+    value: T,
+}
+
+impl<T> Vec<T> {
+    pub fn new() -> Self {}
+    pub fn push(&mut self, value: T) {}
+}
+
+pub fn declared_field() {
+    let boxed = Boxed::new()$type_boxed_initializer$;
+    let _typed: User = boxed.value$type_boxed_field$;
+    boxed$type_boxed_read$;
+}
+
+pub fn tuple_field(user: User) {
+    let pair = (Vec::new(),)$type_pair_initializer$;
+    pair.0$type_pair_field$.push(user);
+    pair$type_pair_read$;
+}
+
+pub fn array_index(user: User) {
+    let array = [Vec::new()]$type_array_initializer$;
+    array[0]$type_array_index$.push(user);
+    array$type_array_read$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("declared field owner initializer", "type_boxed_initializer"),
+            AnalysisQuery::ty("declared field projection", "type_boxed_field"),
+            AnalysisQuery::ty("declared field owner read", "type_boxed_read"),
+            AnalysisQuery::ty("tuple owner initializer", "type_pair_initializer"),
+            AnalysisQuery::ty("tuple field projection", "type_pair_field"),
+            AnalysisQuery::ty("tuple owner read", "type_pair_read"),
+            AnalysisQuery::ty("array owner initializer", "type_array_initializer"),
+            AnalysisQuery::ty("array index projection", "type_array_index"),
+            AnalysisQuery::ty("array owner read", "type_array_read"),
+        ],
+        expect![[r#"
+            declared field owner initializer
+            - nominal struct analysis_member_projection_generic_inference[lib]::crate::Boxed<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>
+
+            declared field projection
+            - nominal struct analysis_member_projection_generic_inference[lib]::crate::User
+
+            declared field owner read
+            - nominal struct analysis_member_projection_generic_inference[lib]::crate::Boxed<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>
+
+            tuple owner initializer
+            - (nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>,)
+
+            tuple field projection
+            - nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>
+
+            tuple owner read
+            - (nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>,)
+
+            array owner initializer
+            - [nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>; 1]
+
+            array index projection
+            - nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>
+
+            array owner read
+            - [nominal struct analysis_member_projection_generic_inference[lib]::crate::Vec<nominal struct analysis_member_projection_generic_inference[lib]::crate::User>; 1]
+        "#]],
+    );
+}
+
+#[test]
 fn applies_explicit_enum_prefix_generics_to_payload_expected_types() {
     check_analysis_queries(
         r#"

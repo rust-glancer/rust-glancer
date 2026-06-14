@@ -149,6 +149,11 @@ impl InferenceTable {
         TableFinalizer::new(self).map_infer_ty(ty)
     }
 
+    /// Expand only the root variable, preserving nested variables as future evidence links.
+    pub fn resolve_root_var(&self, ty: &InferTy) -> InferTy {
+        self.resolve_root_ty_var(ty, &mut Vec::new())
+    }
+
     fn alloc_var(&mut self, kind: InferVarKind) -> InferVarId {
         let id = InferVarId(
             self.slots
@@ -161,6 +166,59 @@ impl InferenceTable {
             value: InferVarValue::Unsolved,
         });
         id
+    }
+
+    fn resolve_root_ty_var(&self, ty: &InferTy, active_vars: &mut Vec<InferVarId>) -> InferTy {
+        match ty {
+            InferTy::Var(id) => self.resolve_root_var_id(*id, InferVarKind::Type, active_vars),
+            InferTy::IntegerVar(id) => {
+                self.resolve_root_var_id(*id, InferVarKind::Integer, active_vars)
+            }
+            InferTy::FloatVar(id) => {
+                self.resolve_root_var_id(*id, InferVarKind::Float, active_vars)
+            }
+            InferTy::Unit
+            | InferTy::Never
+            | InferTy::Primitive(_)
+            | InferTy::Tuple(_)
+            | InferTy::Array { .. }
+            | InferTy::Slice(_)
+            | InferTy::Reference { .. }
+            | InferTy::Opaque { .. }
+            | InferTy::Syntax(_)
+            | InferTy::Nominal(_)
+            | InferTy::SelfTy(_)
+            | InferTy::Unknown => ty.clone(),
+        }
+    }
+
+    fn resolve_root_var_id(
+        &self,
+        id: InferVarId,
+        kind: InferVarKind,
+        active_vars: &mut Vec<InferVarId>,
+    ) -> InferTy {
+        if active_vars.contains(&id) {
+            return InferTy::Unknown;
+        }
+
+        let Some(slot) = self.slots.get(id.index()) else {
+            return InferTy::Unknown;
+        };
+        if slot.kind != kind {
+            return InferTy::Unknown;
+        }
+
+        match &slot.value {
+            InferVarValue::Unsolved => InferTy::var_for_kind(kind, id),
+            InferVarValue::Solved(ty) => {
+                active_vars.push(id);
+                let resolved = self.resolve_root_ty_var(ty, active_vars);
+                active_vars.pop();
+                resolved
+            }
+            InferVarValue::Conflict => InferTy::Unknown,
+        }
     }
 
     fn unify_ty(&mut self, lhs: &InferTy, rhs: &InferTy) -> UnifyResult {

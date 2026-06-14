@@ -148,6 +148,20 @@ fn finalizes_solved_variables_inside_nominal_containers() {
 }
 
 #[test]
+fn resolves_root_variables_without_replacing_nested_vars() {
+    let mut table = InferenceTable::new();
+    let element = table.new_type_var();
+    let nested = table.new_type_var();
+
+    assert!(table.unify(&element, &vec_ty(nested.clone())));
+
+    assert_eq!(table.resolve_root_var(&element), vec_ty(nested.clone()));
+    assert!(table.unify(&nested, &InferTy::from_ty(&user_ty())));
+    assert_eq!(table.resolve_root_var(&element), vec_ty(nested));
+    assert_eq!(table.finalize(&element), concrete_vec_ty(user_ty()));
+}
+
+#[test]
 fn unifies_same_definition_nominal_generic_arguments() {
     let mut table = InferenceTable::new();
     let element = table.new_type_var();

@@ -27,12 +27,21 @@ impl BodyInferenceCtx {
         self.expr_tys[expr.0] = InferTy::from_ty(ty);
     }
 
-    pub(crate) fn set_expr_infer_ty(&mut self, expr: ExprId, ty: InferTy) {
+    pub(crate) fn set_expr_infer_ty(&mut self, expr: ExprId, ty: InferTy) -> bool {
+        if self.expr_tys[expr.0] == ty {
+            return false;
+        }
+
         self.expr_tys[expr.0] = ty;
+        true
     }
 
     pub(crate) fn expr_ty(&self, expr: ExprId) -> InferTy {
         self.expr_tys[expr.0].clone()
+    }
+
+    pub(crate) fn root_resolved_expr_ty(&self, expr: ExprId) -> InferTy {
+        self.table.resolve_root_var(&self.expr_tys[expr.0])
     }
 
     /// Instantiate function type params inside a projected call return.

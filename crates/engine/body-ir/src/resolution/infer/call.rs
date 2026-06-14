@@ -320,7 +320,7 @@ where
             return Ok(subst);
         };
 
-        let receiver_ty = inference.expr_ty(receiver);
+        let receiver_ty = inference.root_resolved_expr_ty(receiver);
         subst.bind_type_ref(
             inference,
             &impl_data.self_ty,
