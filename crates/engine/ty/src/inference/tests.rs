@@ -162,6 +162,44 @@ fn resolves_root_variables_without_replacing_nested_vars() {
 }
 
 #[test]
+fn existing_var_links_do_not_create_reverse_cycles() {
+    let mut table = InferenceTable::new();
+    let left = table.new_type_var();
+    let right = table.new_type_var();
+    let joined = table.new_type_var();
+
+    assert!(table.unify(&right, &left));
+    assert!(!table.unify(&left, &right));
+    assert!(table.unify(&joined, &left));
+    assert!(!table.unify(&joined, &right));
+
+    assert_eq!(table.resolve_root_var(&right), left);
+    assert_eq!(table.resolve_root_var(&joined), left);
+}
+
+#[test]
+fn indirect_var_links_do_not_create_reverse_cycles() {
+    let mut table = InferenceTable::new();
+    let first = table.new_type_var();
+    let second = table.new_type_var();
+    let third = table.new_type_var();
+    let fourth = table.new_type_var();
+
+    assert!(table.unify(&first, &second));
+    assert!(table.unify(&second, &third));
+    assert!(!table.unify(&third, &first));
+
+    assert_eq!(table.resolve_root_var(&first), third);
+    assert_eq!(table.resolve_root_var(&second), third);
+
+    assert!(table.unify(&third, &fourth));
+    assert!(!table.unify(&fourth, &first));
+    assert_eq!(table.resolve_root_var(&first), fourth);
+    assert_eq!(table.resolve_root_var(&second), fourth);
+    assert_eq!(table.resolve_root_var(&third), fourth);
+}
+
+#[test]
 fn unifies_same_definition_nominal_generic_arguments() {
     let mut table = InferenceTable::new();
     let element = table.new_type_var();

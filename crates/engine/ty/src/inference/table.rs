@@ -301,17 +301,18 @@ impl InferenceTable {
     }
 
     fn unify_var(&mut self, id: InferVarId, evidence: &InferTy) -> UnifyResult {
+        let evidence = self.resolve_root_var(evidence);
+
         // Syntax placeholders are preserved facts, not solver evidence. Later phases may resolve
         // them first and feed the resolved shape back into the table.
-        if matches!(evidence, InferTy::Unknown | InferTy::Syntax(_)) {
+        if matches!(&evidence, InferTy::Unknown | InferTy::Syntax(_)) {
             return UnifyResult::compatible();
         }
 
-        // Avoid recursive solutions such as `?T = Vec<?T>`. A variable equal to itself is fine,
-        // but an actual cycle would make finalization order-dependent.
+        // Avoid recursive solutions such as `?T = Vec<?T>`. The check uses root evidence so
+        // variable links like `?U = ?T` do not later allow the reverse `?T = ?U` cycle.
         if evidence.contains_var(id) {
-            let result = if matches!(evidence, InferTy::Var(var) | InferTy::IntegerVar(var) | InferTy::FloatVar(var) if *var == id)
-            {
+            let result = if evidence.var_id() == Some(id) {
                 UnifyResult::compatible()
             } else {
                 self.mark_conflict(id)
@@ -320,9 +321,9 @@ impl InferenceTable {
         }
 
         match self.slots[id.index()].value.clone() {
-            InferVarValue::Unsolved => self.solve_unsolved_var(id, evidence),
+            InferVarValue::Unsolved => self.solve_unsolved_var(id, &evidence),
             InferVarValue::Solved(existing) => {
-                let result = self.unify_ty(&existing, evidence);
+                let result = self.unify_ty(&existing, &evidence);
                 if result.is_conflict() {
                     return self.mark_conflict(id).merge(result);
                 }

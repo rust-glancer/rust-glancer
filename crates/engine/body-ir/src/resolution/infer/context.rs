@@ -232,8 +232,13 @@ impl BodyInferenceCtx {
             }
 
             has_value_result = true;
-            self.table
-                .unify(&result_ty, &self.expr_tys[result_expr.0].clone());
+            if matches!(branch_ty, InferTy::Unknown) {
+                continue;
+            }
+            // A branch may read the value being assigned by the whole expression, e.g.
+            // `x = match state { Keep => x, Change => next }`. Use the root-resolved branch
+            // type so already-detected cycles stay as `Unknown` instead of recursing again.
+            self.table.unify(&result_ty, &branch_ty);
         }
 
         self.expr_tys[expr.0] = if has_value_result {
