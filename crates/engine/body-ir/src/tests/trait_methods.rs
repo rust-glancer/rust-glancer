@@ -279,23 +279,28 @@ impl HasAttrs for Stmt {
 
 pub fn use_it() {
     let supports = StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS;
+    let qualified = <StmtKind as HasAttrs>::SUPPORTS_CUSTOM_INNER_ATTRS;
 }
 "#,
         expect![[r#"
             package body_trait_assoc_const_fixture
 
             body_trait_assoc_const_fixture [lib]
-            body b0 fn body_trait_assoc_const_fixture[lib]::crate::use_it @ 19:1-21:2
+            body b0 fn body_trait_assoc_const_fixture[lib]::crate::use_it @ 19:1-22:2
             scopes
             - s0 parent <none>: <none>
-            - s1 parent s0: v0
+            - s1 parent s0: v0, v1
             bindings
             - v0 let supports `supports` => bool @ 20:9-20:17
+            - v1 let qualified `qualified` => bool @ 21:9-21:18
             body
-            expr e1 block s1 => () @ 19:17-21:2
+            expr e2 block s1 => () @ 19:17-22:2
               stmt s0 let v0 @ 20:5-20:58
                 initializer
                   expr e0 path StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS -> const impl HasAttrs for StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS => bool @ 20:20-20:57
+              stmt s1 let v1 @ 21:5-21:73
+                initializer
+                  expr e1 path <StmtKind as HasAttrs>::SUPPORTS_CUSTOM_INNER_ATTRS -> const impl HasAttrs for StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS => bool @ 21:21-21:72
 
 
             body b1 const impl HasAttrs for StmtKind::SUPPORTS_CUSTOM_INNER_ATTRS @ 12:5-12:52

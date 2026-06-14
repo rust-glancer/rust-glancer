@@ -109,6 +109,11 @@ where
                 else {
                     return Ok(None);
                 };
+                let consts = self.qualified_trait_const_candidates(&selection, last_segment)?;
+                if !consts.is_empty() {
+                    return Ok(Some(Self::const_resolution(consts)));
+                }
+
                 let functions =
                     self.qualified_trait_function_candidates(&selection, last_segment)?;
                 Ok((!functions.is_empty()).then_some(Self::function_resolution(functions)))
@@ -438,6 +443,24 @@ where
             }
         }
         Ok(functions)
+    }
+
+    /// Find consts from the trait impls selected by `<Self as Trait>::item`.
+    fn qualified_trait_const_candidates(
+        &self,
+        selection: &BodyQualifiedTraitSelection,
+        name: &str,
+    ) -> Result<Vec<BodyAssociatedItemCandidate>, PackageStoreError> {
+        let mut consts = Vec::new();
+        for receiver in selection.receivers() {
+            self.push_trait_associated_const_candidates_for_impls(
+                &mut consts,
+                receiver.impls().clone(),
+                receiver.receiver_ty(),
+                name,
+            )?;
+        }
+        Ok(consts)
     }
 
     /// Read target-visible inherent functions, using the index when available.

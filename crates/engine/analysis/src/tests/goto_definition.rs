@@ -1106,16 +1106,34 @@ impl HasAttrs for Stmt {
     const SUPPORTS_CUSTOM_INNER_ATTRS: bool =
         StmtKind::SUPPORTS$goto_trait_assoc_const$_CUSTOM_INNER_ATTRS$type_trait_assoc_const$;
 }
+
+pub fn use_it() {
+    let _ = <StmtKind as HasAttrs>::SUPPORTS$goto_qualified_trait_assoc_const$_CUSTOM_INNER_ATTRS$type_qualified_trait_assoc_const$;
+}
 "#,
         &[
             AnalysisQuery::goto("goto trait associated const", "goto_trait_assoc_const"),
             AnalysisQuery::ty("type at trait associated const", "type_trait_assoc_const"),
+            AnalysisQuery::goto(
+                "goto qualified trait associated const",
+                "goto_qualified_trait_assoc_const",
+            ),
+            AnalysisQuery::ty(
+                "type at qualified trait associated const",
+                "type_qualified_trait_assoc_const",
+            ),
         ],
         expect![[r#"
             goto trait associated const
             - const SUPPORTS_CUSTOM_INNER_ATTRS @ 12:11-12:38
 
             type at trait associated const
+            - bool
+
+            goto qualified trait associated const
+            - const SUPPORTS_CUSTOM_INNER_ATTRS @ 12:11-12:38
+
+            type at qualified trait associated const
             - bool
         "#]],
     );
