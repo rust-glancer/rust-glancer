@@ -3,7 +3,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     BindingId, BodyRef, DefMapRef, ExprId, ModuleRef, PatId, ScopeId, StmtId,
-    items::{ItemNode, ItemTreeId},
+    items::{ItemNode, ItemTreeId, TypeRef},
 };
 use rg_std::{MemorySize, Shrink};
 
@@ -25,6 +25,7 @@ pub struct BodyData {
     source_items: BodySourceItems,
     param_scope: ScopeId,
     root_expr: ExprId,
+    function_params: Vec<FunctionParamData>,
     params: Vec<BindingId>,
     scopes: Arena<ScopeId, ScopeData>,
     bindings: Arena<BindingId, BindingData>,
@@ -45,6 +46,7 @@ impl BodyData {
         source_items: BodySourceItems,
         param_scope: ScopeId,
         root_expr: ExprId,
+        function_params: Vec<FunctionParamData>,
         params: Vec<BindingId>,
         scopes: Arena<ScopeId, ScopeData>,
         bindings: Arena<BindingId, BindingData>,
@@ -60,6 +62,7 @@ impl BodyData {
             source_items,
             param_scope,
             root_expr,
+            function_params,
             params,
             scopes,
             bindings,
@@ -95,6 +98,10 @@ impl BodyData {
 
     pub fn root_expr(&self) -> ExprId {
         self.root_expr
+    }
+
+    pub fn function_params(&self) -> &[FunctionParamData] {
+        &self.function_params
     }
 
     pub fn params(&self) -> &[BindingId] {
@@ -243,6 +250,15 @@ impl BodyData {
 
         self.bindings = new_bindings;
     }
+}
+
+/// One function parameter pattern and its lowered bindings.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct FunctionParamData {
+    pub source: BodySource,
+    pub pat: Option<PatId>,
+    pub bindings: Vec<BindingId>,
+    pub annotation: Option<TypeRef>,
 }
 
 fn rewrite_binding_list(bindings: &mut Vec<BindingId>, old_to_new: &[Option<BindingId>]) {

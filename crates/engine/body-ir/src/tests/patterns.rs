@@ -104,8 +104,8 @@ pub fn destructure(
             - s0 parent <none>: v0, v1, v2, v3, v4
             - s1 parent s0: v5, v6, v7, v8, v9, v10, v11
             bindings
-            - v0 param param_left `param_left` => <unknown> @ 9:6-9:16
-            - v1 param param_right `param_right` => <unknown> @ 9:18-9:29
+            - v0 param param_left `param_left` => nominal struct body_destructure_fixture[lib]::crate::UserId @ 9:6-9:16
+            - v1 param param_right `param_right` => nominal struct body_destructure_fixture[lib]::crate::UserId @ 9:18-9:29
             - v2 param pair `pair`: (UserId, UserId) => (nominal struct body_destructure_fixture[lib]::crate::UserId, nominal struct body_destructure_fixture[lib]::crate::UserId) @ 10:5-10:9
             - v3 param record `record`: Pair => nominal struct body_destructure_fixture[lib]::crate::Pair @ 11:5-11:11
             - v4 param borrowed `borrowed`: &(UserId, UserId) => &(nominal struct body_destructure_fixture[lib]::crate::UserId, nominal struct body_destructure_fixture[lib]::crate::UserId) @ 12:5-12:13
@@ -120,7 +120,7 @@ pub fn destructure(
             expr e5 block s1 => nominal struct body_destructure_fixture[lib]::crate::UserId @ 13:13-19:2
               stmt s0 let v5: UserId @ 14:5-14:41
                 initializer
-                  expr e0 path param_left -> local v0 => <unknown> @ 14:30-14:40
+                  expr e0 path param_left -> local v0 => nominal struct body_destructure_fixture[lib]::crate::UserId @ 14:30-14:40
               stmt s1 let v6, v7 @ 15:5-15:30
                 initializer
                   expr e1 path pair -> local v2 => (nominal struct body_destructure_fixture[lib]::crate::UserId, nominal struct body_destructure_fixture[lib]::crate::UserId) @ 15:25-15:29

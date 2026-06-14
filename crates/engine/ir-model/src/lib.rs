@@ -14,8 +14,8 @@ pub use self::hir::body::{
     BindingData, BindingKind, BodyData, BodyOwner, BodyPath, BodyPathSegment, BodyPathSegmentArgs,
     BodyPathSegmentKind, BodySelfParamKind, BodySource, BodySourceItems, ClosureCapture,
     ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprKind,
-    ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LabelData, LiteralKind, MatchArmData,
-    PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordExprField,
+    ExprRangeKind, ExprUnaryOp, ExprWrapperKind, FunctionParamData, LabelData, LiteralKind,
+    MatchArmData, PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordExprField,
     RecordExprSpread, RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
 };
 pub use self::ids::{

@@ -32,6 +32,19 @@ where
     pub(super) fn propagate(&self) -> Result<Vec<(BindingId, Ty)>, PackageStoreError> {
         let mut updates = Vec::new();
 
+        // Function parameters are flattened into bindings for body consumers, but
+        // destructuring annotations still need the original root pattern.
+        for param in self.context.body().function_params() {
+            let (Some(pat), Some(annotation)) = (param.pat, param.annotation.as_ref()) else {
+                continue;
+            };
+            let expected_ty = self
+                .context
+                .type_refs(TypeRefUseSite::Scope(self.context.body().param_scope()))
+                .resolve(annotation)?;
+            self.propagate_pat(pat, &expected_ty, &mut updates)?;
+        }
+
         for statement_idx in 0..self.context.body().statements().len() {
             let statement = StmtId(statement_idx);
             let StmtKind::Let {
