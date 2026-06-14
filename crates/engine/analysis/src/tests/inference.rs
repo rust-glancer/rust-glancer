@@ -1154,6 +1154,46 @@ pub fn slice_pattern(user: User) {
 }
 
 #[test]
+fn uses_simple_assignments_as_equality_evidence() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_assignment_generic_inference"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub fn missing<T>() -> T {}
+pub fn id<T>(value: T) -> T {}
+
+pub fn use_it(user: User) {
+    let mut value = id(missing()$type_missing$)$type_initializer$;
+    value = user;
+    value$type_read$;
+}
+"#,
+        &[
+            AnalysisQuery::ty("assignment missing argument", "type_missing"),
+            AnalysisQuery::ty("assignment initializer", "type_initializer"),
+            AnalysisQuery::ty("assignment binding read", "type_read"),
+        ],
+        expect![[r#"
+            assignment missing argument
+            - nominal struct analysis_assignment_generic_inference[lib]::crate::User
+
+            assignment initializer
+            - nominal struct analysis_assignment_generic_inference[lib]::crate::User
+
+            assignment binding read
+            - nominal struct analysis_assignment_generic_inference[lib]::crate::User
+        "#]],
+    );
+}
+
+#[test]
 fn applies_explicit_enum_prefix_generics_to_payload_expected_types() {
     check_analysis_queries(
         r#"

@@ -14,7 +14,10 @@ use rg_package_store::PackageStoreError;
 use rg_ty::{NominalTy, Ty, inference::InferTy};
 
 use crate::{
-    ir::{ExprKind, ExprWrapperKind, RecordExprField, StmtKind, resolved::BodyResolution},
+    ir::{
+        ExprAssignOp, ExprKind, ExprWrapperKind, RecordExprField, StmtKind,
+        resolved::BodyResolution,
+    },
     resolution::{
         TypeRefUseSite,
         infer::{
@@ -386,7 +389,7 @@ where
         Ok(())
     }
 
-    /// Route expression-level evidence from calls, method calls, and record fields.
+    /// Route expression-level evidence from calls, method calls, record fields, and assignments.
     fn constrain_expr_expected_types(&mut self, expr: ExprId) -> Result<(), PackageStoreError> {
         let kind = self.pass.body.expr_unchecked(expr).kind.clone();
         match kind {
@@ -418,8 +421,32 @@ where
             ExprKind::Record { fields, .. } => {
                 self.constrain_record_field_initializer_expected_types(expr, fields)
             }
+            ExprKind::Assign {
+                target: Some(target),
+                op: Some(ExprAssignOp::Assign),
+                value: Some(value),
+            } => {
+                self.constrain_simple_assignment(target, value);
+                Ok(())
+            }
             _ => Ok(()),
         }
+    }
+
+    /// Use `target = value` as equality evidence for direct local assignments.
+    fn constrain_simple_assignment(&mut self, target: ExprId, value: ExprId) {
+        let BodyResolution::Binding(binding) = self.pass.body.expr_resolution(target) else {
+            return;
+        };
+
+        let target_ty = self.pass.inference.root_resolved_expr_ty(target);
+        let value_ty = self.pass.inference.root_resolved_expr_ty(value);
+        self.pass
+            .inference
+            .constrain_infer_tys(&target_ty, &value_ty);
+        self.pass
+            .inference
+            .set_binding_infer_ty(*binding, target_ty);
     }
 
     /// Use known enum call result to push payload field types into tuple-variant args.
