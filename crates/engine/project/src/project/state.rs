@@ -13,7 +13,7 @@ use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 use crate::{
     IndexingPerformancePreference, PackageResidencyPlan, PackageResidencyPolicy,
     ProjectMemoryHooks,
-    cache::{Fingerprint, PackageCacheStore, WorkspaceCachePlan},
+    cache::{Fingerprint, PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
 };
 use rg_std::MemorySize;
 
@@ -30,6 +30,8 @@ pub(crate) struct ProjectState {
     pub(crate) workspace: WorkspaceMetadata,
     pub(crate) cargo_metadata_config: CargoMetadataConfig,
     pub(crate) cache_plan: WorkspaceCachePlan,
+    #[memsize(skip)]
+    pub(crate) cache_instance: PackageCacheInstance,
     #[memsize(skip)]
     pub(crate) cache_store: PackageCacheStore,
     pub(crate) package_source_fingerprints: Vec<Option<Fingerprint>>,

@@ -5,7 +5,6 @@
 //! should be resident, rebuilt, or evicted.
 
 use std::{
-    ffi::OsStr,
     fmt, fs,
     io::Write as _,
     path::{Path, PathBuf},
@@ -18,10 +17,9 @@ use rg_workspace::WorkspaceMetadata;
 
 use super::{
     CachedPackage, Fingerprint, PackageCacheArtifact, PackageCacheCodec, PackageCacheHeader,
-    WorkspaceCachePlan,
+    PackageCacheInstance, WorkspaceCachePlan,
 };
 
-const CACHE_DIR_NAME: &str = "rust_glancer";
 const CACHE_PACKAGES_DIR_NAME: &str = "packages";
 const CACHE_GENERATION_DIR_PREFIX: &str = "graph-";
 const PACKAGE_ARTIFACT_EXTENSION: &str = "rgpkg";
@@ -83,33 +81,20 @@ impl std::error::Error for PackageCacheReadError {
 }
 
 impl PackageCacheStore {
-    /// Plans cache paths for a workspace using Cargo's target directory convention.
-    pub fn for_workspace(workspace: &WorkspaceMetadata, cache_plan: &WorkspaceCachePlan) -> Self {
-        let target_dir = std::env::var_os("CARGO_TARGET_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| workspace.workspace_root().join("target"));
-
-        Self::for_workspace_with_target_dir(workspace, cache_plan, target_dir)
-    }
-
-    /// Plans cache paths under an explicit Cargo target directory.
-    pub(super) fn for_workspace_with_target_dir(
+    /// Plans cache paths under this engine's claimed cache instance.
+    pub(crate) fn for_instance(
         workspace: &WorkspaceMetadata,
         cache_plan: &WorkspaceCachePlan,
-        target_dir: impl Into<PathBuf>,
+        instance: &PackageCacheInstance,
     ) -> Self {
-        let workspace_name = workspace
-            .workspace_root()
-            .file_name()
-            .unwrap_or_else(|| OsStr::new("workspace"));
-
         Self {
             workspace_root: workspace.workspace_root().to_path_buf(),
-            root: target_dir.into().join(CACHE_DIR_NAME).join(workspace_name),
+            root: instance.root().to_path_buf(),
             generation: cache_plan.fingerprint(workspace.workspace_root()),
         }
     }
 
+    /// Expose the selected cache root to cache layout tests.
     #[cfg(test)]
     pub(crate) fn root(&self) -> &Path {
         &self.root
@@ -262,18 +247,19 @@ impl PackageCacheStore {
         Ok(Some(artifact))
     }
 
-    /// Removes this workspace's cache namespace.
+    /// Removes package artifacts from this cache instance.
     ///
-    /// This intentionally never reaches outside `<target>/rust_glancer/<workspace>`; callers can
-    /// use it after schema or deserialization failures without touching Cargo's own build output.
-    pub fn invalidate_workspace_cache(&self) -> anyhow::Result<()> {
-        match fs::remove_dir_all(&self.root) {
+    /// The instance root also contains the live ownership lock, so invalidation only clears the
+    /// disposable package data below it.
+    pub(crate) fn clear_package_artifacts(&self) -> anyhow::Result<()> {
+        let packages_dir = self.packages_dir();
+        match fs::remove_dir_all(&packages_dir) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error).with_context(|| {
                 format!(
-                    "while attempting to remove package cache namespace {}",
-                    self.root.display(),
+                    "while attempting to remove package cache artifacts {}",
+                    packages_dir.display(),
                 )
             }),
         }

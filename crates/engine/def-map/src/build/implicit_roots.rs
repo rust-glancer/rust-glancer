@@ -90,21 +90,22 @@ pub(super) fn build_implicit_roots(
 
             // Cargo lets package targets refer to their sibling library by crate name, but build
             // scripts are separate crates and only see explicit build-dependencies.
-            if let Some(&lib_target) = lib_targets.get(package.id()) {
-                if lib_target.target != target.id && !target.kind.is_custom_build() {
-                    let lib_name = package
-                        .target(lib_target.target)
-                        .expect("library target should exist")
-                        .name
-                        .clone();
-                    target_roots.insert(
-                        interner.intern(lib_name),
-                        ModuleRef {
-                            origin: DefMapRef::Target(lib_target),
-                            module: ModuleId(0),
-                        },
-                    );
-                }
+            if let Some(&lib_target) = lib_targets.get(package.id())
+                && lib_target.target != target.id
+                && !target.kind.is_custom_build()
+            {
+                let lib_name = package
+                    .target(lib_target.target)
+                    .expect("library target should exist")
+                    .name
+                    .clone();
+                target_roots.insert(
+                    interner.intern(lib_name),
+                    ModuleRef {
+                        origin: DefMapRef::Target(lib_target),
+                        module: ModuleId(0),
+                    },
+                );
             }
 
             for dependency in &workspace_package.dependencies {

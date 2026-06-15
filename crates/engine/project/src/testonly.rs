@@ -128,15 +128,14 @@ impl ProjectFixture {
         summary
     }
 
-    pub fn remove_cache_namespace(&self) {
-        match fs::remove_dir_all(self.project.state.cache_store.root()) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => panic!(
-                "fixture cache namespace {} should be removable: {error}",
-                self.project.state.cache_store.root().display(),
-            ),
-        }
+    pub fn remove_package_cache_artifacts(&self) {
+        self.project
+            .state
+            .cache_store
+            .clear_package_artifacts()
+            .unwrap_or_else(|error| {
+                panic!("fixture package cache artifacts should be removable: {error}")
+            });
     }
 
     pub fn corrupt_package_cache_artifact(&self, package_name: &str) {

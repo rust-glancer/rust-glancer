@@ -2,7 +2,6 @@
 name = "rg_syntax"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 authors = [
   "rust-analyzer developers",
   "Igor Aleksanov <popzxc@yandex.ru>",

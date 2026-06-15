@@ -141,10 +141,10 @@ impl<'a> ProjectParseSnapshot<'a> {
         if let Ok(relative) = path.strip_prefix(self.display_root) {
             return relative.display().to_string();
         }
-        if let Ok(canonical_path) = path.canonicalize() {
-            if let Ok(relative) = canonical_path.strip_prefix(self.root) {
-                return relative.display().to_string();
-            }
+        if let Ok(canonical_path) = path.canonicalize()
+            && let Ok(relative) = canonical_path.strip_prefix(self.root)
+        {
+            return relative.display().to_string();
         }
 
         path.display().to_string()

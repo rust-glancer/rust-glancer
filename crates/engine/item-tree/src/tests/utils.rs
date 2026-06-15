@@ -220,14 +220,14 @@ impl<'a> PackageItemTreeSnapshot<'a> {
             }
         }
 
-        if let ItemKind::Module(module) = &item.kind {
-            if let ModuleSource::Inline { items } = &module.source {
-                for child_id in items {
-                    let child = file_tree
-                        .item(*child_id)
-                        .expect("inline child item id should exist while rendering");
-                    self.render_item(file_tree, child, depth + 1, dump);
-                }
+        if let ItemKind::Module(module) = &item.kind
+            && let ModuleSource::Inline { items } = &module.source
+        {
+            for child_id in items {
+                let child = file_tree
+                    .item(*child_id)
+                    .expect("inline child item id should exist while rendering");
+                self.render_item(file_tree, child, depth + 1, dump);
             }
         }
     }

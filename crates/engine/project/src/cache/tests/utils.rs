@@ -12,7 +12,7 @@ use crate::cache::{
     CURRENT_PACKAGE_CACHE_SCHEMA_VERSION, CachedCfgOptions, CachedDependency, CachedPackage,
     CachedPackageId, CachedPackageSlot, CachedPackageSource, CachedPath, CachedRustEdition,
     CachedTarget, CachedTargetKind, Fingerprint, PackageCacheArtifact, PackageCacheCodec,
-    PackageCacheHeader, PackageCachePayload, PackageCacheStore, WorkspaceCachePlan,
+    PackageCacheHeader, PackageCachePayload, WorkspaceCachePlan,
 };
 use crate::{
     PackageResidencyPolicy, Project,
@@ -148,15 +148,11 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     let fixture = ProjectSourceFixture::build(fixture);
     let project = fixture.build_project();
     let artifact = package_artifact_from_project(&project, PackageSlot(0));
-    let store = PackageCacheStore::for_workspace_with_target_dir(
-        project.workspace(),
-        &project.state.cache_plan,
-        project.workspace().workspace_root().join("target"),
-    );
+    let store = project.state.cache_store.clone();
     let path = store.package_artifact_path(&artifact.header.package);
 
     store
-        .invalidate_workspace_cache()
+        .clear_package_artifacts()
         .expect("fixture cache namespace should start empty for direct store I/O");
     let missing_before_write = store
         .read_artifact(&artifact.header)
@@ -185,8 +181,8 @@ pub(super) fn check_cache_store_artifact_io(fixture: &str, expect: Expect) {
     let corrupt_error_text = format!("{corrupt_error:#}");
 
     store
-        .invalidate_workspace_cache()
-        .expect("workspace cache namespace should be removable");
+        .clear_package_artifacts()
+        .expect("package cache artifacts should be removable");
     let missing_after_invalidation = store
         .read_artifact(&artifact.header)
         .expect("missing package cache artifact should not fail after invalidation")
@@ -223,11 +219,7 @@ pub(super) fn check_cache_store_generation_cleanup(fixture: &str, expect: Expect
     let fixture = ProjectSourceFixture::build(fixture);
     let project = fixture.build_project();
     let artifact = package_artifact_from_project(&project, PackageSlot(0));
-    let store = PackageCacheStore::for_workspace_with_target_dir(
-        project.workspace(),
-        &project.state.cache_plan,
-        project.workspace().workspace_root().join("target"),
-    );
+    let store = project.state.cache_store.clone();
     let current_artifact = store.package_artifact_path(&artifact.header.package);
 
     store
@@ -421,6 +413,7 @@ pub struct DepNew;
         .write_artifact(&artifact)
         .expect("test should rewrite dependency artifact header");
 
+    drop(project);
     let cached_project = Project::builder(workspace_after_edit)
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
@@ -751,8 +744,8 @@ fn render_artifact_existence_for_policy(
     project
         .state
         .cache_store
-        .invalidate_workspace_cache()
-        .unwrap_or_else(|error| panic!("{label} fixture cache namespace should clean up: {error}"));
+        .clear_package_artifacts()
+        .unwrap_or_else(|error| panic!("{label} fixture cache artifacts should clean up: {error}"));
 }
 
 fn package_artifact_from_project(project: &Project, package: PackageSlot) -> PackageCacheArtifact {

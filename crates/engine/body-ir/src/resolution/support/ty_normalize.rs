@@ -50,10 +50,10 @@ where
             let Ok(Some(name)) = item_query.type_def_name(nominal.def) else {
                 continue;
             };
-            if matches!(name, "Result" | "Option") {
-                if let Some(output) = first_type_arg(&nominal.args) {
-                    outputs.push(output);
-                }
+            if matches!(name, "Result" | "Option")
+                && let Some(output) = first_type_arg(&nominal.args)
+            {
+                outputs.push(output);
             }
         }
 

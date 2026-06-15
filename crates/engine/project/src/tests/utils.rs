@@ -40,8 +40,8 @@ impl HostFixture {
         self.fixture.file_id_for_path(relative_path)
     }
 
-    pub(super) fn remove_cache_namespace(&self) {
-        self.fixture.remove_cache_namespace();
+    pub(super) fn remove_package_cache_artifacts(&self) {
+        self.fixture.remove_package_cache_artifacts();
     }
 
     pub(super) fn corrupt_package_cache_artifact(&self, package_name: &str) {

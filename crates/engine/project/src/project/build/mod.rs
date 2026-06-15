@@ -14,7 +14,7 @@ use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 use crate::{
     BuildProcessMemory, BuildProfile, BuildProfileStage, IndexingPerformancePreference,
     PackageResidencyPlan, PackageResidencyPolicy, ProjectMemoryHooks, ProjectMemoryPurgePoint,
-    cache::{PackageCacheStore, WorkspaceCachePlan},
+    cache::{PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
     memory::NoopProjectMemoryHooks,
     profile::{BuildProfiler, ProcessMemorySampler},
 };
@@ -166,9 +166,14 @@ impl ProjectBuilder {
         let mut finalization_stats = self
             .collect_def_map_finalization_stats
             .then(DefMapFinalizationStats::default);
+        // Claim an instance before startup probing so all cache reads and writes belong to this
+        // project/LSP owner.
+        let cache_instance = PackageCacheInstance::for_workspace(&self.workspace)
+            .context("while attempting to claim package cache instance")?;
         let mut state = build_resident_state(
             self.workspace,
             self.cargo_metadata_config,
+            cache_instance,
             self.body_ir_policy,
             self.indexing_preference,
             self.package_residency_policy,
@@ -206,6 +211,7 @@ impl ProjectBuilder {
 pub(crate) fn build_resident_state(
     workspace: WorkspaceMetadata,
     cargo_metadata_config: CargoMetadataConfig,
+    cache_instance: PackageCacheInstance,
     body_ir_policy: BodyIrBuildPolicy,
     indexing_preference: IndexingPerformancePreference,
     package_residency_policy: PackageResidencyPolicy,
@@ -216,7 +222,7 @@ pub(crate) fn build_resident_state(
 ) -> anyhow::Result<ProjectState> {
     let package_residency = PackageResidencyPlan::build(&workspace, package_residency_policy);
     let cache_plan = WorkspaceCachePlan::build(&workspace);
-    let cache_store = PackageCacheStore::for_workspace(&workspace, &cache_plan);
+    let cache_store = PackageCacheStore::for_instance(&workspace, &cache_plan, &cache_instance);
     let phases = phases::build(
         &workspace,
         body_ir_policy,
@@ -234,6 +240,7 @@ pub(crate) fn build_resident_state(
         workspace,
         cargo_metadata_config,
         cache_plan,
+        cache_instance,
         cache_store,
         package_source_fingerprints: phases.package_source_fingerprints,
         body_ir_policy,

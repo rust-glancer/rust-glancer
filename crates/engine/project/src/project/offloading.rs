@@ -68,8 +68,8 @@ impl<'a> ResidencyApplication<'a> {
     pub(crate) fn failure_recovery(project: &'a mut ProjectState) -> anyhow::Result<()> {
         project
             .cache_store
-            .invalidate_workspace_cache()
-            .context("while attempting to invalidate package cache namespace")?;
+            .clear_package_artifacts()
+            .context("while attempting to clear package cache artifacts")?;
         update::rebuild_resident_from_source(project)
             .context("while attempting to rebuild resident analysis project from source")?;
         let memory_hooks = Arc::clone(&project.memory_hooks);
