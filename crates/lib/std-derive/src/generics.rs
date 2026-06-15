@@ -65,12 +65,13 @@ struct TypeParamCollector<'a> {
 
 impl<'ast> Visit<'ast> for TypeParamCollector<'_> {
     fn visit_type_path(&mut self, node: &'ast syn::TypePath) {
-        if node.qself.is_none() && node.path.segments.len() == 1 {
-            if let Some(segment) = node.path.segments.first() {
-                let ident = segment.ident.to_string();
-                if self.type_params.contains_key(&ident) {
-                    self.used.insert(ident);
-                }
+        if node.qself.is_none()
+            && node.path.segments.len() == 1
+            && let Some(segment) = node.path.segments.first()
+        {
+            let ident = segment.ident.to_string();
+            if self.type_params.contains_key(&ident) {
+                self.used.insert(ident);
             }
         }
 

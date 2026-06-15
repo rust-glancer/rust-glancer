@@ -80,10 +80,10 @@ where
             }
         }
 
-        if self_tys.is_empty() {
-            if let Some(ty) = impl_data.resolved_self_ty.as_option() {
-                self_tys.push(NominalTy::bare(*ty));
-            }
+        if self_tys.is_empty()
+            && let Some(ty) = impl_data.resolved_self_ty.as_option()
+        {
+            self_tys.push(NominalTy::bare(*ty));
         }
 
         Ok(self_tys)

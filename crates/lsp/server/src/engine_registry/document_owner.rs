@@ -68,12 +68,11 @@ impl DocumentOwner {
         // Ask Cargo for the workspace root from the containing VS Code workspace folder rather
         // than from the document directory. Nested rust-toolchain overrides can be older than the
         // workspace itself and break lightweight routing before analysis gets involved.
-        if let Some(workspace_root) = Self::locate_workspace_root(path, &discovery_workspace)? {
-            if let Some(owner) =
+        if let Some(workspace_root) = Self::locate_workspace_root(path, &discovery_workspace)?
+            && let Some(owner) =
                 Self::for_cargo_workspace(inner, path, workspace_root, cache_policy)
-            {
-                return Ok(Some(owner));
-            }
+        {
+            return Ok(Some(owner));
         }
 
         // Cargo could not associate the file with a routable workspace, so keep the request

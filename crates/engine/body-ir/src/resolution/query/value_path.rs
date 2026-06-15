@@ -75,12 +75,11 @@ where
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
         // Single-segment paths are the only ones that can resolve to local bindings. They also
         // need lexical item lookup, so handle them before type-shaped paths.
-        if let Some(name) = path.single_name() {
-            if let Some((resolution, ty)) =
+        if let Some(name) = path.single_name()
+            && let Some((resolution, ty)) =
                 self.resolve_single_segment_value_name(scope, name, visible_bindings)?
-            {
-                return Ok((resolution, ty));
-            }
+        {
+            return Ok((resolution, ty));
         }
 
         // Value paths can start with type-like names: tuple/unit struct constructors, `Self`, and
@@ -119,14 +118,13 @@ where
 
         // Associated value paths are split at the last segment: `Type::VALUE` resolves the
         // `Type` prefix first, then asks associated-item lookup for `VALUE`.
-        if let Some((prefix, last_segment)) = path.split_prefix_name() {
-            if let Some((resolution, ty)) =
+        if let Some((prefix, last_segment)) = path.split_prefix_name()
+            && let Some((resolution, ty)) =
                 self.context
                     .associated_items()
                     .resolve_path(scope, &prefix, last_segment)?
-            {
-                return Ok((resolution, ty));
-            }
+        {
+            return Ok((resolution, ty));
         }
 
         // Multi-segment body paths can name body-local values nested in local modules. Single

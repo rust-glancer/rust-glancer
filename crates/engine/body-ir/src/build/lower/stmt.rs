@@ -162,15 +162,15 @@ impl BodyLowering<'_> {
             return ExprBlockKind::Unsafe;
         }
 
-        if let Some(modifier) = block.try_block_modifier() {
-            if modifier.try_token().is_some() {
-                return ExprBlockKind::Try {
-                    bikeshed: modifier.bikeshed_token().is_some(),
-                    result_ty: modifier
-                        .ty()
-                        .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner))),
-                };
-            }
+        if let Some(modifier) = block.try_block_modifier()
+            && modifier.try_token().is_some()
+        {
+            return ExprBlockKind::Try {
+                bikeshed: modifier.bikeshed_token().is_some(),
+                result_ty: modifier
+                    .ty()
+                    .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner))),
+            };
         }
 
         if block.const_token().is_some() {
