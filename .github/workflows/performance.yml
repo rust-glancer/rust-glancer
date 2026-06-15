@@ -118,7 +118,7 @@ jobs:
           version: valgrind-cache-v1
 
       - name: Install Gungraun runner
-        uses: taiki-e/install-action@50b4a718b59c718df4ef27a3b445f86cd57b9f00 # v2.80.0
+        uses: taiki-e/install-action@7a79fe8c3a13344501c80d99cae481c1c9085912 # v2.81.10
         with:
           tool: gungraun-runner@0.18.2
           fallback: none

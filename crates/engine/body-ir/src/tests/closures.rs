@@ -36,8 +36,8 @@ pub fn use_it(user: User) -> User {
             - v0 param user `user`: User => nominal struct body_closure_fixture[lib]::crate::User @ 3:15-3:19
             - v1 param user `user`: User => nominal struct body_closure_fixture[lib]::crate::User @ 4:28-4:32
             - v2 let pick `pick` => <unknown> @ 4:9-4:13
-            - v3 param left `left` => <unknown> @ 5:18-5:22
-            - v4 param right `right` => <unknown> @ 5:24-5:29
+            - v3 param left `left` => nominal struct body_closure_fixture[lib]::crate::User @ 5:18-5:22
+            - v4 param right `right` => nominal struct body_closure_fixture[lib]::crate::User @ 5:24-5:29
             - v5 let pair `pair` => <unknown> @ 5:9-5:13
             body
             expr e6 block s1 => nominal struct body_closure_fixture[lib]::crate::User @ 3:35-7:2
@@ -52,7 +52,7 @@ pub fn use_it(user: User) -> User {
                 initializer
                   expr e4 closure s4 (v3, v4: (User, User)) => <unknown> @ 5:16-5:50
                     body
-                      expr e3 path left -> local v3 => <unknown> @ 5:46-5:50
+                      expr e3 path left -> local v3 => nominal struct body_closure_fixture[lib]::crate::User @ 5:46-5:50
               tail
                 expr e5 path user -> local v0 => nominal struct body_closure_fixture[lib]::crate::User @ 6:5-6:9
         "#]],

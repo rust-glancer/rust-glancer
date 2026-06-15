@@ -7,7 +7,7 @@ use rg_ir_storage::ItemStoreQuery;
 use rg_item_tree::TypeRef;
 use rg_package_store::PackageStoreError;
 use rg_parse::TargetId;
-use rg_std::UniqueVec;
+use rg_std::ExpectedUnique;
 use rg_ty::ItemPathQuery;
 
 use crate::{SemanticIrReadTxn, store::SemanticIrDbMutator};
@@ -28,8 +28,8 @@ pub(super) fn resolve_impl_headers(
 
 pub(super) struct ImplHeaderResolution {
     impl_ref: ImplRef,
-    resolved_self_tys: UniqueVec<TypeDefRef>,
-    resolved_trait_refs: UniqueVec<TraitRef>,
+    resolved_self_ty: ExpectedUnique<TypeDefRef>,
+    resolved_trait_ref: ExpectedUnique<TraitRef>,
 }
 
 pub(super) fn impl_header_resolutions_for_packages(
@@ -57,9 +57,9 @@ pub(super) fn impl_header_resolutions_for_packages(
                     continue;
                 };
 
-                let resolved_self_tys =
+                let resolved_self_ty =
                     resolve_type_defs_from_ref(semantic_ir, def_map, data.owner, &data.self_ty)?;
-                let resolved_trait_refs = data
+                let resolved_trait_ref = data
                     .trait_ref
                     .as_ref()
                     .map(|ty| resolve_traits_from_ref(semantic_ir, def_map, data.owner, ty))
@@ -68,8 +68,8 @@ pub(super) fn impl_header_resolutions_for_packages(
 
                 resolutions.push(ImplHeaderResolution {
                     impl_ref,
-                    resolved_self_tys,
-                    resolved_trait_refs,
+                    resolved_self_ty,
+                    resolved_trait_ref,
                 });
             }
         }
@@ -85,8 +85,8 @@ pub(super) fn apply_impl_header_resolutions(
     for resolution in resolutions {
         let _ = db.set_impl_header_facts(
             resolution.impl_ref,
-            resolution.resolved_self_tys,
-            resolution.resolved_trait_refs,
+            resolution.resolved_self_ty,
+            resolution.resolved_trait_ref,
         );
     }
 }
@@ -96,12 +96,16 @@ fn resolve_type_defs_from_ref(
     def_map: &DefMapReadTxn<'_>,
     owner: ModuleRef,
     ty: &TypeRef,
-) -> Result<UniqueVec<TypeDefRef>, PackageStoreError> {
+) -> Result<ExpectedUnique<TypeDefRef>, PackageStoreError> {
     let Some(path) = Path::from_type_ref(ty) else {
-        return Ok(UniqueVec::new());
+        return Ok(ExpectedUnique::new());
     };
 
-    ItemPathQuery::new(def_map, db).type_defs_for_path(owner, &path)
+    let mut result = ExpectedUnique::new();
+    for type_def in ItemPathQuery::new(def_map, db).type_defs_for_path(owner, &path)? {
+        result.push(type_def);
+    }
+    Ok(result)
 }
 
 fn resolve_traits_from_ref(
@@ -109,10 +113,14 @@ fn resolve_traits_from_ref(
     def_map: &DefMapReadTxn<'_>,
     owner: ModuleRef,
     ty: &TypeRef,
-) -> Result<UniqueVec<TraitRef>, PackageStoreError> {
+) -> Result<ExpectedUnique<TraitRef>, PackageStoreError> {
     let Some(path) = Path::from_type_ref(ty) else {
-        return Ok(UniqueVec::new());
+        return Ok(ExpectedUnique::new());
     };
 
-    ItemPathQuery::new(def_map, db).traits_for_path(owner, &path)
+    let mut result = ExpectedUnique::new();
+    for trait_ref in ItemPathQuery::new(def_map, db).traits_for_path(owner, &path)? {
+        result.push(trait_ref);
+    }
+    Ok(result)
 }

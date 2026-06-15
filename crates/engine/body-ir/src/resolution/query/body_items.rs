@@ -1,9 +1,4 @@
-//! Body-local item queries that do not fit target-scoped semantic lookup.
-//!
-//! `TargetItemQuery` models items visible from a target. Impl blocks written in bodies have their
-//! headers resolved from body scope, but method lookup treats the resulting impl facts as ordinary
-//! impl candidates. This helper keeps that body overlay explicit instead of broadening the
-//! target-level semantic index.
+//! Body-local item lookup for body-aware resolution.
 
 use rg_ir_model::{AssocItemId, DefMapRef, FunctionRef, ImplRef, TraitImplRef, TypeDefRef};
 use rg_ir_storage::{DefMapSource, ItemStore, ItemStoreSource};
@@ -12,6 +7,7 @@ use rg_std::UniqueVec;
 
 use crate::resolution::BodyResolutionContext;
 
+/// Finds items declared in bodies, such as local impls and their methods.
 pub(crate) struct BodyLocalItemQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
@@ -25,6 +21,7 @@ where
         Self { context }
     }
 
+    /// Return body-local inherent impls whose `Self` resolves to this type.
     pub(super) fn inherent_impls_for_type(
         &self,
         ty: TypeDefRef,
@@ -33,7 +30,7 @@ where
 
         for store in self.body_lookup_stores()? {
             for (impl_ref, impl_data) in store.impls_with_refs() {
-                if impl_data.trait_ref.is_some() || !impl_data.resolved_self_tys.contains(&ty) {
+                if impl_data.trait_ref.is_some() || !impl_data.resolved_self_ty.is(&ty) {
                     continue;
                 }
                 impls.push(impl_ref);
@@ -43,6 +40,7 @@ where
         Ok(impls)
     }
 
+    /// Return body-local inherent functions for this type.
     pub(super) fn inherent_functions_for_type(
         &self,
         ty: TypeDefRef,
@@ -66,25 +64,7 @@ where
         Ok(functions)
     }
 
-    pub(super) fn inherent_functions_for_type_and_name(
-        &self,
-        ty: TypeDefRef,
-        name: &str,
-    ) -> Result<UniqueVec<FunctionRef>, PackageStoreError> {
-        let mut functions = UniqueVec::new();
-        let item_query = self.context.item_query();
-        for function in self.inherent_functions_for_type(ty)? {
-            let Some(function_data) = item_query.function_data(function)? else {
-                continue;
-            };
-            if function_data.name == name {
-                functions.push(function);
-            }
-        }
-
-        Ok(functions)
-    }
-
+    /// Return body-local trait impls whose `Self` resolves to this type.
     pub(super) fn trait_impls_for_type(
         &self,
         ty: TypeDefRef,
@@ -93,21 +73,23 @@ where
 
         for store in self.body_lookup_stores()? {
             for (impl_ref, impl_data) in store.impls_with_refs() {
-                if impl_data.trait_ref.is_none() || !impl_data.resolved_self_tys.contains(&ty) {
+                if impl_data.trait_ref.is_none() || !impl_data.resolved_self_ty.is(&ty) {
                     continue;
                 }
-                for trait_ref in &impl_data.resolved_trait_refs {
-                    trait_impls.push(TraitImplRef {
-                        impl_ref,
-                        trait_ref: *trait_ref,
-                    });
-                }
+                let Some(trait_ref) = impl_data.resolved_trait_ref.as_option() else {
+                    continue;
+                };
+                trait_impls.push(TraitImplRef {
+                    impl_ref,
+                    trait_ref: *trait_ref,
+                });
             }
         }
 
         Ok(trait_impls)
     }
 
+    /// Gather body item stores that can affect the current body lookup.
     fn body_lookup_stores(&self) -> Result<Vec<&'query ItemStore>, PackageStoreError> {
         let mut origins = UniqueVec::new();
 

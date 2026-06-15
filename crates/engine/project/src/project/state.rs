@@ -2,7 +2,7 @@ use std::{path::Path, sync::Arc};
 
 use rg_analysis::{Analysis, SourceTextView};
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
-use rg_def_map::{DefMapDb, PackageSlot};
+use rg_def_map::{DefMapDb, DefMapReadTxn, PackageSlot};
 use rg_ir_model::TargetRef;
 use rg_package_store::{PackageStoreError, PackageSubset};
 use rg_parse::{FileId, ParseDb};
@@ -11,12 +11,13 @@ use rg_text::PackageNameInterners;
 use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::{
-    PackageResidencyPlan, PackageResidencyPolicy, ProjectMemoryHooks,
+    IndexingPerformancePreference, PackageResidencyPlan, PackageResidencyPolicy,
+    ProjectMemoryHooks,
     cache::{Fingerprint, PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
 };
 use rg_std::MemorySize;
 
-use super::{stats::ProjectStats, txn::ProjectReadTxn};
+use super::{loading::PackageReadLoaders, stats::ProjectStats, txn::ProjectReadTxn};
 
 /// Fully built project pipeline state.
 ///
@@ -35,6 +36,8 @@ pub(crate) struct ProjectState {
     pub(crate) cache_store: PackageCacheStore,
     pub(crate) package_source_fingerprints: Vec<Option<Fingerprint>>,
     pub(crate) body_ir_policy: BodyIrBuildPolicy,
+    #[memsize(skip)]
+    pub(crate) indexing_preference: IndexingPerformancePreference,
     pub(crate) package_residency_policy: PackageResidencyPolicy,
     pub(crate) package_residency: PackageResidencyPlan,
     #[memsize(skip)]
@@ -81,6 +84,12 @@ impl ProjectState {
         subset: &PackageSubset,
     ) -> anyhow::Result<ProjectReadTxn<'_>> {
         ProjectReadTxn::for_subset(self, subset)
+    }
+
+    /// Starts a def-map-only read transaction over selected package slots.
+    pub(crate) fn def_map_read_txn_for_subset(&self, subset: &PackageSubset) -> DefMapReadTxn<'_> {
+        let loaders = PackageReadLoaders::new(self);
+        self.def_map.read_txn_for_subset(loaders.def_map, subset)
     }
 
     /// Returns the high-level query API for this frozen project analysis.

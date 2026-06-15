@@ -37,8 +37,11 @@ impl<T> UniqueVec<T> {
         self.items.is_empty()
     }
 
-    pub fn as_slice(&self) -> &[T] {
-        &self.items
+    pub fn as_one(&self) -> Option<&T> {
+        match self.items.as_slice() {
+            [item] => Some(item),
+            [] | [_, ..] => None,
+        }
     }
 
     pub fn iter(&self) -> slice::Iter<'_, T> {
@@ -195,7 +198,7 @@ mod tests {
 
         assert!(values.contains(&"alloc"));
         assert!(!values.contains(&"test"));
-        assert_eq!(values.as_slice(), &["core", "alloc", "std"]);
+        assert_eq!(values.into_vec(), vec!["core", "alloc", "std"]);
     }
 
     #[test]
@@ -209,6 +212,17 @@ mod tests {
 
         assert_eq!(values.into_vec(), vec!["core", "alloc"]);
         assert_eq!(collected.into_vec(), vec!["std", "core", "alloc"]);
+    }
+
+    #[test]
+    fn as_one_returns_only_single_item() {
+        let mut values = UniqueVec::new();
+
+        assert_eq!(values.as_one(), None);
+        values.push("core");
+        assert_eq!(values.as_one(), Some(&"core"));
+        values.push("alloc");
+        assert_eq!(values.as_one(), None);
     }
 
     #[test]
@@ -235,6 +249,6 @@ mod tests {
 
         Shrink::shrink_to_fit(&mut values);
 
-        assert_eq!(values.as_slice(), &["core"]);
+        assert_eq!(values.as_one().map(String::as_str), Some("core"));
     }
 }

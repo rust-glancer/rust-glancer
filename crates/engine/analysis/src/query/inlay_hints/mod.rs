@@ -4,8 +4,10 @@ mod closing_brace;
 
 use rg_ir_model::TargetRef;
 use rg_ir_model::items::{ParamItem, ParamKind};
-use rg_ir_storage::ItemStoreQuery;
-use rg_ir_view::{body::BodyStructureView, display::ty_label::TypeRenderer, ty::locals::BodyView};
+use rg_ir_view::{
+    body::BodyStructureView, display::ty_label::TypeRenderer, member::MemberView,
+    ty::locals::BodyView,
+};
 use rg_parse::{FileId, TextSpan};
 use rg_ty::Ty;
 
@@ -125,13 +127,13 @@ impl<'a, 'db> InlayHintCollector<'a, 'db> {
         file_id: FileId,
         range: Option<TextSpan>,
     ) -> anyhow::Result<Vec<InlayHint>> {
-        let items = ItemStoreQuery::new(self.0.view_db());
+        let members = MemberView::new(self.0.view_db());
         let mut hints = Vec::new();
         for call in BodyView::new(self.0.view_db()).resolved_function_calls(target, file_id)? {
-            let Some(function) = items.function_data(call.function())? else {
+            let Some(function) = members.function(call.function())? else {
                 continue;
             };
-            let params = function.signature.params();
+            let params = function.params();
 
             for (arg_idx, arg) in call.args().iter().enumerate() {
                 let param_idx = arg_idx + call.param_offset();

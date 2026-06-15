@@ -7,7 +7,7 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{BodyLocalItems, ItemLookupIndex, ItemStore, TargetItemQuery};
 use rg_semantic_ir::SemanticIrReadTxn;
-use rg_std::UniqueVec;
+use rg_std::ExpectedUnique;
 use rg_text::NameInterner;
 
 use crate::{
@@ -237,8 +237,8 @@ impl<'target> TargetBodyBuildState<'target> {
                     self.target,
                     &self.body_local_items,
                 );
-                let type_paths =
-                    BodyResolutionContext::new(&source, &source, body_ref, body).type_path_query();
+                let context = BodyResolutionContext::new(&source, &source, body_ref, body);
+                let type_paths = context.type_path_query();
                 let mut resolved_headers = Vec::new();
                 for (impl_id, owner, self_ty, trait_ref) in impl_headers {
                     if owner.origin != DefMapRef::Body(body_ref) {
@@ -249,23 +249,23 @@ impl<'target> TargetBodyBuildState<'target> {
                         continue;
                     };
 
-                    let ty = type_paths
-                        .type_ref(TypeRefUseSite::Scope(scope))
+                    let ty = context
+                        .type_refs(TypeRefUseSite::Scope(scope))
                         .resolve(&self_ty)?;
-                    let mut resolved_self_tys = UniqueVec::new();
+                    let mut resolved_self_ty = ExpectedUnique::new();
                     for nominal in ty.as_nominals() {
-                        resolved_self_tys.push(nominal.def);
+                        resolved_self_ty.push(nominal.def);
                     }
 
-                    let mut resolved_trait_refs = UniqueVec::new();
+                    let mut resolved_trait_ref = ExpectedUnique::new();
                     if let Some(trait_ref) = trait_ref
                         && let Some(path) = Path::from_type_ref(&trait_ref)
-                        && let TypePathResolution::Traits(traits) =
+                        && let TypePathResolution::Trait(trait_ref) =
                             type_paths.resolve_in_scope(scope, &path)?
                     {
-                        resolved_trait_refs = traits;
+                        resolved_trait_ref.push(trait_ref);
                     }
-                    resolved_headers.push((impl_id, resolved_self_tys, resolved_trait_refs));
+                    resolved_headers.push((impl_id, resolved_self_ty, resolved_trait_ref));
                 }
                 resolved_headers
             };
@@ -277,9 +277,8 @@ impl<'target> TargetBodyBuildState<'target> {
             else {
                 continue;
             };
-            for (impl_id, resolved_self_tys, resolved_trait_refs) in resolved_headers {
-                let _ =
-                    items.set_impl_header_facts(impl_id, resolved_self_tys, resolved_trait_refs);
+            for (impl_id, resolved_self_ty, resolved_trait_ref) in resolved_headers {
+                let _ = items.set_impl_header_facts(impl_id, resolved_self_ty, resolved_trait_ref);
             }
         }
 
@@ -306,7 +305,7 @@ impl<'target> TargetBodyBuildState<'target> {
                 target,
                 body: BodyId(body_idx),
             };
-            BodyResolutionPass::new(&source, &source, semantic_index, body_ref, body).resolve()?;
+            BodyResolutionPass::new(&source, &source, semantic_index, body_ref, body)?.resolve()?;
         }
 
         Ok(())

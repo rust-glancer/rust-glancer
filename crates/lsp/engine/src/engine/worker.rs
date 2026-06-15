@@ -11,12 +11,13 @@ use rg_analysis::{
 use rg_ir_model::TargetRef;
 use rg_lsp_proto::{
     AnalysisConfig, CargoMetadataTarget as ProtoCargoMetadataTarget, CompletionClientCapabilities,
+    IndexingPerformancePreference as ProtoIndexingPerformancePreference,
     PackageResidencyPolicy as ProtoPackageResidencyPolicy,
 };
 use rg_parse::TextSpan;
 use rg_project::{
-    CacheProbeProfile, FileContext, PackageResidencyPolicy, Project, ProjectMemoryHooks,
-    ProjectSnapshot, SavedFileChange,
+    CacheProbeProfile, FileContext, IndexingPerformancePreference, PackageResidencyPolicy, Project,
+    ProjectMemoryHooks, ProjectSnapshot, SavedFileChange,
 };
 use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
 
@@ -365,6 +366,14 @@ impl EngineWorker {
                 CargoMetadataConfig::default().target_triple(target.as_str())
             }
         };
+        let indexing_preference = match analysis.indexing_preference {
+            ProtoIndexingPerformancePreference::LowerPeakMemory => {
+                IndexingPerformancePreference::LowerPeakMemory
+            }
+            ProtoIndexingPerformancePreference::FasterBuilds => {
+                IndexingPerformancePreference::FasterBuilds
+            }
+        };
         let started = Instant::now();
         let configured_target = match analysis.cargo_metadata_config.target() {
             ProtoCargoMetadataTarget::Auto => "auto",
@@ -373,6 +382,7 @@ impl EngineWorker {
         tracing::info!(
             root = %root.display(),
             package_residency = analysis.package_residency_policy.config_name(),
+            indexing_preference = analysis.indexing_preference.config_name(),
             cargo_target = configured_target,
             "starting workspace indexing"
         );
@@ -415,6 +425,7 @@ impl EngineWorker {
         let workspace = workspace.with_sysroot_sources(sysroot);
         let project_build = Project::builder(workspace)
             .cargo_metadata_config(cargo_metadata_config)
+            .indexing_preference(indexing_preference)
             .package_residency_policy(package_residency_policy)
             .profile_build_timing(log_startup_cache_probe)
             .memory_hooks(Arc::clone(&self.memory_hooks))

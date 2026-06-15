@@ -4,14 +4,11 @@
 //! details for display and turn parameter names into LSP snippet placeholders.
 
 use rg_ir_model::items::ParamItem;
-use rg_ir_view::display::signature::SignatureRenderer;
+use rg_ir_view::{display::signature::SignatureRenderer, member::MemberFunction};
 
-use crate::{
-    model::{
-        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
-        CompletionKind, CompletionTarget,
-    },
-    query::member::MemberFunction,
+use crate::model::{
+    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
+    CompletionTarget,
 };
 
 use super::{

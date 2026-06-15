@@ -284,10 +284,17 @@ where
     T: MemorySize,
 {
     fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-        for entry in &self.packages {
-            if let Some(package) = entry.as_resident() {
-                package.record_memory_children(recorder);
-            }
+        self.packages.record_memory_children(recorder);
+    }
+}
+
+impl<T> MemorySize for PackageEntry<T>
+where
+    T: MemorySize,
+{
+    fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
+        if let PackageEntryState::Resident(package) = &self.state {
+            package.record_memory_children(recorder);
         }
     }
 }
@@ -427,6 +434,31 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(calls, vec![(0, Some(0)), (1, Some(1)), (2, None)]);
+    }
+
+    #[test]
+    fn memory_accounting_includes_slot_storage_and_resident_payloads() {
+        use std::mem;
+
+        use rg_std::MemorySize;
+
+        let offloaded = PackageStore::<String>::from_entries(vec![
+            PackageEntry::offloaded(),
+            PackageEntry::offloaded(),
+        ]);
+        let resident = PackageStore::from_entries(vec![
+            PackageEntry::offloaded(),
+            PackageEntry::resident("user".to_string()),
+        ]);
+
+        assert!(
+            offloaded.memory_size() > mem::size_of::<PackageStore<String>>(),
+            "offloaded stores should still count package-slot vector storage",
+        );
+        assert!(
+            resident.memory_size() > offloaded.memory_size(),
+            "resident packages should add their Arc-backed payload accounting",
+        );
     }
 
     #[test]

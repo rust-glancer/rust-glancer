@@ -1,10 +1,11 @@
-use std::{io::Write as _, path::PathBuf, time::Instant};
+use std::{fmt as std_fmt, io::Write as _, path::PathBuf, time::Instant};
 
 use anyhow::Context as _;
 use clap::ValueEnum;
 use rg_lsp_engine::MemoryControl as _;
 use rg_project::{
-    BuildProcessMemory, BuildProfileStage, PackageResidencyPolicy, Project, StartupCacheLoad,
+    BuildProcessMemory, BuildProfileStage, IndexingPerformancePreference, PackageResidencyPolicy,
+    Project, StartupCacheLoad,
 };
 use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
 
@@ -32,6 +33,43 @@ impl From<CliPackageResidencyPolicy> for PackageResidencyPolicy {
             }
             CliPackageResidencyPolicy::AllOffloadable => Self::AllOffloadable,
         }
+    }
+}
+
+/// CLI-facing indexing preference names for the `analyze` command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub(crate) enum CliIndexingPreference {
+    LowerPeakMemory,
+    FasterBuilds,
+}
+
+impl From<CliIndexingPreference> for IndexingPerformancePreference {
+    fn from(preference: CliIndexingPreference) -> Self {
+        match preference {
+            CliIndexingPreference::LowerPeakMemory => Self::LowerPeakMemory,
+            CliIndexingPreference::FasterBuilds => Self::FasterBuilds,
+        }
+    }
+}
+
+impl From<IndexingPerformancePreference> for CliIndexingPreference {
+    fn from(preference: IndexingPerformancePreference) -> Self {
+        match preference {
+            IndexingPerformancePreference::LowerPeakMemory => Self::LowerPeakMemory,
+            IndexingPerformancePreference::FasterBuilds => Self::FasterBuilds,
+        }
+    }
+}
+
+impl Default for CliIndexingPreference {
+    fn default() -> Self {
+        IndexingPerformancePreference::default().into()
+    }
+}
+
+impl std_fmt::Display for CliIndexingPreference {
+    fn fmt(&self, f: &mut std_fmt::Formatter<'_>) -> std_fmt::Result {
+        f.write_str(IndexingPerformancePreference::from(*self).config_name())
     }
 }
 
@@ -94,6 +132,7 @@ pub(crate) fn analyze(
     include_memory: bool,
     startup_cache_load: StartupCacheLoad,
     package_residency_policy: PackageResidencyPolicy,
+    indexing_preference: IndexingPerformancePreference,
     target: Option<String>,
     output_format: OutputFormat,
     memory_stage: CliMemoryStage,
@@ -132,6 +171,7 @@ pub(crate) fn analyze(
 
     let builder = Project::builder(workspace)
         .cargo_metadata_config(cargo_metadata_config)
+        .indexing_preference(indexing_preference)
         .package_residency_policy(package_residency_policy)
         .startup_cache_load(startup_cache_load)
         .collect_def_map_finalization_stats(include_def_map_finalization_stats)
@@ -148,6 +188,7 @@ pub(crate) fn analyze(
                         allocated_bytes: stats.allocated_bytes,
                         active_bytes: stats.active_bytes,
                         resident_bytes: stats.resident_bytes,
+                        mapped_bytes: stats.mapped_bytes,
                     })
             })
     } else {

@@ -23,6 +23,16 @@ use crate::{DefMapDb, DefMapReadTxn, PackageSlot};
 
 pub use self::stats::DefMapFinalizationStats;
 
+/// Build-time speed/memory preference for def-map finalization.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DefMapPerformancePreference {
+    /// Use unconstrained macro-expansion behavior.
+    #[default]
+    FasterBuilds,
+    /// Bound bursty macro-expansion parallelism to reduce peak resident memory.
+    LowerPeakMemory,
+}
+
 /// Builder for a fresh def-map snapshot.
 pub struct DefMapDbBuilder<'a, 'names> {
     workspace: &'a WorkspaceMetadata,
@@ -30,6 +40,7 @@ pub struct DefMapDbBuilder<'a, 'names> {
     item_tree: &'a ItemTreeDb,
     interners: NameInternerSource<'names>,
     finalization_stats: Option<&'a mut DefMapFinalizationStats>,
+    performance_preference: DefMapPerformancePreference,
 }
 
 impl<'a> DefMapDbBuilder<'a, 'static> {
@@ -44,6 +55,7 @@ impl<'a> DefMapDbBuilder<'a, 'static> {
             item_tree,
             interners: NameInternerSource::Owned(PackageNameInterners::new(parse.package_count())),
             finalization_stats: None,
+            performance_preference: DefMapPerformancePreference::default(),
         }
     }
 }
@@ -59,11 +71,17 @@ impl<'a, 'names> DefMapDbBuilder<'a, 'names> {
             item_tree: self.item_tree,
             interners: NameInternerSource::Borrowed(interners),
             finalization_stats: self.finalization_stats,
+            performance_preference: self.performance_preference,
         }
     }
 
     pub fn finalization_stats(mut self, stats: &'a mut DefMapFinalizationStats) -> Self {
         self.finalization_stats = Some(stats);
+        self
+    }
+
+    pub fn performance_preference(mut self, preference: DefMapPerformancePreference) -> Self {
+        self.performance_preference = preference;
         self
     }
 
@@ -74,6 +92,7 @@ impl<'a, 'names> DefMapDbBuilder<'a, 'names> {
             self.item_tree,
             self.interners.as_mut(),
             self.finalization_stats,
+            self.performance_preference,
         )?;
         db.mutator().compact_storage();
         Ok(db)
@@ -104,6 +123,7 @@ pub struct DefMapDbPackageRebuilder<'a, 'db> {
     packages: &'a [PackageSlot],
     interners: &'a mut PackageNameInterners,
     finalization_stats: Option<&'a mut DefMapFinalizationStats>,
+    performance_preference: DefMapPerformancePreference,
 }
 
 impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
@@ -125,11 +145,17 @@ impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
             packages,
             interners,
             finalization_stats: None,
+            performance_preference: DefMapPerformancePreference::default(),
         }
     }
 
     pub fn finalization_stats(mut self, stats: &'a mut DefMapFinalizationStats) -> Self {
         self.finalization_stats = Some(stats);
+        self
+    }
+
+    pub fn performance_preference(mut self, preference: DefMapPerformancePreference) -> Self {
+        self.performance_preference = preference;
         self
     }
 
@@ -143,6 +169,7 @@ impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
             self.packages,
             self.interners,
             self.finalization_stats,
+            self.performance_preference,
         )?;
         db.mutator().compact_packages(self.packages);
         Ok(db)

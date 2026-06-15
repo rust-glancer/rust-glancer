@@ -73,19 +73,19 @@ impl ItemLookupIndex {
                 }
             }
 
-            // Item-store lowering has already resolved impl headers into possible `Self` types.
-            // The index preserves that optimistic shape: ambiguous impls are attached to every
-            // resolved self type, and later applicability checks still decide whether candidates fit.
+            // Item-store lowering has already resolved impl headers into an expected-unique
+            // `Self` type. Ambiguous nominal headers are not indexed; structural impls keep a
+            // small side list because they have no nominal receiver key.
             for (impl_ref, impl_data) in store.impls_with_refs() {
                 if impl_data.trait_ref.is_none() {
-                    if impl_data.resolved_self_tys.is_empty() {
+                    if impl_data.resolved_self_ty.is_empty() {
                         // Inherent impls for shaped builtin types, such as `impl<T> [T]`, do not
                         // have a nominal receiver key. Keep them in a small side list so structural
                         // method lookup does not scan every visible impl.
                         index.structural_inherent_impls.push(impl_ref);
                     }
 
-                    for self_ty in &impl_data.resolved_self_tys {
+                    if let Some(self_ty) = impl_data.resolved_self_ty.as_option() {
                         index
                             .inherent_impls_by_type
                             .entry(*self_ty)
@@ -113,28 +113,29 @@ impl ItemLookupIndex {
                         }
                     }
                 } else {
-                    for trait_ref in &impl_data.resolved_trait_refs {
-                        let trait_impl = TraitImplRef {
-                            impl_ref,
-                            trait_ref: *trait_ref,
-                        };
+                    let Some(trait_ref) = impl_data.resolved_trait_ref.as_option() else {
+                        continue;
+                    };
+                    let trait_impl = TraitImplRef {
+                        impl_ref,
+                        trait_ref: *trait_ref,
+                    };
 
-                        // Structural impls such as `impl<T> IntoIterator for &[T]` may not have a
-                        // nominal receiver key, but iterator-like queries can still start from the
-                        // canonical trait identity and ask which impls provide it.
+                    // Structural impls such as `impl<T> IntoIterator for &[T]` may not have a
+                    // nominal receiver key, but iterator-like queries can still start from the
+                    // canonical trait identity and ask which impls provide it.
+                    index
+                        .trait_impls_by_trait
+                        .entry(*trait_ref)
+                        .or_default()
+                        .push(trait_impl);
+
+                    if let Some(self_ty) = impl_data.resolved_self_ty.as_option() {
                         index
-                            .trait_impls_by_trait
-                            .entry(*trait_ref)
+                            .trait_impls_by_type
+                            .entry(*self_ty)
                             .or_default()
                             .push(trait_impl);
-
-                        for self_ty in &impl_data.resolved_self_tys {
-                            index
-                                .trait_impls_by_type
-                                .entry(*self_ty)
-                                .or_default()
-                                .push(trait_impl);
-                        }
                     }
                 }
             }

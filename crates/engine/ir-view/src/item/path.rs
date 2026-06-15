@@ -12,6 +12,7 @@ use rg_ir_storage::{DefMapQuery, ItemStoreQuery};
 
 use crate::IndexedViewDb;
 
+/// Renders stable Rust-like paths for indexed declarations.
 pub struct PathView<'a, 'db>(&'a IndexedViewDb<'db>);
 
 impl<'a, 'db> PathView<'a, 'db> {
@@ -19,6 +20,7 @@ impl<'a, 'db> PathView<'a, 'db> {
         Self(db)
     }
 
+    /// Return the full path for a target-owned module.
     pub fn module_path(&self, module_ref: ModuleRef) -> anyhow::Result<Option<String>> {
         let Some(target) = module_ref.origin.as_target_ref() else {
             return Ok(None);
@@ -58,6 +60,7 @@ impl<'a, 'db> PathView<'a, 'db> {
         Ok(Some(names.join("::")))
     }
 
+    /// Return the full path for a type definition.
     pub fn type_def_path(&self, ty: TypeDefRef) -> anyhow::Result<Option<String>> {
         let Some((module, name)) = self.type_def_owner_and_name(ty)? else {
             return Ok(None);
@@ -65,6 +68,7 @@ impl<'a, 'db> PathView<'a, 'db> {
         self.path_in_module(module, name)
     }
 
+    /// Return the full path for a trait.
     pub fn trait_path(&self, trait_ref: TraitRef) -> anyhow::Result<Option<String>> {
         let Some(data) = ItemStoreQuery::new(self.0).trait_data(trait_ref)? else {
             return Ok(None);
@@ -72,6 +76,7 @@ impl<'a, 'db> PathView<'a, 'db> {
         self.path_in_module(data.owner, &data.name)
     }
 
+    /// Return the full path for a function or method.
     pub fn function_path(&self, function_ref: FunctionRef) -> anyhow::Result<Option<String>> {
         let Some(data) = ItemStoreQuery::new(self.0).function_data(function_ref)? else {
             return Ok(None);
@@ -81,6 +86,7 @@ impl<'a, 'db> PathView<'a, 'db> {
             .map(|owner| format!("{owner}::{}", data.name)))
     }
 
+    /// Return the full path for a type alias.
     pub fn type_alias_path(&self, type_alias_ref: TypeAliasRef) -> anyhow::Result<Option<String>> {
         let Some(data) = ItemStoreQuery::new(self.0).type_alias_data(type_alias_ref)? else {
             return Ok(None);
@@ -90,6 +96,7 @@ impl<'a, 'db> PathView<'a, 'db> {
             .map(|owner| format!("{owner}::{}", data.name)))
     }
 
+    /// Return the full path for a const item.
     pub fn const_path(&self, const_ref: ConstRef) -> anyhow::Result<Option<String>> {
         let Some(data) = ItemStoreQuery::new(self.0).const_data(const_ref)? else {
             return Ok(None);
@@ -99,6 +106,7 @@ impl<'a, 'db> PathView<'a, 'db> {
             .map(|owner| format!("{owner}::{}", data.name)))
     }
 
+    /// Return the full path for a static item.
     pub fn static_path(&self, static_ref: StaticRef) -> anyhow::Result<Option<String>> {
         let Some(data) = ItemStoreQuery::new(self.0).static_data(static_ref)? else {
             return Ok(None);
@@ -106,12 +114,14 @@ impl<'a, 'db> PathView<'a, 'db> {
         self.path_in_module(data.owner, &data.name)
     }
 
+    /// Return the full path for an enum variant.
     pub fn enum_variant_path(&self, data: EnumVariantData<'_>) -> anyhow::Result<Option<String>> {
         Ok(self
             .type_def_path(data.owner)?
             .map(|owner| format!("{owner}::{}", data.variant.name)))
     }
 
+    /// Append a local name to a module path.
     pub fn path_in_module(
         &self,
         module_ref: ModuleRef,
@@ -122,6 +132,7 @@ impl<'a, 'db> PathView<'a, 'db> {
             .map(|module| format!("{module}::{name}")))
     }
 
+    /// Return the path of the item owner used as a path prefix.
     fn path_for_owner(
         &self,
         origin: DefMapRef,
@@ -137,6 +148,7 @@ impl<'a, 'db> PathView<'a, 'db> {
         }
     }
 
+    /// Return the best display path for an impl owner.
     fn impl_self_path(&self, origin: DefMapRef, impl_id: ImplId) -> anyhow::Result<Option<String>> {
         let Some(data) = ItemStoreQuery::new(self.0).impl_data(ImplRef {
             origin,
@@ -146,7 +158,7 @@ impl<'a, 'db> PathView<'a, 'db> {
             return Ok(None);
         };
 
-        if let Some(ty) = data.resolved_self_tys.as_slice().first()
+        if let Some(ty) = data.resolved_self_ty.as_option()
             && let Some(path) = self.type_def_path(*ty)?
         {
             return Ok(Some(path));
@@ -155,6 +167,7 @@ impl<'a, 'db> PathView<'a, 'db> {
         self.module_path(data.owner)
     }
 
+    /// Return the owner module and declared name for a type definition.
     fn type_def_owner_and_name(&self, ty: TypeDefRef) -> anyhow::Result<Option<(ModuleRef, &str)>> {
         let item_query = ItemStoreQuery::new(self.0);
         let Some(items) = item_query.item_store_for_origin(ty.origin)? else {

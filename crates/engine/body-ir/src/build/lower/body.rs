@@ -48,7 +48,11 @@ impl<'a> BodyLowering<'a> {
         // Parameters live in the function's outer lexical scope. The body block gets a child scope
         // so locals do not appear before the function boundary.
         let param_scope = self.builder.alloc_scope(None);
-        let params = self.lower_params(function.param_list(), param_scope);
+        let function_params = self.lower_params(function.param_list(), param_scope);
+        let params = function_params
+            .iter()
+            .flat_map(|param| param.bindings.iter().copied())
+            .collect();
         let root_expr = self.lower_block_expr(body, param_scope);
 
         ResolvedBodyData::new(
@@ -58,6 +62,7 @@ impl<'a> BodyLowering<'a> {
             self.body_source,
             param_scope,
             root_expr,
+            function_params,
             params,
             self.builder,
         )
@@ -77,6 +82,7 @@ impl<'a> BodyLowering<'a> {
             self.body_source,
             root_scope,
             root_expr,
+            Vec::new(),
             Vec::new(),
             self.builder,
         )

@@ -1,10 +1,11 @@
 //! Dot-completion assembly for member access sites.
 
+use rg_ir_view::member::MemberView;
+
 use crate::{
     Analysis,
     completion_site::DotCompletionSite,
     model::{CompletionEdit, CompletionItem, CompletionTarget},
-    query::member::MemberView,
 };
 
 use super::{

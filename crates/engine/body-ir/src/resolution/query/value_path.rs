@@ -1,8 +1,4 @@
-//! Read-only value-path resolution for Body IR.
-//!
-//! This module resolves expressions that name values: bindings, consts, statics, constructors,
-//! enum variants, and associated value items. It does not mutate body facts; callers decide
-//! whether the resolved value should be written back into a body.
+//! Value-path lookup.
 
 use rg_ir_model::{
     BindingId, ConstRef, DefId, DefMapRef, ModuleId, ModuleRef, Path, ScopeId, SemanticItemRef,
@@ -12,28 +8,18 @@ use rg_ir_storage::{
     DefMapSource, ItemStoreSource, NameResolutionFilter, ResolvePathResult, TypePathContext,
 };
 use rg_package_store::PackageStoreError;
-use rg_std::UniqueVec;
-use rg_ty::{NominalTy, Ty};
+use rg_std::{ExpectedUnique, UniqueVec};
+use rg_ty::{ExpectedNominalTyExt, ExpectedTyExt, NominalTy, Ty};
 
 use crate::ir::resolved::BodyResolution;
-use crate::resolution::{BodyResolutionContext, TypeRefUseSite, support::unique_ty_or_unknown};
+use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
-use super::type_path::split_associated_path;
-
-/// Resolves body value paths without mutating the body.
-///
-/// The main pass uses this during the fixed-point pass, and analysis reuses it for cursor
-/// queries over path prefixes. Keeping it read-only avoids cloning bodies just to answer
-/// goto-definition/type-at for `Type::assoc` or `Enum::Variant` segments.
+/// Resolves paths in the value namespace without mutating the body.
 pub struct BodyValuePathQuery<'query, D, I> {
     context: BodyResolutionContext<'query, D, I>,
 }
 
-/// One declaration that can satisfy an unqualified value path inside a body scope.
-///
-/// Rust shares bindings and item-like declarations in the value namespace. Keeping them under one
-/// enum lets lookup stay scope-ordered instead of accidentally searching one category through every
-/// parent scope before the next category.
+/// One declaration that can satisfy a value name inside a body scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BodyValueName {
     Binding(BindingId),
@@ -49,6 +35,7 @@ where
         Self { context }
     }
 
+    /// Find declarations for a path without considering ordinary local bindings.
     pub fn resolve_nonlocal_path_declarations(
         &self,
         scope: ScopeId,
@@ -58,6 +45,7 @@ where
         Ok(resolution.declarations(self.context.body_ref()))
     }
 
+    /// Find the type of a path without considering ordinary local bindings.
     pub fn resolve_nonlocal_path_ty(
         &self,
         scope: ScopeId,
@@ -67,6 +55,7 @@ where
         Ok(ty)
     }
 
+    /// Resolve a path without considering ordinary local bindings.
     pub(crate) fn resolve_nonlocal_path_expr(
         &self,
         scope: ScopeId,
@@ -75,12 +64,17 @@ where
         self.resolve_path_expr(scope, path, None)
     }
 
+    /// Resolve a value path from a body scope.
+    ///
+    /// `visible_bindings` caps which local bindings are visible for local queries.
     pub(crate) fn resolve_path_expr(
         &self,
         scope: ScopeId,
         path: &Path,
         visible_bindings: Option<usize>,
     ) -> Result<(BodyResolution, Ty), PackageStoreError> {
+        // Single-segment paths are the only ones that can resolve to local bindings. They also
+        // need lexical item lookup, so handle them before type-shaped paths.
         if let Some(name) = path.single_name() {
             if let Some((resolution, ty)) =
                 self.resolve_single_segment_value_name(scope, name, visible_bindings)?
@@ -97,54 +91,46 @@ where
             .type_path_query()
             .resolve_in_scope(scope, path)?
         {
-            TypePathResolution::SelfType(types) => {
+            TypePathResolution::SelfType(type_def) => {
                 return Ok((
                     BodyResolution::Unknown,
-                    Ty::self_ty(types.into_iter().map(NominalTy::bare).collect()),
+                    Ty::self_ty(NominalTy::bare(type_def)),
                 ));
             }
-            TypePathResolution::TypeDefs(types) => {
-                let mut constructors = UniqueVec::new();
-                for type_def in types
-                    .into_iter()
-                    .filter(|ty| ty.origin == DefMapRef::Body(self.context.body_ref()))
-                {
-                    if self
+            TypePathResolution::TypeDef(type_def) => {
+                if type_def.origin == DefMapRef::Body(self.context.body_ref())
+                    && self
                         .context
                         .item_query()
                         .type_def_has_value_constructor(type_def)?
-                    {
-                        constructors.push(type_def);
-                    }
-                }
-
-                if !constructors.is_empty() {
-                    let declarations = constructors
-                        .iter()
-                        .copied()
-                        .map(DeclarationRef::from)
-                        .collect();
+                {
                     return Ok((
-                        BodyResolution::Declarations(declarations),
-                        Ty::nominal(constructors.into_iter().map(NominalTy::bare).collect()),
+                        BodyResolution::Declarations(
+                            [DeclarationRef::from(type_def)].into_iter().collect(),
+                        ),
+                        Ty::nominal(NominalTy::bare(type_def)),
                     ));
                 }
             }
-            TypePathResolution::TypeAliases(_)
-            | TypePathResolution::Traits(_)
+            TypePathResolution::TypeAlias(_)
+            | TypePathResolution::Trait(_)
             | TypePathResolution::Unknown => {}
         }
 
-        if let Some((prefix, last_segment)) = split_associated_path(path) {
+        // Associated value paths are split at the last segment: `Type::VALUE` resolves the
+        // `Type` prefix first, then asks associated-item lookup for `VALUE`.
+        if let Some((prefix, last_segment)) = path.split_prefix_name() {
             if let Some((resolution, ty)) =
                 self.context
-                    .associated_values()
+                    .associated_items()
                     .resolve_path(scope, &prefix, last_segment)?
             {
                 return Ok((resolution, ty));
             }
         }
 
+        // Multi-segment body paths can name body-local values nested in local modules. Single
+        // names already took the lexical route above.
         if path.single_name().is_none()
             && let Some((resolution, ty)) =
                 self.resolve_body_value_path_from_def_map(scope, path)?
@@ -152,23 +138,31 @@ where
             return Ok((resolution, ty));
         }
 
+        // Finally, look from the semantic owner module. This covers ordinary module items and
+        // initializer bodies whose owner/fallback modules are outside the body def map.
         let result = self.resolve_path_from_owner_modules(path)?;
         if result.resolved.is_empty() {
             return Ok((BodyResolution::Unknown, Ty::Unknown));
         }
-        let ty = self.nominal_ty_from_defs(&result.resolved)?;
-        Ok((
-            BodyResolution::Declarations(
-                result
-                    .resolved
-                    .into_iter()
-                    .map(DeclarationRef::from)
-                    .collect(),
-            ),
-            ty,
-        ))
+
+        // Functions/consts/statics are true value items. Resolve them before the type-constructor
+        // fallback below, which only admits unit and tuple structs.
+        if let Some((resolution, ty)) =
+            self.semantic_value_resolution_from_defs(&result.resolved)?
+        {
+            return Ok((resolution, ty));
+        }
+
+        // Unit and tuple structs are type defs in DefMap, but value expressions should see their
+        // constructor type.
+        let (declarations, ty) = self.constructor_resolution_from_defs(&result.resolved)?;
+        if declarations.is_empty() {
+            return Ok((BodyResolution::Unknown, Ty::Unknown));
+        }
+        Ok((BodyResolution::Declarations(declarations), ty))
     }
 
+    /// Search one value name through parent scopes, with an optional local binding cutoff.
     fn resolve_single_segment_value_name(
         &self,
         start_scope: ScopeId,
@@ -226,6 +220,7 @@ where
         Ok(None)
     }
 
+    /// Look up a path from the body owner module, then the fallback module.
     fn resolve_path_from_owner_modules(
         &self,
         path: &Path,
@@ -249,6 +244,7 @@ where
             .resolve_path(fallback_module, path)
     }
 
+    /// Resolve a multi-segment value path through the body def map.
     fn resolve_body_value_path_from_def_map(
         &self,
         scope: ScopeId,
@@ -268,6 +264,7 @@ where
         ))
     }
 
+    /// Keep only semantic items that belong to the value namespace.
     fn semantic_items_for_defs(
         &self,
         defs: Vec<DefId>,
@@ -297,6 +294,7 @@ where
         Ok(items)
     }
 
+    /// Convert one value-namespace match into body resolution and type.
     fn value_name_resolution(
         &self,
         value_name: BodyValueName,
@@ -309,7 +307,7 @@ where
             BodyValueName::SemanticItems(items) => {
                 let mut functions = UniqueVec::new();
                 let mut declarations = UniqueVec::new();
-                let mut tys = UniqueVec::new();
+                let mut tys = ExpectedUnique::new();
 
                 for item in items {
                     match item {
@@ -334,7 +332,7 @@ where
                 if !declarations.is_empty() {
                     return Ok(Some((
                         BodyResolution::Declarations(declarations),
-                        unique_ty_or_unknown(tys),
+                        tys.into_ty(),
                     )));
                 }
                 if !functions.is_empty() {
@@ -346,6 +344,60 @@ where
         }
     }
 
+    /// Resolve owner-module functions, consts, and statics before constructor fallback.
+    fn semantic_value_resolution_from_defs(
+        &self,
+        defs: &[DefId],
+    ) -> Result<Option<(BodyResolution, Ty)>, PackageStoreError> {
+        let mut functions = UniqueVec::new();
+        let mut declarations = UniqueVec::new();
+        let mut tys = ExpectedUnique::new();
+
+        for def in defs {
+            let DefId::Local(local_def) = *def else {
+                continue;
+            };
+            let Some(item) = self
+                .context
+                .item_query()
+                .semantic_item_for_local_def(local_def)?
+            else {
+                continue;
+            };
+
+            match item {
+                SemanticItemRef::Function(_) => {
+                    functions.push(DeclarationRef::from(*def));
+                }
+                SemanticItemRef::Const(const_ref) => {
+                    declarations.push(DeclarationRef::from(const_ref));
+                    tys.push(self.semantic_const_ty(const_ref)?);
+                }
+                SemanticItemRef::Static(static_ref) => {
+                    declarations.push(DeclarationRef::from(static_ref));
+                    tys.push(self.semantic_static_ty(static_ref)?);
+                }
+                SemanticItemRef::TypeDef(_)
+                | SemanticItemRef::Trait(_)
+                | SemanticItemRef::Impl(_)
+                | SemanticItemRef::TypeAlias(_) => {}
+            }
+        }
+
+        if !declarations.is_empty() {
+            return Ok(Some((
+                BodyResolution::Declarations(declarations),
+                tys.into_ty(),
+            )));
+        }
+        if !functions.is_empty() {
+            return Ok(Some((BodyResolution::Declarations(functions), Ty::Unknown)));
+        }
+
+        Ok(None)
+    }
+
+    /// Resolve the declared type of a const item.
     fn semantic_const_ty(&self, const_ref: ConstRef) -> Result<Ty, PackageStoreError> {
         let item_query = self.context.item_query();
         let Some(const_data) = item_query.const_data(const_ref)? else {
@@ -359,11 +411,11 @@ where
             .type_path_context_for_owner(const_ref.origin, const_data.owner)?
             .unwrap_or_else(|| TypePathContext::module(self.context.body().owner_module()));
         self.context
-            .type_path_query()
-            .type_ref(TypeRefUseSite::OwnerContext(context))
+            .type_refs(TypeRefUseSite::OwnerContext(context))
             .resolve(ty)
     }
 
+    /// Resolve the declared type of a static item.
     fn semantic_static_ty(&self, static_ref: StaticRef) -> Result<Ty, PackageStoreError> {
         let item_query = self.context.item_query();
         let Some(static_data) = item_query.static_data(static_ref)? else {
@@ -374,13 +426,17 @@ where
         };
 
         self.context
-            .type_path_query()
-            .type_ref(TypeRefUseSite::Module(static_data.owner))
+            .type_refs(TypeRefUseSite::Module(static_data.owner))
             .resolve(ty)
     }
 
-    fn nominal_ty_from_defs(&self, defs: &[DefId]) -> Result<Ty, PackageStoreError> {
-        let mut type_defs = UniqueVec::new();
+    /// Turn constructor-capable type defs into value declarations and their nominal type.
+    fn constructor_resolution_from_defs(
+        &self,
+        defs: &[DefId],
+    ) -> Result<(UniqueVec<DeclarationRef>, Ty), PackageStoreError> {
+        let mut declarations = UniqueVec::new();
+        let mut type_defs = ExpectedUnique::new();
         for def in defs {
             let DefId::Local(local_def) = def else {
                 continue;
@@ -392,13 +448,17 @@ where
             else {
                 continue;
             };
-            type_defs.push(type_def);
+            if !self
+                .context
+                .item_query()
+                .type_def_has_value_constructor(type_def)?
+            {
+                continue;
+            }
+            declarations.push(DeclarationRef::from(*def));
+            type_defs.push(NominalTy::bare(type_def));
         }
 
-        Ok(if type_defs.is_empty() {
-            Ty::Unknown
-        } else {
-            Ty::nominal(type_defs.into_iter().map(NominalTy::bare).collect())
-        })
+        Ok((declarations, type_defs.into_nominal_ty()))
     }
 }

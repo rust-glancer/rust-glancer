@@ -6,18 +6,21 @@
 use rg_ir_model::{BindingId, BodyRef, ExprId};
 use rg_ir_storage::{DefMapSource, ItemLookupIndex, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::Ty;
+use rg_ty::{ExpectedNominalTyExt, PrimitiveTy, Ty};
 
 use crate::{
     ir::body::ResolvedBodyData,
-    ir::{BindingKind, BodySelfParamKind},
+    ir::resolved::BodyResolution,
+    ir::{BindingKind, BodySelfParamKind, ExprWrapperKind},
 };
 
-use crate::resolution::{BodyResolutionContext, BodyResolutionProviders, TypeRefUseSite};
+use crate::resolution::{
+    BodyResolutionContext, BodyResolutionProviders, TypeRefUseSite, infer::BodyInferenceCtx,
+};
 
 use super::{
-    expr::ExprResolutionPass, pattern_binding::PatternBindingMaterializationPass,
-    pattern_type::PatternTypePropagationPass,
+    expr::ExprResolutionPass, inference::InferenceResolutionPass,
+    pattern_binding::PatternBindingMaterializationPass, pattern_type::PatternTypePropagationPass,
 };
 
 /// Shared state for the body-resolution fixed-point pass.
@@ -27,6 +30,7 @@ use super::{
 pub(crate) struct BodyResolutionPass<'query, 'body, D, I> {
     pub(super) providers: BodyResolutionProviders<'query, D, I>,
     pub(super) body: &'body mut ResolvedBodyData,
+    pub(super) inference: BodyInferenceCtx,
 }
 
 impl<'query, 'body, D, I> BodyResolutionPass<'query, 'body, D, I>
@@ -40,16 +44,20 @@ where
         semantic_index: &'query ItemLookupIndex,
         body_ref: BodyRef,
         body: &'body mut ResolvedBodyData,
-    ) -> Self {
-        Self {
-            providers: BodyResolutionProviders::new(
-                def_maps,
-                item_stores,
-                semantic_index,
-                body_ref,
-            ),
+    ) -> Result<Self, PackageStoreError> {
+        let providers =
+            BodyResolutionProviders::new(def_maps, item_stores, semantic_index, body_ref);
+
+        // Pattern materialization rewrites pending binding ids into the final binding arena.
+        // Every later resolution step, including inference storage, assumes that stable shape.
+        PatternBindingMaterializationPass::new(providers, body).materialize()?;
+        let inference = BodyInferenceCtx::new(body.exprs().len(), body.bindings().len());
+
+        Ok(Self {
+            providers,
             body,
-        }
+            inference,
+        })
     }
 
     pub(super) fn context<'source>(
@@ -59,7 +67,6 @@ where
     }
 
     pub(crate) fn resolve(&mut self) -> Result<(), PackageStoreError> {
-        self.materialize_pattern_bindings()?;
         self.resolve_bindings()?;
 
         // Pattern propagation can unlock later expression types, and those expressions can then
@@ -83,18 +90,15 @@ where
             }
         }
 
+        InferenceResolutionPass::new(self).run()?;
         Ok(())
-    }
-
-    fn materialize_pattern_bindings(&mut self) -> Result<(), PackageStoreError> {
-        PatternBindingMaterializationPass::new(self.providers, self.body).materialize()
     }
 
     fn resolve_bindings(&mut self) -> Result<(), PackageStoreError> {
         for binding_idx in 0..self.body.bindings().len() {
             let binding = BindingId(binding_idx);
             let ty = self.binding_ty(binding)?;
-            self.body.set_binding_ty(binding, ty);
+            self.set_binding_ty(binding, ty);
         }
         Ok(())
     }
@@ -113,11 +117,93 @@ where
                 continue;
             }
 
-            self.body.set_binding_ty(binding, ty);
+            self.set_binding_ty(binding, ty);
             changed = true;
         }
 
         changed
+    }
+
+    pub(super) fn set_expr_ty(&mut self, expr: ExprId, ty: Ty) {
+        self.inference.set_expr_ty(expr, &ty);
+        self.body.set_expr_ty(expr, ty);
+    }
+
+    pub(super) fn set_expr_integer_var(&mut self, expr: ExprId) {
+        self.inference.set_expr_integer_var(expr);
+        self.body
+            .set_expr_ty(expr, Ty::Primitive(PrimitiveTy::DEFAULT_INT));
+    }
+
+    pub(super) fn set_expr_float_var(&mut self, expr: ExprId) {
+        self.inference.set_expr_float_var(expr);
+        self.body
+            .set_expr_ty(expr, Ty::Primitive(PrimitiveTy::DEFAULT_FLOAT));
+    }
+
+    pub(super) fn set_expr_tuple_from_fields(&mut self, expr: ExprId, fields: &[ExprId]) {
+        self.inference.set_expr_tuple_from_fields(expr, fields);
+        self.body.set_expr_ty(
+            expr,
+            Ty::tuple(
+                fields
+                    .iter()
+                    .map(|field| self.body.expr_ty_unchecked(*field).clone())
+                    .collect(),
+            ),
+        );
+    }
+
+    pub(super) fn set_expr_array_from_elements(
+        &mut self,
+        expr: ExprId,
+        elements: &[ExprId],
+        ty: Ty,
+    ) {
+        self.inference.set_expr_array_from_elements(
+            expr,
+            elements,
+            Some(elements.len().to_string()),
+        );
+        self.body.set_expr_ty(expr, ty);
+    }
+
+    pub(super) fn set_expr_repeat_array_from_initializer(
+        &mut self,
+        expr: ExprId,
+        initializer: Option<ExprId>,
+        len_text: Option<&str>,
+        ty: Ty,
+    ) {
+        self.inference.set_expr_repeat_array_from_initializer(
+            expr,
+            initializer,
+            len_text.map(str::to_owned),
+        );
+        self.body.set_expr_ty(expr, ty);
+    }
+
+    pub(super) fn set_expr_facts(&mut self, expr: ExprId, resolution: BodyResolution, ty: Ty) {
+        self.inference.set_expr_ty(expr, &ty);
+        self.body.set_expr_facts(expr, resolution, ty);
+    }
+
+    pub(super) fn set_expr_wrapper_facts(
+        &mut self,
+        expr: ExprId,
+        resolution: BodyResolution,
+        kind: ExprWrapperKind,
+        inner: Option<ExprId>,
+        ty: Ty,
+    ) {
+        self.inference
+            .set_expr_wrapper_from_inner(expr, kind, inner, &ty);
+        self.body.set_expr_facts(expr, resolution, ty);
+    }
+
+    fn set_binding_ty(&mut self, binding: BindingId, ty: Ty) {
+        self.inference.set_binding_ty(binding, &ty);
+        self.body.set_binding_ty(binding, ty);
     }
 
     fn binding_ty(&self, binding: BindingId) -> Result<Ty, PackageStoreError> {
@@ -125,8 +211,7 @@ where
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .context()
-                .type_path_query()
-                .type_ref(TypeRefUseSite::Scope(binding_data.scope))
+                .type_refs(TypeRefUseSite::Scope(binding_data.scope))
                 .resolve(annotation);
         }
 
@@ -134,11 +219,11 @@ where
             && binding_data.name.as_deref() == Some("self")
             && let Some(function) = self.body.function_owner()
         {
-            let self_tys = self
+            let ty = self
                 .context()
-                .type_path_query()
-                .self_nominal_tys_for_function(function)?;
-            let ty = Ty::self_ty(self_tys);
+                .functions()
+                .self_nominal_ty(function)?
+                .into_self_ty();
             return Ok(match kind {
                 BodySelfParamKind::Value => ty,
                 BodySelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),

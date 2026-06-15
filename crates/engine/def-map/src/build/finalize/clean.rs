@@ -10,8 +10,8 @@ use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use super::super::{
-    collect::collect_target_states, implicit_roots::build_implicit_roots,
-    stats::DefMapFinalizationStats,
+    DefMapPerformancePreference, collect::collect_target_states,
+    implicit_roots::build_implicit_roots, stats::DefMapFinalizationStats,
 };
 use super::{FinalizeTargetStates, finalize_target_states, freeze_package};
 use crate::{DefMapDb, PackageSlot};
@@ -27,6 +27,7 @@ pub(crate) fn build_db(
     item_tree: &ItemTreeDb,
     interners: &mut PackageNameInterners,
     finalization_stats: Option<&mut DefMapFinalizationStats>,
+    performance_preference: DefMapPerformancePreference,
 ) -> anyhow::Result<DefMapDb> {
     // First compute every implicit crate root from the complete package graph. These roots are
     // needed while collecting target states because extern prelude bindings can point across
@@ -49,6 +50,7 @@ pub(crate) fn build_db(
         &mut target_states,
         interners,
         finalization_stats,
+        performance_preference,
     )
     .context("while attempting to finish target states")?;
 

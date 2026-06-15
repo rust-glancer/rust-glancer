@@ -1,7 +1,7 @@
 use rg_ir_model::{ImplId, TraitRef, TypeDefRef};
 
 use crate::{DefMap, ItemStore};
-use rg_std::{MemorySize, Shrink, UniqueVec};
+use rg_std::{ExpectedUnique, MemorySize, Shrink};
 use wincode::{SchemaRead, SchemaWrite};
 
 /// Finalized body-local DefMap and semantic-shaped item facts for one body.
@@ -30,10 +30,10 @@ impl BodyLocalItems {
     pub fn set_impl_header_facts(
         &mut self,
         id: ImplId,
-        resolved_self_tys: UniqueVec<TypeDefRef>,
-        resolved_trait_refs: UniqueVec<TraitRef>,
+        resolved_self_ty: ExpectedUnique<TypeDefRef>,
+        resolved_trait_ref: ExpectedUnique<TraitRef>,
     ) -> Option<()> {
         self.item_store
-            .set_impl_header_facts(id, resolved_self_tys, resolved_trait_refs)
+            .set_impl_header_facts(id, resolved_self_ty, resolved_trait_ref)
     }
 }

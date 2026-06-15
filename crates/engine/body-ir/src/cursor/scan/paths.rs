@@ -128,7 +128,8 @@ impl ValuePathCursorScanner<'_> {
             return;
         }
 
-        for idx in 0..path.segment_count() {
+        let segment_count = path.segment_count();
+        for idx in 0..segment_count {
             let Some(span) = path.segment_span(idx) else {
                 continue;
             };
@@ -136,6 +137,18 @@ impl ValuePathCursorScanner<'_> {
                 let Some(path) = path.prefix_through(idx) else {
                     continue;
                 };
+                if idx + 1 < segment_count {
+                    // In `Action::Start`, the prefix is still a user-visible type/module path.
+                    // Keep it navigable without treating `Action` as a value expression.
+                    self.candidates.push(BodyCursorCandidate::TypePath {
+                        body: self.body_ref,
+                        scope,
+                        path: path.clone(),
+                        file_id,
+                        span,
+                    });
+                    continue;
+                }
                 self.candidates.push(BodyCursorCandidate::ValueReference {
                     body: self.body_ref,
                     scope,

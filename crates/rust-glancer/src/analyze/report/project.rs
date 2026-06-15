@@ -7,6 +7,7 @@ use super::package::PackageReport;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ProjectReport {
+    pub(crate) indexing_preference: String,
     pub(crate) packages: PackageReport,
     pub(crate) def_map: DefMapReport,
     pub(crate) semantic_ir: SemanticIrReport,
@@ -17,6 +18,7 @@ impl ProjectReport {
     pub(crate) fn capture(project: &Project) -> Self {
         let stats = project.stats();
         Self {
+            indexing_preference: project.indexing_preference().config_name().to_string(),
             packages: PackageReport::capture(project),
             def_map: DefMapReport {
                 target_count: stats.def_map.target_count,
@@ -56,6 +58,7 @@ impl ProjectReport {
 impl fmt::Display for ProjectReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "rust-glancer analysis built")?;
+        writeln!(f, "indexing preference: {}", self.indexing_preference)?;
         writeln!(f, "packages: {}", self.packages)?;
         writeln!(
             f,

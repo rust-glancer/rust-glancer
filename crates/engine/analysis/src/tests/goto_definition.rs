@@ -106,6 +106,31 @@ pub fn use_it() {
 }
 
 #[test]
+fn named_module_targets_select_module_name() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_named_module_goto"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod api {
+    pub struct User;
+}
+
+pub fn use_it(_: a$goto_module$pi::User) {}
+"#,
+        &[AnalysisQuery::goto("goto module", "goto_module")],
+        expect![[r#"
+            goto module
+            - module api @ 1:5-1:8
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_field_accesses_to_field_declarations() {
     check_analysis_queries(
         r#"
@@ -525,7 +550,7 @@ pub fn make(user: Us$goto_param$er) -> Us$goto_ret$er {
         ],
         expect![[r#"
             goto use module
-            - module api @ 1:1-4:2
+            - module api @ 1:5-1:8
 
             goto use path
             - struct User @ 3:16-3:20
@@ -1106,16 +1131,34 @@ impl HasAttrs for Stmt {
     const SUPPORTS_CUSTOM_INNER_ATTRS: bool =
         StmtKind::SUPPORTS$goto_trait_assoc_const$_CUSTOM_INNER_ATTRS$type_trait_assoc_const$;
 }
+
+pub fn use_it() {
+    let _ = <StmtKind as HasAttrs>::SUPPORTS$goto_qualified_trait_assoc_const$_CUSTOM_INNER_ATTRS$type_qualified_trait_assoc_const$;
+}
 "#,
         &[
             AnalysisQuery::goto("goto trait associated const", "goto_trait_assoc_const"),
             AnalysisQuery::ty("type at trait associated const", "type_trait_assoc_const"),
+            AnalysisQuery::goto(
+                "goto qualified trait associated const",
+                "goto_qualified_trait_assoc_const",
+            ),
+            AnalysisQuery::ty(
+                "type at qualified trait associated const",
+                "type_qualified_trait_assoc_const",
+            ),
         ],
         expect![[r#"
             goto trait associated const
             - const SUPPORTS_CUSTOM_INNER_ATTRS @ 12:11-12:38
 
             type at trait associated const
+            - bool
+
+            goto qualified trait associated const
+            - const SUPPORTS_CUSTOM_INNER_ATTRS @ 12:11-12:38
+
+            type at qualified trait associated const
             - bool
         "#]],
     );

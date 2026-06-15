@@ -37,6 +37,18 @@ impl GenericArg {
         }
     }
 
+    /// Returns true when this generic argument contains `Ty::Unknown`.
+    pub fn has_unknown(&self) -> bool {
+        match self {
+            Self::Type(ty) => ty.has_unknown(),
+            Self::FnTraitArgs { params, ret } => {
+                params.iter().any(Ty::has_unknown) || ret.has_unknown()
+            }
+            Self::AssocType { ty, .. } => ty.as_deref().is_some_and(Ty::has_unknown),
+            Self::Lifetime(_) | Self::Const(_) | Self::Unsupported(_) => false,
+        }
+    }
+
     pub(crate) fn is_projectable(&self) -> bool {
         match self {
             Self::Type(ty) => ty.is_projectable(),

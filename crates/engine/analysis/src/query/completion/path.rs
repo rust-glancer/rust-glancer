@@ -1,8 +1,6 @@
 //! Qualified path completion assembly for body and import positions.
 
-use rg_ir_model::items::Documentation;
-use rg_ir_model::{EnumVariantRef, hir::items::EnumVariantData};
-use rg_ir_storage::ItemStoreQuery;
+use rg_ir_view::member::{MemberEnumVariant, MemberView};
 
 use crate::{
     Analysis,
@@ -54,12 +52,12 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             },
         )?;
 
-        let item_query = ItemStoreQuery::new(self.analysis.view_db());
+        let members = MemberView::new(self.analysis.view_db());
         for variant in completion_candidates.enum_variant_candidates_for_path(&site)? {
-            let Some(data) = item_query.enum_variant_data(variant)? else {
+            let Some(variant) = members.enum_variant(variant)? else {
                 continue;
             };
-            self.push_enum_variant_completion(variant, data, edit, &mut completions);
+            self.push_enum_variant_completion(variant, edit, &mut completions);
         }
         completions.sort_by(|left, right| left.sort_text.cmp(&right.sort_text));
 
@@ -105,13 +103,12 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
 
     fn push_enum_variant_completion(
         &self,
-        variant: EnumVariantRef,
-        data: EnumVariantData<'_>,
+        variant: MemberEnumVariant<'_>,
         edit: CompletionEdit,
         completions: &mut Vec<CompletionItem>,
     ) {
-        let target = CompletionTarget::EnumVariant(variant);
-        let label = data.variant.name.as_str();
+        let target = CompletionTarget::EnumVariant(variant.variant_ref());
+        let label = variant.label();
         if completions
             .iter()
             .any(|completion| completion.target == target && completion.label == label)
@@ -125,7 +122,7 @@ impl<'a, 'db, 'source> PathCompletionResolver<'a, 'db, 'source> {
             target,
             applicability: CompletionApplicability::Known,
             detail: Some(def_completion_detail(CompletionKind::EnumVariant, label)),
-            documentation: data.variant.docs.as_ref().map(Documentation::text),
+            documentation: variant.docs_text(),
             sort_text: CompletionSortPolicy::General.sort_text(
                 None,
                 label,

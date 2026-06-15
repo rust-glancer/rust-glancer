@@ -5,7 +5,7 @@ use rg_syntax::{
     ast::{self, HasModuleItem as _, HasName as _, HasVisibility as _},
 };
 
-use rg_ir_model::{BindingId, ExprId, ScopeId, StmtId, items::Mutability};
+use rg_ir_model::{ExprId, FunctionParamData, ScopeId, StmtId, items::Mutability};
 use rg_item_tree::{
     ConstItem, Documentation, EnumItem, ExternCrateItem, FromAst as _, FunctionItem, ImplItem,
     ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroUseAttr, MaybeFromAst,
@@ -26,7 +26,7 @@ impl BodyLowering<'_> {
         &mut self,
         param_list: Option<ast::ParamList>,
         param_scope: ScopeId,
-    ) -> Vec<BindingId> {
+    ) -> Vec<FunctionParamData> {
         let Some(param_list) = param_list else {
             return Vec::new();
         };
@@ -39,13 +39,13 @@ impl BodyLowering<'_> {
         params.extend(
             param_list
                 .params()
-                .flat_map(|param| self.lower_param(param, param_scope)),
+                .map(|param| self.lower_param(param, param_scope)),
         );
 
         params
     }
 
-    fn lower_self_param(&mut self, param: ast::SelfParam, scope: ScopeId) -> BindingId {
+    fn lower_self_param(&mut self, param: ast::SelfParam, scope: ScopeId) -> FunctionParamData {
         let source = self.source(param.syntax());
         let annotation = param
             .ty()
@@ -59,7 +59,7 @@ impl BodyLowering<'_> {
         } else {
             BodySelfParamKind::Value
         };
-        self.builder.alloc_binding(BindingData {
+        let binding = self.builder.alloc_binding(BindingData {
             source,
             name_span: param
                 .name()
@@ -68,24 +68,42 @@ impl BodyLowering<'_> {
             scope,
             kind: BindingKind::SelfParam(self_kind),
             name: Some(self.interner.intern("self")),
+            annotation: annotation.clone(),
+        });
+
+        FunctionParamData {
+            source,
+            pat: None,
+            bindings: vec![binding],
             annotation,
-        })
+        }
     }
 
-    fn lower_param(&mut self, param: ast::Param, scope: ScopeId) -> Vec<BindingId> {
+    fn lower_param(&mut self, param: ast::Param, scope: ScopeId) -> FunctionParamData {
+        let source = self.source(param.syntax());
         let annotation = param
             .ty()
             .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
-        match param.pat() {
-            Some(pat) => self.lower_pat(pat, scope, BindingKind::Param, annotation).1,
-            None => vec![self.builder.alloc_binding(BindingData {
-                source: self.source(param.syntax()),
-                name_span: None,
-                scope,
-                kind: BindingKind::Param,
-                name: None,
-                annotation,
-            })],
+        let (pat, bindings) = match param.pat() {
+            Some(pat) => self.lower_pat(pat, scope, BindingKind::Param, annotation.clone()),
+            None => (
+                None,
+                vec![self.builder.alloc_binding(BindingData {
+                    source,
+                    name_span: None,
+                    scope,
+                    kind: BindingKind::Param,
+                    name: None,
+                    annotation: annotation.clone(),
+                })],
+            ),
+        };
+
+        FunctionParamData {
+            source,
+            pat,
+            bindings,
+            annotation,
         }
     }
 

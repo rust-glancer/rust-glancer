@@ -13,9 +13,10 @@ use rg_def_map::PackageSlot;
 use rg_ir_storage::PackageDefMaps as DefMapPackage;
 use rg_package_store::{PackageLoader, PackageSubset};
 use rg_semantic_ir::PackageIr;
+use rg_std::Shrink;
 use rg_text::PackageNameInterners;
 
-use crate::{BodyIrBuildPolicy, BodyIrDb, BodyIrFile};
+use crate::{BodyIrBuildPolicy, BodyIrDb, BodyIrFile, PackageBodies};
 
 /// Builder for a fresh Body IR snapshot.
 pub struct BodyIrDbBuilder<'db, 'names> {
@@ -83,6 +84,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             &semantic_ir_txn,
         )
         .context("while attempting to resolve body IR packages")?;
+        let packages = compact_packages_two_phase(packages);
         let mut db = BodyIrDb::from_packages(packages);
         {
             let mut mutator = db.mutator();
@@ -188,22 +190,48 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             &semantic_ir_txn,
         )
         .context("while attempting to resolve rebuilt body IR packages")?;
-        let rebuilt_slots = rebuilt_packages
-            .iter()
-            .map(|(package, _)| *package)
-            .collect::<Vec<_>>();
+        let compacted_packages = compact_rebuilt_packages_two_phase(rebuilt_packages);
 
         {
             let mut mutator = next.mutator();
-            for (package, rebuilt) in rebuilt_packages {
+            for (package, rebuilt) in compacted_packages {
                 mutator.replace_package(package, rebuilt).with_context(|| {
                     format!("while attempting to replace body IR package {}", package.0)
                 })?;
             }
-            mutator.compact_packages(&rebuilt_slots);
         }
         Ok(next)
     }
+}
+
+fn compact_packages_two_phase(packages: Vec<PackageBodies>) -> Vec<PackageBodies> {
+    // In-place shrinking reallocates and frees nested body vectors one at a time. Large builds can
+    // then leave the few final allocations scattered across allocator slabs that used to hold
+    // transient capacity. Compact copies are built while the source allocation set is still dense,
+    // then the source packages are dropped together so mostly-empty slabs can be reclaimed.
+    let compacted = packages
+        .iter()
+        .map(compact_package_copy)
+        .collect::<Vec<_>>();
+    drop(packages);
+    compacted
+}
+
+fn compact_rebuilt_packages_two_phase(
+    rebuilt_packages: Vec<(PackageSlot, PackageBodies)>,
+) -> Vec<(PackageSlot, PackageBodies)> {
+    let compacted = rebuilt_packages
+        .iter()
+        .map(|(package, rebuilt)| (*package, compact_package_copy(rebuilt)))
+        .collect::<Vec<_>>();
+    drop(rebuilt_packages);
+    compacted
+}
+
+fn compact_package_copy(package: &PackageBodies) -> PackageBodies {
+    let mut compacted = package.clone();
+    Shrink::shrink_to_fit(&mut compacted);
+    compacted
 }
 
 fn local_thread_pool(thread_name_prefix: &'static str) -> anyhow::Result<rayon::ThreadPool> {

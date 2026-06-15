@@ -4,7 +4,8 @@ use wincode::{SchemaRead, SchemaWrite};
 use rg_arena::Arena;
 use rg_ir_model::{
     BindingData, BindingId, BodyData, BodyOwner, BodyRef, BodySource, BodySourceItems, ExprData,
-    ExprId, FunctionRef, ModuleRef, PatData, PatId, ScopeData, ScopeId, StmtData, StmtId,
+    ExprId, FunctionParamData, FunctionRef, ModuleRef, PatData, PatId, ScopeData, ScopeId,
+    StmtData, StmtId,
     identity::DeclarationRef,
     items::{ItemNode, ItemTreeId},
 };
@@ -50,6 +51,10 @@ impl ResolvedBodyData {
 
     pub fn root_expr(&self) -> ExprId {
         self.body.root_expr()
+    }
+
+    pub fn function_params(&self) -> &[FunctionParamData] {
+        self.body.function_params()
     }
 
     pub fn params(&self) -> &[BindingId] {
@@ -211,6 +216,7 @@ impl ResolvedBodyData {
         source: BodySource,
         param_scope: ScopeId,
         root_expr: ExprId,
+        function_params: Vec<FunctionParamData>,
         params: Vec<BindingId>,
         builder: BodyBuilder,
     ) -> Self {
@@ -221,6 +227,7 @@ impl ResolvedBodyData {
             source,
             param_scope,
             root_expr,
+            function_params,
             params,
         );
 
@@ -267,6 +274,7 @@ impl BodyBuilder {
         source: BodySource,
         param_scope: ScopeId,
         root_expr: ExprId,
+        function_params: Vec<FunctionParamData>,
         params: Vec<BindingId>,
     ) -> (
         BodyData,
@@ -293,6 +301,7 @@ impl BodyBuilder {
                 source_items,
                 param_scope,
                 root_expr,
+                function_params,
                 params,
                 scopes,
                 bindings,

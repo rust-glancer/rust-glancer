@@ -11,14 +11,16 @@ pub mod path;
 mod resolution;
 
 pub use self::hir::body::{
-    BindingData, BindingKind, BodyData, BodyOwner, BodyPath, BodyPathSegment, BodyPathSegmentArgs,
-    BodyPathSegmentKind, BodySelfParamKind, BodySource, BodySourceItems, ClosureCapture,
-    ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprKind,
-    ExprRangeKind, ExprUnaryOp, ExprWrapperKind, LabelData, LiteralKind, MatchArmData,
-    PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordExprField,
-    RecordExprSpread, RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
+    BindingData, BindingKind, BodyAssociatedPathPrefix, BodyData, BodyOwner, BodyPath,
+    BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind, BodySelfParamKind, BodySource,
+    BodySourceItems, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp,
+    ExprBlockKind, ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind,
+    FunctionParamData, LabelData, LiteralKind, MatchArmData, PatBindingMode, PatData, PatKind,
+    PatMutability, PatRangeKind, RecordExprField, RecordExprSpread, RecordFieldSyntax,
+    RecordPatField, ScopeData, StmtData, StmtKind,
 };
 pub use self::ids::{
+    TargetId,
     body::{BindingId, BodyBindingRef, BodyId, BodyRef, ExprId, PatId, ScopeId, StmtId},
     def_map::{
         DefId, DefMapRef, ImportId, ImportRef, LocalDefId, LocalDefRef, LocalImplId, LocalImplRef,
@@ -34,6 +36,7 @@ pub use self::ids::{
 };
 pub use self::path::{Path, PathSegment, last_segment_name};
 pub use self::resolution::TypePathResolution;
+pub use rg_workspace::PackageSlot;
 
 // We have a lot of arenas, and each has to have a unique ID.
 // This macro takes care of boilerplate.

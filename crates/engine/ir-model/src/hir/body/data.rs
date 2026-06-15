@@ -3,7 +3,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     BindingId, BodyRef, DefMapRef, ExprId, ModuleRef, PatId, ScopeId, StmtId,
-    items::{ItemNode, ItemTreeId},
+    items::{ItemNode, ItemTreeId, TypeRef},
 };
 use rg_std::{MemorySize, Shrink};
 
@@ -25,6 +25,7 @@ pub struct BodyData {
     source_items: BodySourceItems,
     param_scope: ScopeId,
     root_expr: ExprId,
+    function_params: Vec<FunctionParamData>,
     params: Vec<BindingId>,
     scopes: Arena<ScopeId, ScopeData>,
     bindings: Arena<BindingId, BindingData>,
@@ -45,6 +46,7 @@ impl BodyData {
         source_items: BodySourceItems,
         param_scope: ScopeId,
         root_expr: ExprId,
+        function_params: Vec<FunctionParamData>,
         params: Vec<BindingId>,
         scopes: Arena<ScopeId, ScopeData>,
         bindings: Arena<BindingId, BindingData>,
@@ -60,6 +62,7 @@ impl BodyData {
             source_items,
             param_scope,
             root_expr,
+            function_params,
             params,
             scopes,
             bindings,
@@ -95,6 +98,10 @@ impl BodyData {
 
     pub fn root_expr(&self) -> ExprId {
         self.root_expr
+    }
+
+    pub fn function_params(&self) -> &[FunctionParamData] {
+        &self.function_params
     }
 
     pub fn params(&self) -> &[BindingId] {
@@ -207,6 +214,9 @@ impl BodyData {
         // lists, and expression visibility boundaries. They all have to move together or later
         // path lookup will see a different scope than the pattern tree describes.
         rewrite_binding_list(&mut self.params, &old_to_new);
+        for param in &mut self.function_params {
+            rewrite_binding_list(&mut param.bindings, &old_to_new);
+        }
         for scope in self.scopes.iter_mut() {
             rewrite_binding_list(&mut scope.bindings, &old_to_new);
         }
@@ -245,6 +255,15 @@ impl BodyData {
     }
 }
 
+/// One function parameter pattern and its lowered bindings.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub struct FunctionParamData {
+    pub source: BodySource,
+    pub pat: Option<PatId>,
+    pub bindings: Vec<BindingId>,
+    pub annotation: Option<TypeRef>,
+}
+
 fn rewrite_binding_list(bindings: &mut Vec<BindingId>, old_to_new: &[Option<BindingId>]) {
     let mut rewritten = Vec::with_capacity(bindings.len());
     for binding in bindings.iter().copied() {
@@ -256,4 +275,101 @@ fn rewrite_binding_list(bindings: &mut Vec<BindingId>, old_to_new: &[Option<Bind
         }
     }
     *bindings = rewritten;
+}
+
+#[cfg(test)]
+mod tests {
+    use rg_parse::{FileId, Span, TargetId, TextSpan};
+
+    use crate::{
+        BindingKind, DefMapRef, FunctionId, FunctionRef, PackageSlot, TargetRef,
+        hir::body::{BodyData, BodyOwner, BodySource, BodySourceItems, ExprData, ExprKind},
+    };
+
+    use super::*;
+
+    fn source() -> BodySource {
+        BodySource {
+            file_id: FileId(0),
+            span: Span {
+                text: TextSpan { start: 0, end: 0 },
+            },
+        }
+    }
+
+    fn module() -> ModuleRef {
+        ModuleRef {
+            origin: DefMapRef::Target(TargetRef {
+                package: PackageSlot(0),
+                target: TargetId(0),
+            }),
+            module: crate::ModuleId(0),
+        }
+    }
+
+    #[test]
+    fn compact_bindings_rewrites_function_param_metadata() {
+        let mut scopes = Arena::new();
+        let param_scope = scopes.alloc(ScopeData {
+            parent: None,
+            source_items: Vec::new(),
+            bindings: vec![BindingId(0), BindingId(1)],
+        });
+
+        let mut bindings = Arena::new();
+        bindings.alloc(BindingData {
+            source: source(),
+            name_span: None,
+            scope: param_scope,
+            kind: BindingKind::Param,
+            name: None,
+            annotation: None,
+        });
+        bindings.alloc(BindingData {
+            source: source(),
+            name_span: None,
+            scope: param_scope,
+            kind: BindingKind::Param,
+            name: None,
+            annotation: None,
+        });
+
+        let mut exprs = Arena::new();
+        let root_expr = exprs.alloc(ExprData {
+            source: source(),
+            scope: param_scope,
+            visible_bindings: 2,
+            kind: ExprKind::Unknown {
+                children: Vec::new(),
+            },
+        });
+
+        let owner_module = module();
+        let mut body = BodyData::new(
+            BodyOwner::Function(FunctionRef::new(owner_module.origin, FunctionId(0))),
+            owner_module,
+            owner_module,
+            source(),
+            BodySourceItems::default(),
+            param_scope,
+            root_expr,
+            vec![FunctionParamData {
+                source: source(),
+                pat: None,
+                bindings: vec![BindingId(0), BindingId(1)],
+                annotation: None,
+            }],
+            vec![BindingId(0), BindingId(1)],
+            scopes,
+            bindings,
+            Arena::new(),
+            Arena::new(),
+            exprs,
+        );
+
+        body.compact_bindings(&[false, true]);
+
+        assert_eq!(body.params(), &[BindingId(0)]);
+        assert_eq!(body.function_params()[0].bindings, [BindingId(0)]);
+    }
 }

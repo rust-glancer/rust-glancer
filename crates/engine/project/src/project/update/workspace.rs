@@ -31,6 +31,7 @@ pub(super) fn rebuild_workspace_graph(
         .context("while attempting to normalize Cargo metadata")?
         .with_sysroot_sources(sysroot);
     let body_ir_policy = project.state.body_ir_policy;
+    let indexing_preference = project.state.indexing_preference;
     let package_residency_policy = project.state.package_residency_policy;
 
     // Cargo graph edits can add, remove, or reorder packages, targets, and dependencies. Starting
@@ -39,6 +40,7 @@ pub(super) fn rebuild_workspace_graph(
     project.state = Project::builder(workspace)
         .cargo_metadata_config(cargo_metadata_config)
         .body_ir_policy(body_ir_policy)
+        .indexing_preference(indexing_preference)
         .package_residency_policy(package_residency_policy)
         .memory_hooks(memory_hooks)
         .build()

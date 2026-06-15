@@ -14,6 +14,7 @@ use rg_std::Shrink;
 use crate::{
     PackageResidency, ProjectMemoryPurgePoint,
     cache::{PackageCacheArtifact, PackageCachePayload, PreparedPackageCacheWriter},
+    profile::BuildProfiler,
 };
 
 use super::{package_set::PhasePackageSet, state::ProjectState, update};
@@ -81,26 +82,68 @@ impl<'a> ResidencyApplication<'a> {
     }
 
     /// Writes required artifacts and offloads selected packages.
-    pub(crate) fn apply(mut self) -> anyhow::Result<()> {
+    pub(crate) fn apply(self) -> anyhow::Result<()> {
+        self.apply_with_profiler(None)
+    }
+
+    /// Writes required artifacts and offloads selected packages, recording transient boundaries.
+    pub(crate) fn apply_profiled(self, profiler: &mut BuildProfiler) -> anyhow::Result<()> {
+        self.apply_with_profiler(Some(profiler))
+    }
+
+    fn apply_with_profiler(
+        mut self,
+        mut profiler: Option<&mut BuildProfiler>,
+    ) -> anyhow::Result<()> {
+        let record_residency_profile = !self.refresh_source_fingerprints_for.is_empty()
+            || !self.packages_to_write.is_empty()
+            || !self.packages_to_offload.is_empty();
+
         if !self.refresh_source_fingerprints_for.is_empty() {
             self.refresh_source_fingerprints()
                 .context("while attempting to refresh package cache source fingerprints")?;
         }
 
+        if record_residency_profile {
+            self.record_project_checkpoint(&mut profiler, "before package cache write");
+        }
         self.write_package_artifacts(&self.packages_to_write)?;
+        if record_residency_profile {
+            self.record_project_checkpoint(&mut profiler, "after package cache write");
+        }
 
         let packages_to_offload = std::mem::take(&mut self.packages_to_offload);
         for package in packages_to_offload.iter() {
             self.offload_package(package)?;
         }
+        if record_residency_profile {
+            self.record_project_checkpoint(&mut profiler, "after package payload offload");
+        }
 
         self.finish_offloading(&packages_to_offload);
+        if record_residency_profile {
+            self.record_project_checkpoint(&mut profiler, "after package offload cleanup");
+        }
         self.project
             .cache_store
             .cleanup_stale_generations()
             .context("while attempting to clean stale package cache generations")?;
 
         Ok(())
+    }
+
+    fn record_project_checkpoint(
+        &self,
+        profiler: &mut Option<&mut BuildProfiler>,
+        label: &'static str,
+    ) {
+        let Some(profiler) = profiler.as_mut() else {
+            return;
+        };
+        let profiler = &mut **profiler;
+        let process_memory = profiler.sample_process_memory();
+        let project_bytes = profiler.measure(&*self.project);
+        profiler.record(label, project_bytes, project_bytes, process_memory);
     }
 
     /// Returns all packages selected by the current residency policy.

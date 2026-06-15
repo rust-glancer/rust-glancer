@@ -74,6 +74,7 @@ impl BuildProfileReport {
                     allocated_bytes: checkpoint.allocated_bytes,
                     active_bytes: checkpoint.active_bytes,
                     resident_bytes: checkpoint.resident_bytes,
+                    mapped_bytes: checkpoint.mapped_bytes,
                 })
                 .collect(),
             cache_probe: profile.cache_probe().map(CacheProbeReport::capture),
@@ -96,6 +97,8 @@ pub(crate) struct BuildCheckpointReport {
     pub(crate) active_bytes: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) resident_bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) mapped_bytes: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
