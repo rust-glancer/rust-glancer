@@ -147,6 +147,7 @@ impl ValuePathCursorScanner<'_> {
                         file_id,
                         span,
                     });
+                    continue;
                 }
                 self.candidates.push(BodyCursorCandidate::ValueReference {
                     body: self.body_ref,
