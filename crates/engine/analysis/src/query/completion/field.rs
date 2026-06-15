@@ -1,13 +1,10 @@
 //! Shared field-completion rendering.
 
-use rg_ir_view::display::signature::SignatureRenderer;
+use rg_ir_view::{display::signature::SignatureRenderer, member::MemberField};
 
-use crate::{
-    model::{
-        CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem,
-        CompletionKind, CompletionTarget,
-    },
-    query::member::MemberField,
+use crate::model::{
+    CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
+    CompletionTarget,
 };
 
 use super::completion_sort::CompletionSortPolicy;

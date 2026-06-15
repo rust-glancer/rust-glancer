@@ -16,6 +16,7 @@ use crate::{
     ty::locals::BodyView,
 };
 
+/// Syntax-only child shown in source outline.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IndexedSyntaxChild {
     name: String,
@@ -45,12 +46,14 @@ impl IndexedSyntaxChild {
     }
 }
 
+/// Child of an indexed item tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum IndexedItemChild {
     Declaration(IndexedItem),
     Syntax(IndexedSyntaxChild),
 }
 
+/// Semantic declaration with nested outline children.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IndexedItem {
     declaration: DeclarationRef,
@@ -81,6 +84,7 @@ impl IndexedItem {
     }
 }
 
+/// Body-local item group attached to its owner declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct IndexedBodyLocalGroup {
     owner: DeclarationRef,
@@ -97,6 +101,7 @@ impl IndexedBodyLocalGroup {
     }
 }
 
+/// Builds declaration trees used by symbol views.
 struct SymbolItemIndex<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -106,10 +111,12 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         Self { db }
     }
 
+    /// Return targets included in the indexed view.
     fn included_targets(&self) -> Result<Vec<TargetRef>> {
         Ok(ItemStoreQuery::new(self.db).included_target_refs()?)
     }
 
+    /// Return module declarations for one target.
     fn module_declarations(&self, target: TargetRef) -> Result<Vec<DeclarationRef>> {
         Ok(DefMapQuery::new(self.db)
             .module_refs(target)?
@@ -118,6 +125,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
             .collect())
     }
 
+    /// Return a workspace-symbol container name for a module.
     fn module_container_name(&self, module_ref: ModuleRef) -> Result<Option<String>> {
         let def_maps = DefMapQuery::new(self.db);
         let Some(module) = def_maps.module_data(module_ref)? else {
@@ -133,6 +141,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         Ok((!path.is_empty()).then_some(path))
     }
 
+    /// Return module-owned items, optionally restricted to one file.
     fn module_owned_items(
         &self,
         target: TargetRef,
@@ -155,6 +164,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         Ok(items)
     }
 
+    /// Return body-local item groups in one file.
     fn body_local_groups(
         &self,
         target: TargetRef,
@@ -182,6 +192,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         Ok(groups)
     }
 
+    /// Convert one semantic item into an indexed item tree.
     fn semantic_item(&self, item: SemanticItemView<'_>) -> Result<Option<IndexedItem>> {
         let declaration = DeclarationRef::from(item.item());
         match item.kind() {
@@ -212,6 +223,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         }
     }
 
+    /// Convert a declaration ref into an indexed item tree.
     fn item_for_declaration(&self, declaration: DeclarationRef) -> Result<Option<IndexedItem>> {
         match declaration {
             DeclarationRef::Item(item) => {
@@ -228,6 +240,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         }
     }
 
+    /// Return a struct or union item with field children.
     fn type_def_item(
         &self,
         declaration: DeclarationRef,
@@ -242,6 +255,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         Ok(Some(IndexedItem::with_children(declaration, children)))
     }
 
+    /// Return an enum item with variant and syntax-field children.
     fn enum_item(
         &self,
         declaration: DeclarationRef,
@@ -273,6 +287,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         Ok(Some(IndexedItem::with_children(declaration, children)))
     }
 
+    /// Return associated item children for a trait or impl.
     fn assoc_item_children(
         &self,
         origin: DefMapRef,
@@ -286,6 +301,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
             .collect())
     }
 
+    /// Convert an associated item id into a declaration ref.
     fn assoc_item(origin: DefMapRef, item: &AssocItemId) -> DeclarationRef {
         match item {
             AssocItemId::Function(id) => {
@@ -296,6 +312,7 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
         }
     }
 
+    /// Return semantic refs for variants of an enum type.
     fn enum_variant_refs(&self, ty: TypeDefRef) -> Result<Vec<SemanticEnumVariantRef>> {
         let TypeDefId::Enum(enum_id) = ty.id else {
             return Ok(Vec::new());
@@ -313,10 +330,12 @@ impl<'a, 'db> SymbolItemIndex<'a, 'db> {
             .collect())
     }
 
+    /// Return a display label for an outline-only field.
     fn field_label(name: Option<String>) -> String {
         name.unwrap_or_else(|| "<unsupported>".to_string())
     }
 
+    /// Return a local module path for workspace-symbol containers.
     fn module_path(&self, origin: DefMapRef, module: ModuleId) -> Result<String> {
         let def_maps = DefMapQuery::new(self.db);
         let Some(data) = def_maps.module_data(ModuleRef { origin, module })? else {
@@ -348,6 +367,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         Self { db }
     }
 
+    /// Return source-outline symbols for one file.
     pub fn source_outline(
         &self,
         target: TargetRef,
@@ -391,6 +411,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         Ok(symbols)
     }
 
+    /// Return workspace-wide symbols for all included targets.
     pub fn workspace_symbols(&self) -> Result<Vec<IndexedSymbolEntry>> {
         let index = SymbolItemIndex::new(self.db);
         let mut symbols = Vec::new();
@@ -421,6 +442,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         Ok(symbols)
     }
 
+    /// Convert an indexed item tree into a source-outline node.
     fn source_outline_item(
         &self,
         item: &IndexedItem,
@@ -459,6 +481,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         ))
     }
 
+    /// Push an indexed item tree into the flat workspace-symbol list.
     fn push_workspace_item(
         &self,
         item: &IndexedItem,
@@ -483,6 +506,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         Ok(())
     }
 
+    /// Return the container name inherited by children of a declaration.
     fn child_container_name(declaration: &Declaration) -> Option<String> {
         match declaration.kind() {
             SymbolKind::Trait => Some(format!("trait {}", declaration.name())),
@@ -503,10 +527,12 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         }
     }
 
+    /// Load declaration facts for a symbol declaration ref.
     fn declaration(&self, declaration: DeclarationRef) -> Result<Option<Declaration>> {
         DeclarationView::new(self.db).declaration(declaration)
     }
 
+    /// Build a source-outline leaf from a declaration ref.
     fn declaration_source_outline_node(
         &self,
         declaration: DeclarationRef,
@@ -514,6 +540,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         Ok(self.declaration(declaration)?.map(SourceOutlineNode::new))
     }
 
+    /// Find a function or method node already present in the outline tree.
     fn find_function_symbol_mut<'s>(
         symbols: &'s mut [SourceOutlineNode],
         function: &Declaration,
@@ -541,6 +568,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         None
     }
 
+    /// Nest source-outline nodes under containing module spans.
     fn nest_module_source_outline(symbols: Vec<SourceOutlineNode>) -> Vec<SourceOutlineNode> {
         let parent_by_symbol = Self::module_parents_by_symbol(&symbols);
         let mut children_by_parent = vec![Vec::new(); symbols.len()];
@@ -559,6 +587,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             .collect()
     }
 
+    /// Find the nearest containing module for each source-outline node.
     fn module_parents_by_symbol(symbols: &[SourceOutlineNode]) -> Vec<Option<usize>> {
         // Inline module spans contain their nested item spans. Choosing the smallest containing
         // module reconstructs the outline hierarchy without consulting def-map parent ids.
@@ -583,6 +612,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
             .collect()
     }
 
+    /// Build one nested source-outline subtree.
     fn build_nested_source_outline(
         idx: usize,
         symbols: &[SourceOutlineNode],
@@ -601,6 +631,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         symbol
     }
 
+    /// Sort source-outline nodes by source order and stable tie-breakers.
     fn sort_source_outline(symbols: &mut [SourceOutlineNode]) {
         for symbol in symbols.iter_mut() {
             Self::sort_source_outline(symbol.children_mut());
@@ -617,6 +648,7 @@ impl<'a, 'db> SymbolView<'a, 'db> {
         });
     }
 
+    /// Return whether one span contains another without being equal.
     fn span_strictly_contains(parent: Span, child: Span) -> bool {
         parent.text.start <= child.text.start
             && child.text.end <= parent.text.end

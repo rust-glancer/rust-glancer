@@ -1,11 +1,10 @@
 //! Record-field completion assembly for struct literals and record patterns.
 
-use rg_ir_view::IndexedViewDb;
+use rg_ir_view::{IndexedViewDb, member::MemberView};
 
 use crate::{
     completion_site::RecordFieldCompletionSite,
     model::{CompletionEdit, CompletionItem},
-    query::member::MemberView,
 };
 
 use super::{candidates::CompletionCandidateSource, field::FieldCompletionRenderer};

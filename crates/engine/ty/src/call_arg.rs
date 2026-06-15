@@ -3,7 +3,7 @@ use rg_text::Name;
 
 use crate::{RefMutability, Ty, TypeSubst};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CallArgMapping {
     /// The written call args line up with signature params from the beginning.
     FunctionCall,

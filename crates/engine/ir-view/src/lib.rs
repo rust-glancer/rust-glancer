@@ -8,11 +8,18 @@
 pub mod body;
 pub mod db;
 pub mod display;
+pub mod implementation;
 pub mod item;
 pub mod lookup;
+pub mod member;
 pub mod source;
 pub mod symbol;
+#[doc(hidden)]
+pub mod testonly;
 pub mod ty;
 
 pub use db::IndexedViewDb;
 pub use symbol::SymbolKind;
+
+#[cfg(test)]
+mod tests;

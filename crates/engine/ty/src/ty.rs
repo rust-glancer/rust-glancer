@@ -1,6 +1,6 @@
 use rg_ir_model::items::{GenericParams, TypeRef};
 use rg_ir_model::{TraitRef, TypeDefRef, TypePathResolution};
-use rg_std::{MemorySize, Shrink, UniqueVec};
+use rg_std::{ExpectedUnique, MemorySize, Shrink, UniqueVec};
 use rg_text::Name;
 
 use crate::{GenericArg, PrimitiveTy, RefMutability};
@@ -89,14 +89,8 @@ pub enum Ty {
         bounds: UniqueVec<OpaqueTraitBound>,
     },
     Syntax(TypeRef),
-    Nominal(
-        #[wincode(with = "rg_wincode_utils::WincodeDynamic<UniqueVec<NominalTy>>")]
-        UniqueVec<NominalTy>,
-    ),
-    SelfTy(
-        #[wincode(with = "rg_wincode_utils::WincodeDynamic<UniqueVec<NominalTy>>")]
-        UniqueVec<NominalTy>,
-    ),
+    Nominal(NominalTy),
+    SelfTy(NominalTy),
     Unknown,
 }
 
@@ -168,16 +162,12 @@ impl Ty {
         Self::Opaque { bounds }
     }
 
-    pub fn nominal(types: UniqueVec<NominalTy>) -> Self {
-        Self::Nominal(types)
+    pub fn nominal(ty: NominalTy) -> Self {
+        Self::Nominal(ty)
     }
 
-    pub fn self_ty(types: UniqueVec<NominalTy>) -> Self {
-        if types.is_empty() {
-            return Self::Unknown;
-        }
-
-        Self::SelfTy(types)
+    pub fn self_ty(ty: NominalTy) -> Self {
+        Self::SelfTy(ty)
     }
 
     /// Projects a resolved nominal type path into `Ty`, preserving source generic arguments.
@@ -188,37 +178,18 @@ impl Ty {
         resolution: TypePathResolution,
         args: Vec<GenericArg>,
     ) -> Option<Self> {
-        // Attach the generic arguments from the source path to whichever nominal definition the
-        // path resolved to. Ambiguous multi-target resolution keeps the same args on every
-        // candidate.
         match resolution {
-            TypePathResolution::SelfType(types) => Some(Self::self_ty(
-                types
-                    .into_iter()
-                    .map(|def| NominalTy {
-                        def,
-                        args: args.clone(),
-                    })
-                    .collect(),
-            )),
-            TypePathResolution::TypeDefs(types) => Some(Self::nominal(
-                types
-                    .into_iter()
-                    .map(|def| NominalTy {
-                        def,
-                        args: args.clone(),
-                    })
-                    .collect(),
-            )),
-            TypePathResolution::TypeAliases(_)
-            | TypePathResolution::Traits(_)
+            TypePathResolution::SelfType(def) => Some(Self::self_ty(NominalTy { def, args })),
+            TypePathResolution::TypeDef(def) => Some(Self::nominal(NominalTy { def, args })),
+            TypePathResolution::TypeAlias(_)
+            | TypePathResolution::Trait(_)
             | TypePathResolution::Unknown => None,
         }
     }
 
     pub fn as_nominals(&self) -> &[NominalTy] {
         match self {
-            Self::Nominal(types) | Self::SelfTy(types) => types.as_slice(),
+            Self::Nominal(ty) | Self::SelfTy(ty) => std::slice::from_ref(ty),
             Self::Unit
             | Self::Never
             | Self::Primitive(_)
@@ -249,12 +220,19 @@ impl Ty {
         }
     }
 
-    pub fn one_or_unknown(tys: UniqueVec<Self>) -> Self {
-        let mut vec = tys.into_vec();
-        if vec.len() == 1 {
-            vec.pop().unwrap()
-        } else {
-            Self::Unknown
+    /// Returns true when this type shape contains `Ty::Unknown`.
+    pub fn has_unknown(&self) -> bool {
+        match self {
+            Self::Tuple(fields) => fields.iter().any(Self::has_unknown),
+            Self::Array { inner, .. } | Self::Slice(inner) | Self::Reference { inner, .. } => {
+                inner.has_unknown()
+            }
+            Self::Opaque { bounds } => bounds
+                .iter()
+                .any(|bound| bound.args.iter().any(GenericArg::has_unknown)),
+            Self::Nominal(ty) | Self::SelfTy(ty) => ty.args.iter().any(GenericArg::has_unknown),
+            Self::Unknown => true,
+            Self::Unit | Self::Never | Self::Primitive(_) | Self::Syntax(_) => false,
         }
     }
 
@@ -274,6 +252,37 @@ impl Ty {
     }
 }
 
+/// Converts expected-unique type candidates into the public type vocabulary.
+pub trait ExpectedTyExt {
+    /// Converts the value to `Ty` or keeps it as `Ty::Unknown`.
+    fn into_ty(self) -> Ty;
+}
+
+impl ExpectedTyExt for ExpectedUnique<Ty> {
+    fn into_ty(self) -> Ty {
+        self.into_option().unwrap_or(Ty::Unknown)
+    }
+}
+
+/// Converts expected-unique nominal candidates into the public type vocabulary.
+pub trait ExpectedNominalTyExt {
+    /// Converts the value to `Ty::Nominal` or keeps it as `Ty::Unknown`.
+    fn into_nominal_ty(self) -> Ty;
+
+    /// Converts the value to `Ty::SelfTy` or keeps it as `Ty::Unknown`.
+    fn into_self_ty(self) -> Ty;
+}
+
+impl ExpectedNominalTyExt for ExpectedUnique<NominalTy> {
+    fn into_nominal_ty(self) -> Ty {
+        self.into_option().map(Ty::nominal).unwrap_or(Ty::Unknown)
+    }
+
+    fn into_self_ty(self) -> Ty {
+        self.into_option().map(Ty::self_ty).unwrap_or(Ty::Unknown)
+    }
+}
+
 impl Shrink for Ty {
     fn shrink_to_fit(&mut self) {
         match self {
@@ -290,8 +299,8 @@ impl Shrink for Ty {
                 Shrink::shrink_to_fit(bounds);
             }
             Self::Syntax(ty) => Shrink::shrink_to_fit(ty),
-            Self::Nominal(types) | Self::SelfTy(types) => {
-                Shrink::shrink_to_fit(types);
+            Self::Nominal(ty) | Self::SelfTy(ty) => {
+                Shrink::shrink_to_fit(ty);
             }
             Self::Unit | Self::Never | Self::Primitive(_) | Self::Unknown => {}
         }

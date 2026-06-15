@@ -14,8 +14,9 @@ use rg_ty::{Autoderef, ImplMatcher, ItemPathQuery, IterationItemResolver};
 use crate::ir::body::ResolvedBodyData;
 
 use crate::resolution::query::{
-    BodyAssociatedValueQuery, BodyLocalItemQuery, BodyReceiverFunctionQuery, BodyTypePathQuery,
-    BodyValuePathQuery, CallableReturnQuery,
+    BodyAssociatedItemQuery, BodyCallQuery, BodyFieldQuery, BodyFunctionQuery, BodyGenericsQuery,
+    BodyLocalItemQuery, BodyMethodQuery, BodyTraitQuery, BodyTypeAliasQuery, BodyTypeContextQuery,
+    BodyTypePathQuery, BodyValuePathQuery, TypeRefResolutionQuery, TypeRefUseSite,
 };
 
 use super::BodyQuerySource;
@@ -92,20 +93,48 @@ where
         BodyValuePathQuery::new(*self)
     }
 
-    pub(crate) fn associated_values(&self) -> BodyAssociatedValueQuery<'a, D, I> {
-        BodyAssociatedValueQuery::new(*self)
+    pub(crate) fn type_refs(&self, use_site: TypeRefUseSite) -> TypeRefResolutionQuery<'a, D, I> {
+        TypeRefResolutionQuery::new(*self, use_site)
     }
 
-    pub(crate) fn callable_returns(&self) -> CallableReturnQuery<'a, D, I> {
-        CallableReturnQuery::new(*self)
+    pub(crate) fn type_contexts(&self) -> BodyTypeContextQuery<'a, D, I> {
+        BodyTypeContextQuery::new(*self)
+    }
+
+    pub(crate) fn type_aliases(&self) -> BodyTypeAliasQuery<'a, D, I> {
+        BodyTypeAliasQuery::new(*self)
+    }
+
+    pub(crate) fn generics(&self) -> BodyGenericsQuery<'a, D, I> {
+        BodyGenericsQuery::new(*self)
+    }
+
+    pub(crate) fn associated_items(&self) -> BodyAssociatedItemQuery<'a, D, I> {
+        BodyAssociatedItemQuery::new(*self)
+    }
+
+    pub(crate) fn traits(&self) -> BodyTraitQuery<'a, D, I> {
+        BodyTraitQuery::new(*self)
+    }
+
+    pub(crate) fn calls(&self) -> BodyCallQuery<'a, D, I> {
+        BodyCallQuery::new(*self)
+    }
+
+    pub(crate) fn fields(&self) -> BodyFieldQuery<'a, D, I> {
+        BodyFieldQuery::new(*self)
+    }
+
+    pub(crate) fn functions(&self) -> BodyFunctionQuery<'a, D, I> {
+        BodyFunctionQuery::new(*self)
     }
 
     pub(crate) fn body_local_items(&self) -> BodyLocalItemQuery<'a, D, I> {
         BodyLocalItemQuery::new(*self)
     }
 
-    pub fn receiver_functions(&self) -> BodyReceiverFunctionQuery<'a, D, I> {
-        BodyReceiverFunctionQuery::new(*self)
+    pub fn methods(&self) -> BodyMethodQuery<'a, D, I> {
+        BodyMethodQuery::new(*self)
     }
 
     pub(crate) fn impl_matcher(

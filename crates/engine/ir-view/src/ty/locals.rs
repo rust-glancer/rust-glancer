@@ -17,12 +17,14 @@ use rg_ty::Ty;
 
 use crate::IndexedViewDb;
 
+/// Namespace requested for body-local name lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyNameNamespace {
     Types,
     Values,
 }
 
+/// Body scope together with the visible binding boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BodyNameScope {
     body: BodyRef,
@@ -47,6 +49,7 @@ impl BodyNameScope {
     }
 }
 
+/// One name visible from a body lexical scope.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BodyLexicalName {
     Binding {
@@ -74,6 +77,7 @@ pub enum BodyLexicalName {
     },
 }
 
+/// Body binding with a known inferred type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InferredBindingTy {
     file_id: FileId,
@@ -95,6 +99,7 @@ impl InferredBindingTy {
     }
 }
 
+/// One resolved call argument span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ResolvedCallArg {
     span: Span,
@@ -137,6 +142,7 @@ impl ResolvedFunctionCall {
     }
 }
 
+/// Body and owner declaration for body-local items.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BodyLocalGroup {
     owner: DeclarationRef,
@@ -153,6 +159,7 @@ impl BodyLocalGroup {
     }
 }
 
+/// Projects body-local facts from Body IR.
 pub struct BodyView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -162,6 +169,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Self { db }
     }
 
+    /// Return the module that owns a body.
     pub fn owner_module(&self, body_ref: BodyRef) -> anyhow::Result<Option<ModuleRef>> {
         Ok(self
             .db
@@ -170,6 +178,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .map(|body| body.owner_module()))
     }
 
+    /// Return body-local module refs from a scope to its parents.
     pub fn lexical_scope_modules(
         &self,
         body_ref: BodyRef,
@@ -196,6 +205,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(modules)
     }
 
+    /// Return item names declared directly in one body scope.
     pub fn direct_item_names(
         &self,
         body_ref: BodyRef,
@@ -221,6 +231,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(names)
     }
 
+    /// Return the stored type for a body expression.
     pub fn expr_ty(&self, body_ref: BodyRef, expr: ExprId) -> anyhow::Result<Option<Ty>> {
         Ok(self
             .db
@@ -229,6 +240,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .and_then(|body| body.expr_ty(expr).cloned()))
     }
 
+    /// Return the stored type for a body binding.
     pub fn binding_ty(&self, binding: BodyBindingRef) -> anyhow::Result<Option<Ty>> {
         Ok(self
             .db
@@ -237,6 +249,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
             .and_then(|body| body.binding_ty(binding.binding).cloned()))
     }
 
+    /// Return names visible from a body scope, ordered by lexical distance.
     pub fn lexical_names(&self, scope: BodyNameScope) -> anyhow::Result<Vec<BodyLexicalName>> {
         let Some(body) = self.db.body_ir.body_data(scope.body)? else {
             return Ok(Vec::new());
@@ -388,7 +401,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(names)
     }
 
-    /// Returns let-like bindings whose type is already known from body facts.
+    /// Return let-like bindings whose type is already known from body facts.
     ///
     /// These are the local pattern bindings that can carry inferred type hints: ordinary `let`
     /// bindings, `let else` and match-pattern bindings, and `for` loop pattern bindings.
@@ -436,7 +449,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(bindings)
     }
 
-    /// Returns call sites in one file that resolve to a single known function.
+    /// Return call sites in one file that resolve to a single known function.
     ///
     /// This is the body-local view used by features that need to project declaration metadata, such
     /// as parameter names, onto concrete argument expressions without owning call resolution.
@@ -499,6 +512,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(calls)
     }
 
+    /// Return bodies that own body-local item groups in one file.
     pub fn local_groups(
         &self,
         target: TargetRef,
@@ -526,6 +540,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(groups)
     }
 
+    /// Return body-local item declarations that appear in one file.
     pub fn local_scope_declarations(
         &self,
         body_ref: BodyRef,
@@ -559,6 +574,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(declarations)
     }
 
+    /// Return one function when declarations resolve to exactly one function.
     fn single_function(
         &self,
         declarations: Vec<DeclarationRef>,
@@ -599,6 +615,7 @@ impl<'a, 'db> BodyView<'a, 'db> {
         Ok(functions.next().is_none().then_some(function))
     }
 
+    /// Convert expression ids into call argument spans.
     fn resolved_call_args(
         body: &rg_body_ir::ResolvedBodyData,
         args: &[ExprId],

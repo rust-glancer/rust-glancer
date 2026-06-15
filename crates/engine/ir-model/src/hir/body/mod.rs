@@ -19,7 +19,7 @@ pub mod stmt;
 
 pub use self::{
     binding::{BindingData, BindingKind, BodySelfParamKind},
-    data::BodyData,
+    data::{BodyData, FunctionParamData},
     expr::{
         ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind,
         ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, MatchArmData,
@@ -29,7 +29,10 @@ pub use self::{
     literal::LiteralKind,
     owner::BodyOwner,
     pat::{PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordPatField},
-    path::{BodyPath, BodyPathSegment, BodyPathSegmentArgs, BodyPathSegmentKind},
+    path::{
+        BodyAssociatedPathPrefix, BodyPath, BodyPathSegment, BodyPathSegmentArgs,
+        BodyPathSegmentKind,
+    },
     record::RecordFieldSyntax,
     scope::ScopeData,
     source::BodySource,

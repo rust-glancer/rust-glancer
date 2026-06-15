@@ -3,6 +3,7 @@
 use rg_ir_model::{DefMapRef, ModuleRef, TargetRef};
 use rg_ir_storage::{DefMap, DefMapSource, PackageDefMaps};
 use rg_package_store::{PackageStoreError, PackageStoreReadTxn};
+use rg_parse::{FileId, TargetId};
 
 use crate::PackageSlot;
 
@@ -26,6 +27,31 @@ impl<'db> DefMapReadTxn<'db> {
     pub fn def_map(&self, target: TargetRef) -> Result<Option<&DefMap>, PackageStoreError> {
         let package = self.package(target.package)?;
         Ok(package.def_map(target.target))
+    }
+
+    /// Returns target contexts whose module tree contains a package-local file.
+    pub fn targets_for_file(
+        &self,
+        package: PackageSlot,
+        file: FileId,
+    ) -> Result<Vec<TargetRef>, PackageStoreError> {
+        let mut targets = Vec::new();
+        let def_map_package = self.package(package)?;
+
+        for (target_idx, def_map) in def_map_package.def_maps().iter().enumerate() {
+            let owns_file = def_map
+                .modules()
+                .iter()
+                .any(|module| module.origin.contains_file(file));
+            if owns_file {
+                targets.push(TargetRef {
+                    package,
+                    target: TargetId(target_idx),
+                });
+            }
+        }
+
+        Ok(targets)
     }
 }
 

@@ -155,6 +155,19 @@ where
             .and_then(|items| items.type_def_name(ty.id)))
     }
 
+    /// Return the source local def for a nominal type, if its item data is available.
+    pub fn local_def_for_type_def(&self, ty: TypeDefRef) -> Result<Option<LocalDefRef>, S::Error> {
+        let Some(items) = self.item_store_for_origin(ty.origin)? else {
+            return Ok(None);
+        };
+
+        Ok(match ty.id {
+            TypeDefId::Struct(id) => items.struct_data(id).map(|data| data.local_def),
+            TypeDefId::Enum(id) => items.enum_data(id).map(|data| data.local_def),
+            TypeDefId::Union(id) => items.union_data(id).map(|data| data.local_def),
+        })
+    }
+
     /// Keeps the struct-constructor rule next to item data instead of duplicating shape checks in
     /// value lookup.
     pub fn type_def_has_value_constructor(&self, ty: TypeDefRef) -> Result<bool, S::Error> {

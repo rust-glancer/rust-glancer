@@ -107,6 +107,28 @@ impl Path {
     pub fn last_segment_label(&self) -> Option<String> {
         last_segment_name(&self.segments).map(|name| name.to_string())
     }
+
+    /// Splits the outermost `prefix::name` shape into `prefix` and `name`.
+    ///
+    /// Callers that need associated paths resolve the prefix separately; this only detaches the
+    /// final plain-name segment.
+    pub fn split_prefix_name(&self) -> Option<(Self, &str)> {
+        if self.segments.len() < 2 {
+            return None;
+        }
+
+        let PathSegment::Name(last_segment) = self.segments.last()? else {
+            return None;
+        };
+
+        Some((
+            Self {
+                absolute: self.absolute,
+                segments: self.segments[..self.segments.len() - 1].to_vec(),
+            },
+            last_segment.as_str(),
+        ))
+    }
 }
 
 impl fmt::Display for Path {
@@ -320,6 +342,72 @@ mod tests {
 
         for (label, path, expected) in cases {
             assert_eq!(path.single_name(), expected, "{label}");
+        }
+    }
+
+    #[test]
+    fn splits_prefix_from_final_name_segment() {
+        let cases = [
+            (
+                "relative name path",
+                path(
+                    false,
+                    vec![
+                        PathSegment::Name(Name::new("api")),
+                        PathSegment::Name(Name::new("User")),
+                    ],
+                ),
+                Some(("api", "User")),
+            ),
+            (
+                "nested name path",
+                path(
+                    false,
+                    vec![
+                        PathSegment::Name(Name::new("api")),
+                        PathSegment::Name(Name::new("User")),
+                        PathSegment::Name(Name::new("Id")),
+                    ],
+                ),
+                Some(("api::User", "Id")),
+            ),
+            (
+                "absolute name path",
+                path(
+                    true,
+                    vec![
+                        PathSegment::Name(Name::new("api")),
+                        PathSegment::Name(Name::new("User")),
+                    ],
+                ),
+                Some(("::api", "User")),
+            ),
+            (
+                "single segment path",
+                path(false, vec![PathSegment::Name(Name::new("User"))]),
+                None,
+            ),
+            (
+                "final keyword path",
+                path(
+                    false,
+                    vec![PathSegment::Name(Name::new("api")), PathSegment::SelfKw],
+                ),
+                None,
+            ),
+        ];
+
+        for (label, path, expected) in cases {
+            let actual = path
+                .split_prefix_name()
+                .map(|(prefix, name)| (prefix.to_string(), name.to_owned()));
+            assert_eq!(
+                actual
+                    .as_ref()
+                    .map(|(prefix, name)| (prefix.as_str(), name.as_str())),
+                expected,
+                "{label}"
+            );
         }
     }
 

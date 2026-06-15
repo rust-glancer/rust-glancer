@@ -462,6 +462,57 @@ pub fn use_it(id: GlobalId) {
 }
 
 #[test]
+fn resolves_body_local_impl_aliases_with_nested_self() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_local_impl_alias_self_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    struct User;
+
+    impl User {
+        type Pair = (Self,);
+    }
+
+    let user: User;
+    let pair: User::Pair = (user,);
+}
+"#,
+        expect![[r#"
+            package body_local_impl_alias_self_fixture
+
+            body_local_impl_alias_self_fixture [lib]
+            body b0 fn body_local_impl_alias_self_fixture[lib]::crate::use_it @ 1:1-10:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v1; source_items i0, i2
+            source_items
+            - i0 struct User @ 2:5-2:17
+            - i1 type_alias Pair @ 5:9-5:29
+            - i2 impl <unnamed> @ 4:5-6:6
+            bindings
+            - v0 let user `user`: User => nominal struct fn body_local_impl_alias_self_fixture[lib]::crate::use_it::User @ 2:5-2:17 @ 8:9-8:13
+            - v1 let pair `pair`: User::Pair => (Self struct fn body_local_impl_alias_self_fixture[lib]::crate::use_it::User @ 2:5-2:17,) @ 9:9-9:13
+            body
+            expr e2 block s1 => () @ 1:17-10:2
+              stmt s0 source_item i0 @ 2:5-2:17
+              stmt s1 source_item i2 @ 4:5-6:6
+              stmt s2 let v0: User @ 8:5-8:20
+              stmt s3 let v1: User::Pair @ 9:5-9:36
+                initializer
+                  expr e1 tuple => (nominal struct fn body_local_impl_alias_self_fixture[lib]::crate::use_it::User @ 2:5-2:17,) @ 9:28-9:35
+                    field
+                      expr e0 path user -> local v0 => nominal struct fn body_local_impl_alias_self_fixture[lib]::crate::use_it::User @ 2:5-2:17 @ 9:29-9:33
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_body_local_trait_impl_methods_for_target_types() {
     check_project_body_ir(
         r#"
@@ -769,9 +820,9 @@ pub fn use_it() {
             - s1 parent s0: <none>
             bindings
             body
-            expr e1 block s1 => <unknown> @ 5:26-7:6
+            expr e1 block s1 => nominal struct fn nested_body_parent_items_fixture[lib]::crate::use_it::Local @ 2:5-2:18 @ 5:26-7:6
               tail
-                expr e0 path DEFAULT -> item const fn nested_body_parent_items_fixture[lib]::crate::use_it::DEFAULT => <unknown> @ 6:9-6:16
+                expr e0 path DEFAULT -> const fn nested_body_parent_items_fixture[lib]::crate::use_it::DEFAULT => nominal struct fn nested_body_parent_items_fixture[lib]::crate::use_it::Local @ 2:5-2:18 @ 6:9-6:16
         "#]],
     );
 }
@@ -857,9 +908,9 @@ pub fn use_it() {
             - s1 parent s0: <none>
             bindings
             body
-            expr e1 block s1 => <unknown> @ 7:33-9:10
+            expr e1 block s1 => nominal struct body_in_body_in_body_fixture[lib]::crate::GlobalId @ 7:33-9:10
               tail
-                expr e0 path INNER -> item const fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::INNER => <unknown> @ 8:13-8:18
+                expr e0 path INNER -> const fn fn body_in_body_in_body_fixture[lib]::crate::use_it::outer::INNER => nominal struct body_in_body_in_body_fixture[lib]::crate::GlobalId @ 8:13-8:18
         "#]],
     );
 }
@@ -1286,7 +1337,7 @@ pub fn make() {
             - s0 parent <none>: <none>
             bindings
             body
-            expr e0 path SEED -> item const fn body_local_assoc_body_fixture[lib]::crate::make::SEED => <unknown> @ 11:33-11:37
+            expr e0 path SEED -> const fn body_local_assoc_body_fixture[lib]::crate::make::SEED => nominal struct body_local_assoc_body_fixture[lib]::crate::GlobalId @ 11:33-11:37
 
 
             body b3 fn impl User::make @ 13:9-15:10
@@ -1295,9 +1346,9 @@ pub fn make() {
             - s1 parent s0: <none>
             bindings
             body
-            expr e1 block s1 => <unknown> @ 13:29-15:10
+            expr e1 block s1 => nominal struct body_local_assoc_body_fixture[lib]::crate::GlobalId @ 13:29-15:10
               tail
-                expr e0 path SEED -> item const fn body_local_assoc_body_fixture[lib]::crate::make::SEED => <unknown> @ 14:13-14:17
+                expr e0 path SEED -> const fn body_local_assoc_body_fixture[lib]::crate::make::SEED => nominal struct body_local_assoc_body_fixture[lib]::crate::GlobalId @ 14:13-14:17
         "#]],
     );
 }

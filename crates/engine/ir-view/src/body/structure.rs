@@ -17,6 +17,7 @@ pub struct BodyClosingBraceBlock {
     kind: BodyClosingBraceBlockKind,
 }
 
+/// Kind of body-owned block used by closing-brace hints.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BodyClosingBraceBlockKind {
     Function {
@@ -76,6 +77,7 @@ impl MethodChainExprTy {
     }
 }
 
+/// Projects structural facts from body expressions.
 pub struct BodyStructureView<'a, 'db> {
     db: &'a IndexedViewDb<'db>,
 }
@@ -85,10 +87,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
         Self { db }
     }
 
-    /// Returns known expression types for intermediate segments in method chains.
-    ///
-    /// The projection stays chain-shaped instead of exposing every typed expression, so callers can
-    /// reason about source structure without re-walking raw Body IR expressions.
+    /// Return known types for method calls that feed another method call.
     pub fn method_chain_expr_tys(
         &self,
         target: TargetRef,
@@ -132,15 +131,16 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
         Ok(expr_tys)
     }
 
-    /// Returns body-owned blocks whose source extent ends at their closing brace.
-    ///
-    /// The source span and structural kind are enough for callers to place block-end annotations
-    /// without reaching back to the body syntax tree that originally produced the facts.
+    /// Return body-owned blocks whose source extent ends at their closing brace.
     pub fn closing_brace_blocks(
         &self,
         target: TargetRef,
         file_id: FileId,
     ) -> anyhow::Result<Vec<BodyClosingBraceBlock>> {
+        // Design note:
+        // The source span and structural kind are enough for callers to place block-end annotations
+        // without reaching back to the body syntax tree that originally produced the facts.
+
         let Some(target_bodies) = self.db.body_ir.target_bodies(target)? else {
             return Ok(Vec::new());
         };
@@ -181,6 +181,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
         Ok(blocks)
     }
 
+    /// Map a method receiver expression to the parent call's dot span.
     fn method_parent_dots_by_receiver(
         body: &rg_body_ir::ResolvedBodyData,
     ) -> HashMap<ExprId, Span> {
@@ -201,6 +202,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
         parent_dot_by_receiver
     }
 
+    /// Peel wrappers around a receiver used as the base of a method chain.
     fn chain_receiver_base(body: &rg_body_ir::ResolvedBodyData, receiver: ExprId) -> ExprId {
         let mut current = receiver;
         while let Some(expr) = body.expr(current) {
@@ -217,6 +219,7 @@ impl<'a, 'db> BodyStructureView<'a, 'db> {
         current
     }
 
+    /// Classify a body expression that can produce a closing-brace hint.
     fn closing_brace_kind(
         body: &rg_body_ir::ResolvedBodyData,
         expr: &ExprKind,

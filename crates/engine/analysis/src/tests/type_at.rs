@@ -1841,7 +1841,7 @@ pub fn use_it() {
         ],
         expect![[r#"
             type at associated function call
-            - Self struct analysis_associated_path_type[lib]::crate::Widget
+            - nominal struct analysis_associated_path_type[lib]::crate::Widget
 
             type at enum variant call
             - nominal enum analysis_associated_path_type[lib]::crate::Action

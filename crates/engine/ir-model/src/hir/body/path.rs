@@ -6,7 +6,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     Path, PathSegment,
-    items::{GenericArg, TypeRef},
+    items::{GenericArg, TypePath, TypePathSegment, TypeRef},
 };
 use rg_std::{MemorySize, Shrink};
 
@@ -63,6 +63,17 @@ pub enum BodyPathSegmentArgs {
     Parenthesized(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BodyAssociatedPathPrefix {
+    /// `Type` in `Type::item`.
+    Type(TypeRef),
+    /// `<Self as Trait>` in `<Self as Trait>::item`.
+    QualifiedTrait {
+        self_ty: TypeRef,
+        trait_ref: TypeRef,
+    },
+}
+
 impl BodyPath {
     pub fn new(source_span: Span, absolute: bool, segments: Vec<BodyPathSegment>) -> Self {
         Self {
@@ -79,6 +90,67 @@ impl BodyPath {
     /// `Maybe::<User>::Some` still projects to `Maybe::Some`.
     pub fn as_def_map_path(&self) -> Option<Path> {
         self.prefix_through(self.segments.len().checked_sub(1)?)
+    }
+
+    /// Split the outermost `Type::<T>::item` shape into `Type::<T>` and `item`.
+    ///
+    /// If the prefix itself contains associated paths, type resolution handles those later. This
+    /// only detaches the final associated item name from the syntax-preserving type prefix.
+    pub fn split_type_prefix_name(&self) -> Option<(TypeRef, &str)> {
+        if self.segments.len() < 2 {
+            return None;
+        }
+        let BodyPathSegmentKind::Name(last_segment) = self.segments.last()?.kind() else {
+            return None;
+        };
+
+        let prefix_segments = self.segments[..self.segments.len() - 1]
+            .iter()
+            .map(BodyPathSegment::as_type_path_segment)
+            .collect::<Option<Vec<_>>>()?;
+        Some((
+            TypeRef::Path(TypePath {
+                source_span: self.source_span,
+                absolute: self.absolute,
+                segments: prefix_segments,
+            }),
+            last_segment.as_str(),
+        ))
+    }
+
+    /// Split `Type::item` or `<Self as Trait>::item` into a typed prefix and final item name.
+    pub fn split_associated_item_prefix_name(&self) -> Option<(BodyAssociatedPathPrefix, &str)> {
+        if self.segments.len() < 2 {
+            return None;
+        }
+        let BodyPathSegmentKind::Name(last_segment) = self.segments.last()?.kind() else {
+            return None;
+        };
+
+        if let [
+            BodyPathSegment {
+                kind:
+                    BodyPathSegmentKind::TypeAnchor {
+                        ty: Some(self_ty),
+                        trait_ref,
+                    },
+                ..
+            },
+            _,
+        ] = self.segments.as_slice()
+        {
+            let prefix = match trait_ref {
+                Some(trait_ref) => BodyAssociatedPathPrefix::QualifiedTrait {
+                    self_ty: self_ty.clone(),
+                    trait_ref: trait_ref.clone(),
+                },
+                None => BodyAssociatedPathPrefix::Type(self_ty.clone()),
+            };
+            return Some((prefix, last_segment.as_str()));
+        }
+
+        let (prefix, name) = self.split_type_prefix_name()?;
+        Some((BodyAssociatedPathPrefix::Type(prefix), name))
     }
 
     pub fn is_absolute(&self) -> bool {
@@ -155,6 +227,29 @@ impl BodyPathSegment {
             BodyPathSegmentKind::TypeAnchor { .. } => None,
         }
     }
+
+    fn as_type_path_segment(&self) -> Option<TypePathSegment> {
+        let name = match &self.kind {
+            BodyPathSegmentKind::Name(name) => name.clone(),
+            BodyPathSegmentKind::SelfType => Name::new("Self"),
+            BodyPathSegmentKind::SelfKw => Name::new("self"),
+            BodyPathSegmentKind::SuperKw => Name::new("super"),
+            BodyPathSegmentKind::CrateKw => Name::new("crate"),
+            BodyPathSegmentKind::TypeAnchor { .. } => return None,
+        };
+        let args = self
+            .args
+            .as_ref()
+            .and_then(BodyPathSegmentArgs::angle_args)
+            .unwrap_or(&[])
+            .to_vec();
+
+        Some(TypePathSegment {
+            name,
+            args,
+            span: self.span,
+        })
+    }
 }
 
 impl BodyPathSegmentArgs {
@@ -229,6 +324,148 @@ impl fmt::Display for BodyPathSegmentArgs {
                 write!(f, ">")
             }
             Self::Parenthesized(text) => write!(f, "{text}"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rg_parse::{Span, TextSpan};
+    use rg_text::Name;
+
+    use crate::items::{GenericArg, TypePath, TypePathSegment, TypeRef};
+
+    use super::{
+        BodyAssociatedPathPrefix, BodyPath, BodyPathSegment, BodyPathSegmentArgs,
+        BodyPathSegmentKind,
+    };
+
+    #[test]
+    fn splits_outermost_type_prefix_from_final_name() {
+        let cases = [
+            (
+                "nested prefix",
+                body_path(
+                    false,
+                    vec![name("A", None), name("B", None), name("C", None)],
+                ),
+                Some(("A::B", "C")),
+            ),
+            (
+                "generic prefix",
+                body_path(
+                    false,
+                    vec![
+                        name(
+                            "Vec",
+                            Some(BodyPathSegmentArgs::Angle {
+                                colon_colon: true,
+                                args: vec![GenericArg::Type(TypeRef::Infer)],
+                            }),
+                        ),
+                        name("new", None),
+                    ],
+                ),
+                Some(("Vec<_>", "new")),
+            ),
+            (
+                "single segment",
+                body_path(false, vec![name("Vec", None)]),
+                None,
+            ),
+            (
+                "final non-name segment",
+                body_path(
+                    false,
+                    vec![name("Vec", None), segment(BodyPathSegmentKind::SelfKw)],
+                ),
+                None,
+            ),
+        ];
+
+        for (label, path, expected) in cases {
+            let actual = path
+                .split_type_prefix_name()
+                .map(|(prefix, name)| (prefix.to_string(), name.to_owned()));
+            assert_eq!(
+                actual
+                    .as_ref()
+                    .map(|(prefix, name)| (prefix.as_str(), name.as_str())),
+                expected,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn does_not_split_type_anchor_prefixes_as_plain_type_paths() {
+        let path = body_path(
+            false,
+            vec![
+                segment(BodyPathSegmentKind::TypeAnchor {
+                    ty: Some(type_path_ref("T")),
+                    trait_ref: Some(type_path_ref("Trait")),
+                }),
+                name("Assoc", None),
+            ],
+        );
+
+        assert_eq!(path.split_type_prefix_name(), None);
+    }
+
+    #[test]
+    fn splits_qualified_trait_prefix_from_final_name() {
+        let path = body_path(
+            false,
+            vec![
+                segment(BodyPathSegmentKind::TypeAnchor {
+                    ty: Some(type_path_ref("User")),
+                    trait_ref: Some(type_path_ref("Factory")),
+                }),
+                name("make", None),
+            ],
+        );
+
+        let Some((prefix, name)) = path.split_associated_item_prefix_name() else {
+            panic!("qualified trait path should split");
+        };
+        assert_eq!(name, "make");
+        assert_eq!(
+            prefix,
+            BodyAssociatedPathPrefix::QualifiedTrait {
+                self_ty: type_path_ref("User"),
+                trait_ref: type_path_ref("Factory"),
+            }
+        );
+    }
+
+    fn body_path(absolute: bool, segments: Vec<BodyPathSegment>) -> BodyPath {
+        BodyPath::new(span(), absolute, segments)
+    }
+
+    fn name(name: &str, args: Option<BodyPathSegmentArgs>) -> BodyPathSegment {
+        BodyPathSegment::new(BodyPathSegmentKind::Name(Name::new(name)), span(), args)
+    }
+
+    fn segment(kind: BodyPathSegmentKind) -> BodyPathSegment {
+        BodyPathSegment::new(kind, span(), None)
+    }
+
+    fn type_path_ref(name: &str) -> TypeRef {
+        TypeRef::Path(TypePath {
+            source_span: span(),
+            absolute: false,
+            segments: vec![TypePathSegment {
+                name: Name::new(name),
+                args: Vec::new(),
+                span: span(),
+            }],
+        })
+    }
+
+    fn span() -> Span {
+        Span {
+            text: TextSpan { start: 0, end: 0 },
         }
     }
 }

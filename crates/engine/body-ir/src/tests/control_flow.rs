@@ -56,7 +56,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
                   condition
                     expr e4 binary && => bool @ 15:8-15:52
                       lhs
-                        expr e1 let s2 v2 => <unknown> @ 15:8-15:35
+                        expr e1 let s2 v2 => bool @ 15:8-15:35
                           initializer
                             expr e0 path input -> local v0 => nominal enum body_if_let_fixture[lib]::crate::Maybe @ 15:30-15:35
                       rhs
@@ -144,7 +144,7 @@ pub fn choose(input: Maybe, fallback: UserId) -> UserId {
                 initializer
                   expr e0 path input -> local v0 => nominal enum body_let_else_guard_fixture[lib]::crate::Maybe @ 15:33-15:38
                 else
-                  expr e3 block s2 => () @ 15:44-17:6
+                  expr e3 block s2 => ! @ 15:44-17:6
                     stmt s0 expr; @ 16:9-16:25
                       expr e2 wrapper return => ! @ 16:9-16:24
                         inner
@@ -233,11 +233,11 @@ pub fn walk(input: Maybe, items: Items) {
               tail
                 expr e14 loop 'outer => <unknown> @ 10:5-20:6
                   body
-                    expr e13 block s2 => () @ 10:18-20:6
+                    expr e13 block s2 => ! @ 10:18-20:6
                       stmt s2 expr @ 11:9-14:10
                         expr e6 while => () @ 11:9-14:10
                           condition
-                            expr e1 let s3 v2 => <unknown> @ 11:15-11:44
+                            expr e1 let s3 v2 => bool @ 11:15-11:44
                               initializer
                                 expr e0 path input -> local v0 => nominal enum body_control_flow_fixture[lib]::crate::Maybe @ 11:39-11:44
                           body
@@ -253,7 +253,7 @@ pub fn walk(input: Maybe, items: Items) {
                           iterable
                             expr e7 path items -> local v1 => nominal struct body_control_flow_fixture[lib]::crate::Items @ 15:22-15:27
                           body
-                            expr e10 block s6 => () @ 15:28-18:10
+                            expr e10 block s6 => ! @ 15:28-18:10
                               stmt s3 expr; @ 16:13-16:19
                                 expr e8 path value -> local v3 => <unknown> @ 16:13-16:18
                               stmt s4 expr; @ 17:13-17:29

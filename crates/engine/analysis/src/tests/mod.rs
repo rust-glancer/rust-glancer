@@ -6,6 +6,7 @@ mod goto_definition;
 mod goto_implementation;
 mod goto_type_definition;
 mod hover;
+mod inference;
 mod inlay_hints;
 mod references;
 mod rename;

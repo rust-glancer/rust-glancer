@@ -7,6 +7,7 @@ mod deref;
 mod generic_arg;
 mod impl_match;
 mod implementation;
+pub mod inference;
 mod item_path;
 mod iteration;
 mod member;
@@ -30,5 +31,5 @@ pub use self::{
     iteration::IterationItemResolver,
     member::{MemberMethodCandidateRef, MemberMethodOrigin, MemberQuery},
     primitive_expr::{ty_for_binary, ty_for_literal, ty_for_unary},
-    ty::{NominalTy, OpaqueTraitBound, Ty, TypeSubst},
+    ty::{ExpectedNominalTyExt, ExpectedTyExt, NominalTy, OpaqueTraitBound, Ty, TypeSubst},
 };

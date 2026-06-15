@@ -1,12 +1,10 @@
 //! Adapter from indexed source occurrences into analysis cursor symbols.
 
 use rg_ir_model::{TargetRef, identity::DeclarationRef};
-use rg_ir_view::source::{
-    IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceSurface, IndexedTypePathScope,
-};
+use rg_ir_view::source::{IndexedSourceFact, IndexedSourceOccurrence, IndexedSourceSurface};
 use rg_parse::{FileId, Span};
 
-use crate::model::{SymbolAt, TypePathScopeRef};
+use crate::model::SymbolAt;
 
 pub(crate) use rg_ir_view::source::IndexedSourceRole as SourceSymbolRole;
 
@@ -74,16 +72,7 @@ impl SourceSymbol {
             }
             IndexedSourceFact::FunctionBody(body) => SymbolAt::FunctionBody { body },
             IndexedSourceFact::Expr(expr) => SymbolAt::Expr { expr },
-            IndexedSourceFact::TypePath { scope, path } => SymbolAt::TypePath {
-                scope: match scope {
-                    IndexedTypePathScope::Signature(context) => {
-                        TypePathScopeRef::signature(context)
-                    }
-                    IndexedTypePathScope::Body(scope) => TypePathScopeRef::body(scope),
-                },
-                path,
-                span,
-            },
+            IndexedSourceFact::TypePath { scope, path } => SymbolAt::TypePath { scope, path, span },
             IndexedSourceFact::ValuePath { scope, path } => {
                 SymbolAt::ValuePath { scope, path, span }
             }

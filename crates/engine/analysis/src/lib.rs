@@ -12,10 +12,9 @@ pub use query::{
 };
 pub use rg_ir_view::SymbolKind;
 
-use rg_def_map::PackageSlot;
-use rg_ir_model::TargetRef;
+use rg_ir_model::{PackageSlot, TargetRef};
 use rg_ir_view::IndexedViewDb;
-use rg_parse::{FileId, ParseDb, Span, TargetId};
+use rg_parse::{FileId, ParseDb, Span};
 use rg_ty::Ty;
 
 use crate::source_symbol::{SourceSymbol, SourceSymbolIndex, SourceSymbolResolver};
@@ -24,8 +23,7 @@ pub use self::model::{
     CompletionApplicability, CompletionEdit, CompletionInsertText, CompletionItem, CompletionKind,
     CompletionTarget, DocumentSymbol, HoverBlock, HoverInfo, InlayHint, InlayHintKind,
     InlayHintPosition, KeywordCompletion, NavigationTarget, NavigationTargetKind,
-    ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt, TypePathScopeRef,
-    WorkspaceSymbol,
+    ReferenceLocation, RenameEdit, RenameResult, RenameTarget, SymbolAt, WorkspaceSymbol,
 };
 
 /// High-level LSP-facing query API over one request-scoped project transaction.
@@ -230,32 +228,6 @@ impl<'a> Analysis<'a> {
     /// Returns flat, best-effort symbols matching a case-insensitive workspace query.
     pub fn workspace_symbols(&self, query: &str) -> anyhow::Result<Vec<WorkspaceSymbol>> {
         query::symbols::SymbolCollector::new(self).workspace_symbols(query)
-    }
-
-    /// Returns target contexts whose module tree contains a package-local file.
-    pub fn targets_for_file(
-        &self,
-        package: PackageSlot,
-        file: FileId,
-    ) -> anyhow::Result<Vec<TargetRef>> {
-        let mut targets = Vec::new();
-        let def_map_package = self.view_db().def_map_package(package)?;
-
-        for (target_idx, def_map) in def_map_package.def_maps().iter().enumerate() {
-            let target_ref = TargetRef {
-                package,
-                target: TargetId(target_idx),
-            };
-            let owns_file = def_map
-                .modules()
-                .iter()
-                .any(|module| module.origin.contains_file(file));
-            if owns_file {
-                targets.push(target_ref);
-            }
-        }
-
-        Ok(targets)
     }
 }
 

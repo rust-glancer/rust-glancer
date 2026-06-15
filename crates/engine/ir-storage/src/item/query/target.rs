@@ -52,7 +52,7 @@ where
         let mut impls = UniqueVec::new();
         for store in self.impl_stores_for_origin(ty.origin)? {
             for (impl_ref, data) in store.impls_with_refs() {
-                if data.resolved_self_tys.contains(&ty) {
+                if data.resolved_self_ty.is(&ty) {
                     impls.push(impl_ref);
                 }
             }
@@ -65,7 +65,7 @@ where
         let mut impls = UniqueVec::new();
         for store in self.impl_stores_for_origin(trait_ref.origin)? {
             for (impl_ref, data) in store.impls_with_refs() {
-                if data.resolved_trait_refs.contains(&trait_ref) {
+                if data.resolved_trait_ref.is(&trait_ref) {
                     impls.push(impl_ref);
                 }
             }
@@ -141,12 +141,13 @@ where
                 continue;
             };
 
-            for trait_ref in &data.resolved_trait_refs {
-                trait_impls.push(TraitImplRef {
-                    impl_ref,
-                    trait_ref: *trait_ref,
-                });
-            }
+            let Some(trait_ref) = data.resolved_trait_ref.as_option() else {
+                continue;
+            };
+            trait_impls.push(TraitImplRef {
+                impl_ref,
+                trait_ref: *trait_ref,
+            });
         }
         Ok(trait_impls)
     }

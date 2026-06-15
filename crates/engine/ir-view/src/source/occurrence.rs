@@ -79,6 +79,7 @@ pub struct IndexedSourceOccurrence {
 }
 
 impl IndexedSourceOccurrence {
+    /// Split the occurrence into transport-neutral parts.
     pub fn into_parts(
         self,
     ) -> (
@@ -99,6 +100,7 @@ impl IndexedSourceOccurrence {
         )
     }
 
+    /// Build a plain declaration occurrence.
     fn declaration(
         fact: IndexedSourceFact,
         target: TargetRef,
@@ -108,6 +110,7 @@ impl IndexedSourceOccurrence {
         Self::declaration_with_surface(fact, target, file_id, span, IndexedSourceSurface::Plain)
     }
 
+    /// Build a declaration occurrence with special source-surface handling.
     fn declaration_with_surface(
         fact: IndexedSourceFact,
         target: TargetRef,
@@ -125,10 +128,12 @@ impl IndexedSourceOccurrence {
         }
     }
 
+    /// Build a plain reference occurrence.
     fn reference(fact: IndexedSourceFact, target: TargetRef, file_id: FileId, span: Span) -> Self {
         Self::reference_with_surface(fact, target, file_id, span, IndexedSourceSurface::Plain)
     }
 
+    /// Build a reference occurrence with special source-surface handling.
     fn reference_with_surface(
         fact: IndexedSourceFact,
         target: TargetRef,
@@ -146,6 +151,7 @@ impl IndexedSourceOccurrence {
         }
     }
 
+    /// Build an occurrence that is neither a declaration nor a reference.
     fn structural(fact: IndexedSourceFact, target: TargetRef, file_id: FileId, span: Span) -> Self {
         Self {
             fact,
@@ -190,15 +196,17 @@ pub enum IndexedTypePathScope {
     Body(LexicalScopeRef),
 }
 
+/// Finds declaration, reference, and structural source occurrences.
 pub struct SourceOccurrenceView<'a, 'db> {
-    analysis: &'a IndexedViewDb<'db>,
+    db: &'a IndexedViewDb<'db>,
 }
 
 impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
-    pub fn new(analysis: &'a IndexedViewDb<'db>) -> Self {
-        Self { analysis }
+    pub fn new(db: &'a IndexedViewDb<'db>) -> Self {
+        Self { db }
     }
 
+    /// Return occurrences that touch one cursor offset.
     pub fn occurrences_at(
         &self,
         target: TargetRef,
@@ -207,24 +215,16 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
 
-        for candidate in self
-            .analysis
-            .body_ir
-            .cursor_candidates(target, file_id, offset)?
-        {
+        for candidate in self.db.body_ir.cursor_candidates(target, file_id, offset)? {
             if let Some(occurrence) = self.body_occurrence(target, candidate, Some(file_id))? {
                 occurrences.push(occurrence);
             }
         }
-        for candidate in self
-            .analysis
-            .def_map
-            .cursor_candidates(target, file_id, offset)?
-        {
+        for candidate in self.db.def_map.cursor_candidates(target, file_id, offset)? {
             occurrences.push(Self::def_map_occurrence(target, candidate));
         }
         for candidate in self
-            .analysis
+            .db
             .semantic_ir
             .signature_cursor_candidates(target, file_id, offset)?
         {
@@ -236,6 +236,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Ok(occurrences)
     }
 
+    /// Return occurrences in a target, optionally restricted to one file.
     pub fn occurrences_in_target(
         &self,
         target: TargetRef,
@@ -243,16 +244,16 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     ) -> anyhow::Result<Vec<IndexedSourceOccurrence>> {
         let mut occurrences = Vec::new();
 
-        for candidate in self.analysis.def_map.source_candidates(target, file_id)? {
+        for candidate in self.db.def_map.source_candidates(target, file_id)? {
             occurrences.push(Self::def_map_occurrence(target, candidate));
         }
-        for candidate in self.analysis.body_ir.source_candidates(target, file_id)? {
+        for candidate in self.db.body_ir.source_candidates(target, file_id)? {
             if let Some(occurrence) = self.body_occurrence(target, candidate, file_id)? {
                 occurrences.push(occurrence);
             }
         }
         for candidate in self
-            .analysis
+            .db
             .semantic_ir
             .signature_source_candidates(target, file_id)?
         {
@@ -264,6 +265,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Ok(occurrences)
     }
 
+    /// Convert a DefMap scanner candidate into a source occurrence.
     fn def_map_occurrence(
         target: TargetRef,
         candidate: DefMapCursorCandidate,
@@ -302,6 +304,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         }
     }
 
+    /// Convert a Semantic IR scanner candidate into a source occurrence.
     fn semantic_occurrence(
         &self,
         target: TargetRef,
@@ -340,6 +343,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Ok(occurrence)
     }
 
+    /// Convert a Body IR scanner candidate into a source occurrence.
     fn body_occurrence(
         &self,
         target: TargetRef,
@@ -349,7 +353,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         let span = candidate.span();
         let occurrence = match candidate {
             BodyCursorCandidate::Body { body, .. } => {
-                let Some(data) = self.analysis.body_ir.body_data(body)? else {
+                let Some(data) = self.db.body_ir.body_data(body)? else {
                     return Ok(None);
                 };
                 let Some(_) = data.function_owner() else {
@@ -379,7 +383,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                         pat_span,
                         binding_name_span,
                     } => {
-                        let file_id = match self.analysis.body_ir.body_data(body)? {
+                        let file_id = match self.db.body_ir.body_data(body)? {
                             Some(body_data) => match body_data.binding(binding) {
                                 Some(data) => data.source.file_id,
                                 None => {
@@ -412,7 +416,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
                 }
             }
             BodyCursorCandidate::Expr { body, expr, .. } => {
-                let file_id = match self.analysis.body_ir.body_data(body)? {
+                let file_id = match self.db.body_ir.body_data(body)? {
                     Some(body_data) => match body_data.expr(expr) {
                         Some(data) => data.source.file_id,
                         None => {
@@ -537,6 +541,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Ok(occurrence)
     }
 
+    /// Build a declaration occurrence using declaration data for file ownership.
     fn declaration_occurrence(
         &self,
         declaration: DeclarationRef,
@@ -546,7 +551,7 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
     ) -> anyhow::Result<Option<IndexedSourceOccurrence>> {
         // Some scanner families know only the selected span. Use the declaration projection for
         // canonical file ownership, and fall back to the cursor file for point lookups.
-        let file_id = match DeclarationView::new(self.analysis).declaration(declaration)? {
+        let file_id = match DeclarationView::new(self.db).declaration(declaration)? {
             Some(declaration) => declaration.file_id(),
             None => {
                 let Some(file_id) = fallback_file_id else {

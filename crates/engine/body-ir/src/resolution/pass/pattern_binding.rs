@@ -14,12 +14,12 @@ use rg_ir_model::{
     BindingId, DefId, DefMapRef, ExprId, ModuleId, ModuleRef, Path, PathSegment, ScopeId,
     SemanticItemRef, TypeDefId,
     identity::DeclarationRef,
-    items::{FieldItem, FieldKey, FieldList, TypeRef},
+    items::{FieldKey, FieldList, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, NameResolutionFilter};
 use rg_package_store::PackageStoreError;
-use rg_std::UniqueVec;
-use rg_ty::{NominalTy, ReferencePeelingCandidates, Ty, TypeSubst};
+use rg_std::ExpectedUnique;
+use rg_ty::{ExpectedNominalTyExt, ReferencePeelingCandidates, Ty};
 
 use crate::{
     BodyPath,
@@ -183,8 +183,7 @@ where
         if let Some(annotation) = annotation {
             let ty = self
                 .context()
-                .type_path_query()
-                .type_ref(TypeRefUseSite::Scope(scope))
+                .type_refs(TypeRefUseSite::Scope(scope))
                 .resolve(annotation)?;
             if !matches!(ty, Ty::Unknown) {
                 return Ok(ty);
@@ -379,7 +378,7 @@ where
     ) -> Result<Option<Ty>, PackageStoreError> {
         let def_map_path = path.and_then(|path| path.as_def_map_path());
         let variant_name = Self::pattern_path_last_name(def_map_path.as_ref());
-        let mut candidates = UniqueVec::new();
+        let mut candidates = ExpectedUnique::new();
 
         // Pattern fields are checked against the type of the field they destructure. This matters
         // before final binding materialization because `None` in `User { value: None }` only makes
@@ -388,8 +387,11 @@ where
             for nominal_ty in candidate.ty().as_nominals() {
                 match nominal_ty.def.id {
                     TypeDefId::Struct(_) | TypeDefId::Union(_) => {
-                        if let Some(field_ty) =
-                            self.field_ty_for_nominal_type(nominal_ty, field_key)?
+                        if let Some(field_ty) = self
+                            .context()
+                            .fields()
+                            .declared(nominal_ty, field_key)?
+                            .and_then(|target| target.ty().cloned())
                         {
                             candidates.push(field_ty);
                         }
@@ -398,70 +400,28 @@ where
                         let Some(variant_name) = variant_name else {
                             continue;
                         };
-                        if let Some(field_ty) =
-                            self.variant_field_ty_for_enum(nominal_ty, variant_name, field_key)?
-                        {
-                            candidates.push(field_ty);
-                        }
+                        let Some(variant_ref) = self
+                            .context()
+                            .item_query()
+                            .enum_variant_ref_for_type_def(nominal_ty.def, variant_name)?
+                        else {
+                            continue;
+                        };
+                        let Some(field_ty) = self.context().fields().enum_variant_field_ty(
+                            nominal_ty,
+                            variant_ref,
+                            field_key,
+                        )?
+                        else {
+                            continue;
+                        };
+                        candidates.push(field_ty);
                     }
                 }
             }
         }
 
-        Ok(match candidates.as_slice() {
-            [ty] => Some(ty.clone()),
-            [] | [_, ..] => None,
-        })
-    }
-
-    fn field_ty_for_nominal_type(
-        &self,
-        ty: &NominalTy,
-        field_key: &FieldKey,
-    ) -> Result<Option<Ty>, PackageStoreError> {
-        let item_query = self.context().item_query();
-        let Some(field_ref) = item_query.field_for_type(ty.def, field_key)? else {
-            return Ok(None);
-        };
-        let Some(field_data) = item_query.field_data(field_ref)? else {
-            return Ok(None);
-        };
-
-        Ok(Some(
-            self.context()
-                .type_path_query()
-                .type_ref(TypeRefUseSite::Module(field_data.owner_module))
-                .with_subst(&self.semantic_type_subst(ty)?)
-                .resolve(&field_data.field.ty)?,
-        ))
-    }
-
-    fn variant_field_ty_for_enum(
-        &self,
-        enum_ty: &NominalTy,
-        variant_name: &str,
-        field_key: &FieldKey,
-    ) -> Result<Option<Ty>, PackageStoreError> {
-        let item_query = self.context().item_query();
-        let Some(variant_ref) =
-            item_query.enum_variant_ref_for_type_def(enum_ty.def, variant_name)?
-        else {
-            return Ok(None);
-        };
-        let Some(variant_data) = item_query.enum_variant_data(variant_ref)? else {
-            return Ok(None);
-        };
-        let Some(field) = Self::field_item(&variant_data.variant.fields, field_key) else {
-            return Ok(None);
-        };
-
-        Ok(Some(
-            self.context()
-                .type_path_query()
-                .type_ref(TypeRefUseSite::Module(variant_data.owner_module))
-                .with_subst(&self.semantic_type_subst(enum_ty)?)
-                .resolve(&field.ty)?,
-        ))
+        Ok(candidates.into_option())
     }
 
     fn path_is_unit_variant_pattern(
@@ -646,8 +606,7 @@ where
         if let Some(annotation) = &binding_data.annotation {
             return self
                 .context()
-                .type_path_query()
-                .type_ref(TypeRefUseSite::Scope(binding_data.scope))
+                .type_refs(TypeRefUseSite::Scope(binding_data.scope))
                 .resolve(annotation);
         }
 
@@ -655,11 +614,11 @@ where
             && binding_data.name.as_deref() == Some("self")
             && let Some(function) = self.body.function_owner()
         {
-            let self_tys = self
+            let ty = self
                 .context()
-                .type_path_query()
-                .self_nominal_tys_for_function(function)?;
-            let ty = Ty::self_ty(self_tys);
+                .functions()
+                .self_nominal_ty(function)?
+                .into_self_ty();
             return Ok(match kind {
                 BodySelfParamKind::Value => ty,
                 BodySelfParamKind::Reference { mutability } => Ty::reference(mutability, ty),
@@ -668,28 +627,6 @@ where
         }
 
         Ok(Ty::Unknown)
-    }
-
-    fn semantic_type_subst(&self, ty: &NominalTy) -> Result<TypeSubst, PackageStoreError> {
-        Ok(self
-            .context()
-            .item_query()
-            .generic_params_for_type_def(ty.def)?
-            .map(|generics| TypeSubst::from_generics(generics, &ty.args))
-            .unwrap_or_else(TypeSubst::new))
-    }
-
-    fn field_item<'a>(fields: &'a FieldList, key: &FieldKey) -> Option<&'a FieldItem> {
-        match key {
-            FieldKey::Named(_) => fields
-                .fields()
-                .iter()
-                .find(|field| field.key.as_ref() == Some(key)),
-            FieldKey::Tuple(index) => fields
-                .fields()
-                .get(*index)
-                .filter(|field| field.key.as_ref() == Some(key)),
-        }
     }
 
     fn pattern_path_last_name(path: Option<&Path>) -> Option<&str> {

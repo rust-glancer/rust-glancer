@@ -1,4 +1,3 @@
-mod candidate;
 mod ty_normalize;
 
-pub(crate) use self::{candidate::unique_ty_or_unknown, ty_normalize::TyNormalizer};
+pub(crate) use self::ty_normalize::TyNormalizer;
