@@ -219,10 +219,7 @@ impl ResolvedCallTargets {
 
     /// Return the target only when lookup is unambiguous.
     fn single(&self) -> Option<ResolvedCallTarget> {
-        match self.targets.as_slice() {
-            [target] => Some(target.clone()),
-            [] | [_, ..] => None,
-        }
+        self.targets.as_one().cloned()
     }
 }
 

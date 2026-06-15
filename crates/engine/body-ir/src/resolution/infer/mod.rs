@@ -5,6 +5,7 @@
 
 mod call;
 mod context;
+mod facts;
 mod member;
 mod pattern;
 mod type_ref;

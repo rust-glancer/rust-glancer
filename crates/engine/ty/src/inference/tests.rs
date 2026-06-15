@@ -1,5 +1,6 @@
 use rg_ir_model::{
-    DefMapRef, PackageSlot, StructId, TargetId, TargetRef, TypeDefId, TypeDefRef,
+    DefMapRef, PackageSlot, StructId, TargetId, TargetRef, TraitId, TraitRef, TypeDefId,
+    TypeDefRef,
     items::{FloatTy, SignedIntTy, TypeRef, UnsignedIntTy},
 };
 
@@ -8,17 +9,28 @@ use crate::{
     GenericArg, NominalTy, PrimitiveTy, Ty,
     inference::{
         ExplicitTypeArgInstantiationBuilder, InferGenericArg, InferNominalTy,
-        UnknownTypeInstantiationBuilder,
+        InferOpaqueTraitBound, UnknownTypeInstantiationBuilder,
     },
 };
 
+fn def_map_ref() -> DefMapRef {
+    DefMapRef::Target(TargetRef {
+        package: PackageSlot(0),
+        target: TargetId(0),
+    })
+}
+
 fn type_def(index: usize) -> TypeDefRef {
     TypeDefRef {
-        origin: DefMapRef::Target(TargetRef {
-            package: PackageSlot(0),
-            target: TargetId(0),
-        }),
+        origin: def_map_ref(),
         id: TypeDefId::Struct(StructId(index)),
+    }
+}
+
+fn trait_ref(index: usize) -> TraitRef {
+    TraitRef {
+        origin: def_map_ref(),
+        id: TraitId(index),
     }
 }
 
@@ -42,6 +54,19 @@ fn concrete_vec_ty(inner: Ty) -> Ty {
         def: type_def(10),
         args: vec![GenericArg::Type(Box::new(inner))],
     })
+}
+
+fn opaque_bound(trait_index: usize, arg: InferTy) -> InferOpaqueTraitBound {
+    InferOpaqueTraitBound {
+        trait_ref: trait_ref(trait_index),
+        args: vec![InferGenericArg::Type(Box::new(arg))],
+    }
+}
+
+fn opaque_ty(bounds: Vec<InferOpaqueTraitBound>) -> InferTy {
+    InferTy::Opaque {
+        bounds: bounds.into_iter().collect(),
+    }
 }
 
 #[test]
@@ -197,6 +222,81 @@ fn indirect_var_links_do_not_create_reverse_cycles() {
     assert_eq!(table.resolve_root_var(&first), fourth);
     assert_eq!(table.resolve_root_var(&second), fourth);
     assert_eq!(table.resolve_root_var(&third), fourth);
+}
+
+#[test]
+fn canonicalizes_variable_aliases_inside_type_shapes() {
+    let mut table = InferenceTable::new();
+    let element = table.new_type_var();
+    let alias = table.new_type_var();
+
+    assert!(table.unify(&element, &alias));
+
+    assert_eq!(table.canonicalize(&element), alias);
+    assert_eq!(table.canonicalize(&vec_ty(element)), vec_ty(alias));
+}
+
+#[test]
+fn canonicalize_expands_solved_slots_inside_type_shapes() {
+    let mut table = InferenceTable::new();
+    let element = table.new_type_var();
+
+    assert!(table.unify(&element, &InferTy::from_ty(&user_ty())));
+
+    assert_eq!(table.canonicalize(&element), InferTy::from_ty(&user_ty()));
+    assert_eq!(
+        table.canonicalize(&vec_ty(element.clone())),
+        vec_ty(InferTy::from_ty(&user_ty()))
+    );
+    assert_eq!(table.finalize(&element), user_ty());
+}
+
+#[test]
+fn later_evidence_refines_unknown_children_inside_solved_slots() {
+    let mut table = InferenceTable::new();
+    let values = table.new_type_var();
+    let element = table.new_type_var();
+
+    assert!(table.unify(&values, &vec_ty(InferTy::Unknown)));
+    assert!(table.unify(&values, &vec_ty(element.clone())));
+    assert!(table.unify(&element, &InferTy::from_ty(&user_ty())));
+
+    assert_eq!(table.finalize(&values), concrete_vec_ty(user_ty()));
+}
+
+#[test]
+fn single_opaque_bound_infers_through_matching_trait_args() {
+    let mut table = InferenceTable::new();
+    let element = table.new_type_var();
+
+    assert!(table.unify(
+        &opaque_ty(vec![opaque_bound(0, element.clone())]),
+        &opaque_ty(vec![opaque_bound(0, InferTy::from_ty(&user_ty()))])
+    ));
+
+    assert_eq!(table.finalize(&element), user_ty());
+}
+
+#[test]
+fn broad_opaque_bounds_do_not_infer_from_partial_bound_overlap() {
+    let mut table = InferenceTable::new();
+    let opaque = table.new_type_var();
+    let element = table.new_type_var();
+
+    assert!(table.unify(
+        &opaque,
+        &opaque_ty(vec![
+            opaque_bound(0, element.clone()),
+            opaque_bound(1, InferTy::from_ty(&project_ty())),
+        ])
+    ));
+    assert!(!table.unify(
+        &opaque,
+        &opaque_ty(vec![opaque_bound(0, InferTy::from_ty(&user_ty()))])
+    ));
+
+    assert_eq!(table.finalize(&element), Ty::Unknown);
+    assert!(matches!(table.finalize(&opaque), Ty::Opaque { .. }));
 }
 
 #[test]

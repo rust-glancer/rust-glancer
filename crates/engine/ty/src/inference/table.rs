@@ -1,6 +1,4 @@
-use rg_std::UniqueVec;
-
-use super::family::InferToTyMapper;
+use super::family::{InferToTyMapper, InferTyMapper};
 use super::model::{InferGenericArg, InferNominalTy, InferOpaqueTraitBound, InferTy};
 use crate::{PrimitiveTy, Ty};
 
@@ -154,6 +152,13 @@ impl InferenceTable {
         self.resolve_root_ty_var(ty, &mut Vec::new())
     }
 
+    /// Return the current canonical form of an inference type.
+    /// `?A = ?B` makes `Vec<?A>` compare as `Vec<?B>`;
+    /// `?B = User` then makes the same value compare as `Vec<User>`.
+    pub fn canonicalize(&self, ty: &InferTy) -> InferTy {
+        TableCanonicalizer::new(self).map_infer_ty(ty)
+    }
+
     fn alloc_var(&mut self, kind: InferVarKind) -> InferVarId {
         let id = InferVarId(
             self.slots
@@ -237,50 +242,57 @@ impl InferenceTable {
             (_, InferTy::Var(id) | InferTy::IntegerVar(id) | InferTy::FloatVar(id)) => {
                 self.unify_var(*id, lhs)
             }
+            _ if !lhs.same_shape_as(rhs) => UnifyResult::conflict(),
+            (InferTy::Opaque { bounds: lhs_bounds }, InferTy::Opaque { bounds: rhs_bounds }) => {
+                // Multiple opaque bounds are too broad to align here; only one same-trait pair
+                // can pass evidence through its generic arguments.
+                let (Some(lhs), Some(rhs)) = (lhs_bounds.as_one(), rhs_bounds.as_one()) else {
+                    return UnifyResult::compatible();
+                };
+                if !lhs.same_trait_shape_as(rhs) {
+                    return UnifyResult::conflict();
+                }
+
+                let mut result = UnifyResult::compatible();
+                for (lhs_arg, rhs_arg) in lhs.args.iter().zip(&rhs.args) {
+                    result = result.merge(self.unify_generic_arg(lhs_arg, rhs_arg));
+                }
+                result
+            }
             (InferTy::Unit, InferTy::Unit)
             | (InferTy::Never, InferTy::Never)
             | (InferTy::Primitive(_), InferTy::Primitive(_))
-            | (InferTy::Syntax(_), InferTy::Syntax(_)) => {
-                if lhs == rhs {
-                    UnifyResult::compatible()
-                } else {
-                    UnifyResult::conflict()
-                }
-            }
-            (InferTy::Tuple(lhs_fields), InferTy::Tuple(rhs_fields))
-                if lhs_fields.len() == rhs_fields.len() =>
-            {
+            | (InferTy::Syntax(_), InferTy::Syntax(_)) => UnifyResult::compatible(),
+            (InferTy::Tuple(lhs_fields), InferTy::Tuple(rhs_fields)) => {
                 self.unify_iter(lhs_fields.iter(), rhs_fields.iter())
             }
             (
                 InferTy::Array {
-                    inner: lhs_inner,
-                    len: lhs_len,
+                    inner: lhs_inner, ..
                 },
                 InferTy::Array {
-                    inner: rhs_inner,
-                    len: rhs_len,
+                    inner: rhs_inner, ..
                 },
-            ) if lhs_len == rhs_len => self.unify_ty(lhs_inner, rhs_inner),
+            ) => self.unify_ty(lhs_inner, rhs_inner),
             (InferTy::Slice(lhs_inner), InferTy::Slice(rhs_inner)) => {
                 self.unify_ty(lhs_inner, rhs_inner)
             }
             (
                 InferTy::Reference {
-                    mutability: lhs_mutability,
-                    inner: lhs_inner,
+                    inner: lhs_inner, ..
                 },
                 InferTy::Reference {
-                    mutability: rhs_mutability,
-                    inner: rhs_inner,
+                    inner: rhs_inner, ..
                 },
-            ) if lhs_mutability == rhs_mutability => self.unify_ty(lhs_inner, rhs_inner),
+            ) => self.unify_ty(lhs_inner, rhs_inner),
             (InferTy::Nominal(lhs_ty), InferTy::Nominal(rhs_ty))
             | (InferTy::SelfTy(lhs_ty), InferTy::SelfTy(rhs_ty)) => {
-                self.unify_nominal_ty(lhs_ty, rhs_ty)
-            }
-            (InferTy::Opaque { bounds: lhs_bounds }, InferTy::Opaque { bounds: rhs_bounds }) => {
-                self.unify_opaque_bounds(lhs_bounds, rhs_bounds)
+                // Same-definition nominal types can pass evidence through their generic arguments.
+                let mut result = UnifyResult::compatible();
+                for (lhs_arg, rhs_arg) in lhs_ty.args.iter().zip(&rhs_ty.args) {
+                    result = result.merge(self.unify_generic_arg(lhs_arg, rhs_arg));
+                }
+                result
             }
             _ => UnifyResult::conflict(),
         }
@@ -327,7 +339,16 @@ impl InferenceTable {
                 if result.is_conflict() {
                     return self.mark_conflict(id).merge(result);
                 }
-                result
+
+                // A slot may first learn a weak shape like `Vec<unknown>` and later see the same
+                // shape with real inference links, e.g. `Vec<?T>`. Keep the stronger child facts.
+                let (refined, refined_changed) = Self::refine_ty(&existing, &evidence);
+                if refined_changed {
+                    self.slots[id.index()].value = InferVarValue::Solved(refined);
+                    result.merge(UnifyResult::changed())
+                } else {
+                    result
+                }
             }
             InferVarValue::Conflict => UnifyResult::conflict(),
         }
@@ -382,46 +403,6 @@ impl InferenceTable {
         }
     }
 
-    fn unify_nominal_ty(&mut self, lhs: &InferNominalTy, rhs: &InferNominalTy) -> UnifyResult {
-        // Same-definition nominal types can pass evidence through their generic arguments.
-        if lhs.def != rhs.def {
-            return UnifyResult::conflict();
-        }
-        if lhs.args.len() != rhs.args.len() {
-            return UnifyResult::conflict();
-        }
-
-        let mut result = UnifyResult::compatible();
-        for (lhs_arg, rhs_arg) in lhs.args.iter().zip(&rhs.args) {
-            result = result.merge(self.unify_generic_arg(lhs_arg, rhs_arg));
-        }
-        result
-    }
-
-    fn unify_opaque_bounds(
-        &mut self,
-        lhs_bounds: &UniqueVec<InferOpaqueTraitBound>,
-        rhs_bounds: &UniqueVec<InferOpaqueTraitBound>,
-    ) -> UnifyResult {
-        // Opaque bounds follow the same rule as nominal candidates: only a single matching trait
-        // bound is precise enough to use its generic arguments as evidence.
-        let ([lhs], [rhs]) = (lhs_bounds.as_slice(), rhs_bounds.as_slice()) else {
-            return UnifyResult::compatible();
-        };
-        if lhs.trait_ref != rhs.trait_ref {
-            return UnifyResult::conflict();
-        }
-        if lhs.args.len() != rhs.args.len() {
-            return UnifyResult::conflict();
-        }
-
-        let mut result = UnifyResult::compatible();
-        for (lhs_arg, rhs_arg) in lhs.args.iter().zip(&rhs.args) {
-            result = result.merge(self.unify_generic_arg(lhs_arg, rhs_arg));
-        }
-        result
-    }
-
     fn unify_generic_arg(&mut self, lhs: &InferGenericArg, rhs: &InferGenericArg) -> UnifyResult {
         match (lhs, rhs) {
             // Type generic args are direct nested type positions.
@@ -437,9 +418,14 @@ impl InferenceTable {
                     params: rhs_params,
                     ret: rhs_ret,
                 },
-            ) if lhs_params.len() == rhs_params.len() => self
-                .unify_iter(lhs_params.iter(), rhs_params.iter())
-                .merge(self.unify_ty(lhs_ret, rhs_ret)),
+            ) => {
+                if !lhs.same_shape_as(rhs) {
+                    return UnifyResult::conflict();
+                }
+
+                self.unify_iter(lhs_params.iter(), rhs_params.iter())
+                    .merge(self.unify_ty(lhs_ret, rhs_ret))
+            }
 
             // Same-name associated type equalities can pass evidence through their type.
             (
@@ -466,6 +452,263 @@ impl InferenceTable {
                     UnifyResult::conflict()
                 }
             }
+        }
+    }
+
+    /// Merge later evidence into weak children of an already chosen slot shape.
+    /// `Vec<unknown>` plus `Vec<?T>` becomes `Vec<?T>`.
+    fn refine_ty(existing: &InferTy, evidence: &InferTy) -> (InferTy, bool) {
+        if matches!(evidence, InferTy::Unknown | InferTy::Syntax(_)) {
+            return (existing.clone(), false);
+        }
+        if matches!(existing, InferTy::Unknown) {
+            return (evidence.clone(), true);
+        }
+        if !existing.same_shape_as(evidence) {
+            return (existing.clone(), false);
+        }
+
+        match (existing, evidence) {
+            (InferTy::Tuple(existing_fields), InferTy::Tuple(evidence_fields)) => {
+                let (fields, changed) =
+                    Self::refine_ty_iter(existing_fields.iter(), evidence_fields.iter());
+                (InferTy::Tuple(fields), changed)
+            }
+            (
+                InferTy::Array {
+                    inner: existing_inner,
+                    len: existing_len,
+                },
+                InferTy::Array {
+                    inner: evidence_inner,
+                    ..
+                },
+            ) => {
+                let (inner, changed) = Self::refine_ty(existing_inner, evidence_inner);
+                (
+                    InferTy::Array {
+                        inner: Box::new(inner),
+                        len: existing_len.clone(),
+                    },
+                    changed,
+                )
+            }
+            (InferTy::Slice(existing_inner), InferTy::Slice(evidence_inner)) => {
+                let (inner, changed) = Self::refine_ty(existing_inner, evidence_inner);
+                (InferTy::Slice(Box::new(inner)), changed)
+            }
+            (
+                InferTy::Reference {
+                    mutability: existing_mutability,
+                    inner: existing_inner,
+                },
+                InferTy::Reference {
+                    inner: evidence_inner,
+                    ..
+                },
+            ) => {
+                let (inner, changed) = Self::refine_ty(existing_inner, evidence_inner);
+                (
+                    InferTy::Reference {
+                        mutability: *existing_mutability,
+                        inner: Box::new(inner),
+                    },
+                    changed,
+                )
+            }
+            (InferTy::Nominal(existing_ty), InferTy::Nominal(evidence_ty)) => {
+                let (args, changed) =
+                    Self::refine_generic_args(&existing_ty.args, &evidence_ty.args);
+                (
+                    InferTy::Nominal(InferNominalTy {
+                        def: existing_ty.def,
+                        args,
+                    }),
+                    changed,
+                )
+            }
+            (InferTy::SelfTy(existing_ty), InferTy::SelfTy(evidence_ty)) => {
+                let (args, changed) =
+                    Self::refine_generic_args(&existing_ty.args, &evidence_ty.args);
+                (
+                    InferTy::SelfTy(InferNominalTy {
+                        def: existing_ty.def,
+                        args,
+                    }),
+                    changed,
+                )
+            }
+            (
+                InferTy::Opaque {
+                    bounds: existing_bounds,
+                },
+                InferTy::Opaque {
+                    bounds: evidence_bounds,
+                },
+            ) => {
+                let (Some(existing), Some(evidence)) =
+                    (existing_bounds.as_one(), evidence_bounds.as_one())
+                else {
+                    return (
+                        InferTy::Opaque {
+                            bounds: existing_bounds.clone(),
+                        },
+                        false,
+                    );
+                };
+                if !existing.same_trait_shape_as(evidence) {
+                    return (
+                        InferTy::Opaque {
+                            bounds: existing_bounds.clone(),
+                        },
+                        false,
+                    );
+                }
+
+                let (args, changed) = Self::refine_generic_args(&existing.args, &evidence.args);
+                (
+                    InferTy::Opaque {
+                        bounds: std::iter::once(InferOpaqueTraitBound {
+                            trait_ref: existing.trait_ref,
+                            args,
+                        })
+                        .collect(),
+                    },
+                    changed,
+                )
+            }
+            _ => (existing.clone(), false),
+        }
+    }
+
+    fn refine_ty_iter<'a>(
+        existing: impl Iterator<Item = &'a InferTy>,
+        evidence: impl Iterator<Item = &'a InferTy>,
+    ) -> (Vec<InferTy>, bool) {
+        let mut changed = false;
+        let fields = existing
+            .zip(evidence)
+            .map(|(existing, evidence)| {
+                let (field, field_changed) = Self::refine_ty(existing, evidence);
+                changed |= field_changed;
+                field
+            })
+            .collect();
+        (fields, changed)
+    }
+
+    fn refine_generic_args(
+        existing: &[InferGenericArg],
+        evidence: &[InferGenericArg],
+    ) -> (Vec<InferGenericArg>, bool) {
+        let mut changed = false;
+        let args = existing
+            .iter()
+            .zip(evidence)
+            .map(|(existing, evidence)| {
+                let (arg, arg_changed) = Self::refine_generic_arg(existing, evidence);
+                changed |= arg_changed;
+                arg
+            })
+            .collect();
+        (args, changed)
+    }
+
+    fn refine_generic_arg(
+        existing: &InferGenericArg,
+        evidence: &InferGenericArg,
+    ) -> (InferGenericArg, bool) {
+        if !existing.same_shape_as(evidence) {
+            return (existing.clone(), false);
+        }
+
+        match (existing, evidence) {
+            (InferGenericArg::Type(existing), InferGenericArg::Type(evidence)) => {
+                let (ty, changed) = Self::refine_ty(existing, evidence);
+                (InferGenericArg::Type(Box::new(ty)), changed)
+            }
+            (
+                InferGenericArg::FnTraitArgs {
+                    params: existing_params,
+                    ret: existing_ret,
+                },
+                InferGenericArg::FnTraitArgs {
+                    params: evidence_params,
+                    ret: evidence_ret,
+                },
+            ) => {
+                let (params, params_changed) =
+                    Self::refine_ty_iter(existing_params.iter(), evidence_params.iter());
+                let (ret, ret_changed) = Self::refine_ty(existing_ret, evidence_ret);
+                (
+                    InferGenericArg::FnTraitArgs {
+                        params,
+                        ret: Box::new(ret),
+                    },
+                    params_changed || ret_changed,
+                )
+            }
+            (
+                InferGenericArg::AssocType {
+                    name: existing_name,
+                    ty: Some(existing_ty),
+                },
+                InferGenericArg::AssocType {
+                    ty: Some(evidence_ty),
+                    ..
+                },
+            ) => {
+                let (ty, changed) = Self::refine_ty(existing_ty, evidence_ty);
+                (
+                    InferGenericArg::AssocType {
+                        name: existing_name.clone(),
+                        ty: Some(Box::new(ty)),
+                    },
+                    changed,
+                )
+            }
+            _ => (existing.clone(), false),
+        }
+    }
+}
+
+/// Builds canonical comparison shapes from table roots.
+struct TableCanonicalizer<'table> {
+    table: &'table InferenceTable,
+    active_vars: Vec<InferVarId>,
+}
+
+impl<'table> TableCanonicalizer<'table> {
+    fn new(table: &'table InferenceTable) -> Self {
+        Self {
+            table,
+            active_vars: Vec::new(),
+        }
+    }
+}
+
+impl InferTyMapper for TableCanonicalizer<'_> {
+    fn map_var(&mut self, id: InferVarId, kind: InferVarKind) -> InferTy {
+        if self.active_vars.contains(&id) {
+            return InferTy::Unknown;
+        }
+
+        let Some(slot) = self.table.slots.get(id.index()) else {
+            return InferTy::Unknown;
+        };
+        if slot.kind != kind {
+            return InferTy::Unknown;
+        }
+
+        match &slot.value {
+            InferVarValue::Unsolved => InferTy::var_for_kind(kind, id),
+            InferVarValue::Solved(ty) => {
+                self.active_vars.push(id);
+                let canonical = self.map_infer_ty(ty);
+                self.active_vars.pop();
+                canonical
+            }
+            InferVarValue::Conflict => InferTy::Unknown,
         }
     }
 }

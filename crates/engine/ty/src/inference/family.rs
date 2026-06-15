@@ -95,6 +95,94 @@ pub(crate) struct PlainTyToInferMapper;
 
 impl TyToInferMapper for PlainTyToInferMapper {}
 
+/// Maps the inference `InferTy` family into another inference `InferTy` tree.
+pub(super) trait InferTyMapper {
+    /// Convert one inference-aware type, recursing through type-bearing children.
+    fn map_infer_ty(&mut self, ty: &InferTy) -> InferTy {
+        match ty {
+            InferTy::Var(id) => self.map_var(*id, InferVarKind::Type),
+            InferTy::IntegerVar(id) => self.map_var(*id, InferVarKind::Integer),
+            InferTy::FloatVar(id) => self.map_var(*id, InferVarKind::Float),
+            InferTy::Unit => InferTy::Unit,
+            InferTy::Never => InferTy::Never,
+            InferTy::Primitive(primitive) => InferTy::Primitive(*primitive),
+            InferTy::Tuple(fields) => InferTy::Tuple(
+                fields
+                    .iter()
+                    .map(|field| self.map_infer_ty(field))
+                    .collect(),
+            ),
+            InferTy::Array { inner, len } => InferTy::Array {
+                inner: Box::new(self.map_infer_ty(inner)),
+                len: len.clone(),
+            },
+            InferTy::Slice(inner) => InferTy::Slice(Box::new(self.map_infer_ty(inner))),
+            InferTy::Reference { mutability, inner } => InferTy::Reference {
+                mutability: *mutability,
+                inner: Box::new(self.map_infer_ty(inner)),
+            },
+            InferTy::Opaque { bounds } => InferTy::Opaque {
+                bounds: bounds
+                    .iter()
+                    .map(|bound| self.map_infer_opaque_bound(bound))
+                    .collect::<UniqueVec<_>>(),
+            },
+            InferTy::Syntax(ty) => InferTy::Syntax(ty.clone()),
+            InferTy::Nominal(ty) => InferTy::Nominal(self.map_infer_nominal_ty(ty)),
+            InferTy::SelfTy(ty) => InferTy::SelfTy(self.map_infer_nominal_ty(ty)),
+            InferTy::Unknown => InferTy::Unknown,
+        }
+    }
+
+    /// Convert nominal generic args through the same inference mapper policy.
+    fn map_infer_nominal_ty(&mut self, ty: &InferNominalTy) -> InferNominalTy {
+        InferNominalTy {
+            def: ty.def,
+            args: ty
+                .args
+                .iter()
+                .map(|arg| self.map_infer_generic_arg(arg))
+                .collect(),
+        }
+    }
+
+    /// Convert opaque-bound generic args through the same inference mapper policy.
+    fn map_infer_opaque_bound(&mut self, bound: &InferOpaqueTraitBound) -> InferOpaqueTraitBound {
+        InferOpaqueTraitBound {
+            trait_ref: bound.trait_ref,
+            args: bound
+                .args
+                .iter()
+                .map(|arg| self.map_infer_generic_arg(arg))
+                .collect(),
+        }
+    }
+
+    /// Convert one inference-aware generic arg through the same mapper policy.
+    fn map_infer_generic_arg(&mut self, arg: &InferGenericArg) -> InferGenericArg {
+        match arg {
+            InferGenericArg::Type(ty) => InferGenericArg::Type(Box::new(self.map_infer_ty(ty))),
+            InferGenericArg::Lifetime(lifetime) => InferGenericArg::Lifetime(lifetime.clone()),
+            InferGenericArg::Const(value) => InferGenericArg::Const(value.clone()),
+            InferGenericArg::FnTraitArgs { params, ret } => InferGenericArg::FnTraitArgs {
+                params: params
+                    .iter()
+                    .map(|param| self.map_infer_ty(param))
+                    .collect(),
+                ret: Box::new(self.map_infer_ty(ret)),
+            },
+            InferGenericArg::AssocType { name, ty } => InferGenericArg::AssocType {
+                name: name.clone(),
+                ty: ty.as_deref().map(|ty| Box::new(self.map_infer_ty(ty))),
+            },
+            InferGenericArg::Unsupported(text) => InferGenericArg::Unsupported(text.clone()),
+        }
+    }
+
+    /// Decide how an inference variable maps for this mapper.
+    fn map_var(&mut self, id: InferVarId, kind: InferVarKind) -> InferTy;
+}
+
 /// Projects written type syntax through a resolved type shape.
 pub trait TypeRefInferenceProjector {
     /// Replace syntax markers such as `_` or a bound type param before walking children.

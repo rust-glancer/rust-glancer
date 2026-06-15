@@ -128,13 +128,14 @@ impl<'query, D, I> BodyPatternInference<'query, D, I> {
             InferTy::Array { inner, .. } | InferTy::Slice(inner) => inner.as_ref(),
             _ => return false,
         };
+        let element_ty = inference.root_resolved_ty(element_ty);
 
         let mut changed = false;
         for field in fields {
             if self.pat_is_rest(*field) {
                 continue;
             }
-            changed |= self.link_pat(inference, *field, element_ty);
+            changed |= self.link_pat(inference, *field, &element_ty);
         }
         changed
     }

@@ -129,7 +129,7 @@ where
         else {
             return;
         };
-        let [DeclarationRef::EnumVariant(_)] = declarations.as_slice() else {
+        let Some(DeclarationRef::EnumVariant(_)) = declarations.as_one() else {
             return;
         };
 
@@ -503,8 +503,8 @@ where
         else {
             return Ok(());
         };
-        let (variant_ref, enum_ty) = if let [DeclarationRef::EnumVariant(variant_ref)] =
-            declarations.as_slice()
+        let (variant_ref, enum_ty) = if let Some(DeclarationRef::EnumVariant(variant_ref)) =
+            declarations.as_one()
             && let [enum_ty] = self.pass.body.expr_ty_unchecked(call).as_nominals()
         {
             (*variant_ref, enum_ty.clone())

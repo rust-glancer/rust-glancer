@@ -109,10 +109,10 @@ impl ResolvedFieldTargets {
 
     /// Return the declared target only when field lookup is unambiguous.
     pub(crate) fn single_declared(&self) -> Option<&DeclaredFieldTarget> {
-        match self.targets.as_slice() {
-            [ResolvedFieldTarget::Declared(target)] => Some(target),
-            _ => None,
-        }
+        let ResolvedFieldTarget::Declared(target) = self.targets.as_one()? else {
+            return None;
+        };
+        Some(target)
     }
 
     /// Add a declared field target.

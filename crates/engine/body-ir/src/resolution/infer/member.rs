@@ -153,6 +153,7 @@ where
         let Some(element_ty) = Self::structural_index_ty(&base_ty) else {
             return false;
         };
+        let element_ty = inference.root_resolved_ty(&element_ty);
 
         inference.set_expr_infer_ty(expr, element_ty)
     }
