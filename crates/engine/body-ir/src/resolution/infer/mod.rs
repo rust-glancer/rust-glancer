@@ -8,13 +8,11 @@ mod context;
 mod facts;
 mod member;
 mod pattern;
-mod type_ref;
 
 pub(super) use call::BodyCallInference;
 pub(super) use context::BodyInferenceCtx;
 pub(super) use member::BodyMemberInference;
 pub(super) use pattern::BodyPatternInference;
-pub(super) use type_ref::{InferTypeRefProjector, InferTypeSubst};
 
 #[cfg(test)]
 mod tests;

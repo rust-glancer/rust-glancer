@@ -11,7 +11,10 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{NominalTy, Ty, inference::InferTy};
+use rg_ty::{
+    NominalTy, Ty,
+    inference::{InferTy, InferTypeRefProjector, InferTypeSubst},
+};
 
 use crate::{
     ir::{
@@ -20,10 +23,7 @@ use crate::{
     },
     resolution::{
         TypeRefUseSite,
-        infer::{
-            BodyCallInference, BodyMemberInference, BodyPatternInference, InferTypeRefProjector,
-            InferTypeSubst,
-        },
+        infer::{BodyCallInference, BodyMemberInference, BodyPatternInference},
     },
 };
 
@@ -598,7 +598,9 @@ where
         };
 
         let mut subst = InferTypeSubst::new();
-        subst.bind_type_params_from_infer_args(&mut self.pass.inference, generics, &infer_args);
+        self.pass
+            .inference
+            .bind_type_params_from_infer_args(&mut subst, generics, &infer_args);
         Some(subst)
     }
 

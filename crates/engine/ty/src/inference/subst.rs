@@ -7,29 +7,30 @@ use rg_ir_model::items::{
     GenericArg as ItemGenericArg, GenericParams, Mutability, TypePath, TypeRef,
 };
 use rg_text::Name;
-use rg_ty::{
-    RefMutability, Ty,
-    inference::{InferGenericArg, InferTy, TypeRefInferenceProjector},
-};
 
-use super::BodyInferenceCtx;
+use super::{
+    family::TypeRefInferenceProjector,
+    model::{InferGenericArg, InferTy},
+    table::InferenceTable,
+};
+use crate::{RefMutability, Ty};
 
 /// Substitution from declared type params to inference-aware types.
 ///
 /// Example: matching `impl<T> Vec<T>` against receiver `Vec<?T>` binds `T = ?T`.
 #[derive(Debug, Default)]
-pub(crate) struct InferTypeSubst(Vec<(Name, InferTy)>);
+pub struct InferTypeSubst(Vec<(Name, InferTy)>);
 
 impl InferTypeSubst {
     /// Start with no inference substitutions.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::default()
     }
 
     /// Add `T = ?T`; if `T` already exists, unify both values.
-    pub(crate) fn push(&mut self, inference: &mut BodyInferenceCtx, name: Name, ty: InferTy) {
+    pub fn push(&mut self, table: &mut InferenceTable, name: Name, ty: InferTy) {
         if let Some(existing) = self.get(name.as_str()).cloned() {
-            inference.constrain_infer_tys(&existing, &ty);
+            table.unify(&existing, &ty);
             return;
         }
 
@@ -37,22 +38,18 @@ impl InferTypeSubst {
     }
 
     /// Let function generics hide same-named impl generics while staying inferable.
-    pub(crate) fn shadow_type_params(
-        &mut self,
-        inference: &mut BodyInferenceCtx,
-        generics: &GenericParams,
-    ) {
+    pub fn shadow_type_params(&mut self, table: &mut InferenceTable, generics: &GenericParams) {
         for param in &generics.types {
-            self.0.push((param.name.clone(), inference.new_type_var()));
+            self.0.push((param.name.clone(), table.new_type_var()));
         }
     }
 
     /// Bind type params by matching declaration syntax against inference evidence.
     ///
     /// Example: `Vec<T>` matched with `Vec<?T>` binds `T = ?T`.
-    pub(crate) fn bind_type_ref(
+    pub fn bind_type_ref(
         &mut self,
-        inference: &mut BodyInferenceCtx,
+        table: &mut InferenceTable,
         pattern: &TypeRef,
         evidence: &InferTy,
         generics: &GenericParams,
@@ -63,7 +60,7 @@ impl InferTypeSubst {
                 .iter()
                 .any(|param| param.name.as_str() == name.as_str())
         {
-            self.push(inference, name, evidence.clone());
+            self.push(table, name, evidence.clone());
             return;
         }
 
@@ -72,7 +69,7 @@ impl InferTypeSubst {
                 if pattern_fields.len() == evidence_fields.len() =>
             {
                 for (pattern_field, evidence_field) in pattern_fields.iter().zip(evidence_fields) {
-                    self.bind_type_ref(inference, pattern_field, evidence_field, generics);
+                    self.bind_type_ref(table, pattern_field, evidence_field, generics);
                 }
             }
             (
@@ -85,10 +82,10 @@ impl InferTypeSubst {
                     len: evidence_len,
                 },
             ) if pattern_len == evidence_len => {
-                self.bind_type_ref(inference, pattern_inner, evidence_inner, generics);
+                self.bind_type_ref(table, pattern_inner, evidence_inner, generics);
             }
             (TypeRef::Slice(pattern_inner), InferTy::Slice(evidence_inner)) => {
-                self.bind_type_ref(inference, pattern_inner, evidence_inner, generics);
+                self.bind_type_ref(table, pattern_inner, evidence_inner, generics);
             }
             (
                 TypeRef::Reference {
@@ -101,19 +98,19 @@ impl InferTypeSubst {
                     inner: evidence_inner,
                 },
             ) if Self::ref_mutability(*mutability) == *evidence_mutability => {
-                self.bind_type_ref(inference, pattern_inner, evidence_inner, generics);
+                self.bind_type_ref(table, pattern_inner, evidence_inner, generics);
             }
             (TypeRef::Path(path), InferTy::Nominal(evidence_ty) | InferTy::SelfTy(evidence_ty)) => {
-                self.bind_type_path_args(inference, path, &evidence_ty.args, generics);
+                self.bind_type_path_args(table, path, &evidence_ty.args, generics);
             }
             _ => {}
         }
     }
 
     /// Bind declared type params from inferred args, e.g. `Option<?T>` gives `T = ?T`.
-    pub(crate) fn bind_type_params_from_infer_args(
+    pub fn bind_type_params_from_infer_args(
         &mut self,
-        inference: &mut BodyInferenceCtx,
+        table: &mut InferenceTable,
         generics: &GenericParams,
         args: &[InferGenericArg],
     ) {
@@ -127,7 +124,7 @@ impl InferTypeSubst {
         });
 
         for (param, ty) in generics.types.iter().zip(type_args) {
-            self.push(inference, param.name.clone(), ty);
+            self.push(table, param.name.clone(), ty);
         }
     }
 
@@ -142,7 +139,7 @@ impl InferTypeSubst {
     /// Bind params from path args, e.g. `Vec<T>` against `Vec<?T>`.
     fn bind_type_path_args(
         &mut self,
-        inference: &mut BodyInferenceCtx,
+        table: &mut InferenceTable,
         path: &TypePath,
         evidence_args: &[InferGenericArg],
         generics: &GenericParams,
@@ -155,21 +152,21 @@ impl InferTypeSubst {
         }
 
         for (pattern_arg, evidence_arg) in segment.args.iter().zip(evidence_args) {
-            self.bind_generic_arg(inference, pattern_arg, evidence_arg, generics);
+            self.bind_generic_arg(table, pattern_arg, evidence_arg, generics);
         }
     }
 
     /// Bind params from one generic arg, including associated-type and Fn-trait args.
     fn bind_generic_arg(
         &mut self,
-        inference: &mut BodyInferenceCtx,
+        table: &mut InferenceTable,
         pattern: &ItemGenericArg,
         evidence: &InferGenericArg,
         generics: &GenericParams,
     ) {
         match (pattern, evidence) {
             (ItemGenericArg::Type(pattern_ty), InferGenericArg::Type(evidence_ty)) => {
-                self.bind_type_ref(inference, pattern_ty, evidence_ty, generics);
+                self.bind_type_ref(table, pattern_ty, evidence_ty, generics);
             }
             (
                 ItemGenericArg::FnTraitArgs {
@@ -182,9 +179,9 @@ impl InferTypeSubst {
                 },
             ) if pattern_params.len() == evidence_params.len() => {
                 for (pattern_param, evidence_param) in pattern_params.iter().zip(evidence_params) {
-                    self.bind_type_ref(inference, pattern_param, evidence_param, generics);
+                    self.bind_type_ref(table, pattern_param, evidence_param, generics);
                 }
-                self.bind_type_ref(inference, pattern_ret, evidence_ret, generics);
+                self.bind_type_ref(table, pattern_ret, evidence_ret, generics);
             }
             (
                 ItemGenericArg::AssocType {
@@ -196,7 +193,7 @@ impl InferTypeSubst {
                     ty: Some(evidence_ty),
                 },
             ) if pattern_name == evidence_name => {
-                self.bind_type_ref(inference, pattern_ty, evidence_ty, generics);
+                self.bind_type_ref(table, pattern_ty, evidence_ty, generics);
             }
             _ => {}
         }
@@ -214,20 +211,20 @@ impl InferTypeSubst {
 /// Projects declared type refs into `InferTy` using an inference substitution.
 ///
 /// Example: `push(value: T)` with `T = ?T` projects the param type to `?T`.
-pub(crate) struct InferTypeRefProjector<'subst> {
+pub struct InferTypeRefProjector<'subst> {
     subst: &'subst InferTypeSubst,
 }
 
 impl<'subst> InferTypeRefProjector<'subst> {
     /// Project type refs through this substitution.
-    pub(crate) fn new(subst: &'subst InferTypeSubst) -> Self {
+    pub fn new(subst: &'subst InferTypeSubst) -> Self {
         Self { subst }
     }
 
     /// Resolve a declared type ref shape while preserving substituted inference vars.
     ///
     /// Example: `Option<T>` with `T = ?T` and resolved `Option<unknown>` becomes `Option<?T>`.
-    pub(crate) fn ty_from_type_ref(&mut self, pattern: &TypeRef, resolved_ty: &Ty) -> InferTy {
+    pub fn ty_from_type_ref(&mut self, pattern: &TypeRef, resolved_ty: &Ty) -> InferTy {
         self.project_ty(pattern, resolved_ty)
     }
 }

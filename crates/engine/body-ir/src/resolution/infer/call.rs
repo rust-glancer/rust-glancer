@@ -9,11 +9,14 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{Ty, inference::InferTy};
+use rg_ty::{
+    Ty,
+    inference::{InferTy, InferTypeRefProjector, InferTypeSubst},
+};
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
-use super::{BodyInferenceCtx, InferTypeRefProjector, InferTypeSubst};
+use super::BodyInferenceCtx;
 
 /// Bridges selected call signatures into inference constraints.
 ///
@@ -145,7 +148,7 @@ where
             let (infer_ty, arg_used_vars) =
                 inference.instantiate_explicit_type_arg_ty(arg_ty, &resolved_ty);
             used_vars |= arg_used_vars;
-            subst.push(inference, param.name.clone(), infer_ty);
+            subst.push(&mut inference.table, param.name.clone(), infer_ty);
         }
 
         Ok((subst, used_vars))
@@ -222,7 +225,7 @@ where
             && let Some(ret_ty) = function_data.signature.ret_ty()
         {
             let return_ty = inference.expr_ty(call);
-            subst.bind_type_ref(inference, ret_ty, &return_ty, generics);
+            subst.bind_type_ref(&mut inference.table, ret_ty, &return_ty, generics);
         }
 
         let written_params = function_data
@@ -277,13 +280,18 @@ where
 
         let return_ty = inference.root_resolved_expr_ty(call);
         subst.bind_type_ref(
-            inference,
+            &mut inference.table,
             &impl_data.self_ty,
             &return_ty,
             &impl_data.generics,
         );
         if let Some(ret_ty) = ret_ty {
-            subst.bind_type_ref(inference, ret_ty, &return_ty, &impl_data.generics);
+            subst.bind_type_ref(
+                &mut inference.table,
+                ret_ty,
+                &return_ty,
+                &impl_data.generics,
+            );
         }
 
         Ok(subst)
@@ -374,7 +382,7 @@ where
 
         let receiver_ty = inference.root_resolved_expr_ty(receiver);
         subst.bind_type_ref(
-            inference,
+            &mut inference.table,
             &impl_data.self_ty,
             &receiver_ty,
             &impl_data.generics,
@@ -396,7 +404,7 @@ where
             return Ok(());
         };
 
-        subst.shadow_type_params(inference, generics);
+        subst.shadow_type_params(&mut inference.table, generics);
 
         let explicit_subst = self.context.generics().subst_for_explicit_args(
             generics,
@@ -405,7 +413,11 @@ where
         )?;
         for param in &generics.types {
             if let Some(ty) = explicit_subst.type_param(param.name.as_str()) {
-                subst.push(inference, param.name.clone(), InferTy::from_ty(&ty));
+                subst.push(
+                    &mut inference.table,
+                    param.name.clone(),
+                    InferTy::from_ty(&ty),
+                );
             }
         }
 

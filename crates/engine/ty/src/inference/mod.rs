@@ -6,6 +6,7 @@
 mod family;
 mod instantiate;
 mod model;
+mod subst;
 mod table;
 
 pub use family::TypeRefInferenceProjector;
@@ -14,6 +15,7 @@ pub use instantiate::{
     UnknownTypeInstantiationBuilder,
 };
 pub use model::{InferGenericArg, InferNominalTy, InferOpaqueTraitBound, InferTy};
+pub use subst::{InferTypeRefProjector, InferTypeSubst};
 pub use table::{InferVarId, InferenceTable};
 
 #[cfg(test)]
