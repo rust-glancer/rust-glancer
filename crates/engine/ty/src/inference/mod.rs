@@ -16,7 +16,7 @@ pub use instantiate::{
 };
 pub use model::{InferGenericArg, InferNominalTy, InferOpaqueTraitBound, InferTy};
 pub use subst::{InferTypeRefProjector, InferTypeSubst};
-pub use table::{InferVarId, InferenceTable};
+pub use table::{InferVarId, InferenceConflict, InferenceTable};
 
 #[cfg(test)]
 mod tests;

@@ -11,14 +11,14 @@ use rg_text::Name;
 use super::{
     family::TypeRefInferenceProjector,
     model::{InferGenericArg, InferTy},
-    table::InferenceTable,
+    table::{InferenceConflict, InferenceTable},
 };
 use crate::{RefMutability, Ty};
 
 /// Substitution from declared type params to inference-aware types.
 ///
 /// Example: matching `impl<T> Vec<T>` against receiver `Vec<?T>` binds `T = ?T`.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct InferTypeSubst(Vec<(Name, InferTy)>);
 
 impl InferTypeSubst {
@@ -29,12 +29,22 @@ impl InferTypeSubst {
 
     /// Add `T = ?T`; if `T` already exists, unify both values.
     pub fn push(&mut self, table: &mut InferenceTable, name: Name, ty: InferTy) {
+        let _ = self.try_push(table, name, ty);
+    }
+
+    /// Add `T = ?T` and report whether repeated evidence stayed compatible.
+    pub fn try_push(
+        &mut self,
+        table: &mut InferenceTable,
+        name: Name,
+        ty: InferTy,
+    ) -> Result<(), InferenceConflict> {
         if let Some(existing) = self.get(name.as_str()).cloned() {
-            table.unify(&existing, &ty);
-            return;
+            return table.try_unify(&existing, &ty);
         }
 
         self.0.push((name, ty));
+        Ok(())
     }
 
     /// Let function generics hide same-named impl generics while staying inferable.
