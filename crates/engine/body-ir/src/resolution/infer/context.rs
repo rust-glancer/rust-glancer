@@ -71,8 +71,8 @@ impl BodyInferenceCtx {
         used_vars
     }
 
-    /// Instantiate explicit `_` slots inside a type arg such as `Vec<_>`.
-    pub(crate) fn instantiate_explicit_type_arg_ty(
+    /// Instantiate written `_` slots inside a type ref such as `Vec<_>`.
+    pub(crate) fn instantiate_written_infer_ty(
         &mut self,
         arg_ty: &TypeRef,
         resolved_ty: &Ty,

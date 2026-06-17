@@ -562,6 +562,109 @@ pub fn use_it(builder: Builder) {
 }
 
 #[test]
+fn infers_collect_destination_through_trait_obligations() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "storage", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait FromIterator<A> {}
+
+    pub trait Iterator {
+        type Item;
+
+        fn collect<B>(self) -> B
+        where
+            B: FromIterator<Self::Item>;
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+pub struct Vec<T> {
+    value: T,
+}
+
+impl<T> iter::FromIterator<T> for Vec<T> {}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use core::Vec;
+use storage::DefMap;
+
+pub fn explicit_destination(def_map: &DefMap) {
+    let imports = def_map.imports().iter().collect::<Vec<_>>()$type_explicit$;
+    imports;
+}
+
+pub fn expected_destination(def_map: &DefMap) {
+    let imports: Vec<_> = def_map.imports().iter().collect()$type_expected$;
+    imports;
+}
+"#,
+        &[
+            AnalysisQuery::ty("explicit collect destination", "type_explicit").in_lib("app"),
+            AnalysisQuery::ty("expected collect destination", "type_expected").in_lib("app"),
+        ],
+        expect![[r#"
+            explicit collect destination
+            - nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData>
+
+            expected collect destination
+            - nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData>
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_expected_types_through_result_expressions() {
     check_analysis_queries(
         r#"

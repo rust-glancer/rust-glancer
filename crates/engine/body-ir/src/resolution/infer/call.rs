@@ -149,7 +149,7 @@ where
             };
 
             let (infer_ty, arg_used_vars) =
-                inference.instantiate_explicit_type_arg_ty(arg_ty, &resolved_ty);
+                inference.instantiate_written_infer_ty(arg_ty, &resolved_ty);
             used_vars |= arg_used_vars;
             subst.push(&mut inference.table, param.name.clone(), infer_ty);
         }
