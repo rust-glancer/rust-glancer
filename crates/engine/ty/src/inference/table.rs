@@ -5,6 +5,10 @@ use crate::{PrimitiveTy, Ty};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InferVarId(u32);
 
+/// Marker returned when speculative inference evidence is incompatible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InferenceConflict;
+
 impl InferVarId {
     fn index(self) -> usize {
         self.0 as usize
@@ -141,6 +145,18 @@ impl InferenceTable {
     /// - Unsolved numeric vars finalize to the existing defaults: `i32` / `f64`.
     pub fn unify(&mut self, lhs: &InferTy, rhs: &InferTy) -> bool {
         self.unify_ty(lhs, rhs).changed_flag()
+    }
+
+    /// Constrains two types and reports whether the evidence stayed compatible.
+    ///
+    /// This is useful for speculative matching: callers can clone the table, try a candidate,
+    /// and discard the clone if the candidate would create a conflict.
+    pub fn try_unify(&mut self, lhs: &InferTy, rhs: &InferTy) -> Result<(), InferenceConflict> {
+        if self.unify_ty(lhs, rhs).is_conflict() {
+            Err(InferenceConflict)
+        } else {
+            Ok(())
+        }
     }
 
     pub fn finalize(&self, ty: &InferTy) -> Ty {

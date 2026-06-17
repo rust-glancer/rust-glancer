@@ -4,16 +4,22 @@
 //! know how receiver substitutions and function generic shadows are built.
 
 use rg_ir_model::{
-    ExprId, ImplRef, ItemOwner, ScopeId,
+    DefMapRef, ExprId, ImplRef, ItemOwner, ScopeId,
     items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
-use rg_ty::{Ty, inference::InferTy};
+use rg_ty::{
+    Ty, TypeSubst,
+    inference::{InferTy, InferTypeRefProjector, InferTypeSubst},
+};
 
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
-use super::{BodyInferenceCtx, InferTypeRefProjector, InferTypeSubst};
+use super::{
+    BodyInferenceCtx,
+    trait_obligation::{BodyTraitObligationSolver, SelectedCallObligationInput},
+};
 
 /// Bridges selected call signatures into inference constraints.
 ///
@@ -143,9 +149,9 @@ where
             };
 
             let (infer_ty, arg_used_vars) =
-                inference.instantiate_explicit_type_arg_ty(arg_ty, &resolved_ty);
+                inference.instantiate_written_infer_ty(arg_ty, &resolved_ty);
             used_vars |= arg_used_vars;
-            subst.push(inference, param.name.clone(), infer_ty);
+            subst.push(&mut inference.table, param.name.clone(), infer_ty);
         }
 
         Ok((subst, used_vars))
@@ -222,7 +228,7 @@ where
             && let Some(ret_ty) = function_data.signature.ret_ty()
         {
             let return_ty = inference.expr_ty(call);
-            subst.bind_type_ref(inference, ret_ty, &return_ty, generics);
+            subst.bind_type_ref(&mut inference.table, ret_ty, &return_ty, generics);
         }
 
         let written_params = function_data
@@ -277,22 +283,31 @@ where
 
         let return_ty = inference.root_resolved_expr_ty(call);
         subst.bind_type_ref(
-            inference,
+            &mut inference.table,
             &impl_data.self_ty,
             &return_ty,
             &impl_data.generics,
         );
         if let Some(ret_ty) = ret_ty {
-            subst.bind_type_ref(inference, ret_ty, &return_ty, &impl_data.generics);
+            subst.bind_type_ref(
+                &mut inference.table,
+                ret_ty,
+                &return_ty,
+                &impl_data.generics,
+            );
         }
 
         Ok(subst)
     }
 
-    /// Use method args to solve receiver vars.
+    /// Use a selected method to solve receiver vars.
     ///
-    /// Example: `values: Vec<?T>; values.push(user)` gives `push(value: T)` evidence `?T = User`.
-    pub(crate) fn constrain_receiver_generic_arguments(
+    /// Examples:
+    ///
+    /// - `values: Vec<?T>; values.push(user)` gives `push(value: T)` evidence `?T = User`.
+    /// - `wrapper: Wrapper<?T>; wrapper.touch()` selected from `impl Wrapper<User>` gives
+    ///   receiver evidence `?T = User`.
+    pub(crate) fn constrain_selected_method_receiver_and_arguments(
         &self,
         inference: &mut BodyInferenceCtx,
         method_call: ExprId,
@@ -326,6 +341,13 @@ where
             &function_data.owner,
             receiver,
         )?;
+        self.constrain_selected_inherent_method_receiver(
+            inference,
+            target.function().origin,
+            &function_data.owner,
+            receiver,
+            &subst,
+        )?;
         self.apply_function_generic_shadows(
             inference,
             &mut subst,
@@ -351,6 +373,137 @@ where
         Ok(())
     }
 
+    /// Push concrete `impl Self` evidence into the receiver slot for selected inherent methods.
+    fn constrain_selected_inherent_method_receiver(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        origin: DefMapRef,
+        owner: &ItemOwner,
+        receiver: ExprId,
+        subst: &InferTypeSubst,
+    ) -> Result<(), PackageStoreError> {
+        let ItemOwner::Impl(impl_id) = owner else {
+            return Ok(());
+        };
+
+        let impl_ref = ImplRef {
+            origin,
+            id: *impl_id,
+        };
+        let Some(impl_data) = self.context.item_query().impl_data(impl_ref)?.cloned() else {
+            return Ok(());
+        };
+        if impl_data.trait_ref.is_some() {
+            return Ok(());
+        }
+
+        let context = TypePathContext {
+            module: impl_data.owner,
+            impl_ref: Some(impl_ref),
+        };
+        let resolved_self_ty = self.context.item_paths().resolve_type_ref(
+            &impl_data.self_ty,
+            context,
+            Ty::syntax(impl_data.self_ty.clone()),
+            &TypeSubst::new(),
+        )?;
+        let receiver_evidence = InferTypeRefProjector::new(subst)
+            .ty_from_type_ref(&impl_data.self_ty, &resolved_self_ty);
+        let receiver_ty = inference.root_resolved_expr_ty(receiver);
+
+        // Method lookup may have used autoderef while the source receiver expression still has its
+        // pre-adjustment type. Only commit the self-type evidence when it fits that original slot.
+        let mut trial_table = inference.table.clone();
+        if trial_table
+            .try_unify(&receiver_ty, &receiver_evidence)
+            .is_err()
+        {
+            return Ok(());
+        }
+
+        inference.constrain_expr_infer_ty(receiver, &receiver_evidence);
+        Ok(())
+    }
+
+    /// Solve shallow trait bounds on already-selected generic calls.
+    ///
+    /// Example: `collect::<Vec<_>>()` produces `B = Vec<?T>` from the return type and then solves
+    /// the selected function bound `B: FromIterator<Item>` through visible impls.
+    pub(crate) fn solve_generic_trait_obligations(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        call: ExprId,
+        args: &[ExprId],
+        receiver: Option<ExprId>,
+    ) -> Result<(), PackageStoreError> {
+        let calls = self.context.calls();
+        let Some(target) = calls.target(call)? else {
+            return Ok(());
+        };
+        let Some(function_data) = self
+            .context
+            .item_query()
+            .function_data(target.function())?
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let Some(generics) = function_data.signature.generics() else {
+            return Ok(());
+        };
+        if generics.types.iter().all(|param| param.bounds.is_empty())
+            && generics.where_predicates.is_empty()
+        {
+            return Ok(());
+        }
+
+        // Stage 1: rebuild the substitution that connects signature names to inference slots.
+        // Return evidence is especially important for `collect::<Vec<_>>()`: it turns `B` into
+        // the already-instantiated destination shape `Vec<?T>`.
+        let projection = calls.signature(&target).project(args)?;
+        let mut subst = self.type_prefix_impl_infer_subst(
+            inference,
+            call,
+            target.has_type_prefix_self_source(),
+            target.function().origin,
+            &function_data.owner,
+            function_data.signature.ret_ty(),
+        )?;
+        if let Some(receiver) = receiver {
+            subst = self.receiver_infer_subst(
+                inference,
+                target.function().origin,
+                &function_data.owner,
+                receiver,
+            )?;
+        }
+        self.apply_function_generic_shadows(
+            inference,
+            &mut subst,
+            Some(generics),
+            target.explicit_args(),
+            self.context.body().expr_unchecked(call).scope,
+        )?;
+
+        if let Some(ret_ty) = function_data.signature.ret_ty() {
+            let return_ty = inference.expr_ty(call);
+            subst.bind_type_ref(&mut inference.table, ret_ty, &return_ty, generics);
+        }
+
+        // Stage 2+: lower selected-call bounds into trait goals and commit only unique solutions.
+        BodyTraitObligationSolver::new(self.context).solve_selected_call(
+            inference,
+            SelectedCallObligationInput {
+                function: target.function(),
+                owner: function_data.owner,
+                generics,
+                subst: &subst,
+                signature_subst: projection.subst(),
+                selected_self_ty: projection.selected_self_ty(),
+            },
+        )
+    }
+
     /// Bind impl generics from the selected receiver slot: `impl<T> Vec<T>` + `Vec<?T>`.
     fn receiver_infer_subst(
         &self,
@@ -374,7 +527,7 @@ where
 
         let receiver_ty = inference.root_resolved_expr_ty(receiver);
         subst.bind_type_ref(
-            inference,
+            &mut inference.table,
             &impl_data.self_ty,
             &receiver_ty,
             &impl_data.generics,
@@ -396,7 +549,7 @@ where
             return Ok(());
         };
 
-        subst.shadow_type_params(inference, generics);
+        subst.shadow_type_params(&mut inference.table, generics);
 
         let explicit_subst = self.context.generics().subst_for_explicit_args(
             generics,
@@ -405,7 +558,11 @@ where
         )?;
         for param in &generics.types {
             if let Some(ty) = explicit_subst.type_param(param.name.as_str()) {
-                subst.push(inference, param.name.clone(), InferTy::from_ty(&ty));
+                subst.push(
+                    &mut inference.table,
+                    param.name.clone(),
+                    InferTy::from_ty(&ty),
+                );
             }
         }
 

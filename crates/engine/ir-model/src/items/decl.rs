@@ -21,6 +21,13 @@ pub struct GenericParams {
     pub where_predicates: Vec<WherePredicate>,
 }
 
+impl GenericParams {
+    /// Iterates type parameter names in declaration order.
+    pub fn type_param_names(&self) -> impl Iterator<Item = &Name> {
+        self.types.iter().map(|param| &param.name)
+    }
+}
+
 impl fmt::Display for GenericParams {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut params = Vec::new();

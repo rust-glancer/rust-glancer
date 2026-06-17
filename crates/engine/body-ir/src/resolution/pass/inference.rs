@@ -5,25 +5,25 @@
 //! Body IR.
 
 use rg_ir_model::{
-    BindingId, EnumVariantRef, ExprId, ScopeId, StmtId,
+    BindingId, EnumVariantRef, ExprId, PatId, ScopeId, StmtId,
     identity::DeclarationRef,
     items::{FieldKey, FieldList, GenericParams, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_ty::{NominalTy, Ty, inference::InferTy};
+use rg_ty::{
+    NominalTy, Ty,
+    inference::{InferTy, InferTypeRefProjector, InferTypeSubst},
+};
 
 use crate::{
     ir::{
-        ExprAssignOp, ExprKind, ExprWrapperKind, RecordExprField, StmtKind,
+        ExprAssignOp, ExprKind, ExprWrapperKind, PatKind, RecordExprField, StmtKind,
         resolved::BodyResolution,
     },
     resolution::{
         TypeRefUseSite,
-        infer::{
-            BodyCallInference, BodyMemberInference, BodyPatternInference, InferTypeRefProjector,
-            InferTypeSubst,
-        },
+        infer::{BodyCallInference, BodyMemberInference, BodyPatternInference},
     },
 };
 
@@ -377,6 +377,21 @@ where
         )
     }
 
+    fn solve_call_target_generic_trait_obligations(
+        &mut self,
+        call: ExprId,
+        args: &[ExprId],
+        receiver: Option<ExprId>,
+    ) -> Result<(), PackageStoreError> {
+        let context = self.pass.providers.context(self.pass.body);
+        BodyCallInference::new(context).solve_generic_trait_obligations(
+            &mut self.pass.inference,
+            call,
+            args,
+            receiver,
+        )
+    }
+
     /// Visit all places that can provide expected types to already-created inference slots.
     fn constrain_expected_types(&mut self) -> Result<(), PackageStoreError> {
         for statement_idx in 0..self.pass.body.statements().len() {
@@ -386,6 +401,10 @@ where
             self.constrain_expr_expected_types(ExprId(expr_idx))?;
         }
         self.constrain_function_return_expected_types()?;
+
+        // Some constraints solve binding slots that path expressions copied before inference ran.
+        // Refresh dependent facts once so finalization sees those solved locals through later reads.
+        self.refresh_inference_dependent_expr_facts()?;
 
         Ok(())
     }
@@ -399,10 +418,11 @@ where
         match kind {
             StmtKind::Let {
                 scope,
+                pat: Some(pat),
                 annotation: Some(annotation),
                 initializer: Some(initializer),
                 ..
-            } => self.constrain_let_annotation_initializer(scope, annotation, initializer),
+            } => self.constrain_let_annotation_initializer(scope, pat, annotation, initializer),
             StmtKind::Let { .. }
             | StmtKind::Expr { .. }
             | StmtKind::Item { .. }
@@ -417,6 +437,7 @@ where
     fn constrain_let_annotation_initializer(
         &mut self,
         scope: ScopeId,
+        pat: PatId,
         annotation: TypeRef,
         initializer: ExprId,
     ) -> Result<(), PackageStoreError> {
@@ -425,9 +446,46 @@ where
             .context()
             .type_refs(TypeRefUseSite::Scope(scope))
             .resolve(&annotation)?;
+        let (expected_infer_ty, used_annotation_vars) = self
+            .pass
+            .inference
+            .instantiate_written_infer_ty(&annotation, &expected_ty);
+
+        // `let value: Vec<_> = make_vec();` needs the written `_` to become a real inference
+        // slot before call obligations run, otherwise `Vec<unknown>` cannot absorb trait evidence.
+        if used_annotation_vars {
+            self.pass
+                .inference
+                .constrain_expr_infer_ty(initializer, &expected_infer_ty);
+            self.constrain_single_binding_annotation(pat, &expected_infer_ty);
+        }
+
         self.constrain_expr_with_expected(initializer, &expected_ty);
 
         Ok(())
+    }
+
+    /// Attach annotation holes to a single local binding.
+    ///
+    /// This processes `let value: Vec<_> = ...`, where the whole annotation belongs to one
+    /// binding. It intentionally does not process destructuring annotations such as
+    /// `let (left, right): (Vec<_>, Vec<_>) = ...`; those need inference-aware pattern
+    /// propagation rather than assigning the whole tuple type to one binding.
+    fn constrain_single_binding_annotation(&mut self, pat: PatId, expected_ty: &InferTy) {
+        let Some(pat_data) = self.pass.body.pat(pat).cloned() else {
+            return;
+        };
+        let PatKind::Binding {
+            binding: Some(binding),
+            ..
+        } = pat_data.kind
+        else {
+            return;
+        };
+
+        self.pass
+            .inference
+            .set_binding_infer_ty(binding, expected_ty.clone());
     }
 
     /// Route expression-level evidence from calls, method calls, record fields, and assignments.
@@ -439,6 +497,7 @@ where
                 args,
             } => {
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
+                self.solve_call_target_generic_trait_obligations(expr, &args, None)?;
                 self.constrain_enum_variant_payload_expected_types(expr, callee, args)
             }
             ExprKind::MethodCall {
@@ -449,15 +508,17 @@ where
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
 
                 let context = self.pass.providers.context(self.pass.body);
-                BodyCallInference::new(context).constrain_receiver_generic_arguments(
+                BodyCallInference::new(context).constrain_selected_method_receiver_and_arguments(
                     &mut self.pass.inference,
                     expr,
                     receiver,
                     &args,
-                )
+                )?;
+                self.solve_call_target_generic_trait_obligations(expr, &args, Some(receiver))
             }
             ExprKind::MethodCall { args, .. } => {
-                self.constrain_call_target_argument_expected_types(expr, &args)
+                self.constrain_call_target_argument_expected_types(expr, &args)?;
+                self.solve_call_target_generic_trait_obligations(expr, &args, None)
             }
             ExprKind::Record { fields, .. } => {
                 self.constrain_record_field_initializer_expected_types(expr, fields)
@@ -598,7 +659,9 @@ where
         };
 
         let mut subst = InferTypeSubst::new();
-        subst.bind_type_params_from_infer_args(&mut self.pass.inference, generics, &infer_args);
+        self.pass
+            .inference
+            .bind_type_params_from_infer_args(&mut subst, generics, &infer_args);
         Some(subst)
     }
 

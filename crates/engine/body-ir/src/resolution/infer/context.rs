@@ -5,7 +5,7 @@ use rg_ty::{
     Ty,
     inference::{
         ExplicitTypeArgInstantiationBuilder, GenericReturnInstantiationBuilder, InferTy,
-        InferenceTable, UnknownTypeInstantiationBuilder,
+        InferTypeSubst, InferenceTable, UnknownTypeInstantiationBuilder,
     },
 };
 
@@ -71,8 +71,8 @@ impl BodyInferenceCtx {
         used_vars
     }
 
-    /// Instantiate explicit `_` slots inside a type arg such as `Vec<_>`.
-    pub(crate) fn instantiate_explicit_type_arg_ty(
+    /// Instantiate written `_` slots inside a type ref such as `Vec<_>`.
+    pub(crate) fn instantiate_written_infer_ty(
         &mut self,
         arg_ty: &TypeRef,
         resolved_ty: &Ty,
@@ -109,10 +109,6 @@ impl BodyInferenceCtx {
     pub(crate) fn set_expr_float_var(&mut self, expr: ExprId) {
         let ty = self.table.new_float_var();
         self.set_expr_infer_ty(expr, ty);
-    }
-
-    pub(crate) fn new_type_var(&mut self) -> InferTy {
-        self.table.new_type_var()
     }
 
     pub(crate) fn set_expr_tuple_from_fields(&mut self, expr: ExprId, fields: &[ExprId]) {
@@ -312,6 +308,15 @@ impl BodyInferenceCtx {
 
     pub(crate) fn constrain_infer_tys(&mut self, lhs: &InferTy, rhs: &InferTy) -> bool {
         self.table.unify(lhs, rhs)
+    }
+
+    pub(crate) fn bind_type_params_from_infer_args(
+        &mut self,
+        subst: &mut InferTypeSubst,
+        generics: &GenericParams,
+        args: &[rg_ty::inference::InferGenericArg],
+    ) {
+        subst.bind_type_params_from_infer_args(&mut self.table, generics, args);
     }
 
     pub(crate) fn finalize_expr_ty(&self, expr: ExprId) -> Ty {
