@@ -4,7 +4,8 @@ mod render;
 pub(crate) use self::{
     document::{
         ReportAlign, ReportBlock, ReportColumn, ReportDocument, ReportField, ReportFieldsBuilder,
-        ReportRow, ReportRowBuilder, ReportSectionBuilder, ReportTableBuilder, ReportValue,
+        ReportRow, ReportRowBuilder, ReportSection, ReportSectionBuilder, ReportTableBuilder,
+        ReportValue,
     },
-    render::{RichJsonRenderer, TextRenderer},
+    render::{HtmlRenderer, RichJsonRenderer, TextRenderer},
 };

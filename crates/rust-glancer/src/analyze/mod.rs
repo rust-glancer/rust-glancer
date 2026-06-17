@@ -1,4 +1,9 @@
-use std::{fmt as std_fmt, io::Write as _, path::PathBuf, time::Instant};
+use std::{
+    fmt as std_fmt, fs,
+    io::Write as _,
+    path::PathBuf,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::Context as _;
 use clap::ValueEnum;
@@ -79,6 +84,7 @@ pub(crate) enum OutputFormat {
     Text,
     Json,
     RichJson,
+    Html,
 }
 
 /// Build stage used for detailed retained-memory reporting.
@@ -257,6 +263,15 @@ pub(crate) fn analyze(
             output.push('\n');
             output
         }
+        OutputFormat::Html => {
+            let document_options = data::ReportDocumentOptions {
+                include_profile: profile,
+                include_memory,
+            };
+            let document = analyze_report.document(document_options);
+            let path = write_html_report(&document)?;
+            format!("wrote HTML report to {}\n", path.display())
+        }
     };
     std::io::stdout()
         .lock()
@@ -264,4 +279,30 @@ pub(crate) fn analyze(
         .context("while attempting to write analyze report")?;
 
     Ok(())
+}
+
+fn write_html_report(document: &report::ReportDocument) -> anyhow::Result<PathBuf> {
+    let report_dir = PathBuf::from("target").join("rust-glancer").join("report");
+    fs::create_dir_all(&report_dir).with_context(|| {
+        format!(
+            "while attempting to create HTML report directory {}",
+            report_dir.display()
+        )
+    })?;
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("while attempting to read system time for HTML report filename")?
+        .as_millis();
+    let path = report_dir.join(format!("{timestamp}-report.html"));
+    let html = report::HtmlRenderer.render(document);
+
+    fs::write(&path, html).with_context(|| {
+        format!(
+            "while attempting to write HTML report file {}",
+            path.display()
+        )
+    })?;
+
+    Ok(path)
 }
