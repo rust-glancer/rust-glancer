@@ -1,7 +1,7 @@
 //! Boolean receiver checks for inherent impls.
 //!
 //! These checks decide whether an already-selected inherent item can belong to a nominal receiver.
-//! They may use impl type and const parameters as wildcards, but concrete args must match.
+//! They may use impl type and const parameters as wildcards, but concrete known args must match.
 
 use crate::{GenericArg, NominalTy, Ty, TypeSubst};
 use rg_ir_model::hir::items::ImplData;
@@ -72,8 +72,9 @@ where
         receiver_ty: &NominalTy,
     ) -> Result<bool, D::Error> {
         // Type and const parameters in the impl self type act as wildcards. Concrete args such as
-        // `impl Wrapper<User>` or `impl Foo<1>` must equal the receiver's known args. Lifetimes do
-        // not select inherent impls, so they only need to line up as lifetime arguments.
+        // `impl Wrapper<User>` or `impl Foo<1>` must equal known receiver args, while unknown
+        // receiver args stay possible so selected-call inference can constrain them later.
+        // Lifetimes do not select inherent impls, so they only need to line up as lifetime args.
         let TypeRef::Path(self_ty) = &impl_data.self_ty else {
             return Ok(true);
         };
@@ -117,6 +118,9 @@ where
                 let Some(receiver_arg) = receiver_arg.as_ty().cloned() else {
                     return Ok(false);
                 };
+                if matches!(receiver_arg, Ty::Unknown) {
+                    return Ok(true);
+                }
                 if impl_arg
                     .type_param_name()
                     .as_deref()

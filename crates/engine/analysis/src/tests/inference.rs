@@ -1027,9 +1027,21 @@ pub struct Vec<T> {
     value: T,
 }
 
+pub struct Wrapper<T> {
+    value: T,
+}
+
 impl<T> Vec<T> {
     pub fn new() -> Self {}
     pub fn push(&mut self, value: T) {}
+}
+
+impl<T> Wrapper<T> {
+    pub fn new() -> Self {}
+}
+
+impl Wrapper<User> {
+    pub fn touch(&self) {}
 }
 
 pub fn user_value(user: User) {
@@ -1056,6 +1068,12 @@ pub fn conflicting() {
     values.push(false$type_conflict_arg$);
     values$type_conflict_read$;
 }
+
+pub fn selected_inherent_receiver() {
+    let wrapper = Wrapper::new()$type_wrapper_initializer$;
+    wrapper.touch();
+    wrapper$type_wrapper_read$;
+}
 "#,
         &[
             AnalysisQuery::ty("user receiver initializer", "type_user_initializer"),
@@ -1070,6 +1088,8 @@ pub fn conflicting() {
             ),
             AnalysisQuery::ty("conflicting receiver argument", "type_conflict_arg"),
             AnalysisQuery::ty("conflicting receiver read", "type_conflict_read"),
+            AnalysisQuery::ty("selected receiver initializer", "type_wrapper_initializer"),
+            AnalysisQuery::ty("selected receiver read", "type_wrapper_read"),
         ],
         expect![[r#"
             user receiver initializer
@@ -1098,6 +1118,12 @@ pub fn conflicting() {
 
             conflicting receiver read
             - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<<unknown>>
+
+            selected receiver initializer
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Wrapper<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User>
+
+            selected receiver read
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Wrapper<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User>
         "#]],
     );
 }

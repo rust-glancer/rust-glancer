@@ -4,13 +4,13 @@
 //! know how receiver substitutions and function generic shadows are built.
 
 use rg_ir_model::{
-    ExprId, ImplRef, ItemOwner, ScopeId,
+    DefMapRef, ExprId, ImplRef, ItemOwner, ScopeId,
     items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
 };
-use rg_ir_storage::{DefMapSource, ItemStoreSource};
+use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
-    Ty,
+    Ty, TypeSubst,
     inference::{InferTy, InferTypeRefProjector, InferTypeSubst},
 };
 
@@ -300,10 +300,14 @@ where
         Ok(subst)
     }
 
-    /// Use method args to solve receiver vars.
+    /// Use a selected method to solve receiver vars.
     ///
-    /// Example: `values: Vec<?T>; values.push(user)` gives `push(value: T)` evidence `?T = User`.
-    pub(crate) fn constrain_receiver_generic_arguments(
+    /// Examples:
+    ///
+    /// - `values: Vec<?T>; values.push(user)` gives `push(value: T)` evidence `?T = User`.
+    /// - `wrapper: Wrapper<?T>; wrapper.touch()` selected from `impl Wrapper<User>` gives
+    ///   receiver evidence `?T = User`.
+    pub(crate) fn constrain_selected_method_receiver_and_arguments(
         &self,
         inference: &mut BodyInferenceCtx,
         method_call: ExprId,
@@ -337,6 +341,13 @@ where
             &function_data.owner,
             receiver,
         )?;
+        self.constrain_selected_inherent_method_receiver(
+            inference,
+            target.function().origin,
+            &function_data.owner,
+            receiver,
+            &subst,
+        )?;
         self.apply_function_generic_shadows(
             inference,
             &mut subst,
@@ -359,6 +370,58 @@ where
             inference.constrain_expr_infer_ty(*arg, &expected_ty);
         }
 
+        Ok(())
+    }
+
+    /// Push concrete `impl Self` evidence into the receiver slot for selected inherent methods.
+    fn constrain_selected_inherent_method_receiver(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        origin: DefMapRef,
+        owner: &ItemOwner,
+        receiver: ExprId,
+        subst: &InferTypeSubst,
+    ) -> Result<(), PackageStoreError> {
+        let ItemOwner::Impl(impl_id) = owner else {
+            return Ok(());
+        };
+
+        let impl_ref = ImplRef {
+            origin,
+            id: *impl_id,
+        };
+        let Some(impl_data) = self.context.item_query().impl_data(impl_ref)?.cloned() else {
+            return Ok(());
+        };
+        if impl_data.trait_ref.is_some() {
+            return Ok(());
+        }
+
+        let context = TypePathContext {
+            module: impl_data.owner,
+            impl_ref: Some(impl_ref),
+        };
+        let resolved_self_ty = self.context.item_paths().resolve_type_ref(
+            &impl_data.self_ty,
+            context,
+            Ty::syntax(impl_data.self_ty.clone()),
+            &TypeSubst::new(),
+        )?;
+        let receiver_evidence = InferTypeRefProjector::new(subst)
+            .ty_from_type_ref(&impl_data.self_ty, &resolved_self_ty);
+        let receiver_ty = inference.root_resolved_expr_ty(receiver);
+
+        // Method lookup may have used autoderef while the source receiver expression still has its
+        // pre-adjustment type. Only commit the self-type evidence when it fits that original slot.
+        let mut trial_table = inference.table.clone();
+        if trial_table
+            .try_unify(&receiver_ty, &receiver_evidence)
+            .is_err()
+        {
+            return Ok(());
+        }
+
+        inference.constrain_expr_infer_ty(receiver, &receiver_evidence);
         Ok(())
     }
 

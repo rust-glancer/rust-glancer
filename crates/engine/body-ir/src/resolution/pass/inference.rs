@@ -508,7 +508,7 @@ where
                 self.constrain_call_target_argument_expected_types(expr, &args)?;
 
                 let context = self.pass.providers.context(self.pass.body);
-                BodyCallInference::new(context).constrain_receiver_generic_arguments(
+                BodyCallInference::new(context).constrain_selected_method_receiver_and_arguments(
                     &mut self.pass.inference,
                     expr,
                     receiver,
