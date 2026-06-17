@@ -1,4 +1,9 @@
-use std::{fmt as std_fmt, io::Write as _, path::PathBuf, time::Instant};
+use std::{
+    fmt as std_fmt, fs,
+    io::Write as _,
+    path::PathBuf,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use anyhow::Context as _;
 use clap::ValueEnum;
@@ -9,7 +14,7 @@ use rg_project::{
 };
 use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
 
-mod fmt;
+mod data;
 mod report;
 
 /// CLI-facing package residency names for the `analyze` command.
@@ -78,6 +83,8 @@ impl std_fmt::Display for CliIndexingPreference {
 pub(crate) enum OutputFormat {
     Text,
     Json,
+    RichJson,
+    Html,
 }
 
 /// Build stage used for detailed retained-memory reporting.
@@ -167,7 +174,7 @@ pub(crate) fn analyze(
     let workspace = workspace.with_sysroot_sources(sysroot);
     let memory_control = crate::memory::memory_control();
     let analysis_setup =
-        report::AnalysisSetupReport::new(metadata_elapsed, workspace_elapsed, sysroot_elapsed);
+        data::AnalysisSetupReport::new(metadata_elapsed, workspace_elapsed, sysroot_elapsed);
 
     let builder = Project::builder(workspace)
         .cargo_metadata_config(cargo_metadata_config)
@@ -210,11 +217,11 @@ pub(crate) fn analyze(
         .then(|| memory_control.allocator_stats())
         .flatten();
     let purge = include_memory
-        .then(|| report::AllocatorPurgeReport::purge_memory_and_collect(&memory_control))
+        .then(|| data::AllocatorPurgeReport::purge_memory_and_collect(&memory_control))
         .flatten();
     let allocator = include_memory
-        .then(|| report::AllocatorReport::capture(allocator_name, allocator_stats, purge));
-    let report = report::AnalyzeReport::build(
+        .then(|| data::AllocatorReport::capture(allocator_name, allocator_stats, purge));
+    let analyze_report = data::AnalyzeReport::build(
         &project,
         analysis_setup,
         build_profile.as_ref(),
@@ -227,23 +234,43 @@ pub(crate) fn analyze(
     let output = match output_format {
         OutputFormat::Text => {
             let mut output = String::new();
-            report
-                .render_text(
-                    fmt::TextRenderOptions {
-                        include_profile: profile,
-                        include_memory,
-                    },
-                    &mut output,
-                )
+            let document_options = data::ReportDocumentOptions {
+                include_profile: profile,
+                include_memory,
+            };
+            let document = analyze_report.document(document_options);
+            report::TextRenderer
+                .render(&document, &mut output)
                 .expect("writing to a string should not fail");
             output
         }
         OutputFormat::Json => {
-            let mut output = report
+            let mut output = analyze_report
                 .render_json()
                 .context("while attempting to render analyze JSON report")?;
             output.push('\n');
             output
+        }
+        OutputFormat::RichJson => {
+            let document_options = data::ReportDocumentOptions {
+                include_profile: profile,
+                include_memory,
+            };
+            let document = analyze_report.document(document_options);
+            let mut output = report::RichJsonRenderer
+                .render(&document)
+                .context("while attempting to render rich analyze JSON report")?;
+            output.push('\n');
+            output
+        }
+        OutputFormat::Html => {
+            let document_options = data::ReportDocumentOptions {
+                include_profile: profile,
+                include_memory,
+            };
+            let document = analyze_report.document(document_options);
+            let path = write_html_report(&document)?;
+            format!("wrote HTML report to {}\n", path.display())
         }
     };
     std::io::stdout()
@@ -252,4 +279,30 @@ pub(crate) fn analyze(
         .context("while attempting to write analyze report")?;
 
     Ok(())
+}
+
+fn write_html_report(document: &report::ReportDocument) -> anyhow::Result<PathBuf> {
+    let report_dir = PathBuf::from("target").join("rust-glancer").join("report");
+    fs::create_dir_all(&report_dir).with_context(|| {
+        format!(
+            "while attempting to create HTML report directory {}",
+            report_dir.display()
+        )
+    })?;
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("while attempting to read system time for HTML report filename")?
+        .as_millis();
+    let path = report_dir.join(format!("{timestamp}-report.html"));
+    let html = report::HtmlRenderer.render(document);
+
+    fs::write(&path, html).with_context(|| {
+        format!(
+            "while attempting to write HTML report file {}",
+            path.display()
+        )
+    })?;
+
+    Ok(path)
 }

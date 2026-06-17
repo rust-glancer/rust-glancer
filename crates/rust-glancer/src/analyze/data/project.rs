@@ -1,9 +1,8 @@
-use std::fmt;
-
 use rg_project::Project;
 use serde::Serialize;
 
 use super::package::PackageReport;
+use crate::analyze::report::{ReportFieldsBuilder, ReportSectionBuilder};
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ProjectReport {
@@ -53,23 +52,25 @@ impl ProjectReport {
             },
         }
     }
-}
 
-impl fmt::Display for ProjectReport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "rust-glancer analysis built")?;
-        writeln!(f, "indexing preference: {}", self.indexing_preference)?;
-        writeln!(f, "packages: {}", self.packages)?;
-        writeln!(
-            f,
-            "package residency: {} ({} resident, {} offloaded)",
-            self.packages.residency_policy,
-            self.packages.resident_count,
-            self.packages.offloaded_count,
-        )?;
-        writeln!(f, "def maps: {}", self.def_map)?;
-        writeln!(f, "semantic IR: {}", self.semantic_ir)?;
-        write!(f, "body IR: {}", self.body_ir)
+    pub(super) fn append_document(&self, section: &mut ReportSectionBuilder) {
+        section.untitled();
+        section.fields("summary", |fields| {
+            fields.text("indexing_preference", &self.indexing_preference);
+        });
+        section.fields("packages", |fields| self.packages.append_fields(fields));
+        section.fields("def_map", |fields| {
+            fields.title("def maps");
+            self.def_map.append_fields(fields);
+        });
+        section.fields("semantic_ir", |fields| {
+            fields.title("semantic IR");
+            self.semantic_ir.append_fields(fields);
+        });
+        section.fields("body_ir", |fields| {
+            fields.title("body IR");
+            self.body_ir.append_fields(fields);
+        });
     }
 }
 
@@ -83,13 +84,19 @@ pub(crate) struct DefMapReport {
     pub(crate) unresolved_import_count: usize,
 }
 
-impl fmt::Display for DefMapReport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} targets, {} modules, {} unresolved imports",
-            self.target_count, self.module_count, self.unresolved_import_count,
-        )
+impl DefMapReport {
+    fn append_fields(&self, fields: &mut ReportFieldsBuilder) {
+        fields
+            .count_as("target_count", "targets", self.target_count)
+            .count_as("module_count", "modules", self.module_count)
+            .count_as("local_def_count", "local definitions", self.local_def_count)
+            .count_as("local_impl_count", "local impls", self.local_impl_count)
+            .count_as("import_count", "imports", self.import_count)
+            .count_as(
+                "unresolved_import_count",
+                "unresolved imports",
+                self.unresolved_import_count,
+            );
     }
 }
 
@@ -107,23 +114,24 @@ pub(crate) struct SemanticIrReport {
     pub(crate) static_count: usize,
 }
 
-impl fmt::Display for SemanticIrReport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} targets, {} type defs, {} traits, {} impls, {} functions",
-            self.target_count,
-            self.type_def_count(),
-            self.trait_count,
-            self.impl_count,
-            self.function_count,
-        )
-    }
-}
-
 impl SemanticIrReport {
-    fn type_def_count(&self) -> usize {
-        self.struct_count + self.enum_count + self.union_count
+    fn append_fields(&self, fields: &mut ReportFieldsBuilder) {
+        fields
+            .count_as("target_count", "targets", self.target_count)
+            .count_as(
+                "type_def_count",
+                "type definitions",
+                self.struct_count + self.union_count + self.enum_count,
+            )
+            .count_as("struct_count", "structs", self.struct_count)
+            .count_as("union_count", "unions", self.union_count)
+            .count_as("enum_count", "enums", self.enum_count)
+            .count_as("trait_count", "traits", self.trait_count)
+            .count_as("impl_count", "impls", self.impl_count)
+            .count_as("function_count", "functions", self.function_count)
+            .count_as("type_alias_count", "type aliases", self.type_alias_count)
+            .count_as("const_count", "consts", self.const_count)
+            .count_as("static_count", "statics", self.static_count);
     }
 }
 
@@ -139,16 +147,24 @@ pub(crate) struct BodyIrReport {
     pub(crate) expression_count: usize,
 }
 
-impl fmt::Display for BodyIrReport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} targets ({} built, {} skipped), {} bodies, {} expressions",
-            self.target_count,
-            self.built_target_count,
-            self.skipped_target_count,
-            self.body_count,
-            self.expression_count,
-        )
+impl BodyIrReport {
+    fn append_fields(&self, fields: &mut ReportFieldsBuilder) {
+        fields
+            .count_as("target_count", "targets", self.target_count)
+            .count_as(
+                "built_target_count",
+                "built targets",
+                self.built_target_count,
+            )
+            .count_as(
+                "skipped_target_count",
+                "skipped targets",
+                self.skipped_target_count,
+            )
+            .count_as("body_count", "bodies", self.body_count)
+            .count_as("scope_count", "scopes", self.scope_count)
+            .count_as("binding_count", "bindings", self.binding_count)
+            .count_as("statement_count", "statements", self.statement_count)
+            .count_as("expression_count", "expressions", self.expression_count);
     }
 }
