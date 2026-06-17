@@ -5,11 +5,11 @@ members = [
   "crates/lsp/proto",
   "crates/lsp/engine",
   "crates/engine/workspace",
-  "crates/engine/parser",
-  "crates/engine/syntax",
-  "crates/engine/tt",
+  "crates/vendor/parser",
+  "crates/vendor/syntax",
+  "crates/vendor/tt",
   "crates/engine/cfg-eval",
-  "crates/engine/macro-expand",
+  "crates/vendor/macro-expand",
   "crates/engine/parse",
   "crates/engine/item-tree",
   "crates/engine/ir-model",
@@ -71,7 +71,7 @@ futures = "0.3.32"
 gungraun = "0.18.2"
 itertools = "0.14.0"
 ls_types = { package = "ls-types", version = "0.0.6" }
-parser = { package = "rg_parser", path = "crates/engine/parser" }
+parser = { package = "rg_parser", path = "crates/vendor/parser" }
 proc-macro2 = "1.0.106"
 quote = "1.0.45"
 ra-ap-rustc_lexer = "0.160"
@@ -103,10 +103,10 @@ stdx = { git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217
 edition = { git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca" }
 test-utils = { git = "https://github.com/rust-lang/rust-analyzer", rev = "b8458013c217be4fccefc4e4f194026fa04ab4ca" }
 
-rg_syntax = { path = "crates/engine/syntax" }
-rg_tt = { path = "crates/engine/tt" }
+rg_syntax = { path = "crates/vendor/syntax" }
+rg_tt = { path = "crates/vendor/tt" }
 rg_cfg_eval = { path = "crates/engine/cfg-eval" }
-rg_macro_expand = { path = "crates/engine/macro-expand" }
+rg_macro_expand = { path = "crates/vendor/macro-expand" }
 
 rg_lsp_server = { path = "crates/lsp/server" }
 rg_lsp_proto = { path = "crates/lsp/proto" }
