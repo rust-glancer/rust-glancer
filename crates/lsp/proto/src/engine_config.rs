@@ -23,7 +23,10 @@ impl EngineConfig {
 mod tests {
     use ls_types::LSPAny;
 
-    use crate::{CargoMetadataTarget, IndexingPerformancePreference, PackageResidencyPolicy};
+    use crate::{
+        CargoMetadataTarget, IndexingPerformancePreference, PackageResidencyPolicy,
+        SysrootDiscovery,
+    };
 
     use super::EngineConfig;
 
@@ -52,6 +55,10 @@ mod tests {
                 )]),
             ),
             (
+                "sysroot",
+                object([("discovery", LSPAny::String("disabled".to_string()))]),
+            ),
+            (
                 "diagnostics",
                 object([
                     ("onStartup", LSPAny::Bool(true)),
@@ -74,6 +81,10 @@ mod tests {
         assert_eq!(
             config.analysis.indexing_preference,
             IndexingPerformancePreference::FasterBuilds,
+        );
+        assert_eq!(
+            config.analysis.sysroot_discovery,
+            SysrootDiscovery::Disabled
         );
         assert!(config.diagnostics.on_startup);
         assert_eq!(config.diagnostics.command, "clippy");

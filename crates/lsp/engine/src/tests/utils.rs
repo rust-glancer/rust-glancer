@@ -10,7 +10,8 @@ use ls_types::{
     Range, WorkspaceEdit,
 };
 use rg_lsp_proto::{
-    CompletionClientCapabilities, EngineConfig, EngineService, ServiceNotification,
+    AnalysisConfig, CompletionClientCapabilities, EngineConfig, EngineService, ServiceNotification,
+    SysrootDiscovery,
 };
 use rg_parse::LineIndex;
 use tarpc::context;
@@ -58,10 +59,22 @@ impl LspEngineFixture {
             .initialize(
                 context::current(),
                 self.fixture.path(""),
-                EngineConfig::default(),
+                Self::engine_config(),
             )
             .await
             .expect("fixture LSP engine should initialize");
+    }
+
+    fn engine_config() -> EngineConfig {
+        // These flow tests exercise fixture-local LSP behavior. Real rust-src indexing is covered
+        // by lower-level sysroot tests and would dominate every tiny protocol fixture.
+        EngineConfig {
+            analysis: AnalysisConfig {
+                sysroot_discovery: SysrootDiscovery::Disabled,
+                ..AnalysisConfig::default()
+            },
+            ..EngineConfig::default()
+        }
     }
 
     pub(super) async fn check(&self, queries: &[LspQuery], expect: Expect) {

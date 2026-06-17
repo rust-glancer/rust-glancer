@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 pub struct AnalysisConfig {
     pub package_residency_policy: PackageResidencyPolicy,
     pub cargo_metadata_config: CargoMetadataConfig,
+    #[serde(default)]
+    pub sysroot_discovery: SysrootDiscovery,
     pub indexing_preference: IndexingPerformancePreference,
 }
 
@@ -115,6 +117,34 @@ pub enum CargoMetadataTarget {
     Triple(String),
 }
 
+/// Protocol-level standard-library source discovery requested by an LSP client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+pub enum SysrootDiscovery {
+    #[default]
+    Auto,
+    Disabled,
+}
+
+impl SysrootDiscovery {
+    /// Stable kebab-case name accepted in LSP initialization options.
+    pub fn config_name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Disabled => "disabled",
+        }
+    }
+
+    /// Parses the public names accepted by frontends.
+    pub fn from_config_name(value: &str) -> Option<Self> {
+        let normalized = value.trim().replace('_', "-").to_ascii_lowercase();
+        match normalized.as_str() {
+            "auto" => Some(Self::Auto),
+            "disabled" => Some(Self::Disabled),
+            _ => None,
+        }
+    }
+}
+
 impl AnalysisConfig {
     pub fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
         let default = Self::default();
@@ -140,6 +170,22 @@ impl AnalysisConfig {
             .and_then(LSPAny::as_str)
             .map(|target| CargoMetadataConfig::default().target_triple(target))
             .unwrap_or_else(|| default.cargo_metadata_config.clone());
+        let sysroot_discovery = match options.and_then(LSPAny::as_object).and_then(|options| {
+            options
+                .get("sysroot")
+                .and_then(LSPAny::as_object)
+                .and_then(|sysroot| sysroot.get("discovery"))
+        }) {
+            Some(value) => {
+                let value = value.as_str().ok_or_else(|| {
+                    anyhow::anyhow!("rust-glancer sysroot.discovery must be a string")
+                })?;
+                SysrootDiscovery::from_config_name(value).ok_or_else(|| {
+                    anyhow::anyhow!("rust-glancer sysroot.discovery must be one of: auto, disabled")
+                })?
+            }
+            None => default.sysroot_discovery,
+        };
         let indexing_preference = match options.and_then(LSPAny::as_object).and_then(|options| {
             options
                 .get("indexing")
@@ -162,6 +208,7 @@ impl AnalysisConfig {
         Ok(Self {
             package_residency_policy,
             cargo_metadata_config,
+            sysroot_discovery,
             indexing_preference,
         })
     }
@@ -174,6 +221,7 @@ impl Default for AnalysisConfig {
             // fast initial indexing unless a client explicitly asks to lower peak memory.
             package_residency_policy: PackageResidencyPolicy::WorkspaceAndPathDepsResident,
             cargo_metadata_config: CargoMetadataConfig::default(),
+            sysroot_discovery: SysrootDiscovery::default(),
             indexing_preference: IndexingPerformancePreference::default(),
         }
     }
@@ -185,6 +233,7 @@ mod tests {
 
     use super::{
         AnalysisConfig, CargoMetadataTarget, IndexingPerformancePreference, PackageResidencyPolicy,
+        SysrootDiscovery,
     };
 
     #[test]
@@ -200,6 +249,7 @@ mod tests {
             config.cargo_metadata_config.target(),
             &CargoMetadataTarget::Auto
         );
+        assert_eq!(config.sysroot_discovery, SysrootDiscovery::Auto);
         assert_eq!(
             config.indexing_preference,
             IndexingPerformancePreference::FasterBuilds,
@@ -242,6 +292,19 @@ mod tests {
             config.cargo_metadata_config.target(),
             &CargoMetadataTarget::Triple("x86_64-unknown-linux-gnu".to_string()),
         );
+    }
+
+    #[test]
+    fn parses_sysroot_discovery() {
+        let options = object([(
+            "sysroot",
+            object([("discovery", LSPAny::String("disabled".to_string()))]),
+        )]);
+
+        let config = AnalysisConfig::from_initialization_options(Some(&options))
+            .expect("analysis config should parse");
+
+        assert_eq!(config.sysroot_discovery, SysrootDiscovery::Disabled);
     }
 
     #[test]

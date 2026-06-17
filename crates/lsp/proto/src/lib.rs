@@ -17,7 +17,7 @@ mod service;
 pub use self::{
     analysis_config::{
         AnalysisConfig, CargoMetadataConfig, CargoMetadataTarget, IndexingPerformancePreference,
-        PackageResidencyPolicy,
+        PackageResidencyPolicy, SysrootDiscovery,
     },
     client_capabilities::ClientCapabilities,
     completion::CompletionClientCapabilities,
