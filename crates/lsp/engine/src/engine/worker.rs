@@ -13,6 +13,7 @@ use rg_lsp_proto::{
     AnalysisConfig, CargoMetadataTarget as ProtoCargoMetadataTarget, CompletionClientCapabilities,
     IndexingPerformancePreference as ProtoIndexingPerformancePreference,
     PackageResidencyPolicy as ProtoPackageResidencyPolicy,
+    SysrootDiscovery as ProtoSysrootDiscovery,
 };
 use rg_parse::TextSpan;
 use rg_project::{
@@ -408,7 +409,10 @@ impl EngineWorker {
         let workspace = WorkspaceMetadata::lower(metadata.metadata, metadata.target_cfg)
             .context("while attempting to normalize Cargo metadata")?;
         let workspace_root = workspace.workspace_root().to_path_buf();
-        let sysroot = SysrootSources::discover(workspace.workspace_root());
+        let sysroot = match analysis.sysroot_discovery {
+            ProtoSysrootDiscovery::Auto => SysrootSources::discover(workspace.workspace_root()),
+            ProtoSysrootDiscovery::Disabled => None,
+        };
         match &sysroot {
             Some(sysroot) => {
                 tracing::info!(
