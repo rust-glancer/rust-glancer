@@ -5,20 +5,21 @@
 
 use rg_ir_model::{
     ExprId, ImplRef, ItemOwner, ScopeId,
-    items::{GenericArg as ItemGenericArg, GenericParams, TypeBound, TypeRef, WherePredicate},
+    items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
-use rg_std::ExpectedUnique;
 use rg_ty::{
-    TraitGoal, TraitSelectionQuery, Ty,
+    Ty,
     inference::{InferTy, InferTypeRefProjector, InferTypeSubst},
 };
 
-use crate::resolution::query::TypeRefResolutionQuery;
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
-use super::BodyInferenceCtx;
+use super::{
+    BodyInferenceCtx,
+    trait_obligation::{BodyTraitObligationSolver, SelectedCallObligationInput},
+};
 
 /// Bridges selected call signatures into inference constraints.
 ///
@@ -393,6 +394,9 @@ where
             return Ok(());
         }
 
+        // Stage 1: rebuild the substitution that connects signature names to inference slots.
+        // Return evidence is especially important for `collect::<Vec<_>>()`: it turns `B` into
+        // the already-instantiated destination shape `Vec<?T>`.
         let projection = calls.signature(&target).project(args)?;
         let mut subst = self.type_prefix_impl_infer_subst(
             inference,
@@ -423,107 +427,18 @@ where
             subst.bind_type_ref(&mut inference.table, ret_ty, &return_ty, generics);
         }
 
-        let bound_resolver = self
-            .context
-            .type_refs(TypeRefUseSite::Function(target.function()))
-            .with_subst(projection.subst());
-        for param in &generics.types {
-            let Some(subject_ty) = subst.type_param(param.name.as_str()) else {
-                continue;
-            };
-            for bound in &param.bounds {
-                self.solve_trait_bound_obligation(
-                    inference,
-                    &subst,
-                    &bound_resolver,
-                    subject_ty.clone(),
-                    bound,
-                )?;
-            }
-        }
-
-        for predicate in &generics.where_predicates {
-            let WherePredicate::Type { ty, bounds } = predicate else {
-                continue;
-            };
-            let subject_ty = self.project_obligation_ty(&subst, &bound_resolver, ty)?;
-            for bound in bounds {
-                self.solve_trait_bound_obligation(
-                    inference,
-                    &subst,
-                    &bound_resolver,
-                    subject_ty.clone(),
-                    bound,
-                )?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn project_obligation_ty(
-        &self,
-        subst: &InferTypeSubst,
-        resolver: &TypeRefResolutionQuery<'query, D, I>,
-        ty: &TypeRef,
-    ) -> Result<InferTy, PackageStoreError> {
-        let resolved_ty = resolver.resolve(ty)?;
-        Ok(InferTypeRefProjector::new(subst).ty_from_type_ref(ty, &resolved_ty))
-    }
-
-    fn solve_trait_bound_obligation(
-        &self,
-        inference: &mut BodyInferenceCtx,
-        subst: &InferTypeSubst,
-        resolver: &TypeRefResolutionQuery<'query, D, I>,
-        self_ty: InferTy,
-        bound: &TypeBound,
-    ) -> Result<(), PackageStoreError> {
-        let TypeBound::Trait(bound_ty) = bound else {
-            return Ok(());
-        };
-        let Some((trait_ref, resolved_args)) = resolver.resolve_trait_bound(bound_ty)? else {
-            return Ok(());
-        };
-        let TypeRef::Path(bound_path) = bound_ty else {
-            return Ok(());
-        };
-        let Some(segment) = bound_path.segments.last() else {
-            return Ok(());
-        };
-        if segment.args.len() != resolved_args.len() {
-            return Ok(());
-        }
-
-        let mut projector = InferTypeRefProjector::new(subst);
-        let args = segment
-            .args
-            .iter()
-            .zip(&resolved_args)
-            .map(|(arg, resolved_arg)| projector.generic_arg_from_arg(arg, resolved_arg))
-            .collect();
-        let goal = TraitGoal {
-            self_ty,
-            trait_ref,
-            args,
-        };
-        let selection = match self.context.semantic_index() {
-            Some(index) => TraitSelectionQuery::with_index(
-                self.context.item_paths(),
-                self.context.target_items(),
-                index,
-            )
-            .probe(&goal, &inference.table)?,
-            None => {
-                TraitSelectionQuery::new(self.context.item_paths(), self.context.target_items())
-                    .probe(&goal, &inference.table)?
-            }
-        };
-        if let ExpectedUnique::One(selection) = selection {
-            inference.table = selection.table;
-        }
-
-        Ok(())
+        // Stage 2+: lower selected-call bounds into trait goals and commit only unique solutions.
+        BodyTraitObligationSolver::new(self.context).solve_selected_call(
+            inference,
+            SelectedCallObligationInput {
+                function: target.function(),
+                owner: function_data.owner,
+                generics,
+                subst: &subst,
+                signature_subst: projection.subst(),
+                selected_self_ty: projection.selected_self_ty(),
+            },
+        )
     }
 
     /// Bind impl generics from the selected receiver slot: `impl<T> Vec<T>` + `Vec<?T>`.

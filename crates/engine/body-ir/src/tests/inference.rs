@@ -317,6 +317,218 @@ pub fn use_it(iter: Iter<User>) {
 }
 
 #[test]
+fn solves_selected_trait_method_obligation_from_associated_type() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_trait_method_associated_obligation"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub struct Vec<T> {
+    value: T,
+}
+
+pub trait FromIterator<A> {}
+
+pub trait Iterator {
+    type Item;
+
+    fn collect<B>(self) -> B
+    where
+        B: FromIterator<Self::Item>;
+}
+
+pub struct Iter<T> {
+    value: T,
+}
+
+impl<T> Iterator for Iter<T> {
+    type Item = T;
+}
+
+impl<T> FromIterator<T> for Vec<T> {}
+
+pub fn use_it(iter: Iter<User>) {
+    let collected = iter.collect::<Vec<_>>();
+    collected;
+}
+"#,
+        expect![[r#"
+            package body_trait_method_associated_obligation
+
+            body_trait_method_associated_obligation [lib]
+            body b0 fn body_trait_method_associated_obligation[lib]::crate::use_it @ 27:1-30:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1
+            bindings
+            - v0 param iter `iter`: Iter<User> => nominal struct body_trait_method_associated_obligation[lib]::crate::Iter<nominal struct body_trait_method_associated_obligation[lib]::crate::User> @ 27:15-27:19
+            - v1 let collected `collected` => nominal struct body_trait_method_associated_obligation[lib]::crate::Vec<nominal struct body_trait_method_associated_obligation[lib]::crate::User> @ 28:9-28:18
+            body
+            expr e3 block s1 => () @ 27:33-30:2
+              stmt s0 let v1 @ 28:5-28:46
+                initializer
+                  expr e1 method_call collect<Vec<_>> -> fn trait body_trait_method_associated_obligation[lib]::crate::Iterator::collect => nominal struct body_trait_method_associated_obligation[lib]::crate::Vec<nominal struct body_trait_method_associated_obligation[lib]::crate::User> @ 28:21-28:45
+                    receiver
+                      expr e0 path iter -> local v0 => nominal struct body_trait_method_associated_obligation[lib]::crate::Iter<nominal struct body_trait_method_associated_obligation[lib]::crate::User> @ 28:21-28:25
+              stmt s1 expr; @ 29:5-29:15
+                expr e2 path collected -> local v1 => nominal struct body_trait_method_associated_obligation[lib]::crate::Vec<nominal struct body_trait_method_associated_obligation[lib]::crate::User> @ 29:5-29:14
+        "#]],
+    );
+}
+
+#[test]
+fn solves_iter_collect_through_selected_trait_method_obligation() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "storage", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait FromIterator<A> {}
+
+    pub trait Iterator {
+        type Item;
+
+        fn collect<B>(self) -> B
+        where
+            B: FromIterator<Self::Item>;
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+pub struct Vec<T> {
+    value: T,
+}
+
+impl<T> iter::FromIterator<T> for Vec<T> {}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use core::Vec;
+use storage::DefMap;
+
+pub fn use_it(def_map: &DefMap) {
+    let imports = def_map.imports().iter().collect::<Vec<_>>();
+    imports;
+}
+"#,
+        expect![[r#"
+            package app
+
+            app [lib]
+            body b0 fn app[lib]::crate::use_it @ 4:1-7:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1
+            bindings
+            - v0 param def_map `def_map`: &DefMap => &nominal struct storage[lib]::crate::DefMap @ 4:15-4:22
+            - v1 let imports `imports` => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 5:9-5:16
+            body
+            expr e5 block s1 => () @ 4:33-7:2
+              stmt s0 let v1 @ 5:5-5:64
+                initializer
+                  expr e3 method_call collect<Vec<_>> -> fn trait fake_core[lib]::crate::iter::Iterator::collect => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 5:19-5:63
+                    receiver
+                      expr e2 method_call iter -> fn impl [T]::iter => nominal struct fake_core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData> @ 5:19-5:43
+                        receiver
+                          expr e1 method_call imports -> fn impl DefMap::imports => &[nominal struct storage[lib]::crate::ImportData] @ 5:19-5:36
+                            receiver
+                              expr e0 path def_map -> local v0 => &nominal struct storage[lib]::crate::DefMap @ 5:19-5:26
+              stmt s1 expr; @ 6:5-6:13
+                expr e4 path imports -> local v1 => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 6:5-6:12
+
+
+            package fake_core
+
+            fake_core [lib]
+            body b0 fn impl [T]::iter @ 24:5-26:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `&self` => <unknown> @ 24:17-24:22
+            body
+            expr e2 block s1 => <unknown> @ 24:46-26:6
+              tail
+                expr e1 call => <unknown> @ 25:9-25:18
+                  callee
+                    expr e0 path missing => <unknown> @ 25:9-25:16
+
+
+            package storage
+
+            storage [lib]
+            body b0 fn impl DefMap::imports @ 6:5-8:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `&self` => &Self struct storage[lib]::crate::DefMap @ 6:20-6:25
+            body
+            expr e2 block s1 => <unknown> @ 6:44-8:6
+              tail
+                expr e1 call => <unknown> @ 7:9-7:18
+                  callee
+                    expr e0 path missing => <unknown> @ 7:9-7:16
+        "#]],
+    );
+}
+
+#[test]
 fn ignores_never_branches_when_inferring_common_result() {
     check_project_body_ir(
         r#"
