@@ -47,6 +47,11 @@ impl InferTypeSubst {
         Ok(())
     }
 
+    /// Return the visible inference binding for a type parameter.
+    pub fn type_param(&self, name: &str) -> Option<InferTy> {
+        self.get(name).cloned()
+    }
+
     /// Let function generics hide same-named impl generics while staying inferable.
     pub fn shadow_type_params(&mut self, table: &mut InferenceTable, generics: &GenericParams) {
         for param in &generics.types {
@@ -236,6 +241,15 @@ impl<'subst> InferTypeRefProjector<'subst> {
     /// Example: `Option<T>` with `T = ?T` and resolved `Option<unknown>` becomes `Option<?T>`.
     pub fn ty_from_type_ref(&mut self, pattern: &TypeRef, resolved_ty: &Ty) -> InferTy {
         self.project_ty(pattern, resolved_ty)
+    }
+
+    /// Resolve a generic arg shape while preserving substituted inference vars.
+    pub fn generic_arg_from_arg(
+        &mut self,
+        pattern: &ItemGenericArg,
+        resolved_arg: &crate::GenericArg,
+    ) -> InferGenericArg {
+        self.project_generic_arg(pattern, resolved_arg)
     }
 }
 

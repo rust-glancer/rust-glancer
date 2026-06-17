@@ -140,6 +140,183 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn solves_selected_call_trait_obligation_from_explicit_return_type() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_selected_call_trait_obligation"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub struct Vec<T> {
+    value: T,
+}
+
+pub trait FromIterator<A> {}
+
+pub struct Iter<T> {
+    value: T,
+}
+
+impl<T> Iter<T> {
+    pub fn collect<B>(self) -> B
+    where
+        B: FromIterator<T>,
+    {
+        missing()
+    }
+}
+
+impl<T> FromIterator<T> for Vec<T> {}
+
+pub fn missing<T>() -> T {}
+
+pub fn use_it(iter: Iter<User>) {
+    let collected = iter.collect::<Vec<_>>();
+    collected;
+}
+"#,
+        expect![[r#"
+            package body_selected_call_trait_obligation
+
+            body_selected_call_trait_obligation [lib]
+            body b0 fn body_selected_call_trait_obligation[lib]::crate::missing @ 24:1-24:28
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e0 block s1 => () @ 24:26-24:28
+
+
+            body b1 fn body_selected_call_trait_obligation[lib]::crate::use_it @ 26:1-29:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1
+            bindings
+            - v0 param iter `iter`: Iter<User> => nominal struct body_selected_call_trait_obligation[lib]::crate::Iter<nominal struct body_selected_call_trait_obligation[lib]::crate::User> @ 26:15-26:19
+            - v1 let collected `collected` => nominal struct body_selected_call_trait_obligation[lib]::crate::Vec<nominal struct body_selected_call_trait_obligation[lib]::crate::User> @ 27:9-27:18
+            body
+            expr e3 block s1 => () @ 26:33-29:2
+              stmt s0 let v1 @ 27:5-27:46
+                initializer
+                  expr e1 method_call collect<Vec<_>> -> fn impl Iter<T>::collect => nominal struct body_selected_call_trait_obligation[lib]::crate::Vec<nominal struct body_selected_call_trait_obligation[lib]::crate::User> @ 27:21-27:45
+                    receiver
+                      expr e0 path iter -> local v0 => nominal struct body_selected_call_trait_obligation[lib]::crate::Iter<nominal struct body_selected_call_trait_obligation[lib]::crate::User> @ 27:21-27:25
+              stmt s1 expr; @ 28:5-28:15
+                expr e2 path collected -> local v1 => nominal struct body_selected_call_trait_obligation[lib]::crate::Vec<nominal struct body_selected_call_trait_obligation[lib]::crate::User> @ 28:5-28:14
+
+
+            body b2 fn impl Iter<T>::collect @ 14:5-19:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `self` => Self struct body_selected_call_trait_obligation[lib]::crate::Iter<syntax T> @ 14:23-14:27
+            body
+            expr e2 block s1 => <unknown> @ 17:5-19:6
+              tail
+                expr e1 call => <unknown> @ 18:9-18:18
+                  callee
+                    expr e0 path missing -> item fn body_selected_call_trait_obligation[lib]::crate::missing => <unknown> @ 18:9-18:16
+        "#]],
+    );
+}
+
+#[test]
+fn ambiguous_selected_call_trait_obligations_do_not_guess() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_ambiguous_selected_call_trait_obligation"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub struct Vec<T> {
+    value: T,
+}
+
+pub trait FromIterator<A> {}
+
+pub struct Iter<T> {
+    value: T,
+}
+
+impl<T> Iter<T> {
+    pub fn collect<B>(self) -> B
+    where
+        B: FromIterator<T>,
+    {
+        missing()
+    }
+}
+
+impl<T> FromIterator<T> for Vec<T> {}
+impl FromIterator<User> for Vec<User> {}
+
+pub fn missing<T>() -> T {}
+
+pub fn use_it(iter: Iter<User>) {
+    let collected = iter.collect::<Vec<_>>();
+    collected;
+}
+"#,
+        expect![[r#"
+            package body_ambiguous_selected_call_trait_obligation
+
+            body_ambiguous_selected_call_trait_obligation [lib]
+            body b0 fn body_ambiguous_selected_call_trait_obligation[lib]::crate::missing @ 25:1-25:28
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e0 block s1 => () @ 25:26-25:28
+
+
+            body b1 fn body_ambiguous_selected_call_trait_obligation[lib]::crate::use_it @ 27:1-30:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1
+            bindings
+            - v0 param iter `iter`: Iter<User> => nominal struct body_ambiguous_selected_call_trait_obligation[lib]::crate::Iter<nominal struct body_ambiguous_selected_call_trait_obligation[lib]::crate::User> @ 27:15-27:19
+            - v1 let collected `collected` => nominal struct body_ambiguous_selected_call_trait_obligation[lib]::crate::Vec<<unknown>> @ 28:9-28:18
+            body
+            expr e3 block s1 => () @ 27:33-30:2
+              stmt s0 let v1 @ 28:5-28:46
+                initializer
+                  expr e1 method_call collect<Vec<_>> -> fn impl Iter<T>::collect => nominal struct body_ambiguous_selected_call_trait_obligation[lib]::crate::Vec<<unknown>> @ 28:21-28:45
+                    receiver
+                      expr e0 path iter -> local v0 => nominal struct body_ambiguous_selected_call_trait_obligation[lib]::crate::Iter<nominal struct body_ambiguous_selected_call_trait_obligation[lib]::crate::User> @ 28:21-28:25
+              stmt s1 expr; @ 29:5-29:15
+                expr e2 path collected -> local v1 => nominal struct body_ambiguous_selected_call_trait_obligation[lib]::crate::Vec<<unknown>> @ 29:5-29:14
+
+
+            body b2 fn impl Iter<T>::collect @ 14:5-19:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `self` => Self struct body_ambiguous_selected_call_trait_obligation[lib]::crate::Iter<syntax T> @ 14:23-14:27
+            body
+            expr e2 block s1 => <unknown> @ 17:5-19:6
+              tail
+                expr e1 call => <unknown> @ 18:9-18:18
+                  callee
+                    expr e0 path missing -> item fn body_ambiguous_selected_call_trait_obligation[lib]::crate::missing => <unknown> @ 18:9-18:16
+        "#]],
+    );
+}
+
+#[test]
 fn ignores_never_branches_when_inferring_common_result() {
     check_project_body_ir(
         r#"

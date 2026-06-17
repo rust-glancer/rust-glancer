@@ -238,6 +238,7 @@ pub(crate) struct CallProjection {
     function_generics: Option<GenericParams>,
     explicit_args: Vec<ItemGenericArg>,
     selected_self_ty: Option<Ty>,
+    subst: TypeSubst,
 }
 
 impl CallProjection {
@@ -249,6 +250,7 @@ impl CallProjection {
             function_generics: None,
             explicit_args: explicit_args.to_vec(),
             selected_self_ty: None,
+            subst: TypeSubst::new(),
         }
     }
 
@@ -280,6 +282,11 @@ impl CallProjection {
     /// Return the `Self` type that selected this associated function or method.
     pub(crate) fn selected_self_ty(&self) -> Option<&Ty> {
         self.selected_self_ty.as_ref()
+    }
+
+    /// Return the call-specific substitution used to project signature types.
+    pub(crate) fn subst(&self) -> &TypeSubst {
+        &self.subst
     }
 }
 
@@ -576,6 +583,7 @@ where
             function_generics: generics.cloned(),
             explicit_args: self.target.explicit_args().to_vec(),
             selected_self_ty: self.target.self_source.self_ty(),
+            subst: return_subst,
         })
     }
 

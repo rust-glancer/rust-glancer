@@ -5,15 +5,17 @@
 
 use rg_ir_model::{
     ExprId, ImplRef, ItemOwner, ScopeId,
-    items::{GenericArg as ItemGenericArg, GenericParams, TypeRef},
+    items::{GenericArg as ItemGenericArg, GenericParams, TypeBound, TypeRef, WherePredicate},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
+use rg_std::ExpectedUnique;
 use rg_ty::{
-    Ty,
+    TraitGoal, TraitSelectionQuery, Ty,
     inference::{InferTy, InferTypeRefProjector, InferTypeSubst},
 };
 
+use crate::resolution::query::TypeRefResolutionQuery;
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
 use super::BodyInferenceCtx;
@@ -354,6 +356,171 @@ where
             };
             let expected_ty = projector.ty_from_type_ref(param_ty, resolved_ty);
             inference.constrain_expr_infer_ty(*arg, &expected_ty);
+        }
+
+        Ok(())
+    }
+
+    /// Solve shallow trait bounds on already-selected generic calls.
+    ///
+    /// Example: `collect::<Vec<_>>()` produces `B = Vec<?T>` from the return type and then solves
+    /// the selected function bound `B: FromIterator<Item>` through visible impls.
+    pub(crate) fn solve_generic_trait_obligations(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        call: ExprId,
+        args: &[ExprId],
+        receiver: Option<ExprId>,
+    ) -> Result<(), PackageStoreError> {
+        let calls = self.context.calls();
+        let Some(target) = calls.target(call)? else {
+            return Ok(());
+        };
+        let Some(function_data) = self
+            .context
+            .item_query()
+            .function_data(target.function())?
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let Some(generics) = function_data.signature.generics() else {
+            return Ok(());
+        };
+        if generics.types.iter().all(|param| param.bounds.is_empty())
+            && generics.where_predicates.is_empty()
+        {
+            return Ok(());
+        }
+
+        let projection = calls.signature(&target).project(args)?;
+        let mut subst = self.type_prefix_impl_infer_subst(
+            inference,
+            call,
+            target.has_type_prefix_self_source(),
+            target.function().origin,
+            &function_data.owner,
+            function_data.signature.ret_ty(),
+        )?;
+        if let Some(receiver) = receiver {
+            subst = self.receiver_infer_subst(
+                inference,
+                target.function().origin,
+                &function_data.owner,
+                receiver,
+            )?;
+        }
+        self.apply_function_generic_shadows(
+            inference,
+            &mut subst,
+            Some(generics),
+            target.explicit_args(),
+            self.context.body().expr_unchecked(call).scope,
+        )?;
+
+        if let Some(ret_ty) = function_data.signature.ret_ty() {
+            let return_ty = inference.expr_ty(call);
+            subst.bind_type_ref(&mut inference.table, ret_ty, &return_ty, generics);
+        }
+
+        let bound_resolver = self
+            .context
+            .type_refs(TypeRefUseSite::Function(target.function()))
+            .with_subst(projection.subst());
+        for param in &generics.types {
+            let Some(subject_ty) = subst.type_param(param.name.as_str()) else {
+                continue;
+            };
+            for bound in &param.bounds {
+                self.solve_trait_bound_obligation(
+                    inference,
+                    &subst,
+                    &bound_resolver,
+                    subject_ty.clone(),
+                    bound,
+                )?;
+            }
+        }
+
+        for predicate in &generics.where_predicates {
+            let WherePredicate::Type { ty, bounds } = predicate else {
+                continue;
+            };
+            let subject_ty = self.project_obligation_ty(&subst, &bound_resolver, ty)?;
+            for bound in bounds {
+                self.solve_trait_bound_obligation(
+                    inference,
+                    &subst,
+                    &bound_resolver,
+                    subject_ty.clone(),
+                    bound,
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn project_obligation_ty(
+        &self,
+        subst: &InferTypeSubst,
+        resolver: &TypeRefResolutionQuery<'query, D, I>,
+        ty: &TypeRef,
+    ) -> Result<InferTy, PackageStoreError> {
+        let resolved_ty = resolver.resolve(ty)?;
+        Ok(InferTypeRefProjector::new(subst).ty_from_type_ref(ty, &resolved_ty))
+    }
+
+    fn solve_trait_bound_obligation(
+        &self,
+        inference: &mut BodyInferenceCtx,
+        subst: &InferTypeSubst,
+        resolver: &TypeRefResolutionQuery<'query, D, I>,
+        self_ty: InferTy,
+        bound: &TypeBound,
+    ) -> Result<(), PackageStoreError> {
+        let TypeBound::Trait(bound_ty) = bound else {
+            return Ok(());
+        };
+        let Some((trait_ref, resolved_args)) = resolver.resolve_trait_bound(bound_ty)? else {
+            return Ok(());
+        };
+        let TypeRef::Path(bound_path) = bound_ty else {
+            return Ok(());
+        };
+        let Some(segment) = bound_path.segments.last() else {
+            return Ok(());
+        };
+        if segment.args.len() != resolved_args.len() {
+            return Ok(());
+        }
+
+        let mut projector = InferTypeRefProjector::new(subst);
+        let args = segment
+            .args
+            .iter()
+            .zip(&resolved_args)
+            .map(|(arg, resolved_arg)| projector.generic_arg_from_arg(arg, resolved_arg))
+            .collect();
+        let goal = TraitGoal {
+            self_ty,
+            trait_ref,
+            args,
+        };
+        let selection = match self.context.semantic_index() {
+            Some(index) => TraitSelectionQuery::with_index(
+                self.context.item_paths(),
+                self.context.target_items(),
+                index,
+            )
+            .probe(&goal, &inference.table)?,
+            None => {
+                TraitSelectionQuery::new(self.context.item_paths(), self.context.target_items())
+                    .probe(&goal, &inference.table)?
+            }
+        };
+        if let ExpectedUnique::One(selection) = selection {
+            inference.table = selection.table;
         }
 
         Ok(())
