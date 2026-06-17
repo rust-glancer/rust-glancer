@@ -14,7 +14,7 @@ use rg_ir_view::testonly::ViewFixture;
 use rg_parse::{FileId, ParseDb, Span};
 use rg_semantic_ir::testonly::SemanticIrFixture;
 use rg_ty::{GenericArg, NominalTy, OpaqueTraitBound, Ty};
-use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
+use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, FixtureMarkers, fixture_crate, fixture_crate_with_markers};
 
 pub(super) fn check_analysis_queries(fixture: &str, queries: &[AnalysisQuery], expect: Expect) {
@@ -33,9 +33,10 @@ pub(super) fn check_analysis_queries_with_sysroot(
     let (fixture, markers) = fixture_crate_with_markers(fixture);
     let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
         .expect("fixture sysroot should be complete");
-    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-        .expect("fixture workspace metadata should build")
-        .with_sysroot_sources(Some(sysroot));
+    let workspace =
+        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+            .expect("fixture workspace metadata should build")
+            .with_sysroot_sources(Some(sysroot));
     let db = AnalysisFixtureDb::build_from_crate_with_workspace(fixture, workspace);
     let renderer = AnalysisQuerySnapshot::new(&db, markers, queries);
     let actual = format!("{}\n", renderer.render().trim_end());
@@ -302,8 +303,9 @@ struct AnalysisFixtureDb {
 
 impl AnalysisFixtureDb {
     fn build_from_crate(fixture: CrateFixture) -> Self {
-        let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-            .expect("fixture workspace metadata should build");
+        let workspace =
+            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+                .expect("fixture workspace metadata should build");
         Self::build_from_crate_with_workspace(fixture, workspace)
     }
 

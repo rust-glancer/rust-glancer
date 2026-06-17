@@ -12,7 +12,9 @@ use rg_project::{
     BuildProcessMemory, BuildProfileStage, IndexingPerformancePreference, PackageResidencyPolicy,
     Project, StartupCacheLoad,
 };
-use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
+use rg_workspace::{
+    CargoMetadataConfig, SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata,
+};
 
 mod data;
 mod report;
@@ -164,8 +166,12 @@ pub(crate) fn analyze(
     let metadata_elapsed = metadata_started.elapsed();
 
     let workspace_started = Instant::now();
-    let workspace = WorkspaceMetadata::lower(metadata.metadata, metadata.target_cfg)
-        .context("while attempting to normalize Cargo metadata")?;
+    let workspace = WorkspaceMetadata::lower(
+        metadata.metadata,
+        metadata.target_cfg,
+        WorkspaceLoweringConfig::default(),
+    )
+    .context("while attempting to normalize Cargo metadata")?;
     let workspace_elapsed = workspace_started.elapsed();
 
     let sysroot_started = Instant::now();

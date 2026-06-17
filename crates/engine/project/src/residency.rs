@@ -143,7 +143,7 @@ mod tests {
 
     use super::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy};
     use rg_def_map::PackageSlot;
-    use rg_workspace::WorkspaceMetadata;
+    use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 
     #[test]
     fn classifies_package_residency_by_policy() {
@@ -196,7 +196,7 @@ pub struct Transitive;
         let mut metadata = fixture.metadata();
         mark_package_as_registry(&mut metadata, "direct");
         mark_package_as_registry(&mut metadata, "transitive");
-        let workspace = WorkspaceMetadata::for_tests(metadata)
+        let workspace = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
             .expect("fixture workspace metadata should normalize");
 
         let app = package_slot(&workspace, "app");

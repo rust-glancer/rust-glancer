@@ -7,7 +7,7 @@ use test_fixture::fixture_crate;
 
 use crate::{
     CargoMetadataConfig, CargoMetadataTarget, PackageSource, RustcTarget, SysrootSources,
-    TargetKind, WorkspaceMetadata, WorkspaceMetadataError,
+    TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata, WorkspaceMetadataError,
 };
 
 #[test]
@@ -187,8 +187,8 @@ fn main() {}
     fs::remove_file(fixture.path("examples/demo.rs"))
         .expect("fixture example file should be removable after metadata is loaded");
 
-    let workspace =
-        WorkspaceMetadata::for_tests(metadata).expect("missing optional target should normalize");
+    let workspace = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
+        .expect("missing optional target should normalize");
     let package = workspace
         .workspace_packages()
         .find(|package| package.name == "missing_target_fixture")
@@ -247,8 +247,8 @@ fn main() {}
     fs::remove_file(fixture.path("dep/examples/demo.rs"))
         .expect("fixture dependency example file should be removable after metadata is loaded");
 
-    let workspace =
-        WorkspaceMetadata::for_tests(metadata).expect("missing dependency target should normalize");
+    let workspace = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
+        .expect("missing dependency target should normalize");
     let package = workspace
         .packages()
         .iter()
@@ -314,8 +314,8 @@ pub struct Lib;
             repr: source.to_string(),
         });
 
-        let workspace =
-            WorkspaceMetadata::for_tests(metadata).expect("known package source should normalize");
+        let workspace = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
+            .expect("known package source should normalize");
         assert_eq!(
             workspace.packages()[0].source,
             expected_source,
@@ -344,8 +344,8 @@ pub struct Lib;
         repr: "mystery+https://example.com".to_string(),
     });
 
-    let error =
-        WorkspaceMetadata::for_tests(metadata).expect_err("unknown source should be rejected");
+    let error = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
+        .expect_err("unknown source should be rejected");
 
     assert!(
         matches!(
@@ -464,9 +464,10 @@ pub mod marker {
     );
     let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
         .expect("fixture sysroot should be complete");
-    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-        .expect("fixture workspace metadata should build")
-        .with_sysroot_sources(Some(sysroot));
+    let workspace =
+        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+            .expect("fixture workspace metadata should build")
+            .with_sysroot_sources(Some(sysroot));
     let app = workspace
         .packages()
         .iter()
@@ -493,6 +494,58 @@ pub mod marker {
             "sysroot package `{name}` should use target cfg without package features",
         );
     }
+}
+
+#[test]
+fn cfg_test_applies_to_workspace_packages_only() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "vendor/dep" }
+
+//- /src/lib.rs
+pub struct App;
+
+//- /vendor/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /vendor/dep/src/lib.rs
+pub struct Dep;
+"#,
+    );
+    let workspace = WorkspaceMetadata::for_tests(
+        fixture.metadata(),
+        WorkspaceLoweringConfig::default().cfg_test(true),
+    )
+    .expect("fixture workspace metadata should build");
+    let app = workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == "app")
+        .expect("fixture app package should exist");
+    let dep = workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == "dep")
+        .expect("fixture dep package should exist");
+
+    assert!(
+        app.cfg_options.contains_atom("test"),
+        "workspace packages should receive the requested cfg(test) atom",
+    );
+    assert!(
+        !dep.cfg_options.contains_atom("test"),
+        "dependency packages should not inherit workspace cfg(test) analysis mode",
+    );
 }
 
 #[test]
@@ -547,8 +600,9 @@ edition = "2024"
 pub struct Independent;
 "#,
     );
-    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-        .expect("fixture workspace metadata should build");
+    let workspace =
+        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+            .expect("fixture workspace metadata should build");
     let dep_id = workspace
         .packages()
         .iter()
@@ -597,8 +651,9 @@ edition = "2024"
 pub struct Dep;
 "#,
     );
-    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-        .expect("fixture workspace metadata should build");
+    let workspace =
+        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+            .expect("fixture workspace metadata should build");
 
     let app_api = fixture
         .path("crates/app/src")

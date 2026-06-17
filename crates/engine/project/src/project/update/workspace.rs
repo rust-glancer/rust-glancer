@@ -22,14 +22,19 @@ pub(super) fn rebuild_workspace_graph(
         .workspace_root()
         .join("Cargo.toml");
     let sysroot = project.state.workspace().sysroot_sources();
+    let workspace_lowering_config = project.state.workspace_lowering_config;
     let cargo_metadata_config = project.state.cargo_metadata_config.clone();
     let memory_hooks = Arc::clone(&project.state.memory_hooks);
     let loaded = cargo_metadata_config
         .load_metadata_with_target_cfg(&manifest_path)
         .with_context(|| format!("while attempting to load {}", manifest_path.display()))?;
-    let workspace = WorkspaceMetadata::lower(loaded.metadata, loaded.target_cfg)
-        .context("while attempting to normalize Cargo metadata")?
-        .with_sysroot_sources(sysroot);
+    let workspace = WorkspaceMetadata::lower(
+        loaded.metadata,
+        loaded.target_cfg,
+        workspace_lowering_config,
+    )
+    .context("while attempting to normalize Cargo metadata")?
+    .with_sysroot_sources(sysroot);
     let body_ir_policy = project.state.body_ir_policy;
     let indexing_preference = project.state.indexing_preference;
     let package_residency_policy = project.state.package_residency_policy;
@@ -38,6 +43,7 @@ pub(super) fn rebuild_workspace_graph(
     // from scratch keeps every phase on one slot-stable snapshot instead of trying to partially
     // reuse state whose internal ids may no longer describe the refreshed metadata graph.
     project.state = Project::builder(workspace)
+        .workspace_lowering_config(workspace_lowering_config)
         .cargo_metadata_config(cargo_metadata_config)
         .body_ir_policy(body_ir_policy)
         .indexing_preference(indexing_preference)

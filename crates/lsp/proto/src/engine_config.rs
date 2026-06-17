@@ -51,6 +51,7 @@ mod tests {
                     LSPAny::String("faster-builds".to_string()),
                 )]),
             ),
+            ("cfg", object([("test", LSPAny::Bool(true))])),
             (
                 "diagnostics",
                 object([
@@ -75,6 +76,7 @@ mod tests {
             config.analysis.indexing_preference,
             IndexingPerformancePreference::FasterBuilds,
         );
+        assert!(config.analysis.cfg.test);
         assert!(config.diagnostics.on_startup);
         assert_eq!(config.diagnostics.command, "clippy");
     }

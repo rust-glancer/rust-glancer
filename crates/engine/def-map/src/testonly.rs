@@ -2,7 +2,7 @@ use rg_ir_model::TargetRef;
 use rg_ir_storage::DefMap;
 use rg_item_tree::{ItemTreeDb, testonly::ItemTreeFixture};
 use rg_parse::{Package, ParseDb, Target};
-use rg_workspace::{SysrootSources, TargetKind, WorkspaceMetadata};
+use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{DefMapDb, DefMapFinalizationStats, PackageSlot};
@@ -16,7 +16,15 @@ pub struct DefMapFixture {
 impl DefMapFixture {
     pub fn build(fixture: &str) -> Self {
         let fixture = fixture_crate(fixture);
-        let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
+        let workspace =
+            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+                .expect("fixture workspace metadata should build");
+        Self::build_from_crate(fixture, workspace)
+    }
+
+    pub fn build_with_workspace_config(fixture: &str, config: WorkspaceLoweringConfig) -> Self {
+        let fixture = fixture_crate(fixture);
+        let workspace = WorkspaceMetadata::for_tests(fixture.metadata(), config)
             .expect("fixture workspace metadata should build");
         Self::build_from_crate(fixture, workspace)
     }
@@ -25,16 +33,18 @@ impl DefMapFixture {
         let fixture = fixture_crate(fixture);
         let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
             .expect("fixture sysroot should be complete");
-        let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-            .expect("fixture workspace metadata should build")
-            .with_sysroot_sources(Some(sysroot));
+        let workspace =
+            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+                .expect("fixture workspace metadata should build")
+                .with_sysroot_sources(Some(sysroot));
         Self::build_from_crate(fixture, workspace)
     }
 
     pub fn build_with_finalization_stats(fixture: &str) -> (Self, DefMapFinalizationStats) {
         let fixture = fixture_crate(fixture);
-        let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-            .expect("fixture workspace metadata should build");
+        let workspace =
+            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+                .expect("fixture workspace metadata should build");
         let mut stats = DefMapFinalizationStats::default();
         let db =
             Self::build_from_crate_with_finalization_stats(fixture, workspace, Some(&mut stats));

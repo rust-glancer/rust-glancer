@@ -20,10 +20,15 @@ export interface ExtensionConfig {
   readonly serverPath: string | undefined;
   readonly extraEnv: Record<string, string>;
   readonly purgeMemoryAfterBuild: boolean;
+  readonly cfg: CfgConfig;
   readonly indexing: IndexingConfig;
   readonly cargo: CargoConfig;
   readonly cache: CacheConfig;
   readonly diagnostics: DiagnosticsConfig;
+}
+
+export interface CfgConfig {
+  readonly test: boolean;
 }
 
 export interface IndexingConfig {
@@ -51,6 +56,7 @@ export namespace ExtensionConfig {
     const serverPath = config.get<string | null>("server.path", null);
     const extraEnv = config.get<Record<string, unknown>>("server.extraEnv", {});
     const purgeMemoryAfterBuild = config.get<boolean>("server.purgeMemoryAfterBuild", true);
+    const cfgTest = config.get<boolean>("cfg.test", false);
     const indexingPerformancePreference = config.get<IndexingPerformancePreferenceSetting>(
       "indexing.performancePreference",
       "faster-builds",
@@ -72,6 +78,9 @@ export namespace ExtensionConfig {
       serverPath: normalizeOptionalString(serverPath),
       extraEnv: normalizeStringRecord(extraEnv),
       purgeMemoryAfterBuild,
+      cfg: {
+        test: cfgTest,
+      },
       indexing: {
         performancePreference: indexingPerformancePreference,
       },

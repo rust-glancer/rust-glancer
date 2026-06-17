@@ -9,7 +9,7 @@ use rg_ir_storage::{DefMap, ImportData, ImportKind, ResolvePathResult, ScopeBind
 use rg_item_tree::VisibilityLevel;
 use rg_package_store::PackageLoader;
 use rg_parse::{FileId, Package, ParseDb, Target};
-use rg_workspace::TargetKind;
+use rg_workspace::{TargetKind, WorkspaceLoweringConfig};
 
 pub(super) fn check_project_def_map(fixture: &str, expect: Expect) {
     let db = DefMapFixtureDb::build(fixture);
@@ -83,6 +83,15 @@ impl DefMapFixtureDb {
     pub(super) fn build(fixture: &str) -> Self {
         Self {
             fixture: DefMapFixture::build(fixture),
+        }
+    }
+
+    pub(super) fn build_with_workspace_config(
+        fixture: &str,
+        config: WorkspaceLoweringConfig,
+    ) -> Self {
+        Self {
+            fixture: DefMapFixture::build_with_workspace_config(fixture, config),
         }
     }
 

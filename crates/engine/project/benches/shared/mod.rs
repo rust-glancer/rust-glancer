@@ -13,7 +13,7 @@ use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
 use rg_semantic_ir::SemanticIrDb;
 use rg_text::PackageNameInterners;
-use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
+use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 static CARGO_FETCH_LOCK: OnceLock<Mutex<HashSet<BenchTarget>>> = OnceLock::new();
 
@@ -227,8 +227,12 @@ impl BenchFixture {
         let loaded = CargoMetadataConfig::default()
             .load_metadata_with_target_cfg(target.manifest_path())
             .unwrap_or_else(|error| panic!("{target} Cargo metadata should load: {error}"));
-        let workspace = WorkspaceMetadata::lower(loaded.metadata, loaded.target_cfg)
-            .unwrap_or_else(|error| panic!("{target} workspace metadata should lower: {error}"));
+        let workspace = WorkspaceMetadata::lower(
+            loaded.metadata,
+            loaded.target_cfg,
+            WorkspaceLoweringConfig::default(),
+        )
+        .unwrap_or_else(|error| panic!("{target} workspace metadata should lower: {error}"));
         let parse = ParseDb::build(&workspace)
             .unwrap_or_else(|error| panic!("{target} parse db should build: {error}"));
         let source_files = count_source_files(&parse);

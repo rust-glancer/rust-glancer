@@ -7,6 +7,13 @@ pub struct AnalysisConfig {
     pub package_residency_policy: PackageResidencyPolicy,
     pub cargo_metadata_config: CargoMetadataConfig,
     pub indexing_preference: IndexingPerformancePreference,
+    pub cfg: AnalysisCfgConfig,
+}
+
+/// Protocol-level cfg atoms requested by an LSP client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct AnalysisCfgConfig {
+    pub test: bool,
 }
 
 /// Protocol-level cache residency policy requested by an LSP client.
@@ -118,6 +125,7 @@ pub enum CargoMetadataTarget {
 impl AnalysisConfig {
     pub fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
         let default = Self::default();
+        let cfg = AnalysisCfgConfig::from_initialization_options(options)?;
         let package_residency_policy = options
             .and_then(LSPAny::as_object)
             .and_then(|options| {
@@ -163,7 +171,29 @@ impl AnalysisConfig {
             package_residency_policy,
             cargo_metadata_config,
             indexing_preference,
+            cfg,
         })
+    }
+}
+
+impl AnalysisCfgConfig {
+    pub fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
+        let Some(cfg) = options
+            .and_then(LSPAny::as_object)
+            .and_then(|options| options.get("cfg"))
+            .and_then(LSPAny::as_object)
+        else {
+            return Ok(Self::default());
+        };
+
+        let test = match cfg.get("test") {
+            Some(value) => value
+                .as_bool()
+                .ok_or_else(|| anyhow::anyhow!("rust-glancer cfg.test must be a boolean"))?,
+            None => false,
+        };
+
+        Ok(Self { test })
     }
 }
 
@@ -175,6 +205,7 @@ impl Default for AnalysisConfig {
             package_residency_policy: PackageResidencyPolicy::WorkspaceAndPathDepsResident,
             cargo_metadata_config: CargoMetadataConfig::default(),
             indexing_preference: IndexingPerformancePreference::default(),
+            cfg: AnalysisCfgConfig::default(),
         }
     }
 }
@@ -204,6 +235,7 @@ mod tests {
             config.indexing_preference,
             IndexingPerformancePreference::FasterBuilds,
         );
+        assert!(!config.cfg.test);
     }
 
     #[test]
@@ -264,6 +296,16 @@ mod tests {
     }
 
     #[test]
+    fn parses_cfg_test() {
+        let options = object([("cfg", object([("test", LSPAny::Bool(true))]))]);
+
+        let config = AnalysisConfig::from_initialization_options(Some(&options))
+            .expect("analysis config should parse");
+
+        assert!(config.cfg.test);
+    }
+
+    #[test]
     fn rejects_unknown_indexing_preference() {
         let options = object([(
             "indexing",
@@ -277,6 +319,19 @@ mod tests {
             error
                 .to_string()
                 .contains("rust-glancer indexing.performancePreference"),
+            "{error:?}",
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_cfg_test() {
+        let options = object([("cfg", object([("test", LSPAny::String("yes".to_string()))]))]);
+
+        let error = AnalysisConfig::from_initialization_options(Some(&options))
+            .expect_err("malformed cfg.test should be rejected");
+
+        assert!(
+            error.to_string().contains("rust-glancer cfg.test"),
             "{error:?}",
         );
     }

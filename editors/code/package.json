@@ -94,6 +94,12 @@
           "default": null,
           "description": "Target triple used to filter Cargo metadata for analysis. When unset, rust-glancer uses the current rustc host target. Restart the rust-glancer server after changing this setting."
         },
+        "rust-glancer.cfg.test": {
+          "scope": "window",
+          "type": "boolean",
+          "default": false,
+          "description": "Enable the `test` cfg atom for workspace packages during semantic analysis. Restart the rust-glancer server after changing this setting."
+        },
         "rust-glancer.cache.packageResidency": {
           "scope": "window",
           "type": "string",
