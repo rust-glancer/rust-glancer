@@ -7,8 +7,9 @@ use rg_ir_model::items::{
     TypePathSegment, TypeRef,
 };
 use rg_ir_model::{
-    DefMapRef, ImplId, LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot, StructId,
-    TargetId, TargetRef, TraitId, TraitImplRef, TraitRef, TypeDefId, TypeDefRef,
+    DefMapRef, FileId, ImplId, LocalImplId, LocalImplRef, ModuleId, ModuleRef, PackageSlot, Span,
+    StructId, TargetId, TargetRef, TextSpan, TraitId, TraitImplRef, TraitRef, TypeDefId,
+    TypeDefRef,
 };
 use rg_ir_storage::{DefMap, DefMapSource, ItemStore, ItemStoreBuilder, ItemStoreSource};
 use rg_std::ExpectedUnique;
@@ -117,9 +118,9 @@ fn trait_impl(index: usize, trait_ref: TraitRef) -> TraitImplRef {
 
 fn dummy_source() -> ItemSource {
     ItemSource {
-        // Source coordinates are irrelevant for trait-selection tests. These IDs are simple
-        // integer newtypes in `rg_parse`, but `rg_ty` does not depend on that crate directly.
-        file_id: unsafe { std::mem::zeroed() },
+        // Source coordinates are irrelevant for trait-selection tests; generated fixtures only
+        // need stable dummy identities.
+        file_id: FileId(0),
         kind: ItemSourceKind::Generated(GeneratedItemRef {
             source: GeneratedSourceId(0),
             item: ItemTreeId(0),
@@ -128,13 +129,17 @@ fn dummy_source() -> ItemSource {
 }
 
 fn path_ty(name: &str, args: Vec<ItemGenericArg>) -> TypeRef {
+    let span = Span {
+        text: TextSpan { start: 0, end: 0 },
+    };
+
     TypeRef::Path(TypePath {
-        source_span: unsafe { std::mem::zeroed() },
+        source_span: span,
         absolute: false,
         segments: vec![TypePathSegment {
             name: Name::new(name),
             args,
-            span: unsafe { std::mem::zeroed() },
+            span,
         }],
     })
 }
