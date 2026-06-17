@@ -30,7 +30,7 @@ mod ast_src;
 use self::ast_src::{AstEnumSrc, AstNodeSrc, AstSrc, Cardinality, Field, KindsSrc};
 
 pub(crate) fn generate(check: bool) {
-    let grammar = fs::read_to_string(project_root().join("crates/engine/syntax/rust.ungram"))
+    let grammar = fs::read_to_string(project_root().join("crates/vendor/syntax/rust.ungram"))
         .expect("failed to read rust.ungram")
         .parse()
         .expect("failed to parse rust.ungram");
@@ -39,7 +39,7 @@ pub(crate) fn generate(check: bool) {
 
     let syntax_kinds = generate_syntax_kinds(kinds_src);
     let syntax_kinds_file =
-        project_root().join("crates/engine/parser/src/syntax_kind/generated.rs");
+        project_root().join("crates/vendor/parser/src/syntax_kind/generated.rs");
     ensure_file_contents(
         CodegenKind::Grammar,
         syntax_kinds_file.as_path(),
@@ -48,7 +48,7 @@ pub(crate) fn generate(check: bool) {
     );
 
     let ast_tokens = generate_tokens(&ast);
-    let ast_tokens_file = project_root().join("crates/engine/syntax/src/ast/generated/tokens.rs");
+    let ast_tokens_file = project_root().join("crates/vendor/syntax/src/ast/generated/tokens.rs");
     ensure_file_contents(
         CodegenKind::Grammar,
         ast_tokens_file.as_path(),
@@ -57,7 +57,7 @@ pub(crate) fn generate(check: bool) {
     );
 
     let ast_nodes = generate_nodes(kinds_src, &ast);
-    let ast_nodes_file = project_root().join("crates/engine/syntax/src/ast/generated/nodes.rs");
+    let ast_nodes_file = project_root().join("crates/vendor/syntax/src/ast/generated/nodes.rs");
     ensure_file_contents(
         CodegenKind::Grammar,
         ast_nodes_file.as_path(),
