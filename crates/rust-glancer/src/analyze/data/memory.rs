@@ -1,10 +1,8 @@
-use std::fmt;
-
 use rg_project::{BuildStageMemorySnapshot, Project};
 use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
 use serde::Serialize;
 
-use super::allocator::format_bytes;
+use crate::analyze::report::{ReportSectionBuilder, ReportTableBuilder};
 
 const TOP_MEMORY_ROWS: usize = 12;
 
@@ -68,6 +66,34 @@ impl MemoryReport {
             ),
         }
     }
+
+    pub(super) fn append_document(&self, section: &mut ReportSectionBuilder) {
+        section.fields("summary", |fields| {
+            if let Some(stage) = &self.stage {
+                fields.text("stage", stage);
+            }
+            fields
+                .bytes_as("retained_bytes", "retained", self.retained_bytes)
+                .count_as(
+                    "aggregate_bucket_count",
+                    "aggregate buckets",
+                    self.aggregate_bucket_count,
+                );
+        });
+
+        section.table("by_component", |table| {
+            MemoryRow::append_table(table, &self.by_component);
+        });
+        section.table("by_kind", |table| {
+            MemoryRow::append_table(table, &self.by_kind);
+        });
+        section.table("top_paths", |table| {
+            MemoryRow::append_table(table, &self.top_paths);
+        });
+        section.table("top_types", |table| {
+            MemoryRow::append_table(table, &self.top_types);
+        });
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -76,43 +102,18 @@ pub(crate) struct MemoryRow {
     pub(crate) bytes: usize,
 }
 
-impl fmt::Display for MemoryReport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(stage) = &self.stage {
-            writeln!(f, "memory stage: {stage}")?;
+impl MemoryRow {
+    fn append_table(table: &mut ReportTableBuilder, rows: &[Self]) {
+        table.bytes_column("bytes").text_column("label");
+
+        for row in rows {
+            table.row(|table_row| {
+                table_row
+                    .bytes("bytes", row.bytes)
+                    .text("label", &row.label);
+            });
         }
-        writeln!(
-            f,
-            "memory: {} retained across {} aggregate buckets",
-            format_bytes(self.retained_bytes),
-            self.aggregate_bucket_count,
-        )?;
-
-        render_memory_section(f, "memory by component", &self.by_component)?;
-        render_memory_section(f, "memory by kind", &self.by_kind)?;
-        render_memory_section(f, "top memory paths", &self.top_paths)?;
-        render_memory_section(f, "top memory types", &self.top_types)
     }
-}
-
-impl fmt::Display for MemoryRow {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:>10}  {}", format_bytes(self.bytes), self.label)
-    }
-}
-
-fn render_memory_section(
-    f: &mut fmt::Formatter<'_>,
-    title: &str,
-    rows: &[MemoryRow],
-) -> fmt::Result {
-    writeln!(f, "{title}:")?;
-
-    for row in rows {
-        writeln!(f, "  {row}")?;
-    }
-
-    Ok(())
 }
 
 fn memory_rows(rows: Vec<(String, usize)>, limit: usize) -> Vec<MemoryRow> {

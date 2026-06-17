@@ -1,6 +1,7 @@
 use rg_project::{PackageResidency, Project};
 use serde::Serialize;
-use std::fmt;
+
+use crate::analyze::report::ReportFieldsBuilder;
 
 #[derive(Debug, Serialize)]
 pub(crate) struct PackageReport {
@@ -30,14 +31,13 @@ impl PackageReport {
             offloaded_count,
         }
     }
-}
 
-impl fmt::Display for PackageReport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} ({} workspace)",
-            self.total_count, self.workspace_count
-        )
+    pub(super) fn append_fields(&self, fields: &mut ReportFieldsBuilder) {
+        fields
+            .count_as("total_count", "total", self.total_count)
+            .count_as("workspace_count", "workspace", self.workspace_count)
+            .text("residency_policy", &self.residency_policy)
+            .count_as("resident_count", "resident", self.resident_count)
+            .count_as("offloaded_count", "offloaded", self.offloaded_count);
     }
 }
