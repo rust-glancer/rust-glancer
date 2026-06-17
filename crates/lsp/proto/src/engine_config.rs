@@ -39,10 +39,21 @@ mod tests {
             ),
             (
                 "cargo",
-                object([(
-                    "target",
-                    LSPAny::String("x86_64-unknown-linux-gnu".to_string()),
-                )]),
+                object([
+                    (
+                        "target",
+                        LSPAny::String("x86_64-unknown-linux-gnu".to_string()),
+                    ),
+                    ("allFeatures", LSPAny::Bool(true)),
+                    ("noDefaultFeatures", LSPAny::Bool(true)),
+                    (
+                        "features",
+                        LSPAny::Array(vec![
+                            LSPAny::String("serde".to_string()),
+                            LSPAny::String("derive".to_string()),
+                        ]),
+                    ),
+                ]),
             ),
             (
                 "indexing",
@@ -71,6 +82,17 @@ mod tests {
         assert_eq!(
             config.analysis.cargo_metadata_config.target(),
             &CargoMetadataTarget::Triple("x86_64-unknown-linux-gnu".to_string()),
+        );
+        assert!(config.analysis.cargo_metadata_config.all_features_enabled());
+        assert!(
+            config
+                .analysis
+                .cargo_metadata_config
+                .no_default_features_enabled()
+        );
+        assert_eq!(
+            config.analysis.cargo_metadata_config.features(),
+            &["serde".to_string(), "derive".to_string()],
         );
         assert_eq!(
             config.analysis.indexing_preference,

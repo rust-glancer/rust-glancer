@@ -94,6 +94,27 @@
           "default": null,
           "description": "Target triple used to filter Cargo metadata for analysis. When unset, rust-glancer uses the current rustc host target. Restart the rust-glancer server after changing this setting."
         },
+        "rust-glancer.cargo.allFeatures": {
+          "scope": "window",
+          "type": "boolean",
+          "default": false,
+          "description": "Ask Cargo to enable all package features while resolving metadata for analysis. Restart the rust-glancer server after changing this setting."
+        },
+        "rust-glancer.cargo.noDefaultFeatures": {
+          "scope": "window",
+          "type": "boolean",
+          "default": false,
+          "description": "Ask Cargo to disable default package features while resolving metadata for analysis. Custom features are still enabled when configured. Restart the rust-glancer server after changing this setting."
+        },
+        "rust-glancer.cargo.features": {
+          "scope": "window",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional Cargo features to enable while resolving metadata for analysis. Restart the rust-glancer server after changing this setting."
+        },
         "rust-glancer.cfg.test": {
           "scope": "window",
           "type": "boolean",

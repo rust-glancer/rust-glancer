@@ -3,7 +3,7 @@ mod utils;
 use std::{collections::BTreeSet, fs};
 
 use expect_test::expect;
-use test_fixture::fixture_crate;
+use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{
     CargoMetadataConfig, CargoMetadataTarget, PackageSource, RustcTarget, SysrootSources,
@@ -549,6 +549,98 @@ pub struct Dep;
 }
 
 #[test]
+fn custom_cargo_features_are_additive_with_defaults() {
+    let fixture = cargo_feature_fixture();
+    let cfg_options = package_cfg_options_for_config(
+        &fixture,
+        CargoMetadataConfig::default().custom_features(["extra"]),
+        "app",
+    );
+
+    assert!(
+        cfg_options.contains_key_value("feature", "default_on"),
+        "default features should remain active when custom features are added",
+    );
+    assert!(
+        cfg_options.contains_key_value("feature", "extra"),
+        "custom features should be active in lowered package cfg options",
+    );
+}
+
+#[test]
+fn no_default_cargo_features_keep_explicit_features() {
+    let fixture = cargo_feature_fixture();
+    let cfg_options = package_cfg_options_for_config(
+        &fixture,
+        CargoMetadataConfig::default()
+            .no_default_features(true)
+            .custom_features(["extra"]),
+        "app",
+    );
+
+    assert!(
+        !cfg_options.contains_key_value("feature", "default_on"),
+        "default features should be disabled when no-default-features is set",
+    );
+    assert!(
+        cfg_options.contains_key_value("feature", "extra"),
+        "explicit custom features should still be active with no-default-features",
+    );
+}
+
+#[test]
+fn all_cargo_features_can_be_combined_with_other_feature_options() {
+    let fixture = cargo_feature_fixture();
+    let cfg_options = package_cfg_options_for_config(
+        &fixture,
+        CargoMetadataConfig::default()
+            .all_features(true)
+            .no_default_features(true)
+            .custom_features(["extra"]),
+        "app",
+    );
+
+    assert!(
+        cfg_options.contains_key_value("feature", "default_on"),
+        "all-features should keep enabling default feature members even when no-default-features is also requested",
+    );
+    assert!(
+        cfg_options.contains_key_value("feature", "extra"),
+        "all-features should enable non-default feature members",
+    );
+}
+
+#[test]
+fn workspace_member_discovery_ignores_feature_selection() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct App;
+"#,
+    );
+    let manifests = CargoMetadataConfig::default()
+        .custom_features(["missing"])
+        .load_workspace_member_manifest_paths(fixture.path("Cargo.toml"))
+        .expect("member discovery should not depend on full analysis feature selection");
+
+    assert_eq!(
+        manifests,
+        vec![
+            fixture
+                .path("Cargo.toml")
+                .canonicalize()
+                .expect("fixture manifest should canonicalize")
+        ],
+    );
+}
+
+#[test]
 fn computes_transitive_reverse_dependency_closure() {
     let fixture = fixture_crate(
         r#"
@@ -708,4 +800,48 @@ fn normalizes_explicit_cargo_metadata_target() {
         panic!("non-empty explicit target should configure a target triple");
     };
     assert_eq!(target.as_str(), "x86_64-unknown-linux-gnu");
+}
+
+fn cargo_feature_fixture() -> CrateFixture {
+    fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["default_on"]
+default_on = []
+extra = []
+
+//- /src/lib.rs
+pub struct App;
+"#,
+    )
+}
+
+fn package_cfg_options_for_config(
+    fixture: &CrateFixture,
+    config: CargoMetadataConfig,
+    package_name: &str,
+) -> rg_cfg_eval::CfgOptions {
+    let loaded = config
+        .load_metadata_with_target_cfg(fixture.path("Cargo.toml"))
+        .expect("fixture cargo metadata should load");
+    let workspace = WorkspaceMetadata::lower(
+        loaded.metadata,
+        loaded.target_cfg,
+        WorkspaceLoweringConfig::default(),
+    )
+    .expect("fixture workspace metadata should build");
+
+    workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == package_name)
+        .unwrap_or_else(|| panic!("fixture package `{package_name}` should exist"))
+        .cfg_options
+        .clone()
 }

@@ -367,7 +367,10 @@ impl EngineWorker {
             ProtoCargoMetadataTarget::Triple(target) => {
                 CargoMetadataConfig::default().target_triple(target.as_str())
             }
-        };
+        }
+        .all_features(analysis.cargo_metadata_config.all_features_enabled())
+        .no_default_features(analysis.cargo_metadata_config.no_default_features_enabled())
+        .custom_features(analysis.cargo_metadata_config.features().iter().cloned());
         let workspace_lowering_config =
             WorkspaceLoweringConfig::default().cfg_test(analysis.cfg.test);
         let indexing_preference = match analysis.indexing_preference {
@@ -388,6 +391,9 @@ impl EngineWorker {
             package_residency = analysis.package_residency_policy.config_name(),
             indexing_preference = analysis.indexing_preference.config_name(),
             cargo_target = configured_target,
+            cargo_all_features = analysis.cargo_metadata_config.all_features_enabled(),
+            cargo_no_default_features = analysis.cargo_metadata_config.no_default_features_enabled(),
+            cargo_features = ?analysis.cargo_metadata_config.features(),
             cfg_test = analysis.cfg.test,
             "starting workspace indexing"
         );

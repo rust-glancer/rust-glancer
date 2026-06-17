@@ -37,6 +37,9 @@ export interface IndexingConfig {
 
 export interface CargoConfig {
   readonly target: string | undefined;
+  readonly allFeatures: boolean;
+  readonly noDefaultFeatures: boolean;
+  readonly features: string[];
 }
 
 export interface CacheConfig {
@@ -62,6 +65,9 @@ export namespace ExtensionConfig {
       "faster-builds",
     );
     const cargoTarget = config.get<string | null>("cargo.target", null);
+    const cargoAllFeatures = config.get<boolean>("cargo.allFeatures", false);
+    const cargoNoDefaultFeatures = config.get<boolean>("cargo.noDefaultFeatures", false);
+    const cargoFeatures = config.get<unknown[]>("cargo.features", []);
     const packageResidency = config.get<PackageResidencySetting>(
       "cache.packageResidency",
       "workspace-and-path-deps",
@@ -86,6 +92,9 @@ export namespace ExtensionConfig {
       },
       cargo: {
         target: normalizeOptionalString(cargoTarget),
+        allFeatures: cargoAllFeatures,
+        noDefaultFeatures: cargoNoDefaultFeatures,
+        features: normalizeCargoFeatures(cargoFeatures),
       },
       cache: {
         packageResidency,
@@ -125,6 +134,23 @@ function normalizeStringRecord(value: Record<string, unknown>): Record<string, s
 
 function normalizeStringArray(value: unknown[]): string[] {
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function normalizeCargoFeatures(value: unknown[]): string[] {
+  const features: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of normalizeStringArray(value)) {
+    const feature = item.trim();
+    if (feature.length === 0 || seen.has(feature)) {
+      continue;
+    }
+
+    features.push(feature);
+    seen.add(feature);
+  }
+
+  return features;
 }
 
 function normalizeCargoSubcommand(value: string): string {
