@@ -20,4 +20,5 @@ tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 
 [dev-dependencies]
+serde_json.workspace = true
 test_fixture.workspace = true

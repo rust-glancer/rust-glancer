@@ -6,10 +6,11 @@ use tower_lsp_server::{
     ls_types::{request::*, *},
 };
 
-use rg_lsp_proto::{ClientCapabilities as EngineClientCapabilities, EngineConfig};
+use rg_lsp_proto::ClientCapabilities as EngineClientCapabilities;
 use tokio::sync::OnceCell;
 
 use crate::{
+    config::ServerConfig,
     engine_client::EngineClient,
     engine_registry::EngineRegistry,
     methods::{self, MethodContext},
@@ -89,9 +90,11 @@ impl LanguageServer for Backend {
             ));
         }
 
-        let config =
-            EngineConfig::from_initialization_options(params.initialization_options.as_ref())
-                .map_err(|error| Error::invalid_params(error.to_string()))?;
+        let config = ServerConfig::from_initialization_options(
+            params.initialization_options.as_ref(),
+            &workspace_folders,
+        )
+        .map_err(|error| Error::invalid_params(error.to_string()))?;
         let client_capabilities =
             EngineClientCapabilities::from_lsp_client_capabilities(&params.capabilities);
         self.client_capabilities

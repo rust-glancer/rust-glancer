@@ -9,6 +9,7 @@ use tower_lsp_server::{Client as LspClient, ls_types::MessageType};
 
 use crate::{
     client_notifications::{ActiveWorkspaceChanged, ActiveWorkspaceStatus},
+    config::ServerConfig,
     engine_client::EngineClient,
     engine_process::{EngineProcess, EngineProcessExit, EngineProcessExitMonitor},
 };
@@ -40,7 +41,7 @@ impl EngineRegistry {
     pub(crate) fn new(
         lsp_client: LspClient,
         workspace_folders: Vec<PathBuf>,
-        config: EngineConfig,
+        config: ServerConfig,
     ) -> Self {
         Self {
             lsp_client,
@@ -585,7 +586,7 @@ pub struct External;
             registry: EngineRegistry::new(
                 client,
                 workspace_folders.clone(),
-                EngineConfig::default(),
+                ServerConfig::from_engine_config(EngineConfig::default()),
             ),
         });
 

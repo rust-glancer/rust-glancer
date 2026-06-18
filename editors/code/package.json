@@ -115,6 +115,47 @@
           "default": [],
           "description": "Additional Cargo features to enable while resolving metadata for analysis. Restart the rust-glancer server after changing this setting."
         },
+        "rust-glancer.cargo.overrides": {
+          "scope": "window",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": [
+              "path"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Cargo workspace root path this override applies to. Relative paths are resolved against VS Code workspace folders."
+              },
+              "target": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Target triple used to filter Cargo metadata for this Cargo workspace. Use null to reset an inherited global target."
+              },
+              "allFeatures": {
+                "type": "boolean",
+                "description": "Ask Cargo to enable all package features for this Cargo workspace."
+              },
+              "noDefaultFeatures": {
+                "type": "boolean",
+                "description": "Ask Cargo to disable default package features for this Cargo workspace."
+              },
+              "features": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Additional Cargo features to enable for this Cargo workspace."
+              }
+            }
+          },
+          "description": "Cargo metadata configuration overrides keyed by exact Cargo workspace root path. Restart the rust-glancer server after changing this setting."
+        },
         "rust-glancer.cfg.test": {
           "scope": "window",
           "type": "boolean",

@@ -1582,6 +1582,7 @@ dependencies = [
  "anyhow",
  "futures",
  "rg_lsp_proto",
+ "serde_json",
  "tarpc",
  "test_fixture",
  "tokio",
