@@ -10,10 +10,7 @@ use std::sync::OnceLock;
 pub use self::{
     indexing::IndexingPerformancePreference,
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
-    profile::{
-        BUILD_CHECKPOINTS_PROFILE_PATH, BUILD_PROFILE_SCOPE, BuildProcessMemory,
-        ProcessMemorySampler,
-    },
+    profile::{BUILD_CHECKPOINTS, BuildProcessMemory, ProcessMemorySampler},
     project::{
         AnalysisChangeSummary, ChangedFile, DirtyFileChange, FileContext, Project, ProjectBuilder,
         ProjectSnapshot, ProjectStats, SavedFileChange, StartupCacheLoad,

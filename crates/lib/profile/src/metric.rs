@@ -25,6 +25,10 @@ impl CounterMetric {
         self.path
     }
 
+    pub const fn scope(self) -> &'static str {
+        self.scope
+    }
+
     pub fn inc(self) {
         self.add(1);
     }
@@ -53,6 +57,10 @@ impl GaugeMetric {
 
     pub const fn path(self) -> &'static str {
         self.path
+    }
+
+    pub const fn scope(self) -> &'static str {
+        self.scope
     }
 
     pub fn record(self, value: ProfileMeasurement) {
@@ -116,6 +124,10 @@ impl DurationMetric {
         self.path
     }
 
+    pub const fn scope(self) -> &'static str {
+        self.scope
+    }
+
     pub fn record(self, elapsed: Duration) {
         crate::record_duration(self.path, elapsed);
     }
@@ -153,6 +165,10 @@ impl KeyedCounterMetric {
 
     pub const fn path(self) -> &'static str {
         self.path
+    }
+
+    pub const fn scope(self) -> &'static str {
+        self.scope
     }
 
     pub fn inc(self, key: impl AsRef<str>) {
@@ -194,6 +210,10 @@ impl KeyedDurationMetric {
         self.path
     }
 
+    pub const fn scope(self) -> &'static str {
+        self.scope
+    }
+
     pub fn record(self, key: impl AsRef<str>, elapsed: Duration) {
         crate::record_keyed_duration(self.path, key, elapsed);
     }
@@ -227,6 +247,10 @@ impl CheckpointMetric {
 
     pub const fn path(self) -> &'static str {
         self.path
+    }
+
+    pub const fn scope(self) -> &'static str {
+        self.scope
     }
 
     pub fn record(self, label: impl Into<String>, values: Vec<ProfileCheckpointValue>) {
@@ -266,6 +290,10 @@ impl MemorySnapshotMetric {
 
     pub const fn path(self) -> &'static str {
         self.path
+    }
+
+    pub const fn scope(self) -> &'static str {
+        self.scope
     }
 
     pub const fn title_text(self) -> Option<&'static str> {

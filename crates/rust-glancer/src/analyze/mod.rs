@@ -233,28 +233,19 @@ fn parse_analyze_profile_filter(
     filter: Option<&str>,
     include_memory: bool,
 ) -> anyhow::Result<Option<rg_profile::ProfileFilter>> {
-    let Some(filter) = profile_filter_text(filter, include_memory) else {
-        return Ok(None);
+    let mut filter = match filter {
+        Some(filter) => rg_profile::ProfileFilter::parse(filter)
+            .context("while attempting to parse analyze profile filter")?,
+        None => rg_profile::ProfileFilter::disabled(),
     };
-    let filter = rg_profile::ProfileFilter::parse(&filter)
-        .context("while attempting to parse analyze profile filter")?;
+
+    if include_memory {
+        filter
+            .enable(rg_project::BUILD_CHECKPOINTS.scope())
+            .context("while attempting to enable project build profiling for memory report")?;
+    }
 
     Ok((!filter.is_disabled()).then_some(filter))
-}
-
-fn profile_filter_text(filter: Option<&str>, include_memory: bool) -> Option<String> {
-    match filter.map(str::trim) {
-        Some("all" | "*") => filter.map(ToString::to_string),
-        Some(filter) if include_memory && filter.is_empty() => {
-            Some(rg_project::BUILD_PROFILE_SCOPE.to_string())
-        }
-        Some(filter) if include_memory => {
-            Some(format!("{filter},{}", rg_project::BUILD_PROFILE_SCOPE))
-        }
-        Some(filter) => Some(filter.to_string()),
-        None if include_memory => Some(rg_project::BUILD_PROFILE_SCOPE.to_string()),
-        None => None,
-    }
 }
 
 fn start_analyze_profile_run(
@@ -295,7 +286,7 @@ fn write_html_report(document: &report::ReportDocument) -> anyhow::Result<PathBu
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_analyze_profile_filter, profile_filter_text, start_analyze_profile_run};
+    use super::{parse_analyze_profile_filter, start_analyze_profile_run};
 
     #[test]
     fn analyze_profile_filter_is_absent_without_profile_argument() {
@@ -319,19 +310,40 @@ mod tests {
 
     #[test]
     fn analyze_profile_filter_enables_project_build_for_memory() {
+        let project_build = rg_project::BUILD_CHECKPOINTS.scope();
+
+        let filter = parse_analyze_profile_filter(None, true)
+            .expect("memory profile filter should parse")
+            .expect("memory reporting should enable a profile run");
         assert_eq!(
-            profile_filter_text(None, true).as_deref(),
-            Some("project.build"),
+            selector_texts(&filter),
+            vec![project_build],
             "memory reports should collect project build checkpoints internally",
         );
+
+        let filter = parse_analyze_profile_filter(Some("def_map.macros"), true)
+            .expect("profile filter with memory should parse")
+            .expect("memory reporting should keep a profile run enabled");
         assert_eq!(
-            profile_filter_text(Some("def_map.macros"), true).as_deref(),
-            Some("def_map.macros,project.build"),
+            selector_texts(&filter),
+            vec!["def_map.macros", project_build],
             "memory reports should extend explicit selectors instead of replacing them",
         );
+
+        let filter = parse_analyze_profile_filter(Some("project.build.def_map"), true)
+            .expect("detailed project build profile filter with memory should parse")
+            .expect("memory reporting should keep a profile run enabled");
         assert_eq!(
-            profile_filter_text(Some("all"), true).as_deref(),
-            Some("all"),
+            selector_texts(&filter),
+            vec!["project.build.def_map"],
+            "detailed project build selectors already cover parent checkpoints",
+        );
+
+        let filter = parse_analyze_profile_filter(Some("all"), true)
+            .expect("all profile filter with memory should parse")
+            .expect("all profile filter should enable a profile run");
+        assert!(
+            filter.is_all(),
             "the all selector already includes project build checkpoints",
         );
     }
@@ -375,5 +387,9 @@ mod tests {
                 .contains("profile selector `def_map.unknown` is not registered")),
             "unknown selector should fail with a typo-oriented error: {error}",
         );
+    }
+
+    fn selector_texts(filter: &rg_profile::ProfileFilter) -> Vec<&str> {
+        filter.selectors().iter().map(String::as_str).collect()
     }
 }

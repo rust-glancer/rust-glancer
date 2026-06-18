@@ -186,6 +186,50 @@ mod tests {
     }
 
     #[test]
+    fn profile_filter_can_enable_required_scopes() {
+        let mut filter = ProfileFilter::disabled();
+        filter
+            .enable(test_metric::CHECKPOINTS.scope())
+            .expect("checkpoint scope should be valid");
+        assert_eq!(
+            selector_texts(&filter),
+            vec!["project.build"],
+            "enabling a scope should turn a disabled filter into an explicit selector",
+        );
+
+        filter
+            .enable(test_metric::CHECKPOINTS.scope())
+            .expect("re-enabling a covered scope should be valid");
+        assert_eq!(
+            selector_texts(&filter),
+            vec!["project.build"],
+            "enabling an already covered scope should not duplicate selectors",
+        );
+    }
+
+    #[test]
+    fn profile_filter_keeps_all_and_covered_parent_scopes_stable() {
+        let mut all = ProfileFilter::all();
+        all.enable(test_metric::CHECKPOINTS.scope())
+            .expect("checkpoint scope should be valid");
+        assert!(
+            all.is_all(),
+            "enabling an internal scope should not narrow an all-profile run",
+        );
+
+        let mut detailed = ProfileFilter::parse("project.build.def_map")
+            .expect("detailed project build selector should parse");
+        detailed
+            .enable(test_metric::CHECKPOINTS.scope())
+            .expect("checkpoint scope should be valid");
+        assert_eq!(
+            selector_texts(&detailed),
+            vec!["project.build.def_map"],
+            "a detailed selector already covers parent checkpoint scopes",
+        );
+    }
+
+    #[test]
     #[should_panic(expected = "profile path `def_map.macros.calls.missing` is not registered")]
     fn active_run_panics_for_unknown_profile_path() {
         let _run = test_support::ProfileTest::start(test_metric::descriptors(), "def_map.macros");
@@ -213,5 +257,9 @@ mod tests {
             .duration(test_metric::RESOLVE_IMPORT_SCOPES.path())
             .expect("timer should record one duration");
         assert!(elapsed > Duration::ZERO);
+    }
+
+    fn selector_texts(filter: &ProfileFilter) -> Vec<&str> {
+        filter.selectors().iter().map(String::as_str).collect()
     }
 }

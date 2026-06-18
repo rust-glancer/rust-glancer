@@ -50,6 +50,28 @@ impl ProfileFilter {
         })
     }
 
+    pub fn enable(&mut self, selector: impl AsRef<str>) -> Result<(), ProfileFilterParseError> {
+        let selector = selector.as_ref().trim();
+        validate_profile_path(selector).map_err(ProfileFilterParseError::InvalidSelector)?;
+
+        match &mut self.mode {
+            ProfileFilterMode::Disabled => {
+                self.mode = ProfileFilterMode::Selectors(vec![selector.to_string()]);
+            }
+            ProfileFilterMode::All => {}
+            ProfileFilterMode::Selectors(selectors) => {
+                if !selectors
+                    .iter()
+                    .any(|existing| path_is_ancestor_or_equal(selector, existing))
+                {
+                    selectors.push(selector.to_string());
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn selectors(&self) -> &[String] {
         match &self.mode {
             ProfileFilterMode::Selectors(selectors) => selectors,

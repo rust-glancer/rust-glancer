@@ -4,9 +4,6 @@ use rg_profile::{
 };
 use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
 
-pub const BUILD_PROFILE_SCOPE: &str = "project.build";
-pub const BUILD_CHECKPOINTS_PROFILE_PATH: &str = "project.build.checkpoints";
-
 static BUILD_CHECKPOINT_COLUMNS: &[ProfileCheckpointColumn] = &[
     ProfileCheckpointColumn::bytes("retained_bytes", "rg_sampled"),
     ProfileCheckpointColumn::bytes("active_retained_bytes", "rg_total"),
@@ -81,6 +78,8 @@ declare_metrics! {
         }
     }
 }
+
+pub const BUILD_CHECKPOINTS: rg_profile::CheckpointMetric = metric::CHECKPOINTS;
 
 pub(crate) fn profile_descriptors() -> &'static [ProfileDescriptor] {
     metric::descriptors()
