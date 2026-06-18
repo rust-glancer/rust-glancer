@@ -81,7 +81,7 @@ just client lint
   "rust-glancer.diagnostics.onSave": false,
   "rust-glancer.diagnostics.command": "check",
   "rust-glancer.diagnostics.cargoArguments": ["--workspace"],
-  "rust-glancer.diagnostics.rustcArguments": []
+  "rust-glancer.diagnostics.extraEnv": {}
 }
 ```
 
@@ -91,6 +91,17 @@ Use `rust-glancer.server.extraEnv` for server logs, for example:
 {
   "rust-glancer.server.extraEnv": {
     "RUST_GLANCER_LOG": "rg_lsp_server=debug,rg_lsp_engine=debug"
+  }
+}
+```
+
+Use `rust-glancer.diagnostics.extraEnv` for environment variables that should
+only affect Cargo diagnostics, for example custom cfg flags:
+
+```json
+{
+  "rust-glancer.diagnostics.extraEnv": {
+    "RUSTFLAGS": "--cfg tokio_unstable"
   }
 }
 ```

@@ -169,7 +169,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Additional custom cfg atoms to enable for Cargo packages during semantic analysis and Cargo diagnostics. Restart the rust-glancer server after changing this setting."
+          "description": "Additional custom cfg atoms to enable for Cargo packages during semantic analysis. Restart the rust-glancer server after changing this setting."
         },
         "rust-glancer.cache.packageResidency": {
           "scope": "window",
@@ -220,14 +220,14 @@
           },
           "description": "Extra Cargo-level arguments appended to cargo <diagnostics.command> --message-format=json for diagnostics."
         },
-        "rust-glancer.diagnostics.rustcArguments": {
+        "rust-glancer.diagnostics.extraEnv": {
           "scope": "window",
-          "type": "array",
-          "default": [],
-          "items": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
             "type": "string"
           },
-          "description": "Extra rustc-level arguments appended after `--` when running Cargo diagnostics."
+          "description": "Additional environment variables for Cargo diagnostics. Use this for compiler flags such as { \"RUSTFLAGS\": \"--cfg tokio_unstable\" }."
         }
       }
     }

@@ -75,7 +75,7 @@ export interface DiagnosticsConfig {
   readonly onSave: boolean;
   readonly command: string;
   readonly cargoArguments: string[];
-  readonly rustcArguments: string[];
+  readonly extraEnv: Record<string, string>;
 }
 
 export namespace ExtensionConfig {
@@ -120,9 +120,7 @@ export namespace ExtensionConfig {
         cargoArguments: normalizeStringArray(
           readUnknownArray(config, "diagnostics.cargoArguments", ["--workspace"]),
         ),
-        rustcArguments: normalizeStringArray(
-          readUnknownArray(config, "diagnostics.rustcArguments"),
-        ),
+        extraEnv: normalizeStringRecord(readUnknownRecord(config, "diagnostics.extraEnv")),
       },
     };
   }

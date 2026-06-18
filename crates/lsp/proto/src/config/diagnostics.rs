@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use ls_types::LSPAny;
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +12,7 @@ pub struct DiagnosticsConfig {
     pub on_save: bool,
     pub command: String,
     pub cargo_arguments: Vec<String>,
-    pub rustc_arguments: Vec<String>,
+    pub extra_env: BTreeMap<String, String>,
 }
 
 impl DiagnosticsConfig {
@@ -41,14 +43,14 @@ impl DiagnosticsConfig {
             None => "check".to_string(),
         };
         let cargo_arguments = parse_arguments(diagnostics, "cargoArguments", &["--workspace"])?;
-        let rustc_arguments = parse_arguments(diagnostics, "rustcArguments", &[])?;
+        let extra_env = parse_extra_env(diagnostics)?;
 
         Ok(Self {
             on_startup,
             on_save,
             command,
             cargo_arguments,
-            rustc_arguments,
+            extra_env,
         })
     }
 
@@ -59,11 +61,6 @@ impl DiagnosticsConfig {
             "--message-format=json".to_string(),
         ];
         parts.extend(self.cargo_arguments(analysis));
-        let rustc_arguments = self.rustc_arguments(analysis);
-        if !rustc_arguments.is_empty() {
-            parts.push("--".to_string());
-            parts.extend(rustc_arguments);
-        }
         parts.join(" ")
     }
 
@@ -88,16 +85,6 @@ impl DiagnosticsConfig {
             arguments.push("--no-default-features".to_string());
         }
 
-        arguments
-    }
-
-    pub fn rustc_arguments(&self, analysis: &AnalysisConfig) -> Vec<String> {
-        let mut arguments = Vec::new();
-        for atom in &analysis.cfg.atoms {
-            arguments.push("--cfg".to_string());
-            arguments.push(atom.clone());
-        }
-        arguments.extend(self.rustc_arguments.iter().cloned());
         arguments
     }
 }
@@ -163,10 +150,41 @@ fn validate_diagnostics_argument(
     );
     anyhow::ensure!(
         argument != "--",
-        "rust-glancer diagnostics.{key}[{idx}] must not contain the `--` argument separator; rust-glancer inserts it automatically before diagnostics.rustcArguments",
+        "rust-glancer diagnostics.{key}[{idx}] must not contain the `--` argument separator",
     );
 
     Ok(())
+}
+
+fn parse_extra_env(diagnostics: &ls_types::LSPObject) -> anyhow::Result<BTreeMap<String, String>> {
+    let Some(extra_env) = diagnostics.get("extraEnv") else {
+        return Ok(BTreeMap::new());
+    };
+    let extra_env = extra_env
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("rust-glancer diagnostics.extraEnv must be an object"))?;
+
+    let mut parsed = BTreeMap::new();
+    for (key, value) in extra_env {
+        anyhow::ensure!(
+            !key.is_empty(),
+            "rust-glancer diagnostics.extraEnv keys must not be empty",
+        );
+        anyhow::ensure!(
+            !key.contains('\0') && !key.contains('='),
+            "rust-glancer diagnostics.extraEnv.{key} must be a valid environment variable name",
+        );
+        let value = value.as_str().ok_or_else(|| {
+            anyhow::anyhow!("rust-glancer diagnostics.extraEnv.{key} must be a string")
+        })?;
+        anyhow::ensure!(
+            !value.contains('\0'),
+            "rust-glancer diagnostics.extraEnv.{key} must not contain NUL bytes",
+        );
+        parsed.insert(key.clone(), value.to_string());
+    }
+
+    Ok(parsed)
 }
 
 impl Default for DiagnosticsConfig {
@@ -176,7 +194,7 @@ impl Default for DiagnosticsConfig {
             on_save: false,
             command: "check".to_string(),
             cargo_arguments: vec!["--workspace".to_string()],
-            rustc_arguments: Vec::new(),
+            extra_env: BTreeMap::new(),
         }
     }
 }
@@ -208,7 +226,9 @@ mod tests {
                 "onSave": true,
                 "command": "clippy",
                 "cargoArguments": ["--workspace", "--locked"],
-                "rustcArguments": ["-Dwarnings"],
+                "extraEnv": {
+                    "RUSTFLAGS": "--cfg tokio_unstable",
+                },
             },
         });
 
@@ -219,10 +239,10 @@ mod tests {
         assert!(config.on_save);
         assert_eq!(config.command, "clippy");
         assert_eq!(config.cargo_arguments, ["--workspace", "--locked"]);
-        assert_eq!(config.rustc_arguments, ["-Dwarnings"]);
+        assert_eq!(config.extra_env["RUSTFLAGS"], "--cfg tokio_unstable");
         assert_eq!(
             config.user_facing_command(&AnalysisConfig::default()),
-            "cargo clippy --message-format=json --workspace --locked --all-targets -- -Dwarnings"
+            "cargo clippy --message-format=json --workspace --locked --all-targets"
         );
     }
 
@@ -269,26 +289,27 @@ mod tests {
     }
 
     #[test]
-    fn user_facing_command_includes_analysis_cfg_atoms_as_rustc_arguments() {
+    fn user_facing_command_keeps_cfg_atoms_analysis_only() {
         let analysis_options = json!({
             "cfg": {
                 "atoms": ["tokio_unstable", "loom"],
             },
-        });
-        let diagnostics_options = json!({
             "diagnostics": {
-                "rustcArguments": ["-Dwarnings"],
+                "extraEnv": {
+                    "RUSTFLAGS": "--cfg tokio_unstable",
+                },
             },
         });
         let analysis = AnalysisConfig::from_initialization_options(Some(&analysis_options))
             .expect("analysis config should parse");
-        let config = DiagnosticsConfig::from_initialization_options(Some(&diagnostics_options))
+        let config = DiagnosticsConfig::from_initialization_options(Some(&analysis_options))
             .expect("diagnostics config should parse");
 
         assert_eq!(
             config.user_facing_command(&analysis),
-            "cargo check --message-format=json --workspace --all-targets -- --cfg tokio_unstable --cfg loom -Dwarnings"
+            "cargo check --message-format=json --workspace --all-targets"
         );
+        assert_eq!(config.extra_env["RUSTFLAGS"], "--cfg tokio_unstable");
     }
 
     #[test]
@@ -344,20 +365,22 @@ mod tests {
         let error = DiagnosticsConfig::from_initialization_options(Some(&options))
             .expect_err("argument separator should be rejected");
 
-        assert!(error.to_string().contains("inserts it automatically"));
+        assert!(error.to_string().contains("argument separator"));
     }
 
     #[test]
-    fn rejects_argument_separator_in_rustc_diagnostics_arguments() {
+    fn rejects_malformed_diagnostics_extra_env() {
         let options = json!({
             "diagnostics": {
-                "rustcArguments": ["--"],
+                "extraEnv": {
+                    "RUSTFLAGS": true,
+                },
             },
         });
 
         let error = DiagnosticsConfig::from_initialization_options(Some(&options))
-            .expect_err("argument separator should be rejected");
+            .expect_err("malformed diagnostics extraEnv should be rejected");
 
-        assert!(error.to_string().contains("rustcArguments[0]"));
+        assert!(error.to_string().contains("diagnostics.extraEnv.RUSTFLAGS"));
     }
 }

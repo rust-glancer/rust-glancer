@@ -76,6 +76,9 @@ mod tests {
             "diagnostics": {
                 "onStartup": true,
                 "command": "clippy",
+                "extraEnv": {
+                    "RUSTFLAGS": "--cfg tokio_unstable",
+                },
             },
         });
 
@@ -113,5 +116,9 @@ mod tests {
         assert_eq!(config.analysis.cfg.atoms, ["tokio_unstable"]);
         assert!(config.diagnostics.on_startup);
         assert_eq!(config.diagnostics.command, "clippy");
+        assert_eq!(
+            config.diagnostics.extra_env["RUSTFLAGS"],
+            "--cfg tokio_unstable",
+        );
     }
 }

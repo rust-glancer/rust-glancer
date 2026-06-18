@@ -33,18 +33,14 @@ impl CargoDiagnosticsCommand {
             .snapshot
             .config
             .cargo_arguments(&self.snapshot.analysis);
-        let rustc_arguments = self
-            .snapshot
-            .config
-            .rustc_arguments(&self.snapshot.analysis);
         command
             .arg(&self.snapshot.config.command)
             .arg("--message-format=json")
             .current_dir(&self.snapshot.workspace_root)
             .kill_on_drop(true);
         command.args(cargo_arguments);
-        if !rustc_arguments.is_empty() {
-            command.arg("--").args(rustc_arguments);
+        for (key, value) in &self.snapshot.config.extra_env {
+            command.env(key, value);
         }
 
         let output = command
