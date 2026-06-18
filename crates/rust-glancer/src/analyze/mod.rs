@@ -5,7 +5,7 @@ use std::{
 
 use anyhow::Context as _;
 use rg_lsp_engine::MemoryControl as _;
-use rg_profile::{ProfileFilter, ProfileRegistry, ProfileRun};
+use rg_profile::ProfileRun;
 use rg_project::{
     BuildProcessMemory, IndexingPerformancePreference, PackageResidencyPolicy, Project,
     StartupCacheLoad,
@@ -15,9 +15,11 @@ use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
 mod config;
 mod data;
 mod output;
+mod profile;
 mod report;
 
 pub(crate) use self::config::{CliIndexingPreference, CliPackageResidencyPolicy, OutputFormat};
+pub(crate) use self::profile::profile_groups_help;
 
 /// Runs project analysis for the Cargo manifest at `path` and prints a small build summary.
 #[allow(clippy::too_many_arguments)]
@@ -63,9 +65,9 @@ pub(crate) fn analyze(
     let include_profile_snapshot = profile_filter
         .as_deref()
         .is_some_and(|filter| !filter.trim().is_empty());
-    let profile_filter = parse_analyze_profile_filter(profile_filter.as_deref(), include_memory)?;
+    let profile_filter = profile::parse_filter(profile_filter.as_deref(), include_memory)?;
     let profile_run = profile_filter
-        .map(start_analyze_profile_run)
+        .map(profile::start_run)
         .transpose()
         .context("while attempting to start analyze profile run")?;
 
@@ -126,40 +128,14 @@ fn measure_time<T>(operation: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Res
     Ok((output, started.elapsed()))
 }
 
-fn parse_analyze_profile_filter(
-    filter: Option<&str>,
-    include_memory: bool,
-) -> anyhow::Result<Option<ProfileFilter>> {
-    let mut filter = match filter {
-        Some(filter) => ProfileFilter::parse(filter)
-            .context("while attempting to parse analyze profile filter")?,
-        None => ProfileFilter::disabled(),
-    };
-
-    if include_memory {
-        filter
-            .enable(rg_project::BUILD_CHECKPOINTS.scope())
-            .context("while attempting to enable project build profiling for memory report")?;
-    }
-
-    Ok((!filter.is_disabled()).then_some(filter))
-}
-
-fn start_analyze_profile_run(filter: ProfileFilter) -> anyhow::Result<ProfileRun> {
-    let registry = ProfileRegistry::new(rg_project::profile_descriptors().iter().copied())
-        .context("while attempting to build project profile registry")?;
-    ProfileRun::start_with_registry(registry, filter)
-        .context("while attempting to activate analyze profile run")
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{parse_analyze_profile_filter, start_analyze_profile_run};
+    use super::profile::{parse_filter, start_run};
 
     #[test]
     fn analyze_profile_filter_is_absent_without_profile_argument() {
         assert_eq!(
-            parse_analyze_profile_filter(None, false)
+            parse_filter(None, false)
                 .expect("missing profile filter should parse as no profile run"),
             None,
             "plain analysis should not start the dynamic profiler",
@@ -169,8 +145,13 @@ mod tests {
     #[test]
     fn analyze_profile_filter_treats_empty_selector_as_disabled() {
         assert_eq!(
-            parse_analyze_profile_filter(Some(""), false)
-                .expect("empty profile filter should parse as disabled"),
+            parse_filter(Some(""), false).expect("empty profile filter should parse as disabled"),
+            None,
+            "an explicitly empty profile selector should not start the dynamic profiler",
+        );
+
+        assert_eq!(
+            parse_filter(Some("  "), false).expect("empty profile filter should parse as disabled"),
             None,
             "an explicitly empty profile selector should not start the dynamic profiler",
         );
@@ -180,7 +161,7 @@ mod tests {
     fn analyze_profile_filter_enables_project_build_for_memory() {
         let project_build = rg_project::BUILD_CHECKPOINTS.scope();
 
-        let filter = parse_analyze_profile_filter(None, true)
+        let filter = parse_filter(None, true)
             .expect("memory profile filter should parse")
             .expect("memory reporting should enable a profile run");
         assert_eq!(
@@ -189,7 +170,7 @@ mod tests {
             "memory reports should collect project build checkpoints internally",
         );
 
-        let filter = parse_analyze_profile_filter(Some("def_map.macros"), true)
+        let filter = parse_filter(Some("def_map.macros"), true)
             .expect("profile filter with memory should parse")
             .expect("memory reporting should keep a profile run enabled");
         assert_eq!(
@@ -198,7 +179,7 @@ mod tests {
             "memory reports should extend explicit selectors instead of replacing them",
         );
 
-        let filter = parse_analyze_profile_filter(Some("project.build.def_map"), true)
+        let filter = parse_filter(Some("project.build.def_map"), true)
             .expect("detailed project build profile filter with memory should parse")
             .expect("memory reporting should keep a profile run enabled");
         assert_eq!(
@@ -207,7 +188,7 @@ mod tests {
             "detailed project build selectors already cover parent checkpoints",
         );
 
-        let filter = parse_analyze_profile_filter(Some("all"), true)
+        let filter = parse_filter(Some("all"), true)
             .expect("all profile filter with memory should parse")
             .expect("all profile filter should enable a profile run");
         assert!(
@@ -217,16 +198,40 @@ mod tests {
     }
 
     #[test]
+    fn analyze_profile_filter_expands_default_alias() {
+        let final_memory = rg_project::BUILD_FINAL_MEMORY.scope();
+
+        let filter = parse_filter(Some("default"), false)
+            .expect("default profile alias should parse")
+            .expect("default profile alias should enable a profile run");
+        assert_eq!(
+            selector_texts(&filter),
+            vec![final_memory],
+            "the default alias should collect build checkpoints and final retained-memory details",
+        );
+
+        let filter = parse_filter(Some("default,def_map.macros"), false)
+            .expect("mixed profile aliases and selectors should parse")
+            .expect("mixed profile aliases and selectors should enable a profile run");
+        assert_eq!(
+            selector_texts(&filter),
+            vec![final_memory, "def_map.macros"],
+            "profile aliases should expand without blocking explicit selectors",
+        );
+    }
+
+    #[test]
     fn analyze_profile_run_accepts_registered_selectors() {
         for selector in [
             "project.build",
             "project.build.def_map",
             "def_map.macros.by_name",
+            "default",
         ] {
-            let filter = parse_analyze_profile_filter(Some(selector), false)
+            let filter = parse_filter(Some(selector), false)
                 .expect("registered analyze profile selector should parse")
                 .expect("registered analyze profile selector should enable a profile run");
-            let run = start_analyze_profile_run(filter)
+            let run = start_run(filter)
                 .expect("registered analyze profile selector should start a profile run");
 
             assert!(
@@ -238,10 +243,10 @@ mod tests {
 
     #[test]
     fn analyze_profile_run_rejects_unknown_selector() {
-        let filter = parse_analyze_profile_filter(Some("def_map.unknown"), false)
+        let filter = parse_filter(Some("def_map.unknown"), false)
             .expect("syntactically valid selector should parse")
             .expect("non-empty selector should enable a profile run");
-        let error = match start_analyze_profile_run(filter) {
+        let error = match start_run(filter) {
             Ok(run) => {
                 drop(run);
                 panic!("unknown analyze profile selector should be rejected");
