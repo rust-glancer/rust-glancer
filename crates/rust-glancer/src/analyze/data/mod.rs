@@ -6,7 +6,7 @@ mod project;
 mod stages;
 
 use rg_profile::ProfileSnapshot;
-use rg_project::{BuildStageMemorySnapshot, Project};
+use rg_project::Project;
 use serde::Serialize;
 
 pub(crate) use self::{
@@ -18,7 +18,7 @@ use self::{
     memory::MemoryReport, profile::ProfileSnapshotReport, project::ProjectReport,
     stages::BuildProfileReport,
 };
-use super::{CliMemoryStage, report::ReportDocument};
+use super::report::ReportDocument;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ReportDocumentOptions {
@@ -43,28 +43,32 @@ pub(crate) struct AnalyzeReport {
     /// Optional dynamic profile snapshot captured through the implicit profiling runtime.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) profile_snapshot: Option<ProfileSnapshotReport>,
-    /// Optional retained-memory breakdown for the final project snapshot.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) memory: Option<MemoryReport>,
+    /// Retained-memory breakdowns for the final project snapshot and selected profile artifacts.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) memory: Vec<MemoryReport>,
 }
 
 impl AnalyzeReport {
     pub(crate) fn build(
         project: &Project,
         analysis_setup: AnalysisSetupReport,
-        stage_memory: Option<&BuildStageMemorySnapshot>,
         allocator: Option<AllocatorReport>,
         profile_snapshot: Option<&ProfileSnapshot>,
         include_profile_snapshot: bool,
         include_memory: bool,
-        memory_stage: CliMemoryStage,
     ) -> Self {
-        let memory = include_memory.then(|| match memory_stage {
-            CliMemoryStage::Final => MemoryReport::capture(project),
-            _ => stage_memory
-                .map(MemoryReport::capture_stage)
-                .expect("selected build memory stage should be captured"),
-        });
+        let mut memory = include_memory
+            .then(|| MemoryReport::capture(project))
+            .into_iter()
+            .collect::<Vec<_>>();
+        if let Some(profile_snapshot) = profile_snapshot {
+            memory.extend(profile_snapshot.memory_snapshot_entries().map(
+                |(descriptor, snapshot)| {
+                    MemoryReport::capture_profile_snapshot(descriptor, snapshot)
+                },
+            ));
+        }
+
         let build_profile_report = include_memory.then(|| {
             let profile_snapshot =
                 profile_snapshot.expect("memory reporting should collect project build profile");
@@ -124,10 +128,10 @@ impl AnalyzeReport {
             });
         }
 
-        if options.include_memory
-            && let Some(memory) = &self.memory
-        {
-            document = document.section("memory", |section| memory.append_document(section));
+        for memory in &self.memory {
+            document = document.section(memory.section_key(), |section| {
+                memory.append_document(section);
+            });
         }
 
         if let Some(profile_snapshot) = &self.profile_snapshot {

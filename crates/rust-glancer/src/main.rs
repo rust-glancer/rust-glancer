@@ -29,9 +29,6 @@ enum Command {
         profile: Option<String>,
         #[clap(short, long)]
         memory: bool,
-        /// Build stage used for detailed retained-memory reporting with --memory.
-        #[clap(long, value_enum, default_value = "final")]
-        stage: analyze::CliMemoryStage,
         /// Load matching offloadable packages from existing cache artifacts during indexing.
         #[clap(short, long)]
         load: bool,
@@ -73,7 +70,6 @@ fn main() -> anyhow::Result<()> {
             path,
             profile,
             memory,
-            stage,
             load,
             package_residency,
             indexing_preference,
@@ -94,7 +90,6 @@ fn main() -> anyhow::Result<()> {
                 indexing_preference.into(),
                 target,
                 format,
-                stage,
             )
         }
         Command::Lsp => start_server::start_server(),

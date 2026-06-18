@@ -16,11 +16,11 @@ use crate::{
     IndexingPerformancePreference, PackageResidencyPlan,
     cache::{Fingerprint, PackageCacheStore, WorkspaceCachePlan},
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
-    profile::{BuildProfileStage, BuildProfiler},
+    profile::{BuildProfiler, metric},
     project::{StartupCacheLoad, loading::PackageReadLoaders, package_set::PhasePackageSet},
 };
 
-use super::{cache_probe::StartupCacheProbe, stage_memory::StageMemory};
+use super::{cache_probe::StartupCacheProbe, checkpoint_memory::CheckpointMemory};
 
 /// Phase payloads built for one project snapshot.
 ///
@@ -48,15 +48,10 @@ pub(super) fn build(
     memory_hooks: &dyn ProjectMemoryHooks,
     profiler: &mut BuildProfiler,
 ) -> anyhow::Result<BuiltPhases> {
-    let mut stage_memory = StageMemory::default();
-
     let mut parse = ParseDb::build(workspace).context("while attempting to build parse db")?;
-    stage_memory = stage_memory.parse(&parse).checkpoint(
-        profiler,
-        BuildProfileStage::Parse,
-        "after parse",
-        &parse,
-    );
+    CheckpointMemory::default()
+        .parse(&parse)
+        .checkpoint(profiler, metric::PARSE_MEMORY, &parse);
 
     let build_plan = PackageBuildPlan::build(
         startup_cache_load,
@@ -67,13 +62,12 @@ pub(super) fn build(
         workspace,
         &mut parse,
     );
-    stage_memory = stage_memory
+    CheckpointMemory::default()
         .parse(&parse)
         .build_plan(&build_plan.source_packages)
         .checkpoint(
             profiler,
-            BuildProfileStage::CacheProbe,
-            "after cache probe",
+            metric::CACHE_PROBE_MEMORY,
             &build_plan.source_packages,
         );
 
@@ -82,17 +76,12 @@ pub(super) fn build(
     let package_indices = build_plan.source_packages.package_indices();
     let item_tree = ItemTreeDb::build_packages(&mut parse, &package_indices, &mut names)
         .context("while attempting to build item tree db")?;
-    stage_memory = stage_memory
+    CheckpointMemory::default()
         .names(&names)
         .parse(&parse)
         .build_plan(&build_plan.source_packages)
         .item_tree(&item_tree)
-        .checkpoint(
-            profiler,
-            BuildProfileStage::ItemTree,
-            "after item-tree",
-            &item_tree,
-        );
+        .checkpoint(profiler, metric::ITEM_TREE_MEMORY, &item_tree);
 
     // Later phases consume file ids, paths, line indexes, and lowered item trees. Body IR reparses
     // syntax file-by-file, so the global parse database can drop full trees before more phase
@@ -100,22 +89,17 @@ pub(super) fn build(
     parse.evict_syntax_trees();
     parse.shrink_to_fit();
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction);
-    stage_memory = stage_memory
+    CheckpointMemory::default()
         .names(&names)
         .parse(&parse)
         .build_plan(&build_plan.source_packages)
         .item_tree(&item_tree)
-        .checkpoint(
-            profiler,
-            BuildProfileStage::ItemTreeSyntaxEviction,
-            "after item-tree syntax eviction",
-            &parse,
-        );
+        .checkpoint(profiler, metric::ITEM_TREE_SYNTAX_EVICTION_MEMORY, &parse);
 
     let package_source_fingerprints = cache_plan
         .source_fingerprints(workspace.workspace_root(), &parse)
         .context("while attempting to compute package cache source fingerprints")?;
-    stage_memory = stage_memory
+    CheckpointMemory::default()
         .names(&names)
         .parse(&parse)
         .build_plan(&build_plan.source_packages)
@@ -123,8 +107,7 @@ pub(super) fn build(
         .source_fingerprints(&package_source_fingerprints)
         .checkpoint(
             profiler,
-            BuildProfileStage::CacheSourceFingerprints,
-            "after cache source fingerprints",
+            metric::CACHE_SOURCE_FINGERPRINTS_MEMORY,
             &package_source_fingerprints,
         );
 
@@ -158,19 +141,14 @@ pub(super) fn build(
         .context("while attempting to build def map db")?;
     drop(old_def_map_txn);
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterDefMapBuild);
-    stage_memory = stage_memory
+    CheckpointMemory::default()
         .names(&names)
         .parse(&parse)
         .build_plan(&build_plan.source_packages)
         .item_tree(&item_tree)
         .source_fingerprints(&package_source_fingerprints)
         .def_map(&def_map)
-        .checkpoint(
-            profiler,
-            BuildProfileStage::DefMap,
-            "after def-map",
-            &def_map,
-        );
+        .checkpoint(profiler, metric::DEF_MAP_MEMORY, &def_map);
 
     let baseline_semantic_ir =
         SemanticIrDb::from_package_store(offloaded_package_store(parse.package_count()));
@@ -185,7 +163,7 @@ pub(super) fn build(
         )
         .build()
         .context("while attempting to build semantic ir db")?;
-    stage_memory = stage_memory
+    CheckpointMemory::default()
         .names(&names)
         .parse(&parse)
         .build_plan(&build_plan.source_packages)
@@ -193,29 +171,20 @@ pub(super) fn build(
         .source_fingerprints(&package_source_fingerprints)
         .def_map(&def_map)
         .semantic_ir(&semantic_ir)
-        .checkpoint(
-            profiler,
-            BuildProfileStage::SemanticIr,
-            "after semantic-ir",
-            &semantic_ir,
-        );
+        .checkpoint(profiler, metric::SEMANTIC_IR_MEMORY, &semantic_ir);
 
     // ItemTree is a lowering input, not retained project state. Cache-backed builds only populate
     // packages that missed the artifact cache, but even that sparse tree should disappear before
     // body lowering so retained-memory checkpoints stay focused on durable phase state.
     drop(item_tree);
-    stage_memory = stage_memory
+    CheckpointMemory::default()
         .names(&names)
         .parse(&parse)
         .build_plan(&build_plan.source_packages)
         .source_fingerprints(&package_source_fingerprints)
         .def_map(&def_map)
         .semantic_ir(&semantic_ir)
-        .checkpoint_without_retained(
-            profiler,
-            BuildProfileStage::ItemTreeDrop,
-            "after item-tree drop",
-        );
+        .checkpoint_without_retained(profiler, metric::ITEM_TREE_DROP_MEMORY);
 
     let baseline_body_ir =
         BodyIrDb::from_package_store(offloaded_package_store(parse.package_count()));
@@ -234,7 +203,7 @@ pub(super) fn build(
         .build()
         .context("while attempting to build body ir db")?;
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterBodyIrBuild);
-    stage_memory = stage_memory
+    CheckpointMemory::default()
         .names(&names)
         .parse(&parse)
         .build_plan(&build_plan.source_packages)
@@ -242,30 +211,20 @@ pub(super) fn build(
         .def_map(&def_map)
         .semantic_ir(&semantic_ir)
         .body_ir(&body_ir)
-        .checkpoint(
-            profiler,
-            BuildProfileStage::BodyIr,
-            "after body-ir",
-            &body_ir,
-        );
+        .checkpoint(profiler, metric::BODY_IR_MEMORY, &body_ir);
     drop(build_plan);
 
     parse.evict_syntax_trees();
     parse.shrink_to_fit();
     Shrink::shrink_to_fit(&mut names);
-    stage_memory
+    CheckpointMemory::default()
         .names(&names)
         .parse(&parse)
         .source_fingerprints(&package_source_fingerprints)
         .def_map(&def_map)
         .semantic_ir(&semantic_ir)
         .body_ir(&body_ir)
-        .checkpoint(
-            profiler,
-            BuildProfileStage::ParseSyntaxEviction,
-            "after parse syntax eviction",
-            &parse,
-        );
+        .checkpoint(profiler, metric::PARSE_SYNTAX_EVICTION_MEMORY, &parse);
 
     Ok(BuiltPhases {
         package_source_fingerprints,

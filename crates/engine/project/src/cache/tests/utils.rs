@@ -374,8 +374,7 @@ pub struct DepOld;
     let project = Project::builder(workspace.clone())
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
-        .expect("fixture project should build")
-        .into_project();
+        .expect("fixture project should build");
     let dep = ProjectFixture::package_slot_by_name_in(project.snapshot().parse_db(), "dep");
     let old_header = project
         .state
@@ -418,8 +417,7 @@ pub struct DepNew;
     let cached_project = Project::builder(workspace_after_edit)
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
-        .expect("fixture project should rebuild from matching artifact")
-        .into_project();
+        .expect("fixture project should rebuild from matching artifact");
     let analysis = cached_project
         .snapshot()
         .full_analysis()
@@ -632,12 +630,11 @@ pub fn dep_value() -> usize { 2 }
         crate::profile_descriptors(),
         "project.build.cache_probe",
     );
-    let (project, _stage_memory) = Project::builder(workspace)
+    let project = Project::builder(workspace)
         .body_ir_policy(BodyIrBuildPolicy::all_packages())
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
-        .expect("fixture project should reject body-policy-mismatched artifact")
-        .into_parts();
+        .expect("fixture project should reject body-policy-mismatched artifact");
     let snapshot = run.finish();
     let artifact = package_cache_artifact_for(&project, "dep");
 
@@ -716,8 +713,7 @@ pub struct DepChildOld;
     let project = Project::builder(workspace.clone())
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
-        .expect("fixture project should build")
-        .into_project();
+        .expect("fixture project should build");
     let dep = ProjectFixture::package_slot_by_name_in(project.snapshot().parse_db(), "dep");
 
     fixture.write_fixture_files(
@@ -733,8 +729,7 @@ pub struct DepChildNew;
     let cached_project = Project::builder(workspace_after_edit)
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()
-        .expect("fixture project should reject stale artifact and rebuild from source")
-        .into_project();
+        .expect("fixture project should reject stale artifact and rebuild from source");
     let analysis = cached_project
         .snapshot()
         .full_analysis()
@@ -771,8 +766,7 @@ fn render_artifact_existence_for_policy(
     let project = Project::builder(workspace.clone())
         .package_residency_policy(policy)
         .build()
-        .unwrap_or_else(|error| panic!("{label} fixture project should build: {error:#}"))
-        .into_project();
+        .unwrap_or_else(|error| panic!("{label} fixture project should build: {error:#}"));
 
     writeln!(dump, "{label}").expect("string writes should not fail");
     for package in project.snapshot().parse_db().packages() {

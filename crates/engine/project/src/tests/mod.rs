@@ -7,8 +7,8 @@ use test_fixture::testonly::MarkedText;
 
 use self::utils::{HostFixture, HostObservation};
 use crate::{
-    BuildProfileStage, PackageResidencyPolicy, Project, ProjectMemoryHooks,
-    ProjectMemoryPurgePoint, testonly::ProjectSourceFixture,
+    PackageResidencyPolicy, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint,
+    testonly::ProjectSourceFixture,
 };
 
 #[derive(Debug)]
@@ -345,12 +345,12 @@ pub struct User;
 }
 
 #[test]
-fn stage_memory_snapshot_captures_requested_transient_phase() {
+fn build_memory_snapshot_captures_requested_transient_point() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
-name = "stage_profile_fixture"
+name = "build_memory_fixture"
 version = "0.1.0"
 edition = "2024"
 
@@ -359,33 +359,37 @@ pub struct User;
 "#,
     );
     let workspace = fixture.workspace_metadata();
-    let (_project, stage_memory) = Project::builder(workspace)
+    let run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.def_map",
+    );
+    Project::builder(workspace)
         .measure_retained_memory(true)
-        .stage_memory_target(Some(BuildProfileStage::DefMap))
         .build()
-        .expect("stage-profiled project build should succeed")
-        .into_parts();
-    let snapshot = stage_memory.expect("requested stage should capture detailed memory");
+        .expect("memory-targeted project build should succeed");
+    let snapshot = run.finish();
+    let memory = snapshot
+        .inner()
+        .memory_snapshot(crate::profile::metric::DEF_MAP_MEMORY.path())
+        .expect("requested memory point should capture detailed memory");
 
-    assert_eq!(snapshot.stage(), BuildProfileStage::DefMap);
-    assert_eq!(snapshot.label(), "after def-map");
     assert!(
-        snapshot.retained_bytes() > 0,
-        "stage memory should report retained bytes"
+        memory.retained_bytes > 0,
+        "build memory snapshot should report retained bytes"
     );
 
-    let paths = snapshot
-        .records()
+    let paths = memory
+        .records
         .iter()
         .map(|record| record.path.as_str())
         .collect::<Vec<_>>();
     assert!(
-        paths.iter().any(|path| path.starts_with("stage.def_map")),
-        "def-map stage snapshot should include def-map memory"
+        paths.iter().any(|path| path.starts_with("build.def_map")),
+        "def-map memory snapshot should include def-map memory"
     );
     assert!(
-        paths.iter().any(|path| path.starts_with("stage.item_tree")),
-        "def-map stage snapshot should still include live item-tree memory"
+        paths.iter().any(|path| path.starts_with("build.item_tree")),
+        "def-map memory snapshot should still include live item-tree memory"
     );
 }
 

@@ -26,17 +26,18 @@ pub use self::{
     },
     metric::{
         CheckpointMetric, CounterMetric, DurationMetric, GaugeMetric, KeyedCounterMetric,
-        KeyedDurationMetric,
+        KeyedDurationMetric, MemorySnapshotMetric,
     },
     registry::{ProfileFilterValidationError, ProfileRegistry, ProfileRegistryError},
     runtime::{
         ProfileInitializeError, ProfileRun, ProfileRunStartError, ProfileTimer, duration_enabled,
-        initialize, record_checkpoint, record_duration, record_gauge, record_keyed_counter,
-        record_keyed_duration, timer,
+        initialize, memory_snapshot_enabled, record_checkpoint, record_duration, record_gauge,
+        record_keyed_counter, record_keyed_duration, record_memory_snapshot, timer,
     },
     snapshot::{
         ProfileCheckpoint, ProfileCheckpointValue, ProfileEntry, ProfileKeyedCounter,
-        ProfileKeyedDuration, ProfileMeasurement, ProfileSnapshot, ProfileValue,
+        ProfileKeyedDuration, ProfileMeasurement, ProfileMemoryRecord, ProfileMemorySnapshot,
+        ProfileSnapshot, ProfileValue,
     },
 };
 
@@ -70,6 +71,9 @@ mod tests {
             }
             scope "project.build" {
                 checkpoint CHECKPOINTS = "checkpoints" [columns super::CHECKPOINT_COLUMNS];
+            }
+            scope "project.build.def_map" {
+                memory_snapshot DEF_MAP_MEMORY = "memory" [title "after def-map"];
             }
         }
     }
@@ -133,6 +137,33 @@ mod tests {
             .expect("checkpoint stream should be present");
         assert_eq!(checkpoints.len(), 1);
         assert_eq!(checkpoints[0].label, "after def-map");
+    }
+
+    #[test]
+    fn profile_run_collects_selected_memory_snapshots() {
+        let run =
+            test_support::ProfileTest::start(test_metric::descriptors(), "project.build.def_map");
+
+        if test_metric::DEF_MAP_MEMORY.is_enabled() {
+            test_metric::DEF_MAP_MEMORY.record(ProfileMemorySnapshot::new(
+                64,
+                vec![ProfileMemoryRecord::new(
+                    "build.def_map",
+                    "DefMapDb",
+                    "heap",
+                    64,
+                )],
+            ));
+        }
+
+        let snapshot = run.finish();
+        let memory = snapshot
+            .inner()
+            .memory_snapshot(test_metric::DEF_MAP_MEMORY.path())
+            .expect("selected memory snapshot should be recorded");
+
+        assert_eq!(memory.retained_bytes, 64);
+        assert_eq!(memory.records[0].path, "build.def_map");
     }
 
     #[test]

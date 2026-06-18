@@ -9,8 +9,8 @@ use anyhow::Context as _;
 use clap::ValueEnum;
 use rg_lsp_engine::MemoryControl as _;
 use rg_project::{
-    BuildProcessMemory, BuildProfileStage, IndexingPerformancePreference, PackageResidencyPolicy,
-    Project, StartupCacheLoad,
+    BuildProcessMemory, IndexingPerformancePreference, PackageResidencyPolicy, Project,
+    StartupCacheLoad,
 };
 use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
 
@@ -87,50 +87,6 @@ pub(crate) enum OutputFormat {
     Html,
 }
 
-/// Build stage used for detailed retained-memory reporting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum CliMemoryStage {
-    #[value(alias = "parse")]
-    Parse,
-    #[value(alias = "cacheprobe")]
-    CacheProbe,
-    #[value(alias = "itemtree")]
-    ItemTree,
-    #[value(alias = "itemtree-syntax-eviction")]
-    ItemTreeSyntaxEviction,
-    #[value(alias = "cache-source-fingerprint")]
-    CacheSourceFingerprints,
-    #[value(alias = "defmap")]
-    DefMap,
-    #[value(alias = "semanticir")]
-    SemanticIr,
-    #[value(alias = "itemtree-drop")]
-    ItemTreeDrop,
-    #[value(alias = "bodyir")]
-    BodyIr,
-    #[value(alias = "parse-syntax-evict")]
-    ParseSyntaxEviction,
-    Final,
-}
-
-impl CliMemoryStage {
-    fn build_stage(self) -> Option<BuildProfileStage> {
-        match self {
-            Self::Parse => Some(BuildProfileStage::Parse),
-            Self::CacheProbe => Some(BuildProfileStage::CacheProbe),
-            Self::ItemTree => Some(BuildProfileStage::ItemTree),
-            Self::ItemTreeSyntaxEviction => Some(BuildProfileStage::ItemTreeSyntaxEviction),
-            Self::CacheSourceFingerprints => Some(BuildProfileStage::CacheSourceFingerprints),
-            Self::DefMap => Some(BuildProfileStage::DefMap),
-            Self::SemanticIr => Some(BuildProfileStage::SemanticIr),
-            Self::ItemTreeDrop => Some(BuildProfileStage::ItemTreeDrop),
-            Self::BodyIr => Some(BuildProfileStage::BodyIr),
-            Self::ParseSyntaxEviction => Some(BuildProfileStage::ParseSyntaxEviction),
-            Self::Final => None,
-        }
-    }
-}
-
 /// Runs project analysis for the Cargo manifest at `path` and prints a small build summary.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn analyze(
@@ -142,7 +98,6 @@ pub(crate) fn analyze(
     indexing_preference: IndexingPerformancePreference,
     target: Option<String>,
     output_format: OutputFormat,
-    memory_stage: CliMemoryStage,
 ) -> anyhow::Result<()> {
     if !path.exists() {
         anyhow::bail!("folder {} does not exist", path.display());
@@ -187,8 +142,7 @@ pub(crate) fn analyze(
         .cargo_metadata_config(cargo_metadata_config)
         .indexing_preference(indexing_preference)
         .package_residency_policy(package_residency_policy)
-        .startup_cache_load(startup_cache_load)
-        .stage_memory_target(include_memory.then(|| memory_stage.build_stage()).flatten());
+        .startup_cache_load(startup_cache_load);
     let builder = if include_memory {
         builder
             .memory_hooks(crate::memory::project_memory_hooks())
@@ -206,14 +160,13 @@ pub(crate) fn analyze(
     } else {
         builder
     };
-    let project_build = builder.build().context(if include_memory {
+    let project = builder.build().context(if include_memory {
         "while attempting to build profiled project"
     } else {
         "while attempting to build project"
     })?;
     let profile_snapshot = profile_run.map(rg_profile::ProfileRun::finish);
 
-    let (project, stage_memory) = project_build.into_parts();
     let allocator_name = memory_control.allocator_name();
 
     // Capture allocator stats and purge after project-building allocations are finished, but
@@ -229,12 +182,10 @@ pub(crate) fn analyze(
     let analyze_report = data::AnalyzeReport::build(
         &project,
         analysis_setup,
-        stage_memory.as_ref(),
         allocator,
         profile_snapshot.as_ref(),
         include_profile_snapshot,
         include_memory,
-        memory_stage,
     );
 
     let output = match output_format {
@@ -387,7 +338,11 @@ mod tests {
 
     #[test]
     fn analyze_profile_run_accepts_registered_selectors() {
-        for selector in ["project.build", "def_map.macros.by_name"] {
+        for selector in [
+            "project.build",
+            "project.build.def_map",
+            "def_map.macros.by_name",
+        ] {
             let filter = parse_analyze_profile_filter(Some(selector), false)
                 .expect("registered analyze profile selector should parse")
                 .expect("registered analyze profile selector should enable a profile run");

@@ -163,7 +163,8 @@ impl ProfileEntryReport {
             }
             ProfileValueReport::Counter(_)
             | ProfileValueReport::Gauge(_)
-            | ProfileValueReport::DurationMs(_) => {}
+            | ProfileValueReport::DurationMs(_)
+            | ProfileValueReport::MemorySnapshot(_) => {}
         }
     }
 
@@ -218,6 +219,7 @@ pub(crate) enum ProfileValueReport {
     KeyedCounters(Vec<ProfileKeyedCounterReport>),
     KeyedDurations(Vec<ProfileKeyedDurationReport>),
     Checkpoints(Vec<ProfileCheckpointReport>),
+    MemorySnapshot(ProfileMemorySnapshotReport),
 }
 
 impl ProfileValueReport {
@@ -244,6 +246,9 @@ impl ProfileValueReport {
                     .map(ProfileCheckpointReport::capture)
                     .collect(),
             ),
+            ProfileValue::MemorySnapshot(snapshot) => {
+                Self::MemorySnapshot(ProfileMemorySnapshotReport::capture(snapshot))
+            }
         }
     }
 
@@ -252,7 +257,25 @@ impl ProfileValueReport {
             Self::Counter(value) => Some(ReportValue::Count(*value)),
             Self::Gauge(value) => Some(value.as_report_value()),
             Self::DurationMs(value) => Some(ReportValue::DurationMs(*value)),
-            Self::KeyedCounters(_) | Self::KeyedDurations(_) | Self::Checkpoints(_) => None,
+            Self::KeyedCounters(_)
+            | Self::KeyedDurations(_)
+            | Self::Checkpoints(_)
+            | Self::MemorySnapshot(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct ProfileMemorySnapshotReport {
+    pub(crate) retained_bytes: usize,
+    pub(crate) aggregate_bucket_count: usize,
+}
+
+impl ProfileMemorySnapshotReport {
+    fn capture(snapshot: &rg_profile::ProfileMemorySnapshot) -> Self {
+        Self {
+            retained_bytes: snapshot.retained_bytes,
+            aggregate_bucket_count: snapshot.records.len(),
         }
     }
 }
@@ -397,6 +420,7 @@ fn instrument_kind(kind: ProfileInstrumentKind) -> &'static str {
         ProfileInstrumentKind::KeyedCounter => "keyed_counter",
         ProfileInstrumentKind::KeyedDuration => "keyed_duration",
         ProfileInstrumentKind::CheckpointStream => "checkpoint_stream",
+        ProfileInstrumentKind::MemorySnapshot => "memory_snapshot",
     }
 }
 

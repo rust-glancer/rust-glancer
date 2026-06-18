@@ -1,6 +1,6 @@
 use rg_profile::{
-    ProfileCheckpointColumn, ProfileCheckpointValue, ProfileDescriptor, ProfileMeasurement,
-    declare_metrics,
+    MemorySnapshotMetric, ProfileCheckpointColumn, ProfileCheckpointValue, ProfileDescriptor,
+    ProfileMeasurement, ProfileMemoryRecord, ProfileMemorySnapshot, declare_metrics,
 };
 use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
 
@@ -20,6 +20,46 @@ declare_metrics! {
     pub(crate) mod metric {
         scope "project.build" {
             checkpoint CHECKPOINTS = "checkpoints" [columns super::BUILD_CHECKPOINT_COLUMNS];
+        }
+
+        scope "project.build.parse" {
+            memory_snapshot PARSE_MEMORY = "memory" [title "after parse"];
+        }
+
+        scope "project.build.cache_probe" {
+            memory_snapshot CACHE_PROBE_MEMORY = "memory" [title "after cache probe"];
+        }
+
+        scope "project.build.item_tree" {
+            memory_snapshot ITEM_TREE_MEMORY = "memory" [title "after item-tree"];
+        }
+
+        scope "project.build.item_tree.syntax_eviction" {
+            memory_snapshot ITEM_TREE_SYNTAX_EVICTION_MEMORY = "memory" [title "after item-tree syntax eviction"];
+        }
+
+        scope "project.build.cache_source_fingerprints" {
+            memory_snapshot CACHE_SOURCE_FINGERPRINTS_MEMORY = "memory" [title "after cache source fingerprints"];
+        }
+
+        scope "project.build.def_map" {
+            memory_snapshot DEF_MAP_MEMORY = "memory" [title "after def-map"];
+        }
+
+        scope "project.build.semantic_ir" {
+            memory_snapshot SEMANTIC_IR_MEMORY = "memory" [title "after semantic-ir"];
+        }
+
+        scope "project.build.item_tree.drop" {
+            memory_snapshot ITEM_TREE_DROP_MEMORY = "memory" [title "after item-tree drop"];
+        }
+
+        scope "project.build.body_ir" {
+            memory_snapshot BODY_IR_MEMORY = "memory" [title "after body-ir"];
+        }
+
+        scope "project.build.parse.syntax_eviction" {
+            memory_snapshot PARSE_SYNTAX_EVICTION_MEMORY = "memory" [title "after parse syntax eviction"];
         }
 
         scope "project.build.cache_probe" {
@@ -57,69 +97,9 @@ pub struct BuildProcessMemory {
 
 pub type ProcessMemorySampler = Box<dyn FnMut() -> Option<BuildProcessMemory>>;
 
-/// Build checkpoint where callers can request a detailed retained-memory breakdown.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BuildProfileStage {
-    Parse,
-    CacheProbe,
-    ItemTree,
-    ItemTreeSyntaxEviction,
-    CacheSourceFingerprints,
-    DefMap,
-    SemanticIr,
-    ItemTreeDrop,
-    BodyIr,
-    ParseSyntaxEviction,
-}
-
-impl BuildProfileStage {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Parse => "after parse",
-            Self::CacheProbe => "after cache probe",
-            Self::ItemTree => "after item-tree",
-            Self::ItemTreeSyntaxEviction => "after item-tree syntax eviction",
-            Self::CacheSourceFingerprints => "after cache source fingerprints",
-            Self::DefMap => "after def-map",
-            Self::SemanticIr => "after semantic-ir",
-            Self::ItemTreeDrop => "after item-tree drop",
-            Self::BodyIr => "after body-ir",
-            Self::ParseSyntaxEviction => "after parse syntax eviction",
-        }
-    }
-}
-
-/// Detailed memory accounting captured while a transient build stage is still alive.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BuildStageMemorySnapshot {
-    stage: BuildProfileStage,
-    retained_bytes: usize,
-    records: Vec<MemoryRecord>,
-}
-
-impl BuildStageMemorySnapshot {
-    pub fn stage(&self) -> BuildProfileStage {
-        self.stage
-    }
-
-    pub fn label(&self) -> &'static str {
-        self.stage.label()
-    }
-
-    pub fn retained_bytes(&self) -> usize {
-        self.retained_bytes
-    }
-
-    pub fn records(&self) -> &[MemoryRecord] {
-        &self.records
-    }
-}
-
 pub(crate) struct BuildProfiler {
     retained_memory: bool,
     process_memory_sampler: Option<ProcessMemorySampler>,
-    stage_memory_target: Option<BuildProfileStage>,
-    stage_memory: Option<BuildStageMemorySnapshot>,
 }
 
 impl BuildProfiler {
@@ -127,21 +107,16 @@ impl BuildProfiler {
         Self {
             retained_memory: false,
             process_memory_sampler: None,
-            stage_memory_target: None,
-            stage_memory: None,
         }
     }
 
     pub(crate) fn new(
         retained_memory: bool,
         process_memory_sampler: Option<ProcessMemorySampler>,
-        stage_memory_target: Option<BuildProfileStage>,
     ) -> Self {
         Self {
             retained_memory,
             process_memory_sampler,
-            stage_memory_target,
-            stage_memory: None,
         }
     }
 
@@ -163,25 +138,35 @@ impl BuildProfiler {
             .and_then(|sampler| sampler())
     }
 
-    pub(crate) fn capture_stage_memory(
+    pub(crate) fn capture_memory_snapshot(
         &mut self,
-        stage: BuildProfileStage,
+        metric: MemorySnapshotMetric,
         capture: impl FnOnce(&mut MemoryRecorder),
     ) {
-        if self.stage_memory_target != Some(stage) || self.stage_memory.is_some() {
+        if !metric.is_enabled() {
             return;
         }
 
-        let mut recorder = MemoryRecorder::new("stage");
+        let mut recorder = MemoryRecorder::new("build");
         capture(&mut recorder);
-        self.stage_memory = Some(BuildStageMemorySnapshot {
-            stage,
-            retained_bytes: recorder.total_bytes(),
-            records: recorder.records(),
-        });
+        let records = recorder
+            .records()
+            .into_iter()
+            .map(Self::profile_memory_record)
+            .collect();
+        metric.record(ProfileMemorySnapshot::new(recorder.total_bytes(), records));
     }
 
-    pub(crate) fn record_stage_value<T>(
+    fn profile_memory_record(record: MemoryRecord) -> ProfileMemoryRecord {
+        ProfileMemoryRecord::new(
+            record.path,
+            record.type_name,
+            record.kind.as_str(),
+            record.bytes,
+        )
+    }
+
+    pub(crate) fn record_memory_value<T>(
         recorder: &mut MemoryRecorder,
         label: &'static str,
         value: Option<&T>,
@@ -251,9 +236,5 @@ impl BuildProfiler {
                 ),
             ],
         );
-    }
-
-    pub(crate) fn finish(self) -> Option<BuildStageMemorySnapshot> {
-        self.stage_memory
     }
 }

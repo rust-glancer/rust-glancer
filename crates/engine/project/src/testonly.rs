@@ -41,7 +41,6 @@ impl ProjectSourceFixture {
             .package_residency_policy(package_residency_policy)
             .build()
             .expect("analysis project should build")
-            .into_project()
     }
 
     pub fn markers(&self) -> &FixtureMarkers {

@@ -45,7 +45,6 @@ pub(super) fn rebuild_workspace_graph(
         .memory_hooks(memory_hooks)
         .build()
         .context("while attempting to build refreshed analysis project")?
-        .into_project()
         .state;
 
     let mut changed_files = Vec::new();

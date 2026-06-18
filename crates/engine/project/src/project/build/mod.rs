@@ -1,8 +1,8 @@
 //! Fresh project construction.
 
 mod cache_probe;
+mod checkpoint_memory;
 mod phases;
-mod stage_memory;
 
 use anyhow::Context as _;
 use std::sync::Arc;
@@ -11,8 +11,8 @@ use rg_body_ir::BodyIrBuildPolicy;
 use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::{
-    BuildProcessMemory, BuildProfileStage, BuildStageMemorySnapshot, IndexingPerformancePreference,
-    PackageResidencyPlan, PackageResidencyPolicy, ProjectMemoryHooks, ProjectMemoryPurgePoint,
+    BuildProcessMemory, IndexingPerformancePreference, PackageResidencyPlan,
+    PackageResidencyPolicy, ProjectMemoryHooks, ProjectMemoryPurgePoint,
     cache::{PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
     memory::NoopProjectMemoryHooks,
     profile::{BuildProfiler, ProcessMemorySampler},
@@ -34,22 +34,6 @@ impl StartupCacheLoad {
     }
 }
 
-/// Result of building a project, optionally including requested transient-stage memory data.
-pub struct ProjectBuild {
-    project: Project,
-    stage_memory: Option<BuildStageMemorySnapshot>,
-}
-
-impl ProjectBuild {
-    pub fn into_project(self) -> Project {
-        self.project
-    }
-
-    pub fn into_parts(self) -> (Project, Option<BuildStageMemorySnapshot>) {
-        (self.project, self.stage_memory)
-    }
-}
-
 /// Fluent construction API for a fresh analysis project.
 pub struct ProjectBuilder {
     workspace: WorkspaceMetadata,
@@ -60,7 +44,6 @@ pub struct ProjectBuilder {
     startup_cache_load: StartupCacheLoad,
     measure_retained_memory: bool,
     process_memory_sampler: Option<ProcessMemorySampler>,
-    stage_memory_target: Option<BuildProfileStage>,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
 }
 
@@ -75,7 +58,6 @@ impl ProjectBuilder {
             startup_cache_load: StartupCacheLoad::default(),
             measure_retained_memory: false,
             process_memory_sampler: None,
-            stage_memory_target: None,
             memory_hooks: Arc::new(NoopProjectMemoryHooks),
         }
     }
@@ -118,22 +100,14 @@ impl ProjectBuilder {
         self
     }
 
-    pub fn stage_memory_target(mut self, stage: Option<BuildProfileStage>) -> Self {
-        self.stage_memory_target = stage;
-        self
-    }
-
     pub fn memory_hooks(mut self, hooks: Arc<dyn ProjectMemoryHooks>) -> Self {
         self.memory_hooks = hooks;
         self
     }
 
-    pub fn build(self) -> anyhow::Result<ProjectBuild> {
-        let mut profiler = BuildProfiler::new(
-            self.measure_retained_memory,
-            self.process_memory_sampler,
-            self.stage_memory_target,
-        );
+    pub fn build(self) -> anyhow::Result<Project> {
+        let mut profiler =
+            BuildProfiler::new(self.measure_retained_memory, self.process_memory_sampler);
         // Claim an instance before startup probing so all cache reads and writes belong to this
         // project/LSP owner.
         let cache_instance = PackageCacheInstance::for_workspace(&self.workspace)
@@ -164,12 +138,7 @@ impl ProjectBuilder {
             project_bytes,
             process_memory,
         );
-        let stage_memory = profiler.finish();
-
-        Ok(ProjectBuild {
-            project: Project { state },
-            stage_memory,
-        })
+        Ok(Project { state })
     }
 }
 

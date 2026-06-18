@@ -72,6 +72,7 @@ pub enum ProfileInstrumentKind {
     KeyedCounter,
     KeyedDuration,
     CheckpointStream,
+    MemorySnapshot,
 }
 
 impl fmt::Display for ProfileInstrumentKind {
@@ -83,6 +84,7 @@ impl fmt::Display for ProfileInstrumentKind {
             Self::KeyedCounter => "keyed counter",
             Self::KeyedDuration => "keyed duration",
             Self::CheckpointStream => "checkpoint stream",
+            Self::MemorySnapshot => "memory snapshot",
         };
         f.write_str(text)
     }
@@ -208,6 +210,15 @@ impl ProfileDescriptor {
             scope,
             ProfileInstrumentKind::CheckpointStream,
             ProfileUnit::None,
+        )
+    }
+
+    pub const fn memory_snapshot(path: &'static str, scope: &'static str) -> Self {
+        Self::new(
+            path,
+            scope,
+            ProfileInstrumentKind::MemorySnapshot,
+            ProfileUnit::Bytes,
         )
     }
 

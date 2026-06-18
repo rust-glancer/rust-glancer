@@ -1,4 +1,5 @@
-use rg_project::{BuildStageMemorySnapshot, Project};
+use rg_profile::{ProfileDescriptor, ProfileMemoryRecord, ProfileMemorySnapshot};
+use rg_project::Project;
 use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
 use serde::Serialize;
 
@@ -9,7 +10,9 @@ const TOP_MEMORY_ROWS: usize = 12;
 #[derive(Debug, Serialize)]
 pub(crate) struct MemoryReport {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) stage: Option<String>,
+    pub(crate) point: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) label: Option<String>,
     pub(crate) retained_bytes: usize,
     pub(crate) aggregate_bucket_count: usize,
     pub(crate) by_component: Vec<MemoryRow>,
@@ -24,30 +27,52 @@ impl MemoryReport {
         // comments with local `analyze --memory` output while scripts still consume raw bytes.
         let mut recorder = MemoryRecorder::new("project");
         project.record_memory_size(&mut recorder);
-        let records = recorder.records();
+        let records = recorder
+            .records()
+            .iter()
+            .map(MemoryReportRecord::from_project_record)
+            .collect::<Vec<_>>();
 
-        Self::from_records(None, recorder.total_bytes(), &records)
+        Self::from_records(None, None, recorder.total_bytes(), records)
     }
 
-    pub(crate) fn capture_stage(snapshot: &BuildStageMemorySnapshot) -> Self {
+    pub(crate) fn capture_profile_snapshot(
+        descriptor: ProfileDescriptor,
+        snapshot: &ProfileMemorySnapshot,
+    ) -> Self {
         Self::from_records(
-            Some(snapshot.label().to_string()),
-            snapshot.retained_bytes(),
-            snapshot.records(),
+            Some(descriptor.scope().to_string()),
+            descriptor.title_text().map(ToString::to_string),
+            snapshot.retained_bytes,
+            snapshot
+                .records
+                .iter()
+                .map(MemoryReportRecord::from_profile_record)
+                .collect(),
         )
     }
 
+    pub(crate) fn section_key(&self) -> String {
+        let Some(point) = &self.point else {
+            return "memory".to_string();
+        };
+
+        format!("memory_{}", profile_key(point))
+    }
+
     fn from_records(
-        stage: Option<String>,
+        point: Option<String>,
+        label: Option<String>,
         retained_bytes: usize,
-        records: &[MemoryRecord],
+        records: Vec<MemoryReportRecord>,
     ) -> Self {
         Self {
-            stage,
+            point,
+            label,
             retained_bytes,
             aggregate_bucket_count: records.len(),
-            by_component: memory_rows(top_level_totals(records), usize::MAX),
-            by_kind: memory_rows(kind_totals(records), usize::MAX),
+            by_component: memory_rows(top_level_totals(&records), usize::MAX),
+            by_kind: memory_rows(kind_totals(&records), usize::MAX),
             top_paths: memory_rows(
                 string_totals(
                     records
@@ -68,9 +93,16 @@ impl MemoryReport {
     }
 
     pub(super) fn append_document(&self, section: &mut ReportSectionBuilder) {
+        if let Some(label) = &self.label {
+            section.title(format!("memory: {label}"));
+        }
+
         section.fields("summary", |fields| {
-            if let Some(stage) = &self.stage {
-                fields.text("stage", stage);
+            if let Some(point) = &self.point {
+                fields.text("point", point);
+            }
+            if let Some(label) = &self.label {
+                fields.text("label", label);
             }
             fields
                 .bytes_as("retained_bytes", "retained", self.retained_bytes)
@@ -116,6 +148,37 @@ impl MemoryRow {
     }
 }
 
+struct MemoryReportRecord {
+    path: String,
+    type_name: String,
+    kind: String,
+    bytes: usize,
+}
+
+impl MemoryReportRecord {
+    fn from_project_record(record: &MemoryRecord) -> Self {
+        Self {
+            path: record.path.clone(),
+            type_name: record.type_name.clone(),
+            kind: record.kind.as_str().to_string(),
+            bytes: record.bytes,
+        }
+    }
+
+    fn from_profile_record(record: &ProfileMemoryRecord) -> Self {
+        Self {
+            path: record.path.clone(),
+            type_name: record.type_name.clone(),
+            kind: record.kind.clone(),
+            bytes: record.bytes,
+        }
+    }
+}
+
+fn profile_key(path: &str) -> String {
+    path.replace('.', "_")
+}
+
 fn memory_rows(rows: Vec<(String, usize)>, limit: usize) -> Vec<MemoryRow> {
     rows.into_iter()
         .take(limit)
@@ -123,7 +186,7 @@ fn memory_rows(rows: Vec<(String, usize)>, limit: usize) -> Vec<MemoryRow> {
         .collect()
 }
 
-fn top_level_totals(records: &[MemoryRecord]) -> Vec<(String, usize)> {
+fn top_level_totals(records: &[MemoryReportRecord]) -> Vec<(String, usize)> {
     string_totals(records.iter().map(|record| {
         let path = top_level_path(&record.path);
         (path, record.bytes)
@@ -142,7 +205,7 @@ fn top_level_path(path: &str) -> String {
     format!("{root}.{child}")
 }
 
-fn kind_totals(records: &[MemoryRecord]) -> Vec<(String, usize)> {
+fn kind_totals(records: &[MemoryReportRecord]) -> Vec<(String, usize)> {
     string_totals(
         records
             .iter()

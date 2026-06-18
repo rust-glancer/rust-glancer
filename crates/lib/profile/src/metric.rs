@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use crate::{
     ProfileCheckpointColumn, ProfileCheckpointValue, ProfileDescriptor, ProfileMeasurement,
-    ProfileReport, ProfileTimer, ProfileUnit,
+    ProfileMemorySnapshot, ProfileReport, ProfileTimer, ProfileUnit,
 };
 
 /// Typed handle for a counter metric.
@@ -231,5 +231,52 @@ impl CheckpointMetric {
 
     pub fn record(self, label: impl Into<String>, values: Vec<ProfileCheckpointValue>) {
         crate::record_checkpoint(self.path, label, values);
+    }
+}
+
+/// Typed handle for a detailed retained-memory snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MemorySnapshotMetric {
+    path: &'static str,
+    scope: &'static str,
+    title: Option<&'static str>,
+}
+
+impl MemorySnapshotMetric {
+    pub const fn new(path: &'static str, scope: &'static str) -> Self {
+        Self {
+            path,
+            scope,
+            title: None,
+        }
+    }
+
+    pub const fn title(mut self, title: &'static str) -> Self {
+        self.title = Some(title);
+        self
+    }
+
+    pub const fn descriptor(self) -> ProfileDescriptor {
+        let descriptor = ProfileDescriptor::memory_snapshot(self.path, self.scope);
+        match self.title {
+            Some(title) => descriptor.title(title),
+            None => descriptor,
+        }
+    }
+
+    pub const fn path(self) -> &'static str {
+        self.path
+    }
+
+    pub const fn title_text(self) -> Option<&'static str> {
+        self.title
+    }
+
+    pub fn is_enabled(self) -> bool {
+        crate::memory_snapshot_enabled(self.path)
+    }
+
+    pub fn record(self, snapshot: ProfileMemorySnapshot) {
+        crate::record_memory_snapshot(self.path, snapshot);
     }
 }

@@ -148,6 +148,15 @@ macro_rules! __rg_profile_declare_metrics {
             $crate::CheckpointMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
                 .columns($columns);
     };
+    (@declare $vis:vis memory_snapshot $name:ident $scope:literal $suffix:literal) => {
+        $vis const $name: $crate::MemorySnapshotMetric =
+            $crate::MemorySnapshotMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope);
+    };
+    (@declare $vis:vis memory_snapshot $name:ident $scope:literal $suffix:literal, title $title:literal) => {
+        $vis const $name: $crate::MemorySnapshotMetric =
+            $crate::MemorySnapshotMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
+                .title($title);
+    };
 }
 
 /// Increments a registered counter by one, or by the provided amount.
@@ -195,6 +204,8 @@ pub use crate::__rg_profile_checkpoint as checkpoint;
 ///             keyed_duration NAME = "suffix" [report REPORT_EXPR];
 ///             checkpoint NAME = "suffix";
 ///             checkpoint NAME = "suffix" [columns COLUMNS_EXPR];
+///             memory_snapshot NAME = "suffix";
+///             memory_snapshot NAME = "suffix" [title "Report title"];
 ///         }
 ///     }
 /// }
@@ -231,6 +242,10 @@ pub use crate::__rg_profile_checkpoint as checkpoint;
 ///
 ///         scope "project.build" {
 ///             checkpoint CHECKPOINTS = "checkpoints" [columns super::CHECKPOINT_COLUMNS];
+///         }
+///
+///         scope "project.build.def_map" {
+///             memory_snapshot DEF_MAP_MEMORY = "memory" [title "after def-map"];
 ///         }
 ///     }
 /// }

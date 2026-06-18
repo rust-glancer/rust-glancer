@@ -422,14 +422,14 @@ impl EngineWorker {
         }
 
         let workspace = workspace.with_sysroot_sources(sysroot);
-        let project_build = Project::builder(workspace)
+        let project = Project::builder(workspace)
             .cargo_metadata_config(cargo_metadata_config)
             .indexing_preference(indexing_preference)
             .package_residency_policy(package_residency_policy)
             .memory_hooks(Arc::clone(&self.memory_hooks))
             .build()
             .context("while attempting to build LSP analysis project")?;
-        self.project.replace_saved(project_build.into_project());
+        self.project.replace_saved(project);
         Self::log_project_snapshot(self.project.saved_snapshot()?, "initial index");
         tracing::info!(
             workspace_root = %workspace_root.display(),

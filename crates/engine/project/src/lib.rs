@@ -11,12 +11,12 @@ pub use self::{
     indexing::IndexingPerformancePreference,
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{
-        BUILD_CHECKPOINTS_PROFILE_PATH, BUILD_PROFILE_SCOPE, BuildProcessMemory, BuildProfileStage,
-        BuildStageMemorySnapshot, ProcessMemorySampler,
+        BUILD_CHECKPOINTS_PROFILE_PATH, BUILD_PROFILE_SCOPE, BuildProcessMemory,
+        ProcessMemorySampler,
     },
     project::{
-        AnalysisChangeSummary, ChangedFile, DirtyFileChange, FileContext, Project, ProjectBuild,
-        ProjectBuilder, ProjectSnapshot, ProjectStats, SavedFileChange, StartupCacheLoad,
+        AnalysisChangeSummary, ChangedFile, DirtyFileChange, FileContext, Project, ProjectBuilder,
+        ProjectSnapshot, ProjectStats, SavedFileChange, StartupCacheLoad,
     },
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
 };

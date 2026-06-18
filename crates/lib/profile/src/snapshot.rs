@@ -69,6 +69,22 @@ impl ProfileSnapshot {
             _ => None,
         }
     }
+
+    pub fn memory_snapshot(&self, path: &str) -> Option<&ProfileMemorySnapshot> {
+        match self.entry(path)?.value() {
+            ProfileValue::MemorySnapshot(snapshot) => Some(snapshot),
+            _ => None,
+        }
+    }
+
+    pub fn memory_snapshot_entries(
+        &self,
+    ) -> impl Iterator<Item = (ProfileDescriptor, &ProfileMemorySnapshot)> + '_ {
+        self.entries.iter().filter_map(|entry| match entry.value() {
+            ProfileValue::MemorySnapshot(snapshot) => Some((entry.descriptor(), snapshot)),
+            _ => None,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -99,6 +115,7 @@ pub enum ProfileValue {
     KeyedCounters(Vec<ProfileKeyedCounter>),
     KeyedDurations(Vec<ProfileKeyedDuration>),
     Checkpoints(Vec<ProfileCheckpoint>),
+    MemorySnapshot(ProfileMemorySnapshot),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,6 +154,45 @@ pub struct ProfileCheckpoint {
 pub struct ProfileCheckpointValue {
     pub key: String,
     pub value: ProfileMeasurement,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileMemorySnapshot {
+    pub retained_bytes: usize,
+    pub records: Vec<ProfileMemoryRecord>,
+}
+
+impl ProfileMemorySnapshot {
+    pub fn new(retained_bytes: usize, records: Vec<ProfileMemoryRecord>) -> Self {
+        Self {
+            retained_bytes,
+            records,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProfileMemoryRecord {
+    pub path: String,
+    pub type_name: String,
+    pub kind: String,
+    pub bytes: usize,
+}
+
+impl ProfileMemoryRecord {
+    pub fn new(
+        path: impl Into<String>,
+        type_name: impl Into<String>,
+        kind: impl Into<String>,
+        bytes: usize,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            type_name: type_name.into(),
+            kind: kind.into(),
+            bytes,
+        }
+    }
 }
 
 impl ProfileCheckpointValue {

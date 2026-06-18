@@ -10,7 +10,7 @@ use std::{
 use crate::{
     ProfileCheckpoint, ProfileCheckpointValue, ProfileDescriptor, ProfileFilter,
     ProfileFilterValidationError, ProfileInstrumentKind, ProfileKeyedCounter, ProfileKeyedDuration,
-    ProfileMeasurement, ProfileRegistry, ProfileSnapshot, ProfileValue,
+    ProfileMeasurement, ProfileMemorySnapshot, ProfileRegistry, ProfileSnapshot, ProfileValue,
 };
 
 static RUNTIME: Mutex<RuntimeState> = Mutex::new(RuntimeState::new());
@@ -339,6 +339,33 @@ pub fn record_checkpoint(
         .record_checkpoint(path, label.into(), elapsed, values);
 }
 
+pub fn memory_snapshot_enabled(path: &'static str) -> bool {
+    let Some(active) = active_run() else {
+        return false;
+    };
+    active
+        .descriptor(path, ProfileInstrumentKind::MemorySnapshot)
+        .is_some()
+}
+
+pub fn record_memory_snapshot(path: &'static str, snapshot: ProfileMemorySnapshot) {
+    let Some(active) = active_run() else {
+        return;
+    };
+    if active
+        .descriptor(path, ProfileInstrumentKind::MemorySnapshot)
+        .is_none()
+    {
+        return;
+    }
+
+    active
+        .collector
+        .lock()
+        .expect("profile collector lock should not be poisoned")
+        .record_memory_snapshot(path, snapshot);
+}
+
 pub fn timer(path: &'static str) -> ProfileTimer {
     let Some(active) = active_run() else {
         return ProfileTimer::disabled();
@@ -393,6 +420,7 @@ struct ProfileCollector {
     keyed_counters: BTreeMap<&'static str, BTreeMap<String, u64>>,
     keyed_durations: BTreeMap<&'static str, BTreeMap<String, DurationStats>>,
     checkpoints: BTreeMap<&'static str, CheckpointStreamState>,
+    memory_snapshots: BTreeMap<&'static str, ProfileMemorySnapshot>,
 }
 
 impl ProfileCollector {
@@ -437,6 +465,10 @@ impl ProfileCollector {
             .entry(path)
             .or_default()
             .record(label, elapsed, values);
+    }
+
+    fn record_memory_snapshot(&mut self, path: &'static str, snapshot: ProfileMemorySnapshot) {
+        self.memory_snapshots.insert(path, snapshot);
     }
 
     fn snapshot(&self, registry: &ProfileRegistry) -> ProfileSnapshot {
@@ -489,6 +521,12 @@ impl ProfileCollector {
             entries.push(
                 ProfileEntryBuilder::new(registry, path)
                     .build(ProfileValue::Checkpoints(stream.rows.clone())),
+            );
+        }
+        for (path, snapshot) in &self.memory_snapshots {
+            entries.push(
+                ProfileEntryBuilder::new(registry, path)
+                    .build(ProfileValue::MemorySnapshot(snapshot.clone())),
             );
         }
 
