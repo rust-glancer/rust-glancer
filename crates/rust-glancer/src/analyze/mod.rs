@@ -135,7 +135,7 @@ impl CliMemoryStage {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn analyze(
     path: PathBuf,
-    profile: bool,
+    profile_filter: Option<String>,
     include_memory: bool,
     startup_cache_load: StartupCacheLoad,
     package_residency_policy: PackageResidencyPolicy,
@@ -143,7 +143,6 @@ pub(crate) fn analyze(
     target: Option<String>,
     output_format: OutputFormat,
     memory_stage: CliMemoryStage,
-    include_def_map_profile: bool,
 ) -> anyhow::Result<()> {
     if !path.exists() {
         anyhow::bail!("folder {} does not exist", path.display());
@@ -175,17 +174,20 @@ pub(crate) fn analyze(
     let memory_control = crate::memory::memory_control();
     let analysis_setup =
         data::AnalysisSetupReport::new(metadata_elapsed, workspace_elapsed, sysroot_elapsed);
-    let profile_run = include_def_map_profile
-        .then(start_def_map_profile_run)
+    let include_profile_snapshot = profile_filter
+        .as_deref()
+        .is_some_and(|filter| !filter.trim().is_empty());
+    let profile_filter = parse_analyze_profile_filter(profile_filter.as_deref(), include_memory)?;
+    let profile_run = profile_filter
+        .map(start_analyze_profile_run)
         .transpose()
-        .context("while attempting to start def-map profile run")?;
+        .context("while attempting to start analyze profile run")?;
 
     let builder = Project::builder(workspace)
         .cargo_metadata_config(cargo_metadata_config)
         .indexing_preference(indexing_preference)
         .package_residency_policy(package_residency_policy)
         .startup_cache_load(startup_cache_load)
-        .profile_build_timing(profile || include_memory)
         .stage_memory_target(include_memory.then(|| memory_stage.build_stage()).flatten());
     let builder = if include_memory {
         builder
@@ -230,6 +232,7 @@ pub(crate) fn analyze(
         build_profile.as_ref(),
         allocator,
         profile_snapshot.as_ref(),
+        include_profile_snapshot,
         include_memory,
         memory_stage,
     );
@@ -237,10 +240,7 @@ pub(crate) fn analyze(
     let output = match output_format {
         OutputFormat::Text => {
             let mut output = String::new();
-            let document_options = data::ReportDocumentOptions {
-                include_profile: profile,
-                include_memory,
-            };
+            let document_options = data::ReportDocumentOptions { include_memory };
             let document = analyze_report.document(document_options);
             report::TextRenderer
                 .render(&document, &mut output)
@@ -255,10 +255,7 @@ pub(crate) fn analyze(
             output
         }
         OutputFormat::RichJson => {
-            let document_options = data::ReportDocumentOptions {
-                include_profile: profile,
-                include_memory,
-            };
+            let document_options = data::ReportDocumentOptions { include_memory };
             let document = analyze_report.document(document_options);
             let mut output = report::RichJsonRenderer
                 .render(&document)
@@ -267,10 +264,7 @@ pub(crate) fn analyze(
             output
         }
         OutputFormat::Html => {
-            let document_options = data::ReportDocumentOptions {
-                include_profile: profile,
-                include_memory,
-            };
+            let document_options = data::ReportDocumentOptions { include_memory };
             let document = analyze_report.document(document_options);
             let path = write_html_report(&document)?;
             format!("wrote HTML report to {}\n", path.display())
@@ -284,14 +278,42 @@ pub(crate) fn analyze(
     Ok(())
 }
 
-fn start_def_map_profile_run() -> anyhow::Result<rg_profile::ProfileRun> {
+fn parse_analyze_profile_filter(
+    filter: Option<&str>,
+    include_memory: bool,
+) -> anyhow::Result<Option<rg_profile::ProfileFilter>> {
+    let Some(filter) = profile_filter_text(filter, include_memory) else {
+        return Ok(None);
+    };
+    let filter = rg_profile::ProfileFilter::parse(&filter)
+        .context("while attempting to parse analyze profile filter")?;
+
+    Ok((!filter.is_disabled()).then_some(filter))
+}
+
+fn profile_filter_text(filter: Option<&str>, include_memory: bool) -> Option<String> {
+    match filter.map(str::trim) {
+        Some("all" | "*") => filter.map(ToString::to_string),
+        Some(filter) if include_memory && filter.is_empty() => {
+            Some(rg_project::BUILD_PROFILE_SCOPE.to_string())
+        }
+        Some(filter) if include_memory => {
+            Some(format!("{filter},{}", rg_project::BUILD_PROFILE_SCOPE))
+        }
+        Some(filter) => Some(filter.to_string()),
+        None if include_memory => Some(rg_project::BUILD_PROFILE_SCOPE.to_string()),
+        None => None,
+    }
+}
+
+fn start_analyze_profile_run(
+    filter: rg_profile::ProfileFilter,
+) -> anyhow::Result<rg_profile::ProfileRun> {
     let registry =
         rg_profile::ProfileRegistry::new(rg_project::profile_descriptors().iter().copied())
             .context("while attempting to build project profile registry")?;
-    let filter = rg_profile::ProfileFilter::parse("def_map.finalization,def_map.macros.by_name")
-        .context("while attempting to parse def-map profile filter")?;
     rg_profile::ProfileRun::start_with_registry(registry, filter)
-        .context("while attempting to activate def-map profile run")
+        .context("while attempting to activate analyze profile run")
 }
 
 fn write_html_report(document: &report::ReportDocument) -> anyhow::Result<PathBuf> {
@@ -318,4 +340,85 @@ fn write_html_report(document: &report::ReportDocument) -> anyhow::Result<PathBu
     })?;
 
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_analyze_profile_filter, profile_filter_text, start_analyze_profile_run};
+
+    #[test]
+    fn analyze_profile_filter_is_absent_without_profile_argument() {
+        assert_eq!(
+            parse_analyze_profile_filter(None, false)
+                .expect("missing profile filter should parse as no profile run"),
+            None,
+            "plain analysis should not start the dynamic profiler",
+        );
+    }
+
+    #[test]
+    fn analyze_profile_filter_treats_empty_selector_as_disabled() {
+        assert_eq!(
+            parse_analyze_profile_filter(Some(""), false)
+                .expect("empty profile filter should parse as disabled"),
+            None,
+            "an explicitly empty profile selector should not start the dynamic profiler",
+        );
+    }
+
+    #[test]
+    fn analyze_profile_filter_enables_project_build_for_memory() {
+        assert_eq!(
+            profile_filter_text(None, true).as_deref(),
+            Some("project.build"),
+            "memory reports should collect project build checkpoints internally",
+        );
+        assert_eq!(
+            profile_filter_text(Some("def_map.macros"), true).as_deref(),
+            Some("def_map.macros,project.build"),
+            "memory reports should extend explicit selectors instead of replacing them",
+        );
+        assert_eq!(
+            profile_filter_text(Some("all"), true).as_deref(),
+            Some("all"),
+            "the all selector already includes project build checkpoints",
+        );
+    }
+
+    #[test]
+    fn analyze_profile_run_accepts_registered_selectors() {
+        for selector in ["project.build", "def_map.macros.by_name"] {
+            let filter = parse_analyze_profile_filter(Some(selector), false)
+                .expect("registered analyze profile selector should parse")
+                .expect("registered analyze profile selector should enable a profile run");
+            let run = start_analyze_profile_run(filter)
+                .expect("registered analyze profile selector should start a profile run");
+
+            assert!(
+                run.finish().entries().is_empty(),
+                "a profile run without recorded metrics should finish with an empty snapshot",
+            );
+        }
+    }
+
+    #[test]
+    fn analyze_profile_run_rejects_unknown_selector() {
+        let filter = parse_analyze_profile_filter(Some("def_map.unknown"), false)
+            .expect("syntactically valid selector should parse")
+            .expect("non-empty selector should enable a profile run");
+        let error = match start_analyze_profile_run(filter) {
+            Ok(run) => {
+                drop(run);
+                panic!("unknown analyze profile selector should be rejected");
+            }
+            Err(error) => error,
+        };
+
+        assert!(
+            error.chain().any(|cause| cause
+                .to_string()
+                .contains("profile selector `def_map.unknown` is not registered")),
+            "unknown selector should fail with a typo-oriented error: {error}",
+        );
+    }
 }

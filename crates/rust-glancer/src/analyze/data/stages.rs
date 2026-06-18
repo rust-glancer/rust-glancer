@@ -1,6 +1,7 @@
 use std::time::Duration;
 
-use rg_project::{BuildProfile, CacheProbeProfile};
+use rg_profile::{ProfileCheckpoint, ProfileMeasurement};
+use rg_project::CacheProbeProfile;
 use serde::Serialize;
 
 use super::allocator::AllocatorPurgeReport;
@@ -69,24 +70,16 @@ pub(crate) struct BuildProfileReport {
 }
 
 impl BuildProfileReport {
-    pub(crate) fn capture(profile: &BuildProfile) -> Self {
+    pub(crate) fn capture(
+        checkpoints: &[ProfileCheckpoint],
+        cache_probe: Option<&CacheProbeProfile>,
+    ) -> Self {
         Self {
-            checkpoints: profile
-                .checkpoints()
+            checkpoints: checkpoints
                 .iter()
-                .map(|checkpoint| BuildCheckpointReport {
-                    label: checkpoint.label.to_string(),
-                    phase_elapsed_ms: duration_ms(checkpoint.phase_elapsed),
-                    elapsed_ms: duration_ms(checkpoint.elapsed),
-                    retained_bytes: checkpoint.retained_bytes,
-                    active_retained_bytes: checkpoint.active_retained_bytes,
-                    allocated_bytes: checkpoint.allocated_bytes,
-                    active_bytes: checkpoint.active_bytes,
-                    resident_bytes: checkpoint.resident_bytes,
-                    mapped_bytes: checkpoint.mapped_bytes,
-                })
+                .map(BuildCheckpointReport::capture)
                 .collect(),
-            cache_probe: profile.cache_probe().map(CacheProbeReport::capture),
+            cache_probe: cache_probe.map(CacheProbeReport::capture),
         }
     }
 
@@ -179,6 +172,20 @@ pub(crate) struct BuildCheckpointReport {
 }
 
 impl BuildCheckpointReport {
+    fn capture(checkpoint: &ProfileCheckpoint) -> Self {
+        Self {
+            label: checkpoint.label.to_string(),
+            phase_elapsed_ms: duration_ms(checkpoint.phase_elapsed),
+            elapsed_ms: duration_ms(checkpoint.elapsed),
+            retained_bytes: Self::optional_bytes(checkpoint, "retained_bytes"),
+            active_retained_bytes: Self::optional_bytes(checkpoint, "active_retained_bytes"),
+            allocated_bytes: Self::optional_bytes(checkpoint, "allocated_bytes"),
+            active_bytes: Self::optional_bytes(checkpoint, "active_bytes"),
+            resident_bytes: Self::optional_bytes(checkpoint, "resident_bytes"),
+            mapped_bytes: Self::optional_bytes(checkpoint, "mapped_bytes"),
+        }
+    }
+
     fn append_row(&self, row: &mut ReportRowBuilder, includes_memory: bool) {
         row.duration_ms("phase", self.phase_elapsed_ms)
             .duration_ms("elapsed", self.elapsed_ms)
@@ -201,6 +208,19 @@ impl BuildCheckpointReport {
             || self.active_bytes.is_some()
             || self.resident_bytes.is_some()
             || self.mapped_bytes.is_some()
+    }
+
+    fn optional_bytes(checkpoint: &ProfileCheckpoint, key: &str) -> Option<usize> {
+        let value = checkpoint.values.iter().find(|value| value.key == key)?;
+        match &value.value {
+            ProfileMeasurement::Empty => None,
+            ProfileMeasurement::Bytes(value) => {
+                Some(usize::try_from(*value).expect("profile byte values should fit in usize"))
+            }
+            value => {
+                panic!("project build checkpoint value `{key}` should be bytes, got {value:?}")
+            }
+        }
     }
 }
 

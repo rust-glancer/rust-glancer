@@ -427,7 +427,7 @@ impl EngineWorker {
             .cargo_metadata_config(cargo_metadata_config)
             .indexing_preference(indexing_preference)
             .package_residency_policy(package_residency_policy)
-            .profile_build_timing(log_startup_cache_probe)
+            .profile_cache_probe(log_startup_cache_probe)
             .memory_hooks(Arc::clone(&self.memory_hooks))
             .build()
             .context("while attempting to build LSP analysis project")?;

@@ -60,7 +60,7 @@ pub struct ProjectBuilder {
     cargo_metadata_config: CargoMetadataConfig,
     body_ir_policy: BodyIrBuildPolicy,
     indexing_preference: IndexingPerformancePreference,
-    profile_build_timing: bool,
+    profile_cache_probe: bool,
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
     measure_retained_memory: bool,
@@ -76,7 +76,7 @@ impl ProjectBuilder {
             cargo_metadata_config: CargoMetadataConfig::default(),
             body_ir_policy: BodyIrBuildPolicy::default(),
             indexing_preference: IndexingPerformancePreference::default(),
-            profile_build_timing: false,
+            profile_cache_probe: false,
             package_residency_policy: PackageResidencyPolicy::default(),
             startup_cache_load: StartupCacheLoad::default(),
             measure_retained_memory: false,
@@ -101,8 +101,8 @@ impl ProjectBuilder {
         self
     }
 
-    pub fn profile_build_timing(mut self, enabled: bool) -> Self {
-        self.profile_build_timing = enabled;
+    pub fn profile_cache_probe(mut self, enabled: bool) -> Self {
+        self.profile_cache_probe = enabled;
         self
     }
 
@@ -140,12 +140,9 @@ impl ProjectBuilder {
     }
 
     pub fn build(self) -> anyhow::Result<ProjectBuild> {
-        let profile_requested = self.profile_build_timing
-            || self.measure_retained_memory
-            || self.process_memory_sampler.is_some()
-            || self.stage_memory_target.is_some();
+        let profile_requested = self.profile_cache_probe || self.stage_memory_target.is_some();
         let mut profiler = BuildProfiler::new(
-            self.profile_build_timing,
+            self.profile_cache_probe,
             self.measure_retained_memory,
             self.process_memory_sampler,
             self.stage_memory_target,

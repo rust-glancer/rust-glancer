@@ -22,7 +22,6 @@ use super::{CliMemoryStage, report::ReportDocument};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ReportDocumentOptions {
-    pub(crate) include_profile: bool,
     pub(crate) include_memory: bool,
 }
 
@@ -56,6 +55,7 @@ impl AnalyzeReport {
         build_profile: Option<&BuildProfile>,
         allocator: Option<AllocatorReport>,
         profile_snapshot: Option<&ProfileSnapshot>,
+        include_profile_snapshot: bool,
         include_memory: bool,
         memory_stage: CliMemoryStage,
     ) -> Self {
@@ -66,14 +66,28 @@ impl AnalyzeReport {
                 .map(MemoryReport::capture_stage)
                 .expect("selected build memory stage should be captured"),
         });
+        let build_profile_report = include_memory.then(|| {
+            let profile_snapshot =
+                profile_snapshot.expect("memory reporting should collect project build profile");
+            let checkpoints = profile_snapshot
+                .checkpoints(rg_project::BUILD_CHECKPOINTS_PROFILE_PATH)
+                .expect("project build profile should record checkpoints");
+
+            BuildProfileReport::capture(
+                checkpoints,
+                build_profile.and_then(|profile| profile.cache_probe()),
+            )
+        });
 
         Self {
             workspace_root: project.workspace().workspace_root().display().to_string(),
             project: ProjectReport::capture(project),
             analysis_setup,
-            build_profile: build_profile.map(BuildProfileReport::capture),
+            build_profile: build_profile_report,
             allocator,
-            profile_snapshot: profile_snapshot.map(ProfileSnapshotReport::capture),
+            profile_snapshot: include_profile_snapshot
+                .then(|| profile_snapshot.map(ProfileSnapshotReport::capture))
+                .flatten(),
             memory,
         }
     }
@@ -87,21 +101,19 @@ impl AnalyzeReport {
             .title("rust-glancer analysis built")
             .section("project", |section| self.project.append_document(section));
 
-        if options.include_profile {
-            document = document.section("analysis_setup", |section| {
-                self.analysis_setup.append_document(section);
-            });
-        }
-
         if options.include_memory
             && let Some(allocator) = &self.allocator
         {
             document = document.section("allocator", |section| allocator.append_document(section));
         }
 
-        if (options.include_profile || options.include_memory)
+        if options.include_memory
             && let Some(build_profile) = &self.build_profile
         {
+            document = document.section("analysis_setup", |section| {
+                self.analysis_setup.append_document(section);
+            });
+
             let purge = options
                 .include_memory
                 .then(|| {

@@ -24,12 +24,9 @@ enum Command {
     /// Analyze the crate or workspace package located at `path`.
     Analyze {
         path: PathBuf,
-        /// Print build phase timings after analysis finishes.
-        #[clap(long)]
-        profile: bool,
-        /// Print def-map finalization counters and timings, including macro expansion.
-        #[clap(long)]
-        macro_stats: bool,
+        /// Collect comma-separated dynamic profile selectors, for example `project.build` or `all`.
+        #[clap(long, value_name = "SELECTORS")]
+        profile: Option<String>,
         #[clap(short, long)]
         memory: bool,
         /// Build stage used for detailed retained-memory reporting with --memory.
@@ -75,7 +72,6 @@ fn main() -> anyhow::Result<()> {
         Command::Analyze {
             path,
             profile,
-            macro_stats,
             memory,
             stage,
             load,
@@ -99,7 +95,6 @@ fn main() -> anyhow::Result<()> {
                 target,
                 format,
                 stage,
-                macro_stats,
             )
         }
         Command::Lsp => start_server::start_server(),

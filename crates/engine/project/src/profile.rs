@@ -1,33 +1,54 @@
 use std::time::{Duration, Instant};
 
+use rg_profile::{
+    ProfileCheckpointColumn, ProfileCheckpointValue, ProfileDescriptor, ProfileMeasurement,
+    declare_metrics,
+};
 use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
 
-/// Build-time memory and timing report for the project pipeline.
+pub const BUILD_PROFILE_SCOPE: &str = "project.build";
+pub const BUILD_CHECKPOINTS_PROFILE_PATH: &str = "project.build.checkpoints";
+
+static BUILD_CHECKPOINT_COLUMNS: &[ProfileCheckpointColumn] = &[
+    ProfileCheckpointColumn::bytes("retained_bytes", "rg_sampled"),
+    ProfileCheckpointColumn::bytes("active_retained_bytes", "rg_total"),
+    ProfileCheckpointColumn::bytes("allocated_bytes", "j_allocated"),
+    ProfileCheckpointColumn::bytes("active_bytes", "j_active"),
+    ProfileCheckpointColumn::bytes("resident_bytes", "j_resident"),
+    ProfileCheckpointColumn::bytes("mapped_bytes", "j_mapped"),
+];
+
+declare_metrics! {
+    pub(crate) mod metric {
+        scope "project.build" {
+            checkpoint CHECKPOINTS = "checkpoints" [columns super::BUILD_CHECKPOINT_COLUMNS];
+        }
+    }
+}
+
+pub(crate) fn profile_descriptors() -> &'static [ProfileDescriptor] {
+    metric::descriptors()
+}
+
+/// Build-time details that still need project-specific structures.
 ///
-/// This is intentionally a facts-only API: callers can inspect coarse checkpoints without
-/// receiving references to transient phase databases such as ItemTree.
+/// Coarse build checkpoints are emitted through `rg_profile`; this type carries selected
+/// retained-memory trees and cache-probe summaries that are not dynamic metrics yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildProfile {
-    checkpoints: Vec<BuildCheckpoint>,
     cache_probe: Option<CacheProbeProfile>,
     stage_memory: Option<BuildStageMemorySnapshot>,
 }
 
 impl BuildProfile {
     pub(crate) fn new(
-        checkpoints: Vec<BuildCheckpoint>,
         cache_probe: Option<CacheProbeProfile>,
         stage_memory: Option<BuildStageMemorySnapshot>,
     ) -> Self {
         Self {
-            checkpoints,
             cache_probe,
             stage_memory,
         }
-    }
-
-    pub fn checkpoints(&self) -> &[BuildCheckpoint] {
-        &self.checkpoints
     }
 
     pub fn cache_probe(&self) -> Option<&CacheProbeProfile> {
@@ -37,28 +58,6 @@ impl BuildProfile {
     pub fn stage_memory(&self) -> Option<&BuildStageMemorySnapshot> {
         self.stage_memory.as_ref()
     }
-}
-
-/// One profiling sample collected while the project pipeline is building.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BuildCheckpoint {
-    pub label: &'static str,
-    /// Time spent since the previous checkpoint, or since build start for the first checkpoint.
-    pub phase_elapsed: Duration,
-    /// Time spent since build start.
-    pub elapsed: Duration,
-    /// Retained size of the object sampled at this checkpoint.
-    pub retained_bytes: Option<usize>,
-    /// Retained size of all live phase state known at this checkpoint.
-    pub active_retained_bytes: Option<usize>,
-    /// Runtime heap bytes allocated through the process allocator, if available.
-    pub allocated_bytes: Option<usize>,
-    /// Runtime heap bytes held in active allocator pages, if available.
-    pub active_bytes: Option<usize>,
-    /// Runtime resident memory reported by the executable, if available.
-    pub resident_bytes: Option<usize>,
-    /// Runtime mapped memory reported by the executable, if available.
-    pub mapped_bytes: Option<usize>,
 }
 
 /// Process allocator counters sampled by the executable during a profiled build.
@@ -244,44 +243,38 @@ impl CacheProbeRecorder {
 }
 
 pub(crate) struct BuildProfiler {
-    started_at: Instant,
-    timing: bool,
+    cache_probe_enabled: bool,
     retained_memory: bool,
     process_memory_sampler: Option<ProcessMemorySampler>,
     stage_memory_target: Option<BuildProfileStage>,
     stage_memory: Option<BuildStageMemorySnapshot>,
-    checkpoints: Vec<BuildCheckpoint>,
     cache_probe: Option<CacheProbeProfile>,
 }
 
 impl BuildProfiler {
     pub(crate) fn disabled() -> Self {
         Self {
-            started_at: Instant::now(),
-            timing: false,
+            cache_probe_enabled: false,
             retained_memory: false,
             process_memory_sampler: None,
             stage_memory_target: None,
             stage_memory: None,
-            checkpoints: Vec::new(),
             cache_probe: None,
         }
     }
 
     pub(crate) fn new(
-        timing: bool,
+        cache_probe_enabled: bool,
         retained_memory: bool,
         process_memory_sampler: Option<ProcessMemorySampler>,
         stage_memory_target: Option<BuildProfileStage>,
     ) -> Self {
         Self {
-            started_at: Instant::now(),
-            timing,
+            cache_probe_enabled,
             retained_memory,
             process_memory_sampler,
             stage_memory_target,
             stage_memory: None,
-            checkpoints: Vec::new(),
             cache_probe: None,
         }
     }
@@ -341,32 +334,61 @@ impl BuildProfiler {
         active_retained_bytes: Option<usize>,
         process_memory: Option<BuildProcessMemory>,
     ) {
-        if !self.is_enabled() {
-            return;
-        }
-
-        let elapsed = self.started_at.elapsed();
-        let previous_elapsed = self
-            .checkpoints
-            .last()
-            .map(|checkpoint| checkpoint.elapsed)
-            .unwrap_or_default();
-
-        self.checkpoints.push(BuildCheckpoint {
+        Self::record_dynamic_checkpoint(
             label,
-            phase_elapsed: elapsed.saturating_sub(previous_elapsed),
-            elapsed,
             retained_bytes,
             active_retained_bytes,
-            allocated_bytes: process_memory.map(|memory| memory.allocated_bytes),
-            active_bytes: process_memory.map(|memory| memory.active_bytes),
-            resident_bytes: process_memory.map(|memory| memory.resident_bytes),
-            mapped_bytes: process_memory.map(|memory| memory.mapped_bytes),
-        });
+            process_memory,
+        );
+    }
+
+    fn record_dynamic_checkpoint(
+        label: &'static str,
+        retained_bytes: Option<usize>,
+        active_retained_bytes: Option<usize>,
+        process_memory: Option<BuildProcessMemory>,
+    ) {
+        metric::CHECKPOINTS.record(
+            label,
+            vec![
+                ProfileCheckpointValue::new(
+                    "retained_bytes",
+                    ProfileMeasurement::optional_bytes(retained_bytes),
+                ),
+                ProfileCheckpointValue::new(
+                    "active_retained_bytes",
+                    ProfileMeasurement::optional_bytes(active_retained_bytes),
+                ),
+                ProfileCheckpointValue::new(
+                    "allocated_bytes",
+                    ProfileMeasurement::optional_bytes(
+                        process_memory.map(|memory| memory.allocated_bytes),
+                    ),
+                ),
+                ProfileCheckpointValue::new(
+                    "active_bytes",
+                    ProfileMeasurement::optional_bytes(
+                        process_memory.map(|memory| memory.active_bytes),
+                    ),
+                ),
+                ProfileCheckpointValue::new(
+                    "resident_bytes",
+                    ProfileMeasurement::optional_bytes(
+                        process_memory.map(|memory| memory.resident_bytes),
+                    ),
+                ),
+                ProfileCheckpointValue::new(
+                    "mapped_bytes",
+                    ProfileMeasurement::optional_bytes(
+                        process_memory.map(|memory| memory.mapped_bytes),
+                    ),
+                ),
+            ],
+        );
     }
 
     pub(crate) fn record_cache_probe(&mut self, cache_probe: Option<CacheProbeProfile>) {
-        if !self.is_enabled() {
+        if !self.cache_probe_enabled {
             return;
         }
 
@@ -374,13 +396,6 @@ impl BuildProfiler {
     }
 
     pub(crate) fn finish(self) -> BuildProfile {
-        BuildProfile::new(self.checkpoints, self.cache_probe, self.stage_memory)
-    }
-
-    fn is_enabled(&self) -> bool {
-        self.timing
-            || self.retained_memory
-            || self.process_memory_sampler.is_some()
-            || self.stage_memory_target.is_some()
+        BuildProfile::new(self.cache_probe, self.stage_memory)
     }
 }

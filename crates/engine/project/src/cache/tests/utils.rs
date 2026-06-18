@@ -556,7 +556,7 @@ pub struct Dep;
 
     let (_project, profile) = Project::builder(workspace)
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
-        .profile_build_timing(true)
+        .profile_cache_probe(true)
         .build()
         .expect("fixture project should build from dependency cache artifact")
         .into_parts();
@@ -614,7 +614,7 @@ pub fn dep_value() -> usize { 2 }
     let (project, profile) = Project::builder(workspace)
         .body_ir_policy(BodyIrBuildPolicy::all_packages())
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
-        .profile_build_timing(true)
+        .profile_cache_probe(true)
         .build()
         .expect("fixture project should reject body-policy-mismatched artifact")
         .into_parts();
