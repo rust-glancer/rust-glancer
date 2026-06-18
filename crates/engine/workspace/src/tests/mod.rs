@@ -549,6 +549,58 @@ pub struct Dep;
 }
 
 #[test]
+fn custom_cfg_atoms_apply_to_all_cargo_packages() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "vendor/dep" }
+
+//- /src/lib.rs
+pub struct App;
+
+//- /vendor/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /vendor/dep/src/lib.rs
+pub struct Dep;
+"#,
+    );
+    let workspace = WorkspaceMetadata::for_tests(
+        fixture.metadata(),
+        WorkspaceLoweringConfig::default().custom_cfg_atoms(["tokio_unstable"]),
+    )
+    .expect("fixture workspace metadata should build");
+    let app = workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == "app")
+        .expect("fixture app package should exist");
+    let dep = workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == "dep")
+        .expect("fixture dep package should exist");
+
+    assert!(
+        app.cfg_options.contains_atom("tokio_unstable"),
+        "workspace packages should receive custom cfg atoms",
+    );
+    assert!(
+        dep.cfg_options.contains_atom("tokio_unstable"),
+        "dependency packages should receive custom cfg atoms too",
+    );
+}
+
+#[test]
 fn custom_cargo_features_are_additive_with_defaults() {
     let fixture = cargo_feature_fixture();
     let cfg_options = package_cfg_options_for_config(

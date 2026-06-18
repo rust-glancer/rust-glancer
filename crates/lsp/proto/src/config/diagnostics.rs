@@ -1,7 +1,7 @@
 use ls_types::LSPAny;
 use serde::{Deserialize, Serialize};
 
-use crate::{AnalysisConfig, CargoMetadataTarget};
+use super::{AnalysisConfig, CargoMetadataTarget, section};
 
 /// Cargo diagnostics configuration sent by the LSP client during initialization.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -15,11 +15,7 @@ pub struct DiagnosticsConfig {
 
 impl DiagnosticsConfig {
     pub fn from_initialization_options(options: Option<&LSPAny>) -> anyhow::Result<Self> {
-        let Some(diagnostics) = options
-            .and_then(LSPAny::as_object)
-            .and_then(|options| options.get("diagnostics"))
-            .and_then(LSPAny::as_object)
-        else {
+        let Some(diagnostics) = section(options, "diagnostics") else {
             return Ok(Self::default());
         };
 
@@ -63,9 +59,10 @@ impl DiagnosticsConfig {
             "--message-format=json".to_string(),
         ];
         parts.extend(self.cargo_arguments(analysis));
-        if !self.rustc_arguments.is_empty() {
+        let rustc_arguments = self.rustc_arguments(analysis);
+        if !rustc_arguments.is_empty() {
             parts.push("--".to_string());
-            parts.extend(self.rustc_arguments.iter().cloned());
+            parts.extend(rustc_arguments);
         }
         parts.join(" ")
     }
@@ -94,8 +91,14 @@ impl DiagnosticsConfig {
         arguments
     }
 
-    pub fn rustc_arguments(&self) -> &[String] {
-        &self.rustc_arguments
+    pub fn rustc_arguments(&self, analysis: &AnalysisConfig) -> Vec<String> {
+        let mut arguments = Vec::new();
+        for atom in &analysis.cfg.atoms {
+            arguments.push("--cfg".to_string());
+            arguments.push(atom.clone());
+        }
+        arguments.extend(self.rustc_arguments.iter().cloned());
+        arguments
     }
 }
 
@@ -182,9 +185,7 @@ impl Default for DiagnosticsConfig {
 mod tests {
     use serde_json::json;
 
-    use crate::AnalysisConfig;
-
-    use super::DiagnosticsConfig;
+    use super::{AnalysisConfig, DiagnosticsConfig};
 
     #[test]
     fn defaults_to_disabled_cargo_check() {
@@ -264,6 +265,29 @@ mod tests {
         assert_eq!(
             config.user_facing_command(&analysis),
             "cargo check --message-format=json --workspace"
+        );
+    }
+
+    #[test]
+    fn user_facing_command_includes_analysis_cfg_atoms_as_rustc_arguments() {
+        let analysis_options = json!({
+            "cfg": {
+                "atoms": ["tokio_unstable", "loom"],
+            },
+        });
+        let diagnostics_options = json!({
+            "diagnostics": {
+                "rustcArguments": ["-Dwarnings"],
+            },
+        });
+        let analysis = AnalysisConfig::from_initialization_options(Some(&analysis_options))
+            .expect("analysis config should parse");
+        let config = DiagnosticsConfig::from_initialization_options(Some(&diagnostics_options))
+            .expect("diagnostics config should parse");
+
+        assert_eq!(
+            config.user_facing_command(&analysis),
+            "cargo check --message-format=json --workspace --all-targets -- --cfg tokio_unstable --cfg loom -Dwarnings"
         );
     }
 

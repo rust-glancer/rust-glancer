@@ -162,6 +162,15 @@
           "default": true,
           "description": "Enable the `test` cfg atom for workspace packages during semantic analysis. Restart the rust-glancer server after changing this setting."
         },
+        "rust-glancer.cfg.atoms": {
+          "scope": "window",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional custom cfg atoms to enable for Cargo packages during semantic analysis and Cargo diagnostics. Restart the rust-glancer server after changing this setting."
+        },
         "rust-glancer.cache.packageResidency": {
           "scope": "window",
           "type": "string",

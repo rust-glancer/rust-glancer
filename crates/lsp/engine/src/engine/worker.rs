@@ -371,8 +371,9 @@ impl EngineWorker {
         .all_features(analysis.cargo_metadata_config.all_features_enabled())
         .no_default_features(analysis.cargo_metadata_config.no_default_features_enabled())
         .custom_features(analysis.cargo_metadata_config.features().iter().cloned());
-        let workspace_lowering_config =
-            WorkspaceLoweringConfig::default().cfg_test(analysis.cfg.test);
+        let workspace_lowering_config = WorkspaceLoweringConfig::default()
+            .cfg_test(analysis.cfg.test)
+            .custom_cfg_atoms(analysis.cfg.atoms.iter().cloned());
         let indexing_preference = match analysis.indexing_preference {
             ProtoIndexingPerformancePreference::LowerPeakMemory => {
                 IndexingPerformancePreference::LowerPeakMemory
@@ -395,6 +396,7 @@ impl EngineWorker {
             cargo_no_default_features = analysis.cargo_metadata_config.no_default_features_enabled(),
             cargo_features = ?analysis.cargo_metadata_config.features(),
             cfg_test = analysis.cfg.test,
+            cfg_atoms = ?analysis.cfg.atoms,
             "starting workspace indexing"
         );
 
@@ -419,7 +421,7 @@ impl EngineWorker {
         let workspace = WorkspaceMetadata::lower(
             metadata.metadata,
             metadata.target_cfg,
-            workspace_lowering_config,
+            workspace_lowering_config.clone(),
         )
         .context("while attempting to normalize Cargo metadata")?;
         let workspace_root = workspace.workspace_root().to_path_buf();

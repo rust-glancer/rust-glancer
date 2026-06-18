@@ -14,9 +14,10 @@ use crate::{
 };
 
 /// Analysis-facing cfg options applied while lowering Cargo metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, MemorySize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
 pub struct WorkspaceLoweringConfig {
     cfg_test: bool,
+    cfg_atoms: Vec<String>,
 }
 
 impl WorkspaceLoweringConfig {
@@ -25,8 +26,23 @@ impl WorkspaceLoweringConfig {
         self
     }
 
-    pub fn is_cfg_test_enabled(self) -> bool {
+    pub fn is_cfg_test_enabled(&self) -> bool {
         self.cfg_test
+    }
+
+    pub fn custom_cfg_atoms(mut self, atoms: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.cfg_atoms.clear();
+        for atom in atoms {
+            let atom = atom.into().trim().to_string();
+            if !atom.is_empty() && !self.cfg_atoms.contains(&atom) {
+                self.cfg_atoms.push(atom);
+            }
+        }
+        self
+    }
+
+    pub fn cfg_atoms(&self) -> &[String] {
+        &self.cfg_atoms
     }
 }
 
@@ -138,6 +154,12 @@ impl CargoMetadataLowerer {
     fn package(&self, package: cargo_metadata::Package) -> WorkspaceMetadataResult<Package> {
         let package_id = PackageId::from(&package.id);
         let mut cfg_options = self.target_cfg.clone();
+
+        // Custom atoms model `rustc --cfg` and apply to every Cargo package in this metadata
+        // graph. `cfg(test)` stays separate because it is an analysis mode for workspace roots.
+        for atom in self.config.cfg_atoms() {
+            cfg_options.insert_atom(atom);
+        }
         for feature in self
             .features_by_package
             .get(&package_id)

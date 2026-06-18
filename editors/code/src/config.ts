@@ -35,6 +35,7 @@ export interface ExtensionConfig {
 
 export interface CfgConfig {
   readonly test: boolean;
+  readonly atoms: string[];
 }
 
 export interface IndexingConfig {
@@ -87,6 +88,7 @@ export namespace ExtensionConfig {
       purgeMemoryAfterBuild: readBoolean(config, "server.purgeMemoryAfterBuild", true),
       cfg: {
         test: readBoolean(config, "cfg.test", true),
+        atoms: normalizeCfgAtoms(readUnknownArray(config, "cfg.atoms")),
       },
       indexing: {
         performancePreference: readStringEnum(
@@ -220,6 +222,23 @@ function normalizeCargoFeatures(value: unknown[]): string[] {
   return features;
 }
 
+function normalizeCfgAtoms(value: unknown[]): string[] {
+  const atoms: string[] = [];
+  const seen = new Set<string>();
+
+  for (const item of normalizeStringArray(value)) {
+    const atom = item.trim();
+    if (!isCfgAtomName(atom) || seen.has(atom)) {
+      continue;
+    }
+
+    atoms.push(atom);
+    seen.add(atom);
+  }
+
+  return atoms;
+}
+
 function normalizeCargoOverrides(value: unknown[]): CargoOverrideConfig[] {
   const overrides: CargoOverrideConfig[] = [];
 
@@ -252,6 +271,10 @@ function normalizeCargoOverrides(value: unknown[]): CargoOverrideConfig[] {
   }
 
   return overrides;
+}
+
+function isCfgAtomName(value: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
 function normalizeOverrideTarget(value: unknown): string | null | undefined {

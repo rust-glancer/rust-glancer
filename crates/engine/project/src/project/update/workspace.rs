@@ -22,7 +22,7 @@ pub(super) fn rebuild_workspace_graph(
         .workspace_root()
         .join("Cargo.toml");
     let sysroot = project.state.workspace().sysroot_sources();
-    let workspace_lowering_config = project.state.workspace_lowering_config;
+    let workspace_lowering_config = project.state.workspace_lowering_config.clone();
     let cargo_metadata_config = project.state.cargo_metadata_config.clone();
     let memory_hooks = Arc::clone(&project.state.memory_hooks);
     let loaded = cargo_metadata_config
@@ -31,7 +31,7 @@ pub(super) fn rebuild_workspace_graph(
     let workspace = WorkspaceMetadata::lower(
         loaded.metadata,
         loaded.target_cfg,
-        workspace_lowering_config,
+        workspace_lowering_config.clone(),
     )
     .context("while attempting to normalize Cargo metadata")?
     .with_sysroot_sources(sysroot);
