@@ -632,7 +632,7 @@ pub fn dep_value() -> usize { 2 }
         crate::profile_descriptors(),
         "project.build.cache_probe",
     );
-    let (project, _profile) = Project::builder(workspace)
+    let (project, _stage_memory) = Project::builder(workspace)
         .body_ir_policy(BodyIrBuildPolicy::all_packages())
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
         .build()

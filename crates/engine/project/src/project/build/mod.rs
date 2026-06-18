@@ -11,7 +11,7 @@ use rg_body_ir::BodyIrBuildPolicy;
 use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
 
 use crate::{
-    BuildProcessMemory, BuildProfile, BuildProfileStage, IndexingPerformancePreference,
+    BuildProcessMemory, BuildProfileStage, BuildStageMemorySnapshot, IndexingPerformancePreference,
     PackageResidencyPlan, PackageResidencyPolicy, ProjectMemoryHooks, ProjectMemoryPurgePoint,
     cache::{PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
     memory::NoopProjectMemoryHooks,
@@ -34,10 +34,10 @@ impl StartupCacheLoad {
     }
 }
 
-/// Result of building a project, optionally including build-time profiling data.
+/// Result of building a project, optionally including requested transient-stage memory data.
 pub struct ProjectBuild {
     project: Project,
-    profile: Option<BuildProfile>,
+    stage_memory: Option<BuildStageMemorySnapshot>,
 }
 
 impl ProjectBuild {
@@ -45,12 +45,8 @@ impl ProjectBuild {
         self.project
     }
 
-    pub fn profile(&self) -> Option<&BuildProfile> {
-        self.profile.as_ref()
-    }
-
-    pub fn into_parts(self) -> (Project, Option<BuildProfile>) {
-        (self.project, self.profile)
+    pub fn into_parts(self) -> (Project, Option<BuildStageMemorySnapshot>) {
+        (self.project, self.stage_memory)
     }
 }
 
@@ -133,7 +129,6 @@ impl ProjectBuilder {
     }
 
     pub fn build(self) -> anyhow::Result<ProjectBuild> {
-        let profile_requested = self.stage_memory_target.is_some();
         let mut profiler = BuildProfiler::new(
             self.measure_retained_memory,
             self.process_memory_sampler,
@@ -169,11 +164,11 @@ impl ProjectBuilder {
             project_bytes,
             process_memory,
         );
-        let profile = profile_requested.then(|| profiler.finish());
+        let stage_memory = profiler.finish();
 
         Ok(ProjectBuild {
             project: Project { state },
-            profile,
+            stage_memory,
         })
     }
 }

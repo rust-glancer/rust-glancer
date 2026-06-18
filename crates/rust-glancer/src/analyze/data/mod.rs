@@ -6,7 +6,7 @@ mod project;
 mod stages;
 
 use rg_profile::ProfileSnapshot;
-use rg_project::{BuildProfile, Project};
+use rg_project::{BuildStageMemorySnapshot, Project};
 use serde::Serialize;
 
 pub(crate) use self::{
@@ -52,7 +52,7 @@ impl AnalyzeReport {
     pub(crate) fn build(
         project: &Project,
         analysis_setup: AnalysisSetupReport,
-        build_profile: Option<&BuildProfile>,
+        stage_memory: Option<&BuildStageMemorySnapshot>,
         allocator: Option<AllocatorReport>,
         profile_snapshot: Option<&ProfileSnapshot>,
         include_profile_snapshot: bool,
@@ -61,8 +61,7 @@ impl AnalyzeReport {
     ) -> Self {
         let memory = include_memory.then(|| match memory_stage {
             CliMemoryStage::Final => MemoryReport::capture(project),
-            _ => build_profile
-                .and_then(|profile| profile.stage_memory())
+            _ => stage_memory
                 .map(MemoryReport::capture_stage)
                 .expect("selected build memory stage should be captured"),
         });

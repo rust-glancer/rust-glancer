@@ -46,25 +46,6 @@ pub(crate) fn profile_descriptors() -> &'static [ProfileDescriptor] {
     metric::descriptors()
 }
 
-/// Build-time details that still need project-specific structures.
-///
-/// Coarse build checkpoints are emitted through `rg_profile`; this type carries selected
-/// retained-memory trees and cache-probe summaries that are not dynamic metrics yet.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BuildProfile {
-    stage_memory: Option<BuildStageMemorySnapshot>,
-}
-
-impl BuildProfile {
-    pub(crate) fn new(stage_memory: Option<BuildStageMemorySnapshot>) -> Self {
-        Self { stage_memory }
-    }
-
-    pub fn stage_memory(&self) -> Option<&BuildStageMemorySnapshot> {
-        self.stage_memory.as_ref()
-    }
-}
-
 /// Process allocator counters sampled by the executable during a profiled build.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BuildProcessMemory {
@@ -272,7 +253,7 @@ impl BuildProfiler {
         );
     }
 
-    pub(crate) fn finish(self) -> BuildProfile {
-        BuildProfile::new(self.stage_memory)
+    pub(crate) fn finish(self) -> Option<BuildStageMemorySnapshot> {
+        self.stage_memory
     }
 }

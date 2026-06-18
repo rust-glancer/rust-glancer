@@ -345,7 +345,7 @@ pub struct User;
 }
 
 #[test]
-fn stage_memory_profile_captures_requested_transient_phase() {
+fn stage_memory_snapshot_captures_requested_transient_phase() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -359,16 +359,13 @@ pub struct User;
 "#,
     );
     let workspace = fixture.workspace_metadata();
-    let (_project, profile) = Project::builder(workspace)
+    let (_project, stage_memory) = Project::builder(workspace)
         .measure_retained_memory(true)
         .stage_memory_target(Some(BuildProfileStage::DefMap))
         .build()
         .expect("stage-profiled project build should succeed")
         .into_parts();
-    let profile = profile.expect("stage profiling should produce a profile");
-    let snapshot = profile
-        .stage_memory()
-        .expect("requested stage should capture detailed memory");
+    let snapshot = stage_memory.expect("requested stage should capture detailed memory");
 
     assert_eq!(snapshot.stage(), BuildProfileStage::DefMap);
     assert_eq!(snapshot.label(), "after def-map");

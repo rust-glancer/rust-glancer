@@ -213,7 +213,7 @@ pub(crate) fn analyze(
     })?;
     let profile_snapshot = profile_run.map(rg_profile::ProfileRun::finish);
 
-    let (project, build_profile) = project_build.into_parts();
+    let (project, stage_memory) = project_build.into_parts();
     let allocator_name = memory_control.allocator_name();
 
     // Capture allocator stats and purge after project-building allocations are finished, but
@@ -229,7 +229,7 @@ pub(crate) fn analyze(
     let analyze_report = data::AnalyzeReport::build(
         &project,
         analysis_setup,
-        build_profile.as_ref(),
+        stage_memory.as_ref(),
         allocator,
         profile_snapshot.as_ref(),
         include_profile_snapshot,
