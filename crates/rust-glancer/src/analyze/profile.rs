@@ -11,8 +11,8 @@ struct ProfileAlias {
 
 const PROFILE_ALIASES: &[ProfileAlias] = &[ProfileAlias {
     name: "default",
-    description: "build checkpoints and the final retained-memory snapshot",
-    selectors: &[rg_project::BUILD_FINAL_MEMORY.scope()],
+    description: "build checkpoints",
+    selectors: &[rg_project::BUILD_CHECKPOINTS.scope()],
 }];
 
 pub(crate) fn profile_groups_help() -> String {

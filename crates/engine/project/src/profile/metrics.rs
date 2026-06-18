@@ -80,8 +80,6 @@ declare_metrics! {
 }
 
 pub const BUILD_CHECKPOINTS: rg_profile::CheckpointMetric = metric::CHECKPOINTS;
-pub const BUILD_FINAL_MEMORY: rg_profile::MemorySnapshotMetric =
-    metric::PARSE_SYNTAX_EVICTION_MEMORY;
 
 pub(crate) fn profile_descriptors() -> &'static [ProfileDescriptor] {
     metric::descriptors()

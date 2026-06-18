@@ -186,15 +186,15 @@ mod tests {
 
     #[test]
     fn analyze_profile_filter_expands_default_alias() {
-        let final_memory = rg_project::BUILD_FINAL_MEMORY.scope();
+        let build_checkpoints = rg_project::BUILD_CHECKPOINTS.scope();
 
         let filter = parse_filter(Some("default"), false)
             .expect("default profile alias should parse")
             .expect("default profile alias should enable a profile run");
         assert_eq!(
             selector_texts(&filter),
-            vec![final_memory],
-            "the default alias should collect build checkpoints and final retained-memory details",
+            vec![build_checkpoints],
+            "the default alias should collect build checkpoints",
         );
 
         let filter = parse_filter(Some("default,def_map.macros"), false)
@@ -202,7 +202,7 @@ mod tests {
             .expect("mixed profile aliases and selectors should enable a profile run");
         assert_eq!(
             selector_texts(&filter),
-            vec![final_memory, "def_map.macros"],
+            vec![build_checkpoints, "def_map.macros"],
             "profile aliases should expand without blocking explicit selectors",
         );
     }
