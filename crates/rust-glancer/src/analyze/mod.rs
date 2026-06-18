@@ -1,91 +1,23 @@
 use std::{
-    fmt as std_fmt, fs,
-    io::Write as _,
     path::PathBuf,
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use anyhow::Context as _;
-use clap::ValueEnum;
 use rg_lsp_engine::MemoryControl as _;
+use rg_profile::{ProfileFilter, ProfileRegistry, ProfileRun};
 use rg_project::{
     BuildProcessMemory, IndexingPerformancePreference, PackageResidencyPolicy, Project,
     StartupCacheLoad,
 };
 use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
 
+mod config;
 mod data;
+mod output;
 mod report;
 
-/// CLI-facing package residency names for the `analyze` command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum CliPackageResidencyPolicy {
-    AllResident,
-    Workspace,
-    WorkspaceAndPathDeps,
-    WorkspacePathAndDirectDeps,
-    AllOffloadable,
-}
-
-impl From<CliPackageResidencyPolicy> for PackageResidencyPolicy {
-    fn from(policy: CliPackageResidencyPolicy) -> Self {
-        match policy {
-            CliPackageResidencyPolicy::AllResident => Self::AllResident,
-            CliPackageResidencyPolicy::Workspace => Self::WorkspaceResident,
-            CliPackageResidencyPolicy::WorkspaceAndPathDeps => Self::WorkspaceAndPathDepsResident,
-            CliPackageResidencyPolicy::WorkspacePathAndDirectDeps => {
-                Self::WorkspacePathAndDirectDepsResident
-            }
-            CliPackageResidencyPolicy::AllOffloadable => Self::AllOffloadable,
-        }
-    }
-}
-
-/// CLI-facing indexing preference names for the `analyze` command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum CliIndexingPreference {
-    LowerPeakMemory,
-    FasterBuilds,
-}
-
-impl From<CliIndexingPreference> for IndexingPerformancePreference {
-    fn from(preference: CliIndexingPreference) -> Self {
-        match preference {
-            CliIndexingPreference::LowerPeakMemory => Self::LowerPeakMemory,
-            CliIndexingPreference::FasterBuilds => Self::FasterBuilds,
-        }
-    }
-}
-
-impl From<IndexingPerformancePreference> for CliIndexingPreference {
-    fn from(preference: IndexingPerformancePreference) -> Self {
-        match preference {
-            IndexingPerformancePreference::LowerPeakMemory => Self::LowerPeakMemory,
-            IndexingPerformancePreference::FasterBuilds => Self::FasterBuilds,
-        }
-    }
-}
-
-impl Default for CliIndexingPreference {
-    fn default() -> Self {
-        IndexingPerformancePreference::default().into()
-    }
-}
-
-impl std_fmt::Display for CliIndexingPreference {
-    fn fmt(&self, f: &mut std_fmt::Formatter<'_>) -> std_fmt::Result {
-        f.write_str(IndexingPerformancePreference::from(*self).config_name())
-    }
-}
-
-/// Output format for the `analyze` command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum OutputFormat {
-    Text,
-    Json,
-    RichJson,
-    Html,
-}
+pub(crate) use self::config::{CliIndexingPreference, CliPackageResidencyPolicy, OutputFormat};
 
 /// Runs project analysis for the Cargo manifest at `path` and prints a small build summary.
 #[allow(clippy::too_many_arguments)]
@@ -111,21 +43,20 @@ pub(crate) fn analyze(
     let cargo_metadata_config = target
         .map(|target| CargoMetadataConfig::default().target_triple(target))
         .unwrap_or_default();
-    let metadata_started = Instant::now();
-    let metadata = cargo_metadata_config
-        .load_metadata_with_target_cfg(&cargo_manifest)
-        .context("cargo metadata failed")?;
-    let metadata_elapsed = metadata_started.elapsed();
+    let (metadata, metadata_elapsed) = measure_time(|| {
+        cargo_metadata_config
+            .load_metadata_with_target_cfg(&cargo_manifest)
+            .context("cargo metadata failed")
+    })?;
 
-    let workspace_started = Instant::now();
-    let workspace = WorkspaceMetadata::lower(metadata.metadata, metadata.target_cfg)
-        .context("while attempting to normalize Cargo metadata")?;
-    let workspace_elapsed = workspace_started.elapsed();
+    let (workspace, workspace_elapsed) = measure_time(|| {
+        WorkspaceMetadata::lower(metadata.metadata, metadata.target_cfg)
+            .context("while attempting to normalize Cargo metadata")
+    })?;
 
-    let sysroot_started = Instant::now();
-    let sysroot = SysrootSources::discover(workspace.workspace_root());
-    let sysroot_elapsed = sysroot_started.elapsed();
-    let workspace = workspace.with_sysroot_sources(sysroot);
+    let (sysroot, sysroot_elapsed) =
+        measure_time(|| Ok(SysrootSources::discover(workspace.workspace_root())))?;
+    let workspace: WorkspaceMetadata = workspace.with_sysroot_sources(sysroot);
     let memory_control = crate::memory::memory_control();
     let analysis_setup =
         data::AnalysisSetupReport::new(metadata_elapsed, workspace_elapsed, sysroot_elapsed);
@@ -160,12 +91,10 @@ pub(crate) fn analyze(
     } else {
         builder
     };
-    let project = builder.build().context(if include_memory {
-        "while attempting to build profiled project"
-    } else {
-        "while attempting to build project"
-    })?;
-    let profile_snapshot = profile_run.map(rg_profile::ProfileRun::finish);
+    let project = builder
+        .build()
+        .context("while attempting to build project")?;
+    let profile_snapshot = profile_run.map(ProfileRun::finish);
 
     let allocator_name = memory_control.allocator_name();
 
@@ -188,55 +117,24 @@ pub(crate) fn analyze(
         include_memory,
     );
 
-    let output = match output_format {
-        OutputFormat::Text => {
-            let mut output = String::new();
-            let document_options = data::ReportDocumentOptions { include_memory };
-            let document = analyze_report.document(document_options);
-            report::TextRenderer
-                .render(&document, &mut output)
-                .expect("writing to a string should not fail");
-            output
-        }
-        OutputFormat::Json => {
-            let mut output = analyze_report
-                .render_json()
-                .context("while attempting to render analyze JSON report")?;
-            output.push('\n');
-            output
-        }
-        OutputFormat::RichJson => {
-            let document_options = data::ReportDocumentOptions { include_memory };
-            let document = analyze_report.document(document_options);
-            let mut output = report::RichJsonRenderer
-                .render(&document)
-                .context("while attempting to render rich analyze JSON report")?;
-            output.push('\n');
-            output
-        }
-        OutputFormat::Html => {
-            let document_options = data::ReportDocumentOptions { include_memory };
-            let document = analyze_report.document(document_options);
-            let path = write_html_report(&document)?;
-            format!("wrote HTML report to {}\n", path.display())
-        }
-    };
-    std::io::stdout()
-        .lock()
-        .write_all(output.as_bytes())
-        .context("while attempting to write analyze report")?;
+    output::write_report(&analyze_report, output_format, include_memory)
+}
 
-    Ok(())
+fn measure_time<T>(operation: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<(T, Duration)> {
+    let started = Instant::now();
+    let output = operation()?;
+
+    Ok((output, started.elapsed()))
 }
 
 fn parse_analyze_profile_filter(
     filter: Option<&str>,
     include_memory: bool,
-) -> anyhow::Result<Option<rg_profile::ProfileFilter>> {
+) -> anyhow::Result<Option<ProfileFilter>> {
     let mut filter = match filter {
-        Some(filter) => rg_profile::ProfileFilter::parse(filter)
+        Some(filter) => ProfileFilter::parse(filter)
             .context("while attempting to parse analyze profile filter")?,
-        None => rg_profile::ProfileFilter::disabled(),
+        None => ProfileFilter::disabled(),
     };
 
     if include_memory {
@@ -248,40 +146,11 @@ fn parse_analyze_profile_filter(
     Ok((!filter.is_disabled()).then_some(filter))
 }
 
-fn start_analyze_profile_run(
-    filter: rg_profile::ProfileFilter,
-) -> anyhow::Result<rg_profile::ProfileRun> {
-    let registry =
-        rg_profile::ProfileRegistry::new(rg_project::profile_descriptors().iter().copied())
-            .context("while attempting to build project profile registry")?;
-    rg_profile::ProfileRun::start_with_registry(registry, filter)
+fn start_analyze_profile_run(filter: ProfileFilter) -> anyhow::Result<ProfileRun> {
+    let registry = ProfileRegistry::new(rg_project::profile_descriptors().iter().copied())
+        .context("while attempting to build project profile registry")?;
+    ProfileRun::start_with_registry(registry, filter)
         .context("while attempting to activate analyze profile run")
-}
-
-fn write_html_report(document: &report::ReportDocument) -> anyhow::Result<PathBuf> {
-    let report_dir = PathBuf::from("target").join("rust-glancer").join("report");
-    fs::create_dir_all(&report_dir).with_context(|| {
-        format!(
-            "while attempting to create HTML report directory {}",
-            report_dir.display()
-        )
-    })?;
-
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context("while attempting to read system time for HTML report filename")?
-        .as_millis();
-    let path = report_dir.join(format!("{timestamp}-report.html"));
-    let html = report::HtmlRenderer.render(document);
-
-    fs::write(&path, html).with_context(|| {
-        format!(
-            "while attempting to write HTML report file {}",
-            path.display()
-        )
-    })?;
-
-    Ok(path)
 }
 
 #[cfg(test)]
