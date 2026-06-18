@@ -73,7 +73,8 @@ export interface DiagnosticsConfig {
   readonly onStartup: boolean;
   readonly onSave: boolean;
   readonly command: string;
-  readonly arguments: string[];
+  readonly cargoArguments: string[];
+  readonly rustcArguments: string[];
 }
 
 export namespace ExtensionConfig {
@@ -114,8 +115,11 @@ export namespace ExtensionConfig {
         onStartup: readBoolean(config, "diagnostics.onStartup", false),
         onSave: readBoolean(config, "diagnostics.onSave", false),
         command: normalizeCargoSubcommand(readString(config, "diagnostics.command", "check")),
-        arguments: normalizeStringArray(
-          readUnknownArray(config, "diagnostics.arguments", ["--workspace", "--all-targets"]),
+        cargoArguments: normalizeStringArray(
+          readUnknownArray(config, "diagnostics.cargoArguments", ["--workspace"]),
+        ),
+        rustcArguments: normalizeStringArray(
+          readUnknownArray(config, "diagnostics.rustcArguments"),
         ),
       },
     };

@@ -200,17 +200,25 @@
           "default": "check",
           "description": "Cargo subcommand used for diagnostics. This must be a Cargo subcommand such as check or clippy, not an arbitrary shell command."
         },
-        "rust-glancer.diagnostics.arguments": {
+        "rust-glancer.diagnostics.cargoArguments": {
           "scope": "window",
           "type": "array",
           "default": [
-            "--workspace",
-            "--all-targets"
+            "--workspace"
           ],
           "items": {
             "type": "string"
           },
-          "description": "Extra arguments appended to cargo <diagnostics.command> --message-format=json for diagnostics."
+          "description": "Extra Cargo-level arguments appended to cargo <diagnostics.command> --message-format=json for diagnostics."
+        },
+        "rust-glancer.diagnostics.rustcArguments": {
+          "scope": "window",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Extra rustc-level arguments appended after `--` when running Cargo diagnostics."
         }
       }
     }

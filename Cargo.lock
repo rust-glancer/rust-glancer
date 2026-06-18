@@ -1571,6 +1571,7 @@ dependencies = [
  "anyhow",
  "ls-types",
  "serde",
+ "serde_json",
  "tarpc",
  "thiserror",
 ]
