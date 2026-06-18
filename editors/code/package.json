@@ -182,13 +182,13 @@
           "default": "workspace-and-path-deps",
           "description": "Controls which package analysis artifacts remain resident after indexing. Restart the rust-glancer server after changing this setting."
         },
-        "rust-glancer.diagnosticsOnStartup": {
+        "rust-glancer.diagnostics.onStartup": {
           "scope": "window",
           "type": "boolean",
           "default": false,
           "description": "Run Cargo diagnostics once after a Rust project engine initializes."
         },
-        "rust-glancer.diagnosticsOnSave": {
+        "rust-glancer.diagnostics.onSave": {
           "scope": "window",
           "type": "boolean",
           "default": false,

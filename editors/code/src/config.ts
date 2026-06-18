@@ -111,8 +111,8 @@ export namespace ExtensionConfig {
         ),
       },
       diagnostics: {
-        onStartup: readBoolean(config, "diagnosticsOnStartup", false),
-        onSave: readBoolean(config, "diagnosticsOnSave", false),
+        onStartup: readBoolean(config, "diagnostics.onStartup", false),
+        onSave: readBoolean(config, "diagnostics.onSave", false),
         command: normalizeCargoSubcommand(readString(config, "diagnostics.command", "check")),
         arguments: normalizeStringArray(
           readUnknownArray(config, "diagnostics.arguments", ["--workspace", "--all-targets"]),
