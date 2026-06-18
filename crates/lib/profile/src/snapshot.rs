@@ -202,6 +202,10 @@ impl ProfileCheckpointValue {
             value: value.into(),
         }
     }
+
+    pub fn optional_bytes(key: impl Into<String>, value: Option<usize>) -> Self {
+        Self::new(key, ProfileMeasurement::optional_bytes(value))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
