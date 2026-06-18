@@ -33,6 +33,8 @@ impl ReportDocument {
 pub(crate) struct ReportSection {
     pub(crate) key: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) group: Option<ReportSectionGroup>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) description: Option<String>,
@@ -43,6 +45,7 @@ impl ReportSection {
     pub(crate) fn new(key: impl Into<String>, title: impl Into<String>) -> Self {
         Self {
             key: key.into(),
+            group: None,
             title: Some(title.into()),
             description: None,
             blocks: Vec::new(),
@@ -51,6 +54,21 @@ impl ReportSection {
 
     pub(crate) fn push_block(&mut self, block: ReportBlock) {
         self.blocks.push(block);
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ReportSectionGroup {
+    pub(crate) key: String,
+    pub(crate) title: String,
+}
+
+impl ReportSectionGroup {
+    pub(crate) fn new(key: impl Into<String>, title: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            title: title.into(),
+        }
     }
 }
 
@@ -255,6 +273,11 @@ impl ReportSectionBuilder {
 
     pub(crate) fn untitled(&mut self) -> &mut Self {
         self.section.title = None;
+        self
+    }
+
+    pub(crate) fn group(&mut self, key: impl Into<String>, title: impl Into<String>) -> &mut Self {
+        self.section.group = Some(ReportSectionGroup::new(key, title));
         self
     }
 

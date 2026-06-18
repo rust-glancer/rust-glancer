@@ -73,22 +73,28 @@ impl AnalyzeReport {
     pub(crate) fn document(&self, options: ReportDocumentOptions) -> ReportDocument {
         let mut document = ReportDocument::builder("analyze")
             .title("rust-glancer analysis built")
-            .section("project", |section| self.project.append_document(section));
+            .section("project", |section| {
+                section.group("summary", "Summary");
+                self.project.append_document(section);
+            });
 
         if options.include_memory {
             document = document.section("analysis_setup", |section| {
+                section.group("summary", "Summary");
                 self.analysis_setup.append_document(section);
             });
         }
 
         for memory in &self.memory {
             document = document.section(memory.section_key(), |section| {
+                section.group("memory", "Memory");
                 memory.append_document(section);
             });
         }
 
         if let Some(profile_snapshot) = &self.profile_snapshot {
             document = document.section("profile_snapshot", |section| {
+                section.group("profile", "Profile");
                 profile_snapshot.append_document(section);
             });
         }

@@ -1,5 +1,6 @@
 use crate::analyze::report::{
     ReportAlign, ReportBlock, ReportColumn, ReportDocument, ReportField, ReportRow, ReportSection,
+    ReportValue,
 };
 
 use super::{html_writer::HtmlWriter, value::format_value};
@@ -8,184 +9,117 @@ const META_TAGS: &str = r#"<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 "#;
 
-const STYLE: &str = r#"<style>
-:root {
-  color-scheme: light;
-  --bg: #f7f8fa;
-  --surface: #ffffff;
-  --text: #1f2933;
-  --muted: #667085;
-  --border: #d9dee7;
-  --accent: #2563eb;
-  --warning-bg: #fff7ed;
-  --warning-border: #f97316;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 14px;
-  line-height: 1.45;
-}
-
-main {
-  width: min(1120px, calc(100vw - 32px));
-  margin: 32px auto 48px;
-}
-
-h1 {
-  margin: 0 0 24px;
-  font-size: 28px;
-  font-weight: 650;
-}
-
-h2 {
-  margin: 0 0 14px;
-  color: var(--accent);
-  font-size: 20px;
-  font-weight: 650;
-}
-
-h3 {
-  margin: 0 0 10px;
-  font-size: 15px;
-  font-weight: 650;
-}
-
-.report-section {
-  margin: 18px 0;
-  padding: 18px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-
-.section-description {
-  margin: 0 0 16px;
-  color: var(--muted);
-}
-
-.report-block + .report-block {
-  margin-top: 18px;
-}
-
-.fields {
-  display: grid;
-  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr);
-  gap: 8px 18px;
-  margin: 0;
-}
-
-.fields dt {
-  color: var(--muted);
-}
-
-.fields dd {
-  margin: 0;
-  font-weight: 500;
-}
-
-.field-description {
-  margin-top: 2px;
-  color: var(--muted);
-  font-weight: 400;
-}
-
-.table-wrap {
-  overflow-x: auto;
-}
-
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-variant-numeric: tabular-nums;
-}
-
-th,
-td {
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--border);
-  vertical-align: top;
-  white-space: nowrap;
-}
-
-th {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 650;
-  text-transform: uppercase;
-}
-
-tbody tr:nth-child(even) {
-  background: #fafbfc;
-}
-
-.align-left {
-  text-align: left;
-}
-
-.align-right {
-  text-align: right;
-}
-
-.align-center {
-  text-align: center;
-}
-
-.warning {
-  padding: 10px 12px;
-  background: var(--warning-bg);
-  border-left: 3px solid var(--warning-border);
-  border-radius: 4px;
-}
-
-pre {
-  margin: 0;
-  padding: 12px;
-  overflow-x: auto;
-  background: #111827;
-  color: #f9fafb;
-  border-radius: 4px;
-}
-
-code {
-  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  font-size: 13px;
-}
-</style>
-"#;
+const STYLE: &str = include_str!("assets/report.css");
+const SCRIPT: &str = include_str!("assets/report.js");
 
 pub(crate) struct HtmlRenderer;
 
+struct SectionGroup<'a> {
+    key: String,
+    title: String,
+    sections: Vec<&'a ReportSection>,
+}
+
 impl HtmlRenderer {
     pub(crate) fn render(&self, document: &ReportDocument) -> String {
+        let groups = section_groups(document);
         let mut html = HtmlWriter::new();
         html.raw("<!doctype html>\n");
         html.element("html").attr("lang", "en").children(|html| {
             html.element("head").children(|html| {
                 html.raw(META_TAGS);
                 html.element("title").text(&document.title);
+                html.raw("<style>\n");
                 html.raw(STYLE);
+                html.raw("\n</style>\n");
             });
             html.element("body").children(|html| {
                 html.element("main").children(|html| {
                     html.element("h1").text(&document.title);
-                    for section in &document.sections {
-                        self.render_section(html, section);
-                    }
+                    self.render_groups(html, &groups);
                 });
+                html.raw("<script>\n");
+                html.raw(SCRIPT);
+                html.raw("\n</script>\n");
             });
         });
         html.finish()
     }
 
-    fn render_section(&self, html: &mut HtmlWriter, section: &ReportSection) {
+    fn render_groups(&self, html: &mut HtmlWriter, groups: &[SectionGroup<'_>]) {
+        if groups.len() <= 1 {
+            for group in groups {
+                self.render_group_panel(html, group);
+            }
+            return;
+        }
+
+        html.element("div")
+            .class("root-tabs")
+            .attr("data-tab-set", "root")
+            .children(|html| {
+                self.render_tab_list(
+                    html,
+                    "root",
+                    groups.iter().enumerate().map(|(index, group)| {
+                        (index == 0, group_panel_id(group), group.title.as_str())
+                    }),
+                );
+
+                for (index, group) in groups.iter().enumerate() {
+                    let panel_id = group_panel_id(group);
+                    html.element("div")
+                        .attr("id", panel_id)
+                        .attr("data-tab-parent", "root")
+                        .class("tab-panel")
+                        .class("group-panel")
+                        .class(if index == 0 { "active" } else { "" })
+                        .children(|html| self.render_group_panel(html, group));
+                }
+            });
+    }
+
+    fn render_group_panel(&self, html: &mut HtmlWriter, group: &SectionGroup<'_>) {
+        let collapsible = group.sections.len() > 1;
+        for (index, section) in group.sections.iter().enumerate() {
+            self.render_section(html, section, collapsible, index == 0);
+        }
+    }
+
+    fn render_section(
+        &self,
+        html: &mut HtmlWriter,
+        section: &ReportSection,
+        collapsible: bool,
+        open: bool,
+    ) {
+        if collapsible {
+            let details = html
+                .element("details")
+                .attr("id", section.key.as_str())
+                .class("report-section");
+            let details = if open {
+                details.attr("open", "open")
+            } else {
+                details
+            };
+            details.children(|html| {
+                html.element("summary")
+                    .class("section-summary")
+                    .text(section_title(section));
+                html.element("div").class("section-body").children(|html| {
+                    if let Some(description) = &section.description {
+                        html.element("p")
+                            .class("section-description")
+                            .text(description);
+                    }
+
+                    self.render_section_body(html, section);
+                });
+            });
+            return;
+        }
+
         html.element("section")
             .attr("id", section.key.as_str())
             .class("report-section")
@@ -200,10 +134,30 @@ impl HtmlRenderer {
                         .text(description);
                 }
 
-                for block in &section.blocks {
-                    self.render_block(html, block);
-                }
+                self.render_section_body(html, section);
             });
+    }
+
+    fn render_section_body(&self, html: &mut HtmlWriter, section: &ReportSection) {
+        let table_blocks = section
+            .blocks
+            .iter()
+            .filter(|block| matches!(block, ReportBlock::Table { .. }))
+            .collect::<Vec<_>>();
+
+        if table_blocks.len() <= 1 {
+            for block in &section.blocks {
+                self.render_block(html, block);
+            }
+            return;
+        }
+
+        for block in &section.blocks {
+            if !matches!(block, ReportBlock::Table { .. }) {
+                self.render_block(html, block);
+            }
+        }
+        self.render_table_tabs(html, &section.key, &table_blocks);
     }
 
     fn render_block(&self, html: &mut HtmlWriter, block: &ReportBlock) {
@@ -238,6 +192,63 @@ impl HtmlRenderer {
                 });
             }
         }
+    }
+
+    fn render_table_tabs(&self, html: &mut HtmlWriter, section_key: &str, blocks: &[&ReportBlock]) {
+        let set_id = html_id("tables", section_key);
+        html.element("div")
+            .class("report-block")
+            .class("table-tabs")
+            .attr("data-tab-set", &set_id)
+            .children(|html| {
+                self.render_tab_list(
+                    html,
+                    &set_id,
+                    blocks.iter().enumerate().filter_map(|(index, block)| {
+                        table_block_parts(block).map(|(key, title, _, _)| {
+                            (index == 0, html_id(section_key, key), title)
+                        })
+                    }),
+                );
+
+                for (index, block) in blocks.iter().enumerate() {
+                    let Some((key, _title, columns, rows)) = table_block_parts(block) else {
+                        continue;
+                    };
+                    html.element("div")
+                        .attr("id", html_id(section_key, key))
+                        .attr("data-tab-parent", &set_id)
+                        .class("tab-panel")
+                        .class(if index == 0 { "active" } else { "" })
+                        .children(|html| {
+                            self.render_table_content(html, columns, rows);
+                        });
+                }
+            });
+    }
+
+    fn render_tab_list<'a>(
+        &self,
+        html: &mut HtmlWriter,
+        parent: &str,
+        tabs: impl IntoIterator<Item = (bool, String, &'a str)>,
+    ) {
+        html.element("div")
+            .class("tab-list")
+            .attr("role", "tablist")
+            .children(|html| {
+                for (active, target, title) in tabs {
+                    html.element("button")
+                        .attr("type", "button")
+                        .attr("role", "tab")
+                        .attr("aria-selected", if active { "true" } else { "false" })
+                        .attr("data-tab-parent", parent)
+                        .attr("data-tab-target", target)
+                        .class("tab-button")
+                        .class(if active { "active" } else { "" })
+                        .text(title);
+                }
+            });
     }
 
     fn render_fields(&self, html: &mut HtmlWriter, title: Option<&str>, fields: &[ReportField]) {
@@ -280,21 +291,46 @@ impl HtmlRenderer {
                     html.element("h3").text(title);
                 }
 
-                html.element("div").class("table-wrap").children(|html| {
-                    html.element("table").children(|html| {
-                        self.render_table_header(html, columns);
-                        self.render_table_body(html, columns, rows);
-                    });
+                self.render_table_content(html, columns, rows);
+            });
+    }
+
+    fn render_table_content(
+        &self,
+        html: &mut HtmlWriter,
+        columns: &[ReportColumn],
+        rows: &[ReportRow],
+    ) {
+        html.element("div").class("table-content").children(|html| {
+            if rows.len() > 8 {
+                html.element("div").class("table-tools").children(|html| {
+                    html.element("input")
+                        .class("table-filter")
+                        .attr("type", "search")
+                        .attr("placeholder", "Filter rows")
+                        .attr("aria-label", "Filter table rows")
+                        .empty();
+                });
+            }
+
+            html.element("div").class("table-wrap").children(|html| {
+                html.element("table").class("data-table").children(|html| {
+                    self.render_table_header(html, columns);
+                    self.render_table_body(html, columns, rows);
                 });
             });
+        });
     }
 
     fn render_table_header(&self, html: &mut HtmlWriter, columns: &[ReportColumn]) {
         html.element("thead").children(|html| {
             html.element("tr").children(|html| {
-                for column in columns {
+                for (index, column) in columns.iter().enumerate() {
                     html.element("th")
+                        .attr("scope", "col")
+                        .attr("data-column-index", index.to_string())
                         .class(align_class(column.align))
+                        .class("sortable")
                         .text(&column.title);
                 }
             });
@@ -316,8 +352,14 @@ impl HtmlRenderer {
                             .get(&column.key)
                             .map(format_value)
                             .unwrap_or_else(|| "-".to_string());
+                        let sort_value = row
+                            .cells
+                            .get(&column.key)
+                            .map(cell_sort_value)
+                            .unwrap_or_default();
 
                         html.element("td")
+                            .attr("data-sort", sort_value)
                             .class(align_class(column.align))
                             .text(&value);
                     }
@@ -325,6 +367,85 @@ impl HtmlRenderer {
             }
         });
     }
+}
+
+fn section_groups(document: &ReportDocument) -> Vec<SectionGroup<'_>> {
+    let mut groups = Vec::<SectionGroup<'_>>::new();
+    for section in &document.sections {
+        let (key, title) = section
+            .group
+            .as_ref()
+            .map(|group| (group.key.as_str(), group.title.as_str()))
+            .unwrap_or_else(|| (section.key.as_str(), section_title(section)));
+
+        if let Some(group) = groups.iter_mut().find(|group| group.key == key) {
+            group.sections.push(section);
+        } else {
+            groups.push(SectionGroup {
+                key: key.to_string(),
+                title: title.to_string(),
+                sections: vec![section],
+            });
+        }
+    }
+
+    groups
+}
+
+fn section_title(section: &ReportSection) -> &str {
+    section.title.as_deref().unwrap_or(section.key.as_str())
+}
+
+fn group_panel_id(group: &SectionGroup<'_>) -> String {
+    html_id("group", &group.key)
+}
+
+fn table_block_parts<'a>(
+    block: &'a ReportBlock,
+) -> Option<(&'a str, &'a str, &'a [ReportColumn], &'a [ReportRow])> {
+    match block {
+        ReportBlock::Table {
+            key,
+            title,
+            columns,
+            rows,
+        } => Some((key, title.as_deref().unwrap_or(key.as_str()), columns, rows)),
+        _ => None,
+    }
+}
+
+fn cell_sort_value(value: &ReportValue) -> String {
+    match value {
+        ReportValue::Text(value) => value.to_lowercase(),
+        ReportValue::Count(value) | ReportValue::Bytes(value) => value.to_string(),
+        ReportValue::Integer(value) | ReportValue::BytesDelta(value) => value.to_string(),
+        ReportValue::Float(value)
+        | ReportValue::DurationMs(value)
+        | ReportValue::Percent(value) => value.to_string(),
+        ReportValue::Bool(value) => {
+            if *value {
+                "1".to_string()
+            } else {
+                "0".to_string()
+            }
+        }
+        ReportValue::Empty => String::new(),
+    }
+}
+
+fn html_id(prefix: &str, key: &str) -> String {
+    let mut id = String::from(prefix);
+    id.push('-');
+
+    for character in key.chars() {
+        if character.is_ascii_alphanumeric() {
+            id.push(character.to_ascii_lowercase());
+        } else {
+            id.push('-');
+        }
+    }
+
+    id
 }
 
 fn align_class(align: ReportAlign) -> &'static str {

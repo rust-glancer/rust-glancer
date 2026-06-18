@@ -28,7 +28,7 @@ impl AnalysisSetupReport {
     }
 
     pub(super) fn append_document(&self, section: &mut ReportSectionBuilder) {
-        section.title("analysis setup profile");
+        section.title("analysis setup");
         section.table("checkpoints", |table| {
             Self::append_timeline_columns(table);
 

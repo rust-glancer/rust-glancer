@@ -92,8 +92,17 @@ impl HtmlElement<'_> {
     }
 
     pub(super) fn class(mut self, class: impl Into<String>) -> Self {
-        self.classes.push(class.into());
+        let class = class.into();
+        if !class.is_empty() {
+            self.classes.push(class);
+        }
         self
+    }
+
+    pub(super) fn empty(self) {
+        self.writer
+            .write_open_tag(self.name, &self.attrs, &self.classes);
+        self.writer.raw("\n");
     }
 
     pub(super) fn text(self, text: &str) {
