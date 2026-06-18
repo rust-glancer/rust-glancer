@@ -6,9 +6,13 @@
 
 mod descriptor;
 mod filter;
+mod macros;
+mod metric;
 mod registry;
 mod runtime;
 mod snapshot;
+
+pub mod test_support;
 
 pub use self::{
     descriptor::{
@@ -16,10 +20,18 @@ pub use self::{
         ProfileReport, ProfileReportSort, ProfileUnit, validate_profile_key, validate_profile_path,
     },
     filter::{ProfileFilter, ProfileFilterParseError},
+    macros::{
+        checkpoint, declare_metrics, increment_counter, increment_keyed_counter, record_duration,
+        record_gauge, record_keyed_duration, timer,
+    },
+    metric::{
+        CheckpointMetric, CounterMetric, DurationMetric, GaugeMetric, KeyedCounterMetric,
+        KeyedDurationMetric,
+    },
     registry::{ProfileFilterValidationError, ProfileRegistry, ProfileRegistryError},
     runtime::{
-        ProfileInitializeError, ProfileRun, ProfileRunStartError, ProfileTimer, initialize,
-        record_checkpoint, record_duration, record_gauge, record_keyed_counter,
+        ProfileInitializeError, ProfileRun, ProfileRunStartError, ProfileTimer, duration_enabled,
+        initialize, record_checkpoint, record_duration, record_gauge, record_keyed_counter,
         record_keyed_duration, timer,
     },
     snapshot::{
@@ -28,186 +40,96 @@ pub use self::{
     },
 };
 
-/// Increments a registered counter by one, or by the provided amount.
-#[macro_export]
-macro_rules! increment_counter {
-    ($path:literal) => {
-        $crate::record_counter($path, 1)
-    };
-    ($path:literal, $amount:expr) => {
-        $crate::record_counter($path, $amount)
-    };
-}
-
-/// Records a keyed counter increment.
-#[macro_export]
-macro_rules! increment_keyed_counter {
-    ($path:literal, $key:expr) => {
-        $crate::record_keyed_counter($path, $key, 1)
-    };
-    ($path:literal, $key:expr, $amount:expr) => {
-        $crate::record_keyed_counter($path, $key, $amount)
-    };
-}
-
-/// Adds elapsed time to a registered duration.
-#[macro_export]
-macro_rules! record_duration {
-    ($path:literal, $duration:expr) => {
-        $crate::record_duration($path, $duration)
-    };
-}
-
-/// Records the latest value for a registered gauge.
-#[macro_export]
-macro_rules! record_gauge {
-    ($path:literal, $value:expr) => {
-        $crate::record_gauge($path, $value)
-    };
-}
-
-/// Adds elapsed time to a keyed duration aggregate.
-#[macro_export]
-macro_rules! record_keyed_duration {
-    ($path:literal, $key:expr, $duration:expr) => {
-        $crate::record_keyed_duration($path, $key, $duration)
-    };
-}
-
-/// Starts an RAII timer that records elapsed time when dropped.
-#[macro_export]
-macro_rules! timer {
-    ($path:literal) => {
-        $crate::timer($path)
-    };
-}
-
-/// Appends a row to a checkpoint stream.
-#[macro_export]
-macro_rules! checkpoint {
-    ($path:literal, $label:expr $(, $key:literal => $value:expr)* $(,)?) => {{
-        let values = ::std::vec![
-            $($crate::ProfileCheckpointValue::new($key, $value),)*
-        ];
-        $crate::record_checkpoint($path, $label, values)
-    }};
-}
-
 pub fn record_counter(path: &'static str, amount: u64) {
     runtime::record_counter(path, amount);
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        sync::{Mutex, MutexGuard},
-        thread,
-        time::Duration,
-    };
+    use std::{thread, time::Duration};
 
     use super::*;
 
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
     static CHECKPOINT_COLUMNS: &[ProfileCheckpointColumn] = &[
         ProfileCheckpointColumn::bytes("retained_bytes", "retained"),
         ProfileCheckpointColumn::count("packages", "packages"),
     ];
 
-    fn test_lock() -> MutexGuard<'static, ()> {
-        TEST_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-    }
-
-    fn registry() -> ProfileRegistry {
-        ProfileRegistry::new([
-            ProfileDescriptor::counter("def_map.macros.calls.seen", "def_map.macros")
-                .title("seen macro calls"),
-            ProfileDescriptor::gauge(
-                "def_map.macros.pending_calls",
-                "def_map.macros",
-                ProfileUnit::Count,
-            ),
-            ProfileDescriptor::keyed_counter(
-                "def_map.macros.unresolved.by_name",
-                "def_map.macros.by_name",
-            ),
-            ProfileDescriptor::duration(
-                "def_map.finalize.resolve_import_scopes",
-                "def_map.finalize",
-            ),
-            ProfileDescriptor::keyed_duration(
-                "def_map.macros.expansion.by_name",
-                "def_map.macros.by_name",
-            ),
-            ProfileDescriptor::checkpoint_stream("project.build.checkpoints", "project.build")
-                .checkpoint_columns(CHECKPOINT_COLUMNS),
-        ])
-        .expect("test profile registry should be valid")
+    declare_metrics! {
+        pub(super) mod test_metric {
+            scope "def_map.macros" {
+                counter MACRO_CALLS_SEEN = "calls.seen";
+                gauge PENDING_CALLS = "pending_calls" [Count];
+            }
+            scope "def_map.macros.by_name" {
+                keyed_counter UNRESOLVED_BY_NAME = "unresolved";
+                keyed_duration EXPANSION_BY_NAME = "expansion";
+            }
+            scope "def_map.finalize" {
+                duration RESOLVE_IMPORT_SCOPES = "resolve_import_scopes";
+            }
+            scope "project.build" {
+                checkpoint CHECKPOINTS = "checkpoints" [columns super::CHECKPOINT_COLUMNS];
+            }
+        }
     }
 
     #[test]
     fn scoped_run_collects_enabled_metrics() {
-        let _lock = test_lock();
-        let run = ProfileRun::start_with_registry(
-            registry(),
-            ProfileFilter::parse("def_map.macros.by_name,def_map.finalize,project.build")
-                .expect("filter should parse"),
-        )
-        .expect("profile run should start");
+        let run = test_support::ProfileTest::start(
+            test_metric::descriptors(),
+            "def_map.macros.by_name,def_map.finalize,project.build",
+        );
 
-        increment_counter!("def_map.macros.calls.seen");
-        record_gauge!("def_map.macros.pending_calls", ProfileMeasurement::count(4));
-        increment_keyed_counter!("def_map.macros.unresolved.by_name", "make_item");
-        record_duration!(
-            "def_map.finalize.resolve_import_scopes",
-            Duration::from_millis(7)
-        );
-        record_keyed_duration!(
-            "def_map.macros.expansion.by_name",
-            "make_item",
-            Duration::from_millis(3)
-        );
-        checkpoint!(
-            "project.build.checkpoints",
+        test_metric::MACRO_CALLS_SEEN.inc();
+        test_metric::PENDING_CALLS.record_count(4);
+        test_metric::UNRESOLVED_BY_NAME.inc("make_item");
+        test_metric::RESOLVE_IMPORT_SCOPES.record(Duration::from_millis(7));
+        test_metric::EXPANSION_BY_NAME.record("make_item", Duration::from_millis(3));
+        test_metric::CHECKPOINTS.record(
             "after def-map",
-            "retained_bytes" => ProfileMeasurement::bytes(512),
-            "packages" => ProfileMeasurement::count(2),
+            vec![
+                ProfileCheckpointValue::new("retained_bytes", ProfileMeasurement::bytes(512)),
+                ProfileCheckpointValue::new("packages", ProfileMeasurement::count(2)),
+            ],
         );
 
         let snapshot = run.finish();
 
-        assert_eq!(
-            snapshot.counter("def_map.macros.calls.seen"),
-            Some(1),
-            "the broad macro selector should include macro summary counters"
+        snapshot.assert_counter_with_message(
+            test_metric::MACRO_CALLS_SEEN,
+            1,
+            "the broad macro selector should include macro summary counters",
+        );
+        snapshot.assert_gauge_count_with_message(
+            test_metric::PENDING_CALLS,
+            4,
+            "gauges should keep the latest value under their registered path",
+        );
+        snapshot.assert_keyed_counter_with_message(
+            test_metric::UNRESOLVED_BY_NAME,
+            "make_item",
+            1,
+            "the by-name selector should include keyed macro tables",
         );
         assert_eq!(
             snapshot
-                .entry("def_map.macros.pending_calls")
-                .map(ProfileEntry::value),
-            Some(&ProfileValue::Gauge(ProfileMeasurement::count(4))),
-            "gauges should keep the latest value under their registered path"
-        );
-        assert_eq!(
-            snapshot.keyed_counter("def_map.macros.unresolved.by_name", "make_item"),
-            Some(1),
-            "the by-name selector should include keyed macro tables"
-        );
-        assert_eq!(
-            snapshot.duration("def_map.finalize.resolve_import_scopes"),
+                .inner()
+                .duration(test_metric::RESOLVE_IMPORT_SCOPES.path()),
             Some(Duration::from_millis(7)),
             "durations should accumulate under their registered path"
         );
         assert_eq!(
             snapshot
-                .keyed_duration("def_map.macros.expansion.by_name", "make_item")
+                .inner()
+                .keyed_duration(test_metric::EXPANSION_BY_NAME.path(), "make_item")
                 .map(|duration| duration.total),
             Some(Duration::from_millis(3)),
             "keyed duration aggregates should preserve total elapsed time"
         );
         let checkpoints = snapshot
-            .checkpoints("project.build.checkpoints")
+            .inner()
+            .checkpoints(test_metric::CHECKPOINTS.path())
             .expect("checkpoint stream should be present");
         assert_eq!(checkpoints.len(), 1);
         assert_eq!(checkpoints[0].label, "after def-map");
@@ -215,21 +137,18 @@ mod tests {
 
     #[test]
     fn inverted_filter_does_not_enable_more_detailed_scopes() {
-        let _lock = test_lock();
-        let run = ProfileRun::start_with_registry(
-            registry(),
-            ProfileFilter::parse("def_map.macros").expect("filter should parse"),
-        )
-        .expect("profile run should start");
+        let run = test_support::ProfileTest::start(test_metric::descriptors(), "def_map.macros");
 
-        increment_counter!("def_map.macros.calls.seen");
-        increment_keyed_counter!("def_map.macros.unresolved.by_name", "make_item");
+        test_metric::MACRO_CALLS_SEEN.inc();
+        test_metric::UNRESOLVED_BY_NAME.inc("make_item");
 
         let snapshot = run.finish();
 
-        assert_eq!(snapshot.counter("def_map.macros.calls.seen"), Some(1));
+        snapshot.assert_counter(test_metric::MACRO_CALLS_SEEN, 1);
         assert_eq!(
-            snapshot.keyed_counter("def_map.macros.unresolved.by_name", "make_item"),
+            snapshot
+                .inner()
+                .keyed_counter(test_metric::UNRESOLVED_BY_NAME.path(), "make_item"),
             None,
             "selecting def_map.macros should not implicitly enable def_map.macros.by_name"
         );
@@ -238,39 +157,29 @@ mod tests {
     #[test]
     #[should_panic(expected = "profile path `def_map.macros.calls.missing` is not registered")]
     fn active_run_panics_for_unknown_profile_path() {
-        let _lock = test_lock();
-        let _run = ProfileRun::start_with_registry(
-            registry(),
-            ProfileFilter::parse("def_map.macros").expect("filter should parse"),
-        )
-        .expect("profile run should start");
+        let _run = test_support::ProfileTest::start(test_metric::descriptors(), "def_map.macros");
 
         increment_counter!("def_map.macros.calls.missing");
     }
 
     #[test]
     fn disabled_recording_has_no_runtime_requirement() {
-        let _lock = test_lock();
         increment_counter!("this.path.is.not.registered");
     }
 
     #[test]
     fn timers_record_elapsed_time_on_drop() {
-        let _lock = test_lock();
-        let run = ProfileRun::start_with_registry(
-            registry(),
-            ProfileFilter::parse("def_map.finalize").expect("filter should parse"),
-        )
-        .expect("profile run should start");
+        let run = test_support::ProfileTest::start(test_metric::descriptors(), "def_map.finalize");
 
         {
-            let _timer = timer!("def_map.finalize.resolve_import_scopes");
+            let _timer = test_metric::RESOLVE_IMPORT_SCOPES.start_timer();
             thread::sleep(Duration::from_millis(1));
         }
 
         let elapsed = run
             .finish()
-            .duration("def_map.finalize.resolve_import_scopes")
+            .inner()
+            .duration(test_metric::RESOLVE_IMPORT_SCOPES.path())
             .expect("timer should record one duration");
         assert!(elapsed > Duration::ZERO);
     }

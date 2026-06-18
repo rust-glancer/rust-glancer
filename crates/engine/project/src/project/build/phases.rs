@@ -3,7 +3,7 @@
 use anyhow::Context as _;
 
 use rg_body_ir::{BodyIrBuildPolicy, BodyIrDb};
-use rg_def_map::{DefMapDb, DefMapFinalizationStats, PackageSlot};
+use rg_def_map::{DefMapDb, PackageSlot};
 use rg_item_tree::ItemTreeDb;
 use rg_package_store::{PackageEntry, PackageStore};
 use rg_parse::ParseDb;
@@ -46,7 +46,6 @@ pub(super) fn build(
     cache_store: &PackageCacheStore,
     startup_cache_load: StartupCacheLoad,
     memory_hooks: &dyn ProjectMemoryHooks,
-    finalization_stats: Option<&mut DefMapFinalizationStats>,
     profiler: &mut BuildProfiler,
 ) -> anyhow::Result<BuiltPhases> {
     let mut stage_memory = StageMemory::default();
@@ -155,13 +154,9 @@ pub(super) fn build(
             &mut names,
         )
         .performance_preference(indexing_preference.def_map_preference());
-    let def_map = match finalization_stats {
-        Some(finalization_stats) => def_map_rebuilder
-            .finalization_stats(finalization_stats)
-            .build(),
-        None => def_map_rebuilder.build(),
-    }
-    .context("while attempting to build def map db")?;
+    let def_map = def_map_rebuilder
+        .build()
+        .context("while attempting to build def map db")?;
     drop(old_def_map_txn);
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterDefMapBuild);
     stage_memory = stage_memory

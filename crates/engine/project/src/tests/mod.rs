@@ -154,12 +154,12 @@ pub struct User;
 }
 
 #[test]
-fn def_map_finalization_stats_are_collected_only_when_requested() {
+fn project_build_records_def_map_profile_when_profile_run_is_active() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
-name = "def_map_finalization_stats_fixture"
+name = "def_map_profile_fixture"
 version = "0.1.0"
 edition = "2024"
 
@@ -175,37 +175,35 @@ make_item!(Admin);
 "#,
     );
     let workspace = fixture.workspace_metadata();
-
-    let plain_build = Project::builder(workspace.clone())
-        .build()
-        .expect("plain project build should succeed");
-    assert!(
-        plain_build.def_map_finalization_stats().is_none(),
-        "def-map finalization stats should not be retained unless requested"
+    let run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "def_map.finalization,def_map.macros",
     );
 
-    let stats_build = Project::builder(workspace)
-        .collect_def_map_finalization_stats(true)
+    Project::builder(workspace)
         .build()
-        .expect("stats-enabled project build should succeed");
-    let stats = stats_build
-        .def_map_finalization_stats()
-        .expect("requested def-map finalization stats should be retained");
-    assert_eq!(
-        stats.macro_calls_expanded, 2,
-        "the fixture should expand both macro calls"
+        .expect("project build should succeed");
+    let snapshot = run.finish();
+
+    snapshot.assert_counter_path_with_message(
+        "def_map.macros.calls.expanded",
+        2,
+        "the fixture should expand both macro calls",
     );
-    assert_eq!(
-        stats.macro_compile_attempts, 1,
-        "multiple calls to one macro definition should share compiled macro data"
+    snapshot.assert_counter_path_with_message(
+        "def_map.macros.compile.attempts",
+        1,
+        "multiple calls to one macro definition should share compiled macro data",
     );
-    assert_eq!(
-        stats.macro_compile_cache_hits, 1,
-        "the second call should reuse the cached compiled macro"
+    snapshot.assert_counter_path_with_message(
+        "def_map.macros.compile.cache_hits",
+        1,
+        "the second call should reuse the cached compiled macro",
     );
-    assert_eq!(
-        stats.generated_sources_parsed, 2,
-        "each expanded generated item source should be parsed"
+    snapshot.assert_counter_path_with_message(
+        "def_map.macros.generated.sources_parsed",
+        2,
+        "each expanded generated item source should be parsed",
     );
 }
 

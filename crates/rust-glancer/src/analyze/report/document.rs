@@ -112,10 +112,6 @@ impl ReportBlock {
             rows,
         }
     }
-
-    pub(crate) fn warning(text: impl Into<String>) -> Self {
-        Self::Warning { text: text.into() }
-    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -311,13 +307,6 @@ impl ReportSectionBuilder {
         self
     }
 
-    pub(crate) fn warning_if(&mut self, condition: bool, text: impl Into<String>) -> &mut Self {
-        if condition {
-            self.section.push_block(ReportBlock::warning(text));
-        }
-        self
-    }
-
     fn build(self) -> ReportSection {
         self.section
     }
@@ -364,10 +353,6 @@ impl ReportFieldsBuilder {
 
     pub(crate) fn text(&mut self, key: impl Into<String>, value: impl Into<String>) -> &mut Self {
         self.value(key, ReportValue::text(value))
-    }
-
-    pub(crate) fn count(&mut self, key: impl Into<String>, value: usize) -> &mut Self {
-        self.value(key, ReportValue::count(value))
     }
 
     pub(crate) fn count_as(
@@ -461,24 +446,8 @@ impl ReportTableBuilder {
         self.column(key, ReportAlign::Left, None)
     }
 
-    pub(crate) fn text_column_as(
-        &mut self,
-        key: impl Into<String>,
-        title: impl Into<String>,
-    ) -> &mut Self {
-        self.column_as(key, title, ReportAlign::Left, None)
-    }
-
     pub(crate) fn count_column(&mut self, key: impl Into<String>) -> &mut Self {
         self.column(key, ReportAlign::Right, Some(ReportUnit::Count))
-    }
-
-    pub(crate) fn count_column_as(
-        &mut self,
-        key: impl Into<String>,
-        title: impl Into<String>,
-    ) -> &mut Self {
-        self.column_as(key, title, ReportAlign::Right, Some(ReportUnit::Count))
     }
 
     pub(crate) fn bytes_column(&mut self, key: impl Into<String>) -> &mut Self {

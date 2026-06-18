@@ -215,7 +215,6 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
         package_residency_policy,
         StartupCacheLoad::Disabled,
         memory_hooks,
-        None,
         &mut profiler,
     )
     .context("while attempting to rebuild resident analysis project")?;

@@ -5,7 +5,6 @@ mod phases;
 mod stage_memory;
 
 use anyhow::Context as _;
-use rg_def_map::DefMapFinalizationStats;
 use std::sync::Arc;
 
 use rg_body_ir::BodyIrBuildPolicy;
@@ -39,7 +38,6 @@ impl StartupCacheLoad {
 pub struct ProjectBuild {
     project: Project,
     profile: Option<BuildProfile>,
-    def_map_finalization_stats: Option<DefMapFinalizationStats>,
 }
 
 impl ProjectBuild {
@@ -49,10 +47,6 @@ impl ProjectBuild {
 
     pub fn profile(&self) -> Option<&BuildProfile> {
         self.profile.as_ref()
-    }
-
-    pub fn def_map_finalization_stats(&self) -> Option<&DefMapFinalizationStats> {
-        self.def_map_finalization_stats.as_ref()
     }
 
     pub fn into_parts(self) -> (Project, Option<BuildProfile>) {
@@ -73,7 +67,6 @@ pub struct ProjectBuilder {
     process_memory_sampler: Option<ProcessMemorySampler>,
     stage_memory_target: Option<BuildProfileStage>,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
-    collect_def_map_finalization_stats: bool,
 }
 
 impl ProjectBuilder {
@@ -90,7 +83,6 @@ impl ProjectBuilder {
             process_memory_sampler: None,
             stage_memory_target: None,
             memory_hooks: Arc::new(NoopProjectMemoryHooks),
-            collect_def_map_finalization_stats: false,
         }
     }
 
@@ -147,11 +139,6 @@ impl ProjectBuilder {
         self
     }
 
-    pub fn collect_def_map_finalization_stats(mut self, enabled: bool) -> Self {
-        self.collect_def_map_finalization_stats = enabled;
-        self
-    }
-
     pub fn build(self) -> anyhow::Result<ProjectBuild> {
         let profile_requested = self.profile_build_timing
             || self.measure_retained_memory
@@ -163,9 +150,6 @@ impl ProjectBuilder {
             self.process_memory_sampler,
             self.stage_memory_target,
         );
-        let mut finalization_stats = self
-            .collect_def_map_finalization_stats
-            .then(DefMapFinalizationStats::default);
         // Claim an instance before startup probing so all cache reads and writes belong to this
         // project/LSP owner.
         let cache_instance = PackageCacheInstance::for_workspace(&self.workspace)
@@ -179,7 +163,6 @@ impl ProjectBuilder {
             self.package_residency_policy,
             self.startup_cache_load,
             Arc::clone(&self.memory_hooks),
-            finalization_stats.as_mut(),
             &mut profiler,
         )
         .context("while attempting to build resident analysis project")?;
@@ -202,7 +185,6 @@ impl ProjectBuilder {
         Ok(ProjectBuild {
             project: Project { state },
             profile,
-            def_map_finalization_stats: finalization_stats,
         })
     }
 }
@@ -217,7 +199,6 @@ pub(crate) fn build_resident_state(
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
-    finalization_stats: Option<&mut DefMapFinalizationStats>,
     profiler: &mut BuildProfiler,
 ) -> anyhow::Result<ProjectState> {
     let package_residency = PackageResidencyPlan::build(&workspace, package_residency_policy);
@@ -232,7 +213,6 @@ pub(crate) fn build_resident_state(
         &cache_store,
         startup_cache_load,
         memory_hooks.as_ref(),
-        finalization_stats,
         profiler,
     )?;
 

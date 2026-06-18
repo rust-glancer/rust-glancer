@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     collections::BTreeMap,
     error::Error,
     fmt,
@@ -13,10 +14,12 @@ use crate::{
 };
 
 static RUNTIME: Mutex<RuntimeState> = Mutex::new(RuntimeState::new());
+thread_local! {
+    static ACTIVE_RUN: RefCell<Option<Arc<ActiveRun>>> = const { RefCell::new(None) };
+}
 
 struct RuntimeState {
     registry: Option<Arc<ProfileRegistry>>,
-    active: Option<Arc<ActiveRun>>,
     next_run_id: u64,
 }
 
@@ -24,7 +27,6 @@ impl RuntimeState {
     const fn new() -> Self {
         Self {
             registry: None,
-            active: None,
             next_run_id: 1,
         }
     }
@@ -95,13 +97,13 @@ impl ProfileRun {
             .validate_filter(&filter)
             .map_err(ProfileRunStartError::InvalidFilter)?;
 
-        let mut runtime = RUNTIME
-            .lock()
-            .expect("profile runtime lock should not be poisoned");
-        if runtime.active.is_some() {
+        if ACTIVE_RUN.with(|active| active.borrow().is_some()) {
             return Err(ProfileRunStartError::AlreadyActive);
         }
 
+        let mut runtime = RUNTIME
+            .lock()
+            .expect("profile runtime lock should not be poisoned");
         let id = runtime.next_run_id;
         runtime.next_run_id = runtime.next_run_id.saturating_add(1);
         let active = Arc::new(ActiveRun {
@@ -111,7 +113,9 @@ impl ProfileRun {
             filter,
             collector: Mutex::new(ProfileCollector::default()),
         });
-        runtime.active = Some(Arc::clone(&active));
+        ACTIVE_RUN.with(|active_slot| {
+            *active_slot.borrow_mut() = Some(Arc::clone(&active));
+        });
 
         Ok(Self {
             id,
@@ -136,16 +140,12 @@ impl Drop for ProfileRun {
 }
 
 fn deactivate_run(id: u64) {
-    let mut runtime = RUNTIME
-        .lock()
-        .expect("profile runtime lock should not be poisoned");
-    if runtime
-        .active
-        .as_ref()
-        .is_some_and(|active| active.id == id)
-    {
-        runtime.active = None;
-    }
+    ACTIVE_RUN.with(|active_slot| {
+        let mut active = active_slot.borrow_mut();
+        if active.as_ref().is_some_and(|active| active.id == id) {
+            *active = None;
+        }
+    });
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,10 +214,7 @@ impl ActiveRun {
 }
 
 fn active_run() -> Option<Arc<ActiveRun>> {
-    let runtime = RUNTIME
-        .lock()
-        .expect("profile runtime lock should not be poisoned");
-    runtime.active.clone()
+    ACTIVE_RUN.with(|active| active.borrow().clone())
 }
 
 pub(crate) fn record_counter(path: &'static str, amount: u64) {
@@ -272,6 +269,15 @@ pub fn record_duration(path: &'static str, elapsed: Duration) {
         .lock()
         .expect("profile collector lock should not be poisoned")
         .record_duration(path, elapsed);
+}
+
+pub fn duration_enabled(path: &'static str) -> bool {
+    let Some(active) = active_run() else {
+        return false;
+    };
+    active
+        .descriptor(path, ProfileInstrumentKind::Duration)
+        .is_some()
 }
 
 pub fn record_keyed_counter(path: &'static str, key: impl AsRef<str>, amount: u64) {

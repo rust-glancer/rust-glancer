@@ -24,6 +24,7 @@ rg_ir_model.workspace = true
 rg_ir_storage.workspace = true
 rg_ir_view.workspace = true
 rg_item_tree.workspace = true
+rg_profile.workspace = true
 rg_std.workspace = true
 rg_package_store.workspace = true
 rg_parse.workspace = true

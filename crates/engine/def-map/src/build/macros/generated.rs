@@ -24,9 +24,8 @@ use rg_macro_expand::ExpansionSyntax;
 use rg_parse::{FileId, Span};
 use rg_text::{Name, NameInterner};
 
-use crate::build::{
-    collect::TargetState, finalize::ScopeMatrix, stats::DefMapFinalizationStatsSink,
-};
+use crate::build::{collect::TargetState, finalize::ScopeMatrix};
+use crate::profile::metric;
 
 use super::{
     ItemOrder, MacroCallSite, MacroDefinitionRecord, MacroExpansionApplyResult,
@@ -58,21 +57,20 @@ impl GeneratedCollector<'_> {
         &mut self,
         expansion: ExpansionSyntax,
         macro_name: Option<&str>,
-        stats: &mut DefMapFinalizationStatsSink<'_>,
     ) -> Result<MacroExpansionApplyResult> {
         // Macro expansion has already run the parser over token trees. At this point we only check
         // syntax errors and collect item-position declarations from the generated root.
-        let timer = stats.start_timer();
+        let timer = metric::TIMING_PARSE_GENERATED_SOURCES.start_timer();
         let errors = expansion.parse.errors();
-        stats.finish_timer(timer, |timings, elapsed| {
-            timings.parse_generated_sources += elapsed;
-        });
+        timer.finish();
         if !errors.is_empty() {
             let macro_name = macro_name.unwrap_or("<unknown>");
-            stats.record(|stats| stats.record_generated_source_parse_failure(macro_name));
+            metric::MACRO_CALLS_FAILED.inc();
+            metric::GENERATED_SOURCE_PARSE_FAILURES.inc();
+            metric::FAILED_PARSE_BY_NAME.inc(macro_name);
             anyhow::bail!("macro expansion syntax has errors: {errors:?}");
         }
-        stats.record(|stats| stats.generated_sources_parsed += 1);
+        metric::GENERATED_SOURCES_PARSED.inc();
         self.result.mark_changed();
 
         let generated_source = GeneratedSourceLowering::lower(
@@ -97,19 +95,16 @@ impl GeneratedCollector<'_> {
 
         // Generated items may introduce further macro calls, imports, and inline modules. Those are
         // appended to the same mutable state so the surrounding fixed-point loop can see them.
-        let timer = stats.start_timer();
+        let timer = metric::TIMING_COLLECT_GENERATED_ITEMS.start_timer();
         for (index, item_id) in top_level.into_iter().enumerate() {
             self.collect_item(
                 self.origin.module,
                 generated_source_id,
                 item_id,
                 self.origin.order.generated_child(index),
-                stats,
             );
         }
-        stats.finish_timer(timer, |timings, elapsed| {
-            timings.collect_generated_items += elapsed;
-        });
+        timer.finish();
 
         Ok(self.result)
     }
@@ -120,7 +115,6 @@ impl GeneratedCollector<'_> {
         generated_source: GeneratedSourceId,
         item_id: ItemTreeId,
         order: ItemOrder,
-        stats: &mut DefMapFinalizationStatsSink<'_>,
     ) {
         let item = self
             .state
@@ -133,7 +127,7 @@ impl GeneratedCollector<'_> {
         if !self.is_item_enabled(&item) {
             return;
         }
-        stats.record(|stats| stats.generated_items_seen += 1);
+        metric::GENERATED_ITEMS_SEEN.inc();
 
         match &item.kind {
             ItemKind::MacroCall(macro_call) => {
@@ -150,14 +144,7 @@ impl GeneratedCollector<'_> {
                 );
             }
             ItemKind::Module(module_item) => {
-                self.collect_inline_module(
-                    module_id,
-                    &item,
-                    module_item,
-                    generated_source,
-                    order,
-                    stats,
-                );
+                self.collect_inline_module(module_id, &item, module_item, generated_source, order);
             }
             ItemKind::Use(use_item) => self.collect_use(module_id, &item, use_item),
             ItemKind::Impl(_) => {
@@ -324,7 +311,6 @@ impl GeneratedCollector<'_> {
         module_item: &ModuleItem,
         generated_source: GeneratedSourceId,
         order: ItemOrder,
-        stats: &mut DefMapFinalizationStatsSink<'_>,
     ) {
         let Some(module_name) = item.name.clone() else {
             return;
@@ -395,7 +381,6 @@ impl GeneratedCollector<'_> {
                 generated_source,
                 child_item,
                 order.generated_child(index),
-                stats,
             );
         }
     }

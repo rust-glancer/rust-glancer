@@ -1,11 +1,12 @@
 mod allocator;
-mod def_map_finalization_stats;
 mod memory;
 mod package;
+mod profile;
 mod project;
 mod stages;
 
-use rg_project::{BuildProfile, DefMapFinalizationStats, Project};
+use rg_profile::ProfileSnapshot;
+use rg_project::{BuildProfile, Project};
 use serde::Serialize;
 
 pub(crate) use self::{
@@ -14,8 +15,8 @@ pub(crate) use self::{
 };
 
 use self::{
-    def_map_finalization_stats::DefMapFinalizationStatsReport, memory::MemoryReport,
-    project::ProjectReport, stages::BuildProfileReport,
+    memory::MemoryReport, profile::ProfileSnapshotReport, project::ProjectReport,
+    stages::BuildProfileReport,
 };
 use super::{CliMemoryStage, report::ReportDocument};
 
@@ -40,9 +41,9 @@ pub(crate) struct AnalyzeReport {
     /// Optional allocator statistics captured around the memory profile boundary.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) allocator: Option<AllocatorReport>,
-    /// Optional counters and timings from def-map finalization.
+    /// Optional dynamic profile snapshot captured through the implicit profiling runtime.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) def_map_finalization_stats: Option<DefMapFinalizationStatsReport>,
+    pub(crate) profile_snapshot: Option<ProfileSnapshotReport>,
     /// Optional retained-memory breakdown for the final project snapshot.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) memory: Option<MemoryReport>,
@@ -54,7 +55,7 @@ impl AnalyzeReport {
         analysis_setup: AnalysisSetupReport,
         build_profile: Option<&BuildProfile>,
         allocator: Option<AllocatorReport>,
-        finalization_stats: Option<&DefMapFinalizationStats>,
+        profile_snapshot: Option<&ProfileSnapshot>,
         include_memory: bool,
         memory_stage: CliMemoryStage,
     ) -> Self {
@@ -72,8 +73,7 @@ impl AnalyzeReport {
             analysis_setup,
             build_profile: build_profile.map(BuildProfileReport::capture),
             allocator,
-            def_map_finalization_stats: finalization_stats
-                .map(DefMapFinalizationStatsReport::capture),
+            profile_snapshot: profile_snapshot.map(ProfileSnapshotReport::capture),
             memory,
         }
     }
@@ -128,9 +128,9 @@ impl AnalyzeReport {
             document = document.section("memory", |section| memory.append_document(section));
         }
 
-        if let Some(finalization_stats) = &self.def_map_finalization_stats {
-            document = document.section("def_map_finalization_stats", |section| {
-                finalization_stats.append_document(section);
+        if let Some(profile_snapshot) = &self.profile_snapshot {
+            document = document.section("profile_snapshot", |section| {
+                profile_snapshot.append_document(section);
             });
         }
 

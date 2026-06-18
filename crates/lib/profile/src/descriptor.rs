@@ -228,17 +228,17 @@ impl ProfileDescriptor {
         }
     }
 
-    pub fn title(mut self, title: &'static str) -> Self {
+    pub const fn title(mut self, title: &'static str) -> Self {
         self.title = Some(title);
         self
     }
 
-    pub fn report(mut self, report: ProfileReport) -> Self {
+    pub const fn report(mut self, report: ProfileReport) -> Self {
         self.report = report;
         self
     }
 
-    pub fn checkpoint_columns(mut self, columns: &'static [ProfileCheckpointColumn]) -> Self {
+    pub const fn checkpoint_columns(mut self, columns: &'static [ProfileCheckpointColumn]) -> Self {
         self.checkpoint_columns = columns;
         self
     }

@@ -30,6 +30,12 @@ impl ProfileRegistry {
     fn push(&mut self, descriptor: ProfileDescriptor) -> Result<(), ProfileRegistryError> {
         validate_profile_path(descriptor.path()).map_err(ProfileRegistryError::InvalidPath)?;
         validate_profile_path(descriptor.scope()).map_err(ProfileRegistryError::InvalidScope)?;
+        if !scope_matches_path(descriptor.scope(), descriptor.path()) {
+            return Err(ProfileRegistryError::ScopeNotPathPrefix {
+                scope: descriptor.scope(),
+                path: descriptor.path(),
+            });
+        }
 
         for column in descriptor.checkpoint_columns_slice() {
             validate_profile_key(column.key, column.key)
@@ -82,12 +88,25 @@ impl ProfileRegistry {
     }
 }
 
+fn scope_matches_path(scope: &str, path: &str) -> bool {
+    path == scope
+        || path
+            .strip_prefix(scope)
+            .is_some_and(|remainder| remainder.starts_with('.'))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProfileRegistryError {
     InvalidPath(ProfilePathError),
     InvalidScope(ProfilePathError),
     InvalidCheckpointColumn(ProfilePathError),
-    DuplicatePath { path: &'static str },
+    ScopeNotPathPrefix {
+        scope: &'static str,
+        path: &'static str,
+    },
+    DuplicatePath {
+        path: &'static str,
+    },
 }
 
 impl fmt::Display for ProfileRegistryError {
@@ -97,6 +116,12 @@ impl fmt::Display for ProfileRegistryError {
             Self::InvalidScope(error) => write!(f, "invalid profile descriptor scope: {error}"),
             Self::InvalidCheckpointColumn(error) => {
                 write!(f, "invalid profile checkpoint column: {error}")
+            }
+            Self::ScopeNotPathPrefix { scope, path } => {
+                write!(
+                    f,
+                    "profile scope `{scope}` is not a prefix of path `{path}`"
+                )
             }
             Self::DuplicatePath { path } => write!(f, "duplicate profile path `{path}`"),
         }
@@ -109,6 +134,7 @@ impl Error for ProfileRegistryError {
             Self::InvalidPath(error)
             | Self::InvalidScope(error)
             | Self::InvalidCheckpointColumn(error) => Some(error),
+            Self::ScopeNotPathPrefix { .. } => None,
             Self::DuplicatePath { .. } => None,
         }
     }

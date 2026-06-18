@@ -23,6 +23,7 @@ anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }
 rg_std.workspace = true
 rg_project.workspace = true
+rg_profile.workspace = true
 rg_workspace.workspace = true
 rg_lsp_engine.workspace = true
 rg_lsp_server.workspace = true

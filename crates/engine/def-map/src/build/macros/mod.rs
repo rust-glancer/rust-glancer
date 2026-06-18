@@ -13,7 +13,9 @@ use rg_parse::{FileId, Span};
 use rg_text::Name;
 use rg_tt::TopSubtree;
 
-use super::{finalize::FinalizeTargetStates, stats::DefMapFinalizationStatsSink};
+use crate::profile::metric;
+
+use super::finalize::FinalizeTargetStates;
 
 mod attempts;
 mod cache;
@@ -202,10 +204,7 @@ impl ItemOrder {
 }
 
 /// Marks the still-retryable macro calls as skipped after the fixed-point guard fires.
-pub(super) fn mark_retryable_macros_skipped_by_limit(
-    states: &mut FinalizeTargetStates,
-    stats: &mut DefMapFinalizationStatsSink<'_>,
-) {
+pub(super) fn mark_retryable_macros_skipped_by_limit(states: &mut FinalizeTargetStates) {
     let mut skipped = 0;
 
     for package_states in states.iter_dirty_mut() {
@@ -222,5 +221,7 @@ pub(super) fn mark_retryable_macros_skipped_by_limit(
         }
     }
 
-    stats.record(|stats| stats.record_expansion_pass_limit_reached(skipped));
+    metric::EXPANSION_PASS_LIMIT_REACHED.record_bool(true);
+    metric::MACRO_CALLS_SKIPPED.add(skipped as u64);
+    metric::MACRO_CALLS_SKIPPED_BY_LIMIT.add(skipped as u64);
 }

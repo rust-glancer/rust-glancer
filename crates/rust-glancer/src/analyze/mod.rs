@@ -143,7 +143,7 @@ pub(crate) fn analyze(
     target: Option<String>,
     output_format: OutputFormat,
     memory_stage: CliMemoryStage,
-    include_def_map_finalization_stats: bool,
+    include_def_map_profile: bool,
 ) -> anyhow::Result<()> {
     if !path.exists() {
         anyhow::bail!("folder {} does not exist", path.display());
@@ -175,13 +175,16 @@ pub(crate) fn analyze(
     let memory_control = crate::memory::memory_control();
     let analysis_setup =
         data::AnalysisSetupReport::new(metadata_elapsed, workspace_elapsed, sysroot_elapsed);
+    let profile_run = include_def_map_profile
+        .then(start_def_map_profile_run)
+        .transpose()
+        .context("while attempting to start def-map profile run")?;
 
     let builder = Project::builder(workspace)
         .cargo_metadata_config(cargo_metadata_config)
         .indexing_preference(indexing_preference)
         .package_residency_policy(package_residency_policy)
         .startup_cache_load(startup_cache_load)
-        .collect_def_map_finalization_stats(include_def_map_finalization_stats)
         .profile_build_timing(profile || include_memory)
         .stage_memory_target(include_memory.then(|| memory_stage.build_stage()).flatten());
     let builder = if include_memory {
@@ -206,8 +209,8 @@ pub(crate) fn analyze(
     } else {
         "while attempting to build project"
     })?;
+    let profile_snapshot = profile_run.map(rg_profile::ProfileRun::finish);
 
-    let finalization_stats = project_build.def_map_finalization_stats().cloned();
     let (project, build_profile) = project_build.into_parts();
     let allocator_name = memory_control.allocator_name();
 
@@ -226,7 +229,7 @@ pub(crate) fn analyze(
         analysis_setup,
         build_profile.as_ref(),
         allocator,
-        finalization_stats.as_ref(),
+        profile_snapshot.as_ref(),
         include_memory,
         memory_stage,
     );
@@ -279,6 +282,16 @@ pub(crate) fn analyze(
         .context("while attempting to write analyze report")?;
 
     Ok(())
+}
+
+fn start_def_map_profile_run() -> anyhow::Result<rg_profile::ProfileRun> {
+    let registry =
+        rg_profile::ProfileRegistry::new(rg_project::profile_descriptors().iter().copied())
+            .context("while attempting to build project profile registry")?;
+    let filter = rg_profile::ProfileFilter::parse("def_map.finalization,def_map.macros.by_name")
+        .context("while attempting to parse def-map profile filter")?;
+    rg_profile::ProfileRun::start_with_registry(registry, filter)
+        .context("while attempting to activate def-map profile run")
 }
 
 fn write_html_report(document: &report::ReportDocument) -> anyhow::Result<PathBuf> {

@@ -5,8 +5,6 @@ mod profile;
 mod project;
 mod residency;
 
-pub use rg_def_map::DefMapFinalizationStats;
-
 pub use self::{
     indexing::IndexingPerformancePreference,
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
@@ -26,3 +24,7 @@ pub mod testonly;
 
 #[cfg(test)]
 mod tests;
+
+pub fn profile_descriptors() -> &'static [rg_profile::ProfileDescriptor] {
+    rg_def_map::profile_descriptors()
+}

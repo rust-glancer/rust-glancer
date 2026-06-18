@@ -30,6 +30,13 @@ impl ProfileSnapshot {
         }
     }
 
+    pub fn gauge(&self, path: &str) -> Option<&ProfileMeasurement> {
+        match self.entry(path)?.value() {
+            ProfileValue::Gauge(value) => Some(value),
+            _ => None,
+        }
+    }
+
     pub fn duration(&self, path: &str) -> Option<Duration> {
         match self.entry(path)?.value() {
             ProfileValue::Duration(value) => Some(*value),

@@ -11,7 +11,7 @@ use rg_workspace::WorkspaceMetadata;
 
 use super::super::{
     DefMapPerformancePreference, collect::collect_target_states,
-    implicit_roots::build_implicit_roots, stats::DefMapFinalizationStats,
+    implicit_roots::build_implicit_roots,
 };
 use super::{FinalizeTargetStates, finalize_target_states, freeze_package};
 use crate::{DefMapDb, PackageSlot};
@@ -26,7 +26,6 @@ pub(crate) fn build_db(
     parse: &rg_parse::ParseDb,
     item_tree: &ItemTreeDb,
     interners: &mut PackageNameInterners,
-    finalization_stats: Option<&mut DefMapFinalizationStats>,
     performance_preference: DefMapPerformancePreference,
 ) -> anyhow::Result<DefMapDb> {
     // First compute every implicit crate root from the complete package graph. These roots are
@@ -49,7 +48,6 @@ pub(crate) fn build_db(
         item_tree,
         &mut target_states,
         interners,
-        finalization_stats,
         performance_preference,
     )
     .context("while attempting to finish target states")?;
