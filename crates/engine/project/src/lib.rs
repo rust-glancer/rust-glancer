@@ -12,7 +12,7 @@ pub use self::{
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
     profile::{
         BUILD_CHECKPOINTS_PROFILE_PATH, BUILD_PROFILE_SCOPE, BuildProcessMemory, BuildProfile,
-        BuildProfileStage, BuildStageMemorySnapshot, CacheProbeProfile, ProcessMemorySampler,
+        BuildProfileStage, BuildStageMemorySnapshot, ProcessMemorySampler,
     },
     project::{
         AnalysisChangeSummary, ChangedFile, DirtyFileChange, FileContext, Project, ProjectBuild,

@@ -1,5 +1,3 @@
-use std::time::{Duration, Instant};
-
 use rg_profile::{
     ProfileCheckpointColumn, ProfileCheckpointValue, ProfileDescriptor, ProfileMeasurement,
     declare_metrics,
@@ -23,6 +21,24 @@ declare_metrics! {
         scope "project.build" {
             checkpoint CHECKPOINTS = "checkpoints" [columns super::BUILD_CHECKPOINT_COLUMNS];
         }
+
+        scope "project.build.cache_probe" {
+            counter CACHE_PROBE_PACKAGES = "packages.total";
+            counter CACHE_PROBE_RESIDENT_PACKAGES = "packages.resident";
+            counter CACHE_PROBE_OFFLOADABLE_PACKAGES = "packages.offloadable";
+            counter CACHE_PROBE_HITS = "results.hits";
+            counter CACHE_PROBE_MISSING_ARTIFACTS = "misses.missing_artifact";
+            counter CACHE_PROBE_ARTIFACT_READ_ERRORS = "misses.artifact_read_error";
+            counter CACHE_PROBE_SOURCE_MISMATCHES = "misses.source_mismatch";
+            counter CACHE_PROBE_SOURCE_ERRORS = "misses.source_error";
+            counter CACHE_PROBE_BODY_IR_POLICY_MISMATCHES = "misses.body_ir_policy_mismatch";
+            counter CACHE_PROBE_PARSE_RESTORE_ERRORS = "misses.parse_restore_error";
+            counter CACHE_PROBE_UNPLANNED_PACKAGES = "misses.unplanned_package";
+
+            duration CACHE_PROBE_ARTIFACT_READ = "timings.artifact_read";
+            duration CACHE_PROBE_SOURCE_FINGERPRINT = "timings.source_fingerprint";
+            duration CACHE_PROBE_PARSE_RESTORE = "timings.parse_restore";
+        }
     }
 }
 
@@ -36,23 +52,12 @@ pub(crate) fn profile_descriptors() -> &'static [ProfileDescriptor] {
 /// retained-memory trees and cache-probe summaries that are not dynamic metrics yet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildProfile {
-    cache_probe: Option<CacheProbeProfile>,
     stage_memory: Option<BuildStageMemorySnapshot>,
 }
 
 impl BuildProfile {
-    pub(crate) fn new(
-        cache_probe: Option<CacheProbeProfile>,
-        stage_memory: Option<BuildStageMemorySnapshot>,
-    ) -> Self {
-        Self {
-            cache_probe,
-            stage_memory,
-        }
-    }
-
-    pub fn cache_probe(&self) -> Option<&CacheProbeProfile> {
-        self.cache_probe.as_ref()
+    pub(crate) fn new(stage_memory: Option<BuildStageMemorySnapshot>) -> Self {
+        Self { stage_memory }
     }
 
     pub fn stage_memory(&self) -> Option<&BuildStageMemorySnapshot> {
@@ -129,153 +134,33 @@ impl BuildStageMemorySnapshot {
     }
 }
 
-/// Startup-cache probe summary collected while selecting packages to rebuild from source.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
-pub struct CacheProbeProfile {
-    pub package_count: usize,
-    pub resident_count: usize,
-    pub offloadable_count: usize,
-    pub hit_count: usize,
-    pub missing_artifact_count: usize,
-    pub artifact_read_error_count: usize,
-    pub source_mismatch_count: usize,
-    pub source_error_count: usize,
-    pub body_ir_policy_mismatch_count: usize,
-    pub restore_error_count: usize,
-    pub unplanned_package_count: usize,
-    pub artifact_read_elapsed: Duration,
-    pub source_fingerprint_elapsed: Duration,
-    pub parse_restore_elapsed: Duration,
-}
-
-impl CacheProbeProfile {
-    pub fn miss_count(&self) -> usize {
-        self.missing_artifact_count
-            + self.artifact_read_error_count
-            + self.source_mismatch_count
-            + self.source_error_count
-            + self.body_ir_policy_mismatch_count
-            + self.restore_error_count
-            + self.unplanned_package_count
-    }
-}
-
-/// Keeps cache-probe counters out of the build pipeline's control flow.
-///
-/// The cache probe should read as hit/miss policy; this wrapper owns the lower-level details of
-/// which public profile field corresponds to each outcome.
-pub(crate) struct CacheProbeRecorder {
-    profile: CacheProbeProfile,
-}
-
-impl CacheProbeRecorder {
-    pub(crate) fn new(package_count: usize) -> Self {
-        Self {
-            profile: CacheProbeProfile {
-                package_count,
-                ..CacheProbeProfile::default()
-            },
-        }
-    }
-
-    pub(crate) fn resident_package(&mut self) {
-        self.profile.resident_count += 1;
-    }
-
-    pub(crate) fn offloadable_package(&mut self) {
-        self.profile.offloadable_count += 1;
-    }
-
-    pub(crate) fn hit(&mut self) {
-        self.profile.hit_count += 1;
-    }
-
-    pub(crate) fn missing_artifact(&mut self) {
-        self.profile.missing_artifact_count += 1;
-    }
-
-    pub(crate) fn artifact_read_error(&mut self) {
-        self.profile.artifact_read_error_count += 1;
-    }
-
-    pub(crate) fn source_mismatch(&mut self) {
-        self.profile.source_mismatch_count += 1;
-    }
-
-    pub(crate) fn source_error(&mut self) {
-        self.profile.source_error_count += 1;
-    }
-
-    pub(crate) fn body_ir_policy_mismatch(&mut self) {
-        self.profile.body_ir_policy_mismatch_count += 1;
-    }
-
-    pub(crate) fn restore_error(&mut self) {
-        self.profile.restore_error_count += 1;
-    }
-
-    pub(crate) fn unplanned_package(&mut self) {
-        self.profile.unplanned_package_count += 1;
-    }
-
-    pub(crate) fn time_artifact_read<T>(&mut self, action: impl FnOnce() -> T) -> T {
-        Self::time(&mut self.profile.artifact_read_elapsed, action)
-    }
-
-    pub(crate) fn time_source_fingerprint<T>(&mut self, action: impl FnOnce() -> T) -> T {
-        Self::time(&mut self.profile.source_fingerprint_elapsed, action)
-    }
-
-    pub(crate) fn time_parse_restore<T>(&mut self, action: impl FnOnce() -> T) -> T {
-        Self::time(&mut self.profile.parse_restore_elapsed, action)
-    }
-
-    pub(crate) fn finish(self) -> Option<CacheProbeProfile> {
-        (self.profile.offloadable_count > 0).then_some(self.profile)
-    }
-
-    fn time<T>(elapsed: &mut Duration, action: impl FnOnce() -> T) -> T {
-        let started = Instant::now();
-        let result = action();
-        *elapsed += started.elapsed();
-        result
-    }
-}
-
 pub(crate) struct BuildProfiler {
-    cache_probe_enabled: bool,
     retained_memory: bool,
     process_memory_sampler: Option<ProcessMemorySampler>,
     stage_memory_target: Option<BuildProfileStage>,
     stage_memory: Option<BuildStageMemorySnapshot>,
-    cache_probe: Option<CacheProbeProfile>,
 }
 
 impl BuildProfiler {
     pub(crate) fn disabled() -> Self {
         Self {
-            cache_probe_enabled: false,
             retained_memory: false,
             process_memory_sampler: None,
             stage_memory_target: None,
             stage_memory: None,
-            cache_probe: None,
         }
     }
 
     pub(crate) fn new(
-        cache_probe_enabled: bool,
         retained_memory: bool,
         process_memory_sampler: Option<ProcessMemorySampler>,
         stage_memory_target: Option<BuildProfileStage>,
     ) -> Self {
         Self {
-            cache_probe_enabled,
             retained_memory,
             process_memory_sampler,
             stage_memory_target,
             stage_memory: None,
-            cache_probe: None,
         }
     }
 
@@ -387,15 +272,7 @@ impl BuildProfiler {
         );
     }
 
-    pub(crate) fn record_cache_probe(&mut self, cache_probe: Option<CacheProbeProfile>) {
-        if !self.cache_probe_enabled {
-            return;
-        }
-
-        self.cache_probe = cache_probe;
-    }
-
     pub(crate) fn finish(self) -> BuildProfile {
-        BuildProfile::new(self.cache_probe, self.stage_memory)
+        BuildProfile::new(self.stage_memory)
     }
 }

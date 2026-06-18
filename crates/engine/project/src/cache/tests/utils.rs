@@ -14,6 +14,7 @@ use crate::cache::{
     CachedTarget, CachedTargetKind, Fingerprint, PackageCacheArtifact, PackageCacheCodec,
     PackageCacheHeader, PackageCachePayload, WorkspaceCachePlan,
 };
+use crate::profile::metric;
 use crate::{
     PackageResidencyPolicy, Project,
     testonly::{ProjectFixture, ProjectSourceFixture},
@@ -554,27 +555,43 @@ pub struct Dep;
         .build()
         .expect("fixture project should write dependency cache artifact");
 
-    let (_project, profile) = Project::builder(workspace)
+    let run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let _project = Project::builder(workspace)
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
-        .profile_cache_probe(true)
         .build()
-        .expect("fixture project should build from dependency cache artifact")
-        .into_parts();
-    let profile = profile.expect("startup cache probe should be profiled");
-    let cache_probe = profile
-        .cache_probe()
-        .expect("startup cache probe profile should be recorded");
+        .expect("fixture project should build from dependency cache artifact");
+    let snapshot = run.finish();
 
     let mut dump = String::new();
     writeln!(&mut dump, "startup cache probe profile").expect("string writes should not fail");
-    writeln!(&mut dump, "packages {}", cache_probe.package_count)
-        .expect("string writes should not fail");
-    writeln!(&mut dump, "resident {}", cache_probe.resident_count)
-        .expect("string writes should not fail");
-    writeln!(&mut dump, "offloadable {}", cache_probe.offloadable_count)
-        .expect("string writes should not fail");
-    writeln!(&mut dump, "hits {}", cache_probe.hit_count).expect("string writes should not fail");
-    writeln!(&mut dump, "misses {}", cache_probe.miss_count())
+    writeln!(
+        &mut dump,
+        "packages {}",
+        profile_counter(&snapshot, metric::CACHE_PROBE_PACKAGES)
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "resident {}",
+        profile_counter(&snapshot, metric::CACHE_PROBE_RESIDENT_PACKAGES)
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "offloadable {}",
+        profile_counter(&snapshot, metric::CACHE_PROBE_OFFLOADABLE_PACKAGES)
+    )
+    .expect("string writes should not fail");
+    writeln!(
+        &mut dump,
+        "hits {}",
+        profile_counter(&snapshot, metric::CACHE_PROBE_HITS)
+    )
+    .expect("string writes should not fail");
+    writeln!(&mut dump, "misses {}", cache_probe_misses(&snapshot))
         .expect("string writes should not fail");
 
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
@@ -611,33 +628,60 @@ pub fn dep_value() -> usize { 2 }
         .build()
         .expect("fixture project should write workspace-policy dependency cache artifact");
 
-    let (project, profile) = Project::builder(workspace)
+    let run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.cache_probe",
+    );
+    let (project, _profile) = Project::builder(workspace)
         .body_ir_policy(BodyIrBuildPolicy::all_packages())
         .package_residency_policy(PackageResidencyPolicy::WorkspaceResident)
-        .profile_cache_probe(true)
         .build()
         .expect("fixture project should reject body-policy-mismatched artifact")
         .into_parts();
-    let profile = profile.expect("startup cache probe should be profiled");
-    let cache_probe = profile
-        .cache_probe()
-        .expect("startup cache probe profile should be recorded");
+    let snapshot = run.finish();
     let artifact = package_cache_artifact_for(&project, "dep");
 
     let mut dump = String::new();
     writeln!(&mut dump, "startup body IR policy mismatch").expect("string writes should not fail");
-    writeln!(&mut dump, "hits {}", cache_probe.hit_count).expect("string writes should not fail");
-    writeln!(&mut dump, "misses {}", cache_probe.miss_count())
+    writeln!(
+        &mut dump,
+        "hits {}",
+        profile_counter(&snapshot, metric::CACHE_PROBE_HITS)
+    )
+    .expect("string writes should not fail");
+    writeln!(&mut dump, "misses {}", cache_probe_misses(&snapshot))
         .expect("string writes should not fail");
     writeln!(
         &mut dump,
         "body policy mismatches {}",
-        cache_probe.body_ir_policy_mismatch_count,
+        profile_counter(&snapshot, metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES),
     )
     .expect("string writes should not fail");
     render_body_ir_target_statuses(&artifact, &mut dump);
 
     expect.assert_eq(&format!("{}\n", dump.trim_end()));
+}
+
+fn profile_counter(
+    snapshot: &rg_profile::test_support::TestSnapshot,
+    metric: rg_profile::CounterMetric,
+) -> u64 {
+    snapshot.inner().counter(metric.path()).unwrap_or(0)
+}
+
+fn cache_probe_misses(snapshot: &rg_profile::test_support::TestSnapshot) -> u64 {
+    [
+        metric::CACHE_PROBE_MISSING_ARTIFACTS,
+        metric::CACHE_PROBE_ARTIFACT_READ_ERRORS,
+        metric::CACHE_PROBE_SOURCE_MISMATCHES,
+        metric::CACHE_PROBE_SOURCE_ERRORS,
+        metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES,
+        metric::CACHE_PROBE_PARSE_RESTORE_ERRORS,
+        metric::CACHE_PROBE_UNPLANNED_PACKAGES,
+    ]
+    .into_iter()
+    .map(|metric| profile_counter(snapshot, metric))
+    .sum()
 }
 
 pub(super) fn check_startup_cache_rejects_stale_out_of_line_module(expect: Expect) {

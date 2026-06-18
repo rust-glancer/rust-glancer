@@ -73,10 +73,7 @@ impl AnalyzeReport {
                 .checkpoints(rg_project::BUILD_CHECKPOINTS_PROFILE_PATH)
                 .expect("project build profile should record checkpoints");
 
-            BuildProfileReport::capture(
-                checkpoints,
-                build_profile.and_then(|profile| profile.cache_probe()),
-            )
+            BuildProfileReport::capture(checkpoints)
         });
 
         Self {
@@ -126,12 +123,6 @@ impl AnalyzeReport {
             document = document.section("build_profile", |section| {
                 build_profile.append_document(section, purge);
             });
-
-            if let Some(cache_probe) = &build_profile.cache_probe {
-                document = document.section("cache_probe", |section| {
-                    cache_probe.append_document(section);
-                });
-            }
         }
 
         if options.include_memory

@@ -295,18 +295,6 @@ impl ReportSectionBuilder {
         self
     }
 
-    pub(crate) fn table_if<R>(
-        &mut self,
-        condition: bool,
-        key: impl Into<String>,
-        configure: impl FnOnce(&mut ReportTableBuilder) -> R,
-    ) -> &mut Self {
-        if condition {
-            self.table(key, configure);
-        }
-        self
-    }
-
     fn build(self) -> ReportSection {
         self.section
     }
@@ -502,10 +490,6 @@ impl ReportRowBuilder {
 
     pub(crate) fn text(&mut self, key: impl Into<String>, value: impl Into<String>) -> &mut Self {
         self.value(key, ReportValue::text(value))
-    }
-
-    pub(crate) fn count(&mut self, key: impl Into<String>, value: usize) -> &mut Self {
-        self.value(key, ReportValue::count(value))
     }
 
     pub(crate) fn bytes(&mut self, key: impl Into<String>, value: usize) -> &mut Self {

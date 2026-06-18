@@ -16,7 +16,7 @@ use crate::{
     IndexingPerformancePreference, PackageResidencyPlan,
     cache::{Fingerprint, PackageCacheStore, WorkspaceCachePlan},
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
-    profile::{BuildProfileStage, BuildProfiler, CacheProbeProfile},
+    profile::{BuildProfileStage, BuildProfiler},
     project::{StartupCacheLoad, loading::PackageReadLoaders, package_set::PhasePackageSet},
 };
 
@@ -67,7 +67,6 @@ pub(super) fn build(
         workspace,
         &mut parse,
     );
-    profiler.record_cache_probe(build_plan.cache_probe.clone());
     stage_memory = stage_memory
         .parse(&parse)
         .build_plan(&build_plan.source_packages)
@@ -284,7 +283,6 @@ pub(super) fn build(
 /// build phases can read them lazily through package stores instead of lowering them from source.
 struct PackageBuildPlan {
     source_packages: PhasePackageSet,
-    cache_probe: Option<CacheProbeProfile>,
 }
 
 impl PackageBuildPlan {
@@ -306,7 +304,6 @@ impl PackageBuildPlan {
         if !startup_cache_load.is_enabled() {
             return Self {
                 source_packages: PhasePackageSet::all(package_count),
-                cache_probe: None,
             };
         }
 
@@ -330,7 +327,6 @@ impl PackageBuildPlan {
 
         Self {
             source_packages: PhasePackageSet::from_packages(source_packages),
-            cache_probe: cache_probe.finish(),
         }
     }
 }

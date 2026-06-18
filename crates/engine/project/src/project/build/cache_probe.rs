@@ -8,7 +8,7 @@ use rg_workspace::WorkspaceMetadata;
 use crate::{
     PackageResidency, PackageResidencyPlan,
     cache::{CachedPackage, PackageCacheArtifact, PackageCacheStore, WorkspaceCachePlan},
-    profile::{CacheProbeProfile, CacheProbeRecorder},
+    profile::metric,
 };
 
 /// Checks whether offloadable packages can be seeded from existing cache artifacts.
@@ -22,7 +22,6 @@ pub(super) struct StartupCacheProbe<'a> {
     cache_store: &'a PackageCacheStore,
     workspace: &'a WorkspaceMetadata,
     parse: &'a mut ParseDb,
-    profile: CacheProbeRecorder,
 }
 
 impl<'a> StartupCacheProbe<'a> {
@@ -35,30 +34,30 @@ impl<'a> StartupCacheProbe<'a> {
         workspace: &'a WorkspaceMetadata,
         parse: &'a mut ParseDb,
     ) -> Self {
-        Self {
+        let probe = Self {
             body_ir_policy,
             package_residency,
             cache_plan,
             cache_store,
             workspace,
             parse,
-            profile: CacheProbeRecorder::new(package_count),
-        }
+        };
+        metric::CACHE_PROBE_PACKAGES.add(package_count as u64);
+        probe
     }
 
     /// Returns whether this package must go through the normal source build path.
     pub(super) fn should_build_from_source(&mut self, package: PackageSlot) -> bool {
         if self.package_residency.package(package) != Some(PackageResidency::Offloadable) {
-            self.profile.resident_package();
+            metric::CACHE_PROBE_RESIDENT_PACKAGES.inc();
             return true;
         }
-        self.profile.offloadable_package();
+        metric::CACHE_PROBE_OFFLOADABLE_PACKAGES.inc();
 
         let Some(cached_package) = self.cache_plan.package(package) else {
-            self.profile.unplanned_package();
+            metric::CACHE_PROBE_UNPLANNED_PACKAGES.inc();
             return true;
         };
-
         let Some(artifact) = self.read_artifact(cached_package) else {
             return true;
         };
@@ -72,50 +71,47 @@ impl<'a> StartupCacheProbe<'a> {
             return true;
         }
 
-        self.profile.hit();
+        metric::CACHE_PROBE_HITS.inc();
         false
-    }
-
-    pub(super) fn finish(self) -> Option<CacheProbeProfile> {
-        self.profile.finish()
     }
 
     fn read_artifact(&mut self, package: &CachedPackage) -> Option<PackageCacheArtifact> {
         // Cache reads fail open. A stale, corrupt, or missing artifact simply means this
         // offloadable package joins the source build and will overwrite its artifact later.
-        match self
-            .profile
-            .time_artifact_read(|| self.cache_store.read_artifact_for_package(package))
-        {
+        let timer = metric::CACHE_PROBE_ARTIFACT_READ.start_timer();
+        let artifact = self.cache_store.read_artifact_for_package(package);
+        timer.finish();
+
+        match artifact {
             Ok(Some(artifact)) => Some(artifact),
             Ok(None) => {
-                self.profile.missing_artifact();
+                metric::CACHE_PROBE_MISSING_ARTIFACTS.inc();
                 None
             }
             Err(_) => {
-                self.profile.artifact_read_error();
+                metric::CACHE_PROBE_ARTIFACT_READ_ERRORS.inc();
                 None
             }
         }
     }
 
     fn source_matches(&mut self, artifact: &PackageCacheArtifact) -> bool {
-        let source_fingerprint = self.profile.time_source_fingerprint(|| {
-            WorkspaceCachePlan::snapshot_source_fingerprint(
-                self.workspace.workspace_root(),
-                &artifact.header.package,
-                &artifact.payload.parse,
-            )
-        });
+        let timer = metric::CACHE_PROBE_SOURCE_FINGERPRINT.start_timer();
+        let source_fingerprint = WorkspaceCachePlan::snapshot_source_fingerprint(
+            self.workspace.workspace_root(),
+            &artifact.header.package,
+            &artifact.payload.parse,
+        );
+        timer.finish();
 
         match source_fingerprint {
             Ok(fingerprint) if fingerprint == artifact.header.source_fingerprint => true,
             Ok(_) => {
-                self.profile.source_mismatch();
+                metric::CACHE_PROBE_SOURCE_MISMATCHES.inc();
                 false
             }
             Err(_) => {
-                self.profile.source_error();
+                metric::CACHE_PROBE_SOURCE_ERRORS.inc();
                 false
             }
         }
@@ -144,7 +140,7 @@ impl<'a> StartupCacheProbe<'a> {
             .all(|target| target.status() == TargetBodiesStatus::Built);
 
         if !matches_policy {
-            self.profile.body_ir_policy_mismatch();
+            metric::CACHE_PROBE_BODY_IR_POLICY_MISMATCHES.inc();
         }
 
         matches_policy
@@ -153,13 +149,14 @@ impl<'a> StartupCacheProbe<'a> {
     fn restore_parse(&mut self, package: PackageSlot, snapshot: PackageParseSnapshot) -> bool {
         // Phase artifacts are only useful if their parse metadata can be mapped back to the current
         // ParseDb package slot. If that fails, the source build path recreates a coherent set.
-        match self
-            .profile
-            .time_parse_restore(|| self.parse.apply_package_parse_snapshot(package.0, snapshot))
-        {
+        let timer = metric::CACHE_PROBE_PARSE_RESTORE.start_timer();
+        let restored = self.parse.apply_package_parse_snapshot(package.0, snapshot);
+        timer.finish();
+
+        match restored {
             Ok(()) => true,
             Err(_) => {
-                self.profile.restore_error();
+                metric::CACHE_PROBE_PARSE_RESTORE_ERRORS.inc();
                 false
             }
         }

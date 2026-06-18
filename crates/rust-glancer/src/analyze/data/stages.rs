@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use rg_profile::{ProfileCheckpoint, ProfileMeasurement};
-use rg_project::CacheProbeProfile;
 use serde::Serialize;
 
 use super::allocator::AllocatorPurgeReport;
@@ -65,21 +64,15 @@ impl AnalysisSetupReport {
 #[derive(Debug, Serialize)]
 pub(crate) struct BuildProfileReport {
     pub(crate) checkpoints: Vec<BuildCheckpointReport>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) cache_probe: Option<CacheProbeReport>,
 }
 
 impl BuildProfileReport {
-    pub(crate) fn capture(
-        checkpoints: &[ProfileCheckpoint],
-        cache_probe: Option<&CacheProbeProfile>,
-    ) -> Self {
+    pub(crate) fn capture(checkpoints: &[ProfileCheckpoint]) -> Self {
         Self {
             checkpoints: checkpoints
                 .iter()
                 .map(BuildCheckpointReport::capture)
                 .collect(),
-            cache_probe: cache_probe.map(CacheProbeReport::capture),
         }
     }
 
@@ -221,98 +214,6 @@ impl BuildCheckpointReport {
                 panic!("project build checkpoint value `{key}` should be bytes, got {value:?}")
             }
         }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub(crate) struct CacheProbeReport {
-    pub(crate) package_count: usize,
-    pub(crate) resident_count: usize,
-    pub(crate) offloadable_count: usize,
-    pub(crate) hit_count: usize,
-    pub(crate) miss_count: usize,
-    pub(crate) missing_artifact_count: usize,
-    pub(crate) artifact_read_error_count: usize,
-    pub(crate) source_mismatch_count: usize,
-    pub(crate) source_error_count: usize,
-    pub(crate) body_ir_policy_mismatch_count: usize,
-    pub(crate) restore_error_count: usize,
-    pub(crate) unplanned_package_count: usize,
-    pub(crate) artifact_read_ms: f64,
-    pub(crate) source_fingerprint_ms: f64,
-    pub(crate) parse_restore_ms: f64,
-}
-
-impl CacheProbeReport {
-    fn capture(profile: &CacheProbeProfile) -> Self {
-        Self {
-            package_count: profile.package_count,
-            resident_count: profile.resident_count,
-            offloadable_count: profile.offloadable_count,
-            hit_count: profile.hit_count,
-            miss_count: profile.miss_count(),
-            missing_artifact_count: profile.missing_artifact_count,
-            artifact_read_error_count: profile.artifact_read_error_count,
-            source_mismatch_count: profile.source_mismatch_count,
-            source_error_count: profile.source_error_count,
-            body_ir_policy_mismatch_count: profile.body_ir_policy_mismatch_count,
-            restore_error_count: profile.restore_error_count,
-            unplanned_package_count: profile.unplanned_package_count,
-            artifact_read_ms: duration_ms(profile.artifact_read_elapsed),
-            source_fingerprint_ms: duration_ms(profile.source_fingerprint_elapsed),
-            parse_restore_ms: duration_ms(profile.parse_restore_elapsed),
-        }
-    }
-
-    pub(super) fn append_document(&self, section: &mut ReportSectionBuilder) {
-        section.fields("summary", |fields| {
-            fields
-                .count_as("package_count", "packages", self.package_count)
-                .count_as("resident_count", "resident", self.resident_count)
-                .count_as("offloadable_count", "offloadable", self.offloadable_count)
-                .count_as("hit_count", "hits", self.hit_count)
-                .count_as("miss_count", "misses", self.miss_count);
-        });
-
-        section.table_if(self.miss_count > 0, "miss_reasons", |table| {
-            table.count_column("count").text_column("reason");
-
-            for (reason, count) in [
-                ("missing artifact", self.missing_artifact_count),
-                ("artifact read error", self.artifact_read_error_count),
-                ("source mismatch", self.source_mismatch_count),
-                ("source fingerprint error", self.source_error_count),
-                (
-                    "body IR policy mismatch",
-                    self.body_ir_policy_mismatch_count,
-                ),
-                ("parse restore error", self.restore_error_count),
-                ("unplanned package", self.unplanned_package_count),
-            ] {
-                if count > 0 {
-                    table.row(|row| {
-                        row.count("count", count).text("reason", reason);
-                    });
-                }
-            }
-        });
-
-        section.table("timings", |table| {
-            Self::append_timing_columns(table);
-            self.append_timing_row(table, "artifact read", self.artifact_read_ms);
-            self.append_timing_row(table, "source fingerprint", self.source_fingerprint_ms);
-            self.append_timing_row(table, "parse restore", self.parse_restore_ms);
-        });
-    }
-
-    fn append_timing_columns(table: &mut ReportTableBuilder) {
-        table.duration_column("elapsed").text_column("step");
-    }
-
-    fn append_timing_row(&self, table: &mut ReportTableBuilder, step: &str, elapsed_ms: f64) {
-        table.row(|row| {
-            row.duration_ms("elapsed", elapsed_ms).text("step", step);
-        });
     }
 }
 
