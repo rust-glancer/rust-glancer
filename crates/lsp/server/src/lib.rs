@@ -8,6 +8,7 @@ mod backend;
 mod capabilities;
 mod client_notifications;
 mod commands;
+mod config;
 mod engine_client;
 mod engine_process;
 mod engine_registry;

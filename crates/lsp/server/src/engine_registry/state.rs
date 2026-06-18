@@ -3,10 +3,12 @@ use std::{
     sync::Arc,
 };
 
-use rg_lsp_proto::EngineConfig;
 use tokio::sync::Notify;
 
-use crate::client_notifications::{ActiveWorkspaceState, ActiveWorkspaceStatus};
+use crate::{
+    client_notifications::{ActiveWorkspaceState, ActiveWorkspaceStatus},
+    config::ServerConfig,
+};
 
 use super::{
     routing::{EngineId, EngineRouting, WorkspaceEngineRoute},
@@ -21,7 +23,7 @@ use super::{
 pub(super) struct EngineRegistryInner {
     pub(super) routing: EngineRouting,
     pub(super) engines: Vec<EngineSlot>,
-    config: EngineConfig,
+    config: ServerConfig,
     last_published_workspace_status: Option<ActiveWorkspaceStatus>,
     shutting_down: bool,
 }
@@ -29,7 +31,7 @@ pub(super) struct EngineRegistryInner {
 impl EngineRegistryInner {
     pub(super) fn new(
         workspace_folders: impl IntoIterator<Item = PathBuf>,
-        config: EngineConfig,
+        config: ServerConfig,
     ) -> Self {
         let mut routing = EngineRouting::default();
         routing.set_workspace_folders(workspace_folders);
@@ -139,8 +141,8 @@ impl EngineRegistryInner {
 
                 ReservedEngineRoute::Spawn(ReservedEngineStart {
                     id: new_id,
+                    config: self.config.engine_config_for_root(&root),
                     root,
-                    config: self.config.clone(),
                 })
             }
         }
@@ -177,5 +179,48 @@ impl ReservedEngineRoute {
 pub(super) struct ReservedEngineStart {
     pub(super) id: EngineId,
     pub(super) root: PathBuf,
-    pub(super) config: EngineConfig,
+    pub(super) config: rg_lsp_proto::EngineConfig,
+}
+
+#[cfg(test)]
+mod tests {
+    use rg_lsp_proto::CargoMetadataTarget;
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn reserved_spawn_uses_config_for_exact_workspace_root() {
+        let options = json!({
+            "cargo": {
+                "target": "x86_64-unknown-linux-gnu",
+                "features": ["base"],
+                "overrides": [{
+                    "path": "project-a",
+                    "target": null,
+                    "features": ["override"],
+                }],
+            },
+        });
+        let config =
+            ServerConfig::from_initialization_options(Some(&options), &[PathBuf::from("/repo")])
+                .expect("server config should parse");
+        let mut inner = EngineRegistryInner::new([PathBuf::from("/repo")], config);
+
+        let route = inner
+            .reserve_workspace_root(PathBuf::from("/repo/project-a"))
+            .expect("configured root should reserve an engine");
+        let ReservedEngineRoute::Spawn(start) = route else {
+            panic!("first route for workspace root should spawn");
+        };
+
+        assert_eq!(
+            start.config.analysis.cargo_metadata_config.target(),
+            &CargoMetadataTarget::Auto,
+        );
+        assert_eq!(
+            start.config.analysis.cargo_metadata_config.features(),
+            &["override".to_string()],
+        );
+    }
 }

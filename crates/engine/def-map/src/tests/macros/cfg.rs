@@ -1,4 +1,5 @@
 use super::super::utils;
+use rg_workspace::WorkspaceLoweringConfig;
 
 #[test]
 fn skips_cfg_disabled_macro_definitions_and_calls() {
@@ -146,6 +147,45 @@ pub struct WindowsOnly;
             .entry("WindowsOnly")
             .assert_type_exists("host windows cfg should be present");
     }
+}
+
+#[test]
+fn filters_test_cfg_items_with_workspace_config() {
+    let fixture = r#"
+//- /Cargo.toml
+[package]
+name = "test_cfg_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+#[cfg(test)]
+pub struct TestOnly;
+
+#[cfg(not(test))]
+pub struct NormalOnly;
+"#;
+
+    let normal_project = utils::DefMapFixtureDb::build(fixture);
+    let normal_target = normal_project.lib("test_cfg_fixture");
+    normal_target
+        .entry("TestOnly")
+        .assert_missing("cfg(test) items should be hidden by default");
+    normal_target
+        .entry("NormalOnly")
+        .assert_type_exists("cfg(not(test)) items should be present by default");
+
+    let test_project = utils::DefMapFixtureDb::build_with_workspace_config(
+        fixture,
+        WorkspaceLoweringConfig::default().cfg_test(true),
+    );
+    let test_target = test_project.lib("test_cfg_fixture");
+    test_target
+        .entry("TestOnly")
+        .assert_type_exists("cfg(test) items should be present when cfg(test) is enabled");
+    test_target
+        .entry("NormalOnly")
+        .assert_missing("cfg(not(test)) items should be hidden when cfg(test) is enabled");
 }
 
 #[test]

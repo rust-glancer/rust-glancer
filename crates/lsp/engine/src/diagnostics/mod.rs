@@ -14,7 +14,7 @@ use std::{
 };
 
 use ls_types::ProgressToken;
-use rg_lsp_proto::DiagnosticsConfig;
+use rg_lsp_proto::{AnalysisConfig, DiagnosticsConfig};
 use tokio::{sync::Mutex, task::JoinHandle};
 
 use crate::{documents::DocumentStore, service::ServiceNotificationsSink};
@@ -52,10 +52,16 @@ impl DiagnosticsHandle {
         }
     }
 
-    pub(crate) async fn configure(&self, workspace_root: PathBuf, config: DiagnosticsConfig) {
+    pub(crate) async fn configure(
+        &self,
+        workspace_root: PathBuf,
+        config: DiagnosticsConfig,
+        analysis: AnalysisConfig,
+    ) {
         let mut inner = self.inner.lock().await;
         inner.workspace_root = Some(workspace_root);
         inner.config = config;
+        inner.analysis = analysis;
     }
 
     pub(crate) async fn launch_on_startup(&self) {
@@ -111,6 +117,7 @@ impl DiagnosticsHandle {
             generation: inner.generation,
             workspace_root,
             config: inner.config.clone(),
+            analysis: inner.analysis.clone(),
             trigger,
         })
     }
@@ -143,6 +150,7 @@ struct CurrentDiagnostics {
 struct DiagnosticsHandleInner {
     workspace_root: Option<PathBuf>,
     config: DiagnosticsConfig,
+    analysis: AnalysisConfig,
     // Every launched cargo diagnostics task gets a monotonically increasing generation. A task
     // only publishes when it still matches the latest generation, so stale tasks cannot overwrite
     // newer diagnostics.
@@ -158,6 +166,7 @@ struct DiagnosticsSnapshot {
     generation: u64,
     workspace_root: PathBuf,
     config: DiagnosticsConfig,
+    analysis: AnalysisConfig,
     trigger: DiagnosticsTrigger,
 }
 

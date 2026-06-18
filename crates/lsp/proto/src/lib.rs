@@ -5,24 +5,21 @@
 //! work without depending on engine internals, and lets engine implementations publish results in a
 //! common shape.
 
-mod analysis_config;
 mod client_capabilities;
 mod completion;
-mod diagnostics_config;
-mod engine_config;
+mod config;
 mod error;
 mod notifications;
 mod service;
 
 pub use self::{
-    analysis_config::{
-        AnalysisConfig, CargoMetadataConfig, CargoMetadataTarget, IndexingPerformancePreference,
-        PackageResidencyPolicy, SysrootDiscovery,
-    },
     client_capabilities::ClientCapabilities,
     completion::CompletionClientCapabilities,
-    diagnostics_config::DiagnosticsConfig,
-    engine_config::EngineConfig,
+    config::{
+        AnalysisCfgConfig, AnalysisConfig, CargoMetadataConfig, CargoMetadataTarget,
+        DiagnosticsConfig, EngineConfig, IndexingPerformancePreference, PackageResidencyPolicy,
+        SysrootDiscovery,
+    },
     error::EngineError,
     notifications::{ServiceLogLevel, ServiceNotification},
     service::{

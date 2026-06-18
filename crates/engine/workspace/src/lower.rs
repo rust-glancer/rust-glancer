@@ -5,6 +5,7 @@ use std::{
 };
 
 use rg_cfg_eval::CfgOptions;
+use rg_std::MemorySize;
 
 use crate::{
     Package, PackageDependency, PackageId, PackageOrigin, PackageSource, RustEdition, Target,
@@ -12,21 +13,58 @@ use crate::{
     path::canonicalize_path,
 };
 
+/// Analysis-facing cfg options applied while lowering Cargo metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Default, MemorySize)]
+pub struct WorkspaceLoweringConfig {
+    cfg_test: bool,
+    cfg_atoms: Vec<String>,
+}
+
+impl WorkspaceLoweringConfig {
+    pub fn cfg_test(mut self, enabled: bool) -> Self {
+        self.cfg_test = enabled;
+        self
+    }
+
+    pub fn is_cfg_test_enabled(&self) -> bool {
+        self.cfg_test
+    }
+
+    pub fn custom_cfg_atoms(mut self, atoms: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.cfg_atoms.clear();
+        for atom in atoms {
+            let atom = atom.into().trim().to_string();
+            if !atom.is_empty() && !self.cfg_atoms.contains(&atom) {
+                self.cfg_atoms.push(atom);
+            }
+        }
+        self
+    }
+
+    pub fn cfg_atoms(&self) -> &[String] {
+        &self.cfg_atoms
+    }
+}
+
 impl WorkspaceMetadata {
     /// Lowers raw Cargo metadata into the normalized workspace model.
     pub fn lower(
         metadata: cargo_metadata::Metadata,
         target_cfg: CfgOptions,
+        config: WorkspaceLoweringConfig,
     ) -> WorkspaceMetadataResult<Self> {
-        CargoMetadataLowerer::lower(metadata, target_cfg)
+        CargoMetadataLowerer::lower(metadata, target_cfg, config)
     }
 
     /// Lowers fixture metadata with current-host cfg facts.
     ///
     /// This is intended for tests, where fixture metadata is generated for the current host. Real
     /// Cargo metadata loading should pass the cfg facts returned by `CargoMetadataConfig`.
-    pub fn for_tests(metadata: cargo_metadata::Metadata) -> WorkspaceMetadataResult<Self> {
-        Self::lower(metadata, CfgOptions::current_host())
+    pub fn for_tests(
+        metadata: cargo_metadata::Metadata,
+        config: WorkspaceLoweringConfig,
+    ) -> WorkspaceMetadataResult<Self> {
+        Self::lower(metadata, CfgOptions::current_host(), config)
     }
 }
 
@@ -59,6 +97,7 @@ impl From<cargo_metadata::Edition> for RustEdition {
 /// Lowers Cargo's transport model into the normalized workspace graph used by analysis.
 struct CargoMetadataLowerer {
     target_cfg: CfgOptions,
+    config: WorkspaceLoweringConfig,
     workspace_members: HashSet<PackageId>,
     dependencies_by_package: HashMap<PackageId, Vec<PackageDependency>>,
     features_by_package: HashMap<PackageId, Vec<String>>,
@@ -68,10 +107,11 @@ impl CargoMetadataLowerer {
     fn lower(
         metadata: cargo_metadata::Metadata,
         target_cfg: CfgOptions,
+        config: WorkspaceLoweringConfig,
     ) -> WorkspaceMetadataResult<WorkspaceMetadata> {
         let workspace_root = canonicalize_path(metadata.workspace_root.as_std_path())
             .map_err(WorkspaceMetadataError::Path)?;
-        let lowerer = Self::new(&metadata, target_cfg);
+        let lowerer = Self::new(&metadata, target_cfg, config);
         let packages = metadata
             .packages
             .into_iter()
@@ -85,9 +125,14 @@ impl CargoMetadataLowerer {
         ))
     }
 
-    fn new(metadata: &cargo_metadata::Metadata, target_cfg: CfgOptions) -> Self {
+    fn new(
+        metadata: &cargo_metadata::Metadata,
+        target_cfg: CfgOptions,
+        config: WorkspaceLoweringConfig,
+    ) -> Self {
         Self {
             target_cfg,
+            config,
             workspace_members: metadata
                 .workspace_members
                 .iter()
@@ -109,6 +154,12 @@ impl CargoMetadataLowerer {
     fn package(&self, package: cargo_metadata::Package) -> WorkspaceMetadataResult<Package> {
         let package_id = PackageId::from(&package.id);
         let mut cfg_options = self.target_cfg.clone();
+
+        // Custom atoms model `rustc --cfg` and apply to every Cargo package in this metadata
+        // graph. `cfg(test)` stays separate because it is an analysis mode for workspace roots.
+        for atom in self.config.cfg_atoms() {
+            cfg_options.insert_atom(atom);
+        }
         for feature in self
             .features_by_package
             .get(&package_id)
@@ -119,6 +170,11 @@ impl CargoMetadataLowerer {
         }
 
         let is_workspace_member = self.workspace_members.contains(&package_id);
+        if is_workspace_member && self.config.is_cfg_test_enabled() {
+            // `cfg(test)` is an analysis mode for roots the user works on, not a target platform
+            // fact or third-party package feature.
+            cfg_options.insert_atom("test");
+        }
         let raw_manifest_path = package.manifest_path.as_std_path();
         let manifest_path =
             canonicalize_path(raw_manifest_path).map_err(WorkspaceMetadataError::Path)?;

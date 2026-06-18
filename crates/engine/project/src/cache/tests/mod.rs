@@ -2,6 +2,10 @@ mod instance;
 mod utils;
 
 use expect_test::expect;
+use rg_workspace::{PackageSlot, WorkspaceLoweringConfig, WorkspaceMetadata};
+use test_fixture::fixture_crate;
+
+use crate::cache::WorkspaceCachePlan;
 
 #[test]
 fn plans_cache_artifacts_from_analyzed_targets() {
@@ -134,6 +138,78 @@ pub struct DevHelper;
             - <none>
         "#]],
     );
+}
+
+#[test]
+fn cfg_test_changes_workspace_package_cache_identity() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "dep" }
+
+//- /src/lib.rs
+pub struct App;
+
+//- /dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /dep/src/lib.rs
+pub struct Dep;
+"#,
+    );
+    let normal_workspace =
+        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+            .expect("fixture workspace metadata should build");
+    let test_workspace = WorkspaceMetadata::for_tests(
+        fixture.metadata(),
+        WorkspaceLoweringConfig::default().cfg_test(true),
+    )
+    .expect("fixture workspace metadata should build");
+    let normal_plan = WorkspaceCachePlan::build(&normal_workspace);
+    let test_plan = WorkspaceCachePlan::build(&test_workspace);
+
+    let app = package_slot(&normal_workspace, "app");
+    let dep = package_slot(&normal_workspace, "dep");
+    assert_ne!(
+        normal_plan
+            .package(app)
+            .expect("normal app package should exist")
+            .fingerprint(normal_workspace.workspace_root()),
+        test_plan
+            .package(app)
+            .expect("test app package should exist")
+            .fingerprint(test_workspace.workspace_root()),
+        "cfg(test) should select a distinct workspace package cache identity",
+    );
+    assert_eq!(
+        normal_plan
+            .package(dep)
+            .expect("normal dep package should exist")
+            .fingerprint(normal_workspace.workspace_root()),
+        test_plan
+            .package(dep)
+            .expect("test dep package should exist")
+            .fingerprint(test_workspace.workspace_root()),
+        "dependency package cache identity should not change for workspace cfg(test)",
+    );
+}
+
+fn package_slot(workspace: &WorkspaceMetadata, package_name: &str) -> PackageSlot {
+    workspace
+        .packages()
+        .iter()
+        .position(|package| package.name == package_name)
+        .map(PackageSlot)
+        .unwrap_or_else(|| panic!("fixture package `{package_name}` should exist"))
 }
 
 #[test]

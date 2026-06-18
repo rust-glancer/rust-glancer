@@ -196,6 +196,7 @@ enum RebuildResidency {
 
 pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::Result<()> {
     let workspace = state.workspace.clone();
+    let workspace_lowering_config = state.workspace_lowering_config.clone();
     let cargo_metadata_config = state.cargo_metadata_config.clone();
     let body_ir_policy = state.body_ir_policy;
     let indexing_preference = state.indexing_preference;
@@ -208,6 +209,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
     // directory may have changed since the project was opened.
     let rebuilt = build::build_resident_state(
         workspace,
+        workspace_lowering_config,
         cargo_metadata_config,
         cache_instance,
         body_ir_policy,

@@ -49,7 +49,7 @@ impl DiagnosticsTaskContext {
 
     async fn run(self, snapshot: DiagnosticsSnapshot, progress: DiagnosticsProgress) {
         let generation = snapshot.generation;
-        let command = snapshot.config.user_facing_command();
+        let command = snapshot.config.user_facing_command(&snapshot.analysis);
         progress.begin(command).await;
 
         let result = CargoDiagnosticsCommand::new(snapshot).run().await;
