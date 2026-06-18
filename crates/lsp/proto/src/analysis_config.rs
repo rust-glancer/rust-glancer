@@ -11,7 +11,7 @@ pub struct AnalysisConfig {
 }
 
 /// Protocol-level cfg atoms requested by an LSP client.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnalysisCfgConfig {
     pub test: bool,
 }
@@ -274,14 +274,21 @@ impl AnalysisCfgConfig {
             return Ok(Self::default());
         };
 
+        let default = Self::default();
         let test = match cfg.get("test") {
             Some(value) => value
                 .as_bool()
                 .ok_or_else(|| anyhow::anyhow!("rust-glancer cfg.test must be a boolean"))?,
-            None => false,
+            None => default.test,
         };
 
         Ok(Self { test })
+    }
+}
+
+impl Default for AnalysisCfgConfig {
+    fn default() -> Self {
+        Self { test: true }
     }
 }
 
@@ -326,7 +333,7 @@ mod tests {
             config.indexing_preference,
             IndexingPerformancePreference::FasterBuilds,
         );
-        assert!(!config.cfg.test);
+        assert!(config.cfg.test);
     }
 
     #[test]
@@ -423,6 +430,16 @@ mod tests {
             .expect("analysis config should parse");
 
         assert!(config.cfg.test);
+    }
+
+    #[test]
+    fn parses_disabled_cfg_test() {
+        let options = object([("cfg", object([("test", LSPAny::Bool(false))]))]);
+
+        let config = AnalysisConfig::from_initialization_options(Some(&options))
+            .expect("analysis config should parse");
+
+        assert!(!config.cfg.test);
     }
 
     #[test]

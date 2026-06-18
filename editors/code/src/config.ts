@@ -85,7 +85,7 @@ export namespace ExtensionConfig {
       extraEnv: normalizeStringRecord(readUnknownRecord(config, "server.extraEnv")),
       purgeMemoryAfterBuild: readBoolean(config, "server.purgeMemoryAfterBuild", true),
       cfg: {
-        test: readBoolean(config, "cfg.test", false),
+        test: readBoolean(config, "cfg.test", true),
       },
       indexing: {
         performancePreference: readStringEnum(

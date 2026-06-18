@@ -159,7 +159,7 @@
         "rust-glancer.cfg.test": {
           "scope": "window",
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Enable the `test` cfg atom for workspace packages during semantic analysis. Restart the rust-glancer server after changing this setting."
         },
         "rust-glancer.cache.packageResidency": {
