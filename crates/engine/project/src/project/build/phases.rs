@@ -22,6 +22,16 @@ use crate::{
 
 use super::{cache_probe::StartupCacheProbe, checkpoint_memory::CheckpointMemory};
 
+macro_rules! checkpoint_memory {
+    ($($value:expr),+ $(,)?) => {{
+        let mut memory = CheckpointMemory::default();
+        $(
+            memory = memory.merge(CheckpointMemory::from(&$value));
+        )+
+        memory
+    }};
+}
+
 /// Phase payloads built for one project snapshot.
 ///
 /// `ParseDb` keeps package slots, file ids, source paths, and line indexes resident for every
@@ -48,11 +58,16 @@ pub(super) fn build(
     memory_hooks: &dyn ProjectMemoryHooks,
     profiler: &mut BuildProfiler,
 ) -> anyhow::Result<BuiltPhases> {
+    // ---------------------
+    // 1. Parse all packages
+    // ---------------------
     let mut parse = ParseDb::build(workspace).context("while attempting to build parse db")?;
-    CheckpointMemory::default()
-        .parse(&parse)
-        .checkpoint(profiler, metric::PARSE_MEMORY, &parse);
+    let memory = checkpoint_memory!(parse);
+    memory.checkpoint(profiler, metric::PARSE_MEMORY, &parse);
 
+    // -------------------------------
+    // 2. Choose source-built packages
+    // -------------------------------
     let build_plan = PackageBuildPlan::build(
         startup_cache_load,
         body_ir_policy,
@@ -62,63 +77,67 @@ pub(super) fn build(
         workspace,
         &mut parse,
     );
-    CheckpointMemory::default()
-        .parse(&parse)
-        .build_plan(&build_plan.source_packages)
-        .checkpoint(
-            profiler,
-            metric::CACHE_PROBE_MEMORY,
-            &build_plan.source_packages,
-        );
+    let memory = checkpoint_memory!(parse, build_plan.source_packages);
+    memory.checkpoint(
+        profiler,
+        metric::CACHE_PROBE_MEMORY,
+        &build_plan.source_packages,
+    );
 
     let mut names = PackageNameInterners::new(parse.package_count());
 
+    // -------------------
+    // 3. Lower item trees
+    // -------------------
     let package_indices = build_plan.source_packages.package_indices();
     let item_tree = ItemTreeDb::build_packages(&mut parse, &package_indices, &mut names)
         .context("while attempting to build item tree db")?;
-    CheckpointMemory::default()
-        .names(&names)
-        .parse(&parse)
-        .build_plan(&build_plan.source_packages)
-        .item_tree(&item_tree)
-        .checkpoint(profiler, metric::ITEM_TREE_MEMORY, &item_tree);
+    let memory = checkpoint_memory!(names, parse, build_plan.source_packages, item_tree);
+    memory.checkpoint(profiler, metric::ITEM_TREE_MEMORY, &item_tree);
 
+    // -------------------------
+    // 4. Evict item-tree syntax
+    // -------------------------
     // Later phases consume file ids, paths, line indexes, and lowered item trees. Body IR reparses
     // syntax file-by-file, so the global parse database can drop full trees before more phase
     // databases start overlapping in memory.
     parse.evict_syntax_trees();
     parse.shrink_to_fit();
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction);
-    CheckpointMemory::default()
-        .names(&names)
-        .parse(&parse)
-        .build_plan(&build_plan.source_packages)
-        .item_tree(&item_tree)
-        .checkpoint(profiler, metric::ITEM_TREE_SYNTAX_EVICTION_MEMORY, &parse);
+    let memory = checkpoint_memory!(names, parse, build_plan.source_packages, item_tree);
+    memory.checkpoint(profiler, metric::ITEM_TREE_SYNTAX_EVICTION_MEMORY, &parse);
 
-    let package_source_fingerprints = cache_plan
+    // -------------------------------
+    // 5. Prepare cache-backed loaders
+    // -------------------------------
+    let source_fingerprints = cache_plan
         .source_fingerprints(workspace.workspace_root(), &parse)
         .context("while attempting to compute package cache source fingerprints")?;
-    CheckpointMemory::default()
-        .names(&names)
-        .parse(&parse)
-        .build_plan(&build_plan.source_packages)
-        .item_tree(&item_tree)
-        .source_fingerprints(&package_source_fingerprints)
-        .checkpoint(
-            profiler,
-            metric::CACHE_SOURCE_FINGERPRINTS_MEMORY,
-            &package_source_fingerprints,
-        );
+    let memory = checkpoint_memory!(
+        names,
+        parse,
+        build_plan.source_packages,
+        item_tree,
+        source_fingerprints
+    );
+    memory.checkpoint(
+        profiler,
+        metric::CACHE_SOURCE_FINGERPRINTS_MEMORY,
+        &source_fingerprints,
+    );
 
     let loaders = PackageReadLoaders::from_cache(
         cache_plan.clone(),
         cache_store.clone(),
-        package_source_fingerprints.clone(),
+        source_fingerprints.clone(),
     );
     let rebuild_subset = build_plan
         .source_packages
         .visible_dependency_subset(workspace);
+
+    // ----------------
+    // 6. Build def-map
+    // ----------------
     // Each retained phase starts as an all-offloaded store. Source-built packages are then
     // replaced in every phase DB; omitted packages remain cache-backed and are loaded lazily
     // through the same package artifact whenever a dependency query needs them.
@@ -141,15 +160,19 @@ pub(super) fn build(
         .context("while attempting to build def map db")?;
     drop(old_def_map_txn);
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterDefMapBuild);
-    CheckpointMemory::default()
-        .names(&names)
-        .parse(&parse)
-        .build_plan(&build_plan.source_packages)
-        .item_tree(&item_tree)
-        .source_fingerprints(&package_source_fingerprints)
-        .def_map(&def_map)
-        .checkpoint(profiler, metric::DEF_MAP_MEMORY, &def_map);
+    let memory = checkpoint_memory!(
+        names,
+        parse,
+        build_plan.source_packages,
+        item_tree,
+        source_fingerprints,
+        def_map,
+    );
+    memory.checkpoint(profiler, metric::DEF_MAP_MEMORY, &def_map);
 
+    // --------------------
+    // 7. Build semantic IR
+    // --------------------
     let baseline_semantic_ir =
         SemanticIrDb::from_package_store(offloaded_package_store(parse.package_count()));
     let semantic_ir = baseline_semantic_ir
@@ -163,29 +186,37 @@ pub(super) fn build(
         )
         .build()
         .context("while attempting to build semantic ir db")?;
-    CheckpointMemory::default()
-        .names(&names)
-        .parse(&parse)
-        .build_plan(&build_plan.source_packages)
-        .item_tree(&item_tree)
-        .source_fingerprints(&package_source_fingerprints)
-        .def_map(&def_map)
-        .semantic_ir(&semantic_ir)
-        .checkpoint(profiler, metric::SEMANTIC_IR_MEMORY, &semantic_ir);
+    let memory = checkpoint_memory!(
+        names,
+        parse,
+        build_plan.source_packages,
+        item_tree,
+        source_fingerprints,
+        def_map,
+        semantic_ir,
+    );
+    memory.checkpoint(profiler, metric::SEMANTIC_IR_MEMORY, &semantic_ir);
 
+    // ----------------------------
+    // 8. Drop transient item trees
+    // ----------------------------
     // ItemTree is a lowering input, not retained project state. Cache-backed builds only populate
     // packages that missed the artifact cache, but even that sparse tree should disappear before
     // body lowering so retained-memory checkpoints stay focused on durable phase state.
     drop(item_tree);
-    CheckpointMemory::default()
-        .names(&names)
-        .parse(&parse)
-        .build_plan(&build_plan.source_packages)
-        .source_fingerprints(&package_source_fingerprints)
-        .def_map(&def_map)
-        .semantic_ir(&semantic_ir)
-        .checkpoint_without_retained(profiler, metric::ITEM_TREE_DROP_MEMORY);
+    let memory = checkpoint_memory!(
+        names,
+        parse,
+        build_plan.source_packages,
+        source_fingerprints,
+        def_map,
+        semantic_ir,
+    );
+    memory.checkpoint_without_retained(profiler, metric::ITEM_TREE_DROP_MEMORY);
 
+    // ----------------
+    // 9. Build body IR
+    // ----------------
     let baseline_body_ir =
         BodyIrDb::from_package_store(offloaded_package_store(parse.package_count()));
     let body_ir = baseline_body_ir
@@ -203,31 +234,36 @@ pub(super) fn build(
         .build()
         .context("while attempting to build body ir db")?;
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterBodyIrBuild);
-    CheckpointMemory::default()
-        .names(&names)
-        .parse(&parse)
-        .build_plan(&build_plan.source_packages)
-        .source_fingerprints(&package_source_fingerprints)
-        .def_map(&def_map)
-        .semantic_ir(&semantic_ir)
-        .body_ir(&body_ir)
-        .checkpoint(profiler, metric::BODY_IR_MEMORY, &body_ir);
+    let memory = checkpoint_memory!(
+        names,
+        parse,
+        build_plan.source_packages,
+        source_fingerprints,
+        def_map,
+        semantic_ir,
+        body_ir,
+    );
+    memory.checkpoint(profiler, metric::BODY_IR_MEMORY, &body_ir);
     drop(build_plan);
 
+    // --------------------------
+    // 10. Compact retained state
+    // --------------------------
     parse.evict_syntax_trees();
     parse.shrink_to_fit();
     Shrink::shrink_to_fit(&mut names);
-    CheckpointMemory::default()
-        .names(&names)
-        .parse(&parse)
-        .source_fingerprints(&package_source_fingerprints)
-        .def_map(&def_map)
-        .semantic_ir(&semantic_ir)
-        .body_ir(&body_ir)
-        .checkpoint(profiler, metric::PARSE_SYNTAX_EVICTION_MEMORY, &parse);
+    let memory = checkpoint_memory!(
+        names,
+        parse,
+        source_fingerprints,
+        def_map,
+        semantic_ir,
+        body_ir,
+    );
+    memory.checkpoint(profiler, metric::PARSE_SYNTAX_EVICTION_MEMORY, &parse);
 
     Ok(BuiltPhases {
-        package_source_fingerprints,
+        package_source_fingerprints: source_fingerprints,
         names,
         parse,
         def_map,

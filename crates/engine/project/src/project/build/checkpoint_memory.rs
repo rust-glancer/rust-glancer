@@ -26,47 +26,17 @@ pub(super) struct CheckpointMemory<'a> {
 }
 
 impl<'a> CheckpointMemory<'a> {
-    pub(super) fn names(mut self, names: &'a PackageNameInterners) -> Self {
-        self.names = Some(names);
-        self
-    }
-
-    pub(super) fn parse(mut self, parse: &'a ParseDb) -> Self {
-        self.parse = Some(parse);
-        self
-    }
-
-    pub(super) fn build_plan(mut self, build_plan: &'a PhasePackageSet) -> Self {
-        self.build_plan = Some(build_plan);
-        self
-    }
-
-    pub(super) fn item_tree(mut self, item_tree: &'a ItemTreeDb) -> Self {
-        self.item_tree = Some(item_tree);
-        self
-    }
-
-    pub(super) fn source_fingerprints(
-        mut self,
-        source_fingerprints: &'a Vec<Option<Fingerprint>>,
-    ) -> Self {
-        self.source_fingerprints = Some(source_fingerprints);
-        self
-    }
-
-    pub(super) fn def_map(mut self, def_map: &'a DefMapDb) -> Self {
-        self.def_map = Some(def_map);
-        self
-    }
-
-    pub(super) fn semantic_ir(mut self, semantic_ir: &'a SemanticIrDb) -> Self {
-        self.semantic_ir = Some(semantic_ir);
-        self
-    }
-
-    pub(super) fn body_ir(mut self, body_ir: &'a BodyIrDb) -> Self {
-        self.body_ir = Some(body_ir);
-        self
+    pub(super) fn merge(self, other: Self) -> Self {
+        Self {
+            names: self.names.or(other.names),
+            parse: self.parse.or(other.parse),
+            build_plan: self.build_plan.or(other.build_plan),
+            item_tree: self.item_tree.or(other.item_tree),
+            source_fingerprints: self.source_fingerprints.or(other.source_fingerprints),
+            def_map: self.def_map.or(other.def_map),
+            semantic_ir: self.semantic_ir.or(other.semantic_ir),
+            body_ir: self.body_ir.or(other.body_ir),
+        }
     }
 
     pub(super) fn checkpoint<T>(
@@ -91,7 +61,7 @@ impl<'a> CheckpointMemory<'a> {
         self,
         profiler: &mut BuildProfiler,
         memory: MemorySnapshotMetric,
-    ) -> CheckpointMemory<'static> {
+    ) {
         let label = memory
             .title_text()
             .expect("build memory snapshot metrics should have report titles");
@@ -99,7 +69,6 @@ impl<'a> CheckpointMemory<'a> {
         let active_retained_bytes = self.measure_retained(profiler);
         profiler.record(label, None, active_retained_bytes, process_memory);
         self.capture_memory_snapshot(profiler, memory);
-        CheckpointMemory::default()
     }
 
     fn capture_memory_snapshot(&self, profiler: &mut BuildProfiler, memory: MemorySnapshotMetric) {
@@ -135,3 +104,25 @@ impl<'a> CheckpointMemory<'a> {
         BuildProfiler::record_memory_value(recorder, "body_ir", self.body_ir);
     }
 }
+
+macro_rules! impl_checkpoint_memory_from {
+    ($ty:ty, $field:ident) => {
+        impl<'a> From<&'a $ty> for CheckpointMemory<'a> {
+            fn from(value: &'a $ty) -> Self {
+                Self {
+                    $field: Some(value),
+                    ..Self::default()
+                }
+            }
+        }
+    };
+}
+
+impl_checkpoint_memory_from!(PackageNameInterners, names);
+impl_checkpoint_memory_from!(ParseDb, parse);
+impl_checkpoint_memory_from!(PhasePackageSet, build_plan);
+impl_checkpoint_memory_from!(ItemTreeDb, item_tree);
+impl_checkpoint_memory_from!(Vec<Option<Fingerprint>>, source_fingerprints);
+impl_checkpoint_memory_from!(DefMapDb, def_map);
+impl_checkpoint_memory_from!(SemanticIrDb, semantic_ir);
+impl_checkpoint_memory_from!(BodyIrDb, body_ir);
