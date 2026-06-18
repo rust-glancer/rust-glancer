@@ -16,7 +16,7 @@ use crate::{
     IndexingPerformancePreference, PackageResidencyPlan,
     cache::{Fingerprint, PackageCacheStore, WorkspaceCachePlan},
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
-    profile::{BuildProfiler, metric},
+    profile::{BuildMemorySampler, metric},
     project::{StartupCacheLoad, loading::PackageReadLoaders, package_set::PhasePackageSet},
 };
 
@@ -56,14 +56,14 @@ pub(super) fn build(
     cache_store: &PackageCacheStore,
     startup_cache_load: StartupCacheLoad,
     memory_hooks: &dyn ProjectMemoryHooks,
-    profiler: &mut BuildProfiler,
+    sampler: &mut BuildMemorySampler,
 ) -> anyhow::Result<BuiltPhases> {
     // ---------------------
     // 1. Parse all packages
     // ---------------------
     let mut parse = ParseDb::build(workspace).context("while attempting to build parse db")?;
     let memory = checkpoint_memory!(parse);
-    memory.checkpoint(profiler, metric::PARSE_MEMORY, &parse);
+    memory.checkpoint(sampler, metric::PARSE_MEMORY, &parse);
 
     // -------------------------------
     // 2. Choose source-built packages
@@ -79,7 +79,7 @@ pub(super) fn build(
     );
     let memory = checkpoint_memory!(parse, build_plan.source_packages);
     memory.checkpoint(
-        profiler,
+        sampler,
         metric::CACHE_PROBE_MEMORY,
         &build_plan.source_packages,
     );
@@ -93,7 +93,7 @@ pub(super) fn build(
     let item_tree = ItemTreeDb::build_packages(&mut parse, &package_indices, &mut names)
         .context("while attempting to build item tree db")?;
     let memory = checkpoint_memory!(names, parse, build_plan.source_packages, item_tree);
-    memory.checkpoint(profiler, metric::ITEM_TREE_MEMORY, &item_tree);
+    memory.checkpoint(sampler, metric::ITEM_TREE_MEMORY, &item_tree);
 
     // -------------------------
     // 4. Evict item-tree syntax
@@ -105,7 +105,7 @@ pub(super) fn build(
     parse.shrink_to_fit();
     memory_hooks.purge(ProjectMemoryPurgePoint::AfterItemTreeSyntaxEviction);
     let memory = checkpoint_memory!(names, parse, build_plan.source_packages, item_tree);
-    memory.checkpoint(profiler, metric::ITEM_TREE_SYNTAX_EVICTION_MEMORY, &parse);
+    memory.checkpoint(sampler, metric::ITEM_TREE_SYNTAX_EVICTION_MEMORY, &parse);
 
     // -------------------------------
     // 5. Prepare cache-backed loaders
@@ -121,7 +121,7 @@ pub(super) fn build(
         source_fingerprints
     );
     memory.checkpoint(
-        profiler,
+        sampler,
         metric::CACHE_SOURCE_FINGERPRINTS_MEMORY,
         &source_fingerprints,
     );
@@ -168,7 +168,7 @@ pub(super) fn build(
         source_fingerprints,
         def_map,
     );
-    memory.checkpoint(profiler, metric::DEF_MAP_MEMORY, &def_map);
+    memory.checkpoint(sampler, metric::DEF_MAP_MEMORY, &def_map);
 
     // --------------------
     // 7. Build semantic IR
@@ -195,7 +195,7 @@ pub(super) fn build(
         def_map,
         semantic_ir,
     );
-    memory.checkpoint(profiler, metric::SEMANTIC_IR_MEMORY, &semantic_ir);
+    memory.checkpoint(sampler, metric::SEMANTIC_IR_MEMORY, &semantic_ir);
 
     // ----------------------------
     // 8. Drop transient item trees
@@ -212,7 +212,7 @@ pub(super) fn build(
         def_map,
         semantic_ir,
     );
-    memory.checkpoint_without_retained(profiler, metric::ITEM_TREE_DROP_MEMORY);
+    memory.checkpoint_without_retained(sampler, metric::ITEM_TREE_DROP_MEMORY);
 
     // ----------------
     // 9. Build body IR
@@ -243,7 +243,7 @@ pub(super) fn build(
         semantic_ir,
         body_ir,
     );
-    memory.checkpoint(profiler, metric::BODY_IR_MEMORY, &body_ir);
+    memory.checkpoint(sampler, metric::BODY_IR_MEMORY, &body_ir);
     drop(build_plan);
 
     // --------------------------
@@ -260,7 +260,7 @@ pub(super) fn build(
         semantic_ir,
         body_ir,
     );
-    memory.checkpoint(profiler, metric::PARSE_SYNTAX_EVICTION_MEMORY, &parse);
+    memory.checkpoint(sampler, metric::PARSE_SYNTAX_EVICTION_MEMORY, &parse);
 
     Ok(BuiltPhases {
         package_source_fingerprints: source_fingerprints,

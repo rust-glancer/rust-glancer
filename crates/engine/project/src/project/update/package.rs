@@ -11,7 +11,7 @@ use rg_std::Shrink;
 
 use crate::{
     ProjectMemoryPurgePoint,
-    profile::BuildProfiler,
+    profile::BuildMemorySampler,
     project::{
         StartupCacheLoad, build, loading::PackageReadLoaders, offloading::ResidencyApplication,
         package_set::PhasePackageSet, state::ProjectState,
@@ -202,7 +202,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
     let package_residency_policy = state.package_residency_policy;
     let cache_instance = state.cache_instance.clone();
     let memory_hooks = Arc::clone(&state.memory_hooks);
-    let mut profiler = BuildProfiler::disabled();
+    let mut memory_sampler = BuildMemorySampler::disabled();
 
     // Keep recovery in the original cache namespace. The environment that selected the target
     // directory may have changed since the project was opened.
@@ -215,7 +215,7 @@ pub(crate) fn rebuild_resident_from_source(state: &mut ProjectState) -> anyhow::
         package_residency_policy,
         StartupCacheLoad::Disabled,
         memory_hooks,
-        &mut profiler,
+        &mut memory_sampler,
     )
     .context("while attempting to rebuild resident analysis project")?;
 

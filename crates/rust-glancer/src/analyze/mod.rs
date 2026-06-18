@@ -77,7 +77,6 @@ pub(crate) fn analyze(
     let builder = if include_memory {
         builder
             .memory_hooks(crate::memory::project_memory_hooks())
-            .measure_retained_memory(true)
             .process_memory_sampler(move || {
                 memory_control
                     .allocator_stats()

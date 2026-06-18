@@ -2,12 +2,16 @@ use rg_body_ir::BodyIrDb;
 use rg_def_map::DefMapDb;
 use rg_item_tree::ItemTreeDb;
 use rg_parse::ParseDb;
-use rg_profile::MemorySnapshotMetric;
+use rg_profile::{MemorySnapshotMetric, ProfileMemoryRecord, ProfileMemorySnapshot};
 use rg_semantic_ir::SemanticIrDb;
-use rg_std::{MemoryRecorder, MemorySize};
+use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
 use rg_text::PackageNameInterners;
 
-use crate::{cache::Fingerprint, profile::BuildProfiler, project::package_set::PhasePackageSet};
+use crate::{
+    cache::Fingerprint,
+    profile::{BuildMemorySampler, record_build_checkpoint},
+    project::package_set::PhasePackageSet,
+};
 
 /// Snapshot of the phase locals that are still alive at a build checkpoint.
 ///
@@ -41,7 +45,7 @@ impl<'a> CheckpointMemory<'a> {
 
     pub(super) fn checkpoint<T>(
         self,
-        profiler: &mut BuildProfiler,
+        sampler: &mut BuildMemorySampler,
         memory: MemorySnapshotMetric,
         retained: &T,
     ) where
@@ -50,58 +54,88 @@ impl<'a> CheckpointMemory<'a> {
         let label = memory
             .title_text()
             .expect("build memory snapshot metrics should have report titles");
-        let process_memory = profiler.sample_process_memory();
-        let retained_bytes = profiler.measure(retained);
-        let active_retained_bytes = self.measure_retained(profiler);
-        profiler.record(label, retained_bytes, active_retained_bytes, process_memory);
-        self.capture_memory_snapshot(profiler, memory);
+        let process_memory = sampler.sample_process_memory();
+        let retained_bytes = sampler.measure_retained(retained);
+        let active_retained_bytes = self.measure_retained(sampler);
+        record_build_checkpoint(label, retained_bytes, active_retained_bytes, process_memory);
+        self.capture_memory_snapshot(memory);
     }
 
     pub(super) fn checkpoint_without_retained(
         self,
-        profiler: &mut BuildProfiler,
+        sampler: &mut BuildMemorySampler,
         memory: MemorySnapshotMetric,
     ) {
         let label = memory
             .title_text()
             .expect("build memory snapshot metrics should have report titles");
-        let process_memory = profiler.sample_process_memory();
-        let active_retained_bytes = self.measure_retained(profiler);
-        profiler.record(label, None, active_retained_bytes, process_memory);
-        self.capture_memory_snapshot(profiler, memory);
+        let process_memory = sampler.sample_process_memory();
+        let active_retained_bytes = self.measure_retained(sampler);
+        record_build_checkpoint(label, None, active_retained_bytes, process_memory);
+        self.capture_memory_snapshot(memory);
     }
 
-    fn capture_memory_snapshot(&self, profiler: &mut BuildProfiler, memory: MemorySnapshotMetric) {
-        profiler.capture_memory_snapshot(memory, |recorder| self.record(recorder));
+    fn capture_memory_snapshot(&self, memory: MemorySnapshotMetric) {
+        if !memory.is_enabled() {
+            return;
+        }
+
+        let mut recorder = MemoryRecorder::new("build");
+        self.record(&mut recorder);
+        let records = recorder
+            .records()
+            .into_iter()
+            .map(Self::profile_memory_record)
+            .collect();
+        memory.record(ProfileMemorySnapshot::new(recorder.total_bytes(), records));
     }
 
-    fn measure_retained(&self, profiler: &BuildProfiler) -> Option<usize> {
-        profiler.sum_retained(&[
-            self.names.and_then(|value| profiler.measure(value)),
-            self.parse.and_then(|value| profiler.measure(value)),
-            self.build_plan.and_then(|value| profiler.measure(value)),
-            self.item_tree.and_then(|value| profiler.measure(value)),
+    fn profile_memory_record(record: MemoryRecord) -> ProfileMemoryRecord {
+        ProfileMemoryRecord::new(
+            record.path,
+            record.type_name,
+            record.kind.as_str(),
+            record.bytes,
+        )
+    }
+
+    fn measure_retained(&self, sampler: &BuildMemorySampler) -> Option<usize> {
+        sampler.sum_retained(&[
+            self.names.and_then(|value| sampler.measure_retained(value)),
+            self.parse.and_then(|value| sampler.measure_retained(value)),
+            self.build_plan
+                .and_then(|value| sampler.measure_retained(value)),
+            self.item_tree
+                .and_then(|value| sampler.measure_retained(value)),
             self.source_fingerprints
-                .and_then(|value| profiler.measure(value)),
-            self.def_map.and_then(|value| profiler.measure(value)),
-            self.semantic_ir.and_then(|value| profiler.measure(value)),
-            self.body_ir.and_then(|value| profiler.measure(value)),
+                .and_then(|value| sampler.measure_retained(value)),
+            self.def_map
+                .and_then(|value| sampler.measure_retained(value)),
+            self.semantic_ir
+                .and_then(|value| sampler.measure_retained(value)),
+            self.body_ir
+                .and_then(|value| sampler.measure_retained(value)),
         ])
     }
 
     fn record(&self, recorder: &mut MemoryRecorder) {
-        BuildProfiler::record_memory_value(recorder, "names", self.names);
-        BuildProfiler::record_memory_value(recorder, "parse", self.parse);
-        BuildProfiler::record_memory_value(recorder, "build_plan", self.build_plan);
-        BuildProfiler::record_memory_value(recorder, "item_tree", self.item_tree);
-        BuildProfiler::record_memory_value(
-            recorder,
-            "source_fingerprints",
-            self.source_fingerprints,
-        );
-        BuildProfiler::record_memory_value(recorder, "def_map", self.def_map);
-        BuildProfiler::record_memory_value(recorder, "semantic_ir", self.semantic_ir);
-        BuildProfiler::record_memory_value(recorder, "body_ir", self.body_ir);
+        Self::record_memory_value(recorder, "names", self.names);
+        Self::record_memory_value(recorder, "parse", self.parse);
+        Self::record_memory_value(recorder, "build_plan", self.build_plan);
+        Self::record_memory_value(recorder, "item_tree", self.item_tree);
+        Self::record_memory_value(recorder, "source_fingerprints", self.source_fingerprints);
+        Self::record_memory_value(recorder, "def_map", self.def_map);
+        Self::record_memory_value(recorder, "semantic_ir", self.semantic_ir);
+        Self::record_memory_value(recorder, "body_ir", self.body_ir);
+    }
+
+    fn record_memory_value<T>(recorder: &mut MemoryRecorder, label: &'static str, value: Option<&T>)
+    where
+        T: MemorySize,
+    {
+        if let Some(value) = value {
+            recorder.scope(label, |recorder| value.record_memory_size(recorder));
+        }
     }
 }
 

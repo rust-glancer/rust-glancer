@@ -1,8 +1,8 @@
 use rg_profile::{
-    MemorySnapshotMetric, ProfileCheckpointColumn, ProfileCheckpointValue, ProfileDescriptor,
-    ProfileMeasurement, ProfileMemoryRecord, ProfileMemorySnapshot, declare_metrics,
+    ProfileCheckpointColumn, ProfileCheckpointValue, ProfileDescriptor, ProfileMeasurement,
+    declare_metrics,
 };
-use rg_std::{MemoryRecord, MemoryRecorder, MemorySize};
+use rg_std::MemorySize;
 
 static BUILD_CHECKPOINT_COLUMNS: &[ProfileCheckpointColumn] = &[
     ProfileCheckpointColumn::bytes("retained_bytes", "rg_sampled"),
@@ -96,144 +96,107 @@ pub struct BuildProcessMemory {
 
 pub type ProcessMemorySampler = Box<dyn FnMut() -> Option<BuildProcessMemory>>;
 
-pub(crate) struct BuildProfiler {
-    retained_memory: bool,
-    process_memory_sampler: Option<ProcessMemorySampler>,
+pub(crate) enum BuildMemorySampler {
+    Disabled,
+    Retained {
+        process_memory: Option<ProcessMemorySampler>,
+    },
 }
 
-impl BuildProfiler {
+impl BuildMemorySampler {
     pub(crate) fn disabled() -> Self {
-        Self {
-            retained_memory: false,
-            process_memory_sampler: None,
+        Self::Disabled
+    }
+
+    pub(crate) fn retained(process_memory: Option<ProcessMemorySampler>) -> Self {
+        Self::Retained { process_memory }
+    }
+
+    pub(crate) fn with_retained_memory(self, enabled: bool) -> Self {
+        if !enabled {
+            return Self::Disabled;
+        }
+
+        match self {
+            Self::Disabled => Self::retained(None),
+            Self::Retained { process_memory } => Self::retained(process_memory),
         }
     }
 
-    pub(crate) fn new(
-        retained_memory: bool,
-        process_memory_sampler: Option<ProcessMemorySampler>,
-    ) -> Self {
-        Self {
-            retained_memory,
-            process_memory_sampler,
+    pub(crate) fn with_process_memory(self, process_memory: ProcessMemorySampler) -> Self {
+        match self {
+            Self::Disabled | Self::Retained { .. } => Self::retained(Some(process_memory)),
         }
     }
 
-    pub(crate) fn measure<T>(&self, value: &T) -> Option<usize>
+    pub(crate) fn measure_retained<T>(&self, value: &T) -> Option<usize>
     where
         T: MemorySize,
     {
-        self.retained_memory.then(|| value.memory_size())
+        match self {
+            Self::Disabled => None,
+            Self::Retained { .. } => Some(value.memory_size()),
+        }
     }
 
     pub(crate) fn sum_retained(&self, values: &[Option<usize>]) -> Option<usize> {
-        self.retained_memory
-            .then(|| values.iter().flatten().copied().sum())
+        match self {
+            Self::Disabled => None,
+            Self::Retained { .. } => Some(values.iter().flatten().copied().sum()),
+        }
     }
 
     pub(crate) fn sample_process_memory(&mut self) -> Option<BuildProcessMemory> {
-        self.process_memory_sampler
-            .as_mut()
-            .and_then(|sampler| sampler())
-    }
-
-    pub(crate) fn capture_memory_snapshot(
-        &mut self,
-        metric: MemorySnapshotMetric,
-        capture: impl FnOnce(&mut MemoryRecorder),
-    ) {
-        if !metric.is_enabled() {
-            return;
-        }
-
-        let mut recorder = MemoryRecorder::new("build");
-        capture(&mut recorder);
-        let records = recorder
-            .records()
-            .into_iter()
-            .map(Self::profile_memory_record)
-            .collect();
-        metric.record(ProfileMemorySnapshot::new(recorder.total_bytes(), records));
-    }
-
-    fn profile_memory_record(record: MemoryRecord) -> ProfileMemoryRecord {
-        ProfileMemoryRecord::new(
-            record.path,
-            record.type_name,
-            record.kind.as_str(),
-            record.bytes,
-        )
-    }
-
-    pub(crate) fn record_memory_value<T>(
-        recorder: &mut MemoryRecorder,
-        label: &'static str,
-        value: Option<&T>,
-    ) where
-        T: MemorySize,
-    {
-        if let Some(value) = value {
-            recorder.scope(label, |recorder| value.record_memory_size(recorder));
+        match self {
+            Self::Disabled => None,
+            Self::Retained { process_memory } => {
+                process_memory.as_mut().and_then(|sampler| sampler())
+            }
         }
     }
+}
 
-    pub(crate) fn record(
-        &mut self,
-        label: &'static str,
-        retained_bytes: Option<usize>,
-        active_retained_bytes: Option<usize>,
-        process_memory: Option<BuildProcessMemory>,
-    ) {
-        Self::record_dynamic_checkpoint(
-            label,
-            retained_bytes,
-            active_retained_bytes,
-            process_memory,
-        );
-    }
-
-    fn record_dynamic_checkpoint(
-        label: &'static str,
-        retained_bytes: Option<usize>,
-        active_retained_bytes: Option<usize>,
-        process_memory: Option<BuildProcessMemory>,
-    ) {
-        metric::CHECKPOINTS.record(
-            label,
-            vec![
-                ProfileCheckpointValue::new(
-                    "retained_bytes",
-                    ProfileMeasurement::optional_bytes(retained_bytes),
+pub(crate) fn record_build_checkpoint(
+    label: &'static str,
+    retained_bytes: Option<usize>,
+    active_retained_bytes: Option<usize>,
+    process_memory: Option<BuildProcessMemory>,
+) {
+    metric::CHECKPOINTS.record(
+        label,
+        vec![
+            ProfileCheckpointValue::new(
+                "retained_bytes",
+                ProfileMeasurement::optional_bytes(retained_bytes),
+            ),
+            ProfileCheckpointValue::new(
+                "active_retained_bytes",
+                ProfileMeasurement::optional_bytes(active_retained_bytes),
+            ),
+            ProfileCheckpointValue::new(
+                "allocated_bytes",
+                ProfileMeasurement::optional_bytes(
+                    process_memory.map(|memory| memory.allocated_bytes),
                 ),
-                ProfileCheckpointValue::new(
-                    "active_retained_bytes",
-                    ProfileMeasurement::optional_bytes(active_retained_bytes),
+            ),
+            ProfileCheckpointValue::new(
+                "active_bytes",
+                ProfileMeasurement::optional_bytes(
+                    process_memory.map(|memory| memory.active_bytes),
                 ),
-                ProfileCheckpointValue::new(
-                    "allocated_bytes",
-                    ProfileMeasurement::optional_bytes(
-                        process_memory.map(|memory| memory.allocated_bytes),
-                    ),
+            ),
+            ProfileCheckpointValue::new(
+                "resident_bytes",
+                ProfileMeasurement::optional_bytes(
+                    process_memory.map(|memory| memory.resident_bytes),
                 ),
-                ProfileCheckpointValue::new(
-                    "active_bytes",
-                    ProfileMeasurement::optional_bytes(
-                        process_memory.map(|memory| memory.active_bytes),
-                    ),
+            ),
+            ProfileCheckpointValue::new(
+                "mapped_bytes",
+                ProfileMeasurement::optional_bytes(
+                    process_memory.map(|memory| memory.mapped_bytes),
                 ),
-                ProfileCheckpointValue::new(
-                    "resident_bytes",
-                    ProfileMeasurement::optional_bytes(
-                        process_memory.map(|memory| memory.resident_bytes),
-                    ),
-                ),
-                ProfileCheckpointValue::new(
-                    "mapped_bytes",
-                    ProfileMeasurement::optional_bytes(
-                        process_memory.map(|memory| memory.mapped_bytes),
-                    ),
-                ),
-            ],
-        );
-    }
+            ),
+        ],
+    );
 }

@@ -7,8 +7,8 @@ use test_fixture::testonly::MarkedText;
 
 use self::utils::{HostFixture, HostObservation};
 use crate::{
-    PackageResidencyPolicy, Project, ProjectMemoryHooks, ProjectMemoryPurgePoint,
-    testonly::ProjectSourceFixture,
+    BuildProcessMemory, PackageResidencyPolicy, Project, ProjectMemoryHooks,
+    ProjectMemoryPurgePoint, testonly::ProjectSourceFixture,
 };
 
 #[derive(Debug)]
@@ -173,6 +173,52 @@ pub struct User;
             .iter()
             .all(|value| value.value == rg_profile::ProfileMeasurement::Empty)),
         "dynamic timing-only project checkpoints should not sample memory"
+    );
+}
+
+#[test]
+fn process_memory_sampler_enables_retained_build_memory() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "process_memory_profile_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let run =
+        rg_profile::test_support::ProfileTest::start(crate::profile_descriptors(), "project.build");
+
+    Project::builder(workspace)
+        .process_memory_sampler(|| {
+            Some(BuildProcessMemory {
+                allocated_bytes: 11,
+                active_bytes: 13,
+                resident_bytes: 17,
+                mapped_bytes: 19,
+            })
+        })
+        .build()
+        .expect("process-memory-profiled project build should succeed");
+    let snapshot = run.finish();
+    let after_parse = project_build_checkpoints(&snapshot)
+        .iter()
+        .find(|checkpoint| checkpoint.label == "after parse")
+        .expect("profile should contain the parse checkpoint");
+
+    assert!(
+        checkpoint_optional_bytes(after_parse, "retained_bytes").is_some_and(|bytes| bytes > 0),
+        "process memory sampling should also enable retained object measurements"
+    );
+    assert_eq!(
+        checkpoint_optional_bytes(after_parse, "allocated_bytes"),
+        Some(11),
+        "process memory sampling should still record allocator counters"
     );
 }
 

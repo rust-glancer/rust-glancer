@@ -15,7 +15,7 @@ use crate::{
     PackageResidencyPolicy, ProjectMemoryHooks, ProjectMemoryPurgePoint,
     cache::{PackageCacheInstance, PackageCacheStore, WorkspaceCachePlan},
     memory::NoopProjectMemoryHooks,
-    profile::{BuildProfiler, ProcessMemorySampler},
+    profile::{BuildMemorySampler, record_build_checkpoint},
 };
 
 use super::{Project, offloading::ResidencyApplication, state::ProjectState};
@@ -42,8 +42,7 @@ pub struct ProjectBuilder {
     indexing_preference: IndexingPerformancePreference,
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
-    measure_retained_memory: bool,
-    process_memory_sampler: Option<ProcessMemorySampler>,
+    memory_sampler: BuildMemorySampler,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
 }
 
@@ -56,8 +55,7 @@ impl ProjectBuilder {
             indexing_preference: IndexingPerformancePreference::default(),
             package_residency_policy: PackageResidencyPolicy::default(),
             startup_cache_load: StartupCacheLoad::default(),
-            measure_retained_memory: false,
-            process_memory_sampler: None,
+            memory_sampler: BuildMemorySampler::disabled(),
             memory_hooks: Arc::new(NoopProjectMemoryHooks),
         }
     }
@@ -88,7 +86,7 @@ impl ProjectBuilder {
     }
 
     pub fn measure_retained_memory(mut self, enabled: bool) -> Self {
-        self.measure_retained_memory = enabled;
+        self.memory_sampler = self.memory_sampler.with_retained_memory(enabled);
         self
     }
 
@@ -96,7 +94,7 @@ impl ProjectBuilder {
         mut self,
         sampler: impl FnMut() -> Option<BuildProcessMemory> + 'static,
     ) -> Self {
-        self.process_memory_sampler = Some(Box::new(sampler));
+        self.memory_sampler = self.memory_sampler.with_process_memory(Box::new(sampler));
         self
     }
 
@@ -106,8 +104,7 @@ impl ProjectBuilder {
     }
 
     pub fn build(self) -> anyhow::Result<Project> {
-        let mut profiler =
-            BuildProfiler::new(self.measure_retained_memory, self.process_memory_sampler);
+        let mut memory_sampler = self.memory_sampler;
         // Claim an instance before startup probing so all cache reads and writes belong to this
         // project/LSP owner.
         let cache_instance = PackageCacheInstance::for_workspace(&self.workspace)
@@ -121,18 +118,18 @@ impl ProjectBuilder {
             self.package_residency_policy,
             self.startup_cache_load,
             Arc::clone(&self.memory_hooks),
-            &mut profiler,
+            &mut memory_sampler,
         )
         .context("while attempting to build resident analysis project")?;
         ResidencyApplication::fresh(&mut state)
-            .apply_profiled(&mut profiler)
+            .apply_profiled(&mut memory_sampler)
             .context("while attempting to apply package cache residency")?;
         self.memory_hooks
             .purge(ProjectMemoryPurgePoint::AfterProjectBuild);
 
-        let process_memory = profiler.sample_process_memory();
-        let project_bytes = profiler.measure(&state);
-        profiler.record(
+        let process_memory = memory_sampler.sample_process_memory();
+        let project_bytes = memory_sampler.measure_retained(&state);
+        record_build_checkpoint(
             "after project",
             project_bytes,
             project_bytes,
@@ -152,7 +149,7 @@ pub(crate) fn build_resident_state(
     package_residency_policy: PackageResidencyPolicy,
     startup_cache_load: StartupCacheLoad,
     memory_hooks: Arc<dyn ProjectMemoryHooks>,
-    profiler: &mut BuildProfiler,
+    memory_sampler: &mut BuildMemorySampler,
 ) -> anyhow::Result<ProjectState> {
     let package_residency = PackageResidencyPlan::build(&workspace, package_residency_policy);
     let cache_plan = WorkspaceCachePlan::build(&workspace);
@@ -166,7 +163,7 @@ pub(crate) fn build_resident_state(
         &cache_store,
         startup_cache_load,
         memory_hooks.as_ref(),
-        profiler,
+        memory_sampler,
     )?;
 
     Ok(ProjectState {
