@@ -31,7 +31,7 @@ declare_metrics! {
             memory_snapshot ITEM_TREE_MEMORY = "memory" [title "after item-tree"];
         }
 
-        scope "project.build.item_tree.syntax_eviction" {
+        scope "project.build.item_tree_syntax_eviction" {
             memory_snapshot ITEM_TREE_SYNTAX_EVICTION_MEMORY = "memory" [title "after item-tree syntax eviction"];
         }
 
@@ -47,7 +47,7 @@ declare_metrics! {
             memory_snapshot SEMANTIC_IR_MEMORY = "memory" [title "after semantic-ir"];
         }
 
-        scope "project.build.item_tree.drop" {
+        scope "project.build.item_tree_drop" {
             memory_snapshot ITEM_TREE_DROP_MEMORY = "memory" [title "after item-tree drop"];
         }
 
@@ -55,7 +55,7 @@ declare_metrics! {
             memory_snapshot BODY_IR_MEMORY = "memory" [title "after body-ir"];
         }
 
-        scope "project.build.parse.syntax_eviction" {
+        scope "project.build.parse_syntax_eviction" {
             memory_snapshot PARSE_SYNTAX_EVICTION_MEMORY = "memory" [title "after parse syntax eviction"];
         }
 
