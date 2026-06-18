@@ -182,17 +182,6 @@ impl ReportValue {
     pub(crate) fn bytes(value: usize) -> Self {
         Self::Bytes(value as u64)
     }
-
-    pub(crate) fn byte_delta(after: usize, before: usize) -> Self {
-        let Some(after) = i64::try_from(after).ok() else {
-            return Self::Empty;
-        };
-        let Some(before) = i64::try_from(before).ok() else {
-            return Self::Empty;
-        };
-
-        Self::BytesDelta(after - before)
-    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
@@ -357,10 +346,6 @@ impl ReportFieldsBuilder {
         self.value_as(key, title, ReportValue::bytes(value))
     }
 
-    pub(crate) fn bool(&mut self, key: impl Into<String>, value: bool) -> &mut Self {
-        self.value(key, ReportValue::Bool(value))
-    }
-
     fn build(self) -> ReportBlock {
         ReportBlock::fields(self.key, self.title, self.fields)
     }
@@ -482,15 +467,6 @@ impl ReportRowBuilder {
 
     pub(crate) fn bytes(&mut self, key: impl Into<String>, value: usize) -> &mut Self {
         self.value(key, ReportValue::bytes(value))
-    }
-
-    pub(crate) fn byte_delta(
-        &mut self,
-        key: impl Into<String>,
-        after: usize,
-        before: usize,
-    ) -> &mut Self {
-        self.value(key, ReportValue::byte_delta(after, before))
     }
 
     pub(crate) fn duration_ms(&mut self, key: impl Into<String>, value: f64) -> &mut Self {

@@ -97,22 +97,9 @@ pub(crate) fn analyze(
         .context("while attempting to build project")?;
     let profile_snapshot = profile_run.map(ProfileRun::finish);
 
-    let allocator_name = memory_control.allocator_name();
-
-    // Capture allocator stats and purge after project-building allocations are finished, but
-    // before memory aggregation or text/JSON rendering can allocate and perturb the measurements.
-    let allocator_stats = include_memory
-        .then(|| memory_control.allocator_stats())
-        .flatten();
-    let purge = include_memory
-        .then(|| data::AllocatorPurgeReport::purge_memory_and_collect(&memory_control))
-        .flatten();
-    let allocator = include_memory
-        .then(|| data::AllocatorReport::capture(allocator_name, allocator_stats, purge));
     let analyze_report = data::AnalyzeReport::build(
         &project,
         analysis_setup,
-        allocator,
         profile_snapshot.as_ref(),
         include_profile_snapshot,
         include_memory,

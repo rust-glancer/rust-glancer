@@ -1,4 +1,3 @@
-mod allocator;
 mod memory;
 mod package;
 mod profile;
@@ -9,10 +8,7 @@ use rg_profile::ProfileSnapshot;
 use rg_project::Project;
 use serde::Serialize;
 
-pub(crate) use self::{
-    allocator::{AllocatorPurgeReport, AllocatorReport},
-    stages::AnalysisSetupReport,
-};
+pub(crate) use self::stages::AnalysisSetupReport;
 
 use self::{memory::MemoryReport, profile::ProfileSnapshotReport, project::ProjectReport};
 use super::report::ReportDocument;
@@ -31,9 +27,6 @@ pub(crate) struct AnalyzeReport {
     pub(crate) project: ProjectReport,
     /// Setup timings collected before the analysis pipeline starts.
     pub(crate) analysis_setup: AnalysisSetupReport,
-    /// Optional allocator statistics captured around the memory profile boundary.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) allocator: Option<AllocatorReport>,
     /// Optional dynamic profile snapshot captured through the implicit profiling runtime.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) profile_snapshot: Option<ProfileSnapshotReport>,
@@ -46,7 +39,6 @@ impl AnalyzeReport {
     pub(crate) fn build(
         project: &Project,
         analysis_setup: AnalysisSetupReport,
-        allocator: Option<AllocatorReport>,
         profile_snapshot: Option<&ProfileSnapshot>,
         include_profile_snapshot: bool,
         include_memory: bool,
@@ -67,7 +59,6 @@ impl AnalyzeReport {
             workspace_root: project.workspace().workspace_root().display().to_string(),
             project: ProjectReport::capture(project),
             analysis_setup,
-            allocator,
             profile_snapshot: (include_profile_snapshot || include_memory)
                 .then(|| profile_snapshot.map(ProfileSnapshotReport::capture))
                 .flatten(),
@@ -83,12 +74,6 @@ impl AnalyzeReport {
         let mut document = ReportDocument::builder("analyze")
             .title("rust-glancer analysis built")
             .section("project", |section| self.project.append_document(section));
-
-        if options.include_memory
-            && let Some(allocator) = &self.allocator
-        {
-            document = document.section("allocator", |section| allocator.append_document(section));
-        }
 
         if options.include_memory {
             document = document.section("analysis_setup", |section| {
