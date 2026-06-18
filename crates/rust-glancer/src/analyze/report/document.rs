@@ -183,10 +183,6 @@ impl ReportValue {
         Self::Bytes(value as u64)
     }
 
-    pub(crate) fn optional_bytes(value: Option<usize>) -> Self {
-        value.map(Self::bytes).unwrap_or(Self::Empty)
-    }
-
     pub(crate) fn byte_delta(after: usize, before: usize) -> Self {
         let Some(after) = i64::try_from(after).ok() else {
             return Self::Empty;
@@ -442,14 +438,6 @@ impl ReportTableBuilder {
         self.column(key, ReportAlign::Right, Some(ReportUnit::Bytes))
     }
 
-    pub(crate) fn bytes_column_as(
-        &mut self,
-        key: impl Into<String>,
-        title: impl Into<String>,
-    ) -> &mut Self {
-        self.column_as(key, title, ReportAlign::Right, Some(ReportUnit::Bytes))
-    }
-
     pub(crate) fn duration_column(&mut self, key: impl Into<String>) -> &mut Self {
         self.column(key, ReportAlign::Right, Some(ReportUnit::Duration))
     }
@@ -496,14 +484,6 @@ impl ReportRowBuilder {
         self.value(key, ReportValue::bytes(value))
     }
 
-    pub(crate) fn optional_bytes(
-        &mut self,
-        key: impl Into<String>,
-        value: Option<usize>,
-    ) -> &mut Self {
-        self.value(key, ReportValue::optional_bytes(value))
-    }
-
     pub(crate) fn byte_delta(
         &mut self,
         key: impl Into<String>,
@@ -515,10 +495,6 @@ impl ReportRowBuilder {
 
     pub(crate) fn duration_ms(&mut self, key: impl Into<String>, value: f64) -> &mut Self {
         self.value(key, ReportValue::DurationMs(value))
-    }
-
-    pub(crate) fn empty(&mut self, key: impl Into<String>) -> &mut Self {
-        self.value(key, ReportValue::Empty)
     }
 
     fn build(self) -> ReportRow {

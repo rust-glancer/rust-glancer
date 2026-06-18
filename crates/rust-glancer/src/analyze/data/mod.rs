@@ -14,10 +14,7 @@ pub(crate) use self::{
     stages::AnalysisSetupReport,
 };
 
-use self::{
-    memory::MemoryReport, profile::ProfileSnapshotReport, project::ProjectReport,
-    stages::BuildProfileReport,
-};
+use self::{memory::MemoryReport, profile::ProfileSnapshotReport, project::ProjectReport};
 use super::report::ReportDocument;
 
 #[derive(Debug, Clone, Copy)]
@@ -34,9 +31,6 @@ pub(crate) struct AnalyzeReport {
     pub(crate) project: ProjectReport,
     /// Setup timings collected before the analysis pipeline starts.
     pub(crate) analysis_setup: AnalysisSetupReport,
-    /// Optional build-stage timings and memory samples from the analysis pipeline.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) build_profile: Option<BuildProfileReport>,
     /// Optional allocator statistics captured around the memory profile boundary.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) allocator: Option<AllocatorReport>,
@@ -69,23 +63,12 @@ impl AnalyzeReport {
             ));
         }
 
-        let build_profile_report = include_memory.then(|| {
-            let profile_snapshot =
-                profile_snapshot.expect("memory reporting should collect project build profile");
-            let checkpoints = profile_snapshot
-                .checkpoints(rg_project::BUILD_CHECKPOINTS_PROFILE_PATH)
-                .expect("project build profile should record checkpoints");
-
-            BuildProfileReport::capture(checkpoints)
-        });
-
         Self {
             workspace_root: project.workspace().workspace_root().display().to_string(),
             project: ProjectReport::capture(project),
             analysis_setup,
-            build_profile: build_profile_report,
             allocator,
-            profile_snapshot: include_profile_snapshot
+            profile_snapshot: (include_profile_snapshot || include_memory)
                 .then(|| profile_snapshot.map(ProfileSnapshotReport::capture))
                 .flatten(),
             memory,
@@ -107,24 +90,9 @@ impl AnalyzeReport {
             document = document.section("allocator", |section| allocator.append_document(section));
         }
 
-        if options.include_memory
-            && let Some(build_profile) = &self.build_profile
-        {
+        if options.include_memory {
             document = document.section("analysis_setup", |section| {
                 self.analysis_setup.append_document(section);
-            });
-
-            let purge = options
-                .include_memory
-                .then(|| {
-                    self.allocator
-                        .as_ref()
-                        .and_then(|allocator| allocator.purge.as_ref())
-                })
-                .flatten();
-
-            document = document.section("build_profile", |section| {
-                build_profile.append_document(section, purge);
             });
         }
 

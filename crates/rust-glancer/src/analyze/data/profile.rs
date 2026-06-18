@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 
 use rg_profile::{
-    ProfileCheckpoint, ProfileCheckpointValue, ProfileEntry, ProfileInstrumentKind,
-    ProfileKeyedCounter, ProfileKeyedDuration, ProfileMeasurement, ProfileReportSort,
-    ProfileSnapshot, ProfileUnit, ProfileValue,
+    ProfileCheckpoint, ProfileCheckpointColumn, ProfileCheckpointValue, ProfileEntry,
+    ProfileInstrumentKind, ProfileKeyedCounter, ProfileKeyedDuration, ProfileMeasurement,
+    ProfileReportSort, ProfileSnapshot, ProfileUnit, ProfileValue,
 };
 use serde::Serialize;
 
@@ -72,6 +72,8 @@ pub(crate) struct ProfileEntryReport {
     pub(crate) sort: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) limit: Option<usize>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) checkpoint_columns: Vec<ProfileCheckpointColumnReport>,
     pub(crate) value: ProfileValueReport,
 }
 
@@ -86,6 +88,11 @@ impl ProfileEntryReport {
             title: descriptor.title_text().map(ToString::to_string),
             sort: descriptor.report_hints().sort.map(report_sort),
             limit: descriptor.report_hints().limit,
+            checkpoint_columns: descriptor
+                .checkpoint_columns_slice()
+                .iter()
+                .map(ProfileCheckpointColumnReport::capture)
+                .collect(),
             value: ProfileValueReport::capture(entry.value()),
         }
     }
@@ -179,9 +186,14 @@ impl ProfileEntryReport {
                 .duration_column("phase")
                 .duration_column("elapsed");
 
-            let value_columns = checkpoint_value_columns(checkpoints);
-            for (key, unit) in &value_columns {
-                table.column_as(key.clone(), profile_title(key), ReportAlign::Right, *unit);
+            let value_columns = checkpoint_value_columns(&self.checkpoint_columns, checkpoints);
+            for column in &value_columns {
+                table.column_as(
+                    column.key.clone(),
+                    column.title.clone(),
+                    ReportAlign::Right,
+                    column.unit,
+                );
             }
             table.text_column("checkpoint");
 
@@ -207,6 +219,32 @@ impl ProfileEntryReport {
             .and_then(|suffix| suffix.strip_prefix('.'))
             .unwrap_or(&self.path);
         profile_title(suffix)
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct ProfileCheckpointColumnReport {
+    pub(crate) key: String,
+    pub(crate) title: String,
+    pub(crate) unit: Option<ReportUnit>,
+}
+
+impl ProfileCheckpointColumnReport {
+    fn capture(column: &ProfileCheckpointColumn) -> Self {
+        Self {
+            key: column.key.to_string(),
+            title: column.title.to_string(),
+            unit: report_unit(column.unit),
+        }
+    }
+
+    fn inferred(key: impl Into<String>, unit: Option<ReportUnit>) -> Self {
+        let key = key.into();
+        Self {
+            title: profile_title(&key),
+            key,
+            unit,
+        }
     }
 }
 
@@ -434,6 +472,16 @@ fn unit(unit: ProfileUnit) -> &'static str {
     }
 }
 
+fn report_unit(unit: ProfileUnit) -> Option<ReportUnit> {
+    match unit {
+        ProfileUnit::None => None,
+        ProfileUnit::Count => Some(ReportUnit::Count),
+        ProfileUnit::Bytes => Some(ReportUnit::Bytes),
+        ProfileUnit::Duration => Some(ReportUnit::Duration),
+        ProfileUnit::Percent => Some(ReportUnit::Percent),
+    }
+}
+
 fn report_sort(sort: ProfileReportSort) -> &'static str {
     match sort {
         ProfileReportSort::KeyAscending => "key_asc",
@@ -451,27 +499,39 @@ fn profile_title(path: &str) -> String {
 }
 
 fn checkpoint_value_columns(
+    declared_columns: &[ProfileCheckpointColumnReport],
     checkpoints: &[ProfileCheckpointReport],
-) -> BTreeMap<String, Option<ReportUnit>> {
-    let mut columns = BTreeMap::new();
+) -> Vec<ProfileCheckpointColumnReport> {
+    let mut columns = BTreeMap::<String, ProfileCheckpointColumnReport>::new();
+
+    for column in declared_columns {
+        columns.insert(column.key.clone(), column.clone());
+    }
 
     for checkpoint in checkpoints {
         for value in &checkpoint.values {
-            let column = columns.entry(value.key.clone()).or_insert(None);
-            if column.is_none() {
-                *column = value.value.report_unit();
-            }
+            columns.entry(value.key.clone()).or_insert_with(|| {
+                ProfileCheckpointColumnReport::inferred(
+                    value.key.clone(),
+                    value.value.report_unit(),
+                )
+            });
         }
     }
 
-    columns
+    columns.into_values().collect()
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use rg_profile::{ProfileDescriptor, test_support::ProfileTest};
+    use rg_profile::{
+        ProfileCheckpointColumn, ProfileCheckpointValue, ProfileDescriptor, ProfileMeasurement,
+        test_support::ProfileTest,
+    };
+
+    use crate::analyze::report::{ReportBlock, ReportUnit};
 
     use super::*;
 
@@ -528,6 +588,81 @@ mod tests {
                 .iter()
                 .any(|block| matches!(block, crate::analyze::report::ReportBlock::Table { .. })),
             "keyed profile entries should render as report tables"
+        );
+    }
+
+    #[test]
+    fn renders_declared_checkpoint_columns() {
+        static CHECKPOINT_COLUMNS: &[ProfileCheckpointColumn] = &[
+            ProfileCheckpointColumn::bytes("retained_bytes", "rg_sampled"),
+            ProfileCheckpointColumn::count("packages", "packages"),
+        ];
+        let descriptors =
+            [
+                ProfileDescriptor::checkpoint_stream("test.scope.checkpoints", "test.scope")
+                    .checkpoint_columns(CHECKPOINT_COLUMNS),
+            ];
+        let run = ProfileTest::start(&descriptors, "test.scope");
+
+        rg_profile::record_checkpoint(
+            "test.scope.checkpoints",
+            "after parse",
+            vec![
+                ProfileCheckpointValue::new("retained_bytes", ProfileMeasurement::bytes(64)),
+                ProfileCheckpointValue::new("packages", ProfileMeasurement::count(3)),
+            ],
+        );
+        let snapshot = run.finish().into_inner();
+
+        let report = ProfileSnapshotReport::capture(&snapshot);
+        let entry = report
+            .entries
+            .iter()
+            .find(|entry| entry.path == "test.scope.checkpoints")
+            .expect("checkpoint entry should be retained in the JSON-facing report");
+
+        let retained_column = entry
+            .checkpoint_columns
+            .iter()
+            .find(|column| column.key == "retained_bytes")
+            .expect("declared retained-memory column should be captured");
+        assert_eq!(
+            retained_column.title, "rg_sampled",
+            "declared checkpoint titles should survive report capture",
+        );
+        assert!(
+            matches!(retained_column.unit, Some(ReportUnit::Bytes)),
+            "declared checkpoint units should survive report capture",
+        );
+
+        let document = crate::analyze::report::ReportDocument::builder("profile_test")
+            .section("profile", |section| report.append_document(section))
+            .build();
+        let table_columns = document
+            .sections
+            .first()
+            .expect("profile report should render a section")
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                ReportBlock::Table { key, columns, .. } if key == "test_scope_checkpoints" => {
+                    Some(columns)
+                }
+                _ => None,
+            })
+            .expect("checkpoint entries should render as report tables");
+
+        let retained_column = table_columns
+            .iter()
+            .find(|column| column.key == "retained_bytes")
+            .expect("checkpoint table should use the retained-memory column");
+        assert_eq!(
+            retained_column.title, "rg_sampled",
+            "checkpoint table should use the declared column title",
+        );
+        assert!(
+            matches!(retained_column.unit, Some(ReportUnit::Bytes)),
+            "checkpoint table should use the declared column unit",
         );
     }
 }
