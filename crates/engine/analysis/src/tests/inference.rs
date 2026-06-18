@@ -562,6 +562,109 @@ pub fn use_it(builder: Builder) {
 }
 
 #[test]
+fn infers_collect_destination_through_trait_obligations() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "storage", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait FromIterator<A> {}
+
+    pub trait Iterator {
+        type Item;
+
+        fn collect<B>(self) -> B
+        where
+            B: FromIterator<Self::Item>;
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+pub struct Vec<T> {
+    value: T,
+}
+
+impl<T> iter::FromIterator<T> for Vec<T> {}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use core::Vec;
+use storage::DefMap;
+
+pub fn explicit_destination(def_map: &DefMap) {
+    let imports = def_map.imports().iter().collect::<Vec<_>>()$type_explicit$;
+    imports;
+}
+
+pub fn expected_destination(def_map: &DefMap) {
+    let imports: Vec<_> = def_map.imports().iter().collect()$type_expected$;
+    imports;
+}
+"#,
+        &[
+            AnalysisQuery::ty("explicit collect destination", "type_explicit").in_lib("app"),
+            AnalysisQuery::ty("expected collect destination", "type_expected").in_lib("app"),
+        ],
+        expect![[r#"
+            explicit collect destination
+            - nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData>
+
+            expected collect destination
+            - nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData>
+        "#]],
+    );
+}
+
+#[test]
 fn propagates_expected_types_through_result_expressions() {
     check_analysis_queries(
         r#"
@@ -924,9 +1027,21 @@ pub struct Vec<T> {
     value: T,
 }
 
+pub struct Wrapper<T> {
+    value: T,
+}
+
 impl<T> Vec<T> {
     pub fn new() -> Self {}
     pub fn push(&mut self, value: T) {}
+}
+
+impl<T> Wrapper<T> {
+    pub fn new() -> Self {}
+}
+
+impl Wrapper<User> {
+    pub fn touch(&self) {}
 }
 
 pub fn user_value(user: User) {
@@ -953,6 +1068,12 @@ pub fn conflicting() {
     values.push(false$type_conflict_arg$);
     values$type_conflict_read$;
 }
+
+pub fn selected_inherent_receiver() {
+    let wrapper = Wrapper::new()$type_wrapper_initializer$;
+    wrapper.touch();
+    wrapper$type_wrapper_read$;
+}
 "#,
         &[
             AnalysisQuery::ty("user receiver initializer", "type_user_initializer"),
@@ -967,6 +1088,8 @@ pub fn conflicting() {
             ),
             AnalysisQuery::ty("conflicting receiver argument", "type_conflict_arg"),
             AnalysisQuery::ty("conflicting receiver read", "type_conflict_read"),
+            AnalysisQuery::ty("selected receiver initializer", "type_wrapper_initializer"),
+            AnalysisQuery::ty("selected receiver read", "type_wrapper_read"),
         ],
         expect![[r#"
             user receiver initializer
@@ -995,6 +1118,12 @@ pub fn conflicting() {
 
             conflicting receiver read
             - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Vec<<unknown>>
+
+            selected receiver initializer
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Wrapper<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User>
+
+            selected receiver read
+            - nominal struct analysis_method_receiver_generic_inference[lib]::crate::Wrapper<nominal struct analysis_method_receiver_generic_inference[lib]::crate::User>
         "#]],
     );
 }

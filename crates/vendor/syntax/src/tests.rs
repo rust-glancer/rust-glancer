@@ -8,7 +8,7 @@ use expect_test::expect_file;
 use parser::Edition;
 use rayon::prelude::*;
 use stdx::format_to_acc;
-use test_utils::{bench, bench_fixture, project_root};
+use test_utils::{bench, bench_fixture};
 
 use crate::{
     AstNode, SourceFile, SyntaxError,
@@ -106,10 +106,10 @@ fn parser_fuzz_tests() {
 
 #[test]
 fn self_hosting_parsing() {
-    let crates_dir = project_root().join("crates");
+    let crates_dir = workspace_root().join("crates");
 
     let mut files = Vec::new();
-    let mut work = vec![crates_dir.into_std_path_buf()];
+    let mut work = vec![crates_dir];
     while let Some(dir) = work.pop() {
         for entry in dir.read_dir().unwrap() {
             let entry = entry.unwrap();
@@ -132,7 +132,7 @@ fn self_hosting_parsing() {
     }
 
     files.retain(|path| {
-        // Get all files which are not in the crates/syntax/test_data folder
+        // Get all files which are not in the syntax test data folder.
         !path
             .components()
             .any(|component| component.as_os_str() == "test_data")
@@ -165,9 +165,22 @@ fn self_hosting_parsing() {
 }
 
 fn test_data_dir() -> PathBuf {
-    project_root()
-        .into_std_path_buf()
-        .join("crates/syntax/test_data")
+    syntax_crate_root().join("test_data")
+}
+
+fn syntax_crate_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+}
+
+fn workspace_root() -> PathBuf {
+    syntax_crate_root()
+        .parent()
+        .expect("syntax crate should live in crates/vendor")
+        .parent()
+        .expect("vendor directory should live in crates")
+        .parent()
+        .expect("crates directory should live in the workspace root")
+        .to_owned()
 }
 
 fn assert_errors_are_present(errors: &[SyntaxError], path: &Path) {

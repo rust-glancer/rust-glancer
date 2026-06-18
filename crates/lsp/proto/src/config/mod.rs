@@ -4,6 +4,7 @@ mod cargo;
 mod cfg;
 mod diagnostics;
 mod indexing;
+mod sysroot;
 
 use ls_types::LSPAny;
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,7 @@ pub use self::{
     cfg::AnalysisCfgConfig,
     diagnostics::DiagnosticsConfig,
     indexing::IndexingPerformancePreference,
+    sysroot::SysrootDiscovery,
 };
 
 /// Configuration needed to start one analysis engine.
@@ -46,6 +48,7 @@ mod tests {
 
     use super::{
         CargoMetadataTarget, EngineConfig, IndexingPerformancePreference, PackageResidencyPolicy,
+        SysrootDiscovery,
     };
 
     #[test]
@@ -62,6 +65,9 @@ mod tests {
             },
             "indexing": {
                 "performancePreference": "faster-builds",
+            },
+            "sysroot": {
+                "discovery": "disabled",
             },
             "cfg": {
                 "test": true,
@@ -98,6 +104,10 @@ mod tests {
         assert_eq!(
             config.analysis.indexing_preference,
             IndexingPerformancePreference::FasterBuilds,
+        );
+        assert_eq!(
+            config.analysis.sysroot_discovery,
+            SysrootDiscovery::Disabled,
         );
         assert!(config.analysis.cfg.test);
         assert_eq!(config.analysis.cfg.atoms, ["tokio_unstable"]);

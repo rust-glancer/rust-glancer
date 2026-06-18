@@ -18,6 +18,7 @@ pub use self::{
     config::{
         AnalysisCfgConfig, AnalysisConfig, CargoMetadataConfig, CargoMetadataTarget,
         DiagnosticsConfig, EngineConfig, IndexingPerformancePreference, PackageResidencyPolicy,
+        SysrootDiscovery,
     },
     error::EngineError,
     notifications::{ServiceLogLevel, ServiceNotification},

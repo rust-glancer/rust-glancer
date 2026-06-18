@@ -11,12 +11,12 @@ use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_ty::{
     NominalTy, Ty,
-    inference::{InferGenericArg, InferTy},
+    inference::{InferGenericArg, InferTy, InferTypeRefProjector, InferTypeSubst},
 };
 
 use crate::{ir::ExprKind, resolution::BodyResolutionContext};
 
-use super::{BodyInferenceCtx, InferTypeRefProjector, InferTypeSubst};
+use super::BodyInferenceCtx;
 
 /// Projects member expressions while preserving inference variables from the base.
 pub(crate) struct BodyMemberInference<'query, D, I> {
@@ -117,7 +117,7 @@ where
         let infer_args = Self::infer_args_for_owner(&base_ty, owner_ty)?;
 
         let mut subst = InferTypeSubst::new();
-        subst.bind_type_params_from_infer_args(inference, generics, infer_args);
+        subst.bind_type_params_from_infer_args(&mut inference.table, generics, infer_args);
         Some(subst)
     }
 
