@@ -63,6 +63,10 @@ impl EditionedFileId {
         self.0
     }
 
+    pub const fn raw_file_id(self) -> u32 {
+        self.0 & Self::FILE_ID_MASK
+    }
+
     pub const fn edition(self) -> Edition {
         let edition = (self.0 >> Self::EDITION_BITS_OFFSET) as u8;
         match edition {

@@ -447,25 +447,33 @@ impl<'a> GeneratedSourceLowering<'a> {
         name_range: Option<rg_syntax::TextRange>,
         visibility: VisibilityLevel,
         docs: Option<Documentation>,
-        text_range: rg_syntax::TextRange,
+        _text_range: rg_syntax::TextRange,
     ) -> ItemTreeId {
+        let span = self.origin.span;
+        let name_span = name_range
+            .and_then(|range| self.parse_span_for_range(range))
+            .filter(|name_span| span.contains_span(*name_span));
+
+        // Generated item syntax is shaped by both invocation tokens and transcriber tokens. Use the
+        // macro call as the stable editor-facing item range, while preserving a precise selection
+        // span when the declaration name genuinely comes from the invocation.
         self.items.alloc(ItemNode {
             kind,
             name,
-            name_span: name_range.map(|range| self.parse_span_for_range(range)),
+            name_span,
             visibility,
             cfg: CfgExpr::default(),
             docs,
             file_id: self.origin.file_id,
-            span: self.parse_span_for_range(text_range),
+            span,
         })
     }
 
-    fn parse_span_for_range(&self, range: rg_syntax::TextRange) -> Span {
+    fn parse_span_for_range(&self, range: rg_syntax::TextRange) -> Option<Span> {
         self.span_map
             .span_for_range(range)
+            .filter(|span| span.anchor.file_id.raw_file_id() as usize == self.origin.file_id.0)
             .map(|span| Span::from_text_range(span.range))
-            .unwrap_or(self.origin.span)
     }
 }
 
