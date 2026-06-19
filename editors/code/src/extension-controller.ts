@@ -25,8 +25,9 @@ export class ExtensionController implements vscode.Disposable {
     private readonly extensionLog: vscode.LogOutputChannel,
     serverOutput: vscode.OutputChannel,
     private readonly status: StatusView,
+    extensionUri: vscode.Uri,
   ) {
-    this.clientSlot = new LanguageClientSlot(extensionLog, serverOutput, status);
+    this.clientSlot = new LanguageClientSlot(extensionLog, serverOutput, status, extensionUri);
     this.workspaceListeners = vscode.Disposable.from(
       vscode.window.onDidChangeActiveTextEditor((editor) => {
         void this.activateForEditor(editor);

@@ -5,6 +5,7 @@
  * decision into `vscode-languageclient` server options.
  */
 import { spawn, type ChildProcess } from "child_process";
+import { existsSync } from "fs";
 import * as vscode from "vscode";
 import type { ServerOptions } from "vscode-languageclient/node";
 
@@ -24,6 +25,7 @@ export interface ResolvedServer {
 export namespace ResolvedServer {
   export function discover(
     config: ExtensionConfig,
+    extensionUri: vscode.Uri,
     workspaceFolder: vscode.WorkspaceFolder,
   ): ResolvedServer {
     if (config.serverPath !== undefined) {
@@ -38,6 +40,11 @@ export namespace ResolvedServer {
     const envServer = normalizeOptionalString(process.env[SERVER_ENV_OVERRIDE]);
     if (envServer !== undefined) {
       return executableServer(envServer, SERVER_ENV_OVERRIDE, config, workspaceFolder);
+    }
+
+    const bundled = bundledServerPath(extensionUri);
+    if (bundled !== undefined) {
+      return executableServer(bundled, "bundled server", config, workspaceFolder);
     }
 
     return executableServer("rust-glancer", "PATH", config, workspaceFolder);
@@ -77,6 +84,12 @@ export namespace ResolvedServer {
   export function commandLine(server: ResolvedServer): string {
     return [server.command, ...server.args].join(" ");
   }
+}
+
+function bundledServerPath(extensionUri: vscode.Uri): string | undefined {
+  const executableName = process.platform === "win32" ? "rust-glancer.exe" : "rust-glancer";
+  const bundled = vscode.Uri.joinPath(extensionUri, "server", executableName).fsPath;
+  return existsSync(bundled) ? bundled : undefined;
 }
 
 function executableServer(
