@@ -590,7 +590,7 @@ fn finalize_scopes(
                 let timer = metric::TIMING_RESOLVE_IMPORT_SCOPES.start_timer();
                 current_scopes = resolve_import_scopes(old, states)?;
                 timer.finish();
-                freeze_resolved_scopes(old, states, &current_scopes)?;
+                freeze_resolved_scopes(old, states, current_scopes)?;
                 return Ok(());
             }
 
@@ -661,7 +661,7 @@ fn finalize_scopes(
 
             // No imports and no macros changed the visible declarations, so this is the stable
             // scope matrix that can be written into the frozen def maps.
-            freeze_resolved_scopes(old, states, &current_scopes)?;
+            freeze_resolved_scopes(old, states, current_scopes)?;
             return Ok(());
         }
     }
@@ -701,18 +701,32 @@ fn resolve_import_scopes(
 fn freeze_resolved_scopes(
     old: Option<&DefMapReadTxn<'_>>,
     states: &mut FinalizeTargetStates,
-    current_scopes: &ScopeMatrix,
+    current_scopes: ScopeMatrix,
 ) -> anyhow::Result<()> {
     // Once the import graph reaches a fixed point, freeze the resolved scopes into the public
     // def-map payload and preserve unresolved imports for query consumers.
     let unresolved_imports = {
-        let env = FinalizeResolutionEnv::new(old, states, current_scopes);
+        let env = FinalizeResolutionEnv::new(old, states, &current_scopes);
         UnresolvedImports::collect(states, &env)?
     };
 
-    for (_, package_states) in states.iter_dirty_mut_enumerated() {
-        for state in package_states {
-            freeze_target_scopes(state, current_scopes, &unresolved_imports);
+    for (package_slot, target_scopes) in current_scopes.packages.into_iter().enumerate() {
+        let Some(target_scopes) = target_scopes else {
+            continue;
+        };
+        let package_states = states
+            .packages
+            .get_mut(package_slot)
+            .and_then(Option::as_mut)
+            .expect("resolved scopes should exist only for dirty packages");
+        assert_eq!(
+            package_states.len(),
+            target_scopes.len(),
+            "resolved target scopes should match dirty target states"
+        );
+
+        for (state, scopes) in package_states.iter_mut().zip(target_scopes) {
+            freeze_target_scopes(state, scopes, &unresolved_imports);
         }
     }
 
@@ -721,17 +735,14 @@ fn freeze_resolved_scopes(
 
 fn freeze_target_scopes(
     state: &mut TargetState,
-    current_scopes: &ScopeMatrix,
+    final_scopes: TargetScopeMatrix,
     unresolved_imports: &UnresolvedImports,
 ) {
-    let final_scopes = current_scopes
-        .target_scopes(state.target)
-        .expect("final scopes should exist for every dirty target");
     let final_unresolved_imports = unresolved_imports
         .target_imports(state.target)
         .expect("unresolved imports should exist for every dirty target");
 
-    for (module_idx, scope) in final_scopes.iter().enumerate() {
+    for (module_idx, scope) in final_scopes.into_iter().enumerate() {
         let module = state
             .def_map_builder
             .module_mut(ModuleId(module_idx))

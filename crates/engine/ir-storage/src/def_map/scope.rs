@@ -111,12 +111,12 @@ impl ModuleScopeBuilder {
             .map(|(name, entry)| (name, entry.as_ref()))
     }
 
-    pub fn freeze(&self) -> ModuleScope {
+    pub fn freeze(self) -> ModuleScope {
         let mut entries = self
             .names
-            .iter()
+            .into_iter()
             .map(|(name, entry)| ScopeNameEntry {
-                name: name.clone(),
+                name,
                 entry: entry.freeze(),
             })
             .collect::<Vec<_>>();
@@ -194,11 +194,11 @@ impl ScopeEntryBuilder {
         }
     }
 
-    fn freeze(&self) -> ScopeEntry {
+    fn freeze(self) -> ScopeEntry {
         ScopeEntry {
-            types: self.types.clone().into_boxed_slice(),
-            values: self.values.clone().into_boxed_slice(),
-            macros: self.macros.clone().into_boxed_slice(),
+            types: self.types.into_boxed_slice(),
+            values: self.values.into_boxed_slice(),
+            macros: self.macros.into_boxed_slice(),
         }
     }
 }
