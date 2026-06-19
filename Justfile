@@ -22,6 +22,9 @@ deny:
 build:
     cargo build --workspace --release
 
+package-vsix:
+    just client::package-vsix
+
 bench:
     cargo bench -p rg_project --bench analysis_pipeline
 

@@ -39,6 +39,7 @@ export class LanguageClientSession implements vscode.Disposable {
     private readonly extensionLog: vscode.LogOutputChannel,
     private readonly serverOutput: vscode.OutputChannel,
     status: StatusView,
+    private readonly extensionUri: vscode.Uri,
     private readonly workspaceFolder: vscode.WorkspaceFolder,
   ) {
     this.clientStatus = new ClientStatus(status);
@@ -62,7 +63,7 @@ export class LanguageClientSession implements vscode.Disposable {
     }
 
     const config = ExtensionConfig.read();
-    const server = ResolvedServer.discover(config, this.workspaceFolder);
+    const server = ResolvedServer.discover(config, this.extensionUri, this.workspaceFolder);
     const statusDetails = {
       workspaceRoot: this.workspaceFolder.uri.fsPath,
       serverCommand: ResolvedServer.commandLine(server),
