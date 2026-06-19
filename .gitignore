@@ -1,9 +1,12 @@
 target
+dist
 .DS_Store
 editors/code/dist
+editors/code/LICENSE
 editors/code/node_modules
 editors/code/out
 editors/code/out-unit
+editors/code/server
 editors/code/.vscode-test
 
 .codex

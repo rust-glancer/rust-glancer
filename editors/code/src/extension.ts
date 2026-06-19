@@ -34,7 +34,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const extensionLog = recordingExtensionLog ?? rawExtensionLog;
   const serverOutput = new ServerOutputChannel(recordingServerLog ?? rawServerLog);
   const status = new StatusView();
-  controller = new ExtensionController(extensionLog, serverOutput, status);
+  controller = new ExtensionController(extensionLog, serverOutput, status, context.extensionUri);
 
   // Extension-host tests need a stable synchronization point. Keep this command out of the
   // package manifest so it is available only when the test runner opts in through the environment.

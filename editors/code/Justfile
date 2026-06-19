@@ -1,6 +1,9 @@
 build:
     npm run compile
 
+package-vsix:
+    npm run package:vsix
+
 fmt:
     npm run fmt
 

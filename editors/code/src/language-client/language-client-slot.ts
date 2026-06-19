@@ -19,6 +19,7 @@ export class LanguageClientSlot implements vscode.Disposable {
     private readonly extensionLog: vscode.LogOutputChannel,
     private readonly serverOutput: vscode.OutputChannel,
     private readonly status: StatusView,
+    private readonly extensionUri: vscode.Uri,
   ) {}
 
   public current(): LanguageClientSession | undefined {
@@ -79,6 +80,7 @@ export class LanguageClientSlot implements vscode.Disposable {
       this.extensionLog,
       this.serverOutput,
       this.status,
+      this.extensionUri,
       workspaceFolder,
     );
     const started = await session.start();

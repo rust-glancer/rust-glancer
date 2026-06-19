@@ -35,6 +35,11 @@ impl Span {
         self.text.contains(offset)
     }
 
+    /// Returns true when `other` is fully contained in this span.
+    pub fn contains_span(self, other: Span) -> bool {
+        self.text.contains_span(other.text)
+    }
+
     /// Returns true when `offset` is inside the text range or exactly at its end.
     pub fn touches(self, offset: u32) -> bool {
         self.text.touches(offset)
@@ -63,6 +68,11 @@ impl TextSpan {
     /// Returns true when `offset` is inside the half-open range: `start <= offset < end`.
     pub fn contains(self, offset: u32) -> bool {
         self.start <= offset && offset < self.end
+    }
+
+    /// Returns true when `other` is fully contained in this half-open range.
+    pub fn contains_span(self, other: TextSpan) -> bool {
+        self.start <= other.start && other.end <= self.end
     }
 
     /// Returns true when `offset` is inside the range or exactly at its end.
@@ -113,6 +123,23 @@ mod tests {
 
         for (label, span, offset, expected) in cases {
             assert_eq!(span.contains(offset), expected, "{label}");
+        }
+    }
+
+    #[test]
+    fn checks_nested_span_containment() {
+        let parent = TextSpan { start: 10, end: 20 };
+        let cases = [
+            ("same", TextSpan { start: 10, end: 20 }, true),
+            ("inside", TextSpan { start: 12, end: 18 }, true),
+            ("empty at start", TextSpan { start: 10, end: 10 }, true),
+            ("empty at end", TextSpan { start: 20, end: 20 }, true),
+            ("overlaps left", TextSpan { start: 9, end: 12 }, false),
+            ("overlaps right", TextSpan { start: 18, end: 21 }, false),
+        ];
+
+        for (label, child, expected) in cases {
+            assert_eq!(parent.contains_span(child), expected, "{label}");
         }
     }
 

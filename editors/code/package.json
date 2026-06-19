@@ -5,6 +5,10 @@
   "version": "0.1.0",
   "publisher": "rust-glancer",
   "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/popzxc/rust-glancer"
+  },
   "engines": {
     "vscode": "^1.119.0"
   },
@@ -243,6 +247,7 @@
     "fmt:check": "prettier --check \"**/*.{json,md,ts,js,mjs}\"",
     "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" \"unit/**/*.ts\"",
     "lint:fix": "npm run lint -- --fix",
+    "package:vsix": "node scripts/package-vsix.mjs",
     "test": "npm run test:unit && npm run test:e2e",
     "test:e2e": "npm run compile && npm run compile:test && cargo build --release -p rust-glancer && RUST_GLANCER_EXTENSION_TEST=1 __RUST_GLANCER_SERVER=\"$(pwd)/../../target/release/rust-glancer\" vscode-test",
     "test:unit": "node -e \"require('node:fs').rmSync('out-unit', { recursive: true, force: true })\" && npm run compile:unit && node --test out-unit/unit/*.test.js",
@@ -259,6 +264,7 @@
     "@types/vscode": "^1.118.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.0",
     "eslint": "^10.3.0",
     "prettier": "^3.8.3",

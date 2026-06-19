@@ -3,6 +3,41 @@ use expect_test::expect;
 use super::utils::{DocumentSymbolsQuery, check_document_symbols};
 
 #[test]
+fn outlines_macro_generated_items_at_call_site() {
+    check_document_symbols(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_macro_document_symbols"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! make_id {
+    ($name:ident) => {
+        struct $name;
+    };
+}
+
+macro_rules! make_named {
+    () => {
+        struct Hardcoded;
+    };
+}
+
+make_id!(Generated);
+make_named!();
+"#,
+        DocumentSymbolsQuery::new("macro document symbols", "/src/lib.rs"),
+        expect![[r#"
+            macro document symbols
+            - struct Generated @ 13:1-13:21 selection 13:10-13:19
+            - struct Hardcoded @ 14:1-14:15
+        "#]],
+    );
+}
+
+#[test]
 fn outlines_semantic_and_body_local_items() {
     check_document_symbols(
         r#"
