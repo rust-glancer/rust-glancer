@@ -191,7 +191,7 @@ mod tests {
     }
 
     #[test]
-    fn analyze_profile_filter_expands_default_alias() {
+    fn analyze_profile_filter_expands_aliases() {
         let build_checkpoints = rg_project::BUILD_CHECKPOINTS.scope();
 
         let filter = parse_filter(Some("default"), false)
@@ -203,12 +203,34 @@ mod tests {
             "the default alias should collect build checkpoints",
         );
 
-        let filter = parse_filter(Some("default,def_map.macros"), false)
+        let filter = parse_filter(Some("macros"), false)
+            .expect("macros profile alias should parse")
+            .expect("macros profile alias should enable a profile run");
+        assert_eq!(
+            selector_texts(&filter),
+            vec!["def_map.finalization", "def_map.macros.by_name"],
+            "the macros alias should collect aggregate timings, counters, and by-name stats",
+        );
+
+        let filter = parse_filter(Some("memory:def-map"), false)
+            .expect("def-map memory profile alias should parse")
+            .expect("def-map memory profile alias should enable a profile run");
+        assert_eq!(
+            selector_texts(&filter),
+            vec![build_checkpoints, "project.build.def_map"],
+            "the def-map memory alias should collect checkpoints and the def-map memory snapshot",
+        );
+
+        let filter = parse_filter(Some("default,macros"), false)
             .expect("mixed profile aliases and selectors should parse")
             .expect("mixed profile aliases and selectors should enable a profile run");
         assert_eq!(
             selector_texts(&filter),
-            vec![build_checkpoints, "def_map.macros"],
+            vec![
+                build_checkpoints,
+                "def_map.finalization",
+                "def_map.macros.by_name"
+            ],
             "profile aliases should expand without blocking explicit selectors",
         );
     }
@@ -220,6 +242,8 @@ mod tests {
             "project.build.def_map",
             "def_map.macros.by_name",
             "default",
+            "macros",
+            "memory:def-map",
         ] {
             let filter = parse_filter(Some(selector), false)
                 .expect("registered analyze profile selector should parse")

@@ -9,11 +9,26 @@ struct ProfileAlias {
     selectors: &'static [&'static str],
 }
 
-const PROFILE_ALIASES: &[ProfileAlias] = &[ProfileAlias {
-    name: "default",
-    description: "build checkpoints",
-    selectors: &[rg_project::BUILD_CHECKPOINTS.scope()],
-}];
+const PROFILE_ALIASES: &[ProfileAlias] = &[
+    ProfileAlias {
+        name: "default",
+        description: "build checkpoints",
+        selectors: &[rg_project::BUILD_CHECKPOINTS.scope()],
+    },
+    ProfileAlias {
+        name: "macros",
+        description: "def-map macro counters, timings, and by-name expansion tables",
+        selectors: &["def_map.finalization", "def_map.macros.by_name"],
+    },
+    ProfileAlias {
+        name: "memory:def-map",
+        description: "build checkpoints plus the def-map memory snapshot",
+        selectors: &[
+            rg_project::BUILD_CHECKPOINTS.scope(),
+            "project.build.def_map",
+        ],
+    },
+];
 
 pub(crate) fn profile_groups_help() -> String {
     let alias_name_width = PROFILE_ALIASES

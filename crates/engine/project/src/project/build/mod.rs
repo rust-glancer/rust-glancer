@@ -92,11 +92,13 @@ impl ProjectBuilder {
         self
     }
 
+    /// Enables measuring retained memory for stages (via internal memory profiler).
     pub fn measure_retained_memory(mut self, enabled: bool) -> Self {
         self.memory_sampler = self.memory_sampler.with_retained_memory(enabled);
         self
     }
 
+    /// Enables measuring BOTH retained and process memory.
     pub fn process_memory_sampler(
         mut self,
         sampler: impl FnMut() -> Option<BuildProcessMemory> + 'static,

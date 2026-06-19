@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use rg_profile::{
     ProfileCheckpoint, ProfileCheckpointColumn, ProfileCheckpointValue, ProfileEntry,
@@ -502,24 +502,32 @@ fn checkpoint_value_columns(
     declared_columns: &[ProfileCheckpointColumnReport],
     checkpoints: &[ProfileCheckpointReport],
 ) -> Vec<ProfileCheckpointColumnReport> {
-    let mut columns = BTreeMap::<String, ProfileCheckpointColumnReport>::new();
-
-    for column in declared_columns {
-        columns.insert(column.key.clone(), column.clone());
-    }
+    let mut columns = declared_columns.to_vec();
+    let declared_keys = declared_columns
+        .iter()
+        .map(|column| column.key.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut inferred_columns = BTreeMap::<String, ProfileCheckpointColumnReport>::new();
 
     for checkpoint in checkpoints {
         for value in &checkpoint.values {
-            columns.entry(value.key.clone()).or_insert_with(|| {
-                ProfileCheckpointColumnReport::inferred(
-                    value.key.clone(),
-                    value.value.report_unit(),
-                )
-            });
+            if declared_keys.contains(value.key.as_str()) {
+                continue;
+            }
+
+            inferred_columns
+                .entry(value.key.clone())
+                .or_insert_with(|| {
+                    ProfileCheckpointColumnReport::inferred(
+                        value.key.clone(),
+                        value.value.report_unit(),
+                    )
+                });
         }
     }
 
-    columns.into_values().collect()
+    columns.extend(inferred_columns.into_values());
+    columns
 }
 
 #[cfg(test)]
@@ -610,6 +618,7 @@ mod tests {
             vec![
                 ProfileCheckpointValue::new("retained_bytes", ProfileMeasurement::bytes(64)),
                 ProfileCheckpointValue::new("packages", ProfileMeasurement::count(3)),
+                ProfileCheckpointValue::new("allocated_bytes", ProfileMeasurement::bytes(128)),
             ],
         );
         let snapshot = run.finish().into_inner();
@@ -620,6 +629,15 @@ mod tests {
             .iter()
             .find(|entry| entry.path == "test.scope.checkpoints")
             .expect("checkpoint entry should be retained in the JSON-facing report");
+        assert_eq!(
+            entry
+                .checkpoint_columns
+                .iter()
+                .map(|column| column.key.as_str())
+                .collect::<Vec<_>>(),
+            ["retained_bytes", "packages"],
+            "declared checkpoint column order should survive report capture",
+        );
 
         let retained_column = entry
             .checkpoint_columns
@@ -651,6 +669,21 @@ mod tests {
                 _ => None,
             })
             .expect("checkpoint entries should render as report tables");
+        assert_eq!(
+            table_columns
+                .iter()
+                .map(|column| column.key.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "phase",
+                "elapsed",
+                "retained_bytes",
+                "packages",
+                "allocated_bytes",
+                "checkpoint",
+            ],
+            "checkpoint tables should render declared columns first, then inferred columns",
+        );
 
         let retained_column = table_columns
             .iter()
