@@ -3,8 +3,10 @@
 //! Reference lookup intentionally scans known source facts instead of building a separate index.
 //! The query owns the search surface, declaration-inclusion policy, and declaration projection.
 
+use std::collections::HashSet;
+
 use rg_ir_model::{TargetRef, identity::DeclarationRef};
-use rg_ir_view::item::declaration::DeclarationView;
+use rg_ir_view::{IndexedViewDb, item::declaration::DeclarationView};
 use rg_parse::{FileId, Span};
 
 use crate::{
@@ -156,12 +158,13 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         &self,
         declarations: &[DeclarationRef],
     ) -> anyhow::Result<Vec<SourceSymbol>> {
-        let mut symbols = Vec::new();
-        for candidate in self.reference_candidates()? {
-            if self.source_symbol_matches_declarations(candidate.symbol().clone(), declarations)? {
-                symbols.push(candidate);
-            }
+        if declarations.is_empty() {
+            return Ok(Vec::new());
         }
+
+        let matcher = ReferenceDeclarationMatcher::new(self.analysis.view_db(), declarations);
+        let mut symbols = Vec::new();
+        self.push_matching_reference_candidates(&matcher, &mut symbols)?;
 
         // Rename needs declaration occurrences with their source-surface metadata. Prefer scanned
         // source symbols when they exist, and project a plain declaration only for declarations
@@ -219,19 +222,11 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
         Ok(unique)
     }
 
-    fn source_symbol_matches_declarations(
+    fn push_matching_reference_candidates(
         &self,
-        symbol: SymbolAt,
-        declarations: &[DeclarationRef],
-    ) -> anyhow::Result<bool> {
-        let candidate_declarations = self.unique_declarations_for_symbol(symbol)?;
-        Ok(candidate_declarations
-            .iter()
-            .any(|candidate| declarations.contains(candidate)))
-    }
-
-    fn reference_candidates(&self) -> anyhow::Result<Vec<SourceSymbol>> {
-        let mut candidates = Vec::new();
+        matcher: &ReferenceDeclarationMatcher<'_, 'db>,
+        symbols: &mut Vec<SourceSymbol>,
+    ) -> anyhow::Result<()> {
         let mut visited = Vec::new();
 
         match self.query.search_scope() {
@@ -245,40 +240,49 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
                         continue;
                     }
                     visited.push(scan);
-                    self.push_scan_target_candidates(scan, &mut candidates)?;
+                    self.push_matching_scan_target_candidates(scan, matcher, symbols)?;
                 }
             }
             ReferenceSearchScope::File { target, file_id } => {
-                self.push_scan_target_candidates(
+                self.push_matching_scan_target_candidates(
                     ReferenceScanTarget {
                         target,
                         file_id: Some(file_id),
                     },
-                    &mut candidates,
+                    matcher,
+                    symbols,
                 )?;
             }
         }
 
-        Ok(candidates)
+        Ok(())
     }
 
-    fn push_scan_target_candidates(
+    fn push_matching_scan_target_candidates(
         &self,
         scan: ReferenceScanTarget,
-        candidates: &mut Vec<SourceSymbol>,
+        matcher: &ReferenceDeclarationMatcher<'_, 'db>,
+        symbols: &mut Vec<SourceSymbol>,
     ) -> anyhow::Result<()> {
         for candidate in SourceSymbolIndex::new(self.analysis.view_db())
             .symbols_in_target(scan.target, scan.file_id)?
         {
-            match candidate.role() {
-                SourceSymbolRole::Reference => candidates.push(candidate),
-                SourceSymbolRole::Declaration if self.query.includes_declarations() => {
-                    candidates.push(candidate);
-                }
-                SourceSymbolRole::Declaration | SourceSymbolRole::Structural => {}
+            if !self.accepts_candidate_role(candidate.role()) {
+                continue;
+            }
+            if matcher.matches(candidate.symbol())? {
+                symbols.push(candidate);
             }
         }
         Ok(())
+    }
+
+    fn accepts_candidate_role(&self, role: SourceSymbolRole) -> bool {
+        match role {
+            SourceSymbolRole::Reference => true,
+            SourceSymbolRole::Declaration => self.query.includes_declarations(),
+            SourceSymbolRole::Structural => false,
+        }
     }
 
     fn declaration_locations(
@@ -299,6 +303,34 @@ impl<'a, 'db, 'scope> ReferenceResolver<'a, 'db, 'scope> {
             });
         }
         Ok(locations)
+    }
+}
+
+/// Request-local declaration matcher used while scanning source occurrences.
+struct ReferenceDeclarationMatcher<'a, 'db> {
+    resolver: SourceSymbolResolver<'a, 'db>,
+    declarations: HashSet<DeclarationRef>,
+}
+
+impl<'a, 'db> ReferenceDeclarationMatcher<'a, 'db> {
+    fn new(db: &'a IndexedViewDb<'db>, declarations: &[DeclarationRef]) -> Self {
+        Self {
+            resolver: SourceSymbolResolver::new(db),
+            declarations: declarations.iter().copied().collect(),
+        }
+    }
+
+    fn matches(&self, symbol: &SymbolAt) -> anyhow::Result<bool> {
+        if let SymbolAt::Declaration { declaration, .. } = symbol
+            && self.declarations.contains(declaration)
+        {
+            return Ok(true);
+        }
+
+        let candidate_declarations = self.resolver.declarations_for_symbol(symbol.clone())?;
+        Ok(candidate_declarations
+            .iter()
+            .any(|candidate| self.declarations.contains(candidate)))
     }
 }
 
