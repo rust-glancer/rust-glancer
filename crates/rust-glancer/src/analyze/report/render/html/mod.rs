@@ -62,10 +62,9 @@ impl HtmlRenderer {
                 render_tab_list(
                     html,
                     "root",
-                    groups
-                        .iter()
-                        .enumerate()
-                        .map(|(index, group)| (index == 0, group.panel_id(), group.title.as_str())),
+                    groups.iter().enumerate().map(|(index, group)| {
+                        (index == 0, group.panel_id(), group.title.as_str(), None)
+                    }),
                 );
 
                 for (index, group) in groups.iter().enumerate() {
@@ -224,13 +223,13 @@ impl HtmlRenderer {
 fn render_tab_list<'a>(
     html: &mut HtmlWriter,
     parent: &str,
-    tabs: impl IntoIterator<Item = (bool, String, &'a str)>,
+    tabs: impl IntoIterator<Item = (bool, String, &'a str, Option<&'a str>)>,
 ) {
     html.element("div")
         .class("tab-list")
         .attr("role", "tablist")
         .children(|html| {
-            for (active, target, title) in tabs {
+            for (active, target, title, description) in tabs {
                 html.element("button")
                     .attr("type", "button")
                     .attr("role", "tab")
@@ -239,7 +238,17 @@ fn render_tab_list<'a>(
                     .attr("data-tab-target", target)
                     .class("tab-button")
                     .class(if active { "active" } else { "" })
-                    .text(title);
+                    .children(|html| {
+                        html.text(title);
+                        if let Some(description) = description {
+                            html.text(" ");
+                            html.element("span")
+                                .class("tab-help")
+                                .attr("title", description)
+                                .attr("aria-label", description)
+                                .text("?");
+                        }
+                    });
             }
         });
 }

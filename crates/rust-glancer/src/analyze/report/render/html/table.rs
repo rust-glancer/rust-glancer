@@ -78,7 +78,12 @@ pub(super) fn render_table_tabs(
                 html,
                 &set_id,
                 tables.iter().enumerate().map(|(index, table)| {
-                    (index == 0, table.panel_id(section_key), table.tab_title())
+                    (
+                        index == 0,
+                        table.panel_id(section_key),
+                        table.tab_title(),
+                        table.description,
+                    )
                 }),
             );
 
@@ -89,11 +94,6 @@ pub(super) fn render_table_tabs(
                     .class("tab-panel")
                     .class(if index == 0 { "active" } else { "" })
                     .children(|html| {
-                        if let Some(description) = table.description {
-                            html.element("p")
-                                .class("block-description")
-                                .text(description);
-                        }
                         render_table_content(html, table.columns, table.rows);
                     });
             }
@@ -125,10 +125,17 @@ fn render_table_content(html: &mut HtmlWriter, columns: &[ReportColumn], rows: &
 fn render_table_header(html: &mut HtmlWriter, columns: &[ReportColumn]) {
     html.element("thead").children(|html| {
         html.element("tr").children(|html| {
+            html.element("th")
+                .attr("scope", "col")
+                .attr("data-column-index", "0")
+                .class("align-right")
+                .class("row-index")
+                .class("sortable")
+                .text("#");
             for (index, column) in columns.iter().enumerate() {
                 html.element("th")
                     .attr("scope", "col")
-                    .attr("data-column-index", index.to_string())
+                    .attr("data-column-index", (index + 1).to_string())
                     .class(align_class(column.align))
                     .class("sortable")
                     .text(&column.title);
@@ -139,8 +146,13 @@ fn render_table_header(html: &mut HtmlWriter, columns: &[ReportColumn]) {
 
 fn render_table_body(html: &mut HtmlWriter, columns: &[ReportColumn], rows: &[ReportRow]) {
     html.element("tbody").children(|html| {
-        for row in rows {
+        for (index, row) in rows.iter().enumerate() {
             html.element("tr").children(|html| {
+                html.element("td")
+                    .attr("data-sort", index.to_string())
+                    .class("align-right")
+                    .class("row-index")
+                    .text(&(index + 1).to_string());
                 for column in columns {
                     let value = row
                         .cells

@@ -93,10 +93,7 @@ impl AnalyzeReport {
         }
 
         if let Some(profile_snapshot) = &self.profile_snapshot {
-            document = document.section("profile_snapshot", |section| {
-                section.group("profile", "Profile");
-                profile_snapshot.append_document(section);
-            });
+            document = profile_snapshot.append_sections(document);
         }
 
         document.build()

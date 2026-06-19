@@ -22,8 +22,8 @@ use serde::Serialize;
 
 use super::stages::duration_ms;
 use crate::analyze::report::{
-    ReportAlign, ReportFieldsBuilder, ReportRowBuilder, ReportSectionBuilder, ReportUnit,
-    ReportValue,
+    ReportAlign, ReportDocumentBuilder, ReportFieldsBuilder, ReportRowBuilder,
+    ReportSectionBuilder, ReportUnit, ReportValue,
 };
 
 /// Serializable view of one captured profile run.
@@ -48,25 +48,56 @@ impl ProfileSnapshotReport {
         }
     }
 
-    pub(super) fn append_document(&self, section: &mut ReportSectionBuilder) {
-        section.title("profile snapshot");
+    pub(super) fn append_sections(
+        &self,
+        mut document: ReportDocumentBuilder,
+    ) -> ReportDocumentBuilder {
+        for scope in self.scopes() {
+            document =
+                document.section(format!("profile_{}", profile_key(scope.path)), |section| {
+                    section.group("profile", "Profile");
+                    scope.append_document(section);
+                });
+        }
 
-        // Scalars stay grouped by activation scope so broad profile sections read as compact field
-        // blocks instead of a single long list of fully qualified paths.
-        let mut scalar_entries = BTreeMap::<&str, Vec<&ProfileEntryReport>>::new();
+        document
+    }
+
+    fn scopes(&self) -> Vec<ProfileScopeReport<'_>> {
+        let mut scopes = Vec::<ProfileScopeReport<'_>>::new();
         for entry in &self.entries {
-            if entry.value.as_report_value().is_some() {
-                scalar_entries
-                    .entry(entry.scope.as_str())
-                    .or_default()
-                    .push(entry);
+            if let Some(scope) = scopes.iter_mut().find(|scope| scope.path == entry.scope) {
+                scope.entries.push(entry);
+            } else {
+                scopes.push(ProfileScopeReport {
+                    path: &entry.scope,
+                    entries: vec![entry],
+                });
             }
         }
 
-        for (scope, entries) in scalar_entries {
-            section.fields(profile_key(scope), |fields| {
-                fields.title(profile_title(scope));
-                for entry in entries {
+        scopes
+    }
+}
+
+struct ProfileScopeReport<'a> {
+    path: &'a str,
+    entries: Vec<&'a ProfileEntryReport>,
+}
+
+impl ProfileScopeReport<'_> {
+    fn append_document(&self, section: &mut ReportSectionBuilder) {
+        section.title(profile_title(self.path));
+
+        let scalar_entries = self
+            .entries
+            .iter()
+            .copied()
+            .filter(|entry| entry.value.as_report_value().is_some())
+            .collect::<Vec<_>>();
+        if !scalar_entries.is_empty() {
+            section.fields("summary", |fields| {
+                for entry in scalar_entries {
                     entry.append_scalar_field(fields);
                 }
             });
@@ -669,21 +700,23 @@ mod tests {
             "keyed entries should be retained in the JSON-facing report"
         );
 
-        let document = crate::analyze::report::ReportDocument::builder("profile_test")
-            .section("profile", |section| report.append_document(section))
-            .build();
-        let section = document
+        let document = report.append_sections(crate::analyze::report::ReportDocument::builder(
+            "profile_test",
+        ));
+        let document = document.build();
+        let counter_section = document
             .sections
-            .first()
-            .expect("profile report should render a section");
+            .iter()
+            .find(|section| section.key == "profile_test_scope")
+            .expect("scalar profile entries should render in their scope section");
         assert!(
-            section
+            counter_section
                 .blocks
                 .iter()
                 .any(|block| matches!(block, crate::analyze::report::ReportBlock::Fields { .. })),
             "scalar profile entries should render as report fields"
         );
-        let counter_description = section.blocks.iter().find_map(|block| match block {
+        let counter_description = counter_section.blocks.iter().find_map(|block| match block {
             crate::analyze::report::ReportBlock::Fields { fields, .. } => fields
                 .iter()
                 .find(|field| field.key == "test_scope_counter")
@@ -695,14 +728,19 @@ mod tests {
             Some("Counts profile events.\nAnother detail."),
             "scalar profile descriptions should be carried into the report IR",
         );
+        let table_section = document
+            .sections
+            .iter()
+            .find(|section| section.key == "profile_test_scope_detail")
+            .expect("table profile entries should render in their scope section");
         assert!(
-            section
+            table_section
                 .blocks
                 .iter()
                 .any(|block| matches!(block, crate::analyze::report::ReportBlock::Table { .. })),
             "keyed profile entries should render as report tables"
         );
-        let table_description = section.blocks.iter().find_map(|block| match block {
+        let table_description = table_section.blocks.iter().find_map(|block| match block {
             crate::analyze::report::ReportBlock::Table {
                 key, description, ..
             } if key == "test_scope_detail_by_key" => description.as_deref(),
@@ -769,13 +807,15 @@ mod tests {
             "declared checkpoint units should survive report capture",
         );
 
-        let document = crate::analyze::report::ReportDocument::builder("profile_test")
-            .section("profile", |section| report.append_document(section))
-            .build();
+        let document = report.append_sections(crate::analyze::report::ReportDocument::builder(
+            "profile_test",
+        ));
+        let document = document.build();
         let table_columns = document
             .sections
-            .first()
-            .expect("profile report should render a section")
+            .iter()
+            .find(|section| section.key == "profile_test_scope")
+            .expect("checkpoint entries should render in their scope section")
             .blocks
             .iter()
             .find_map(|block| match block {

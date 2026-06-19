@@ -16,7 +16,7 @@ static BUILD_CHECKPOINT_COLUMNS: &[ProfileCheckpointColumn] = &[
 declare_metrics! {
     pub(crate) mod metric {
         scope "project.build" {
-            checkpoint CHECKPOINTS = "checkpoints" [columns super::BUILD_CHECKPOINT_COLUMNS];
+            checkpoint CHECKPOINTS = "checkpoints" [columns super::BUILD_CHECKPOINT_COLUMNS, title "Build checkpoints"];
         }
 
         scope "project.build.parse" {

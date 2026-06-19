@@ -10,15 +10,28 @@ use crate::{
 pub struct CounterMetric {
     path: &'static str,
     scope: &'static str,
+    title: Option<&'static str>,
 }
 
 impl CounterMetric {
     pub const fn new(path: &'static str, scope: &'static str) -> Self {
-        Self { path, scope }
+        Self {
+            path,
+            scope,
+            title: None,
+        }
+    }
+
+    pub const fn title(mut self, title: &'static str) -> Self {
+        self.title = Some(title);
+        self
     }
 
     pub const fn descriptor(self) -> ProfileDescriptor {
-        ProfileDescriptor::counter(self.path, self.scope)
+        with_title(
+            ProfileDescriptor::counter(self.path, self.scope),
+            self.title,
+        )
     }
 
     pub const fn path(self) -> &'static str {
@@ -44,15 +57,29 @@ pub struct GaugeMetric {
     path: &'static str,
     scope: &'static str,
     unit: ProfileUnit,
+    title: Option<&'static str>,
 }
 
 impl GaugeMetric {
     pub const fn new(path: &'static str, scope: &'static str, unit: ProfileUnit) -> Self {
-        Self { path, scope, unit }
+        Self {
+            path,
+            scope,
+            unit,
+            title: None,
+        }
+    }
+
+    pub const fn title(mut self, title: &'static str) -> Self {
+        self.title = Some(title);
+        self
     }
 
     pub const fn descriptor(self) -> ProfileDescriptor {
-        ProfileDescriptor::gauge(self.path, self.scope, self.unit)
+        with_title(
+            ProfileDescriptor::gauge(self.path, self.scope, self.unit),
+            self.title,
+        )
     }
 
     pub const fn path(self) -> &'static str {
@@ -109,15 +136,28 @@ impl GaugeMetric {
 pub struct DurationMetric {
     path: &'static str,
     scope: &'static str,
+    title: Option<&'static str>,
 }
 
 impl DurationMetric {
     pub const fn new(path: &'static str, scope: &'static str) -> Self {
-        Self { path, scope }
+        Self {
+            path,
+            scope,
+            title: None,
+        }
+    }
+
+    pub const fn title(mut self, title: &'static str) -> Self {
+        self.title = Some(title);
+        self
     }
 
     pub const fn descriptor(self) -> ProfileDescriptor {
-        ProfileDescriptor::duration(self.path, self.scope)
+        with_title(
+            ProfileDescriptor::duration(self.path, self.scope),
+            self.title,
+        )
     }
 
     pub const fn path(self) -> &'static str {
@@ -142,6 +182,7 @@ impl DurationMetric {
 pub struct KeyedCounterMetric {
     path: &'static str,
     scope: &'static str,
+    title: Option<&'static str>,
     report: ProfileReport,
 }
 
@@ -150,8 +191,14 @@ impl KeyedCounterMetric {
         Self {
             path,
             scope,
+            title: None,
             report: ProfileReport::new(),
         }
+    }
+
+    pub const fn title(mut self, title: &'static str) -> Self {
+        self.title = Some(title);
+        self
     }
 
     pub const fn report(mut self, report: ProfileReport) -> Self {
@@ -160,7 +207,10 @@ impl KeyedCounterMetric {
     }
 
     pub const fn descriptor(self) -> ProfileDescriptor {
-        ProfileDescriptor::keyed_counter(self.path, self.scope).report(self.report)
+        with_title(
+            ProfileDescriptor::keyed_counter(self.path, self.scope).report(self.report),
+            self.title,
+        )
     }
 
     pub const fn path(self) -> &'static str {
@@ -185,6 +235,7 @@ impl KeyedCounterMetric {
 pub struct KeyedDurationMetric {
     path: &'static str,
     scope: &'static str,
+    title: Option<&'static str>,
     report: ProfileReport,
 }
 
@@ -193,8 +244,14 @@ impl KeyedDurationMetric {
         Self {
             path,
             scope,
+            title: None,
             report: ProfileReport::new(),
         }
+    }
+
+    pub const fn title(mut self, title: &'static str) -> Self {
+        self.title = Some(title);
+        self
     }
 
     pub const fn report(mut self, report: ProfileReport) -> Self {
@@ -203,7 +260,10 @@ impl KeyedDurationMetric {
     }
 
     pub const fn descriptor(self) -> ProfileDescriptor {
-        ProfileDescriptor::keyed_duration(self.path, self.scope).report(self.report)
+        with_title(
+            ProfileDescriptor::keyed_duration(self.path, self.scope).report(self.report),
+            self.title,
+        )
     }
 
     pub const fn path(self) -> &'static str {
@@ -224,6 +284,7 @@ impl KeyedDurationMetric {
 pub struct CheckpointMetric {
     path: &'static str,
     scope: &'static str,
+    title: Option<&'static str>,
     columns: &'static [ProfileCheckpointColumn],
 }
 
@@ -232,8 +293,14 @@ impl CheckpointMetric {
         Self {
             path,
             scope,
+            title: None,
             columns: &[],
         }
+    }
+
+    pub const fn title(mut self, title: &'static str) -> Self {
+        self.title = Some(title);
+        self
     }
 
     pub const fn columns(mut self, columns: &'static [ProfileCheckpointColumn]) -> Self {
@@ -242,7 +309,11 @@ impl CheckpointMetric {
     }
 
     pub const fn descriptor(self) -> ProfileDescriptor {
-        ProfileDescriptor::checkpoint_stream(self.path, self.scope).checkpoint_columns(self.columns)
+        with_title(
+            ProfileDescriptor::checkpoint_stream(self.path, self.scope)
+                .checkpoint_columns(self.columns),
+            self.title,
+        )
     }
 
     pub const fn path(self) -> &'static str {
@@ -255,6 +326,16 @@ impl CheckpointMetric {
 
     pub fn record(self, label: impl Into<String>, values: Vec<ProfileCheckpointValue>) {
         crate::record_checkpoint(self.path, label, values);
+    }
+}
+
+const fn with_title(
+    descriptor: ProfileDescriptor,
+    title: Option<&'static str>,
+) -> ProfileDescriptor {
+    match title {
+        Some(title) => descriptor.title(title),
+        None => descriptor,
     }
 }
 

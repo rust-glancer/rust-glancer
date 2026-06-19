@@ -93,6 +93,19 @@ h3 {
   border-bottom-color: var(--surface);
 }
 
+.tab-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
+}
+
 .tab-panel {
   display: none;
 }
@@ -241,6 +254,11 @@ th.sortable[data-sort-dir="asc"]::after {
 th.sortable[data-sort-dir="desc"]::after {
   content: " v";
   color: var(--accent);
+}
+
+.row-index {
+  width: 1%;
+  color: var(--muted);
 }
 
 tbody tr:nth-child(even) {

@@ -64,7 +64,7 @@ mod tests {
                 gauge PENDING_CALLS = "pending_calls" [Count];
             }
             scope "def_map.macros.by_name" {
-                keyed_counter UNRESOLVED_BY_NAME = "unresolved";
+                keyed_counter UNRESOLVED_BY_NAME = "unresolved" [title "Unresolved macros"];
                 keyed_duration EXPANSION_BY_NAME = "expansion";
             }
             scope "def_map.finalize" {
@@ -91,6 +91,16 @@ mod tests {
                 .description_text()
                 .is_some_and(|description| description.contains("Macro calls observed")),
             "metric doc comments should be available as descriptor descriptions",
+        );
+
+        let descriptor = test_metric::descriptors()
+            .iter()
+            .find(|descriptor| descriptor.path() == test_metric::UNRESOLVED_BY_NAME.path())
+            .expect("keyed macro metric should have a descriptor");
+        assert_eq!(
+            descriptor.title_text(),
+            Some("Unresolved macros"),
+            "metric titles should be available as descriptor titles",
         );
     }
 

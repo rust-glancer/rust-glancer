@@ -66,6 +66,9 @@ macro_rules! __rg_profile_checkpoint {
     }};
 }
 
+// Dear reader, this macro is 100% certified vibe coded. Do not try to understand it,
+// just believe it works.
+// For syntax description, see doc-comment on `declare_metrics` reexport below.
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __rg_profile_declare_metrics {
@@ -112,68 +115,90 @@ macro_rules! __rg_profile_declare_metrics {
     (@descriptor [$($doc:literal),+] $name:ident) => {
         $name.descriptor().description(concat!($($doc, "\n"),+))
     };
-    (@declare [$($doc:literal),*] $vis:vis counter $name:ident $scope:literal $suffix:literal) => {
+    (@options $metric:expr) => {
+        $metric
+    };
+    (@options $metric:expr, title $title:literal $(, $($rest:tt)+)?) => {
+        $crate::__rg_profile_declare_metrics!(
+            @options $metric.title($title) $(, $($rest)+)?
+        )
+    };
+    (@options $metric:expr, report $report:expr $(, $($rest:tt)+)?) => {
+        $crate::__rg_profile_declare_metrics!(
+            @options $metric.report($report) $(, $($rest)+)?
+        )
+    };
+    (@options $metric:expr, columns $columns:expr $(, $($rest:tt)+)?) => {
+        $crate::__rg_profile_declare_metrics!(
+            @options $metric.columns($columns) $(, $($rest)+)?
+        )
+    };
+    (@declare [$($doc:literal),*] $vis:vis counter $name:ident $scope:literal $suffix:literal $(, $($option:tt)+)?) => {
         $(#[doc = $doc])*
         $vis const $name: $crate::CounterMetric =
-            $crate::CounterMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope);
-    };
-    (@declare [$($doc:literal),*] $vis:vis gauge $name:ident $scope:literal $suffix:literal, $unit:ident) => {
-        $(#[doc = $doc])*
-        $vis const $name: $crate::GaugeMetric =
-            $crate::GaugeMetric::new(
-                $crate::__rg_profile_declare_metrics!(@path $scope $suffix),
-                $scope,
-                $crate::ProfileUnit::$unit,
+            $crate::__rg_profile_declare_metrics!(
+                @options
+                $crate::CounterMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
+                $(, $($option)+)?
             );
     };
-    (@declare [$($doc:literal),*] $vis:vis duration $name:ident $scope:literal $suffix:literal) => {
+    (@declare [$($doc:literal),*] $vis:vis gauge $name:ident $scope:literal $suffix:literal, $unit:ident $(, $($option:tt)+)?) => {
+        $(#[doc = $doc])*
+        $vis const $name: $crate::GaugeMetric =
+            $crate::__rg_profile_declare_metrics!(
+                @options
+                $crate::GaugeMetric::new(
+                    $crate::__rg_profile_declare_metrics!(@path $scope $suffix),
+                    $scope,
+                    $crate::ProfileUnit::$unit,
+                )
+                $(, $($option)+)?
+            );
+    };
+    (@declare [$($doc:literal),*] $vis:vis duration $name:ident $scope:literal $suffix:literal $(, $($option:tt)+)?) => {
         $(#[doc = $doc])*
         $vis const $name: $crate::DurationMetric =
-            $crate::DurationMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope);
+            $crate::__rg_profile_declare_metrics!(
+                @options
+                $crate::DurationMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
+                $(, $($option)+)?
+            );
     };
-    (@declare [$($doc:literal),*] $vis:vis keyed_counter $name:ident $scope:literal $suffix:literal) => {
+    (@declare [$($doc:literal),*] $vis:vis keyed_counter $name:ident $scope:literal $suffix:literal $(, $($option:tt)+)?) => {
         $(#[doc = $doc])*
         $vis const $name: $crate::KeyedCounterMetric =
-            $crate::KeyedCounterMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope);
+            $crate::__rg_profile_declare_metrics!(
+                @options
+                $crate::KeyedCounterMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
+                $(, $($option)+)?
+            );
     };
-    (@declare [$($doc:literal),*] $vis:vis keyed_counter $name:ident $scope:literal $suffix:literal, report $report:expr) => {
-        $(#[doc = $doc])*
-        $vis const $name: $crate::KeyedCounterMetric =
-            $crate::KeyedCounterMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
-                .report($report);
-    };
-    (@declare [$($doc:literal),*] $vis:vis keyed_duration $name:ident $scope:literal $suffix:literal) => {
+    (@declare [$($doc:literal),*] $vis:vis keyed_duration $name:ident $scope:literal $suffix:literal $(, $($option:tt)+)?) => {
         $(#[doc = $doc])*
         $vis const $name: $crate::KeyedDurationMetric =
-            $crate::KeyedDurationMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope);
+            $crate::__rg_profile_declare_metrics!(
+                @options
+                $crate::KeyedDurationMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
+                $(, $($option)+)?
+            );
     };
-    (@declare [$($doc:literal),*] $vis:vis keyed_duration $name:ident $scope:literal $suffix:literal, report $report:expr) => {
-        $(#[doc = $doc])*
-        $vis const $name: $crate::KeyedDurationMetric =
-            $crate::KeyedDurationMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
-                .report($report);
-    };
-    (@declare [$($doc:literal),*] $vis:vis checkpoint $name:ident $scope:literal $suffix:literal) => {
+    (@declare [$($doc:literal),*] $vis:vis checkpoint $name:ident $scope:literal $suffix:literal $(, $($option:tt)+)?) => {
         $(#[doc = $doc])*
         $vis const $name: $crate::CheckpointMetric =
-            $crate::CheckpointMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope);
+            $crate::__rg_profile_declare_metrics!(
+                @options
+                $crate::CheckpointMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
+                $(, $($option)+)?
+            );
     };
-    (@declare [$($doc:literal),*] $vis:vis checkpoint $name:ident $scope:literal $suffix:literal, columns $columns:expr) => {
-        $(#[doc = $doc])*
-        $vis const $name: $crate::CheckpointMetric =
-            $crate::CheckpointMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
-                .columns($columns);
-    };
-    (@declare [$($doc:literal),*] $vis:vis memory_snapshot $name:ident $scope:literal $suffix:literal) => {
+    (@declare [$($doc:literal),*] $vis:vis memory_snapshot $name:ident $scope:literal $suffix:literal $(, $($option:tt)+)?) => {
         $(#[doc = $doc])*
         $vis const $name: $crate::MemorySnapshotMetric =
-            $crate::MemorySnapshotMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope);
-    };
-    (@declare [$($doc:literal),*] $vis:vis memory_snapshot $name:ident $scope:literal $suffix:literal, title $title:literal) => {
-        $(#[doc = $doc])*
-        $vis const $name: $crate::MemorySnapshotMetric =
-            $crate::MemorySnapshotMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
-                .title($title);
+            $crate::__rg_profile_declare_metrics!(
+                @options
+                $crate::MemorySnapshotMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
+                $(, $($option)+)?
+            );
     };
 }
 
@@ -221,11 +246,11 @@ pub use crate::__rg_profile_checkpoint as checkpoint;
 ///             gauge NAME = "suffix" [Unit];
 ///             duration NAME = "suffix";
 ///             keyed_counter NAME = "suffix";
-///             keyed_counter NAME = "suffix" [report REPORT_EXPR];
+///             keyed_counter NAME = "suffix" [report REPORT_EXPR, title "Report title"];
 ///             keyed_duration NAME = "suffix";
-///             keyed_duration NAME = "suffix" [report REPORT_EXPR];
+///             keyed_duration NAME = "suffix" [report REPORT_EXPR, title "Report title"];
 ///             checkpoint NAME = "suffix";
-///             checkpoint NAME = "suffix" [columns COLUMNS_EXPR];
+///             checkpoint NAME = "suffix" [columns COLUMNS_EXPR, title "Report title"];
 ///             memory_snapshot NAME = "suffix";
 ///             memory_snapshot NAME = "suffix" [title "Report title"];
 ///         }
@@ -234,9 +259,11 @@ pub use crate::__rg_profile_checkpoint as checkpoint;
 /// ```
 ///
 /// Gauge units are written as [`crate::ProfileUnit`] variant names without the `ProfileUnit::`
-/// prefix, such as `Count`, `Bytes`, `Duration`, `Percent`, or `None`. Report and
-/// checkpoint-column expressions are evaluated inside the generated module, so constants declared
-/// next to the macro usually need a `super::` prefix.
+/// prefix, such as `Count`, `Bytes`, `Duration`, `Percent`, or `None`. Options after the unit can
+/// be combined with commas, for example `[Count, title "Pending calls"]`.
+///
+/// Report and checkpoint-column expressions are evaluated inside the generated module, so constants
+/// declared next to the macro usually need a `super::` prefix.
 ///
 /// ```
 /// const BY_COUNT: rg_profile::ProfileReport = rg_profile::ProfileReport {
@@ -258,12 +285,12 @@ pub use crate::__rg_profile_checkpoint as checkpoint;
 ///         }
 ///
 ///         scope "def_map.macros.by_name" {
-///             keyed_counter UNRESOLVED_BY_NAME = "unresolved" [report super::BY_COUNT];
-///             keyed_duration EXPANSION_BY_NAME = "expansion";
+///             keyed_counter UNRESOLVED_BY_NAME = "unresolved" [report super::BY_COUNT, title "Unresolved macros"];
+///             keyed_duration EXPANSION_BY_NAME = "expansion" [title "Slowest macros to expand"];
 ///         }
 ///
 ///         scope "project.build" {
-///             checkpoint CHECKPOINTS = "checkpoints" [columns super::CHECKPOINT_COLUMNS];
+///             checkpoint CHECKPOINTS = "checkpoints" [columns super::CHECKPOINT_COLUMNS, title "Build checkpoints"];
 ///         }
 ///
 ///         scope "project.build.def_map" {

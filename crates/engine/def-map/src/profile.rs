@@ -78,15 +78,15 @@ declare_metrics! {
 
         scope "def_map.macros.by_name" {
             /// Macro definition compilation failures grouped by macro name.
-            keyed_counter FAILED_COMPILE_BY_NAME = "failures.compile" [report super::BY_COUNT];
+            keyed_counter FAILED_COMPILE_BY_NAME = "failures.compile" [report super::BY_COUNT, title "Macro compilation failures"];
             /// Macro expansion failures grouped by macro name.
-            keyed_counter FAILED_EXPAND_BY_NAME = "failures.expand" [report super::BY_COUNT];
+            keyed_counter FAILED_EXPAND_BY_NAME = "failures.expand" [report super::BY_COUNT, title "Macro expansion failures"];
             /// Generated-source parse failures grouped by macro name.
-            keyed_counter FAILED_PARSE_BY_NAME = "failures.parse" [report super::BY_COUNT];
+            keyed_counter FAILED_PARSE_BY_NAME = "failures.parse" [report super::BY_COUNT, title "Macro parsing failures"];
             /// Unresolved macro calls grouped by macro name.
-            keyed_counter UNRESOLVED_BY_NAME = "unresolved" [report super::BY_COUNT];
+            keyed_counter UNRESOLVED_BY_NAME = "unresolved" [report super::BY_COUNT, title "Unresolved macros"];
             /// Macro expansion time grouped by macro name.
-            keyed_duration EXPANSION_BY_NAME = "expansion" [report super::BY_DURATION];
+            keyed_duration EXPANSION_BY_NAME = "expansion" [report super::BY_DURATION, title "Slowest macros to expand"];
         }
     }
 }
