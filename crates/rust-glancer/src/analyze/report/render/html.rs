@@ -400,9 +400,7 @@ fn group_panel_id(group: &SectionGroup<'_>) -> String {
     html_id("group", &group.key)
 }
 
-fn table_block_parts<'a>(
-    block: &'a ReportBlock,
-) -> Option<(&'a str, &'a str, &'a [ReportColumn], &'a [ReportRow])> {
+fn table_block_parts(block: &ReportBlock) -> Option<(&str, &str, &[ReportColumn], &[ReportRow])> {
     match block {
         ReportBlock::Table {
             key,
