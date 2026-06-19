@@ -5,8 +5,8 @@ use expect_test::Expect;
 use crate::{
     Analysis, CompletionApplicability, CompletionClientCapabilities, CompletionInsertText,
     CompletionItem, CompletionQuery, DocumentSymbol, HoverInfo, InlayHint, NavigationTarget,
-    ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, RenameEdit, RenameResult,
-    RenameTarget, SourceTextView, SymbolAt, WorkspaceSymbol,
+    ReferenceLocation, ReferenceQuery as AnalysisReferenceQuery, ReferenceSearchFile, RenameEdit,
+    RenameResult, RenameTarget, SourceTextView, SymbolAt, WorkspaceSymbol,
 };
 use rg_def_map::testonly::DefMapFixture;
 use rg_ir_model::{BodySource, ExprData, ExprKind, PackageSlot, TargetRef};
@@ -276,6 +276,13 @@ impl ReferenceQuery {
         }
     }
 
+    pub(super) fn files(paths: &'static [&'static str]) -> Self {
+        Self {
+            include_declaration: true,
+            scope: ReferenceQueryScope::Files(paths),
+        }
+    }
+
     pub(super) fn libs(packages: &'static [&'static str]) -> Self {
         Self {
             include_declaration: true,
@@ -294,6 +301,7 @@ enum ReferenceQueryScope {
     AllIncludedTargets,
     CurrentTarget,
     CurrentFile,
+    Files(&'static [&'static str]),
     LibTargets(&'static [&'static str]),
 }
 
@@ -511,13 +519,13 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     &mut dump,
                 );
             }
-            AnalysisQueryKind::References(query) => {
-                let references = match query.scope {
+            AnalysisQueryKind::References(reference_options) => {
+                let references = match reference_options.scope {
                     ReferenceQueryScope::AllIncludedTargets => {
                         let use_site_targets = self.db.all_targets();
                         let reference_query = AnalysisReferenceQuery::find_references(
                             &use_site_targets,
-                            query.include_declaration,
+                            reference_options.include_declaration,
                         );
                         self.db
                             .analysis()
@@ -528,7 +536,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                         let use_site_targets = [target];
                         let reference_query = AnalysisReferenceQuery::find_references(
                             &use_site_targets,
-                            query.include_declaration,
+                            reference_options.include_declaration,
                         );
                         self.db
                             .analysis()
@@ -537,7 +545,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                     }
                     ReferenceQueryScope::CurrentFile => {
                         let reference_query = AnalysisReferenceQuery::file_scoped(target, file_id);
-                        let reference_query = if query.include_declaration {
+                        let reference_query = if reference_options.include_declaration {
                             reference_query
                         } else {
                             reference_query.without_declarations()
@@ -546,6 +554,24 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                             .analysis()
                             .references(target, file_id, offset, reference_query)
                             .expect("fixture file-scoped references query should resolve")
+                    }
+                    ReferenceQueryScope::Files(paths) => {
+                        let search_files = paths
+                            .iter()
+                            .map(|path| {
+                                let (target, file_id) =
+                                    self.db.target_and_file_for_path(&query.target, path);
+                                ReferenceSearchFile { target, file_id }
+                            })
+                            .collect::<Vec<_>>();
+                        let reference_query = AnalysisReferenceQuery::find_references_in_files(
+                            &search_files,
+                            reference_options.include_declaration,
+                        );
+                        self.db
+                            .analysis()
+                            .references(target, file_id, offset, reference_query)
+                            .expect("fixture file-list references query should resolve")
                     }
                     ReferenceQueryScope::LibTargets(packages) => {
                         let use_site_targets = packages
@@ -556,7 +582,7 @@ impl<'a> AnalysisQuerySnapshot<'a> {
                             .collect::<Vec<_>>();
                         let reference_query = AnalysisReferenceQuery::find_references(
                             &use_site_targets,
-                            query.include_declaration,
+                            reference_options.include_declaration,
                         );
                         self.db
                             .analysis()

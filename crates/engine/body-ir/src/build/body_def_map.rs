@@ -312,7 +312,7 @@ impl BodyDefMapBuildState {
         let final_scopes = self.resolve_import_scopes(def_maps)?;
         let unresolved_imports = self.collect_unresolved_imports(def_maps, &final_scopes)?;
 
-        for (module_idx, scope) in final_scopes.iter().enumerate() {
+        for (module_idx, scope) in final_scopes.into_iter().enumerate() {
             let module = self
                 .builder
                 .module_mut(ModuleId(module_idx))

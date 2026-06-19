@@ -624,6 +624,51 @@ pub fn use_there(_: User) {}
 }
 
 #[test]
+fn file_list_references_scan_selected_files_only() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_file_list_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod other;
+mod skipped;
+
+pub struct User;
+
+pub fn use_here() {
+    let _: Us$file_list_type_ref$er;
+}
+
+//- /src/other.rs
+use crate::User;
+
+pub fn use_there(_: User) {}
+
+//- /src/skipped.rs
+use crate::User;
+
+pub fn use_elsewhere(_: User) {}
+"#,
+        &[AnalysisQuery::references(
+            "file-list type references",
+            "file_list_type_ref",
+            ReferenceQuery::files(&["src/lib.rs", "src/other.rs"]),
+        )],
+        expect![[r#"
+            file-list type references
+            - `User` @ src/lib.rs:4:12-4:16
+            - `User` @ src/lib.rs:7:12-7:16
+            - `User` @ src/other.rs:1:12-1:16
+            - `User` @ src/other.rs:3:21-3:25
+        "#]],
+    );
+}
+
+#[test]
 fn file_scoped_references_do_not_include_external_declaration() {
     check_analysis_queries(
         r#"
@@ -730,6 +775,39 @@ pub fn app_use(_: dep::Api) {
             - `Api` @ dep/src/lib.rs:1:12-1:15
             - `Api` @ dep/src/lib.rs:3:19-3:22
             - `Api` @ helper/src/lib.rs:1:27-1:30
+        "#]],
+    );
+}
+
+#[test]
+fn references_keep_import_alias_uses_for_type_declarations() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_import_alias_references"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod api {
+    pub struct Us$aliased_type_ref$er;
+}
+
+use api::User as Account;
+
+pub fn use_it(_: Account) {}
+"#,
+        &[AnalysisQuery::references(
+            "aliased type references",
+            "aliased_type_ref",
+            ReferenceQuery::all(),
+        )],
+        expect![[r#"
+            aliased type references
+            - `User` @ src/lib.rs:2:16-2:20
+            - `User` @ src/lib.rs:5:10-5:14
+            - `Account` @ src/lib.rs:7:18-7:25
         "#]],
     );
 }

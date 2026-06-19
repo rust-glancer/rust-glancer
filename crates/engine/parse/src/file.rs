@@ -169,6 +169,11 @@ impl<'a> ParsedFile<'a> {
 
         file_text.get(start..end).map(ToString::to_string)
     }
+
+    /// Returns source text from the same saved or dirty snapshot that backs this parsed file.
+    pub fn source_text(&self) -> anyhow::Result<Cow<'a, str>> {
+        self.data.source.read(&self.data.path)
+    }
 }
 
 /// Shared parse cache that owns filesystem-backed source files and syntax trees.

@@ -72,6 +72,7 @@ futures = "0.3.32"
 gungraun = "0.18.2"
 itertools = "0.14.0"
 ls_types = { package = "ls-types", version = "0.0.6" }
+memchr = "2.8.0"
 parser = { package = "rg_parser", path = "crates/vendor/parser" }
 proc-macro2 = "1.0.106"
 quote = "1.0.45"
