@@ -1290,12 +1290,20 @@ impl EngineWorker {
             MemoryReporter::log_checkpoint(memory_control.as_ref(), label, "query_before");
         let result = query(self);
         let query_elapsed = started.elapsed();
-        MemoryReporter::log_checkpoint_delta(
+        let memory_after_query = MemoryReporter::log_checkpoint_delta(
             memory_control.as_ref(),
             label,
             "query_after",
             memory_before,
         );
+        self.project.release_query_memory();
+        MemoryReporter::log_checkpoint_delta(
+            memory_control.as_ref(),
+            label,
+            "query_cleanup_after",
+            memory_after_query,
+        );
+        MemoryReporter::purge_and_report_debug(memory_control.as_ref(), "after analysis query");
         let should_recover = result
             .as_ref()
             .err()

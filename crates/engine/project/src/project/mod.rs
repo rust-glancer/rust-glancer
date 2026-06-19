@@ -20,7 +20,10 @@ use rg_parse::FileId;
 use rg_workspace::WorkspaceMetadata;
 
 use self::state::ProjectState;
-use crate::{indexing::IndexingPerformancePreference, residency::PackageResidencyPlan};
+use crate::{
+    indexing::IndexingPerformancePreference,
+    residency::{PackageResidency, PackageResidencyPlan},
+};
 use rg_std::MemorySize;
 
 pub use self::{
@@ -114,6 +117,28 @@ impl Project {
         changes: impl IntoIterator<Item = DirtyFileChange>,
     ) -> anyhow::Result<Option<Project>> {
         dirty::build_overlay(self, changes)
+    }
+
+    /// Drops state that read-only queries may lazily reconstruct from durable backing data.
+    ///
+    /// Query transactions own their offloaded package payloads, so those die with the request.
+    /// Source-coordinate conversion is different: it repopulates line-index cells inside the
+    /// project itself, and the owner has to reset those cells after the request settles.
+    pub fn release_query_memory(&mut self) {
+        let offloadable_packages = self
+            .state
+            .package_residency
+            .packages()
+            .iter()
+            .enumerate()
+            .filter_map(|(package_idx, residency)| {
+                (*residency == PackageResidency::Offloadable).then_some(package_idx)
+            })
+            .collect::<Vec<_>>();
+
+        self.state
+            .parse
+            .offload_line_indexes_for_packages(&offloadable_packages);
     }
 }
 
