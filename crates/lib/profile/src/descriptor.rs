@@ -159,6 +159,7 @@ pub struct ProfileDescriptor {
     kind: ProfileInstrumentKind,
     unit: ProfileUnit,
     title: Option<&'static str>,
+    description: Option<&'static str>,
     report: ProfileReport,
     checkpoint_columns: &'static [ProfileCheckpointColumn],
 }
@@ -234,6 +235,7 @@ impl ProfileDescriptor {
             kind,
             unit,
             title: None,
+            description: None,
             report: ProfileReport::new(),
             checkpoint_columns: EMPTY_CHECKPOINT_COLUMNS,
         }
@@ -241,6 +243,11 @@ impl ProfileDescriptor {
 
     pub const fn title(mut self, title: &'static str) -> Self {
         self.title = Some(title);
+        self
+    }
+
+    pub const fn description(mut self, description: &'static str) -> Self {
+        self.description = Some(description);
         self
     }
 
@@ -272,6 +279,10 @@ impl ProfileDescriptor {
 
     pub fn title_text(self) -> Option<&'static str> {
         self.title
+    }
+
+    pub fn description_text(self) -> Option<&'static str> {
+        self.description
     }
 
     pub fn report_hints(self) -> ProfileReport {

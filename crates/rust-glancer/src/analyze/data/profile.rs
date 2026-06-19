@@ -69,6 +69,8 @@ pub(crate) struct ProfileEntryReport {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) sort: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) limit: Option<usize>,
@@ -86,6 +88,7 @@ impl ProfileEntryReport {
             kind: instrument_kind(descriptor.kind()),
             unit: unit(descriptor.unit()),
             title: descriptor.title_text().map(ToString::to_string),
+            description: descriptor.description_text().map(profile_description),
             sort: descriptor.report_hints().sort.map(report_sort),
             limit: descriptor.report_hints().limit,
             checkpoint_columns: descriptor
@@ -102,7 +105,12 @@ impl ProfileEntryReport {
             return;
         };
 
-        fields.value_as(profile_key(&self.path), self.entry_title(), value);
+        fields.value_as_with_description(
+            profile_key(&self.path),
+            self.entry_title(),
+            value,
+            self.description.clone(),
+        );
     }
 
     fn append_table(&self, section: &mut ReportSectionBuilder) {
@@ -111,6 +119,7 @@ impl ProfileEntryReport {
                 section.table(profile_key(&self.path), |table| {
                     table
                         .title(self.entry_title())
+                        .description_opt(self.description.clone())
                         .count_column("count")
                         .text_column("key");
 
@@ -137,6 +146,7 @@ impl ProfileEntryReport {
                 section.table(profile_key(&self.path), |table| {
                     table
                         .title(self.entry_title())
+                        .description_opt(self.description.clone())
                         .duration_column_as("total_ms", "total")
                         .duration_column_as("average_ms", "avg")
                         .duration_column_as("max_ms", "max")
@@ -183,6 +193,7 @@ impl ProfileEntryReport {
         section.table(profile_key(&self.path), |table| {
             table
                 .title(self.entry_title())
+                .description_opt(self.description.clone())
                 .duration_column("phase")
                 .duration_column("elapsed");
 
@@ -498,6 +509,16 @@ fn profile_title(path: &str) -> String {
     path.replace(['.', '_'], " ")
 }
 
+fn profile_description(description: &str) -> String {
+    description
+        .lines()
+        .map(str::trim)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
+}
+
 fn checkpoint_value_columns(
     declared_columns: &[ProfileCheckpointColumnReport],
     checkpoints: &[ProfileCheckpointReport],
@@ -546,8 +567,10 @@ mod tests {
     #[test]
     fn captures_dynamic_profile_snapshot_for_json_report() {
         let descriptors = [
-            ProfileDescriptor::counter("test.scope.counter", "test.scope"),
-            ProfileDescriptor::keyed_duration("test.scope.detail.by_key", "test.scope.detail"),
+            ProfileDescriptor::counter("test.scope.counter", "test.scope")
+                .description(" Counts profile events.\n Another detail."),
+            ProfileDescriptor::keyed_duration("test.scope.detail.by_key", "test.scope.detail")
+                .description("Duration grouped by item."),
         ];
         let run = ProfileTest::start(&descriptors, "test.scope.detail");
 
@@ -567,6 +590,16 @@ mod tests {
                 .iter()
                 .any(|entry| entry.path == "test.scope.counter"),
             "summary entries should be retained in the JSON-facing report"
+        );
+        let counter_entry = report
+            .entries
+            .iter()
+            .find(|entry| entry.path == "test.scope.counter")
+            .expect("counter entry should be retained in the JSON-facing report");
+        assert_eq!(
+            counter_entry.description.as_deref(),
+            Some("Counts profile events.\nAnother detail."),
+            "profile descriptions should be normalized for JSON-facing reports",
         );
         assert!(
             report
@@ -590,12 +623,35 @@ mod tests {
                 .any(|block| matches!(block, crate::analyze::report::ReportBlock::Fields { .. })),
             "scalar profile entries should render as report fields"
         );
+        let counter_description = section.blocks.iter().find_map(|block| match block {
+            crate::analyze::report::ReportBlock::Fields { fields, .. } => fields
+                .iter()
+                .find(|field| field.key == "test_scope_counter")
+                .and_then(|field| field.description.as_deref()),
+            _ => None,
+        });
+        assert_eq!(
+            counter_description,
+            Some("Counts profile events.\nAnother detail."),
+            "scalar profile descriptions should be carried into the report IR",
+        );
         assert!(
             section
                 .blocks
                 .iter()
                 .any(|block| matches!(block, crate::analyze::report::ReportBlock::Table { .. })),
             "keyed profile entries should render as report tables"
+        );
+        let table_description = section.blocks.iter().find_map(|block| match block {
+            crate::analyze::report::ReportBlock::Table {
+                key, description, ..
+            } if key == "test_scope_detail_by_key" => description.as_deref(),
+            _ => None,
+        });
+        assert_eq!(
+            table_description,
+            Some("Duration grouped by item."),
+            "table profile descriptions should be carried into the report IR",
         );
     }
 

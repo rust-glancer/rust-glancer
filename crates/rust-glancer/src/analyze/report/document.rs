@@ -91,6 +91,8 @@ pub(crate) enum ReportBlock {
         key: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        description: Option<String>,
         columns: Vec<ReportColumn>,
         rows: Vec<ReportRow>,
     },
@@ -120,12 +122,14 @@ impl ReportBlock {
     pub(crate) fn table(
         key: impl Into<String>,
         title: Option<String>,
+        description: Option<String>,
         columns: Vec<ReportColumn>,
         rows: Vec<ReportRow>,
     ) -> Self {
         Self::Table {
             key: key.into(),
             title,
+            description,
             columns,
             rows,
         }
@@ -347,6 +351,19 @@ impl ReportFieldsBuilder {
         self
     }
 
+    pub(crate) fn value_as_with_description(
+        &mut self,
+        key: impl Into<String>,
+        title: impl Into<String>,
+        value: ReportValue,
+        description: Option<String>,
+    ) -> &mut Self {
+        let mut field = ReportField::new(key, title, value);
+        field.description = description;
+        self.fields.push(field);
+        self
+    }
+
     pub(crate) fn text(&mut self, key: impl Into<String>, value: impl Into<String>) -> &mut Self {
         self.value(key, ReportValue::text(value))
     }
@@ -377,6 +394,7 @@ impl ReportFieldsBuilder {
 pub(crate) struct ReportTableBuilder {
     key: String,
     title: Option<String>,
+    description: Option<String>,
     columns: Vec<ReportColumn>,
     rows: Vec<ReportRow>,
 }
@@ -386,6 +404,7 @@ impl ReportTableBuilder {
         let key = key.into();
         Self {
             title: Some(default_title(&key)),
+            description: None,
             key,
             columns: Vec::new(),
             rows: Vec::new(),
@@ -399,6 +418,11 @@ impl ReportTableBuilder {
 
     pub(crate) fn untitled(&mut self) -> &mut Self {
         self.title = None;
+        self
+    }
+
+    pub(crate) fn description_opt(&mut self, description: Option<String>) -> &mut Self {
+        self.description = description;
         self
     }
 
@@ -469,7 +493,13 @@ impl ReportTableBuilder {
     }
 
     fn build(self) -> ReportBlock {
-        ReportBlock::table(self.key, self.title, self.columns, self.rows)
+        ReportBlock::table(
+            self.key,
+            self.title,
+            self.description,
+            self.columns,
+            self.rows,
+        )
     }
 }
 

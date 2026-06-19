@@ -172,6 +172,11 @@ details.report-section {
   font-weight: 400;
 }
 
+.block-description {
+  margin: -4px 0 12px;
+  color: var(--muted);
+}
+
 .table-wrap {
   overflow-x: auto;
   border: 1px solid var(--border);

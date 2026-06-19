@@ -59,6 +59,7 @@ mod tests {
     declare_metrics! {
         pub(super) mod test_metric {
             scope "def_map.macros" {
+                /// Macro calls observed by the finalization loop.
                 counter MACRO_CALLS_SEEN = "calls.seen";
                 gauge PENDING_CALLS = "pending_calls" [Count];
             }
@@ -76,6 +77,21 @@ mod tests {
                 memory_snapshot DEF_MAP_MEMORY = "memory" [title "after def-map"];
             }
         }
+    }
+
+    #[test]
+    fn declare_metrics_captures_doc_comments_as_descriptions() {
+        let descriptor = test_metric::descriptors()
+            .iter()
+            .find(|descriptor| descriptor.path() == test_metric::MACRO_CALLS_SEEN.path())
+            .expect("macro calls metric should have a descriptor");
+
+        assert!(
+            descriptor
+                .description_text()
+                .is_some_and(|description| description.contains("Macro calls observed")),
+            "metric doc comments should be available as descriptor descriptions",
+        );
     }
 
     #[test]

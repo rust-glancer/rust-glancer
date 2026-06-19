@@ -74,6 +74,7 @@ macro_rules! __rg_profile_declare_metrics {
             $(
                 scope $scope:literal {
                     $(
+                        $(#[doc = $doc:literal])*
                         $kind:ident $name:ident = $suffix:literal $( [$($option:tt)+] )? ;
                     )*
                 }
@@ -84,7 +85,7 @@ macro_rules! __rg_profile_declare_metrics {
             $(
                 $(
                     $crate::__rg_profile_declare_metrics!(
-                        @declare $vis $kind $name $scope $suffix $(, $($option)+)?
+                        @declare [$($doc),*] $vis $kind $name $scope $suffix $(, $($option)+)?
                     );
                 )*
             )*
@@ -92,7 +93,7 @@ macro_rules! __rg_profile_declare_metrics {
             $vis static DESCRIPTORS: &[$crate::ProfileDescriptor] = &[
                 $(
                     $(
-                        $name.descriptor(),
+                        $crate::__rg_profile_declare_metrics!(@descriptor [$($doc),*] $name),
                     )*
                 )*
             ];
@@ -105,11 +106,19 @@ macro_rules! __rg_profile_declare_metrics {
     (@path $scope:literal $suffix:literal) => {
         concat!($scope, ".", $suffix)
     };
-    (@declare $vis:vis counter $name:ident $scope:literal $suffix:literal) => {
+    (@descriptor [] $name:ident) => {
+        $name.descriptor()
+    };
+    (@descriptor [$($doc:literal),+] $name:ident) => {
+        $name.descriptor().description(concat!($($doc, "\n"),+))
+    };
+    (@declare [$($doc:literal),*] $vis:vis counter $name:ident $scope:literal $suffix:literal) => {
+        $(#[doc = $doc])*
         $vis const $name: $crate::CounterMetric =
             $crate::CounterMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope);
     };
-    (@declare $vis:vis gauge $name:ident $scope:literal $suffix:literal, $unit:ident) => {
+    (@declare [$($doc:literal),*] $vis:vis gauge $name:ident $scope:literal $suffix:literal, $unit:ident) => {
+        $(#[doc = $doc])*
         $vis const $name: $crate::GaugeMetric =
             $crate::GaugeMetric::new(
                 $crate::__rg_profile_declare_metrics!(@path $scope $suffix),
@@ -117,42 +126,51 @@ macro_rules! __rg_profile_declare_metrics {
                 $crate::ProfileUnit::$unit,
             );
     };
-    (@declare $vis:vis duration $name:ident $scope:literal $suffix:literal) => {
+    (@declare [$($doc:literal),*] $vis:vis duration $name:ident $scope:literal $suffix:literal) => {
+        $(#[doc = $doc])*
         $vis const $name: $crate::DurationMetric =
             $crate::DurationMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope);
     };
-    (@declare $vis:vis keyed_counter $name:ident $scope:literal $suffix:literal) => {
+    (@declare [$($doc:literal),*] $vis:vis keyed_counter $name:ident $scope:literal $suffix:literal) => {
+        $(#[doc = $doc])*
         $vis const $name: $crate::KeyedCounterMetric =
             $crate::KeyedCounterMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope);
     };
-    (@declare $vis:vis keyed_counter $name:ident $scope:literal $suffix:literal, report $report:expr) => {
+    (@declare [$($doc:literal),*] $vis:vis keyed_counter $name:ident $scope:literal $suffix:literal, report $report:expr) => {
+        $(#[doc = $doc])*
         $vis const $name: $crate::KeyedCounterMetric =
             $crate::KeyedCounterMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
                 .report($report);
     };
-    (@declare $vis:vis keyed_duration $name:ident $scope:literal $suffix:literal) => {
+    (@declare [$($doc:literal),*] $vis:vis keyed_duration $name:ident $scope:literal $suffix:literal) => {
+        $(#[doc = $doc])*
         $vis const $name: $crate::KeyedDurationMetric =
             $crate::KeyedDurationMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope);
     };
-    (@declare $vis:vis keyed_duration $name:ident $scope:literal $suffix:literal, report $report:expr) => {
+    (@declare [$($doc:literal),*] $vis:vis keyed_duration $name:ident $scope:literal $suffix:literal, report $report:expr) => {
+        $(#[doc = $doc])*
         $vis const $name: $crate::KeyedDurationMetric =
             $crate::KeyedDurationMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
                 .report($report);
     };
-    (@declare $vis:vis checkpoint $name:ident $scope:literal $suffix:literal) => {
+    (@declare [$($doc:literal),*] $vis:vis checkpoint $name:ident $scope:literal $suffix:literal) => {
+        $(#[doc = $doc])*
         $vis const $name: $crate::CheckpointMetric =
             $crate::CheckpointMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope);
     };
-    (@declare $vis:vis checkpoint $name:ident $scope:literal $suffix:literal, columns $columns:expr) => {
+    (@declare [$($doc:literal),*] $vis:vis checkpoint $name:ident $scope:literal $suffix:literal, columns $columns:expr) => {
+        $(#[doc = $doc])*
         $vis const $name: $crate::CheckpointMetric =
             $crate::CheckpointMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
                 .columns($columns);
     };
-    (@declare $vis:vis memory_snapshot $name:ident $scope:literal $suffix:literal) => {
+    (@declare [$($doc:literal),*] $vis:vis memory_snapshot $name:ident $scope:literal $suffix:literal) => {
+        $(#[doc = $doc])*
         $vis const $name: $crate::MemorySnapshotMetric =
             $crate::MemorySnapshotMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope);
     };
-    (@declare $vis:vis memory_snapshot $name:ident $scope:literal $suffix:literal, title $title:literal) => {
+    (@declare [$($doc:literal),*] $vis:vis memory_snapshot $name:ident $scope:literal $suffix:literal, title $title:literal) => {
+        $(#[doc = $doc])*
         $vis const $name: $crate::MemorySnapshotMetric =
             $crate::MemorySnapshotMetric::new($crate::__rg_profile_declare_metrics!(@path $scope $suffix), $scope)
                 .title($title);
@@ -186,6 +204,9 @@ pub use crate::__rg_profile_checkpoint as checkpoint;
 /// item suffix to its scope with a dot, so `scope "def_map.macros"` plus
 /// `counter CALLS = "calls"` declares the path `def_map.macros.calls`.
 ///
+/// Doc comments on individual metrics are copied to the generated metric constants and are also
+/// stored as descriptor descriptions for report renderers.
+///
 /// The generated module contains one typed metric constant per item, a `DESCRIPTORS` slice, and a
 /// `descriptors()` function. The visibility on the module is reused for those generated items.
 ///
@@ -195,6 +216,7 @@ pub use crate::__rg_profile_checkpoint as checkpoint;
 /// rg_profile::declare_metrics! {
 ///     pub(crate) mod metric {
 ///         scope "scope.path" {
+///             /// Optional description carried into profile reports.
 ///             counter NAME = "suffix";
 ///             gauge NAME = "suffix" [Unit];
 ///             duration NAME = "suffix";

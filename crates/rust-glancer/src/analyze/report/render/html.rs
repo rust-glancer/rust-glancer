@@ -170,10 +170,17 @@ impl HtmlRenderer {
             }
             ReportBlock::Table {
                 title,
+                description,
                 columns,
                 rows,
                 ..
-            } => self.render_table(html, title.as_deref(), columns, rows),
+            } => self.render_table(
+                html,
+                title.as_deref(),
+                description.as_deref(),
+                columns,
+                rows,
+            ),
             ReportBlock::Warning { text } => {
                 html.element("div")
                     .class("report-block")
@@ -205,14 +212,15 @@ impl HtmlRenderer {
                     html,
                     &set_id,
                     blocks.iter().enumerate().filter_map(|(index, block)| {
-                        table_block_parts(block).map(|(key, title, _, _)| {
+                        table_block_parts(block).map(|(key, title, _, _, _)| {
                             (index == 0, html_id(section_key, key), title)
                         })
                     }),
                 );
 
                 for (index, block) in blocks.iter().enumerate() {
-                    let Some((key, _title, columns, rows)) = table_block_parts(block) else {
+                    let Some((key, _title, description, columns, rows)) = table_block_parts(block)
+                    else {
                         continue;
                     };
                     html.element("div")
@@ -221,6 +229,11 @@ impl HtmlRenderer {
                         .class("tab-panel")
                         .class(if index == 0 { "active" } else { "" })
                         .children(|html| {
+                            if let Some(description) = description {
+                                html.element("p")
+                                    .class("block-description")
+                                    .text(description);
+                            }
                             self.render_table_content(html, columns, rows);
                         });
                 }
@@ -280,6 +293,7 @@ impl HtmlRenderer {
         &self,
         html: &mut HtmlWriter,
         title: Option<&str>,
+        description: Option<&str>,
         columns: &[ReportColumn],
         rows: &[ReportRow],
     ) {
@@ -289,6 +303,11 @@ impl HtmlRenderer {
             .children(|html| {
                 if let Some(title) = title {
                     html.element("h3").text(title);
+                }
+                if let Some(description) = description {
+                    html.element("p")
+                        .class("block-description")
+                        .text(description);
                 }
 
                 self.render_table_content(html, columns, rows);
@@ -400,14 +419,23 @@ fn group_panel_id(group: &SectionGroup<'_>) -> String {
     html_id("group", &group.key)
 }
 
-fn table_block_parts(block: &ReportBlock) -> Option<(&str, &str, &[ReportColumn], &[ReportRow])> {
+fn table_block_parts(
+    block: &ReportBlock,
+) -> Option<(&str, &str, Option<&str>, &[ReportColumn], &[ReportRow])> {
     match block {
         ReportBlock::Table {
             key,
             title,
+            description,
             columns,
             rows,
-        } => Some((key, title.as_deref().unwrap_or(key.as_str()), columns, rows)),
+        } => Some((
+            key,
+            title.as_deref().unwrap_or(key.as_str()),
+            description.as_deref(),
+            columns,
+            rows,
+        )),
         _ => None,
     }
 }
