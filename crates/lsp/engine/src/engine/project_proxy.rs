@@ -53,6 +53,13 @@ impl ProjectProxy {
             .context("LSP engine is not initialized")
     }
 
+    pub(super) fn release_query_memory(&mut self) {
+        if let Some(saved) = &mut self.saved {
+            saved.release_query_memory();
+        }
+        self.dirty_overlay.release_query_memory();
+    }
+
     pub(super) fn with_query_snapshot<T>(
         &mut self,
         dirty: Option<&DirtyDocumentSnapshot>,

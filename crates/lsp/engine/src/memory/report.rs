@@ -79,4 +79,34 @@ impl MemoryReporter {
             );
         }
     }
+
+    pub(crate) fn purge_and_report_debug(memory_control: &dyn MemoryControl, label: &'static str) {
+        let before_purge = MemoryStats::capture(memory_control);
+        let purge = if memory_control.allocator_purge_enabled() {
+            MemoryPurge::try_purge(memory_control, before_purge)
+        } else {
+            None
+        };
+        let after = match purge {
+            Some(purge) => purge.after,
+            None => before_purge,
+        };
+
+        tracing::debug!(
+            label,
+            allocator = memory_control.allocator_name(),
+            allocator_purge_enabled = memory_control.allocator_purge_enabled(),
+            allocator_purged = purge.is_some(),
+            stats = %after,
+            "allocation info"
+        );
+
+        if let Some(purge) = purge {
+            tracing::debug!(
+                label,
+                purge = %purge,
+                "purge stats"
+            );
+        }
+    }
 }

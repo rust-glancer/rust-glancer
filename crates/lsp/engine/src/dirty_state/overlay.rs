@@ -28,6 +28,12 @@ impl DirtyOverlayCache {
         self.cached = None;
     }
 
+    pub(crate) fn release_query_memory(&mut self) {
+        if let Some(cached) = &mut self.cached {
+            cached.project.release_query_memory();
+        }
+    }
+
     pub(crate) fn project_for_dirty(
         &mut self,
         base: &Project,
