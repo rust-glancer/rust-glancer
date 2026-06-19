@@ -1,3 +1,16 @@
+//! Profile reports are captured from the dynamic `rg_profile` snapshot, then reshaped into the
+//! generic report document used by text, JSON, and HTML output.
+//!
+//! The important bit is that the data is dynamic, but not completely free-form. Descriptors still
+//! give us the declaration order, scopes, titles, descriptions, sorting hints, and checkpoint
+//! columns. The snapshot only contains entries that were registered and enabled for this run, so a
+//! report for `--profile default` and a report for `--profile all` can have different sections
+//! without either renderer needing to know every possible metric ahead of time.
+//!
+//! In practice, this module is the small adapter in the middle: `rg_profile` knows how to collect,
+//! the report IR knows how to render, and this file teaches them to talk without making either side
+//! learn too much about the other. Tiny diplomatic service, but for counters.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use rg_profile::{
@@ -13,9 +26,14 @@ use crate::analyze::report::{
     ReportValue,
 };
 
-/// Serializable view of the dynamic profile snapshot produced by `rg_profile`.
+/// Serializable view of one captured profile run.
+///
+/// Entries are kept in snapshot order, which follows descriptor declaration order. That makes the
+/// JSON stable enough for humans and scripts, while still letting filters decide which entries are
+/// present in the first place.
 #[derive(Debug, Serialize)]
 pub(crate) struct ProfileSnapshotReport {
+    /// Every profile entry that survived registration and filtering for this run.
     pub(crate) entries: Vec<ProfileEntryReport>,
 }
 
@@ -62,20 +80,33 @@ impl ProfileSnapshotReport {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ProfileEntryReport {
+    /// Fully qualified profile path, for example `def_map.macros.calls.seen`.
     pub(crate) path: String,
+    /// Selector scope that owns this metric. Scalars are grouped by this in the rendered report.
     pub(crate) scope: String,
+    /// Metric kind as a small string, kept JSON-friendly and easy to scan.
     pub(crate) kind: &'static str,
+    /// Default unit declared by the descriptor. Individual checkpoint values can still carry their
+    /// own units.
     pub(crate) unit: &'static str,
+    /// Optional display name. When it is missing, the path suffix is prettified instead.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) title: Option<String>,
+    /// Optional doc-comment text from the metric declaration. HTML/JSON use it, text output stays
+    /// compact.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) description: Option<String>,
+    /// Optional table sort hint, mostly useful for "top N" style keyed metrics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) sort: Option<&'static str>,
+    /// Optional row limit for table-like metrics. No limit means "show everything we captured".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) limit: Option<usize>,
+    /// Declared checkpoint columns. Runtime checkpoints may add extra columns; declared ones stay
+    /// first because humans usually picked that order for a reason.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) checkpoint_columns: Vec<ProfileCheckpointColumnReport>,
+    /// Captured value in the shape that best matches the metric kind.
     pub(crate) value: ProfileValueReport,
 }
 
@@ -235,8 +266,11 @@ impl ProfileEntryReport {
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ProfileCheckpointColumnReport {
+    /// Value key used inside checkpoint rows.
     pub(crate) key: String,
+    /// Human-facing column title.
     pub(crate) title: String,
+    /// Optional unit used by rich renderers for formatting and alignment.
     pub(crate) unit: Option<ReportUnit>,
 }
 
@@ -259,6 +293,10 @@ impl ProfileCheckpointColumnReport {
     }
 }
 
+/// Captured metric value, normalized just enough for JSON and report rendering.
+///
+/// Simple values become fields. Values with their own row shape become tables. This keeps renderers
+/// generic: they do not need to know what a "macro expansion by name" is to show it nicely.
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub(crate) enum ProfileValueReport {
@@ -316,7 +354,10 @@ impl ProfileValueReport {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ProfileMemorySnapshotReport {
+    /// Total retained memory represented by the sampled profile snapshot.
     pub(crate) retained_bytes: usize,
+    /// Number of aggregate buckets. This is mostly a quick smell test for how detailed the snapshot
+    /// is, not a user-facing memory number by itself.
     pub(crate) aggregate_bucket_count: usize,
 }
 
@@ -331,7 +372,9 @@ impl ProfileMemorySnapshotReport {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ProfileKeyedCounterReport {
+    /// Grouping key recorded by the metric, such as a macro name or cache bucket.
     pub(crate) key: String,
+    /// Counter value for this key.
     pub(crate) count: u64,
 }
 
@@ -346,10 +389,15 @@ impl ProfileKeyedCounterReport {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ProfileKeyedDurationReport {
+    /// Grouping key recorded by the metric, such as a macro name or operation label.
     pub(crate) key: String,
+    /// Number of samples folded into this row.
     pub(crate) count: u64,
+    /// Sum of all samples, already converted to milliseconds for report output.
     pub(crate) total_ms: f64,
+    /// Average sample duration in milliseconds.
     pub(crate) average_ms: f64,
+    /// Slowest single sample in milliseconds.
     pub(crate) max_ms: f64,
 }
 
@@ -367,9 +415,14 @@ impl ProfileKeyedDurationReport {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ProfileCheckpointReport {
+    /// Label recorded at the checkpoint call site.
     pub(crate) label: String,
+    /// Time since the previous checkpoint in the same stream.
     pub(crate) phase_elapsed_ms: f64,
+    /// Time since the first checkpoint in the same stream.
     pub(crate) elapsed_ms: f64,
+    /// Extra values recorded with this checkpoint. The set can vary between streams, and inferred
+    /// columns are added after the declared ones.
     pub(crate) values: Vec<ProfileCheckpointValueReport>,
 }
 
@@ -398,7 +451,9 @@ impl ProfileCheckpointReport {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct ProfileCheckpointValueReport {
+    /// Column key for this value.
     pub(crate) key: String,
+    /// Measurement stored in the cell.
     pub(crate) value: ProfileMeasurementReport,
 }
 
@@ -411,6 +466,11 @@ impl ProfileCheckpointValueReport {
     }
 }
 
+/// Small value language shared by gauges and checkpoint cells.
+///
+/// It deliberately mirrors profile measurements instead of formatting everything into strings too
+/// early. HTML can still align bytes as bytes, JSON can stay structured, and terminal output can do
+/// its usual compact thing.
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 pub(crate) enum ProfileMeasurementReport {
