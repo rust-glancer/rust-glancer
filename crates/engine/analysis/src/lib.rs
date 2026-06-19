@@ -8,7 +8,7 @@ mod tests;
 
 pub use query::{
     completion::{CompletionClientCapabilities, CompletionQuery},
-    references::ReferenceQuery,
+    references::{ReferenceQuery, ReferenceSearchFile, ReferenceSearchLabel},
 };
 pub use rg_ir_view::SymbolKind;
 
@@ -180,6 +180,16 @@ impl<'a> Analysis<'a> {
         query: ReferenceQuery<'_>,
     ) -> anyhow::Result<Vec<ReferenceLocation>> {
         query::references::ReferenceResolver::new(self, query).references(target, file_id, offset)
+    }
+
+    /// Returns labels that callers may use for request-local reference prefiltering.
+    pub fn reference_search_labels(
+        &self,
+        target: TargetRef,
+        file_id: FileId,
+        offset: u32,
+    ) -> anyhow::Result<Vec<ReferenceSearchLabel>> {
+        query::references::ReferenceResolver::reference_search_labels(self, target, file_id, offset)
     }
 
     /// Returns the source range and placeholder for a valid rename position.

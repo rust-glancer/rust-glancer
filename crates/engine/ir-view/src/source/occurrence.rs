@@ -206,6 +206,33 @@ impl<'a, 'db> SourceOccurrenceView<'a, 'db> {
         Self { db }
     }
 
+    /// Returns the named source spelling selected by an expression, when the expression has one.
+    ///
+    /// Expression-backed occurrences intentionally expose only `ExprRef`, so callers that need a
+    /// cheap source label can ask the view to inspect the lowered expression. For example, this
+    /// returns `user` for a path expression, `push` for `items.push(value)`, and `name` for
+    /// `user.name`; literals and operators return `None`.
+    pub fn expr_source_label(&self, expr: ExprRef) -> anyhow::Result<Option<String>> {
+        let Some(body_data) = self.db.body_ir.body_data(expr.body_ir())? else {
+            return Ok(None);
+        };
+        let Some(expr_data) = body_data.expr(expr.expr_id()) else {
+            return Ok(None);
+        };
+
+        let label = match &expr_data.kind {
+            rg_body_ir::ExprKind::Path { path } => path
+                .as_def_map_path()
+                .and_then(|path| path.last_segment_label()),
+            rg_body_ir::ExprKind::MethodCall { method_name, .. } => Some(method_name.to_string()),
+            rg_body_ir::ExprKind::Field { field, .. } => {
+                field.as_ref().map(|field| field.declaration_label())
+            }
+            _ => None,
+        };
+        Ok(label)
+    }
+
     /// Return occurrences that touch one cursor offset.
     pub fn occurrences_at(
         &self,

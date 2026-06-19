@@ -1664,6 +1664,7 @@ dependencies = [
  "codspeed-divan-compat",
  "derive_more",
  "expect-test",
+ "memchr",
  "rayon",
  "rg_analysis",
  "rg_body_ir",

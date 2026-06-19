@@ -6,7 +6,8 @@ use std::{
 
 use anyhow::Context as _;
 use rg_analysis::{
-    CompletionQuery, InlayHint as AnalysisInlayHint, ReferenceQuery, RenameEdit, RenameTarget,
+    Analysis as QueryAnalysis, CompletionQuery, InlayHint as AnalysisInlayHint, ReferenceQuery,
+    ReferenceSearchFile, RenameEdit, RenameTarget,
 };
 use rg_ir_model::TargetRef;
 use rg_lsp_proto::{
@@ -50,6 +51,21 @@ struct QueryContext {
     label: &'static str,
     queue_elapsed: Duration,
     dirty_identity: Option<DirtyDocumentIdentity>,
+}
+
+#[derive(Debug)]
+struct ReferenceSearchPlan {
+    targets: Vec<TargetRef>,
+    files: Option<Vec<ReferenceSearchFile>>,
+}
+
+impl ReferenceSearchPlan {
+    fn query(&self, include_declaration: bool) -> ReferenceQuery<'_> {
+        match self.files.as_deref() {
+            Some(files) => ReferenceQuery::find_references_in_files(files, include_declaration),
+            None => ReferenceQuery::find_references(&self.targets, include_declaration),
+        }
+    }
 }
 
 impl QueryContext {
@@ -551,20 +567,13 @@ impl EngineWorker {
                 let mut locations = Vec::new();
 
                 for (context, target, offset) in target_offsets {
-                    let declaration_targets = analysis
-                        .goto_definition(target, context.file, offset)?
-                        .into_iter()
-                        .map(|target| target.target)
-                        .collect::<Vec<_>>();
-                    let search_targets =
-                        snapshot.reference_search_targets(context.package, &declaration_targets);
+                    let search_plan =
+                        Self::reference_search_plan(snapshot, &analysis, &context, target, offset)?;
+                    let reference_query = search_plan.query(include_declaration);
 
-                    for reference in analysis.references(
-                        target,
-                        context.file,
-                        offset,
-                        ReferenceQuery::find_references(&search_targets, include_declaration),
-                    )? {
+                    for reference in
+                        analysis.references(target, context.file, offset, reference_query)?
+                    {
                         let Some(location) =
                             references::location_for_reference(snapshot, &reference)?
                         else {
@@ -664,19 +673,15 @@ impl EngineWorker {
                     if !snapshot.package_is_workspace_member(context.package) {
                         continue;
                     }
-                    let declaration_targets = analysis
-                        .goto_definition(target, context.file, offset)?
-                        .into_iter()
-                        .map(|target| target.target)
-                        .collect::<Vec<_>>();
-                    let search_targets =
-                        snapshot.reference_search_targets(context.package, &declaration_targets);
+                    let search_plan =
+                        Self::reference_search_plan(snapshot, &analysis, &context, target, offset)?;
+                    let reference_query = search_plan.query(true);
                     let Some(rename_result) = analysis.rename(
                         target,
                         context.file,
                         offset,
                         &new_name,
-                        ReferenceQuery::find_references(&search_targets, true),
+                        reference_query,
                     )?
                     else {
                         continue;
@@ -1095,6 +1100,25 @@ impl EngineWorker {
         );
 
         Ok(targets)
+    }
+
+    fn reference_search_plan(
+        snapshot: ProjectSnapshot<'_>,
+        analysis: &QueryAnalysis<'_>,
+        context: &FileContext,
+        target: TargetRef,
+        offset: u32,
+    ) -> anyhow::Result<ReferenceSearchPlan> {
+        let declaration_targets = analysis
+            .goto_definition(target, context.file, offset)?
+            .into_iter()
+            .map(|target| target.target)
+            .collect::<Vec<_>>();
+        let targets = snapshot.reference_search_targets(context.package, &declaration_targets);
+        let labels = analysis.reference_search_labels(target, context.file, offset)?;
+        let files = snapshot.reference_search_files_matching_labels(&targets, &labels)?;
+
+        Ok(ReferenceSearchPlan { targets, files })
     }
 
     fn file_contexts(

@@ -1,6 +1,9 @@
 mod utils;
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::BTreeSet,
+    sync::{Arc, Mutex},
+};
 
 use expect_test::expect;
 use test_fixture::testonly::MarkedText;
@@ -8,7 +11,8 @@ use test_fixture::testonly::MarkedText;
 use self::utils::{HostFixture, HostObservation};
 use crate::{
     BuildProcessMemory, PackageResidencyPolicy, Project, ProjectMemoryHooks,
-    ProjectMemoryPurgePoint, testonly::ProjectSourceFixture,
+    ProjectMemoryPurgePoint,
+    testonly::{ProjectFixture, ProjectSourceFixture},
 };
 
 #[derive(Debug)]
@@ -302,6 +306,93 @@ make_item!(Admin);
         "def_map.macros.generated.sources_parsed",
         2,
         "each expanded generated item source should be parsed",
+    );
+}
+
+#[test]
+fn reference_search_targets_follow_workspace_reverse_dependencies() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/mid", "crates/app", "crates/independent"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub struct Dep;
+
+//- /crates/mid/Cargo.toml
+[package]
+name = "mid"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/mid/src/lib.rs
+pub struct Mid(dep::Dep);
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+mid = { path = "../mid" }
+
+//- /crates/app/src/lib.rs
+pub struct App(mid::Mid);
+
+//- /crates/independent/Cargo.toml
+[package]
+name = "independent"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/independent/src/lib.rs
+pub struct Independent;
+"#,
+    );
+    let project = fixture.build_project();
+    let snapshot = project.snapshot();
+    let dep_package = ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), "dep");
+    let app_package = ProjectFixture::package_slot_by_name_in(snapshot.parse_db(), "app");
+    let dep_file = ProjectFixture::file_id_for_path_in(
+        snapshot.parse_db(),
+        &fixture.path("crates/dep/src/lib.rs"),
+    );
+    let dep_target = snapshot
+        .targets_for_file(dep_package, dep_file)
+        .expect("dep target lookup should succeed")
+        .into_iter()
+        .next()
+        .expect("dep lib file should belong to the dep lib target");
+
+    let package_names = snapshot
+        .reference_search_targets(app_package, &[dep_target])
+        .into_iter()
+        .map(|target| {
+            snapshot
+                .parse_db()
+                .package(target.package.0)
+                .expect("reference search target package should exist")
+                .package_name()
+                .to_owned()
+        })
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        package_names,
+        BTreeSet::from(["app".to_string(), "dep".to_string(), "mid".to_string()]),
+        "workspace reference searches should skip unrelated workspace packages"
     );
 }
 
