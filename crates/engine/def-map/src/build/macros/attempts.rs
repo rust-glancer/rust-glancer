@@ -11,7 +11,7 @@ use anyhow::Context as _;
 use rg_ir_model::{DefMapRef, TargetRef};
 use rg_ir_storage::{ScopeBindingOrigin, TargetResolutionEnv};
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
-use rg_macro_expand::{Edition, ExpansionSyntax};
+use rg_macro_expand::{Edition, ExpansionParseKind, ExpansionSyntax};
 use rg_parse::{FileId, Span};
 use rg_text::PackageNameInterners;
 use rg_tt::{Span as TtSpan, syntax_bridge::SpanFactory};
@@ -585,8 +585,14 @@ impl MacroExpansionAttempt {
 
         let call_site =
             tt_span_for_parse_span(call.file_id, call.span, macro_edition(state.edition));
-        let prepared_expansion =
-            cache.prepare_expansion(resolved.def_ref, macro_, path_text, args, call_site);
+        let prepared_expansion = cache.prepare_expansion(
+            resolved.def_ref,
+            macro_,
+            path_text,
+            args,
+            call_site,
+            ExpansionParseKind::Items,
+        );
         let outcome = match prepared_expansion.expansion {
             PreparedMacroExpansion::Syntax(syntax) => {
                 MacroExpansionAttemptOutcome::Generated(syntax)

@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use anyhow::Context as _;
 use rg_arena::Arena;
-use rg_macro_expand::{CfgSelect, ExpansionSyntax};
+use rg_macro_expand::{CfgSelect, ExpansionParseKind, ExpansionSyntax};
 use rg_syntax::{
     AstNode as _, AstToken as _, SyntaxKind,
     ast::{self, HasDocComments, HasModuleItem, HasName, HasVisibility},
@@ -495,7 +495,8 @@ impl<'db> PackageLowering<'db> {
 
         let mut arms = Vec::new();
         for arm in cfg_select.arms() {
-            let expansion = ExpansionSyntax::from_token_tree(arm.payload.clone());
+            let expansion =
+                ExpansionSyntax::from_token_tree(arm.payload.clone(), ExpansionParseKind::Items);
             let file = match ast::MacroItems::cast(expansion.parse.syntax_node()) {
                 Some(file) if expansion.parse.errors().is_empty() => file,
                 _ => {

@@ -12,7 +12,7 @@ use std::{
 use anyhow::Context as _;
 use rayon::prelude::*;
 
-use rg_macro_expand::{DeclarativeMacro, ExpansionSyntax};
+use rg_macro_expand::{DeclarativeMacro, ExpansionParseKind, ExpansionSyntax};
 use rg_tt::{Span as TtSpan, TopSubtree};
 
 use super::{
@@ -113,6 +113,7 @@ pub(super) struct MacroExpansionWork {
     pub(super) macro_: Arc<DeclarativeMacro>,
     pub(super) args: TopSubtree,
     pub(super) call_site: TtSpan,
+    pub(super) parse_kind: ExpansionParseKind,
 }
 
 impl MacroExpansionWork {
@@ -120,7 +121,7 @@ impl MacroExpansionWork {
         let started_at = Instant::now();
         let generated_syntax = self
             .macro_
-            .expand_call_tokens(&self.args, self.call_site)
+            .expand_call_tokens(&self.args, self.call_site, self.parse_kind)
             .ok();
         let elapsed = started_at.elapsed();
 

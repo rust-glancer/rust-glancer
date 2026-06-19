@@ -14,7 +14,7 @@ use anyhow::Context as _;
 
 use rg_ir_model::LocalDefRef;
 use rg_ir_storage::{MacroDefinitionData, MacroDefinitionPayload};
-use rg_macro_expand::{DeclarativeMacro, Edition, ExpansionSyntax};
+use rg_macro_expand::{DeclarativeMacro, Edition, ExpansionParseKind, ExpansionSyntax};
 use rg_tt::{Span as TtSpan, TopSubtree};
 
 use super::expand::MacroExpansionWork;
@@ -83,11 +83,13 @@ impl MacroExpansionCache {
         path_text: &str,
         args: &TopSubtree,
         call_site: TtSpan,
+        parse_kind: ExpansionParseKind,
     ) -> PreparedMacroExpansionResult {
         let key = MacroExpansionCacheKey {
             def_ref,
             args: args.clone(),
             call_site,
+            parse_kind,
         };
 
         if let Some(expanded) = self.expanded.get(&key) {
@@ -110,6 +112,7 @@ impl MacroExpansionCache {
                 macro_,
                 args: args.clone(),
                 call_site,
+                parse_kind,
             }),
             record: MacroExpandRecord::Attempt,
         }
@@ -142,6 +145,7 @@ pub(super) struct MacroExpansionCacheKey {
     pub(super) def_ref: LocalDefRef,
     pub(super) args: TopSubtree,
     pub(super) call_site: TtSpan,
+    pub(super) parse_kind: ExpansionParseKind,
 }
 
 /// Expansion payload together with the accounting event produced while preparing it.

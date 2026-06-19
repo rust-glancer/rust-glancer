@@ -24,6 +24,32 @@ pub use rg_tt::tt::TopSubtree;
 
 pub use self::builtins::{CfgSelect, CfgSelectArm};
 
+/// Parser entry point used for a successful macro expansion.
+///
+/// Def-map expands macros as items, while Body IR needs the same token
+/// expansion parsed as statements, expressions, patterns, or types before it
+/// can splice generated syntax into body lowering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ExpansionParseKind {
+    Items,
+    Statements,
+    Expr,
+    Pattern,
+    Type,
+}
+
+impl ExpansionParseKind {
+    fn top_entry_point(self) -> parser::TopEntryPoint {
+        match self {
+            Self::Items => parser::TopEntryPoint::MacroItems,
+            Self::Statements => parser::TopEntryPoint::MacroStmts,
+            Self::Expr => parser::TopEntryPoint::Expr,
+            Self::Pattern => parser::TopEntryPoint::Pattern,
+            Self::Type => parser::TopEntryPoint::Type,
+        }
+    }
+}
+
 /// Compiled declarative macro ready to expand function-like calls.
 ///
 /// The inner matcher/transcriber comes from the vendored MBE engine. This wrapper
@@ -90,11 +116,12 @@ impl DeclarativeMacro {
         Ok(Self { inner, edition })
     }
 
-    /// Expands a parsed function-like macro call into parsed item-position syntax.
+    /// Expands a parsed function-like macro call into the requested syntax kind.
     pub fn expand_call(
         &self,
         call: &ast::MacroCall,
         file_id: u32,
+        parse_kind: ExpansionParseKind,
     ) -> anyhow::Result<ExpansionSyntax> {
         let args = call
             .token_tree()
@@ -114,14 +141,18 @@ impl DeclarativeMacro {
             anyhow::bail!("macro expansion failed: {err}");
         }
 
-        Ok(ExpansionSyntax::from_token_tree(expanded.value.0))
+        Ok(ExpansionSyntax::from_token_tree(
+            expanded.value.0,
+            parse_kind,
+        ))
     }
 
-    /// Expands a function-like macro call from stored argument token trees.
+    /// Expands stored function-like call arguments into the requested syntax kind.
     pub fn expand_call_tokens(
         &self,
         args: &TopSubtree,
         call_site: rg_tt::Span,
+        parse_kind: ExpansionParseKind,
     ) -> anyhow::Result<ExpansionSyntax> {
         let expanded = self.inner.expand(
             args,
@@ -135,26 +166,29 @@ impl DeclarativeMacro {
             anyhow::bail!("macro expansion failed: {err}");
         }
 
-        Ok(ExpansionSyntax::from_token_tree(expanded.value.0))
+        Ok(ExpansionSyntax::from_token_tree(
+            expanded.value.0,
+            parse_kind,
+        ))
     }
 }
 
 /// Parsed syntax produced by a successful declarative macro expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExpansionSyntax {
-    /// Generated item-position syntax parsed directly from the expanded token tree.
+    /// Generated syntax parsed directly from the expanded token tree.
     pub parse: Parse<SyntaxNode>,
     /// Offset-to-span map for generated tokens.
     pub span_map: ExpansionSpanMap,
 }
 
 impl ExpansionSyntax {
-    /// Parses item-position syntax directly from an expanded token tree.
-    pub fn from_token_tree(token_tree: TopSubtree) -> Self {
+    /// Parses an expanded token tree using the requested syntax entry point.
+    pub fn from_token_tree(token_tree: TopSubtree, parse_kind: ExpansionParseKind) -> Self {
         let mut span_to_edition = |ctx: SyntaxContext| ctx.edition();
         let (parse, span_map) = token_tree_to_syntax_node(
             &token_tree,
-            parser::TopEntryPoint::MacroItems,
+            parse_kind.top_entry_point(),
             &mut span_to_edition,
         );
         Self { parse, span_map }
@@ -181,6 +215,75 @@ macro_rules! make_user {
 make_user!();
 "#,
             expect!["pub struct User ;"],
+        );
+    }
+
+    #[test]
+    fn expands_statement_macro_to_syntax() {
+        check_expansion_as(
+            r#"
+macro_rules! make_statements {
+    () => {
+        let value = 1;
+        value
+    };
+}
+
+make_statements!();
+"#,
+            ExpansionParseKind::Statements,
+            expect!["let value = 1 ;value"],
+        );
+    }
+
+    #[test]
+    fn expands_expression_macro_to_syntax() {
+        check_expansion_as(
+            r#"
+macro_rules! make_expr {
+    () => {
+        1 + 2
+    };
+}
+
+make_expr!();
+"#,
+            ExpansionParseKind::Expr,
+            expect!["1 + 2"],
+        );
+    }
+
+    #[test]
+    fn expands_pattern_macro_to_syntax() {
+        check_expansion_as(
+            r#"
+macro_rules! make_pat {
+    () => {
+        Some(value)
+    };
+}
+
+make_pat!();
+"#,
+            ExpansionParseKind::Pattern,
+            expect!["Some(value)"],
+        );
+    }
+
+    #[test]
+    fn expands_type_macro_to_syntax() {
+        check_expansion_as(
+            r#"
+macro_rules! make_type {
+    () => {
+        Option<User>
+    };
+}
+
+make_type!();
+"#,
+            ExpansionParseKind::Type,
+            expect!["Option < User >"],
         );
     }
 
@@ -267,7 +370,7 @@ outer!();
         let mac = DeclarativeMacro::from_macro_rules_tokens(&macro_rules, Edition::CURRENT)
             .expect("macro should compile");
         let expanded = mac
-            .expand_call_tokens(&args, call_site)
+            .expand_call_tokens(&args, call_site, ExpansionParseKind::Items)
             .expect("macro should expand");
         let generated_call = expanded
             .parse
@@ -290,6 +393,10 @@ outer!();
     }
 
     fn check_expansion(source: &str, expected: Expect) {
+        check_expansion_as(source, ExpansionParseKind::Items, expected);
+    }
+
+    fn check_expansion_as(source: &str, parse_kind: ExpansionParseKind, expected: Expect) {
         let file = ast::SourceFile::parse(source, Edition::CURRENT)
             .ok()
             .expect("test source should parse");
@@ -310,7 +417,7 @@ outer!();
         let mac = DeclarativeMacro::from_macro_rules_tokens(&macro_rules, Edition::CURRENT)
             .expect("macro should compile");
         let expanded = mac
-            .expand_call_tokens(&args, call_site)
+            .expand_call_tokens(&args, call_site, parse_kind)
             .expect("macro should expand");
 
         expected.assert_eq(&expanded.parse.syntax_node().text().to_string());
@@ -349,7 +456,7 @@ import_thing!();
         let mac = DeclarativeMacro::from_macro_rules_tokens(&macro_rules, Edition::CURRENT)
             .expect("macro should compile");
         let expanded = mac
-            .expand_call_tokens(&args, call_site)
+            .expand_call_tokens(&args, call_site, ExpansionParseKind::Items)
             .expect("macro should expand");
 
         assert_eq!(
@@ -389,7 +496,7 @@ make!(Generated);
         let mac = DeclarativeMacro::from_macro_rules_tokens(&macro_rules, Edition::CURRENT)
             .expect("macro should compile");
         let expanded = mac
-            .expand_call_tokens(&args, call_site)
+            .expand_call_tokens(&args, call_site, ExpansionParseKind::Items)
             .expect("macro should expand");
 
         assert_eq!(
