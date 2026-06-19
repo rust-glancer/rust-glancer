@@ -69,7 +69,7 @@ fn document_options(include_memory: bool) -> ReportDocumentOptions {
 }
 
 fn write_html_report(document: &ReportDocument) -> anyhow::Result<PathBuf> {
-    let report_dir = PathBuf::from("target").join("rust-glancer").join("report");
+    let report_dir = PathBuf::from("target").join("rust_glancer").join("report");
     fs::create_dir_all(&report_dir).with_context(|| {
         format!(
             "while attempting to create HTML report directory {}",

@@ -260,7 +260,7 @@ If defmap is suspicious, add macro stats:
 just analyze path/to/rust-analyzer --profile default,macros --package-residency all-offloadable -m
 ```
 
-For disabling memory purging, you can set `RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD=0`
+To disable memory purging, you can set `RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD=0`
 environment variable.
 
 ### Peak RSS
