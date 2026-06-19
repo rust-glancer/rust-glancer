@@ -79,6 +79,7 @@ export class LanguageClientSession implements vscode.Disposable {
       diagnosticCollectionName: "rust-glancer",
       outputChannel: this.serverOutput,
       initializationOptions: {
+        cfg: config.cfg,
         diagnostics: config.diagnostics,
         indexing: config.indexing,
         cargo: config.cargo,

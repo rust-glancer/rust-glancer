@@ -1,7 +1,7 @@
 mod utils;
 
 use expect_test::expect;
-use rg_workspace::WorkspaceMetadata;
+use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
 use self::utils::{check_parse_db, check_parse_db_after_module_discovery};
@@ -257,8 +257,9 @@ fn in_memory_source_keeps_its_line_index_when_saved_indexes_are_offloaded() {
         pub fn saved() {}
         "#,
     );
-    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-        .expect("fixture workspace metadata should build");
+    let workspace =
+        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+            .expect("fixture workspace metadata should build");
     let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
     let file_path = fixture
         .path("src/lib.rs")

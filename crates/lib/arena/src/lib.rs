@@ -1,8 +1,8 @@
 //! Typed dense arenas for phase-local rust-glancer ids.
 //!
 //! The crate intentionally models only the simple arena shape used throughout the engine:
-//! builders allocate values into a dense `Arena`, then immutable project snapshots can freeze the
-//! storage into a `FrozenArena` backed by an exact boxed slice.
+//! builders allocate values into a dense `Arena`, and retained project snapshots compact that
+//! storage through the workspace-wide `Shrink` hierarchy.
 
 use std::{
     marker::PhantomData,
@@ -142,13 +142,6 @@ impl<Id, T> Arena<Id, T> {
     pub fn resize_with(&mut self, new_len: usize, f: impl FnMut() -> T) {
         self.items.resize_with(new_len, f);
     }
-
-    pub fn freeze(self) -> FrozenArena<Id, T> {
-        FrozenArena {
-            items: self.items.into_boxed_slice(),
-            _marker: PhantomData,
-        }
-    }
 }
 
 impl<Id, T> Arena<Id, T>
@@ -226,106 +219,12 @@ impl<'a, Id, T> IntoIterator for &'a mut Arena<Id, T> {
     }
 }
 
-/// Immutable dense arena for finalized phase snapshots.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FrozenArena<Id, T> {
-    items: Box<[T]>,
-    _marker: PhantomData<fn(Id) -> Id>,
-}
-
-impl<Id, T> Default for FrozenArena<Id, T> {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<Id, T> FrozenArena<Id, T> {
-    pub fn new() -> Self {
-        Self {
-            items: Box::new([]),
-            _marker: PhantomData,
-        }
-    }
-
-    pub fn from_boxed_slice(items: Box<[T]>) -> Self {
-        Self {
-            items,
-            _marker: PhantomData,
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.items.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty()
-    }
-
-    pub fn as_slice(&self) -> &[T] {
-        &self.items
-    }
-
-    pub fn iter(&self) -> slice::Iter<'_, T> {
-        self.items.iter()
-    }
-
-    pub fn into_boxed_slice(self) -> Box<[T]> {
-        self.items
-    }
-}
-
-impl<Id, T> FrozenArena<Id, T>
-where
-    Id: ArenaId,
-{
-    pub fn get(&self, id: Id) -> Option<&T> {
-        self.items.get(id.index())
-    }
-
-    pub fn iter_with_ids(&self) -> impl Iterator<Item = (Id, &T)> {
-        self.items
-            .iter()
-            .enumerate()
-            .map(|(index, item)| (Id::from_index(index), item))
-    }
-}
-
-impl<Id, T> Index<Id> for FrozenArena<Id, T>
-where
-    Id: ArenaId,
-{
-    type Output = T;
-
-    fn index(&self, id: Id) -> &Self::Output {
-        &self.items[id.index()]
-    }
-}
-
-impl<'a, Id, T> IntoIterator for &'a FrozenArena<Id, T> {
-    type Item = &'a T;
-    type IntoIter = slice::Iter<'a, T>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.items.iter()
-    }
-}
-
 mod memsize {
     use rg_std::{MemoryRecorder, MemorySize};
 
-    use crate::{Arena, FrozenArena};
+    use crate::Arena;
 
     impl<Id, T> MemorySize for Arena<Id, T>
-    where
-        T: MemorySize,
-    {
-        fn record_memory_children(&self, recorder: &mut MemoryRecorder) {
-            self.items.record_memory_children(recorder);
-        }
-    }
-
-    impl<Id, T> MemorySize for FrozenArena<Id, T>
     where
         T: MemorySize,
     {
@@ -338,18 +237,9 @@ mod memsize {
 mod shrink {
     use rg_std::Shrink;
 
-    use crate::{Arena, FrozenArena};
+    use crate::Arena;
 
     impl<Id, T> Shrink for Arena<Id, T>
-    where
-        T: Shrink,
-    {
-        fn shrink_to_fit(&mut self) {
-            Shrink::shrink_to_fit(&mut self.items);
-        }
-    }
-
-    impl<Id, T> Shrink for FrozenArena<Id, T>
     where
         T: Shrink,
     {
@@ -361,7 +251,7 @@ mod shrink {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Arena, ArenaId, FrozenArena};
+    use crate::{Arena, ArenaId};
 
     crate::arena_id!(ExprId);
     crate::arena_id!(pub(crate) LocalId);
@@ -415,32 +305,6 @@ mod tests {
     }
 
     #[test]
-    fn freezes_into_exact_storage() {
-        let mut arena = Arena::<ExprId, String>::with_capacity(8);
-        let id = arena.alloc("value".to_string());
-        assert!(arena.capacity() >= 8);
-
-        let frozen = arena.freeze();
-
-        assert_eq!(frozen.len(), 1);
-        assert_eq!(frozen.get(id).map(String::as_str), Some("value"));
-    }
-
-    #[test]
-    fn builds_frozen_arena_from_boxed_slice() {
-        let frozen = FrozenArena::<ExprId, _>::from_boxed_slice(Box::new(["a", "b"]));
-
-        assert_eq!(frozen.as_slice(), &["a", "b"]);
-        assert_eq!(
-            frozen
-                .iter_with_ids()
-                .map(|(id, item)| (id.index(), item))
-                .collect::<Vec<_>>(),
-            vec![(0, &"a"), (1, &"b")]
-        );
-    }
-
-    #[test]
     fn records_arena_memory_without_losing_container_shape() {
         use std::mem;
 
@@ -474,40 +338,6 @@ mod tests {
             .map(|record| record.path)
             .collect::<Vec<_>>();
         assert!(paths.iter().any(|path| path == "arena.items"));
-        assert!(!paths.iter().any(|path| path.contains("items.items")));
-    }
-
-    #[test]
-    fn records_frozen_arena_without_spare_capacity() {
-        use std::mem;
-
-        use rg_std::{MemoryRecordKind, MemoryRecorder, MemorySize};
-
-        let mut arena = Arena::<ExprId, String>::new();
-        arena.alloc("user".to_string());
-        let frozen = arena.freeze();
-
-        let mut recorder = MemoryRecorder::new("frozen");
-        frozen.record_memory_size(&mut recorder);
-        let totals = recorder.totals_by_kind();
-
-        assert_eq!(
-            totals.get(&MemoryRecordKind::Shallow),
-            Some(&mem::size_of::<FrozenArena<ExprId, String>>())
-        );
-        assert!(
-            totals
-                .get(&MemoryRecordKind::Heap)
-                .is_some_and(|bytes| *bytes > 0)
-        );
-        assert!(!totals.contains_key(&MemoryRecordKind::SpareCapacity));
-
-        let paths = recorder
-            .records()
-            .into_iter()
-            .map(|record| record.path)
-            .collect::<Vec<_>>();
-        assert!(paths.iter().any(|path| path == "frozen.items"));
         assert!(!paths.iter().any(|path| path.contains("items.items")));
     }
 

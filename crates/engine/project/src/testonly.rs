@@ -5,7 +5,7 @@ use std::{
 
 use rg_def_map::PackageSlot;
 use rg_parse::{FileId, ParseDb};
-use rg_workspace::WorkspaceMetadata;
+use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, FixtureMarkers, FixtureSpec, fixture_crate_with_markers};
 
 use crate::{
@@ -25,7 +25,7 @@ impl ProjectSourceFixture {
     }
 
     pub fn workspace_metadata(&self) -> WorkspaceMetadata {
-        WorkspaceMetadata::for_tests(self.fixture.metadata())
+        WorkspaceMetadata::for_tests(self.fixture.metadata(), WorkspaceLoweringConfig::default())
             .expect("fixture workspace metadata should build")
     }
 

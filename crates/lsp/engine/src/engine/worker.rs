@@ -13,13 +13,16 @@ use rg_lsp_proto::{
     AnalysisConfig, CargoMetadataTarget as ProtoCargoMetadataTarget, CompletionClientCapabilities,
     IndexingPerformancePreference as ProtoIndexingPerformancePreference,
     PackageResidencyPolicy as ProtoPackageResidencyPolicy,
+    SysrootDiscovery as ProtoSysrootDiscovery,
 };
 use rg_parse::TextSpan;
 use rg_project::{
     FileContext, IndexingPerformancePreference, PackageResidencyPolicy, Project,
     ProjectMemoryHooks, ProjectSnapshot, SavedFileChange,
 };
-use rg_workspace::{CargoMetadataConfig, SysrootSources, WorkspaceMetadata};
+use rg_workspace::{
+    CargoMetadataConfig, SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata,
+};
 
 use crate::{
     dirty_state::{DirtyDocumentIdentity, DirtyState},
@@ -365,7 +368,13 @@ impl EngineWorker {
             ProtoCargoMetadataTarget::Triple(target) => {
                 CargoMetadataConfig::default().target_triple(target.as_str())
             }
-        };
+        }
+        .all_features(analysis.cargo_metadata_config.all_features_enabled())
+        .no_default_features(analysis.cargo_metadata_config.no_default_features_enabled())
+        .custom_features(analysis.cargo_metadata_config.features().iter().cloned());
+        let workspace_lowering_config = WorkspaceLoweringConfig::default()
+            .cfg_test(analysis.cfg.test)
+            .custom_cfg_atoms(analysis.cfg.atoms.iter().cloned());
         let indexing_preference = match analysis.indexing_preference {
             ProtoIndexingPerformancePreference::LowerPeakMemory => {
                 IndexingPerformancePreference::LowerPeakMemory
@@ -384,6 +393,11 @@ impl EngineWorker {
             package_residency = analysis.package_residency_policy.config_name(),
             indexing_preference = analysis.indexing_preference.config_name(),
             cargo_target = configured_target,
+            cargo_all_features = analysis.cargo_metadata_config.all_features_enabled(),
+            cargo_no_default_features = analysis.cargo_metadata_config.no_default_features_enabled(),
+            cargo_features = ?analysis.cargo_metadata_config.features(),
+            cfg_test = analysis.cfg.test,
+            cfg_atoms = ?analysis.cfg.atoms,
             "starting workspace indexing"
         );
 
@@ -405,10 +419,17 @@ impl EngineWorker {
             "cargo metadata finished"
         );
 
-        let workspace = WorkspaceMetadata::lower(metadata.metadata, metadata.target_cfg)
-            .context("while attempting to normalize Cargo metadata")?;
+        let workspace = WorkspaceMetadata::lower(
+            metadata.metadata,
+            metadata.target_cfg,
+            workspace_lowering_config.clone(),
+        )
+        .context("while attempting to normalize Cargo metadata")?;
         let workspace_root = workspace.workspace_root().to_path_buf();
-        let sysroot = SysrootSources::discover(workspace.workspace_root());
+        let sysroot = match analysis.sysroot_discovery {
+            ProtoSysrootDiscovery::Auto => SysrootSources::discover(workspace.workspace_root()),
+            ProtoSysrootDiscovery::Disabled => None,
+        };
         match &sysroot {
             Some(sysroot) => {
                 tracing::info!(
@@ -423,6 +444,7 @@ impl EngineWorker {
 
         let workspace = workspace.with_sysroot_sources(sysroot);
         let project = Project::builder(workspace)
+            .workspace_lowering_config(workspace_lowering_config)
             .cargo_metadata_config(cargo_metadata_config)
             .indexing_preference(indexing_preference)
             .package_residency_policy(package_residency_policy)

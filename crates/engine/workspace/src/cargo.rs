@@ -19,6 +19,9 @@ use rg_std::MemorySize;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, MemorySize)]
 pub struct CargoMetadataConfig {
     target: CargoMetadataTarget,
+    all_features: bool,
+    no_default_features: bool,
+    features: Vec<String>,
 }
 
 impl CargoMetadataConfig {
@@ -30,9 +33,50 @@ impl CargoMetadataConfig {
         self
     }
 
+    /// Enables or disables Cargo's all-features metadata resolution mode.
+    pub fn all_features(mut self, enabled: bool) -> Self {
+        self.all_features = enabled;
+        self
+    }
+
+    /// Enables or disables Cargo's no-default-features metadata resolution mode.
+    pub fn no_default_features(mut self, enabled: bool) -> Self {
+        self.no_default_features = enabled;
+        self
+    }
+
+    /// Sets the explicit Cargo feature names to pass to Cargo metadata.
+    pub fn custom_features(
+        mut self,
+        features: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.features = features
+            .into_iter()
+            .map(Into::into)
+            .map(|feature| feature.trim().to_string())
+            .filter(|feature| !feature.is_empty())
+            .collect();
+        self
+    }
+
     /// Returns the configured target selection before auto-detection is resolved.
     pub fn target(&self) -> &CargoMetadataTarget {
         &self.target
+    }
+
+    /// Returns whether Cargo should enable every feature during metadata resolution.
+    pub fn all_features_enabled(&self) -> bool {
+        self.all_features
+    }
+
+    /// Returns whether Cargo should disable default features during metadata resolution.
+    pub fn no_default_features_enabled(&self) -> bool {
+        self.no_default_features
+    }
+
+    /// Returns the explicit Cargo feature names to enable during metadata resolution.
+    pub fn features(&self) -> &[String] {
+        &self.features
     }
 
     /// Runs `cargo metadata` and returns the target cfg environment used for normalization.
@@ -42,8 +86,9 @@ impl CargoMetadataConfig {
     ) -> WorkspaceMetadataResult<LoadedCargoMetadata> {
         let target = self.resolved_target()?;
         let target_cfg = target.cfg_options()?;
-        let metadata = self
-            .metadata_command_for_target(manifest_path.as_ref(), &target)
+        let mut command = self.metadata_command_for_target(manifest_path.as_ref(), &target);
+        self.apply_configured_features(&mut command);
+        let metadata = command
             .exec()
             .map_err(WorkspaceMetadataError::CargoMetadata)?;
 
@@ -98,6 +143,20 @@ impl CargoMetadataConfig {
         command
     }
 
+    fn apply_configured_features(&self, command: &mut cargo_metadata::MetadataCommand) {
+        if !self.features.is_empty() {
+            command.features(cargo_metadata::CargoOpt::SomeFeatures(
+                self.features.clone(),
+            ));
+        }
+        if self.all_features {
+            command.features(cargo_metadata::CargoOpt::AllFeatures);
+        }
+        if self.no_default_features {
+            command.features(cargo_metadata::CargoOpt::NoDefaultFeatures);
+        }
+    }
+
     fn resolved_target(&self) -> WorkspaceMetadataResult<RustcTarget> {
         match &self.target {
             CargoMetadataTarget::Auto => RustcTarget::detect_host(),
@@ -110,6 +169,9 @@ impl Default for CargoMetadataConfig {
     fn default() -> Self {
         Self {
             target: CargoMetadataTarget::Auto,
+            all_features: false,
+            no_default_features: false,
+            features: Vec::new(),
         }
     }
 }

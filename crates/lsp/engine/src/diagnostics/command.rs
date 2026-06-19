@@ -24,17 +24,24 @@ impl CargoDiagnosticsCommand {
         tracing::info!(
             generation = self.snapshot.generation,
             trigger = %self.snapshot.trigger,
-            command = %self.snapshot.config.user_facing_command(),
+            command = %self.snapshot.config.user_facing_command(&self.snapshot.analysis),
             "starting cargo diagnostics"
         );
 
         let mut command = Command::new("cargo");
+        let cargo_arguments = self
+            .snapshot
+            .config
+            .cargo_arguments(&self.snapshot.analysis);
         command
             .arg(&self.snapshot.config.command)
             .arg("--message-format=json")
-            .args(&self.snapshot.config.arguments)
             .current_dir(&self.snapshot.workspace_root)
             .kill_on_drop(true);
+        command.args(cargo_arguments);
+        for (key, value) in &self.snapshot.config.extra_env {
+            command.env(key, value);
+        }
 
         let output = command
             .output()

@@ -15,3 +15,6 @@ ls_types.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tarpc.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

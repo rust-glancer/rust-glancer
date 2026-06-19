@@ -140,6 +140,315 @@ pub fn use_it(user: User) {
 }
 
 #[test]
+fn infers_collect_destination_from_selected_trait_obligations() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["core", "storage", "app"]
+resolver = "3"
+
+//- /core/Cargo.toml
+[package]
+name = "fake_core"
+version = "0.1.0"
+edition = "2024"
+
+//- /core/src/lib.rs
+pub mod iter {
+    pub trait FromIterator<A> {}
+
+    pub trait Iterator {
+        type Item;
+
+        fn collect<B>(self) -> B
+        where
+            B: FromIterator<Self::Item>;
+    }
+}
+
+pub mod slice {
+    pub struct Iter<'a, T>(&'a T);
+}
+
+pub struct Vec<T> {
+    value: T,
+}
+
+impl<T> iter::FromIterator<T> for Vec<T> {}
+
+impl<T> [T] {
+    pub fn iter(&self) -> slice::Iter<'_, T> {
+        missing()
+    }
+}
+
+impl<'a, T> iter::Iterator for slice::Iter<'a, T> {
+    type Item = &'a T;
+}
+
+//- /storage/Cargo.toml
+[package]
+name = "storage"
+version = "0.1.0"
+edition = "2024"
+
+//- /storage/src/lib.rs
+pub struct ImportData;
+
+pub struct DefMap;
+
+impl DefMap {
+    pub fn imports(&self) -> &[ImportData] {
+        missing()
+    }
+}
+
+//- /app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+core = { package = "fake_core", path = "../core" }
+storage = { path = "../storage" }
+
+//- /app/src/lib.rs
+use core::Vec;
+use storage::DefMap;
+
+pub fn explicit_destination(def_map: &DefMap) {
+    let imports = def_map.imports().iter().collect::<Vec<_>>();
+    imports;
+}
+
+pub fn expected_destination(def_map: &DefMap) {
+    let imports: Vec<_> = def_map.imports().iter().collect();
+    imports;
+}
+"#,
+        expect![[r#"
+            package app
+
+            app [lib]
+            body b0 fn app[lib]::crate::explicit_destination @ 4:1-7:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1
+            bindings
+            - v0 param def_map `def_map`: &DefMap => &nominal struct storage[lib]::crate::DefMap @ 4:29-4:36
+            - v1 let imports `imports` => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 5:9-5:16
+            body
+            expr e5 block s1 => () @ 4:47-7:2
+              stmt s0 let v1 @ 5:5-5:64
+                initializer
+                  expr e3 method_call collect<Vec<_>> -> fn trait fake_core[lib]::crate::iter::Iterator::collect => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 5:19-5:63
+                    receiver
+                      expr e2 method_call iter -> fn impl [T]::iter => nominal struct fake_core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData> @ 5:19-5:43
+                        receiver
+                          expr e1 method_call imports -> fn impl DefMap::imports => &[nominal struct storage[lib]::crate::ImportData] @ 5:19-5:36
+                            receiver
+                              expr e0 path def_map -> local v0 => &nominal struct storage[lib]::crate::DefMap @ 5:19-5:26
+              stmt s1 expr; @ 6:5-6:13
+                expr e4 path imports -> local v1 => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 6:5-6:12
+
+
+            body b1 fn app[lib]::crate::expected_destination @ 9:1-12:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1
+            bindings
+            - v0 param def_map `def_map`: &DefMap => &nominal struct storage[lib]::crate::DefMap @ 9:29-9:36
+            - v1 let imports `imports`: Vec<_> => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 10:9-10:16
+            body
+            expr e5 block s1 => () @ 9:47-12:2
+              stmt s0 let v1: Vec<_> @ 10:5-10:62
+                initializer
+                  expr e3 method_call collect -> fn trait fake_core[lib]::crate::iter::Iterator::collect => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 10:27-10:61
+                    receiver
+                      expr e2 method_call iter -> fn impl [T]::iter => nominal struct fake_core[lib]::crate::slice::Iter<'_, nominal struct storage[lib]::crate::ImportData> @ 10:27-10:51
+                        receiver
+                          expr e1 method_call imports -> fn impl DefMap::imports => &[nominal struct storage[lib]::crate::ImportData] @ 10:27-10:44
+                            receiver
+                              expr e0 path def_map -> local v0 => &nominal struct storage[lib]::crate::DefMap @ 10:27-10:34
+              stmt s1 expr; @ 11:5-11:13
+                expr e4 path imports -> local v1 => nominal struct fake_core[lib]::crate::Vec<&nominal struct storage[lib]::crate::ImportData> @ 11:5-11:12
+
+
+            package fake_core
+
+            fake_core [lib]
+            body b0 fn impl [T]::iter @ 24:5-26:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `&self` => <unknown> @ 24:17-24:22
+            body
+            expr e2 block s1 => <unknown> @ 24:46-26:6
+              tail
+                expr e1 call => <unknown> @ 25:9-25:18
+                  callee
+                    expr e0 path missing => <unknown> @ 25:9-25:16
+
+
+            package storage
+
+            storage [lib]
+            body b0 fn impl DefMap::imports @ 6:5-8:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `&self` => &Self struct storage[lib]::crate::DefMap @ 6:20-6:25
+            body
+            expr e2 block s1 => <unknown> @ 6:44-8:6
+              tail
+                expr e1 call => <unknown> @ 7:9-7:18
+                  callee
+                    expr e0 path missing => <unknown> @ 7:9-7:16
+        "#]],
+    );
+}
+
+#[test]
+fn keeps_trait_obligation_solving_conservative() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_conservative_trait_obligation_solving"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+pub struct Vec<T> {
+    value: T,
+}
+
+pub trait FromIterator<A> {}
+
+pub struct Iter<T> {
+    value: T,
+}
+
+impl<T> Iter<T> {
+    pub fn collect<B>(self) -> B
+    where
+        B: FromIterator<T>,
+    {
+        missing()
+    }
+}
+
+pub struct NotIterator<T> {
+    value: T,
+}
+
+impl<T> NotIterator<T> {
+    pub fn collect<B>(self) -> B {
+        missing()
+    }
+}
+
+impl<T> FromIterator<T> for Vec<T> {}
+impl FromIterator<User> for Vec<User> {}
+
+pub fn missing<T>() -> T {}
+
+pub fn ambiguous_impls(iter: Iter<User>) {
+    let collected = iter.collect::<Vec<_>>();
+    collected;
+}
+
+pub fn unrelated_collect(iter: NotIterator<User>) {
+    let collected = iter.collect::<Vec<_>>();
+    collected;
+}
+"#,
+        expect![[r#"
+            package body_conservative_trait_obligation_solving
+
+            body_conservative_trait_obligation_solving [lib]
+            body b0 fn body_conservative_trait_obligation_solving[lib]::crate::missing @ 35:1-35:28
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e0 block s1 => () @ 35:26-35:28
+
+
+            body b1 fn body_conservative_trait_obligation_solving[lib]::crate::ambiguous_impls @ 37:1-40:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1
+            bindings
+            - v0 param iter `iter`: Iter<User> => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Iter<nominal struct body_conservative_trait_obligation_solving[lib]::crate::User> @ 37:24-37:28
+            - v1 let collected `collected` => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<<unknown>> @ 38:9-38:18
+            body
+            expr e3 block s1 => () @ 37:42-40:2
+              stmt s0 let v1 @ 38:5-38:46
+                initializer
+                  expr e1 method_call collect<Vec<_>> -> fn impl Iter<T>::collect => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<<unknown>> @ 38:21-38:45
+                    receiver
+                      expr e0 path iter -> local v0 => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Iter<nominal struct body_conservative_trait_obligation_solving[lib]::crate::User> @ 38:21-38:25
+              stmt s1 expr; @ 39:5-39:15
+                expr e2 path collected -> local v1 => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<<unknown>> @ 39:5-39:14
+
+
+            body b2 fn body_conservative_trait_obligation_solving[lib]::crate::unrelated_collect @ 42:1-45:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1
+            bindings
+            - v0 param iter `iter`: NotIterator<User> => nominal struct body_conservative_trait_obligation_solving[lib]::crate::NotIterator<nominal struct body_conservative_trait_obligation_solving[lib]::crate::User> @ 42:26-42:30
+            - v1 let collected `collected` => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<<unknown>> @ 43:9-43:18
+            body
+            expr e3 block s1 => () @ 42:51-45:2
+              stmt s0 let v1 @ 43:5-43:46
+                initializer
+                  expr e1 method_call collect<Vec<_>> -> fn impl NotIterator<T>::collect => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<<unknown>> @ 43:21-43:45
+                    receiver
+                      expr e0 path iter -> local v0 => nominal struct body_conservative_trait_obligation_solving[lib]::crate::NotIterator<nominal struct body_conservative_trait_obligation_solving[lib]::crate::User> @ 43:21-43:25
+              stmt s1 expr; @ 44:5-44:15
+                expr e2 path collected -> local v1 => nominal struct body_conservative_trait_obligation_solving[lib]::crate::Vec<<unknown>> @ 44:5-44:14
+
+
+            body b3 fn impl Iter<T>::collect @ 14:5-19:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `self` => Self struct body_conservative_trait_obligation_solving[lib]::crate::Iter<syntax T> @ 14:23-14:27
+            body
+            expr e2 block s1 => <unknown> @ 17:5-19:6
+              tail
+                expr e1 call => <unknown> @ 18:9-18:18
+                  callee
+                    expr e0 path missing -> item fn body_conservative_trait_obligation_solving[lib]::crate::missing => <unknown> @ 18:9-18:16
+
+
+            body b4 fn impl NotIterator<T>::collect @ 27:5-29:6
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 self_param self `self` => Self struct body_conservative_trait_obligation_solving[lib]::crate::NotIterator<syntax T> @ 27:23-27:27
+            body
+            expr e2 block s1 => <unknown> @ 27:34-29:6
+              tail
+                expr e1 call => <unknown> @ 28:9-28:18
+                  callee
+                    expr e0 path missing -> item fn body_conservative_trait_obligation_solving[lib]::crate::missing => <unknown> @ 28:9-28:16
+        "#]],
+    );
+}
+
+#[test]
 fn ignores_never_branches_when_inferring_common_result() {
     check_project_body_ir(
         r#"

@@ -1,7 +1,7 @@
 use std::{fmt::Write as _, path::Path};
 
 use expect_test::Expect;
-use rg_workspace::WorkspaceMetadata;
+use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::fixture_crate;
 
 use crate::{Package, ParseDb, Target};
@@ -21,8 +21,9 @@ fn check_parse_db_with(fixture: &str, mode: ParseFixtureMode, expect: Expect) {
         .canonicalize()
         .expect("fixture root should be canonicalizable");
     let display_root = fixture.path("");
-    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-        .expect("fixture workspace metadata should build");
+    let workspace =
+        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+            .expect("fixture workspace metadata should build");
     let mut parse = ParseDb::build(&workspace).expect("fixture parse db should build");
     if matches!(mode, ParseFixtureMode::DiscoverModules) {
         for package in parse.packages_mut() {

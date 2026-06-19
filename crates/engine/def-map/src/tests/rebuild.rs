@@ -4,7 +4,7 @@ use rg_item_tree::ItemTreeDb;
 use rg_package_store::{LoadPackage, PackageLoader, PackageStoreError};
 use rg_parse::ParseDb;
 use rg_text::PackageNameInterners;
-use rg_workspace::WorkspaceMetadata;
+use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, fixture_crate};
 
 use rg_ir_model::TargetRef;
@@ -138,8 +138,9 @@ struct RebuildFixture {
 impl RebuildFixture {
     fn build(fixture: &str, clean_package: &str) -> Self {
         let fixture = fixture_crate(fixture);
-        let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-            .expect("fixture workspace metadata should build");
+        let workspace =
+            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+                .expect("fixture workspace metadata should build");
         let (parse, item_tree, mut names) = Self::build_item_tree(&workspace);
         let mut old = DefMapDb::builder(&workspace, &parse, &item_tree)
             .name_interners(&mut names)

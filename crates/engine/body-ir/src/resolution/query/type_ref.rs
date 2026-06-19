@@ -1,7 +1,7 @@
 //! Type-ref resolution.
 
 use rg_ir_model::{
-    DefMapRef, FunctionRef, ModuleRef, Path, ScopeId, TypePathResolution,
+    DefMapRef, FunctionRef, ModuleRef, Path, ScopeId, TraitRef, TypePathResolution,
     items::{GenericArg as ItemGenericArg, Mutability, PrimitiveTy, TypePath, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
@@ -319,6 +319,25 @@ where
         args.iter()
             .map(|arg| self.generic_arg_at(arg, anchor))
             .collect()
+    }
+
+    /// Resolve a trait bound path and its generic args at this query's use site.
+    pub(crate) fn resolve_trait_bound(
+        &self,
+        bound: &TypeRef,
+    ) -> Result<Option<(TraitRef, Vec<GenericArg>)>, PackageStoreError> {
+        let TypeRef::Path(type_path) = bound else {
+            return Ok(None);
+        };
+
+        let anchor = self.anchor_for_use_site(self.use_site)?;
+        let path = Path::from_type_path(type_path);
+        let args = self.generic_args_from_type_path(type_path, anchor)?;
+        let TypePathResolution::Trait(trait_ref) = self.resolve_type_path(anchor, &path)? else {
+            return Ok(None);
+        };
+
+        Ok(Some((trait_ref, args)))
     }
 
     /// Resolve the type parts of one generic arg under this anchor.

@@ -8,7 +8,7 @@ use rg_package_store::{PackageStoreError, PackageSubset};
 use rg_parse::{FileId, ParseDb};
 use rg_semantic_ir::SemanticIrDb;
 use rg_text::PackageNameInterners;
-use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
+use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
     IndexingPerformancePreference, PackageResidencyPlan, PackageResidencyPolicy,
@@ -28,6 +28,8 @@ use super::{loading::PackageReadLoaders, stats::ProjectStats, txn::ProjectReadTx
 #[derive(Debug, Clone, MemorySize)]
 pub(crate) struct ProjectState {
     pub(crate) workspace: WorkspaceMetadata,
+    #[memsize(skip)]
+    pub(crate) workspace_lowering_config: WorkspaceLoweringConfig,
     pub(crate) cargo_metadata_config: CargoMetadataConfig,
     pub(crate) cache_plan: WorkspaceCachePlan,
     #[memsize(skip)]

@@ -19,13 +19,14 @@ impl EngineService for Service {
         root: PathBuf,
         config: EngineConfig,
     ) -> EngineResult<()> {
+        let analysis = config.analysis;
         self.diagnostics
-            .configure(root.clone(), config.diagnostics)
+            .configure(root.clone(), config.diagnostics, analysis.clone())
             .await;
         self.engine
             .request(|respond_to| EngineCommand::Initialize {
                 root,
-                analysis: config.analysis,
+                analysis,
                 respond_to,
             })
             .await

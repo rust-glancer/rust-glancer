@@ -94,6 +94,83 @@
           "default": null,
           "description": "Target triple used to filter Cargo metadata for analysis. When unset, rust-glancer uses the current rustc host target. Restart the rust-glancer server after changing this setting."
         },
+        "rust-glancer.cargo.allFeatures": {
+          "scope": "window",
+          "type": "boolean",
+          "default": false,
+          "description": "Ask Cargo to enable all package features while resolving metadata for analysis. Restart the rust-glancer server after changing this setting."
+        },
+        "rust-glancer.cargo.noDefaultFeatures": {
+          "scope": "window",
+          "type": "boolean",
+          "default": false,
+          "description": "Ask Cargo to disable default package features while resolving metadata for analysis. Custom features are still enabled when configured. Restart the rust-glancer server after changing this setting."
+        },
+        "rust-glancer.cargo.features": {
+          "scope": "window",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional Cargo features to enable while resolving metadata for analysis. Restart the rust-glancer server after changing this setting."
+        },
+        "rust-glancer.cargo.overrides": {
+          "scope": "window",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "required": [
+              "path"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "Cargo workspace root path this override applies to. Relative paths are resolved against VS Code workspace folders."
+              },
+              "target": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Target triple used to filter Cargo metadata for this Cargo workspace. Use null to reset an inherited global target."
+              },
+              "allFeatures": {
+                "type": "boolean",
+                "description": "Ask Cargo to enable all package features for this Cargo workspace."
+              },
+              "noDefaultFeatures": {
+                "type": "boolean",
+                "description": "Ask Cargo to disable default package features for this Cargo workspace."
+              },
+              "features": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Additional Cargo features to enable for this Cargo workspace."
+              }
+            }
+          },
+          "description": "Cargo metadata configuration overrides keyed by exact Cargo workspace root path. Restart the rust-glancer server after changing this setting."
+        },
+        "rust-glancer.cfg.test": {
+          "scope": "window",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the `test` cfg atom for workspace packages during semantic analysis. Restart the rust-glancer server after changing this setting."
+        },
+        "rust-glancer.cfg.atoms": {
+          "scope": "window",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "Additional custom cfg atoms to enable for Cargo packages during semantic analysis. Restart the rust-glancer server after changing this setting."
+        },
         "rust-glancer.cache.packageResidency": {
           "scope": "window",
           "type": "string",
@@ -114,13 +191,13 @@
           "default": "workspace-and-path-deps",
           "description": "Controls which package analysis artifacts remain resident after indexing. Restart the rust-glancer server after changing this setting."
         },
-        "rust-glancer.diagnosticsOnStartup": {
+        "rust-glancer.diagnostics.onStartup": {
           "scope": "window",
           "type": "boolean",
           "default": false,
           "description": "Run Cargo diagnostics once after a Rust project engine initializes."
         },
-        "rust-glancer.diagnosticsOnSave": {
+        "rust-glancer.diagnostics.onSave": {
           "scope": "window",
           "type": "boolean",
           "default": false,
@@ -132,17 +209,25 @@
           "default": "check",
           "description": "Cargo subcommand used for diagnostics. This must be a Cargo subcommand such as check or clippy, not an arbitrary shell command."
         },
-        "rust-glancer.diagnostics.arguments": {
+        "rust-glancer.diagnostics.cargoArguments": {
           "scope": "window",
           "type": "array",
           "default": [
-            "--workspace",
-            "--all-targets"
+            "--workspace"
           ],
           "items": {
             "type": "string"
           },
-          "description": "Extra arguments appended to cargo <diagnostics.command> --message-format=json for diagnostics."
+          "description": "Extra Cargo-level arguments appended to cargo <diagnostics.command> --message-format=json for diagnostics."
+        },
+        "rust-glancer.diagnostics.extraEnv": {
+          "scope": "window",
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Additional environment variables for Cargo diagnostics. Use this for compiler flags such as { \"RUSTFLAGS\": \"--cfg tokio_unstable\" }."
         }
       }
     }

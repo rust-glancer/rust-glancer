@@ -1,5 +1,5 @@
 use rg_parse::ParseDb;
-use rg_workspace::WorkspaceMetadata;
+use rg_workspace::{WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{ItemTreeDb, PackageNameInterners};
@@ -14,8 +14,9 @@ pub struct ItemTreeFixture {
 impl ItemTreeFixture {
     pub fn build(fixture: &str) -> Self {
         let fixture = fixture_crate(fixture);
-        let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-            .expect("fixture workspace metadata should build");
+        let workspace =
+            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+                .expect("fixture workspace metadata should build");
         Self::build_from_crate(fixture, &workspace)
     }
 

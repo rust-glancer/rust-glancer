@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use std::sync::Arc;
 
 use rg_body_ir::BodyIrBuildPolicy;
-use rg_workspace::{CargoMetadataConfig, WorkspaceMetadata};
+use rg_workspace::{CargoMetadataConfig, WorkspaceLoweringConfig, WorkspaceMetadata};
 
 use crate::{
     BuildProcessMemory, IndexingPerformancePreference, PackageResidencyPlan,
@@ -37,6 +37,7 @@ impl StartupCacheLoad {
 /// Fluent construction API for a fresh analysis project.
 pub struct ProjectBuilder {
     workspace: WorkspaceMetadata,
+    workspace_lowering_config: WorkspaceLoweringConfig,
     cargo_metadata_config: CargoMetadataConfig,
     body_ir_policy: BodyIrBuildPolicy,
     indexing_preference: IndexingPerformancePreference,
@@ -50,6 +51,7 @@ impl ProjectBuilder {
     pub(crate) fn new(workspace: WorkspaceMetadata) -> Self {
         Self {
             workspace,
+            workspace_lowering_config: WorkspaceLoweringConfig::default(),
             cargo_metadata_config: CargoMetadataConfig::default(),
             body_ir_policy: BodyIrBuildPolicy::default(),
             indexing_preference: IndexingPerformancePreference::default(),
@@ -72,6 +74,11 @@ impl ProjectBuilder {
 
     pub fn cargo_metadata_config(mut self, config: CargoMetadataConfig) -> Self {
         self.cargo_metadata_config = config;
+        self
+    }
+
+    pub fn workspace_lowering_config(mut self, config: WorkspaceLoweringConfig) -> Self {
+        self.workspace_lowering_config = config;
         self
     }
 
@@ -111,6 +118,7 @@ impl ProjectBuilder {
             .context("while attempting to claim package cache instance")?;
         let mut state = build_resident_state(
             self.workspace,
+            self.workspace_lowering_config,
             self.cargo_metadata_config,
             cache_instance,
             self.body_ir_policy,
@@ -142,6 +150,7 @@ impl ProjectBuilder {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_resident_state(
     workspace: WorkspaceMetadata,
+    workspace_lowering_config: WorkspaceLoweringConfig,
     cargo_metadata_config: CargoMetadataConfig,
     cache_instance: PackageCacheInstance,
     body_ir_policy: BodyIrBuildPolicy,
@@ -168,6 +177,7 @@ pub(crate) fn build_resident_state(
 
     Ok(ProjectState {
         workspace,
+        workspace_lowering_config,
         cargo_metadata_config,
         cache_plan,
         cache_instance,

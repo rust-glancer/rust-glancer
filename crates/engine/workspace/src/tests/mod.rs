@@ -3,11 +3,11 @@ mod utils;
 use std::{collections::BTreeSet, fs};
 
 use expect_test::expect;
-use test_fixture::fixture_crate;
+use test_fixture::{CrateFixture, fixture_crate};
 
 use crate::{
     CargoMetadataConfig, CargoMetadataTarget, PackageSource, RustcTarget, SysrootSources,
-    TargetKind, WorkspaceMetadata, WorkspaceMetadataError,
+    TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata, WorkspaceMetadataError,
 };
 
 #[test]
@@ -187,8 +187,8 @@ fn main() {}
     fs::remove_file(fixture.path("examples/demo.rs"))
         .expect("fixture example file should be removable after metadata is loaded");
 
-    let workspace =
-        WorkspaceMetadata::for_tests(metadata).expect("missing optional target should normalize");
+    let workspace = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
+        .expect("missing optional target should normalize");
     let package = workspace
         .workspace_packages()
         .find(|package| package.name == "missing_target_fixture")
@@ -247,8 +247,8 @@ fn main() {}
     fs::remove_file(fixture.path("dep/examples/demo.rs"))
         .expect("fixture dependency example file should be removable after metadata is loaded");
 
-    let workspace =
-        WorkspaceMetadata::for_tests(metadata).expect("missing dependency target should normalize");
+    let workspace = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
+        .expect("missing dependency target should normalize");
     let package = workspace
         .packages()
         .iter()
@@ -314,8 +314,8 @@ pub struct Lib;
             repr: source.to_string(),
         });
 
-        let workspace =
-            WorkspaceMetadata::for_tests(metadata).expect("known package source should normalize");
+        let workspace = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
+            .expect("known package source should normalize");
         assert_eq!(
             workspace.packages()[0].source,
             expected_source,
@@ -344,8 +344,8 @@ pub struct Lib;
         repr: "mystery+https://example.com".to_string(),
     });
 
-    let error =
-        WorkspaceMetadata::for_tests(metadata).expect_err("unknown source should be rejected");
+    let error = WorkspaceMetadata::for_tests(metadata, WorkspaceLoweringConfig::default())
+        .expect_err("unknown source should be rejected");
 
     assert!(
         matches!(
@@ -464,9 +464,10 @@ pub mod marker {
     );
     let sysroot = SysrootSources::from_library_root(fixture.path("sysroot/library"))
         .expect("fixture sysroot should be complete");
-    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-        .expect("fixture workspace metadata should build")
-        .with_sysroot_sources(Some(sysroot));
+    let workspace =
+        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+            .expect("fixture workspace metadata should build")
+            .with_sysroot_sources(Some(sysroot));
     let app = workspace
         .packages()
         .iter()
@@ -493,6 +494,202 @@ pub mod marker {
             "sysroot package `{name}` should use target cfg without package features",
         );
     }
+}
+
+#[test]
+fn cfg_test_applies_to_workspace_packages_only() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "vendor/dep" }
+
+//- /src/lib.rs
+pub struct App;
+
+//- /vendor/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /vendor/dep/src/lib.rs
+pub struct Dep;
+"#,
+    );
+    let workspace = WorkspaceMetadata::for_tests(
+        fixture.metadata(),
+        WorkspaceLoweringConfig::default().cfg_test(true),
+    )
+    .expect("fixture workspace metadata should build");
+    let app = workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == "app")
+        .expect("fixture app package should exist");
+    let dep = workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == "dep")
+        .expect("fixture dep package should exist");
+
+    assert!(
+        app.cfg_options.contains_atom("test"),
+        "workspace packages should receive the requested cfg(test) atom",
+    );
+    assert!(
+        !dep.cfg_options.contains_atom("test"),
+        "dependency packages should not inherit workspace cfg(test) analysis mode",
+    );
+}
+
+#[test]
+fn custom_cfg_atoms_apply_to_all_cargo_packages() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "vendor/dep" }
+
+//- /src/lib.rs
+pub struct App;
+
+//- /vendor/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /vendor/dep/src/lib.rs
+pub struct Dep;
+"#,
+    );
+    let workspace = WorkspaceMetadata::for_tests(
+        fixture.metadata(),
+        WorkspaceLoweringConfig::default().custom_cfg_atoms(["tokio_unstable"]),
+    )
+    .expect("fixture workspace metadata should build");
+    let app = workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == "app")
+        .expect("fixture app package should exist");
+    let dep = workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == "dep")
+        .expect("fixture dep package should exist");
+
+    assert!(
+        app.cfg_options.contains_atom("tokio_unstable"),
+        "workspace packages should receive custom cfg atoms",
+    );
+    assert!(
+        dep.cfg_options.contains_atom("tokio_unstable"),
+        "dependency packages should receive custom cfg atoms too",
+    );
+}
+
+#[test]
+fn custom_cargo_features_are_additive_with_defaults() {
+    let fixture = cargo_feature_fixture();
+    let cfg_options = package_cfg_options_for_config(
+        &fixture,
+        CargoMetadataConfig::default().custom_features(["extra"]),
+        "app",
+    );
+
+    assert!(
+        cfg_options.contains_key_value("feature", "default_on"),
+        "default features should remain active when custom features are added",
+    );
+    assert!(
+        cfg_options.contains_key_value("feature", "extra"),
+        "custom features should be active in lowered package cfg options",
+    );
+}
+
+#[test]
+fn no_default_cargo_features_keep_explicit_features() {
+    let fixture = cargo_feature_fixture();
+    let cfg_options = package_cfg_options_for_config(
+        &fixture,
+        CargoMetadataConfig::default()
+            .no_default_features(true)
+            .custom_features(["extra"]),
+        "app",
+    );
+
+    assert!(
+        !cfg_options.contains_key_value("feature", "default_on"),
+        "default features should be disabled when no-default-features is set",
+    );
+    assert!(
+        cfg_options.contains_key_value("feature", "extra"),
+        "explicit custom features should still be active with no-default-features",
+    );
+}
+
+#[test]
+fn all_cargo_features_can_be_combined_with_other_feature_options() {
+    let fixture = cargo_feature_fixture();
+    let cfg_options = package_cfg_options_for_config(
+        &fixture,
+        CargoMetadataConfig::default()
+            .all_features(true)
+            .no_default_features(true)
+            .custom_features(["extra"]),
+        "app",
+    );
+
+    assert!(
+        cfg_options.contains_key_value("feature", "default_on"),
+        "all-features should keep enabling default feature members even when no-default-features is also requested",
+    );
+    assert!(
+        cfg_options.contains_key_value("feature", "extra"),
+        "all-features should enable non-default feature members",
+    );
+}
+
+#[test]
+fn workspace_member_discovery_ignores_feature_selection() {
+    let fixture = fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct App;
+"#,
+    );
+    let manifests = CargoMetadataConfig::default()
+        .custom_features(["missing"])
+        .load_workspace_member_manifest_paths(fixture.path("Cargo.toml"))
+        .expect("member discovery should not depend on full analysis feature selection");
+
+    assert_eq!(
+        manifests,
+        vec![
+            fixture
+                .path("Cargo.toml")
+                .canonicalize()
+                .expect("fixture manifest should canonicalize")
+        ],
+    );
 }
 
 #[test]
@@ -547,8 +744,9 @@ edition = "2024"
 pub struct Independent;
 "#,
     );
-    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-        .expect("fixture workspace metadata should build");
+    let workspace =
+        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+            .expect("fixture workspace metadata should build");
     let dep_id = workspace
         .packages()
         .iter()
@@ -597,8 +795,9 @@ edition = "2024"
 pub struct Dep;
 "#,
     );
-    let workspace = WorkspaceMetadata::for_tests(fixture.metadata())
-        .expect("fixture workspace metadata should build");
+    let workspace =
+        WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
+            .expect("fixture workspace metadata should build");
 
     let app_api = fixture
         .path("crates/app/src")
@@ -653,4 +852,48 @@ fn normalizes_explicit_cargo_metadata_target() {
         panic!("non-empty explicit target should configure a target triple");
     };
     assert_eq!(target.as_str(), "x86_64-unknown-linux-gnu");
+}
+
+fn cargo_feature_fixture() -> CrateFixture {
+    fixture_crate(
+        r#"
+//- /Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["default_on"]
+default_on = []
+extra = []
+
+//- /src/lib.rs
+pub struct App;
+"#,
+    )
+}
+
+fn package_cfg_options_for_config(
+    fixture: &CrateFixture,
+    config: CargoMetadataConfig,
+    package_name: &str,
+) -> rg_cfg_eval::CfgOptions {
+    let loaded = config
+        .load_metadata_with_target_cfg(fixture.path("Cargo.toml"))
+        .expect("fixture cargo metadata should load");
+    let workspace = WorkspaceMetadata::lower(
+        loaded.metadata,
+        loaded.target_cfg,
+        WorkspaceLoweringConfig::default(),
+    )
+    .expect("fixture workspace metadata should build");
+
+    workspace
+        .packages()
+        .iter()
+        .find(|package| package.name == package_name)
+        .unwrap_or_else(|| panic!("fixture package `{package_name}` should exist"))
+        .cfg_options
+        .clone()
 }

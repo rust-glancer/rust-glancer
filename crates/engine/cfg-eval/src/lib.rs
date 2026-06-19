@@ -271,7 +271,7 @@ fn string_token_value(token: SyntaxToken) -> Option<String> {
 /// Target-specific cfg environment used while collecting real definitions.
 pub struct CfgEvaluator<'a> {
     options: &'a CfgOptions,
-    test_enabled: bool,
+    target_test_enabled: bool,
 }
 
 impl<'a> CfgEvaluator<'a> {
@@ -279,10 +279,10 @@ impl<'a> CfgEvaluator<'a> {
     ///
     /// `#[cfg(test)]` is not reported by rustc target cfg output; Cargo enables it for test and
     /// bench targets, so the target-owning phase passes that bit explicitly.
-    pub fn new(options: &'a CfgOptions, test_enabled: bool) -> Self {
+    pub fn new(options: &'a CfgOptions, target_test_enabled: bool) -> Self {
         Self {
             options,
-            test_enabled,
+            target_test_enabled,
         }
     }
 
@@ -329,7 +329,7 @@ impl<'a> CfgEvaluator<'a> {
 
     fn evaluate_atom(&self, atom: &str) -> bool {
         if atom == "test" {
-            return self.test_enabled;
+            return self.target_test_enabled || self.options.contains_atom("test");
         }
 
         self.options.contains_atom(atom)
@@ -409,5 +409,10 @@ mod tests {
 
         let test_cfg = CfgEvaluator::new(&options, true);
         assert!(test_cfg.is_predicate_enabled(&CfgPredicate::Atom("test".to_string())));
+
+        let mut explicit_options = CfgOptions::default();
+        explicit_options.insert_atom("test");
+        let explicit_cfg = CfgEvaluator::new(&explicit_options, false);
+        assert!(explicit_cfg.is_predicate_enabled(&CfgPredicate::Atom("test".to_string())));
     }
 }
