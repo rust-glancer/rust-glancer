@@ -1,4 +1,5 @@
 use super::super::utils;
+use crate::{profile::metric, profile_descriptors};
 use expect_test::expect;
 
 #[test]
@@ -269,7 +270,11 @@ make_user!();
 
 #[test]
 fn stops_recursive_generated_macro_expansion_at_pass_limit() {
-    let (project, stats) = utils::DefMapFixtureDb::build_with_finalization_stats(
+    let run = rg_profile::test_support::ProfileTest::start(
+        profile_descriptors(),
+        "def_map.finalization,def_map.macros",
+    );
+    let project = utils::DefMapFixtureDb::build(
         r#"
 //- /Cargo.toml
 [package]
@@ -289,14 +294,27 @@ recurse!();
 pub struct After;
 "#,
     );
+    let snapshot = run.finish();
     let target = project.lib("recursive_macro_fixture");
 
     target
         .entry("After")
         .assert_type_exists("macro expansion limit should not abort def-map finalization");
-    assert!(stats.expansion_pass_limit_reached);
-    assert_eq!(stats.expansion_passes, stats.expansion_pass_limit);
-    assert!(stats.macro_calls_skipped_by_limit > 0);
+    snapshot.assert_gauge_bool_with_message(
+        metric::EXPANSION_PASS_LIMIT_REACHED,
+        true,
+        "recursive macro expansion should mark the pass limit as reached",
+    );
+    snapshot.assert_counter_with_message(
+        metric::EXPANSION_PASSES,
+        128,
+        "recursive macro expansion should stop at the configured pass limit",
+    );
+    snapshot.assert_counter_satisfies_with_message(
+        metric::MACRO_CALLS_SKIPPED_BY_LIMIT,
+        |skipped| skipped > 0,
+        "recursive macro expansion should leave some retryable calls skipped by limit",
+    );
 }
 
 #[test]

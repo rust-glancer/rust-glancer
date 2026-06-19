@@ -1,4 +1,5 @@
 mod build;
+mod profile;
 mod query;
 mod store;
 #[doc(hidden)]
@@ -7,7 +8,8 @@ pub mod testonly;
 pub use rg_workspace::PackageSlot;
 
 pub use self::{
-    build::{DefMapFinalizationStats, DefMapPerformancePreference},
+    build::DefMapPerformancePreference,
+    profile::profile_descriptors,
     query::{DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite},
     store::{DefMapDb, DefMapReadTxn, DefMapStats},
 };

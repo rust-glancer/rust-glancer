@@ -49,12 +49,12 @@ plenty of stats. The "default fixture" for that is `rust-analyzer` on a specific
 commit, since it's a big enough, stable, and complex "real-world" project. It can
 be fetched by running [`test_targets/bench_fixtures/fetch-rust-analyzer.sh`][ra].
 
-The main part of the output is the following table:
+One key part of the output is the `project.build.checkpoints` profile table:
 
 ```bash
 $ just analyze path/to/rust-analyzer --profile --package-residency all-offloadable -m
 # .. some parts omitted
-build profile:
+profile snapshot:
  phase     elapsed    rg_sampled      rg_total   j_allocated      j_active    j_resident      j_mapped  checkpoint
 150 ms      150 ms      60.8 MiB      60.8 MiB      70.6 MiB      76.9 MiB      83.3 MiB      85.7 MiB  after parse
   0 ms      151 ms       2.3 KiB      60.8 MiB      70.6 MiB      76.9 MiB      83.3 MiB      85.7 MiB  after cache probe
@@ -71,7 +71,6 @@ build profile:
 214 ms      9.48 s      36.0 MiB      36.0 MiB      46.2 MiB     110.5 MiB     675.8 MiB     698.2 MiB  after package payload offload
  17 ms      9.50 s       7.3 MiB       7.3 MiB      10.6 MiB      38.2 MiB     675.8 MiB     698.2 MiB  after package offload cleanup
  23 ms      9.52 s       7.3 MiB       7.3 MiB       7.8 MiB      33.3 MiB      53.0 MiB      75.3 MiB  after project
-     -           -       7.3 MiB       7.3 MiB       7.8 MiB      33.3 MiB      53.0 MiB      75.3 MiB  after allocator purge
 ```
 
 The information should be interpreted as follows:
@@ -207,11 +206,13 @@ This is the baseline command. For details, run `just analyze --help`.
 
 Useful flags:
 
-- `--profile` prints the phase timing table. Use it almost always.
-- `-m` / `--memory` adds retained-memory and jemalloc stats to the phase table.
-- `--stage <stage>` prints a detailed memory breakdown for one phase checkpoint.
-  This is useful when `rg_total` points at a phase, but you want to know which
-  paths and types dominate it.
+- `--profile [selectors]` collects dynamic profile data. Without a value, it uses
+  the `default` alias, which records build checkpoints. `--profile all` collects
+  every registered profile.
+- `-m` / `--memory` adds retained-memory and jemalloc stats to build checkpoints,
+  plus the final retained-memory breakdown.
+- `--profile memory:def-map` records a detailed memory breakdown for the def-map
+  checkpoint. Other available aliases and selectors are listed in `just analyze --help`.
 - `--package-residency <policy>` controls what remains resident after indexing.
   `all-offloadable` is useful for checking idle-memory behavior, while `all-resident`
   is useful when you want to remove offloading from the experiment.
@@ -219,7 +220,7 @@ Useful flags:
   artifacts can be reused instead of rebuilt.
 - `--indexing-preference <preference>` switches between `lower-peak-memory` and
   `faster-builds`.
-- `--macro-stats` prints defmap macro-expansion counters and timings.
+- `--profile macros` prints defmap macro-expansion counters, timings, and by-name tables.
 - `--format json` is useful if you want to compare reports with a script.
 
 Note: this command works for _both_ performance and memory analysis, but memory
@@ -245,7 +246,7 @@ just analyze path/to/rust-analyzer --profile --package-residency all-offloadable
 
 Inspect one suspicious checkpoint in more detail:
 ```
-just analyze path/to/rust-analyzer --profile --package-residency all-offloadable -m --stage def-map
+just analyze path/to/rust-analyzer --profile memory:def-map --package-residency all-offloadable -m
 ```
 
 Compare the speed/memory trade-off for macro expansion:
@@ -256,10 +257,10 @@ just analyze path/to/rust-analyzer --profile --package-residency all-offloadable
 
 If defmap is suspicious, add macro stats:
 ```
-just analyze path/to/rust-analyzer --profile --package-residency all-offloadable --macro-stats -m
+just analyze path/to/rust-analyzer --profile default,macros --package-residency all-offloadable -m
 ```
 
-For disabling memory purging, you can set `RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD=0`
+To disable memory purging, you can set `RUST_GLANCER_PURGE_MEMORY_AFTER_BUILD=0`
 environment variable.
 
 ### Peak RSS

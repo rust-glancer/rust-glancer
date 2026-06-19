@@ -5,18 +5,15 @@ mod profile;
 mod project;
 mod residency;
 
-pub use rg_def_map::DefMapFinalizationStats;
+use std::sync::OnceLock;
 
 pub use self::{
     indexing::IndexingPerformancePreference,
     memory::{ProjectMemoryHooks, ProjectMemoryPurgePoint},
-    profile::{
-        BuildCheckpoint, BuildProcessMemory, BuildProfile, BuildProfileStage,
-        BuildStageMemorySnapshot, CacheProbeProfile, ProcessMemorySampler,
-    },
+    profile::{BUILD_CHECKPOINTS, BuildProcessMemory, ProcessMemorySampler},
     project::{
-        AnalysisChangeSummary, ChangedFile, DirtyFileChange, FileContext, Project, ProjectBuild,
-        ProjectBuilder, ProjectSnapshot, ProjectStats, SavedFileChange, StartupCacheLoad,
+        AnalysisChangeSummary, ChangedFile, DirtyFileChange, FileContext, Project, ProjectBuilder,
+        ProjectSnapshot, ProjectStats, SavedFileChange, StartupCacheLoad,
     },
     residency::{PackageResidency, PackageResidencyPlan, PackageResidencyPolicy},
 };
@@ -26,3 +23,16 @@ pub mod testonly;
 
 #[cfg(test)]
 mod tests;
+
+pub fn profile_descriptors() -> &'static [rg_profile::ProfileDescriptor] {
+    static DESCRIPTORS: OnceLock<Vec<rg_profile::ProfileDescriptor>> = OnceLock::new();
+
+    DESCRIPTORS
+        .get_or_init(|| {
+            let mut descriptors = Vec::new();
+            descriptors.extend_from_slice(profile::profile_descriptors());
+            descriptors.extend_from_slice(rg_def_map::profile_descriptors());
+            descriptors
+        })
+        .as_slice()
+}

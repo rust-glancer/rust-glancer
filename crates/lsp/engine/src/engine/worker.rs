@@ -17,7 +17,7 @@ use rg_lsp_proto::{
 };
 use rg_parse::TextSpan;
 use rg_project::{
-    CacheProbeProfile, FileContext, IndexingPerformancePreference, PackageResidencyPolicy, Project,
+    FileContext, IndexingPerformancePreference, PackageResidencyPolicy, Project,
     ProjectMemoryHooks, ProjectSnapshot, SavedFileChange,
 };
 use rg_workspace::{
@@ -442,23 +442,16 @@ impl EngineWorker {
             }
         }
 
-        let log_startup_cache_probe = tracing::enabled!(tracing::Level::DEBUG);
         let workspace = workspace.with_sysroot_sources(sysroot);
-        let project_build = Project::builder(workspace)
+        let project = Project::builder(workspace)
             .workspace_lowering_config(workspace_lowering_config)
             .cargo_metadata_config(cargo_metadata_config)
             .indexing_preference(indexing_preference)
             .package_residency_policy(package_residency_policy)
-            .profile_build_timing(log_startup_cache_probe)
             .memory_hooks(Arc::clone(&self.memory_hooks))
             .build()
             .context("while attempting to build LSP analysis project")?;
-        Self::log_startup_cache_probe(
-            project_build
-                .profile()
-                .and_then(|profile| profile.cache_probe()),
-        );
-        self.project.replace_saved(project_build.into_project());
+        self.project.replace_saved(project);
         Self::log_project_snapshot(self.project.saved_snapshot()?, "initial index");
         tracing::info!(
             workspace_root = %workspace_root.display(),
@@ -1338,31 +1331,6 @@ impl EngineWorker {
                 );
             }
         }
-    }
-
-    fn log_startup_cache_probe(profile: Option<&CacheProbeProfile>) {
-        let Some(profile) = profile else {
-            return;
-        };
-
-        tracing::debug!(
-            packages = profile.package_count,
-            resident = profile.resident_count,
-            offloadable = profile.offloadable_count,
-            hits = profile.hit_count,
-            misses = profile.miss_count(),
-            missing_artifacts = profile.missing_artifact_count,
-            artifact_read_errors = profile.artifact_read_error_count,
-            source_mismatches = profile.source_mismatch_count,
-            source_errors = profile.source_error_count,
-            body_ir_policy_mismatches = profile.body_ir_policy_mismatch_count,
-            parse_restore_errors = profile.restore_error_count,
-            unplanned_packages = profile.unplanned_package_count,
-            artifact_read_ms = profile.artifact_read_elapsed.as_millis(),
-            source_fingerprint_ms = profile.source_fingerprint_elapsed.as_millis(),
-            parse_restore_ms = profile.parse_restore_elapsed.as_millis(),
-            "startup cache probe finished"
-        );
     }
 
     /// Logs the retained project shape after the analysis project changes.

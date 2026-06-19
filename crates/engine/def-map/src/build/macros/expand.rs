@@ -19,7 +19,7 @@ use super::{
     MacroExpansionAttempt,
     cache::{MacroExpansionCache, MacroExpansionCacheKey},
 };
-use crate::build::{DefMapPerformancePreference, stats::DefMapFinalizationStatsSink};
+use crate::{build::DefMapPerformancePreference, profile::metric};
 
 const LOWER_PEAK_MEMORY_MACRO_EXPANSION_THREAD_LIMIT: usize = 2;
 
@@ -64,7 +64,6 @@ pub(crate) fn expand_expansion_attempts(
     executor: &MacroExpansionExecutor,
     attempts: &mut [MacroExpansionAttempt],
     cache: &mut MacroExpansionCache,
-    stats: &mut DefMapFinalizationStatsSink<'_>,
 ) {
     let work = attempts
         .iter_mut()
@@ -80,29 +79,27 @@ pub(crate) fn expand_expansion_attempts(
 
     // Expansion no longer borrows def-map state, so the expensive matcher/transcriber work can run
     // in parallel without making the collector itself concurrent.
-    let timer = stats.start_timer();
+    let timer = metric::TIMING_EXPAND_MACROS.start_timer();
     let mut results = executor.thread_pool.install(|| {
         work.into_par_iter()
             .map(|(attempt_id, work)| work.expand(attempt_id))
             .collect::<Vec<_>>()
     });
-    stats.finish_timer(timer, |timings, elapsed| {
-        timings.expand_macros += elapsed;
-    });
+    timer.finish();
 
     // Keep result application deterministic even though the work finished in parallel.
     results.sort_by_key(|result| result.attempt_id);
     for result in results {
         let syntax = result.generated_syntax;
         cache.insert_expansion(result.key, syntax.clone());
-        stats.record(|stats| {
-            stats.record_macro_expansion_elapsed(&result.macro_name, result.elapsed);
-            if syntax.is_some() {
-                stats.macro_calls_expanded += 1;
-            } else {
-                stats.record_expand_failure(&result.macro_name);
-            }
-        });
+        metric::EXPANSION_BY_NAME.record(&result.macro_name, result.elapsed);
+        if syntax.is_some() {
+            metric::MACRO_CALLS_EXPANDED.inc();
+        } else {
+            metric::MACRO_CALLS_FAILED.inc();
+            metric::MACRO_EXPAND_FAILURES.inc();
+            metric::FAILED_EXPAND_BY_NAME.inc(&result.macro_name);
+        }
 
         let attempt = &mut attempts[result.attempt_id];
         attempt.set_expansion_result(syntax);

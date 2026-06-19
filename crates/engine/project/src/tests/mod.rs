@@ -7,7 +7,7 @@ use test_fixture::testonly::MarkedText;
 
 use self::utils::{HostFixture, HostObservation};
 use crate::{
-    BuildProfileStage, PackageResidencyPolicy, Project, ProjectMemoryHooks,
+    BuildProcessMemory, PackageResidencyPolicy, Project, ProjectMemoryHooks,
     ProjectMemoryPurgePoint, testonly::ProjectSourceFixture,
 };
 
@@ -65,8 +65,30 @@ pub struct User;
     );
 }
 
+fn project_build_checkpoints(
+    snapshot: &rg_profile::test_support::TestSnapshot,
+) -> &[rg_profile::ProfileCheckpoint] {
+    snapshot
+        .inner()
+        .checkpoints(crate::profile::metric::CHECKPOINTS.path())
+        .expect("project build checkpoints should be recorded")
+}
+
+fn checkpoint_optional_bytes(checkpoint: &rg_profile::ProfileCheckpoint, key: &str) -> Option<u64> {
+    let value = checkpoint
+        .values
+        .iter()
+        .find(|value| value.key == key)
+        .unwrap_or_else(|| panic!("checkpoint should include {key:?}"));
+    match value.value {
+        rg_profile::ProfileMeasurement::Empty => None,
+        rg_profile::ProfileMeasurement::Bytes(bytes) => Some(bytes),
+        ref value => panic!("checkpoint value {key:?} should be bytes or empty, got {value:?}"),
+    }
+}
+
 #[test]
-fn timing_profile_reports_phase_checkpoints_without_memory_sampling() {
+fn dynamic_profile_records_timing_only_project_build_checkpoints() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
@@ -80,35 +102,111 @@ pub struct User;
 "#,
     );
     let workspace = fixture.workspace_metadata();
-    let (_project, profile) = Project::builder(workspace)
-        .profile_build_timing(true)
-        .build()
-        .expect("timing-profiled project build should succeed")
-        .into_parts();
-    let profile = profile.expect("timing profiling should produce a profile");
+    let run =
+        rg_profile::test_support::ProfileTest::start(crate::profile_descriptors(), "project.build");
 
+    Project::builder(workspace)
+        .build()
+        .expect("project build should succeed");
+    let snapshot = run.finish();
+    let checkpoints = project_build_checkpoints(&snapshot);
+    let labels = checkpoints
+        .iter()
+        .map(|checkpoint| checkpoint.label.as_str())
+        .collect::<Vec<_>>();
     assert_eq!(
-        profile.checkpoints().len(),
-        11,
-        "timing profile should report the same build checkpoints as memory profiling"
+        labels,
+        [
+            "after parse",
+            "after cache probe",
+            "after item-tree",
+            "after item-tree syntax eviction",
+            "after cache source fingerprints",
+            "after def-map",
+            "after semantic-ir",
+            "after item-tree drop",
+            "after body-ir",
+            "after parse syntax eviction",
+            "after project",
+        ],
+        "dynamic profile should report the same build checkpoints as memory profiling",
     );
     assert!(
-        profile
-            .checkpoints()
+        checkpoints
             .iter()
             .all(|checkpoint| checkpoint.phase_elapsed <= checkpoint.elapsed),
         "phase durations should be bounded by cumulative elapsed time"
     );
+    for checkpoint in checkpoints {
+        assert_eq!(
+            checkpoint
+                .values
+                .iter()
+                .map(|value| value.key.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "retained_bytes",
+                "active_retained_bytes",
+                "allocated_bytes",
+                "active_bytes",
+                "resident_bytes",
+                "mapped_bytes",
+            ],
+            "timing-only checkpoints should keep the memory column shape",
+        );
+        assert!(
+            checkpoint
+                .values
+                .iter()
+                .all(|value| value.value == rg_profile::ProfileMeasurement::Empty),
+            "timing-only profiling should not run memory samplers",
+        );
+    }
+}
+
+#[test]
+fn process_memory_sampler_enables_retained_build_memory() {
+    let fixture = ProjectSourceFixture::build(
+        r#"
+//- /Cargo.toml
+[package]
+name = "process_memory_profile_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+"#,
+    );
+    let workspace = fixture.workspace_metadata();
+    let run =
+        rg_profile::test_support::ProfileTest::start(crate::profile_descriptors(), "project.build");
+
+    Project::builder(workspace)
+        .process_memory_sampler(|| {
+            Some(BuildProcessMemory {
+                allocated_bytes: 11,
+                active_bytes: 13,
+                resident_bytes: 17,
+                mapped_bytes: 19,
+            })
+        })
+        .build()
+        .expect("process-memory-profiled project build should succeed");
+    let snapshot = run.finish();
+    let after_parse = project_build_checkpoints(&snapshot)
+        .iter()
+        .find(|checkpoint| checkpoint.label == "after parse")
+        .expect("profile should contain the parse checkpoint");
+
     assert!(
-        profile.checkpoints().iter().all(|checkpoint| {
-            checkpoint.retained_bytes.is_none()
-                && checkpoint.active_retained_bytes.is_none()
-                && checkpoint.allocated_bytes.is_none()
-                && checkpoint.active_bytes.is_none()
-                && checkpoint.resident_bytes.is_none()
-                && checkpoint.mapped_bytes.is_none()
-        }),
-        "timing-only profiling should not run memory samplers"
+        checkpoint_optional_bytes(after_parse, "retained_bytes").is_some_and(|bytes| bytes > 0),
+        "process memory sampling should also enable retained object measurements"
+    );
+    assert_eq!(
+        checkpoint_optional_bytes(after_parse, "allocated_bytes"),
+        Some(11),
+        "process memory sampling should still record allocator counters"
     );
 }
 
@@ -127,17 +225,17 @@ pub struct User;
 "#,
     );
     let workspace = fixture.workspace_metadata();
-    let (_project, profile) = Project::builder(workspace)
+    let run =
+        rg_profile::test_support::ProfileTest::start(crate::profile_descriptors(), "project.build");
+
+    Project::builder(workspace)
         .package_residency_policy(PackageResidencyPolicy::AllOffloadable)
-        .profile_build_timing(true)
         .build()
-        .expect("profiled offloadable project build should succeed")
-        .into_parts();
-    let profile = profile.expect("timing profiling should produce a profile");
-    let labels = profile
-        .checkpoints()
+        .expect("profiled offloadable project build should succeed");
+    let snapshot = run.finish();
+    let labels = project_build_checkpoints(&snapshot)
         .iter()
-        .map(|checkpoint| checkpoint.label)
+        .map(|checkpoint| checkpoint.label.as_str())
         .collect::<Vec<_>>();
 
     for label in [
@@ -154,12 +252,12 @@ pub struct User;
 }
 
 #[test]
-fn def_map_finalization_stats_are_collected_only_when_requested() {
+fn project_build_records_def_map_profile_when_profile_run_is_active() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
-name = "def_map_finalization_stats_fixture"
+name = "def_map_profile_fixture"
 version = "0.1.0"
 edition = "2024"
 
@@ -175,37 +273,35 @@ make_item!(Admin);
 "#,
     );
     let workspace = fixture.workspace_metadata();
-
-    let plain_build = Project::builder(workspace.clone())
-        .build()
-        .expect("plain project build should succeed");
-    assert!(
-        plain_build.def_map_finalization_stats().is_none(),
-        "def-map finalization stats should not be retained unless requested"
+    let run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "def_map.finalization,def_map.macros",
     );
 
-    let stats_build = Project::builder(workspace)
-        .collect_def_map_finalization_stats(true)
+    Project::builder(workspace)
         .build()
-        .expect("stats-enabled project build should succeed");
-    let stats = stats_build
-        .def_map_finalization_stats()
-        .expect("requested def-map finalization stats should be retained");
-    assert_eq!(
-        stats.macro_calls_expanded, 2,
-        "the fixture should expand both macro calls"
+        .expect("project build should succeed");
+    let snapshot = run.finish();
+
+    snapshot.assert_counter_path_with_message(
+        "def_map.macros.calls.expanded",
+        2,
+        "the fixture should expand both macro calls",
     );
-    assert_eq!(
-        stats.macro_compile_attempts, 1,
-        "multiple calls to one macro definition should share compiled macro data"
+    snapshot.assert_counter_path_with_message(
+        "def_map.macros.compile.attempts",
+        1,
+        "multiple calls to one macro definition should share compiled macro data",
     );
-    assert_eq!(
-        stats.macro_compile_cache_hits, 1,
-        "the second call should reuse the cached compiled macro"
+    snapshot.assert_counter_path_with_message(
+        "def_map.macros.compile.cache_hits",
+        1,
+        "the second call should reuse the cached compiled macro",
     );
-    assert_eq!(
-        stats.generated_sources_parsed, 2,
-        "each expanded generated item source should be parsed"
+    snapshot.assert_counter_path_with_message(
+        "def_map.macros.generated.sources_parsed",
+        2,
+        "each expanded generated item source should be parsed",
     );
 }
 
@@ -224,17 +320,18 @@ pub struct User;
 "#,
     );
     let workspace = fixture.workspace_metadata();
-    let (_project, profile) = Project::builder(workspace)
+    let run =
+        rg_profile::test_support::ProfileTest::start(crate::profile_descriptors(), "project.build");
+
+    Project::builder(workspace)
         .measure_retained_memory(true)
         .build()
-        .expect("profiled project build should succeed")
-        .into_parts();
-    let profile = profile.expect("retained memory profiling should produce a profile");
-
-    let labels = profile
-        .checkpoints()
+        .expect("profiled project build should succeed");
+    let snapshot = run.finish();
+    let checkpoints = project_build_checkpoints(&snapshot);
+    let labels = checkpoints
         .iter()
-        .map(|checkpoint| checkpoint.label)
+        .map(|checkpoint| checkpoint.label.as_str())
         .collect::<Vec<_>>();
     assert_eq!(
         labels,
@@ -254,42 +351,40 @@ pub struct User;
     );
 
     assert!(
-        profile
-            .checkpoints()
+        checkpoints
             .iter()
-            .filter(|checkpoint| checkpoint.retained_bytes.is_some())
-            .all(|checkpoint| checkpoint
-                .retained_bytes
-                .expect("retained bytes should exist")
-                > 0),
+            .filter_map(|checkpoint| checkpoint_optional_bytes(checkpoint, "retained_bytes"))
+            .all(|bytes| bytes > 0),
         "retained checkpoints should record non-zero memory"
     );
     assert!(
-        profile
-            .checkpoints()
+        checkpoints
             .iter()
-            .all(|checkpoint| checkpoint.active_retained_bytes.is_some()),
+            .all(
+                |checkpoint| checkpoint_optional_bytes(checkpoint, "active_retained_bytes")
+                    .is_some()
+            ),
         "retained profiling should record active live-state memory for every checkpoint"
     );
 
-    let item_tree_drop = profile
-        .checkpoints()
+    let item_tree_drop = checkpoints
         .iter()
         .find(|checkpoint| checkpoint.label == "after item-tree drop")
         .expect("profile should contain item-tree drop checkpoint");
     assert_eq!(
-        item_tree_drop.retained_bytes, None,
+        checkpoint_optional_bytes(item_tree_drop, "retained_bytes"),
+        None,
         "process-only checkpoints should not pretend to sample a dropped phase object"
     );
 }
 
 #[test]
-fn stage_memory_profile_captures_requested_transient_phase() {
+fn build_memory_snapshot_captures_requested_transient_point() {
     let fixture = ProjectSourceFixture::build(
         r#"
 //- /Cargo.toml
 [package]
-name = "stage_profile_fixture"
+name = "build_memory_fixture"
 version = "0.1.0"
 edition = "2024"
 
@@ -298,36 +393,37 @@ pub struct User;
 "#,
     );
     let workspace = fixture.workspace_metadata();
-    let (_project, profile) = Project::builder(workspace)
+    let run = rg_profile::test_support::ProfileTest::start(
+        crate::profile_descriptors(),
+        "project.build.def_map",
+    );
+    Project::builder(workspace)
         .measure_retained_memory(true)
-        .stage_memory_target(Some(BuildProfileStage::DefMap))
         .build()
-        .expect("stage-profiled project build should succeed")
-        .into_parts();
-    let profile = profile.expect("stage profiling should produce a profile");
-    let snapshot = profile
-        .stage_memory()
-        .expect("requested stage should capture detailed memory");
+        .expect("memory-targeted project build should succeed");
+    let snapshot = run.finish();
+    let memory = snapshot
+        .inner()
+        .memory_snapshot(crate::profile::metric::DEF_MAP_MEMORY.path())
+        .expect("requested memory point should capture detailed memory");
 
-    assert_eq!(snapshot.stage(), BuildProfileStage::DefMap);
-    assert_eq!(snapshot.label(), "after def-map");
     assert!(
-        snapshot.retained_bytes() > 0,
-        "stage memory should report retained bytes"
+        memory.retained_bytes > 0,
+        "build memory snapshot should report retained bytes"
     );
 
-    let paths = snapshot
-        .records()
+    let paths = memory
+        .records
         .iter()
         .map(|record| record.path.as_str())
         .collect::<Vec<_>>();
     assert!(
-        paths.iter().any(|path| path.starts_with("stage.def_map")),
-        "def-map stage snapshot should include def-map memory"
+        paths.iter().any(|path| path.starts_with("build.def_map")),
+        "def-map memory snapshot should include def-map memory"
     );
     assert!(
-        paths.iter().any(|path| path.starts_with("stage.item_tree")),
-        "def-map stage snapshot should still include live item-tree memory"
+        paths.iter().any(|path| path.starts_with("build.item_tree")),
+        "def-map memory snapshot should still include live item-tree memory"
     );
 }
 

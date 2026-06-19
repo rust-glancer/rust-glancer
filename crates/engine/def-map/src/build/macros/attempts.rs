@@ -20,8 +20,8 @@ use rg_workspace::RustEdition;
 use crate::build::{
     collect::TargetState,
     finalize::{FinalizeTargetStates, ScopeMatrix},
-    stats::DefMapFinalizationStatsSink,
 };
+use crate::profile::metric;
 
 use super::{
     MacroCallSite, MacroDirectiveState,
@@ -96,7 +96,6 @@ pub(crate) fn collect_expansion_attempts(
     states: &FinalizeTargetStates,
     scan: MacroExpansionScan<'_>,
     cache: &mut MacroExpansionCache,
-    stats: &mut DefMapFinalizationStatsSink<'_>,
 ) -> anyhow::Result<Vec<MacroExpansionAttempt>> {
     let mut attempts = Vec::new();
 
@@ -128,7 +127,7 @@ pub(crate) fn collect_expansion_attempts(
                         state.target_name
                     )
                 })?;
-                attempt.record(stats);
+                attempt.record();
                 attempts.push(attempt);
             }
         }
@@ -144,7 +143,6 @@ pub(crate) fn apply_expansion_attempts(
     interners: &mut PackageNameInterners,
     current_scopes: &mut ScopeMatrix,
     attempts: Vec<MacroExpansionAttempt>,
-    stats: &mut DefMapFinalizationStatsSink<'_>,
 ) -> anyhow::Result<MacroExpansionApplyResult> {
     let mut result = MacroExpansionApplyResult::default();
 
@@ -247,7 +245,7 @@ pub(crate) fn apply_expansion_attempts(
             origin: attempt.origin,
             result: MacroExpansionApplyResult::default(),
         }
-        .collect_syntax(syntax, macro_name.as_deref(), stats);
+        .collect_syntax(syntax, macro_name.as_deref());
         let directive_state = match collected {
             Ok(collected) => {
                 result.merge(collected);
@@ -621,9 +619,9 @@ impl MacroExpansionAttempt {
         )
     }
 
-    fn record(&self, stats: &mut DefMapFinalizationStatsSink<'_>) {
+    fn record(&self) {
         let macro_name = self.macro_name.as_deref().unwrap_or("<unknown>");
-        self.record.record(stats, macro_name);
+        self.record.record(macro_name);
     }
 
     pub(super) fn take_expansion_work(&mut self) -> Option<MacroExpansionWork> {
@@ -708,61 +706,67 @@ impl MacroExpansionAttemptRecord {
         }
     }
 
-    fn record(&self, stats: &mut DefMapFinalizationStatsSink<'_>, macro_name: &str) {
-        stats.record(|stats| {
-            stats.macro_calls_seen += 1;
+    fn record(&self, macro_name: &str) {
+        metric::MACRO_CALLS_SEEN.inc();
 
-            if self.resolved {
-                stats.macro_calls_resolved += 1;
-            }
-            if self.unresolved {
-                stats.macro_calls_unresolved += 1;
-                stats.record_unresolved_macro(macro_name);
-            }
-            if self.skipped {
-                stats.macro_calls_skipped += 1;
-            }
-            if self.expanded {
-                stats.macro_calls_expanded += 1;
-            }
-            if self.failed {
-                stats.record_expand_failure(macro_name);
-            }
+        if self.resolved {
+            metric::MACRO_CALLS_RESOLVED.inc();
+        }
+        if self.unresolved {
+            metric::MACRO_CALLS_UNRESOLVED.inc();
+            metric::UNRESOLVED_BY_NAME.inc(macro_name);
+        }
+        if self.skipped {
+            metric::MACRO_CALLS_SKIPPED.inc();
+        }
+        if self.expanded {
+            metric::MACRO_CALLS_EXPANDED.inc();
+        }
+        if self.failed {
+            metric::MACRO_CALLS_FAILED.inc();
+            metric::MACRO_EXPAND_FAILURES.inc();
+            metric::FAILED_EXPAND_BY_NAME.inc(macro_name);
+        }
 
-            if let Some(compile) = self.compile {
-                match compile {
-                    MacroCompileRecord::CacheHit { failed } => {
-                        stats.macro_compile_cache_hits += 1;
-                        if failed {
-                            stats.record_compile_failure(macro_name);
-                        }
+        if let Some(compile) = self.compile {
+            match compile {
+                MacroCompileRecord::CacheHit { failed } => {
+                    metric::MACRO_COMPILE_CACHE_HITS.inc();
+                    if failed {
+                        metric::MACRO_CALLS_FAILED.inc();
+                        metric::MACRO_COMPILE_FAILURES.inc();
+                        metric::FAILED_COMPILE_BY_NAME.inc(macro_name);
                     }
-                    MacroCompileRecord::Attempt { elapsed, failed } => {
-                        stats.macro_compile_attempts += 1;
-                        stats.timings.compile_macros += elapsed;
-                        if failed {
-                            stats.record_compile_failure(macro_name);
-                        }
+                }
+                MacroCompileRecord::Attempt { elapsed, failed } => {
+                    metric::MACRO_COMPILE_ATTEMPTS.inc();
+                    metric::TIMING_COMPILE_MACROS.record(elapsed);
+                    if failed {
+                        metric::MACRO_CALLS_FAILED.inc();
+                        metric::MACRO_COMPILE_FAILURES.inc();
+                        metric::FAILED_COMPILE_BY_NAME.inc(macro_name);
                     }
                 }
             }
+        }
 
-            if let Some(expand) = self.expand {
-                match expand {
-                    MacroExpandRecord::CacheHit { failed } => {
-                        stats.macro_expand_cache_hits += 1;
-                        if failed {
-                            stats.record_expand_failure(macro_name);
-                        } else {
-                            stats.macro_calls_expanded += 1;
-                        }
-                    }
-                    MacroExpandRecord::Attempt => {
-                        stats.macro_expand_attempts += 1;
+        if let Some(expand) = self.expand {
+            match expand {
+                MacroExpandRecord::CacheHit { failed } => {
+                    metric::MACRO_EXPAND_CACHE_HITS.inc();
+                    if failed {
+                        metric::MACRO_CALLS_FAILED.inc();
+                        metric::MACRO_EXPAND_FAILURES.inc();
+                        metric::FAILED_EXPAND_BY_NAME.inc(macro_name);
+                    } else {
+                        metric::MACRO_CALLS_EXPANDED.inc();
                     }
                 }
+                MacroExpandRecord::Attempt => {
+                    metric::MACRO_EXPAND_ATTEMPTS.inc();
+                }
             }
-        });
+        }
     }
 }
 

@@ -13,15 +13,12 @@ mod finalize;
 mod implicit_roots;
 mod imports;
 mod macros;
-mod stats;
 
 use rg_item_tree::ItemTreeDb;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
 use crate::{DefMapDb, DefMapReadTxn, PackageSlot};
-
-pub use self::stats::DefMapFinalizationStats;
 
 /// Build-time speed/memory preference for def-map finalization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -39,7 +36,6 @@ pub struct DefMapDbBuilder<'a, 'names> {
     parse: &'a rg_parse::ParseDb,
     item_tree: &'a ItemTreeDb,
     interners: NameInternerSource<'names>,
-    finalization_stats: Option<&'a mut DefMapFinalizationStats>,
     performance_preference: DefMapPerformancePreference,
 }
 
@@ -54,7 +50,6 @@ impl<'a> DefMapDbBuilder<'a, 'static> {
             parse,
             item_tree,
             interners: NameInternerSource::Owned(PackageNameInterners::new(parse.package_count())),
-            finalization_stats: None,
             performance_preference: DefMapPerformancePreference::default(),
         }
     }
@@ -70,14 +65,8 @@ impl<'a, 'names> DefMapDbBuilder<'a, 'names> {
             parse: self.parse,
             item_tree: self.item_tree,
             interners: NameInternerSource::Borrowed(interners),
-            finalization_stats: self.finalization_stats,
             performance_preference: self.performance_preference,
         }
-    }
-
-    pub fn finalization_stats(mut self, stats: &'a mut DefMapFinalizationStats) -> Self {
-        self.finalization_stats = Some(stats);
-        self
     }
 
     pub fn performance_preference(mut self, preference: DefMapPerformancePreference) -> Self {
@@ -91,7 +80,6 @@ impl<'a, 'names> DefMapDbBuilder<'a, 'names> {
             self.parse,
             self.item_tree,
             self.interners.as_mut(),
-            self.finalization_stats,
             self.performance_preference,
         )?;
         db.mutator().compact_storage();
@@ -122,7 +110,6 @@ pub struct DefMapDbPackageRebuilder<'a, 'db> {
     item_tree: &'a ItemTreeDb,
     packages: &'a [PackageSlot],
     interners: &'a mut PackageNameInterners,
-    finalization_stats: Option<&'a mut DefMapFinalizationStats>,
     performance_preference: DefMapPerformancePreference,
 }
 
@@ -144,14 +131,8 @@ impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
             item_tree,
             packages,
             interners,
-            finalization_stats: None,
             performance_preference: DefMapPerformancePreference::default(),
         }
-    }
-
-    pub fn finalization_stats(mut self, stats: &'a mut DefMapFinalizationStats) -> Self {
-        self.finalization_stats = Some(stats);
-        self
     }
 
     pub fn performance_preference(mut self, preference: DefMapPerformancePreference) -> Self {
@@ -168,7 +149,6 @@ impl<'a, 'db> DefMapDbPackageRebuilder<'a, 'db> {
             self.item_tree,
             self.packages,
             self.interners,
-            self.finalization_stats,
             self.performance_preference,
         )?;
         db.mutator().compact_packages(self.packages);

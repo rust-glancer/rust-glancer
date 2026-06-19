@@ -1,5 +1,4 @@
 mod html;
-mod html_writer;
 mod json;
 mod text;
 mod value;

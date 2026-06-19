@@ -1,5 +1,9 @@
-//! Minimal HTML writer just so that HTML rendering doesn't look so awful (though it still kind of is).
+//! Small HTML writer used by the report renderer.
+//!
+//! It escapes text and attributes by default. Raw HTML is only used for the fixed page shell,
+//! stylesheet, and script.
 
+/// Accumulates HTML into a string.
 pub(super) struct HtmlWriter {
     html: String,
 }
@@ -78,6 +82,10 @@ impl HtmlWriter {
     }
 }
 
+/// Pending HTML element.
+///
+/// The element is written only when one of `empty`, `text`, or `children` is called. That keeps
+/// attributes and classes easy to chain.
 pub(super) struct HtmlElement<'writer> {
     writer: &'writer mut HtmlWriter,
     name: &'static str,
@@ -92,8 +100,17 @@ impl HtmlElement<'_> {
     }
 
     pub(super) fn class(mut self, class: impl Into<String>) -> Self {
-        self.classes.push(class.into());
+        let class = class.into();
+        if !class.is_empty() {
+            self.classes.push(class);
+        }
         self
+    }
+
+    pub(super) fn empty(self) {
+        self.writer
+            .write_open_tag(self.name, &self.attrs, &self.classes);
+        self.writer.raw("\n");
     }
 
     pub(super) fn text(self, text: &str) {

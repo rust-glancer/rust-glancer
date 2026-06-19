@@ -23,7 +23,7 @@ use crate::{indexing::IndexingPerformancePreference, residency::PackageResidency
 use rg_std::MemorySize;
 
 pub use self::{
-    build::{ProjectBuild, ProjectBuilder, StartupCacheLoad},
+    build::{ProjectBuilder, StartupCacheLoad},
     dirty::DirtyFileChange,
     snapshot::ProjectSnapshot,
     stats::ProjectStats,

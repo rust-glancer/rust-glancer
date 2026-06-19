@@ -24,6 +24,7 @@ members = [
   "crates/engine/package-store",
   "crates/lib/text",
   "crates/lib/arena",
+  "crates/lib/profile",
   "crates/lib/std",
   "crates/lib/std-derive",
   "crates/lib/wincode-utils",
@@ -126,6 +127,7 @@ rg_project = { path = "crates/engine/project" }
 rg_package_store = { path = "crates/engine/package-store" }
 rg_text = { path = "crates/lib/text" }
 rg_arena = { path = "crates/lib/arena" }
+rg_profile = { path = "crates/lib/profile" }
 rg_std = { path = "crates/lib/std" }
 rg_std_derive = { path = "crates/lib/std-derive" }
 rg_wincode_utils = { path = "crates/lib/wincode-utils" }

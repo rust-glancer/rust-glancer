@@ -5,7 +5,7 @@ use rg_parse::{Package, ParseDb, Target};
 use rg_workspace::{SysrootSources, TargetKind, WorkspaceLoweringConfig, WorkspaceMetadata};
 use test_fixture::{CrateFixture, fixture_crate};
 
-use crate::{DefMapDb, DefMapFinalizationStats, PackageSlot};
+use crate::{DefMapDb, PackageSlot};
 
 /// End-to-end fixture for tests that need name resolution data.
 pub struct DefMapFixture {
@@ -40,33 +40,11 @@ impl DefMapFixture {
         Self::build_from_crate(fixture, workspace)
     }
 
-    pub fn build_with_finalization_stats(fixture: &str) -> (Self, DefMapFinalizationStats) {
-        let fixture = fixture_crate(fixture);
-        let workspace =
-            WorkspaceMetadata::for_tests(fixture.metadata(), WorkspaceLoweringConfig::default())
-                .expect("fixture workspace metadata should build");
-        let mut stats = DefMapFinalizationStats::default();
-        let db =
-            Self::build_from_crate_with_finalization_stats(fixture, workspace, Some(&mut stats));
-        (db, stats)
-    }
-
     pub fn build_from_crate(fixture: CrateFixture, workspace: WorkspaceMetadata) -> Self {
-        Self::build_from_crate_with_finalization_stats(fixture, workspace, None)
-    }
-
-    fn build_from_crate_with_finalization_stats(
-        fixture: CrateFixture,
-        workspace: WorkspaceMetadata,
-        finalization_stats: Option<&mut DefMapFinalizationStats>,
-    ) -> Self {
         let item_tree = ItemTreeFixture::build_from_crate(fixture, &workspace);
-        let mut builder =
-            DefMapDb::builder(&workspace, item_tree.parse_db(), item_tree.item_tree_db());
-        if let Some(stats) = finalization_stats {
-            builder = builder.finalization_stats(stats);
-        }
-        let def_map = builder.build().expect("fixture def map db should build");
+        let def_map = DefMapDb::builder(&workspace, item_tree.parse_db(), item_tree.item_tree_db())
+            .build()
+            .expect("fixture def map db should build");
 
         Self { item_tree, def_map }
     }

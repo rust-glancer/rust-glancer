@@ -1,6 +1,6 @@
 use expect_test::Expect;
 
-use crate::{DefMapDb, DefMapFinalizationStats, testonly::DefMapFixture};
+use crate::{DefMapDb, testonly::DefMapFixture};
 use rg_ir_model::{
     DefId, DefMapRef, ModuleId, ModuleRef, Path, PathSegment, TargetRef,
     hir::source::{ItemSource, ItemSourceKind},
@@ -93,11 +93,6 @@ impl DefMapFixtureDb {
         Self {
             fixture: DefMapFixture::build_with_workspace_config(fixture, config),
         }
-    }
-
-    pub(super) fn build_with_finalization_stats(fixture: &str) -> (Self, DefMapFinalizationStats) {
-        let (fixture, stats) = DefMapFixture::build_with_finalization_stats(fixture);
-        (Self { fixture }, stats)
     }
 
     pub(super) fn build_with_sysroot(fixture: &str) -> Self {

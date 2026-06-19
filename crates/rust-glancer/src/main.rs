@@ -22,19 +22,19 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Analyze the crate or workspace package located at `path`.
+    #[command(after_help = analyze::profile_groups_help())]
     Analyze {
         path: PathBuf,
-        /// Print build phase timings after analysis finishes.
-        #[clap(long)]
-        profile: bool,
-        /// Print def-map finalization counters and timings, including macro expansion.
-        #[clap(long)]
-        macro_stats: bool,
+        /// Collect comma-separated dynamic profile selectors or aliases.
+        #[clap(
+            long,
+            value_name = "SELECTORS",
+            num_args = 0..=1,
+            default_missing_value = "default"
+        )]
+        profile: Option<String>,
         #[clap(short, long)]
         memory: bool,
-        /// Build stage used for detailed retained-memory reporting with --memory.
-        #[clap(long, value_enum, default_value = "final")]
-        stage: analyze::CliMemoryStage,
         /// Load matching offloadable packages from existing cache artifacts during indexing.
         #[clap(short, long)]
         load: bool,
@@ -75,9 +75,7 @@ fn main() -> anyhow::Result<()> {
         Command::Analyze {
             path,
             profile,
-            macro_stats,
             memory,
-            stage,
             load,
             package_residency,
             indexing_preference,
@@ -98,8 +96,6 @@ fn main() -> anyhow::Result<()> {
                 indexing_preference.into(),
                 target,
                 format,
-                stage,
-                macro_stats,
             )
         }
         Command::Lsp => start_server::start_server(),
@@ -107,5 +103,41 @@ fn main() -> anyhow::Result<()> {
             engine_addr,
             notifications_addr,
         } => start_engine::start_engine(engine_addr, notifications_addr),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser as _;
+
+    use super::{Cli, Command};
+
+    #[test]
+    fn analyze_profile_flag_without_value_uses_default_alias() {
+        let cli = Cli::try_parse_from(["rust-glancer", "analyze", "/tmp/project", "--profile"])
+            .expect("analyze profile flag without a value should parse");
+        let Command::Analyze { profile, .. } = cli.command else {
+            panic!("CLI should parse the analyze subcommand");
+        };
+
+        assert_eq!(
+            profile.as_deref(),
+            Some("default"),
+            "passing --profile without selectors should use the default profile alias",
+        );
+    }
+
+    #[test]
+    fn analyze_without_profile_flag_keeps_profile_disabled() {
+        let cli = Cli::try_parse_from(["rust-glancer", "analyze", "/tmp/project"])
+            .expect("plain analyze command should parse");
+        let Command::Analyze { profile, .. } = cli.command else {
+            panic!("CLI should parse the analyze subcommand");
+        };
+
+        assert_eq!(
+            profile, None,
+            "omitting --profile should not implicitly enable profiling",
+        );
     }
 }

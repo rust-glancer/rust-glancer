@@ -1462,6 +1462,7 @@ dependencies = [
  "rg_macro_expand",
  "rg_package_store",
  "rg_parse",
+ "rg_profile",
  "rg_std",
  "rg_syntax",
  "rg_text",
@@ -1649,6 +1650,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "rg_profile"
+version = "0.1.0"
+
+[[package]]
 name = "rg_project"
 version = "0.1.0"
 dependencies = [
@@ -1670,6 +1675,7 @@ dependencies = [
  "rg_item_tree",
  "rg_package_store",
  "rg_parse",
+ "rg_profile",
  "rg_semantic_ir",
  "rg_std",
  "rg_text",
@@ -1803,6 +1809,7 @@ dependencies = [
  "gungraun",
  "rg_lsp_engine",
  "rg_lsp_server",
+ "rg_profile",
  "rg_project",
  "rg_std",
  "rg_workspace",
