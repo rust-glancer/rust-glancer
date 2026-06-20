@@ -1,4 +1,5 @@
 mod build;
+mod macro_expansion;
 mod profile;
 mod query;
 mod store;

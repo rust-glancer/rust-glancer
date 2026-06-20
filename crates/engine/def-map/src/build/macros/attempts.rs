@@ -21,12 +21,14 @@ use crate::build::{
     collect::TargetState,
     finalize::{FinalizeTargetStates, ScopeMatrix},
 };
+use crate::macro_expansion::{
+    MacroCompileRecord, MacroExpandRecord, MacroExpansionCache, MacroExpansionWork,
+    PreparedMacroExpansion,
+};
 use crate::profile::metric;
 
 use super::{
     MacroCallSite, MacroDirectiveState,
-    cache::{MacroCompileRecord, MacroExpandRecord, MacroExpansionCache, PreparedMacroExpansion},
-    expand::MacroExpansionWork,
     generated::{GeneratedCollector, GeneratedOrigin},
     resolve::{
         BuiltinMacroDisposition, builtin_macro_disposition, macro_path_from_text,

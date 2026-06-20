@@ -18,20 +18,20 @@ use crate::profile::metric;
 use super::finalize::FinalizeTargetStates;
 
 mod attempts;
-mod cache;
 mod expand;
 mod generated;
 mod generated_tree;
 mod resolve;
 mod source_fragment;
 
+pub(super) use crate::macro_expansion::{MacroExpansionCache, MacroExpansionExecutor};
+
 pub(super) use self::{
     attempts::{
         MacroExpansionApplyResult, MacroExpansionAttempt, MacroExpansionCursors,
         MacroExpansionScan, apply_expansion_attempts, collect_expansion_attempts,
     },
-    cache::MacroExpansionCache,
-    expand::{MacroExpansionExecutor, expand_expansion_attempts},
+    expand::expand_expansion_attempts,
 };
 
 // Recursive generated macro calls can otherwise keep the fixed-point loop alive forever. Keep the
