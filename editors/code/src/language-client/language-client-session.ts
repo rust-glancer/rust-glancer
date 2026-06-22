@@ -76,7 +76,7 @@ export class LanguageClientSession implements vscode.Disposable {
     this.clientStatus.starting(statusDetails);
 
     const fileEvents = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(this.workspaceFolder, "**/*.rs"),
+      new vscode.RelativePattern(this.workspaceFolder, "**/{*.rs,Cargo.toml,Cargo.lock}"),
     );
     const clientOptions: LanguageClientOptions = {
       documentSelector: [{ scheme: "file", language: "rust" }],

@@ -11,20 +11,20 @@ pub(crate) async fn did_change_watched_files(
     recent_editor_saves: &RecentEditorSaves,
     params: DidChangeWatchedFilesParams,
 ) {
-    let paths = watched_rust_source_paths(params);
+    let paths = watched_rust_paths(params);
     let paths = recent_editor_saves.saves_to_process(paths).await;
     if paths.is_empty() {
         return;
     }
 
     tracing::debug!(
-        source_files = paths.len(),
-        "routing external Rust source changes"
+        rust_paths = paths.len(),
+        "routing external Rust project changes"
     );
     registry.external_project_paths_changed(paths).await;
 }
 
-fn watched_rust_source_paths(params: DidChangeWatchedFilesParams) -> Vec<PathBuf> {
+fn watched_rust_paths(params: DidChangeWatchedFilesParams) -> Vec<PathBuf> {
     params
         .changes
         .into_iter()
@@ -35,12 +35,14 @@ fn watched_rust_source_paths(params: DidChangeWatchedFilesParams) -> Vec<PathBuf
             )
         })
         .filter_map(|change| uri_to_path(&change.uri))
-        .filter(|path| is_rust_source_path(path))
+        .filter(|path| is_rust_path(path))
         .collect()
 }
 
-fn is_rust_source_path(path: &Path) -> bool {
+fn is_rust_path(path: &Path) -> bool {
+    let file_name = path.file_name().and_then(|name| name.to_str());
     path.extension().and_then(|extension| extension.to_str()) == Some("rs")
+        || matches!(file_name, Some("Cargo.toml" | "Cargo.lock"))
 }
 
 #[cfg(test)]
@@ -52,12 +54,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn watched_rust_source_paths_accepts_changed_and_created_rust_files() {
+    fn watched_rust_paths_accepts_changed_and_created_rust_paths() {
         let root = std::env::current_dir().expect("test process should have a current directory");
         let created = root.join("src/generated.rs");
         let changed = root.join("src/lib.rs");
         let deleted = root.join("src/old.rs");
         let manifest = root.join("Cargo.toml");
+        let lockfile = root.join("Cargo.lock");
+        let notes = root.join("notes.md");
 
         let params = DidChangeWatchedFilesParams {
             changes: vec![
@@ -65,6 +69,8 @@ mod tests {
                 file_event(&changed, FileChangeType::CHANGED),
                 file_event(&deleted, FileChangeType::DELETED),
                 file_event(&manifest, FileChangeType::CHANGED),
+                file_event(&lockfile, FileChangeType::CREATED),
+                file_event(&notes, FileChangeType::CHANGED),
                 FileEvent {
                     uri: Uri::from_str("untitled:Scratch.rs")
                         .expect("untitled URI should be valid"),
@@ -73,7 +79,10 @@ mod tests {
             ],
         };
 
-        assert_eq!(watched_rust_source_paths(params), vec![created, changed]);
+        assert_eq!(
+            watched_rust_paths(params),
+            vec![created, changed, manifest, lockfile]
+        );
     }
 
     fn file_event(path: &Path, typ: FileChangeType) -> FileEvent {

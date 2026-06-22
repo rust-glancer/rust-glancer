@@ -193,3 +193,58 @@ pub struct GeneratedName;
 
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn external_cargo_manifest_change_refreshes_workspace_graph() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_external_manifest"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub struct Lib;
+
+        //- /src/tool.rs
+        pub struct ToolCommand;
+        "#,
+    )
+    .await;
+
+    fixture
+        .external_file_changed(
+            "Cargo.toml",
+            r#"[package]
+name = "lsp_external_manifest"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "tool"
+path = "src/tool.rs"
+"#,
+        )
+        .await;
+
+    fixture
+        .check(
+            &[LspQuery::document_symbol(
+                "document symbols after external manifest change",
+                "src/tool.rs",
+            )],
+            expect![[r#"
+                document symbols after external manifest change
+                - Struct ToolCommand 0:11-0:22
+            "#]],
+        )
+        .await;
+
+    fixture.check_notification_effects(expect![[r#"
+        notifications
+        - inlay hint refresh
+    "#]]);
+
+    fixture.shutdown().await;
+}
