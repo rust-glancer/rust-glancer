@@ -163,7 +163,8 @@ impl EngineService for Service {
         let mut forwarded_paths = Vec::new();
         let mut changed_texts = Vec::new();
 
-        // Collect text from the changed documents to update document states.
+        // Watched-file notifications only carry paths. Read the files here so document state and
+        // project state are updated from the same disk text.
         for path in paths {
             if !path.is_file() {
                 tracing::trace!(
@@ -193,7 +194,7 @@ impl EngineService for Service {
             return Ok(());
         }
 
-        // Update the documents state.
+        // Update document state before asking the project to rebuild from these files.
         let mut documents = self.engine.documents.lock().await;
         for (path, text) in &changed_texts {
             documents.external_saved_change(path.clone(), text);
@@ -215,13 +216,12 @@ impl EngineService for Service {
         }
         drop(documents);
 
-        // Launch diagnostics, if required. We don't need to provide all the paths,
-        // since we expect diagnostics to be a global workspace command.
+        // Diagnostics run as a workspace command, so one changed path is enough to start them.
         if let Some(path) = forwarded_paths.first().cloned() {
             self.diagnostics.launch_on_save(path).await;
         }
 
-        // Notify engine about the changes.
+        // The project decides whether a path is a source edit or a Cargo graph change.
         let changed_file_count = forwarded_paths.len();
         self.engine
             .request(|respond_to| EngineCommand::ProjectPathsChanged {

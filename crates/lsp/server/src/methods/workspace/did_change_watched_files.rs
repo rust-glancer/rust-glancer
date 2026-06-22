@@ -1,3 +1,9 @@
+//! Filters LSP watched-file notifications before engine routing.
+//!
+//! The extension watches Rust source and Cargo inputs, but this server edge still owns URI
+//! conversion, event-kind filtering, and editor-save echo suppression. Engine routing then receives
+//! plain paths and can stay independent from LSP watcher details.
+
 use std::path::{Path, PathBuf};
 
 use tower_lsp_server::ls_types::*;

@@ -1,11 +1,7 @@
-//! File save de-duplication logic. We both watch file edits to detect edits
-//! made outside of the editor, and we receive `did_save` events. These are not
-//! deduplicated by the client, so we need to deduplicate them ourselves.
+//! Filters repeated incoming file changes.
 //!
-//! We do it on the server, not in the engine, because engines already deal with
-//! a lot of complex logic related to open documents and dirty states, so at
-//! least this way we keep an invariant that incoming changes are not duplicates
-//! of each other.
+//! Editor saves can also show up as watched-file changes. We keep a short cache of recently saved
+//! files and ignore watched changes that still match the same file metadata.
 
 use std::{
     fs,
@@ -18,24 +14,22 @@ use tokio::sync::Mutex;
 const RECENT_EDITOR_SAVE_TTL: Duration = Duration::from_secs(2);
 const MAX_RECENT_EDITOR_SAVES: usize = 128;
 
-/// Short-lived filter for watched-file echoes produced by ordinary editor saves.
+/// Filter for incoming file changes that repeat a recent editor save.
 ///
-/// We keep it as a LSP-ingress concern: it only remembers disk metadata that just came
-/// through `textDocument/didSave`. This way the rest of the application can assume
-/// that changes are not duplicated and we don't have to implement this logic on the
-/// engine level.
+/// If file metadata changes after the save, for example because `rustfmt` rewrote the file, the
+/// watched change goes through.
 #[derive(Debug, Default)]
 pub(crate) struct RecentEditorSaves {
     inner: Mutex<RecentEditorSavesInner>,
 }
 
 impl RecentEditorSaves {
-    /// Some file has been saved recently.
+    /// Remember the current disk identity of a file just saved by the editor.
     pub(crate) async fn record_editor_save(&self, path: &Path) {
         self.inner.lock().await.record(path);
     }
 
-    /// Removes paths that are recent echoes of editor saves.
+    /// Drop watched paths whose current disk identity matches a recent editor save.
     pub(crate) async fn saves_to_process(&self, paths: Vec<PathBuf>) -> Vec<PathBuf> {
         let mut inner = self.inner.lock().await;
         paths
@@ -93,7 +87,7 @@ impl RecentEditorSavesInner {
     }
 }
 
-/// What file was saved, which metadata did it have, and when did it happen.
+/// One recorded editor save plus the timestamp used for cache expiry.
 #[derive(Clone, Debug)]
 struct RecentEditorSave {
     path: PathBuf,
@@ -112,7 +106,7 @@ impl RecentEditorSave {
     }
 }
 
-/// File metadata sufficient to distinguish different file versions.
+/// Disk identity used to decide whether a watched event is the same save.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct FileIdentity {
     len: u64,

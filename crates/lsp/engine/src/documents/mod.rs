@@ -96,13 +96,10 @@ impl DocumentStore {
         document.dirty = document.live != document.saved;
     }
 
-    /// Processes a change to the document that is not clearly initiated by user,
-    /// e.g. a change outside of the code editor.
+    /// Processes a saved-file change that came from outside the editor save flow.
     ///
-    /// The difference with `did_save` is that if the document is already dirty,
-    /// we enter an ambiguous tri-state: old saved state, new saved state, and dirty
-    /// state that is based on the old saved state. As a result, we use a simpler
-    /// processing model and don't try to be overly smart.
+    /// Clean open documents can follow the new disk text. Dirty documents keep the editor text,
+    /// but still update their saved state so future comparisons use the latest file contents.
     pub(crate) fn external_saved_change(&mut self, path: PathBuf, full_text: &str) {
         let Some(document) = self.documents.get_mut(&path) else {
             return;
@@ -110,8 +107,7 @@ impl DocumentStore {
 
         let saved = TextFingerprint::new(full_text);
         document.saved = Some(saved);
-        // External changes move the saved baseline. A clean editor buffer follows disk, while a
-        // dirty editor buffer remains the authoritative live snapshot.
+        // If the editor has no unsaved changes, keep its live snapshot in sync with disk.
         if !document.dirty {
             document.live = Some(saved);
             document.live_text = Some(Arc::from(full_text));

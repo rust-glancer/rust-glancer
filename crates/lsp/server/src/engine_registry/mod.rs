@@ -141,7 +141,7 @@ impl EngineRegistry {
         self.engine_for_document_owner(owner).await
     }
 
-    /// Forwards external project path changes to already-running engines whose roots contain them.
+    /// Forwards external project path changes to ready engines whose roots contain them.
     pub(crate) async fn external_project_paths_changed(&self, paths: Vec<PathBuf>) {
         // In theory, paths might correspond to different engines.
         // So, for given list of paths we try to find a ready engine, and record path
