@@ -1,0 +1,90 @@
+//! Body-local macro expansion state used while lowering syntax into Body IR.
+//!
+//! Body lowering is otherwise a mechanical syntax-to-IR pass. This module is the narrow adapter
+//! that lets it ask def-map for macro expansion while keeping the expansion cache, parse package,
+//! and recursion guard outside the lowering context itself.
+
+use std::{cell::Cell, rc::Rc};
+
+use rg_def_map::{BodyMacroExpander as DefMapBodyMacroExpander, DefMapReadTxn};
+use rg_ir_model::{ModuleRef, TargetRef};
+use rg_parse::{FileId, Span};
+use rg_syntax::ast;
+
+const BODY_MACRO_EXPANSION_DEPTH_LIMIT: usize = 64;
+
+pub(crate) trait BodyMacroExpansionContext {
+    /// Enter one nested expansion step, returning `None` when the recursion cap is reached.
+    fn expansion_scope(&self) -> Option<BodyMacroExpansionScope>;
+
+    /// Expand a macro call as expression syntax, leaving lowering to decide the fallback shape.
+    fn expand_expr_call(
+        &mut self,
+        target: TargetRef,
+        module: ModuleRef,
+        file_id: FileId,
+        span: Span,
+        call: &ast::MacroCall,
+    ) -> anyhow::Result<Option<ast::Expr>>;
+}
+
+/// RAII guard that keeps recursive macro expansion depth balanced across early returns.
+pub(crate) struct BodyMacroExpansionScope {
+    depth: Rc<Cell<usize>>,
+}
+
+impl Drop for BodyMacroExpansionScope {
+    fn drop(&mut self) {
+        let depth = self.depth.get();
+        self.depth.set(
+            depth
+                .checked_sub(1)
+                .expect("body macro expansion depth should be balanced"),
+        );
+    }
+}
+
+/// Keeps macro expansion cache and recursion policy out of the mechanical body lowering context.
+pub(crate) struct BodyMacroExpansion<'ctx, 'db> {
+    parse_package: &'ctx rg_parse::Package,
+    expander: DefMapBodyMacroExpander<'db, 'ctx>,
+    depth: Rc<Cell<usize>>,
+}
+
+impl<'ctx, 'db> BodyMacroExpansion<'ctx, 'db> {
+    pub(crate) fn new(
+        parse_package: &'ctx rg_parse::Package,
+        def_maps: &'ctx DefMapReadTxn<'db>,
+    ) -> Self {
+        Self {
+            parse_package,
+            expander: DefMapBodyMacroExpander::new(def_maps),
+            depth: Rc::new(Cell::new(0)),
+        }
+    }
+}
+
+impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
+    fn expansion_scope(&self) -> Option<BodyMacroExpansionScope> {
+        let depth = self.depth.get();
+        if depth >= BODY_MACRO_EXPANSION_DEPTH_LIMIT {
+            return None;
+        }
+        self.depth.set(depth + 1);
+        Some(BodyMacroExpansionScope {
+            depth: Rc::clone(&self.depth),
+        })
+    }
+
+    fn expand_expr_call(
+        &mut self,
+        target: TargetRef,
+        module: ModuleRef,
+        file_id: FileId,
+        span: Span,
+        call: &ast::MacroCall,
+    ) -> anyhow::Result<Option<ast::Expr>> {
+        self.expander
+            .expand_expr_call(target, module, file_id, span, self.parse_package, call)
+    }
+}

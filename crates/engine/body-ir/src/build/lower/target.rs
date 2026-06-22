@@ -6,7 +6,7 @@
 
 use anyhow::Context as _;
 
-use rg_def_map::PackageSlot;
+use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{ConstRef, FunctionRef, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitRef};
 use rg_ir_storage::ItemStoreQuery;
 use rg_parse::{FileId, Span};
@@ -15,7 +15,9 @@ use rg_text::NameInterner;
 
 use crate::{BodyOwner, TargetBodies};
 
-use super::{BodyIrLoweringScope, task::BodyLoweringTask, task::BodyTaskLowering};
+use super::{
+    BodyIrLoweringScope, BodyMacroExpansion, task::BodyLoweringTask, task::BodyTaskLowering,
+};
 
 type FunctionLoweringTarget = (FunctionRef, FileId, Span);
 type ConstLoweringTarget = (ConstRef, FileId, Span);
@@ -23,6 +25,7 @@ type StaticLoweringTarget = (StaticRef, FileId, Span);
 
 pub(super) struct TargetLowering<'a> {
     pub(super) parse_package: &'a rg_parse::Package,
+    pub(super) def_map: &'a DefMapReadTxn<'a>,
     pub(super) semantic_ir: &'a SemanticIrReadTxn<'a>,
     pub(super) scope: BodyIrLoweringScope<'a>,
     pub(super) package: PackageSlot,
@@ -36,8 +39,9 @@ pub(super) struct TargetLowering<'a> {
 impl<'a> TargetLowering<'a> {
     pub(super) fn lower(mut self) -> anyhow::Result<TargetBodies> {
         let tasks = self.selected_body_tasks()?;
+        let mut macro_expansion = BodyMacroExpansion::new(self.parse_package, self.def_map);
         BodyTaskLowering::new(self.parse_package, &mut self.target_bodies, self.interner)
-            .lower_tasks(&tasks)?;
+            .lower_tasks(&tasks, &mut macro_expansion)?;
         Ok(self.target_bodies)
     }
 

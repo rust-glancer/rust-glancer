@@ -28,6 +28,8 @@ use rg_tt::{
     syntax_bridge::{ExpansionSpanMap, SpanFactory},
 };
 
+use crate::macro_expansion::macro_edition;
+
 use super::generated::GeneratedOrigin;
 
 /// Lowers one parsed macro expansion into retained generated item payloads.
@@ -495,15 +497,6 @@ fn tt_span_for_range(
         macro_edition(edition),
     )
     .span_for(text_range)
-}
-
-fn macro_edition(edition: rg_workspace::RustEdition) -> rg_tt::Edition {
-    match edition {
-        rg_workspace::RustEdition::Edition2015 => rg_tt::Edition::Edition2015,
-        rg_workspace::RustEdition::Edition2018 => rg_tt::Edition::Edition2018,
-        rg_workspace::RustEdition::Edition2021 => rg_tt::Edition::Edition2021,
-        rg_workspace::RustEdition::Edition2024 => rg_tt::Edition::Edition2024,
-    }
 }
 
 /// Keeps the original `use ...` text in a compact, human-readable form for debugging and tests.

@@ -1,5 +1,5 @@
 use rg_ir_model::items::{ItemTag, MacroDefinitionItem, VisibilityLevel};
-use rg_ir_model::{ModuleId, TargetRef, hir::source::ItemSource};
+use rg_ir_model::{LocalDefRef, ModuleId, TargetRef, hir::source::ItemSource};
 use rg_parse::{FileId, Span};
 use rg_std::{MemorySize, Shrink};
 use rg_text::Name;
@@ -45,6 +45,55 @@ impl MacroDefinitionData {
         }
     }
 }
+
+/// Borrowed macro-definition facts selected from a resolved `DefId`.
+///
+/// Macro resolution often starts from a scope binding, but expansion also needs the local
+/// definition's module/source metadata and the retained token-tree payload. This view keeps those
+/// borrowed pieces together without making every caller repeat the "is this really a macro"
+/// check.
+#[derive(Debug, Clone, Copy)]
+pub struct MacroDefinitionView<'a> {
+    /// Stable identity used for cache keys and duplicate-candidate collapse.
+    pub def_ref: LocalDefRef,
+    /// The ordinary local definition record that owns visibility, module, and source facts.
+    pub local_def: &'a LocalDefData,
+    /// Retained macro body and edition data used by the declarative macro engine.
+    pub data: &'a MacroDefinitionData,
+}
+
+impl<'a> MacroDefinitionView<'a> {
+    /// Build a view only when the local definition kind agrees with the retained macro payload.
+    pub fn new(
+        def_ref: LocalDefRef,
+        local_def: &'a LocalDefData,
+        data: &'a MacroDefinitionData,
+    ) -> Option<Self> {
+        if local_def.kind != LocalDefKind::MacroDefinition {
+            return None;
+        }
+
+        Some(Self {
+            def_ref,
+            local_def,
+            data,
+        })
+    }
+}
+
+impl PartialEq for MacroDefinitionView<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        // Within one DefMap snapshot, one local-def ref should always point at the same borrowed
+        // records. Keep the asserts here so equality can stay focused on candidate identity.
+        debug_assert_eq!(self.local_def, other.local_def);
+        debug_assert_eq!(self.data, other.data);
+
+        // Candidate uniqueness is definition identity; local data is the expansion payload.
+        self.def_ref == other.def_ref
+    }
+}
+
+impl Eq for MacroDefinitionView<'_> {}
 
 /// Token-tree payload needed to compile a collected declarative macro.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

@@ -9,13 +9,11 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 
 use rg_ir_model::{DefMapRef, TargetRef};
-use rg_ir_storage::{ScopeBindingOrigin, TargetResolutionEnv};
+use rg_ir_storage::{ImportPath, MacroDefinitionEnv, ScopeBindingOrigin, TargetResolutionEnv};
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
-use rg_macro_expand::{Edition, ExpansionParseKind, ExpansionSyntax};
-use rg_parse::{FileId, Span};
+use rg_macro_expand::{ExpansionParseKind, ExpansionSyntax};
+use rg_parse::FileId;
 use rg_text::PackageNameInterners;
-use rg_tt::{Span as TtSpan, syntax_bridge::SpanFactory};
-use rg_workspace::RustEdition;
 
 use crate::build::{
     collect::TargetState,
@@ -23,17 +21,14 @@ use crate::build::{
 };
 use crate::macro_expansion::{
     MacroCompileRecord, MacroExpandRecord, MacroExpansionCache, MacroExpansionWork,
-    PreparedMacroExpansion,
+    PreparedMacroExpansion, macro_edition, tt_span_for_parse_span,
 };
 use crate::profile::metric;
 
 use super::{
     MacroCallSite, MacroDirectiveState,
     generated::{GeneratedCollector, GeneratedOrigin},
-    resolve::{
-        BuiltinMacroDisposition, builtin_macro_disposition, macro_path_from_text,
-        resolve_macro_definition,
-    },
+    resolve::{BuiltinMacroDisposition, ItemMacroResolver},
     source_fragment::{SourceFragmentCollector, SourceFragmentOrigin},
 };
 
@@ -93,12 +88,15 @@ impl MacroExpansionCursors {
 }
 
 /// Resolves pending macro calls into concrete attempts for the current scope snapshot.
-pub(crate) fn collect_expansion_attempts(
-    env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
+pub(crate) fn collect_expansion_attempts<E>(
+    env: &E,
     states: &FinalizeTargetStates,
     scan: MacroExpansionScan<'_>,
     cache: &mut MacroExpansionCache,
-) -> anyhow::Result<Vec<MacroExpansionAttempt>> {
+) -> anyhow::Result<Vec<MacroExpansionAttempt>>
+where
+    E: TargetResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
+{
     let mut attempts = Vec::new();
 
     for package_states in states.iter_dirty() {
@@ -496,14 +494,17 @@ impl MacroExpansionAttempt {
         }
     }
 
-    fn for_call(
-        env: &impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
+    fn for_call<E>(
+        env: &E,
         states: &FinalizeTargetStates,
         cache: &mut MacroExpansionCache,
         state: &TargetState,
         call_id: usize,
         call: &MacroCallSite,
-    ) -> anyhow::Result<Self> {
+    ) -> anyhow::Result<Self>
+    where
+        E: TargetResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
+    {
         // First normalize the syntactic call into a path and argument list. Calls that are not
         // item-position macro invocations are marked done so the worklist can move on.
         let Some(path_text) = call.path.as_deref().or(call.callee.as_deref()) else {
@@ -512,14 +513,16 @@ impl MacroExpansionAttempt {
         let Some(args) = call.args.as_ref() else {
             return Ok(Self::skipped(state.target, call_id, call));
         };
-        let Some(path) = macro_path_from_text(path_text, call.dollar_crate_target) else {
+        let Some(path) = ImportPath::from_macro_path_text(path_text, call.dollar_crate_target)
+        else {
             return Ok(Self::skipped(state.target, call_id, call));
         };
 
         // Then resolve against the current scope snapshot. Unresolved user macros stay resumable;
         // known builtins are classified once so we do not retry names that def-map cannot expand.
-        let Some(resolved) = resolve_macro_definition(env, states, state, call, &path)? else {
-            match builtin_macro_disposition(&path) {
+        let resolver = ItemMacroResolver::new(env, states, state);
+        let Some(resolved) = resolver.resolve(call, &path)? else {
+            match BuiltinMacroDisposition::from_path(&path) {
                 Some(BuiltinMacroDisposition::IgnoredByDefMap) => {
                     return Ok(Self::ignored_by_def_map(
                         state.target,
@@ -787,22 +790,4 @@ enum MacroExpansionAttemptOutcome {
         items: Vec<ItemTreeId>,
     },
     PendingExpansion(MacroExpansionWork),
-}
-
-fn macro_edition(edition: RustEdition) -> Edition {
-    match edition {
-        RustEdition::Edition2015 => Edition::Edition2015,
-        RustEdition::Edition2018 => Edition::Edition2018,
-        RustEdition::Edition2021 => Edition::Edition2021,
-        RustEdition::Edition2024 => Edition::Edition2024,
-    }
-}
-
-fn tt_span_for_parse_span(file_id: FileId, span: Span, edition: Edition) -> TtSpan {
-    let text_range = rg_syntax::TextRange::new(span.text.start.into(), span.text.end.into());
-    SpanFactory::new(
-        u32::try_from(file_id.0).expect("file id should fit macro span storage"),
-        edition,
-    )
-    .span_for(text_range)
 }

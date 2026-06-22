@@ -3,7 +3,7 @@ use std::fmt;
 use wincode::{SchemaRead, SchemaWrite};
 
 use rg_ir_model::{
-    ModuleId, Path, PathSegment,
+    ModuleId, Path, PathSegment, TargetRef,
     hir::source::ItemSource,
     items::{ImportAlias, UseImportKind, UsePath, VisibilityLevel},
     last_segment_name,
@@ -134,8 +134,54 @@ impl ImportPath {
         }
     }
 
+    /// Parses the textual callee path stored in item-tree or AST macro-call data.
+    ///
+    /// A `$crate` segment only has meaning after resolution has selected the macro definition crate.
+    /// Callers that do not have that origin pass `None`, and `$crate` paths are rejected instead of
+    /// being guessed from the call site.
+    pub fn from_macro_path_text(
+        path: &str,
+        dollar_crate_target: Option<TargetRef>,
+    ) -> Option<Self> {
+        let path = path.trim();
+        let absolute = path.starts_with("::");
+        let path = path.trim_start_matches("::");
+        let mut segments = Vec::new();
+
+        for segment in path.split("::") {
+            let segment = segment.trim();
+            if segment.is_empty() {
+                return None;
+            }
+            segments.push(match segment {
+                "$crate" => PathSegment::DollarCrate(dollar_crate_target?),
+                "self" => PathSegment::SelfKw,
+                "super" => PathSegment::SuperKw,
+                "crate" => PathSegment::CrateKw,
+                name => PathSegment::Name(Name::new(name)),
+            });
+        }
+
+        (!segments.is_empty()).then_some(Self { absolute, segments })
+    }
+
     pub(super) fn last_name(&self) -> Option<Name> {
         last_segment_name(&self.segments)
+    }
+
+    /// Returns the name for a path that is exactly one relative named segment.
+    pub fn relative_single_name(&self) -> Option<&Name> {
+        if self.absolute || self.segments.len() != 1 {
+            return None;
+        }
+
+        match self.segments.first()? {
+            PathSegment::Name(name) => Some(name),
+            PathSegment::SelfKw
+            | PathSegment::SuperKw
+            | PathSegment::CrateKw
+            | PathSegment::DollarCrate(_) => None,
+        }
     }
 }
 

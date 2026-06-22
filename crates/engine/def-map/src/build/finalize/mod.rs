@@ -11,11 +11,11 @@ mod rebuild;
 
 use anyhow::Context as _;
 
-use rg_ir_model::{DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_ir_storage::{
-    DefMap, ImportPath, LocalDefData, MacroDefinitionData, ModuleData, ModuleScopeBuilder,
-    PackageDefMaps as DefMapPackage, PathResolver, ScopeEntryRef, ScopeResolutionEnv, TargetData,
-    TargetResolutionEnv,
+    DefMap, ImportPath, LocalDefData, MacroDefinitionEnv, MacroDefinitionView, ModuleData,
+    ModuleScopeBuilder, PackageDefMaps as DefMapPackage, PathResolver, ScopeEntryRef,
+    ScopeResolutionEnv, TargetData, TargetResolutionEnv,
 };
 use rg_item_tree::ItemTreeDb;
 use rg_parse::Package;
@@ -311,29 +311,42 @@ impl ScopeResolutionEnv for FinalizeResolutionEnv<'_> {
             .transpose()
             .map(Option::flatten)
     }
+}
 
-    fn macro_definition_data(
-        &self,
-        local_def_ref: LocalDefRef,
-    ) -> Result<Option<&MacroDefinitionData>, rg_package_store::PackageStoreError> {
-        if let Some(target) = local_def_ref.origin.as_target_ref()
-            && let Some(state) = self.states.target(target)
-        {
-            return Ok(state
-                .def_map_builder
-                .partial()
-                .macro_definition(local_def_ref.local_def));
-        }
-
-        let Some(target) = local_def_ref.origin.as_target_ref() else {
+impl MacroDefinitionEnv for FinalizeResolutionEnv<'_> {
+    fn macro_definition_view<'a>(
+        &'a self,
+        def: DefId,
+    ) -> Result<Option<MacroDefinitionView<'a>>, rg_package_store::PackageStoreError> {
+        let DefId::Local(def_ref) = def else {
             return Ok(None);
         };
-        Ok(self
-            .old
-            .map(|old| old.def_map(target))
-            .transpose()?
-            .flatten()
-            .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))
+        let Some(local_def) = self.local_def_data(def_ref)? else {
+            return Ok(None);
+        };
+
+        let data = if let Some(target) = def_ref.origin.as_target_ref()
+            && let Some(state) = self.states.target(target)
+        {
+            state
+                .def_map_builder
+                .partial()
+                .macro_definition(def_ref.local_def)
+        } else {
+            let Some(target) = def_ref.origin.as_target_ref() else {
+                return Ok(None);
+            };
+            self.old
+                .map(|old| old.def_map(target))
+                .transpose()?
+                .flatten()
+                .and_then(|def_map| def_map.macro_definition(def_ref.local_def))
+        };
+        let Some(data) = data else {
+            return Ok(None);
+        };
+
+        Ok(MacroDefinitionView::new(def_ref, local_def, data))
     }
 }
 

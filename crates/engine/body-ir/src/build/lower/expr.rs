@@ -44,6 +44,7 @@ impl BodyLowering<'_> {
             }
             ast::Expr::Literal(literal) => self.lower_literal(literal, scope),
             ast::Expr::LoopExpr(loop_expr) => self.lower_loop_expr(loop_expr, scope),
+            ast::Expr::MacroExpr(macro_expr) => self.lower_macro_expr(macro_expr, scope),
             ast::Expr::MatchExpr(match_expr) => self.lower_match_expr(match_expr, scope),
             ast::Expr::MethodCallExpr(method_call) => {
                 self.lower_method_call_expr(method_call, scope)
@@ -672,6 +673,16 @@ impl BodyLowering<'_> {
         let kind = Self::literal_kind_from_ast(&literal);
 
         self.alloc_expr(literal.syntax(), scope, ExprKind::Literal { kind })
+    }
+
+    fn lower_macro_expr(&mut self, expr: ast::MacroExpr, scope: ScopeId) -> ExprId {
+        let call_source = self.source(expr.syntax());
+        let Some(call) = expr.macro_call() else {
+            return self.lower_unknown_with_direct_children(expr.syntax(), scope);
+        };
+
+        self.lower_macro_call_from_call_site(call_source, &call, scope)
+            .unwrap_or_else(|| self.lower_unknown_with_direct_children(expr.syntax(), scope))
     }
 
     fn lower_path_expr(&mut self, expr: ast::PathExpr, scope: ScopeId) -> ExprId {

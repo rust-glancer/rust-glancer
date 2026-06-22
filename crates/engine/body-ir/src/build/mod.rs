@@ -71,6 +71,7 @@ impl<'db, 'names> BodyIrDbBuilder<'db, 'names> {
             .read_txn(PackageLoader::resident_only("resident body IR build"));
         let mut packages = lower::build_packages(
             self.parse,
+            &def_map_txn,
             &semantic_ir_txn,
             self.semantic_ir.package_count(),
             self.policy,
@@ -176,6 +177,7 @@ impl<'db, 'names> BodyIrDbPackageRebuilder<'db, 'names> {
             .read_txn_for_subset(self.def_map_loader, self.subset);
         let mut rebuilt_packages = lower::build_selected_packages(
             self.parse,
+            &def_map_txn,
             &semantic_ir_txn,
             lowering_scope,
             &packages,

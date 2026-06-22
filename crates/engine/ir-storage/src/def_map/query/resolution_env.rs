@@ -4,10 +4,10 @@
 //! separately in `path_resolution`, while each storage owner implements this contract next to its
 //! own data access methods.
 
-use rg_ir_model::{LocalDefRef, ModuleRef, TargetRef};
+use rg_ir_model::{DefId, LocalDefRef, ModuleRef, TargetRef};
 use rg_text::Name;
 
-use super::super::{LocalDefData, LocalDefKind, MacroDefinitionData, ModuleData, ScopeEntryRef};
+use super::super::{LocalDefData, LocalDefKind, MacroDefinitionView, ModuleData, ScopeEntryRef};
 
 /// Minimal scope graph required by path and visibility lookup.
 pub trait ScopeResolutionEnv {
@@ -30,11 +30,6 @@ pub trait ScopeResolutionEnv {
         &self,
         local_def_ref: LocalDefRef,
     ) -> Result<Option<&LocalDefData>, Self::Error>;
-
-    fn macro_definition_data(
-        &self,
-        local_def_ref: LocalDefRef,
-    ) -> Result<Option<&MacroDefinitionData>, Self::Error>;
 
     fn local_def_kind(
         &self,
@@ -59,6 +54,19 @@ pub trait ScopeResolutionEnv {
             module: parent,
         }))
     }
+}
+
+/// Macro-definition facts needed by declarative macro resolution and expansion.
+///
+/// This stays separate from `ScopeResolutionEnv` because path walking only needs generic scope
+/// facts. Macro callers additionally need to classify a resolved binding as an expandable macro
+/// and borrow the retained macro body in one step.
+pub trait MacroDefinitionEnv: ScopeResolutionEnv {
+    /// Return the expandable macro view for `def`, or `None` for non-local/non-macro definitions.
+    fn macro_definition_view<'a>(
+        &'a self,
+        def: DefId,
+    ) -> Result<Option<MacroDefinitionView<'a>>, Self::Error>;
 }
 
 /// Target-level graph facts needed by normal Rust module path lookup.

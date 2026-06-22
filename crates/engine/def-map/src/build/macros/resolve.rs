@@ -7,9 +7,10 @@ use anyhow::Result;
 
 use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, PathSegment, TargetRef};
 use rg_ir_storage::{
-    ImportPath, LocalDefData, LocalDefKind, MacroDefinitionData, PathResolver, ScopeBinding,
+    ImportPath, LocalDefData, MacroDefinitionData, MacroDefinitionEnv, PathResolver, ScopeBinding,
     ScopeBindingOrigin, TargetResolutionEnv,
 };
+use rg_std::ExpectedUnique;
 use rg_text::Name;
 
 use crate::build::{collect::TargetState, finalize::FinalizeTargetStates};
@@ -25,207 +26,232 @@ pub(super) struct ResolvedMacroDefinition<'a> {
     pub(super) origin: ScopeBindingOrigin,
 }
 
-/// Finds the unique declarative macro definition visible at a macro call.
-pub(super) fn resolve_macro_definition<'a>(
-    env: &'a impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
-    states: &'a FinalizeTargetStates,
-    state: &TargetState,
-    call: &MacroCallSite,
-    path: &ImportPath,
-) -> Result<Option<ResolvedMacroDefinition<'a>>> {
-    if let Some(name) = relative_single_name(path) {
-        // Unqualified calls have special `macro_rules!` textual visibility before they behave like
-        // ordinary macro-namespace lookups.
-        return resolve_single_name_macro(env, states, state, call, name);
+impl PartialEq for ResolvedMacroDefinition<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        // Collapse duplicate bindings to the same macro definition, e.g. macro-export root aliases.
+        self.def_ref == other.def_ref
     }
-
-    // Qualified calls follow ordinary path resolution for the prefix, then keep the final macro
-    // binding so order filtering can distinguish direct definitions from exports/imports.
-    let resolved_bindings =
-        PathResolver::new(env).macro_bindings(state.target, call.module, path)?;
-    let mut macros = Vec::new();
-
-    for binding in resolved_bindings {
-        if let Some(resolved) = macro_record_for_binding(env, states, &binding)? {
-            macros.push(resolved);
-        }
-    }
-
-    Ok(
-        unique_macro_definition(visible_macro_definitions(macros, state.target, call))
-            .into_option(),
-    )
 }
 
-/// Resolves one-segment macro calls with Rust's `macro_rules!` lookup order.
-fn resolve_single_name_macro<'a>(
-    env: &'a impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
+impl Eq for ResolvedMacroDefinition<'_> {}
+
+/// Applies item-position macro lookup rules on top of ordinary path resolution.
+///
+/// Macro calls are mostly path-shaped, but one-segment calls have extra Rust-specific behavior:
+/// textual `macro_rules!` definitions can shadow namespace bindings, legacy `#[macro_use]` imports
+/// are a fallback, and unresolved names may still be known builtins that def-map should classify
+/// rather than retry forever. This resolver keeps that policy together while reusing
+/// `PathResolver` for the ordinary namespace work.
+pub(super) struct ItemMacroResolver<'a, E: ?Sized> {
+    env: &'a E,
     states: &'a FinalizeTargetStates,
-    state: &TargetState,
-    call: &MacroCallSite,
-    name: &Name,
-) -> Result<Option<ResolvedMacroDefinition<'a>>> {
-    // Textual `macro_rules!` scope shadows ordinary macro bindings. This covers the source-order
-    // behavior that cannot be represented by a normal module-scope map.
-    if let Some(resolved) = resolve_textual_macro_rules(env, states, state, call, name)? {
-        return Ok(Some(resolved));
+    state: &'a TargetState,
+}
+
+impl<'a, E> ItemMacroResolver<'a, E>
+where
+    E: TargetResolutionEnv<Error = rg_package_store::PackageStoreError>
+        + MacroDefinitionEnv
+        + ?Sized,
+{
+    pub(super) fn new(
+        env: &'a E,
+        states: &'a FinalizeTargetStates,
+        state: &'a TargetState,
+    ) -> Self {
+        Self { env, states, state }
     }
 
-    // Imported/reexported macros and exported root macros are represented as ordinary macro
-    // namespace bindings in the current resolved scope snapshot.
-    let entry = env.module_scope_entry(
-        ModuleRef {
-            origin: DefMapRef::Target(state.target),
-            module: call.module,
-        },
-        name.as_str(),
-    )?;
+    /// Finds the unique declarative macro definition visible at a macro call.
+    pub(super) fn resolve(
+        &self,
+        call: &MacroCallSite,
+        path: &ImportPath,
+    ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
+        if let Some(name) = path.relative_single_name() {
+            // Unqualified calls have special `macro_rules!` textual visibility before they behave
+            // like ordinary macro-namespace lookups.
+            return self.resolve_single_name_macro(call, name);
+        }
 
-    if let Some(entry) = entry {
+        // Qualified calls follow ordinary path resolution for the prefix, then keep the final macro
+        // binding so order filtering can distinguish direct definitions from exports/imports.
+        let resolved_bindings =
+            PathResolver::new(self.env).macro_bindings(self.state.target, call.module, path)?;
         let mut macros = Vec::new();
-        for binding in entry.macros() {
-            if let Some(resolved) = macro_record_for_binding(env, states, binding)? {
+
+        for binding in resolved_bindings {
+            if let Some(resolved) = self.macro_record_for_binding(&binding)? {
                 macros.push(resolved);
             }
         }
 
-        match unique_macro_definition(visible_macro_definitions(macros, state.target, call)) {
-            MacroDefinitionSelection::Empty => {}
-            MacroDefinitionSelection::Unique(macro_) => return Ok(Some(macro_)),
-            MacroDefinitionSelection::Ambiguous => return Ok(None),
-        }
+        Ok(
+            unique_macro_definition(visible_macro_definitions(macros, self.state.target, call))
+                .into_option(),
+        )
     }
 
-    resolve_macro_use_extern_crate_fallback(env, states, state, name)
-}
-
-/// Searches build-only textual `macro_rules!` scopes for the definition visible at this call.
-fn resolve_textual_macro_rules<'a>(
-    env: &'a impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
-    states: &'a FinalizeTargetStates,
-    state: &TargetState,
-    call: &MacroCallSite,
-    name: &Name,
-) -> Result<Option<ResolvedMacroDefinition<'a>>> {
-    let mut module = call.module;
-    let mut boundary = &call.order;
-
-    loop {
-        // In the current module, use the latest declaration that appears before the call. When we
-        // climb to a parent, `boundary` becomes the child module declaration instead.
-        if let Some(local_def) = state
-            .textual_macro_scopes
-            .latest_before(module, name, boundary)
-        {
-            return macro_record_for_def(
-                env,
-                states,
-                DefId::Local(LocalDefRef {
-                    origin: DefMapRef::Target(state.target),
-                    local_def,
-                }),
-                ScopeBindingOrigin::Direct,
-            );
+    /// Resolves one-segment macro calls with Rust's `macro_rules!` lookup order.
+    fn resolve_single_name_macro(
+        &self,
+        call: &MacroCallSite,
+        name: &Name,
+    ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
+        // Textual `macro_rules!` scope shadows ordinary macro bindings. This covers the
+        // source-order behavior that cannot be represented by a normal module-scope map.
+        if let Some(resolved) = self.resolve_textual_macro_rules(call, name)? {
+            return Ok(Some(resolved));
         }
 
-        // A parent module contributes only declarations that appeared before the child module was
-        // declared, matching the textual file view used by `macro_rules!`.
-        let Some(parent) = env.parent_module(ModuleRef {
-            origin: DefMapRef::Target(state.target),
-            module,
-        })?
-        else {
-            return Ok(None);
-        };
-        let Some(parent_boundary) = state.textual_macro_scopes.module_declaration_order(module)
-        else {
-            return Ok(None);
-        };
+        // Imported/reexported macros and exported root macros are represented as ordinary macro
+        // namespace bindings in the current resolved scope snapshot.
+        let entry = self.env.module_scope_entry(
+            ModuleRef {
+                origin: DefMapRef::Target(self.state.target),
+                module: call.module,
+            },
+            name.as_str(),
+        )?;
 
-        boundary = parent_boundary;
-        module = parent.module;
+        if let Some(entry) = entry {
+            let mut macros = Vec::new();
+            for binding in entry.macros() {
+                if let Some(resolved) = self.macro_record_for_binding(binding)? {
+                    macros.push(resolved);
+                }
+            }
+
+            match unique_macro_definition(visible_macro_definitions(
+                macros,
+                self.state.target,
+                call,
+            )) {
+                ExpectedUnique::Empty => {}
+                ExpectedUnique::One(macro_) => return Ok(Some(macro_)),
+                ExpectedUnique::Ambiguous => return Ok(None),
+            }
+        }
+
+        self.resolve_macro_use_extern_crate_fallback(name)
     }
-}
 
-/// Consults legacy `#[macro_use] extern crate` imports after ordinary unqualified lookup fails.
-fn resolve_macro_use_extern_crate_fallback<'a>(
-    env: &'a impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
-    states: &'a FinalizeTargetStates,
-    state: &TargetState,
-    name: &Name,
-) -> Result<Option<ResolvedMacroDefinition<'a>>> {
-    let mut macros = Vec::new();
+    /// Searches build-only textual `macro_rules!` scopes for the definition visible at this call.
+    fn resolve_textual_macro_rules(
+        &self,
+        call: &MacroCallSite,
+        name: &Name,
+    ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
+        let mut module = call.module;
+        let mut boundary = &call.order;
 
-    for macro_use in &state.macro_use_imports {
-        if !macro_use.selector.allows(name) {
-            continue;
-        }
-
-        let import_owner = ModuleRef {
-            origin: DefMapRef::Target(state.target),
-            module: macro_use.module,
-        };
-        for binding in PathResolver::new(env).visible_macro_bindings(
-            import_owner,
-            macro_use.source_module,
-            name,
-        )? {
-            // Treat the fallback as an import-like binding. The source binding may be direct inside
-            // the exporting crate, but macro-use lookup is not source-order sensitive in the caller.
-            if let Some(resolved) =
-                macro_record_for_def(env, states, binding.def, ScopeBindingOrigin::Import)?
+        loop {
+            // In the current module, use the latest declaration that appears before the call. When
+            // we climb to a parent, `boundary` becomes the child module declaration instead.
+            if let Some(local_def) = self
+                .state
+                .textual_macro_scopes
+                .latest_before(module, name, boundary)
             {
-                macros.push(resolved);
+                return self.macro_record_for_def(
+                    DefId::Local(LocalDefRef {
+                        origin: DefMapRef::Target(self.state.target),
+                        local_def,
+                    }),
+                    ScopeBindingOrigin::Direct,
+                );
             }
+
+            // A parent module contributes only declarations that appeared before the child module
+            // was declared, matching the textual file view used by `macro_rules!`.
+            let Some(parent) = self.env.parent_module(ModuleRef {
+                origin: DefMapRef::Target(self.state.target),
+                module,
+            })?
+            else {
+                return Ok(None);
+            };
+            let Some(parent_boundary) = self
+                .state
+                .textual_macro_scopes
+                .module_declaration_order(module)
+            else {
+                return Ok(None);
+            };
+
+            boundary = parent_boundary;
+            module = parent.module;
         }
     }
 
-    Ok(unique_macro_definition(macros).into_option())
-}
+    /// Consults legacy `#[macro_use] extern crate` imports after ordinary unqualified lookup fails.
+    fn resolve_macro_use_extern_crate_fallback(
+        &self,
+        name: &Name,
+    ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
+        let mut macros = Vec::new();
 
-/// Converts a resolved macro binding into the payload needed by expansion.
-fn macro_record_for_binding<'a>(
-    env: &'a impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
-    states: &'a FinalizeTargetStates,
-    binding: &ScopeBinding,
-) -> Result<Option<ResolvedMacroDefinition<'a>>> {
-    macro_record_for_def(env, states, binding.def, binding.origin)
-}
+        for macro_use in &self.state.macro_use_imports {
+            if !macro_use.selector.allows(name) {
+                continue;
+            }
 
-/// Converts a resolved definition id into the macro payload needed by expansion.
-fn macro_record_for_def<'a>(
-    env: &'a impl TargetResolutionEnv<Error = rg_package_store::PackageStoreError>,
-    states: &'a FinalizeTargetStates,
-    def: DefId,
-    origin: ScopeBindingOrigin,
-) -> Result<Option<ResolvedMacroDefinition<'a>>> {
-    let DefId::Local(def_ref) = def else {
-        return Ok(None);
-    };
-    if env.local_def_kind(def_ref)? != Some(LocalDefKind::MacroDefinition) {
-        return Ok(None);
+            let import_owner = ModuleRef {
+                origin: DefMapRef::Target(self.state.target),
+                module: macro_use.module,
+            };
+            for binding in PathResolver::new(self.env).visible_macro_bindings(
+                import_owner,
+                macro_use.source_module,
+                name,
+            )? {
+                // Treat the fallback as an import-like binding. The source binding may be direct
+                // inside the exporting crate, but macro-use lookup is not source-order sensitive in
+                // the caller.
+                if let Some(resolved) =
+                    self.macro_record_for_def(binding.def, ScopeBindingOrigin::Import)?
+                {
+                    macros.push(resolved);
+                }
+            }
+        }
+
+        Ok(unique_macro_definition(macros).into_option())
     }
 
-    let Some(local_def) = env.local_def_data(def_ref)? else {
-        return Ok(None);
-    };
-    let Some(data) = env.macro_definition_data(def_ref)? else {
-        return Ok(None);
-    };
-    let order = def_ref
-        .origin
-        .as_target_ref()
-        .and_then(|target| states.target(target))
-        .and_then(|state| state.macro_definitions.get(&def_ref.local_def))
-        .map(|record| &record.order);
+    /// Converts a resolved macro binding into the payload needed by expansion.
+    fn macro_record_for_binding(
+        &self,
+        binding: &ScopeBinding,
+    ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
+        self.macro_record_for_def(binding.def, binding.origin)
+    }
 
-    Ok(Some(ResolvedMacroDefinition {
-        def_ref,
-        local_def,
-        data,
-        order,
-        origin,
-    }))
+    /// Converts a resolved definition id into the macro payload needed by expansion.
+    fn macro_record_for_def(
+        &self,
+        def: DefId,
+        origin: ScopeBindingOrigin,
+    ) -> Result<Option<ResolvedMacroDefinition<'a>>> {
+        let Some(payload) = MacroDefinitionEnv::macro_definition_view(self.env, def)? else {
+            return Ok(None);
+        };
+        let order = payload
+            .def_ref
+            .origin
+            .as_target_ref()
+            .and_then(|target| self.states.target(target))
+            .and_then(|state| state.macro_definitions.get(&payload.def_ref.local_def))
+            .map(|record| &record.order);
+
+        Ok(Some(ResolvedMacroDefinition {
+            def_ref: payload.def_ref,
+            local_def: payload.local_def,
+            data: payload.data,
+            order,
+            origin,
+        }))
+    }
 }
 
 fn visible_macro_definitions<'a, 'call, I>(
@@ -243,37 +269,15 @@ where
 
 fn unique_macro_definition<'a>(
     macros: impl IntoIterator<Item = ResolvedMacroDefinition<'a>>,
-) -> MacroDefinitionSelection<'a> {
-    let mut unique: Option<ResolvedMacroDefinition<'a>> = None;
+) -> ExpectedUnique<ResolvedMacroDefinition<'a>> {
+    let mut unique = ExpectedUnique::new();
     for macro_ in macros {
         // A root `#[macro_export]` macro can appear as both its ordinary definition and exported
         // root binding. That is still one resolved macro, not an ambiguity.
-        match &unique {
-            Some(existing) if existing.def_ref == macro_.def_ref => {}
-            Some(_) => return MacroDefinitionSelection::Ambiguous,
-            None => unique = Some(macro_),
-        }
+        unique.push(macro_);
     }
 
-    match unique {
-        Some(macro_) => MacroDefinitionSelection::Unique(macro_),
-        None => MacroDefinitionSelection::Empty,
-    }
-}
-
-enum MacroDefinitionSelection<'a> {
-    Empty,
-    Unique(ResolvedMacroDefinition<'a>),
-    Ambiguous,
-}
-
-impl<'a> MacroDefinitionSelection<'a> {
-    fn into_option(self) -> Option<ResolvedMacroDefinition<'a>> {
-        match self {
-            Self::Unique(macro_) => Some(macro_),
-            Self::Empty | Self::Ambiguous => None,
-        }
-    }
+    unique
 }
 
 /// Filters ordinary namespace candidates that are textually later than the call site.
@@ -291,21 +295,6 @@ fn macro_definition_is_visible_by_order(
         && macro_.order.is_some_and(|order| order > &call.order))
 }
 
-/// Returns the macro name for unqualified calls such as `foo!()`.
-fn relative_single_name(path: &ImportPath) -> Option<&Name> {
-    if path.absolute || path.segments.len() != 1 {
-        return None;
-    }
-
-    match path.segments.first()? {
-        PathSegment::Name(name) => Some(name),
-        PathSegment::SelfKw
-        | PathSegment::SuperKw
-        | PathSegment::CrateKw
-        | PathSegment::DollarCrate(_) => None,
-    }
-}
-
 /// Known builtin macro call that should not be resolved as a user macro.
 pub(super) enum BuiltinMacroDisposition {
     /// The builtin cannot add module-scope definitions, so def-map can safely ignore it.
@@ -318,60 +307,38 @@ pub(super) enum BuiltinMacroDisposition {
     Unsupported,
 }
 
-/// Classifies builtin macros that are known even when no user macro binding resolves.
-///
-/// We intentionally take a small shortcut here. Unqualified builtins and `std`/`core`-qualified
-/// builtin-shaped paths cover the realistic call sites, while a fully resolution-aware builtin
-/// prefix model would add a lot of complexity for rare local `std`/`core` shadowing cases.
-pub(super) fn builtin_macro_disposition(path: &ImportPath) -> Option<BuiltinMacroDisposition> {
-    let name = relative_single_name(path).or_else(|| {
-        // Check if we have two segments and the first one is either `std` or `core`.
-        let [PathSegment::Name(root), PathSegment::Name(name)] = path.segments.as_slice() else {
-            return None;
-        };
-        matches!(root.as_str(), "std" | "core").then_some(name)
-    })?;
+impl BuiltinMacroDisposition {
+    /// Classifies builtin macros that are known even when no user macro binding resolves.
+    ///
+    /// We intentionally take a small shortcut here. Unqualified builtins and `std`/`core`-qualified
+    /// builtin-shaped paths cover the realistic call sites, while a fully resolution-aware builtin
+    /// prefix model would add a lot of complexity for rare local `std`/`core` shadowing cases.
+    pub(super) fn from_path(path: &ImportPath) -> Option<Self> {
+        let name = path.relative_single_name().or_else(|| {
+            // Check if we have two segments and the first one is either `std` or `core`.
+            let [PathSegment::Name(root), PathSegment::Name(name)] = path.segments.as_slice()
+            else {
+                return None;
+            };
+            matches!(root.as_str(), "std" | "core").then_some(name)
+        })?;
 
-    match name.as_str() {
-        // Expression, diagnostic, or assembly builtins do not contribute named items to def-map.
-        // Body lowering can later synthesize values/types for the expression-like subset.
-        "asm" | "cfg" | "column" | "compile_error" | "concat" | "env" | "file" | "format_args"
-        | "global_asm" | "include_bytes" | "include_str" | "line" | "llvm_asm" | "module_path"
-        | "option_env" | "stringify" => Some(BuiltinMacroDisposition::IgnoredByDefMap),
+        match name.as_str() {
+            // Expression, diagnostic, or assembly builtins do not contribute named items to def-map.
+            // Body lowering can later synthesize values/types for the expression-like subset.
+            "asm" | "cfg" | "column" | "compile_error" | "concat" | "env" | "file"
+            | "format_args" | "global_asm" | "include_bytes" | "include_str" | "line"
+            | "llvm_asm" | "module_path" | "option_env" | "stringify" => {
+                Some(Self::IgnoredByDefMap)
+            }
 
-        "cfg_select" => Some(BuiltinMacroDisposition::CfgSelect),
-        "include" => Some(BuiltinMacroDisposition::Include),
+            "cfg_select" => Some(Self::CfgSelect),
+            "include" => Some(Self::Include),
 
-        // `concat_idents!` has token-shaping behavior that is better handled by a dedicated
-        // builtin implementation.
-        "concat_idents" => Some(BuiltinMacroDisposition::Unsupported),
-        _ => None,
-    }
-}
-
-/// Parses the textual callee path stored in item-tree macro-call data.
-pub(super) fn macro_path_from_text(
-    path: &str,
-    dollar_crate_target: Option<TargetRef>,
-) -> Option<ImportPath> {
-    let path = path.trim();
-    let absolute = path.starts_with("::");
-    let path = path.trim_start_matches("::");
-    let mut segments = Vec::new();
-
-    for segment in path.split("::") {
-        let segment = segment.trim();
-        if segment.is_empty() {
-            return None;
+            // `concat_idents!` has token-shaping behavior that is better handled by a dedicated
+            // builtin implementation.
+            "concat_idents" => Some(Self::Unsupported),
+            _ => None,
         }
-        segments.push(match segment {
-            "$crate" => PathSegment::DollarCrate(dollar_crate_target?),
-            "self" => PathSegment::SelfKw,
-            "super" => PathSegment::SuperKw,
-            "crate" => PathSegment::CrateKw,
-            name => PathSegment::Name(Name::new(name)),
-        });
     }
-
-    (!segments.is_empty()).then_some(ImportPath { absolute, segments })
 }

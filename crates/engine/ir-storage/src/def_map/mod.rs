@@ -11,12 +11,13 @@ pub use self::{
     import::{ImportBinding, ImportData, ImportKind, ImportPath, ImportSourcePath},
     local::{
         LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData, MacroDefinitionPayload,
+        MacroDefinitionView,
     },
     module::{ModuleData, ModuleOrigin},
     package::{PackageDefMaps, TargetData},
     query::{
-        DefMapQuery, DefMapSource, NameResolutionFilter, PathResolver, ResolvePathResult,
-        ScopeResolutionEnv, TargetResolutionEnv,
+        DefMapQuery, DefMapSource, MacroDefinitionEnv, NameResolutionFilter, PathResolver,
+        ResolvePathResult, ScopeResolutionEnv, TargetResolutionEnv,
     },
     scope::{
         ModuleScope, ModuleScopeBuilder, Namespace, ScopeBinding, ScopeBindingOrigin, ScopeEntry,

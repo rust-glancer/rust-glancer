@@ -12,9 +12,10 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{
     DefMap, DefMapBuilder, DefMapSource, ImportBinding, ImportData, ImportKind, ImportPath,
-    ImportSourcePath, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionData, ModuleData,
-    ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace, PathResolver, ScopeBinding,
-    ScopeBindingOrigin, ScopeEntryRef, ScopeResolutionEnv, TargetResolutionEnv,
+    ImportSourcePath, LocalDefData, LocalDefKind, LocalImplData, MacroDefinitionEnv,
+    MacroDefinitionView, ModuleData, ModuleOrigin, ModuleScope, ModuleScopeBuilder, Namespace,
+    PathResolver, ScopeBinding, ScopeBindingOrigin, ScopeEntryRef, ScopeResolutionEnv,
+    TargetResolutionEnv,
 };
 use rg_package_store::PackageStoreError;
 use rg_text::Name;
@@ -554,23 +555,38 @@ where
             .def_map_for_origin(local_def_ref.origin)?
             .and_then(|def_map| def_map.local_def(local_def_ref.local_def)))
     }
+}
 
-    fn macro_definition_data(
-        &self,
-        local_def_ref: LocalDefRef,
-    ) -> Result<Option<&MacroDefinitionData>, Self::Error> {
-        if self.is_active_body_origin(local_def_ref.origin) {
-            return Ok(self
-                .state
+impl<S> MacroDefinitionEnv for BodyDefMapFinalizationEnv<'_, S>
+where
+    S: DefMapSource<Error = PackageStoreError> + Copy,
+{
+    fn macro_definition_view<'a>(
+        &'a self,
+        def: DefId,
+    ) -> Result<Option<MacroDefinitionView<'a>>, Self::Error> {
+        let DefId::Local(def_ref) = def else {
+            return Ok(None);
+        };
+        let Some(local_def) = self.local_def_data(def_ref)? else {
+            return Ok(None);
+        };
+
+        let data = if self.is_active_body_origin(def_ref.origin) {
+            self.state
                 .builder
                 .partial()
-                .macro_definition(local_def_ref.local_def));
-        }
+                .macro_definition(def_ref.local_def)
+        } else {
+            self.def_maps
+                .def_map_for_origin(def_ref.origin)?
+                .and_then(|def_map| def_map.macro_definition(def_ref.local_def))
+        };
+        let Some(data) = data else {
+            return Ok(None);
+        };
 
-        Ok(self
-            .def_maps
-            .def_map_for_origin(local_def_ref.origin)?
-            .and_then(|def_map| def_map.macro_definition(local_def_ref.local_def)))
+        Ok(MacroDefinitionView::new(def_ref, local_def, data))
     }
 }
 

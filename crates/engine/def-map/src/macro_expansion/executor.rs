@@ -73,7 +73,17 @@ pub(crate) struct MacroExpansionJob {
 
 impl MacroExpansionJob {
     fn expand(self) -> MacroExpansionOutput {
-        self.work.expand(self.id)
+        let started_at = Instant::now();
+        let syntax = self.work.expand_syntax();
+        let elapsed = started_at.elapsed();
+
+        MacroExpansionOutput {
+            id: self.id,
+            key: syntax.key,
+            macro_name: syntax.macro_name,
+            elapsed,
+            generated_syntax: syntax.generated_syntax,
+        }
     }
 }
 
@@ -83,6 +93,13 @@ pub(crate) struct MacroExpansionOutput {
     pub(crate) key: MacroExpansionCacheKey,
     pub(crate) macro_name: String,
     pub(crate) elapsed: Duration,
+    pub(crate) generated_syntax: Option<ExpansionSyntax>,
+}
+
+/// Expanded syntax plus the cache key needed by both worker-pool and synchronous callers.
+pub(crate) struct MacroExpansionSyntax {
+    pub(crate) key: MacroExpansionCacheKey,
+    pub(crate) macro_name: String,
     pub(crate) generated_syntax: Option<ExpansionSyntax>,
 }
 
@@ -97,19 +114,16 @@ pub(crate) struct MacroExpansionWork {
 }
 
 impl MacroExpansionWork {
-    fn expand(self, id: usize) -> MacroExpansionOutput {
-        let started_at = Instant::now();
+    /// Run the matcher/transcriber step without adding executor ids or timing data.
+    pub(crate) fn expand_syntax(self) -> MacroExpansionSyntax {
         let generated_syntax = self
             .macro_
             .expand_call_tokens(&self.args, self.call_site, self.parse_kind)
             .ok();
-        let elapsed = started_at.elapsed();
 
-        MacroExpansionOutput {
-            id,
+        MacroExpansionSyntax {
             key: self.key,
             macro_name: self.macro_name,
-            elapsed,
             generated_syntax,
         }
     }
