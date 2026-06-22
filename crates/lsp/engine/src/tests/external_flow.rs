@@ -117,3 +117,79 @@ pub fn demo(user: ExternalUser) {
 
     fixture.shutdown().await;
 }
+
+#[tokio::test]
+async fn external_created_module_file_refreshes_saved_project() {
+    let fixture = LspEngineFixture::initialized(
+        r#"
+        //- /Cargo.toml
+        [package]
+        name = "lsp_external_created"
+        version = "0.1.0"
+        edition = "2024"
+
+        //- /src/lib.rs
+        pub mod generated;
+
+        pub fn demo(user: generated::GeneratedUser) {
+            let _completion = user.$complete$;
+            let _hover = user.generated_$hover$field;
+        }
+        "#,
+    )
+    .await;
+
+    fixture
+        .external_file_changed(
+            "src/generated.rs",
+            r#"pub struct GeneratedUser {
+    pub generated_field: GeneratedName,
+}
+
+pub struct GeneratedName;
+"#,
+        )
+        .await;
+
+    fixture
+        .check(
+            &[
+                LspQuery::completion("complete field after external module creation", "complete"),
+                LspQuery::hover("hover field after external module creation", "hover"),
+                LspQuery::document_symbol(
+                    "document symbols after external module creation",
+                    "src/generated.rs",
+                ),
+            ],
+            expect![[r#"
+                complete field after external module creation
+                - generated_field Field
+                  detail: pub generated_field: GeneratedName
+                  edit: /src/lib.rs:3:27-3:27 -> generated_field
+
+                hover field after external module creation
+                - range: /src/lib.rs:4:22-4:37
+                - markdown:
+                  ```rust
+                  lsp_external_created::generated::GeneratedUser
+                  ```
+
+                  ```rust
+                  pub generated_field: GeneratedName
+                  ```
+
+                document symbols after external module creation
+                - Struct GeneratedUser 0:11-0:24
+                  - Field generated_field 1:8-1:23
+                - Struct GeneratedName 4:11-4:24
+            "#]],
+        )
+        .await;
+
+    fixture.check_notification_effects(expect![[r#"
+        notifications
+        - inlay hint refresh
+    "#]]);
+
+    fixture.shutdown().await;
+}
