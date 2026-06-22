@@ -193,6 +193,29 @@ impl LanguageServer for Backend {
         methods::text_document::did_save::did_save(context, params).await;
     }
 
+    #[tracing::instrument(skip_all, fields(rg.method = "didChangeWatchedFiles"))]
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        let paths = params
+            .changes
+            .into_iter()
+            .filter(|change| change.typ == FileChangeType::CHANGED)
+            .filter_map(|change| methods::uri_to_path(&change.uri))
+            .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("rs"))
+            .collect::<Vec<_>>();
+        if paths.is_empty() {
+            return;
+        }
+
+        tracing::debug!(
+            changed_files = paths.len(),
+            "routing external Rust source changes"
+        );
+        let Some(registry) = self.registry().await.ok() else {
+            return;
+        };
+        registry.external_project_paths_changed(paths).await;
+    }
+
     #[tracing::instrument(
         skip_all,
         fields(rg.method = "didClose", rg.uri = ?params.text_document.uri)

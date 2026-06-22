@@ -47,6 +47,14 @@ fn routes_documents_to_existing_spawned_or_active_engines() {
                 "workspace/project_a/src/lib.rs",
             ),
             RoutingStep::workspace_root("resolved workspace root spawns engine", "workspace"),
+            RoutingStep::known_root_owner(
+                "watched source file uses known root",
+                "workspace/project_a/src/lib.rs",
+            ),
+            RoutingStep::known_root_owner(
+                "external watched file does not use active engine",
+                "external/thin_vec/src/lib.rs",
+            ),
             RoutingStep::open_file(
                 "didOpen caches exact file owner",
                 "workspace/project_a/src/lib.rs",
@@ -80,6 +88,8 @@ fn routes_documents_to_existing_spawned_or_active_engines() {
         r#"
 unopened workspace member is not cached: unowned
 resolved workspace root spawns engine: spawn e0 /workspace
+watched source file uses known root: known e0 /workspace
+external watched file does not use active engine: unknown
 didOpen caches exact file owner: active e0 /workspace
 same open file reuses cached owner: existing e0 /workspace
 different unopened file is not cached: unowned

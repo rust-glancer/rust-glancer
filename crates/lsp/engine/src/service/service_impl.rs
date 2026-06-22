@@ -137,9 +137,8 @@ impl EngineService for Service {
         let saved_path = path.clone();
         if let Err(error) = self
             .engine
-            .request(|respond_to| EngineCommand::DidSave {
-                path,
-                text,
+            .request(|respond_to| EngineCommand::ProjectPathsChanged {
+                paths: vec![path],
                 respond_to,
             })
             .await
@@ -151,6 +150,91 @@ impl EngineService for Service {
         }
 
         self.engine.log_freshness_after_save(&saved_path).await;
+        self.engine.refresh_inlay_hints_now();
+
+        Ok(())
+    }
+
+    async fn external_project_paths_changed(
+        self,
+        _: context::Context,
+        paths: Vec<PathBuf>,
+    ) -> EngineResult<()> {
+        let mut forwarded_paths = Vec::new();
+        let mut changed_texts = Vec::new();
+
+        // Collect text from the changed documents to update document states.
+        for path in paths {
+            if !path.is_file() {
+                tracing::trace!(
+                    path = %path.display(),
+                    "external project path skipped because path is not a file"
+                );
+                continue;
+            }
+
+            let text = match std::fs::read_to_string(&path) {
+                Ok(text) => text,
+                Err(error) => {
+                    tracing::debug!(
+                        path = %path.display(),
+                        error = %error,
+                        "external project path skipped because source text could not be read"
+                    );
+                    continue;
+                }
+            };
+
+            changed_texts.push((path.clone(), text));
+            forwarded_paths.push(path);
+        }
+
+        if forwarded_paths.is_empty() {
+            return Ok(());
+        }
+
+        // Update the documents state.
+        let mut documents = self.engine.documents.lock().await;
+        for (path, text) in &changed_texts {
+            documents.external_saved_change(path.clone(), text);
+            let freshness = documents.freshness(path);
+            let dirty = documents.dirty_snapshot(path);
+            self.engine.sync_dirty_state(path, &dirty);
+
+            tracing::trace!(
+                path = %path.display(),
+                tracked = freshness.tracked(),
+                version = ?freshness.version(),
+                dirty = freshness.dirty(),
+                saved_len = ?freshness.saved_len(),
+                live_len = ?freshness.live_len(),
+                saved_hash = ?freshness.saved_hash(),
+                live_hash = ?freshness.live_hash(),
+                "document freshness after external change"
+            );
+        }
+        drop(documents);
+
+        // Launch diagnostics, if required. We don't need to provide all the paths,
+        // since we expect diagnostics to be a global workspace command.
+        if let Some(path) = forwarded_paths.first().cloned() {
+            self.diagnostics.launch_on_save(path).await;
+        }
+
+        // Notify engine about the changes.
+        let changed_file_count = forwarded_paths.len();
+        self.engine
+            .request(|respond_to| EngineCommand::ProjectPathsChanged {
+                paths: forwarded_paths,
+                respond_to,
+            })
+            .await
+            .map_err(EngineError::from)?;
+
+        tracing::debug!(
+            changed_files = changed_file_count,
+            "applied external project path changes"
+        );
         self.engine.refresh_inlay_hints_now();
 
         Ok(())

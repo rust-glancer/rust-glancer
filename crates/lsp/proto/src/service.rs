@@ -26,6 +26,8 @@ pub trait EngineService {
 
     async fn did_save(path: PathBuf, text: Option<String>) -> EngineResult<()>;
 
+    async fn external_project_paths_changed(paths: Vec<PathBuf>) -> EngineResult<()>;
+
     async fn did_close(path: PathBuf) -> EngineResult<()>;
 
     async fn goto_definition(

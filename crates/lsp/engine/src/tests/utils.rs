@@ -164,6 +164,18 @@ impl LspEngineFixture {
             .expect("fixture dirty document should save");
     }
 
+    pub(super) async fn external_file_changed(&self, path: &str, text: &str) {
+        self.notifications.clear();
+        std::fs::write(self.fixture.path(path), text)
+            .expect("fixture external change should be writable");
+
+        self.service
+            .clone()
+            .external_project_paths_changed(context::current(), vec![self.fixture.path(path)])
+            .await
+            .expect("fixture external file change should apply");
+    }
+
     pub(super) fn check_notification_effects(&self, expect: Expect) {
         let mut rendered = String::new();
         writeln!(rendered, "notifications").expect("snapshot should be writable");

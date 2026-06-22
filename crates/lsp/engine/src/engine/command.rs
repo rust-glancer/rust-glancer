@@ -14,9 +14,8 @@ pub(crate) enum EngineCommand {
         analysis: AnalysisConfig,
         respond_to: EngineResponse<()>,
     },
-    DidSave {
-        path: PathBuf,
-        text: Option<String>,
+    ProjectPathsChanged {
+        paths: Vec<PathBuf>,
         respond_to: EngineResponse<()>,
     },
     GotoDefinition {
