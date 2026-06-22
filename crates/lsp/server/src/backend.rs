@@ -1,4 +1,7 @@
-use std::{borrow::Cow, path::PathBuf};
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 use tower_lsp_server::{
     Client as LspClient, LanguageServer,
@@ -14,6 +17,7 @@ use crate::{
     engine_client::EngineClient,
     engine_registry::EngineRegistry,
     methods::{self, MethodContext},
+    recent_editor_saves::RecentEditorSaves,
 };
 
 #[derive(Debug)]
@@ -21,6 +25,7 @@ pub(crate) struct Backend {
     lsp_client: LspClient,
     engines: OnceCell<EngineRegistry>,
     client_capabilities: OnceCell<EngineClientCapabilities>,
+    recent_editor_saves: RecentEditorSaves,
 }
 
 impl Backend {
@@ -29,6 +34,7 @@ impl Backend {
             lsp_client,
             engines: OnceCell::new(),
             client_capabilities: OnceCell::new(),
+            recent_editor_saves: RecentEditorSaves::default(),
         }
     }
 
@@ -51,10 +57,14 @@ impl Backend {
         let Some(path) = methods::uri_to_path(uri) else {
             return Ok(None);
         };
+        self.method_context_for_path(&path).await
+    }
+
+    async fn method_context_for_path(&self, path: &Path) -> Result<Option<MethodContext>> {
         let Some(engine_client) = self
             .registry()
             .await?
-            .document(&path)
+            .document(path)
             .await
             .inspect_err(|_| tracing::error!("failed to route LSP method to an engine"))
             .map_err(methods::internal_error)?
@@ -182,38 +192,28 @@ impl LanguageServer for Backend {
         fields(rg.method = "didSave", rg.uri = ?params.text_document.uri)
     )]
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
-        let Some(context) = self
-            .method_context_for(&params.text_document.uri)
-            .await
-            .ok()
-            .flatten()
-        else {
+        let Some(path) = methods::uri_to_path(&params.text_document.uri) else {
             return;
         };
-        methods::text_document::did_save::did_save(context, params).await;
+        self.recent_editor_saves.record_editor_save(&path).await;
+
+        let Some(context) = self.method_context_for_path(&path).await.ok().flatten() else {
+            return;
+        };
+        methods::text_document::did_save::did_save(context, path, params).await;
     }
 
     #[tracing::instrument(skip_all, fields(rg.method = "didChangeWatchedFiles"))]
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
-        let paths = params
-            .changes
-            .into_iter()
-            .filter(|change| change.typ == FileChangeType::CHANGED)
-            .filter_map(|change| methods::uri_to_path(&change.uri))
-            .filter(|path| path.extension().and_then(|extension| extension.to_str()) == Some("rs"))
-            .collect::<Vec<_>>();
-        if paths.is_empty() {
-            return;
-        }
-
-        tracing::debug!(
-            changed_files = paths.len(),
-            "routing external Rust source changes"
-        );
         let Some(registry) = self.registry().await.ok() else {
             return;
         };
-        registry.external_project_paths_changed(paths).await;
+        methods::workspace::did_change_watched_files::did_change_watched_files(
+            registry,
+            &self.recent_editor_saves,
+            params,
+        )
+        .await;
     }
 
     #[tracing::instrument(
