@@ -6,7 +6,7 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use rg_def_map::{BodyMacroExpander as DefMapBodyMacroExpander, DefMapReadTxn};
+use rg_def_map::{BodyMacroExpander as DefMapBodyMacroExpander, DefMapReadTxn, ExpandedBodyMacro};
 use rg_ir_model::{ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_syntax::ast;
@@ -32,7 +32,7 @@ pub(crate) trait BodyMacroExpansionContext {
         file_id: FileId,
         span: Span,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ast::Expr>>;
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Expr>>>;
 
     /// Expand a macro call as statement-list syntax, leaving lowering to splice the result.
     ///
@@ -45,7 +45,7 @@ pub(crate) trait BodyMacroExpansionContext {
         file_id: FileId,
         span: Span,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ast::MacroStmts>>;
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::MacroStmts>>>;
 
     /// Expand a macro call as pattern syntax, leaving lowering to preserve binding semantics.
     ///
@@ -58,7 +58,7 @@ pub(crate) trait BodyMacroExpansionContext {
         file_id: FileId,
         span: Span,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ast::Pat>>;
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Pat>>>;
 
     /// Expand a macro call as type syntax, leaving lowering to preserve the fallback type.
     ///
@@ -71,7 +71,7 @@ pub(crate) trait BodyMacroExpansionContext {
         file_id: FileId,
         span: Span,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ast::Type>>;
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Type>>>;
 }
 
 /// RAII guard that keeps recursive macro expansion depth balanced across early returns.
@@ -129,7 +129,7 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         file_id: FileId,
         span: Span,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ast::Expr>> {
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Expr>>> {
         self.expander
             .expand_expr_call(target, module, file_id, span, self.parse_package, call)
     }
@@ -141,7 +141,7 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         file_id: FileId,
         span: Span,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ast::MacroStmts>> {
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::MacroStmts>>> {
         self.expander
             .expand_stmt_call(target, module, file_id, span, self.parse_package, call)
     }
@@ -153,7 +153,7 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         file_id: FileId,
         span: Span,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ast::Pat>> {
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Pat>>> {
         self.expander
             .expand_pat_call(target, module, file_id, span, self.parse_package, call)
     }
@@ -165,7 +165,7 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         file_id: FileId,
         span: Span,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ast::Type>> {
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Type>>> {
         self.expander
             .expand_type_call(target, module, file_id, span, self.parse_package, call)
     }

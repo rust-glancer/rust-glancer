@@ -5,7 +5,7 @@ use rg_text::Name;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
-    Path, PathSegment,
+    Path, PathSegment, TargetRef,
     items::{GenericArg, TypePath, TypePathSegment, TypeRef},
 };
 use rg_std::{MemorySize, Shrink};
@@ -33,6 +33,8 @@ pub struct BodyPathSegment {
 pub enum BodyPathSegmentKind {
     /// `name` in `module::name`.
     Name(Name),
+    /// `$crate` in macro-generated syntax, resolved to the macro definition crate.
+    DollarCrate(TargetRef),
     /// `Self` in type position.
     SelfType,
     /// `self` in value/module path position.
@@ -220,6 +222,7 @@ impl BodyPathSegment {
     fn as_def_map_segment(&self) -> Option<PathSegment> {
         match &self.kind {
             BodyPathSegmentKind::Name(name) => Some(PathSegment::Name(name.clone())),
+            BodyPathSegmentKind::DollarCrate(target) => Some(PathSegment::DollarCrate(*target)),
             BodyPathSegmentKind::SelfType => Some(PathSegment::Name(Name::new("Self"))),
             BodyPathSegmentKind::SelfKw => Some(PathSegment::SelfKw),
             BodyPathSegmentKind::SuperKw => Some(PathSegment::SuperKw),
@@ -231,6 +234,7 @@ impl BodyPathSegment {
     fn as_type_path_segment(&self) -> Option<TypePathSegment> {
         let name = match &self.kind {
             BodyPathSegmentKind::Name(name) => name.clone(),
+            BodyPathSegmentKind::DollarCrate(_) => return None,
             BodyPathSegmentKind::SelfType => Name::new("Self"),
             BodyPathSegmentKind::SelfKw => Name::new("self"),
             BodyPathSegmentKind::SuperKw => Name::new("super"),
@@ -282,6 +286,7 @@ impl fmt::Display for BodyPathSegment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.kind {
             BodyPathSegmentKind::Name(name) => write!(f, "{name}")?,
+            BodyPathSegmentKind::DollarCrate(_) => write!(f, "$crate")?,
             BodyPathSegmentKind::SelfType => write!(f, "Self")?,
             BodyPathSegmentKind::SelfKw => write!(f, "self")?,
             BodyPathSegmentKind::SuperKw => write!(f, "super")?,

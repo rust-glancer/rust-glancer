@@ -5,4 +5,4 @@
 
 mod body;
 
-pub use self::body::BodyMacroExpander;
+pub use self::body::{BodyMacroExpander, ExpandedBodyMacro};

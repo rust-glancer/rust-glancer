@@ -2,7 +2,8 @@
 
 use rg_syntax::ast;
 
-use rg_ir_model::{ExprId, ModuleRef, ScopeId};
+use rg_def_map::ExpandedBodyMacro;
+use rg_ir_model::{ExprId, ModuleRef, ScopeId, TargetRef};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
 
@@ -19,7 +20,23 @@ pub(super) struct BodyLowering<'a> {
     pub(super) interner: &'a mut NameInterner,
     pub(super) builder: BodyBuilder,
     pub(super) macro_expansion: &'a mut dyn BodyMacroExpansionContext,
-    source_override: Option<BodySource>,
+    generated_context: Option<GeneratedBodyMacroContext>,
+}
+
+/// Temporary context for syntax produced by one body macro expansion.
+#[derive(Clone, Copy)]
+struct GeneratedBodyMacroContext {
+    source: BodySource,
+    dollar_crate_target: TargetRef,
+}
+
+impl GeneratedBodyMacroContext {
+    fn new(source: BodySource, dollar_crate_target: TargetRef) -> Self {
+        Self {
+            source,
+            dollar_crate_target,
+        }
+    }
 }
 
 impl<'a> BodyLowering<'a> {
@@ -41,7 +58,7 @@ impl<'a> BodyLowering<'a> {
             interner,
             builder: BodyBuilder::default(),
             macro_expansion,
-            source_override: None,
+            generated_context: None,
         }
     }
 
@@ -113,11 +130,16 @@ impl BodyLowering<'_> {
     }
 
     pub(super) fn source(&self, syntax: &rg_syntax::SyntaxNode) -> BodySource {
-        if let Some(source) = self.source_override {
-            return source;
+        if let Some(context) = self.generated_context {
+            return context.source;
         }
 
         source_for(self.body_source.file_id, syntax)
+    }
+
+    pub(super) fn dollar_crate_target(&self) -> Option<TargetRef> {
+        self.generated_context
+            .map(|context| context.dollar_crate_target)
     }
 
     /// Pick the semantic module used to resolve a body macro call.
@@ -135,18 +157,18 @@ impl BodyLowering<'_> {
         }
     }
 
-    /// Lower generated syntax while assigning every produced node to one conservative source span.
-    ///
-    /// Example: when `make_expr!()` expands to `input + input`, both generated `input` paths are
-    /// recorded at the original macro call until fine-grained expansion spans are preserved.
-    pub(super) fn with_source_override<T>(
+    /// Lower one expanded macro under the call-site source and macro-definition crate context.
+    pub(super) fn with_expanded_macro<Syntax, Output>(
         &mut self,
-        source: BodySource,
-        f: impl FnOnce(&mut Self) -> T,
-    ) -> T {
-        let previous = self.source_override.replace(source);
-        let result = f(self);
-        self.source_override = previous;
+        call_source: BodySource,
+        expanded: ExpandedBodyMacro<Syntax>,
+        f: impl FnOnce(&mut Self, Syntax) -> Output,
+    ) -> Output {
+        let context = GeneratedBodyMacroContext::new(call_source, expanded.dollar_crate_target());
+        let syntax = expanded.into_syntax();
+        let previous = self.generated_context.replace(context);
+        let result = f(self, syntax);
+        self.generated_context = previous;
         result
     }
 
@@ -174,6 +196,10 @@ impl BodyLowering<'_> {
 
         // Generated body syntax carries no fine-grained expansion span map at this boundary, so
         // every lowered node in the expansion is anchored to the macro call site.
-        Some(self.with_source_override(call_source, |this| this.lower_expr(expanded, scope)))
+        Some(
+            self.with_expanded_macro(call_source, expanded, |this, syntax| {
+                this.lower_expr(syntax, scope)
+            }),
+        )
     }
 }

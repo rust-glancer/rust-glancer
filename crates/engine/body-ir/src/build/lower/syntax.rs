@@ -40,9 +40,7 @@ impl BodyLowering<'_> {
             | ast::LiteralKind::CString(_) => LiteralKind::String,
         }
     }
-}
 
-impl BodyLowering<'_> {
     pub(super) fn lower_body_path(&mut self, path: ast::Path) -> Option<BodyPath> {
         let source_span = Span::from_text_range(path.syntax().text_range());
         let absolute = path
@@ -106,7 +104,11 @@ impl BodyLowering<'_> {
             .ok()
             .flatten()?;
 
-        Some(self.with_source_override(call_source, |this| this.lower_type_ref(expanded)))
+        Some(
+            self.with_expanded_macro(call_source, expanded, |this, syntax| {
+                this.lower_type_ref(syntax)
+            }),
+        )
     }
 
     pub(super) fn lower_lifetime_label(
@@ -141,10 +143,15 @@ impl BodyLowering<'_> {
         let (kind, span) = match segment.kind()? {
             PathSegmentKind::Name(name_ref) => {
                 let span = self.source(name_ref.syntax()).span;
-                (
-                    BodyPathSegmentKind::Name(self.intern_ast_name_ref(name_ref)),
-                    span,
-                )
+                let name = self.intern_ast_name_ref(name_ref);
+                // `$crate` is meaningful only for macro-generated syntax, where the temporary
+                // lowering context knows which crate defined the macro.
+                let kind = if name.as_str() == "$crate" {
+                    BodyPathSegmentKind::DollarCrate(self.dollar_crate_target()?)
+                } else {
+                    BodyPathSegmentKind::Name(name)
+                };
+                (kind, span)
             }
             // `Self` needs to stay distinguishable in the rich path, but its DefMap projection
             // follows DefMap's type-path convention and behaves like a normal type name.

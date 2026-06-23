@@ -455,3 +455,129 @@ pub fn use_it(input: User, flag: u8) -> User {
         "#]],
     );
 }
+
+#[test]
+fn imported_macro_expands_inside_function_body() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_imported_macro_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+mod macros {
+    macro_rules! make_value {
+        ($input:expr) => {
+            $input + $input
+        };
+    }
+
+    pub(crate) use make_value;
+}
+
+use macros::make_value;
+
+pub fn use_it(input: i32) -> i32 {
+    make_value!(input)
+}
+"#,
+        expect![[r#"
+            package body_imported_macro_fixture
+
+            body_imported_macro_fixture [lib]
+            body b0 fn body_imported_macro_fixture[lib]::crate::use_it @ 13:1-15:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            bindings
+            - v0 param input `input`: i32 => i32 @ 13:15-13:20
+            body
+            expr e3 block s1 => i32 @ 13:34-15:2
+              tail
+                expr e2 binary + => i32 @ 14:5-14:23
+                  lhs
+                    expr e0 path input -> local v0 => i32 @ 14:5-14:23
+                  rhs
+                    expr e1 path input -> local v0 => i32 @ 14:5-14:23
+        "#]],
+    );
+}
+
+#[test]
+fn dependency_macro_dollar_crate_resolves_to_definition_crate_in_body() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub fn dep_value() -> i32 {
+    7
+}
+
+macro_rules! make_dep_value {
+    () => {
+        $crate::dep_value()
+    };
+}
+
+pub use make_dep_value;
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/app/src/lib.rs
+use dep::make_dep_value;
+
+pub fn use_it() -> i32 {
+    make_dep_value!()
+}
+"#,
+        expect![[r#"
+            package app
+
+            app [lib]
+            body b0 fn app[lib]::crate::use_it @ 3:1-5:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e2 block s1 => i32 @ 3:24-5:2
+              tail
+                expr e1 call => i32 @ 4:5-4:22
+                  callee
+                    expr e0 path $crate::dep_value -> item fn dep[lib]::crate::dep_value => <unknown> @ 4:5-4:22
+
+
+            package dep
+
+            dep [lib]
+            body b0 fn dep[lib]::crate::dep_value @ 1:1-3:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e1 block s1 => i32 @ 1:27-3:2
+              tail
+                expr e0 literal int `7` => i32 @ 2:5-2:6
+        "#]],
+    );
+}

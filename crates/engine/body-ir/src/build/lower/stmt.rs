@@ -249,13 +249,14 @@ impl BodyLowering<'_> {
 
         // Generated statement syntax has no stable Body IR source of its own yet. Lower every
         // generated node under the call site so cursor-facing data remains conservative.
-        self.with_source_override(call_source, |this| {
+        self.with_expanded_macro(call_source, expanded, |this, expanded| {
             for generated in expanded.statements() {
                 this.lower_statement(generated, scope, statements);
             }
 
-            // `MacroStmts` may contain a final expression after generated statements. Preserve the
-            // invocation's semicolon shape when turning that expression back into a statement.
+            // `MacroStmts` may contain a final expression after generated statements.
+            // Preserve the invocation's semicolon shape when turning that expression back into
+            // a statement.
             if let Some(tail_expr) = expanded.expr() {
                 let expr = this.lower_expr(tail_expr, scope);
                 statements.push(this.alloc_expr_statement(

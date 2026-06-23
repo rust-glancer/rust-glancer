@@ -25,6 +25,31 @@ use rg_workspace::RustEdition;
 
 use crate::DefMapReadTxn;
 
+/// Generated body syntax plus the macro-definition origin needed while lowering it.
+pub struct ExpandedBodyMacro<T> {
+    syntax: T,
+    dollar_crate_target: TargetRef,
+}
+
+impl<T> ExpandedBodyMacro<T> {
+    fn new(syntax: T, dollar_crate_target: TargetRef) -> Self {
+        Self {
+            syntax,
+            dollar_crate_target,
+        }
+    }
+
+    /// Returns the generated syntax selected for the requested body parse position.
+    pub fn into_syntax(self) -> T {
+        self.syntax
+    }
+
+    /// Returns the crate that generated `$crate` paths inside this syntax should resolve to.
+    pub fn dollar_crate_target(&self) -> TargetRef {
+        self.dollar_crate_target
+    }
+}
+
 /// Expands declarative macros for Body IR lowering using frozen def-map visibility.
 pub struct BodyMacroExpander<'db, 'txn> {
     def_maps: &'txn DefMapReadTxn<'db>,
@@ -48,8 +73,8 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         span: Span,
         parse_package: &rg_parse::Package,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ast::Expr>> {
-        let Some(syntax) = self.expand_call_syntax(
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Expr>>> {
+        let Some(expanded) = self.expand_call_syntax(
             target,
             module,
             file_id,
@@ -62,8 +87,10 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             return Ok(None);
         };
 
-        let root = syntax.parse.syntax_node();
-        Ok(ast::Expr::cast(root.clone()).or_else(|| root.children().find_map(ast::Expr::cast)))
+        let root = expanded.syntax.parse.syntax_node();
+        Ok(ast::Expr::cast(root.clone())
+            .or_else(|| root.children().find_map(ast::Expr::cast))
+            .map(|syntax| ExpandedBodyMacro::new(syntax, expanded.dollar_crate_target)))
     }
 
     /// Expands one statement-position macro call to generated statement-list syntax.
@@ -75,8 +102,8 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         span: Span,
         parse_package: &rg_parse::Package,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ast::MacroStmts>> {
-        let Some(syntax) = self.expand_call_syntax(
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::MacroStmts>>> {
+        let Some(expanded) = self.expand_call_syntax(
             target,
             module,
             file_id,
@@ -89,9 +116,10 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             return Ok(None);
         };
 
-        let root = syntax.parse.syntax_node();
+        let root = expanded.syntax.parse.syntax_node();
         Ok(ast::MacroStmts::cast(root.clone())
-            .or_else(|| root.children().find_map(ast::MacroStmts::cast)))
+            .or_else(|| root.children().find_map(ast::MacroStmts::cast))
+            .map(|syntax| ExpandedBodyMacro::new(syntax, expanded.dollar_crate_target)))
     }
 
     /// Expands one pattern-position macro call to generated pattern syntax.
@@ -103,8 +131,8 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         span: Span,
         parse_package: &rg_parse::Package,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ast::Pat>> {
-        let Some(syntax) = self.expand_call_syntax(
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Pat>>> {
+        let Some(expanded) = self.expand_call_syntax(
             target,
             module,
             file_id,
@@ -117,8 +145,10 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             return Ok(None);
         };
 
-        let root = syntax.parse.syntax_node();
-        Ok(ast::Pat::cast(root.clone()).or_else(|| root.children().find_map(ast::Pat::cast)))
+        let root = expanded.syntax.parse.syntax_node();
+        Ok(ast::Pat::cast(root.clone())
+            .or_else(|| root.children().find_map(ast::Pat::cast))
+            .map(|syntax| ExpandedBodyMacro::new(syntax, expanded.dollar_crate_target)))
     }
 
     /// Expands one type-position macro call to generated type syntax.
@@ -130,8 +160,8 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         span: Span,
         parse_package: &rg_parse::Package,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ast::Type>> {
-        let Some(syntax) = self.expand_call_syntax(
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Type>>> {
+        let Some(expanded) = self.expand_call_syntax(
             target,
             module,
             file_id,
@@ -144,8 +174,10 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             return Ok(None);
         };
 
-        let root = syntax.parse.syntax_node();
-        Ok(ast::Type::cast(root.clone()).or_else(|| root.children().find_map(ast::Type::cast)))
+        let root = expanded.syntax.parse.syntax_node();
+        Ok(ast::Type::cast(root.clone())
+            .or_else(|| root.children().find_map(ast::Type::cast))
+            .map(|syntax| ExpandedBodyMacro::new(syntax, expanded.dollar_crate_target)))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -158,15 +190,15 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         parse_package: &rg_parse::Package,
         call: &ast::MacroCall,
         parse_kind: ExpansionParseKind,
-    ) -> anyhow::Result<Option<ExpansionSyntax>> {
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<ExpansionSyntax>>> {
         let Some(invocation) =
             BodyMacroInvocation::from_ast(file_id, span, parse_package.edition(), call)
         else {
             return Ok(None);
         };
-        // Note: generated body syntax can contain `$crate` paths, but parsing them requires the
-        // macro definition target. Body expressions are plain AST nodes at this boundary, so reject
-        // those paths until body expansions carry the same origin tracking as generated items.
+        // Note: generated body syntax carries its macro-definition crate through
+        // `ExpandedBodyMacro`. The invocation path itself does not yet have that context, so a
+        // body call written through `$crate::macro_name!()` stays unresolved.
         let Some(path) = ImportPath::from_macro_path_text(invocation.path_text(), None) else {
             return Ok(None);
         };
@@ -179,9 +211,14 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         };
 
         let request = invocation.expansion_request(resolved.def_ref, resolved.data, parse_kind);
-        let syntax = self.runtime.expand_now(request);
+        let Some(syntax) = self.runtime.expand_now(request) else {
+            return Ok(None);
+        };
 
-        Ok(syntax)
+        Ok(Some(ExpandedBodyMacro::new(
+            syntax,
+            resolved.data.dollar_crate_target,
+        )))
     }
 
     fn resolve_macro_definition<'a>(

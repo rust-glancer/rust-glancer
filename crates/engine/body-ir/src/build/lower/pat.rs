@@ -370,9 +370,11 @@ impl BodyLowering<'_> {
 
         // The expanded pattern should behave exactly like handwritten syntax in the same pattern
         // position, including binding allocation and ambiguity handling.
-        Some(self.with_source_override(call_source, |this| {
-            this.lower_pat_inner_with_ident_binding(expanded, scope, options, bindings)
-        }))
+        Some(
+            self.with_expanded_macro(call_source, expanded, |this, syntax| {
+                this.lower_pat_inner_with_ident_binding(syntax, scope, options, bindings)
+            }),
+        )
     }
 
     fn push_pat_binding(
