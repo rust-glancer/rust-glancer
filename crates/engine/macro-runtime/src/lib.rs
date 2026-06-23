@@ -7,18 +7,17 @@
 
 mod cache;
 mod executor;
+mod runtime;
 mod syntax;
 
-pub use rg_macro_expand::{Edition, ExpansionParseKind, ExpansionSyntax};
+pub use rg_macro_expand::{ExpansionParseKind, ExpansionSyntax};
 
 pub use self::{
-    cache::{
-        MacroCompileRecord, MacroCompileResult, MacroExpandRecord, MacroExpansionCache,
-        MacroExpansionCacheKey, PreparedMacroExpansion, PreparedMacroExpansionResult,
+    cache::{MacroCompileRecord, MacroExpandRecord},
+    executor::MacroExpansionPerformancePreference,
+    runtime::{
+        CompletedMacroExpansion, MacroExpansionRequest, MacroExpansionRuntime,
+        PendingMacroExpansion, PreparedMacroExpansion, PreparedMacroExpansionResult,
     },
-    executor::{
-        MacroExpansionExecutor, MacroExpansionJob, MacroExpansionOutput,
-        MacroExpansionPerformancePreference, MacroExpansionSyntax, MacroExpansionWork,
-    },
-    syntax::{macro_edition, tt_span_for_parse_span},
+    syntax::macro_edition,
 };

@@ -21,26 +21,26 @@ use super::executor::MacroExpansionWork;
 
 /// Per-build cache for compiled macro definitions and expanded syntax.
 #[derive(Default)]
-pub struct MacroExpansionCache {
+pub(crate) struct MacroExpansionCache {
     compiled: HashMap<LocalDefRef, Option<Arc<DeclarativeMacro>>>,
     expanded: HashMap<MacroExpansionCacheKey, Option<ExpansionSyntax>>,
 }
 
 impl MacroExpansionCache {
     /// Compiles a macro definition once and remembers failures as well as successes.
-    pub fn compile(
+    pub(crate) fn compile(
         &mut self,
         def_ref: LocalDefRef,
         macro_definition: &MacroDefinitionData,
         edition: Edition,
-    ) -> MacroCompileResult {
+    ) -> CachedMacroCompileResult {
         if self.compiled.contains_key(&def_ref) {
             let macro_ = self.compiled.get(&def_ref).and_then(Clone::clone);
             let failed = self
                 .compiled
                 .get(&def_ref)
                 .is_some_and(|compiled| compiled.is_none());
-            return MacroCompileResult {
+            return CachedMacroCompileResult {
                 macro_,
                 record: MacroCompileRecord::CacheHit { failed },
             };
@@ -54,7 +54,7 @@ impl MacroExpansionCache {
             Ok(compiled) => {
                 let compiled = Arc::new(compiled);
                 self.compiled.insert(def_ref, Some(Arc::clone(&compiled)));
-                MacroCompileResult {
+                CachedMacroCompileResult {
                     macro_: Some(compiled),
                     record: MacroCompileRecord::Attempt {
                         elapsed,
@@ -64,7 +64,7 @@ impl MacroExpansionCache {
             }
             Err(_) => {
                 self.compiled.insert(def_ref, None);
-                MacroCompileResult {
+                CachedMacroCompileResult {
                     macro_: None,
                     record: MacroCompileRecord::Attempt {
                         elapsed,
@@ -76,7 +76,7 @@ impl MacroExpansionCache {
     }
 
     /// Returns a cached expansion result or packages new expansion work for the worker pool.
-    pub fn prepare_expansion(
+    pub(crate) fn prepare_expansion(
         &mut self,
         def_ref: LocalDefRef,
         macro_: Arc<DeclarativeMacro>,
@@ -84,7 +84,7 @@ impl MacroExpansionCache {
         args: &TopSubtree,
         call_site: TtSpan,
         parse_kind: ExpansionParseKind,
-    ) -> PreparedMacroExpansionResult {
+    ) -> CachedMacroExpansionPreparation {
         let key = MacroExpansionCacheKey {
             def_ref,
             args: args.clone(),
@@ -94,10 +94,10 @@ impl MacroExpansionCache {
 
         if let Some(expanded) = self.expanded.get(&key) {
             let expansion = match expanded {
-                Some(syntax) => PreparedMacroExpansion::Syntax(syntax.clone()),
-                None => PreparedMacroExpansion::Failed,
+                Some(syntax) => CachedPreparedMacroExpansion::Syntax(syntax.clone()),
+                None => CachedPreparedMacroExpansion::Failed,
             };
-            return PreparedMacroExpansionResult {
+            return CachedMacroExpansionPreparation {
                 expansion,
                 record: MacroExpandRecord::CacheHit {
                     failed: expanded.is_none(),
@@ -105,8 +105,8 @@ impl MacroExpansionCache {
             };
         }
 
-        PreparedMacroExpansionResult {
-            expansion: PreparedMacroExpansion::Work(MacroExpansionWork {
+        CachedMacroExpansionPreparation {
+            expansion: CachedPreparedMacroExpansion::Work(MacroExpansionWork {
                 key,
                 macro_name: path_text.to_string(),
                 macro_,
@@ -118,7 +118,7 @@ impl MacroExpansionCache {
         }
     }
 
-    pub fn insert_expansion(
+    pub(crate) fn insert_expansion(
         &mut self,
         key: MacroExpansionCacheKey,
         syntax: Option<ExpansionSyntax>,
@@ -148,9 +148,9 @@ impl MacroExpansionCache {
 }
 
 /// Compiled macro payload together with the accounting event produced while fetching it.
-pub struct MacroCompileResult {
-    pub macro_: Option<Arc<DeclarativeMacro>>,
-    pub record: MacroCompileRecord,
+pub(crate) struct CachedMacroCompileResult {
+    pub(crate) macro_: Option<Arc<DeclarativeMacro>>,
+    pub(crate) record: MacroCompileRecord,
 }
 
 /// Stats event for one macro-definition compile lookup.
@@ -161,21 +161,21 @@ pub enum MacroCompileRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct MacroExpansionCacheKey {
-    pub def_ref: LocalDefRef,
-    pub args: TopSubtree,
-    pub call_site: TtSpan,
-    pub parse_kind: ExpansionParseKind,
+pub(crate) struct MacroExpansionCacheKey {
+    pub(crate) def_ref: LocalDefRef,
+    pub(crate) args: TopSubtree,
+    pub(crate) call_site: TtSpan,
+    pub(crate) parse_kind: ExpansionParseKind,
 }
 
 /// Expansion payload together with the accounting event produced while preparing it.
-pub struct PreparedMacroExpansionResult {
-    pub expansion: PreparedMacroExpansion,
-    pub record: MacroExpandRecord,
+pub(crate) struct CachedMacroExpansionPreparation {
+    pub(crate) expansion: CachedPreparedMacroExpansion,
+    pub(crate) record: MacroExpandRecord,
 }
 
 /// Either already-expanded syntax, a known failed expansion, or work to run in parallel.
-pub enum PreparedMacroExpansion {
+pub(crate) enum CachedPreparedMacroExpansion {
     Syntax(ExpansionSyntax),
     Failed,
     Work(MacroExpansionWork),

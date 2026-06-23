@@ -13,8 +13,7 @@ use rg_ir_storage::{ImportPath, MacroDefinitionEnv, ScopeBindingOrigin, TargetRe
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
 use rg_macro_runtime::{
     ExpansionParseKind, ExpansionSyntax, MacroCompileRecord, MacroExpandRecord,
-    MacroExpansionCache, MacroExpansionWork, PreparedMacroExpansion, macro_edition,
-    tt_span_for_parse_span,
+    MacroExpansionRequest, MacroExpansionRuntime, PendingMacroExpansion, PreparedMacroExpansion,
 };
 use rg_parse::FileId;
 use rg_text::PackageNameInterners;
@@ -92,7 +91,7 @@ pub(crate) fn collect_expansion_attempts<E>(
     env: &E,
     states: &FinalizeTargetStates,
     scan: MacroExpansionScan<'_>,
-    cache: &mut MacroExpansionCache,
+    runtime: &mut MacroExpansionRuntime,
 ) -> anyhow::Result<Vec<MacroExpansionAttempt>>
 where
     E: TargetResolutionEnv<Error = rg_package_store::PackageStoreError> + MacroDefinitionEnv,
@@ -116,7 +115,7 @@ where
                 let attempt = MacroExpansionAttempt::for_call(
                     env,
                     states,
-                    cache,
+                    runtime,
                     state,
                     call_id,
                     &directive.call,
@@ -497,7 +496,7 @@ impl MacroExpansionAttempt {
     fn for_call<E>(
         env: &E,
         states: &FinalizeTargetStates,
-        cache: &mut MacroExpansionCache,
+        runtime: &mut MacroExpansionRuntime,
         state: &TargetState,
         call_id: usize,
         call: &MacroCallSite,
@@ -572,32 +571,19 @@ impl MacroExpansionAttempt {
             ));
         }
 
-        // Finally compile the definition and either reuse cached output or prepare self-contained
-        // expansion work for the worker pool.
-        let edition = macro_edition(resolved.data.edition);
-        let compile_result = cache.compile(resolved.def_ref, resolved.data, edition);
-        let Some(macro_) = compile_result.macro_ else {
-            return Ok(Self::resolved(
-                state.target,
-                call_id,
-                call,
-                path_text,
-                MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Failed),
-                compile_result.record,
-                None,
-            ));
-        };
-
-        let call_site =
-            tt_span_for_parse_span(call.file_id, call.span, macro_edition(state.edition));
-        let prepared_expansion = cache.prepare_expansion(
-            resolved.def_ref,
-            macro_,
+        // Finally hand the resolved definition and call tokens to the runtime. Def-map keeps the
+        // visibility policy, while the runtime owns compilation, expansion caching, and pending
+        // worker-pool jobs.
+        let prepared_expansion = runtime.prepare_expansion(MacroExpansionRequest {
+            def_ref: resolved.def_ref,
+            definition: resolved.data,
             path_text,
             args,
-            call_site,
-            ExpansionParseKind::Items,
-        );
+            call_file_id: call.file_id,
+            call_span: call.span,
+            call_edition: state.edition,
+            parse_kind: ExpansionParseKind::Items,
+        });
         let outcome = match prepared_expansion.expansion {
             PreparedMacroExpansion::Syntax(syntax) => {
                 MacroExpansionAttemptOutcome::Generated(syntax)
@@ -605,8 +591,8 @@ impl MacroExpansionAttempt {
             PreparedMacroExpansion::Failed => {
                 MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Failed)
             }
-            PreparedMacroExpansion::Work(work) => {
-                MacroExpansionAttemptOutcome::PendingExpansion(work)
+            PreparedMacroExpansion::Pending(pending) => {
+                MacroExpansionAttemptOutcome::PendingExpansion(pending)
             }
         };
 
@@ -616,8 +602,8 @@ impl MacroExpansionAttempt {
             call,
             path_text,
             outcome,
-            compile_result.record,
-            Some(prepared_expansion.record),
+            prepared_expansion.compile,
+            prepared_expansion.expand,
         );
         attempt.origin.dollar_crate_target = Some(resolved.data.dollar_crate_target);
         Ok(attempt)
@@ -635,13 +621,13 @@ impl MacroExpansionAttempt {
         self.record.record(macro_name);
     }
 
-    pub(super) fn take_expansion_work(&mut self) -> Option<MacroExpansionWork> {
+    pub(super) fn take_pending_expansion(&mut self) -> Option<PendingMacroExpansion> {
         let outcome = std::mem::replace(
             &mut self.outcome,
             MacroExpansionAttemptOutcome::NoSource(MacroDirectiveState::Pending),
         );
         match outcome {
-            MacroExpansionAttemptOutcome::PendingExpansion(work) => Some(work),
+            MacroExpansionAttemptOutcome::PendingExpansion(pending) => Some(pending),
             other => {
                 self.outcome = other;
                 None
@@ -789,5 +775,5 @@ enum MacroExpansionAttemptOutcome {
         file_id: FileId,
         items: Vec<ItemTreeId>,
     },
-    PendingExpansion(MacroExpansionWork),
+    PendingExpansion(PendingMacroExpansion),
 }

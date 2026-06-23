@@ -24,8 +24,6 @@ mod generated_tree;
 mod resolve;
 mod source_fragment;
 
-pub(super) use rg_macro_runtime::{MacroExpansionCache, MacroExpansionExecutor};
-
 pub(super) use self::{
     attempts::{
         MacroExpansionApplyResult, MacroExpansionAttempt, MacroExpansionCursors,

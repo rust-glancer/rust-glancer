@@ -1,38 +1,41 @@
 //! Body-facing declarative macro expansion.
 //!
 //! Body lowering needs expansion as an input to syntax lowering, but it should not know about the
-//! token-tree and macro-engine crates directly. This facade keeps resolution and token conversion
-//! next to the def-map-owned macro expansion cache.
+//! token-tree and macro-engine crates directly. This facade keeps body-specific frozen def-map
+//! visibility and token conversion next to the def-map query it relies on.
 
 use anyhow::Context as _;
 
-use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_ir_storage::{
-    DefMapQuery, ImportPath, MacroDefinitionView, PathResolver, ScopeResolutionEnv,
+    DefMapQuery, ImportPath, MacroDefinitionData, MacroDefinitionView, PathResolver,
+    ScopeResolutionEnv,
 };
 use rg_macro_runtime::{
-    ExpansionParseKind, ExpansionSyntax, MacroExpansionCache, PreparedMacroExpansion,
-    macro_edition, tt_span_for_parse_span,
+    ExpansionParseKind, ExpansionSyntax, MacroExpansionRequest, MacroExpansionRuntime,
+    macro_edition,
 };
 use rg_parse::{FileId, Span};
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode as _, ast, utils::normalized_syntax_text};
 use rg_text::Name;
+use rg_tt::TopSubtree;
 use rg_tt::syntax_bridge::{SpanFactory, syntax_node_to_token_tree_with_span};
+use rg_workspace::RustEdition;
 
 use crate::DefMapReadTxn;
 
 /// Expands declarative macros for Body IR lowering using frozen def-map visibility.
 pub struct BodyMacroExpander<'db, 'txn> {
     def_maps: &'txn DefMapReadTxn<'db>,
-    cache: MacroExpansionCache,
+    runtime: MacroExpansionRuntime,
 }
 
 impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
     pub fn new(def_maps: &'txn DefMapReadTxn<'db>) -> Self {
         Self {
             def_maps,
-            cache: MacroExpansionCache::default(),
+            runtime: MacroExpansionRuntime::default(),
         }
     }
 
@@ -129,16 +132,15 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         call: &ast::MacroCall,
         parse_kind: ExpansionParseKind,
     ) -> anyhow::Result<Option<ExpansionSyntax>> {
-        let Some(path_text) = call.path().map(|path| normalized_syntax_text(&path)) else {
-            return Ok(None);
-        };
-        let Some(args) = call.token_tree() else {
+        let Some(invocation) =
+            BodyMacroInvocation::from_ast(file_id, span, parse_package.edition(), call)
+        else {
             return Ok(None);
         };
         // Note: generated body syntax can contain `$crate` paths, but parsing them requires the
         // macro definition target. Body expressions are plain AST nodes at this boundary, so reject
         // those paths until body expansions carry the same origin tracking as generated items.
-        let Some(path) = ImportPath::from_macro_path_text(&path_text, None) else {
+        let Some(path) = ImportPath::from_macro_path_text(invocation.path_text(), None) else {
             return Ok(None);
         };
 
@@ -149,43 +151,8 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             return Ok(None);
         };
 
-        let definition_edition = resolved.data.edition;
-        let compile_result = self.cache.compile(
-            resolved.def_ref,
-            resolved.data,
-            macro_edition(definition_edition),
-        );
-        let Some(macro_) = compile_result.macro_ else {
-            return Ok(None);
-        };
-
-        let edition = macro_edition(parse_package.edition());
-        let span_factory = SpanFactory::new(
-            u32::try_from(file_id.0).expect("file id should fit macro span storage"),
-            edition,
-        );
-        let call_site = tt_span_for_parse_span(file_id, span, edition);
-        let args =
-            syntax_node_to_token_tree_with_span(&args, &mut |range| span_factory.span_for(range));
-        let prepared_expansion = self.cache.prepare_expansion(
-            resolved.def_ref,
-            macro_,
-            &path_text,
-            &args,
-            call_site,
-            parse_kind,
-        );
-
-        let syntax = match prepared_expansion.expansion {
-            PreparedMacroExpansion::Syntax(syntax) => Some(syntax),
-            PreparedMacroExpansion::Failed => None,
-            PreparedMacroExpansion::Work(work) => {
-                let result = work.expand_syntax();
-                let syntax = result.generated_syntax;
-                self.cache.insert_expansion(result.key, syntax.clone());
-                syntax
-            }
-        };
+        let request = invocation.expansion_request(resolved.def_ref, resolved.data, parse_kind);
+        let syntax = self.runtime.expand_now(request);
 
         Ok(syntax)
     }
@@ -266,5 +233,67 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         }
 
         Ok(resolved.into_option())
+    }
+}
+
+/// Body-specific adapter from parsed macro-call syntax to runtime expansion input.
+///
+/// Item-position calls are already lowered by item-tree before def-map expansion sees them. Bodies
+/// arrive here as `ast::MacroCall`, so this private adapter keeps the AST and token-tree conversion
+/// next to the body visibility policy instead of making `rg_macro_runtime` depend on parsed AST.
+struct BodyMacroInvocation {
+    path_text: String,
+    args: TopSubtree,
+    call_file_id: FileId,
+    call_span: Span,
+    call_edition: RustEdition,
+}
+
+impl BodyMacroInvocation {
+    fn from_ast(
+        file_id: FileId,
+        span: Span,
+        edition: RustEdition,
+        call: &ast::MacroCall,
+    ) -> Option<Self> {
+        let path_text = call.path().map(|path| normalized_syntax_text(&path))?;
+        let args = call.token_tree()?;
+
+        let span_factory = SpanFactory::new(
+            u32::try_from(file_id.0).expect("file id should fit macro span storage"),
+            macro_edition(edition),
+        );
+        let args =
+            syntax_node_to_token_tree_with_span(&args, &mut |range| span_factory.span_for(range));
+
+        Some(Self {
+            path_text,
+            args,
+            call_file_id: file_id,
+            call_span: span,
+            call_edition: edition,
+        })
+    }
+
+    fn path_text(&self) -> &str {
+        &self.path_text
+    }
+
+    fn expansion_request<'a>(
+        &'a self,
+        def_ref: LocalDefRef,
+        definition: &'a MacroDefinitionData,
+        parse_kind: ExpansionParseKind,
+    ) -> MacroExpansionRequest<'a> {
+        MacroExpansionRequest {
+            def_ref,
+            definition,
+            path_text: &self.path_text,
+            args: &self.args,
+            call_file_id: self.call_file_id,
+            call_span: self.call_span,
+            call_edition: self.call_edition,
+            parse_kind,
+        }
     }
 }

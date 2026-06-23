@@ -18,7 +18,7 @@ use rg_ir_storage::{
     ScopeResolutionEnv, TargetData, TargetResolutionEnv,
 };
 use rg_item_tree::ItemTreeDb;
-use rg_macro_runtime::MacroExpansionPerformancePreference;
+use rg_macro_runtime::{MacroExpansionPerformancePreference, MacroExpansionRuntime};
 use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
@@ -29,9 +29,8 @@ use super::{
     collect::TargetState,
     imports::{UnresolvedImports, apply_imports},
     macros::{
-        MAX_MACRO_EXPANSION_PASSES, MacroExpansionCache, MacroExpansionCursors,
-        MacroExpansionExecutor, MacroExpansionScan, apply_expansion_attempts,
-        collect_expansion_attempts, expand_expansion_attempts,
+        MAX_MACRO_EXPANSION_PASSES, MacroExpansionCursors, MacroExpansionScan,
+        apply_expansion_attempts, collect_expansion_attempts, expand_expansion_attempts,
         mark_retryable_macros_skipped_by_limit,
     },
 };
@@ -576,8 +575,7 @@ fn finalize_scopes(
     interners: &mut PackageNameInterners,
     performance_preference: MacroExpansionPerformancePreference,
 ) -> anyhow::Result<()> {
-    let mut macro_cache = MacroExpansionCache::default();
-    let mut macro_expansion_executor = None;
+    let mut macro_runtime = MacroExpansionRuntime::new(performance_preference);
     let mut expansion_passes = 0;
     metric::EXPANSION_PASS_LIMIT.record_count(MAX_MACRO_EXPANSION_PASSES);
 
@@ -620,7 +618,7 @@ fn finalize_scopes(
                     .as_ref()
                     .map(MacroExpansionScan::NewCallsSince)
                     .unwrap_or(MacroExpansionScan::AllPending);
-                collect_expansion_attempts(&env, states, scan, &mut macro_cache)?
+                collect_expansion_attempts(&env, states, scan, &mut macro_runtime)?
             };
             timer.finish();
 
@@ -628,16 +626,9 @@ fn finalize_scopes(
                 .iter()
                 .any(|attempt| attempt.needs_expansion())
             {
-                if macro_expansion_executor.is_none() {
-                    macro_expansion_executor =
-                        Some(MacroExpansionExecutor::new(performance_preference)?);
-                }
-                // The executor owns the rust-analyzer expansion adapter. It is created lazily so
-                // projects without expandable declarative macros do not pay its setup cost.
-                let executor = macro_expansion_executor
-                    .as_ref()
-                    .expect("macro expansion executor should be initialized");
-                expand_expansion_attempts(executor, &mut expansion_attempts, &mut macro_cache);
+                // The runtime owns the worker pool and creates it lazily, so projects without
+                // expandable declarative macros do not pay its setup cost.
+                expand_expansion_attempts(&mut macro_runtime, &mut expansion_attempts)?;
             }
 
             let scan_cursors_before_apply = MacroExpansionCursors::capture(states);
