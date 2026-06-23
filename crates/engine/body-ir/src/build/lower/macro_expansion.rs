@@ -46,6 +46,19 @@ pub(crate) trait BodyMacroExpansionContext {
         span: Span,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ast::MacroStmts>>;
+
+    /// Expand a macro call as pattern syntax, leaving lowering to preserve binding semantics.
+    ///
+    /// Example: `let bind_pair!(left, right) = value;` asks for an `ast::Pat`. Pattern lowering
+    /// then applies the same binding rules that a handwritten tuple or identifier pattern would.
+    fn expand_pat_call(
+        &mut self,
+        target: TargetRef,
+        module: ModuleRef,
+        file_id: FileId,
+        span: Span,
+        call: &ast::MacroCall,
+    ) -> anyhow::Result<Option<ast::Pat>>;
 }
 
 /// RAII guard that keeps recursive macro expansion depth balanced across early returns.
@@ -118,5 +131,17 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
     ) -> anyhow::Result<Option<ast::MacroStmts>> {
         self.expander
             .expand_stmt_call(target, module, file_id, span, self.parse_package, call)
+    }
+
+    fn expand_pat_call(
+        &mut self,
+        target: TargetRef,
+        module: ModuleRef,
+        file_id: FileId,
+        span: Span,
+        call: &ast::MacroCall,
+    ) -> anyhow::Result<Option<ast::Pat>> {
+        self.expander
+            .expand_pat_call(target, module, file_id, span, self.parse_package, call)
     }
 }

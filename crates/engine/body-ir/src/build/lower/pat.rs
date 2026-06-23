@@ -334,13 +334,45 @@ impl BodyLowering<'_> {
                     .map(|block| self.lower_const_block_pat_expr(block)),
             },
             ast::Pat::WildcardPat(_) => PatKind::Wildcard,
-            ast::Pat::MacroPat(_) => PatKind::Unsupported,
+            ast::Pat::MacroPat(pat) => {
+                return self
+                    .lower_macro_pat(&pat, scope, options, bindings)
+                    .unwrap_or_else(|| self.alloc_unsupported_pat(pat.syntax()));
+            }
         };
 
         self.builder.alloc_pat(PatData {
             source,
             kind: pat_kind,
         })
+    }
+
+    fn lower_macro_pat(
+        &mut self,
+        pat: &ast::MacroPat,
+        scope: ScopeId,
+        options: PatLoweringOptions,
+        bindings: &mut Vec<BindingId>,
+    ) -> Option<PatId> {
+        let call_source = self.source(pat.syntax());
+        let call = pat.macro_call()?;
+        let _expansion_scope = self.macro_expansion.expansion_scope()?;
+        let module = self.macro_resolution_module();
+        let target = module.origin.origin_target();
+
+        // Pattern expansion is best-effort. If the macro cannot be resolved or parsed as a
+        // pattern, the caller keeps the original macro pattern as unsupported but buildable IR.
+        let expanded = self
+            .macro_expansion
+            .expand_pat_call(target, module, call_source.file_id, call_source.span, &call)
+            .ok()
+            .flatten()?;
+
+        // The expanded pattern should behave exactly like handwritten syntax in the same pattern
+        // position, including binding allocation and ambiguity handling.
+        Some(self.with_source_override(call_source, |this| {
+            this.lower_pat_inner_with_ident_binding(expanded, scope, options, bindings)
+        }))
     }
 
     fn push_pat_binding(

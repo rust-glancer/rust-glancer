@@ -186,3 +186,212 @@ pub fn use_it(input: i32) -> i32 {
         "#]],
     );
 }
+
+#[test]
+fn macro_statement_expands_to_body_local_struct() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_macro_local_struct_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! make_user {
+    () => {
+        struct User;
+    };
+}
+
+pub fn use_it() {
+    make_user!();
+    let user: User = User;
+    user
+}
+"#,
+        expect![[r#"
+            package body_macro_local_struct_fixture
+
+            body_macro_local_struct_fixture [lib]
+            body b0 fn body_macro_local_struct_fixture[lib]::crate::use_it @ 7:1-11:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0; source_items i0
+            source_items
+            - i0 struct User @ 8:5-8:17
+            bindings
+            - v0 let user `user`: User => nominal struct fn body_macro_local_struct_fixture[lib]::crate::use_it::User @ 8:5-8:17 @ 9:9-9:13
+            body
+            expr e2 block s1 => nominal struct fn body_macro_local_struct_fixture[lib]::crate::use_it::User @ 8:5-8:17 @ 7:17-11:2
+              stmt s0 source_item i0 @ 8:5-8:17
+              stmt s1 let v0: User @ 9:5-9:27
+                initializer
+                  expr e0 path User -> struct fn body_macro_local_struct_fixture[lib]::crate::use_it::User @ 8:5-8:17 => nominal struct fn body_macro_local_struct_fixture[lib]::crate::use_it::User @ 8:5-8:17 @ 9:22-9:26
+              tail
+                expr e1 path user -> local v0 => nominal struct fn body_macro_local_struct_fixture[lib]::crate::use_it::User @ 8:5-8:17 @ 10:5-10:9
+        "#]],
+    );
+}
+
+#[test]
+fn macro_statement_expands_to_body_local_use() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_macro_local_use_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct GlobalId;
+
+macro_rules! import_id {
+    () => {
+        use crate::GlobalId as Id;
+    };
+}
+
+pub fn use_it() {
+    import_id!();
+    let id: Id = GlobalId;
+    id
+}
+"#,
+        expect![[r#"
+            package body_macro_local_use_fixture
+
+            body_macro_local_use_fixture [lib]
+            body b0 fn body_macro_local_use_fixture[lib]::crate::use_it @ 9:1-13:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0; source_items i0
+            source_items
+            - i0 use <unnamed> @ 10:5-10:17
+            bindings
+            - v0 let id `id`: Id => nominal struct body_macro_local_use_fixture[lib]::crate::GlobalId @ 11:9-11:11
+            body
+            expr e2 block s1 => nominal struct body_macro_local_use_fixture[lib]::crate::GlobalId @ 9:17-13:2
+              stmt s0 source_item i0 @ 10:5-10:17
+              stmt s1 let v0: Id @ 11:5-11:27
+                initializer
+                  expr e0 path GlobalId -> item struct body_macro_local_use_fixture[lib]::crate::GlobalId => nominal struct body_macro_local_use_fixture[lib]::crate::GlobalId @ 11:18-11:26
+              tail
+                expr e1 path id -> local v0 => nominal struct body_macro_local_use_fixture[lib]::crate::GlobalId @ 12:5-12:7
+        "#]],
+    );
+}
+
+#[test]
+fn macro_pattern_expands_in_let_binding() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_macro_let_pattern_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! bind_pair {
+    ($left:ident, $right:ident) => {
+        ($left, $right)
+    };
+}
+
+pub fn use_it(input: (i32, i32)) -> i32 {
+    let bind_pair!(left, right) = input;
+    left + right
+}
+"#,
+        expect![[r#"
+            package body_macro_let_pattern_fixture
+
+            body_macro_let_pattern_fixture [lib]
+            body b0 fn body_macro_let_pattern_fixture[lib]::crate::use_it @ 7:1-10:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v2
+            bindings
+            - v0 param input `input`: (i32, i32) => (i32, i32) @ 7:15-7:20
+            - v1 let left `bind_pair!(left, right)` => i32 @ 8:9-8:32
+            - v2 let right `bind_pair!(left, right)` => i32 @ 8:9-8:32
+            body
+            expr e4 block s1 => i32 @ 7:41-10:2
+              stmt s0 let v1, v2 @ 8:5-8:41
+                initializer
+                  expr e0 path input -> local v0 => (i32, i32) @ 8:35-8:40
+              tail
+                expr e3 binary + => i32 @ 9:5-9:17
+                  lhs
+                    expr e1 path left -> local v1 => i32 @ 9:5-9:9
+                  rhs
+                    expr e2 path right -> local v2 => i32 @ 9:12-9:17
+        "#]],
+    );
+}
+
+#[test]
+fn macro_pattern_expands_in_if_let() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_macro_if_let_pattern_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub enum Maybe {
+    Some(i32),
+    None,
+}
+
+macro_rules! some_value {
+    ($value:ident) => {
+        Maybe::Some($value)
+    };
+}
+
+pub fn use_it(input: Maybe) -> i32 {
+    if let some_value!(value) = input {
+        value
+    } else {
+        0
+    }
+}
+"#,
+        expect![[r#"
+            package body_macro_if_let_pattern_fixture
+
+            body_macro_if_let_pattern_fixture [lib]
+            body b0 fn body_macro_if_let_pattern_fixture[lib]::crate::use_it @ 12:1-18:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: <none>
+            - s2 parent s1: v1
+            - s3 parent s2: <none>
+            - s4 parent s1: <none>
+            bindings
+            - v0 param input `input`: Maybe => nominal enum body_macro_if_let_pattern_fixture[lib]::crate::Maybe @ 12:15-12:20
+            - v1 let value `some_value!(value)` => i32 @ 13:12-13:30
+            body
+            expr e7 block s1 => i32 @ 12:36-18:2
+              tail
+                expr e6 if => i32 @ 13:5-17:6
+                  condition
+                    expr e1 let s2 v1 => bool @ 13:8-13:38
+                      initializer
+                        expr e0 path input -> local v0 => nominal enum body_macro_if_let_pattern_fixture[lib]::crate::Maybe @ 13:33-13:38
+                  then
+                    expr e3 block s3 => i32 @ 13:39-15:6
+                      tail
+                        expr e2 path value -> local v1 => i32 @ 14:9-14:14
+                  else
+                    expr e5 block s4 => i32 @ 15:12-17:6
+                      tail
+                        expr e4 literal int `0` => i32 @ 16:9-16:10
+        "#]],
+    );
+}
