@@ -124,6 +124,9 @@ impl BodyLowering<'_> {
     ///
     /// Top-level bodies resolve in their owner module. Body-local generated/nested bodies may have
     /// a synthetic module owner, so they fall back to the surrounding semantic module.
+    ///
+    /// Example: a macro inside a normal function resolves from that function's module, while a
+    /// macro inside a generated nested body still resolves from the nearest real module.
     pub(super) fn macro_resolution_module(&self) -> ModuleRef {
         if self.owner_module.origin.as_target_ref().is_some() {
             self.owner_module
@@ -133,6 +136,9 @@ impl BodyLowering<'_> {
     }
 
     /// Lower generated syntax while assigning every produced node to one conservative source span.
+    ///
+    /// Example: when `make_expr!()` expands to `input + input`, both generated `input` paths are
+    /// recorded at the original macro call until fine-grained expansion spans are preserved.
     pub(super) fn with_source_override<T>(
         &mut self,
         source: BodySource,
@@ -144,6 +150,10 @@ impl BodyLowering<'_> {
         result
     }
 
+    /// Expand and lower an expression-position macro call from its original source location.
+    ///
+    /// Example: `let value = make_expr!(input);` expands to an expression and is lowered in the
+    /// current lexical scope. If expansion fails, the caller keeps the original macro expression.
     pub(super) fn lower_macro_call_from_call_site(
         &mut self,
         call_source: BodySource,

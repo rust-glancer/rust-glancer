@@ -675,6 +675,10 @@ impl BodyLowering<'_> {
         self.alloc_expr(literal.syntax(), scope, ExprKind::Literal { kind })
     }
 
+    /// Lower a macro expression by first trying expression-position expansion.
+    ///
+    /// Example: the initializer in `let value = make_expr!();` is expanded as an expression. A
+    /// standalone `make_stmts!();` statement is handled earlier by statement lowering instead.
     fn lower_macro_expr(&mut self, expr: ast::MacroExpr, scope: ScopeId) -> ExprId {
         let call_source = self.source(expr.syntax());
         let Some(call) = expr.macro_call() else {

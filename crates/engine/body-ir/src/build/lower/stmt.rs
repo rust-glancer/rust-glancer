@@ -16,7 +16,8 @@ use rg_parse::Span;
 use rg_text::Name;
 
 use crate::ir::{
-    BindingData, BindingKind, BodySelfParamKind, ExprBlockKind, ExprKind, StmtData, StmtKind,
+    BindingData, BindingKind, BodySelfParamKind, BodySource, ExprBlockKind, ExprKind, StmtData,
+    StmtKind,
 };
 
 use super::body::BodyLowering;
@@ -118,11 +119,9 @@ impl BodyLowering<'_> {
         let mut tail = None;
 
         if let Some(stmt_list) = block.stmt_list() {
-            statements.extend(
-                stmt_list
-                    .statements()
-                    .map(|statement| self.lower_statement(statement, block_scope)),
-            );
+            for statement in stmt_list.statements() {
+                self.lower_statement(statement, block_scope, &mut statements);
+            }
             tail = stmt_list
                 .tail_expr()
                 .map(|tail_expr| self.lower_expr(tail_expr, block_scope));
@@ -180,24 +179,118 @@ impl BodyLowering<'_> {
         ExprBlockKind::Plain
     }
 
-    fn lower_statement(&mut self, statement: ast::Stmt, scope: ScopeId) -> StmtId {
+    /// Lower one source statement into the surrounding block statement list.
+    ///
+    /// Most syntax statements append exactly one `StmtId`. Macro expression statements are the
+    /// exception: `make_stmts!();` can expand to many generated statements or none at all.
+    fn lower_statement(
+        &mut self,
+        statement: ast::Stmt,
+        scope: ScopeId,
+        statements: &mut Vec<StmtId>,
+    ) {
         match statement {
-            ast::Stmt::LetStmt(statement) => self.lower_let_statement(statement, scope),
-            ast::Stmt::ExprStmt(statement) => {
-                let expr = statement.expr().map(|expr| self.lower_expr(expr, scope));
-                self.builder.alloc_statement(StmtData {
-                    source: self.source(statement.syntax()),
-                    kind: match expr {
-                        Some(expr) => StmtKind::Expr {
-                            expr,
-                            has_semicolon: statement.semicolon_token().is_some(),
-                        },
-                        None => StmtKind::ItemIgnored,
-                    },
-                })
+            ast::Stmt::LetStmt(statement) => {
+                statements.push(self.lower_let_statement(statement, scope));
             }
-            ast::Stmt::Item(item) => self.lower_item_statement(item, scope),
+            ast::Stmt::ExprStmt(statement) => {
+                if self.lower_macro_expr_statement(&statement, scope, statements) {
+                    return;
+                }
+
+                let expr = statement.expr().map(|expr| self.lower_expr(expr, scope));
+                statements.push(self.alloc_expr_statement(
+                    self.source(statement.syntax()),
+                    expr,
+                    statement.semicolon_token().is_some(),
+                ));
+            }
+            ast::Stmt::Item(item) => {
+                statements.push(self.lower_item_statement(item, scope));
+            }
         }
+    }
+
+    /// Try to lower an expression statement as a statement-position macro expansion.
+    ///
+    /// Returns `true` only after the macro expansion has been fully spliced into `statements`.
+    /// Returning `false` tells the caller to lower the original expression statement normally.
+    ///
+    /// Example: `make_steps!(input);` can expand to two `let` statements, both lowered in the
+    /// caller's block scope and both recorded at the original macro call source span.
+    fn lower_macro_expr_statement(
+        &mut self,
+        statement: &ast::ExprStmt,
+        scope: ScopeId,
+        statements: &mut Vec<StmtId>,
+    ) -> bool {
+        // Only statement syntax gets `MacroStmts` treatment here. Macro calls in initializers,
+        // operands, or block tails keep using the expression-position expansion path.
+        let Some(ast::Expr::MacroExpr(expr)) = statement.expr() else {
+            return false;
+        };
+        let Some(call) = expr.macro_call() else {
+            return false;
+        };
+
+        // The scope guard covers lowering of the generated statements too, so recursive
+        // statement macros consume the same depth budget as expression macros.
+        let call_source = self.source(expr.syntax());
+        let Some(_expansion_scope) = self.macro_expansion.expansion_scope() else {
+            return false;
+        };
+        let module = self.macro_resolution_module();
+        let target = module.origin.origin_target();
+
+        // Statement expansion is best-effort just like expression expansion. A failed expansion
+        // falls back to the original macro expression statement so Body IR remains buildable.
+        let Some(expanded) = self
+            .macro_expansion
+            .expand_stmt_call(target, module, call_source.file_id, call_source.span, &call)
+            .ok()
+            .flatten()
+        else {
+            return false;
+        };
+
+        // Generated statement syntax has no stable Body IR source of its own yet. Lower every
+        // generated node under the call site so cursor-facing data remains conservative.
+        self.with_source_override(call_source, |this| {
+            for generated in expanded.statements() {
+                this.lower_statement(generated, scope, statements);
+            }
+
+            // `MacroStmts` may contain a final expression after generated statements. Preserve the
+            // invocation's semicolon shape when turning that expression back into a statement.
+            if let Some(tail_expr) = expanded.expr() {
+                let expr = this.lower_expr(tail_expr, scope);
+                statements.push(this.alloc_expr_statement(
+                    call_source,
+                    Some(expr),
+                    statement.semicolon_token().is_some(),
+                ));
+            }
+        });
+
+        true
+    }
+
+    fn alloc_expr_statement(
+        &mut self,
+        source: BodySource,
+        expr: Option<ExprId>,
+        has_semicolon: bool,
+    ) -> StmtId {
+        self.builder.alloc_statement(StmtData {
+            source,
+            kind: match expr {
+                Some(expr) => StmtKind::Expr {
+                    expr,
+                    has_semicolon,
+                },
+                None => StmtKind::ItemIgnored,
+            },
+        })
     }
 
     fn lower_item_statement(&mut self, item: ast::Item, scope: ScopeId) -> StmtId {

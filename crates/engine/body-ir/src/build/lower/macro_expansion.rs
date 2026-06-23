@@ -15,9 +15,16 @@ const BODY_MACRO_EXPANSION_DEPTH_LIMIT: usize = 64;
 
 pub(crate) trait BodyMacroExpansionContext {
     /// Enter one nested expansion step, returning `None` when the recursion cap is reached.
+    ///
+    /// Example: lowering `recurse!()` enters a scope before expanding the call. If the expansion
+    /// produces another `recurse!()`, nested lowering asks for another scope until the cap is hit
+    /// and the caller keeps the original macro as an unknown expression or statement.
     fn expansion_scope(&self) -> Option<BodyMacroExpansionScope>;
 
     /// Expand a macro call as expression syntax, leaving lowering to decide the fallback shape.
+    ///
+    /// Example: `let value = make_expr!(input);` asks for an `ast::Expr`. If resolution or
+    /// expansion fails, expression lowering falls back to the original macro expression.
     fn expand_expr_call(
         &mut self,
         target: TargetRef,
@@ -26,6 +33,19 @@ pub(crate) trait BodyMacroExpansionContext {
         span: Span,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ast::Expr>>;
+
+    /// Expand a macro call as statement-list syntax, leaving lowering to splice the result.
+    ///
+    /// Example: `make_stmts!(input);` asks for `ast::MacroStmts`. Block lowering then splices the
+    /// generated statements, and an empty expansion contributes no placeholder statement.
+    fn expand_stmt_call(
+        &mut self,
+        target: TargetRef,
+        module: ModuleRef,
+        file_id: FileId,
+        span: Span,
+        call: &ast::MacroCall,
+    ) -> anyhow::Result<Option<ast::MacroStmts>>;
 }
 
 /// RAII guard that keeps recursive macro expansion depth balanced across early returns.
@@ -86,5 +106,17 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
     ) -> anyhow::Result<Option<ast::Expr>> {
         self.expander
             .expand_expr_call(target, module, file_id, span, self.parse_package, call)
+    }
+
+    fn expand_stmt_call(
+        &mut self,
+        target: TargetRef,
+        module: ModuleRef,
+        file_id: FileId,
+        span: Span,
+        call: &ast::MacroCall,
+    ) -> anyhow::Result<Option<ast::MacroStmts>> {
+        self.expander
+            .expand_stmt_call(target, module, file_id, span, self.parse_package, call)
     }
 }

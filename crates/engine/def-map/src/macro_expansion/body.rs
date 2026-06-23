@@ -10,7 +10,7 @@ use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef};
 use rg_ir_storage::{
     DefMapQuery, ImportPath, MacroDefinitionView, PathResolver, ScopeResolutionEnv,
 };
-use rg_macro_expand::ExpansionParseKind;
+use rg_macro_expand::{ExpansionParseKind, ExpansionSyntax};
 use rg_parse::{FileId, Span};
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode as _, ast, utils::normalized_syntax_text};
@@ -45,6 +45,62 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         parse_package: &rg_parse::Package,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ast::Expr>> {
+        let Some(syntax) = self.expand_call_syntax(
+            target,
+            module,
+            file_id,
+            span,
+            parse_package,
+            call,
+            ExpansionParseKind::Expr,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        let root = syntax.parse.syntax_node();
+        Ok(ast::Expr::cast(root.clone()).or_else(|| root.children().find_map(ast::Expr::cast)))
+    }
+
+    /// Expands one statement-position macro call to generated statement-list syntax.
+    pub fn expand_stmt_call(
+        &mut self,
+        target: TargetRef,
+        module: ModuleRef,
+        file_id: FileId,
+        span: Span,
+        parse_package: &rg_parse::Package,
+        call: &ast::MacroCall,
+    ) -> anyhow::Result<Option<ast::MacroStmts>> {
+        let Some(syntax) = self.expand_call_syntax(
+            target,
+            module,
+            file_id,
+            span,
+            parse_package,
+            call,
+            ExpansionParseKind::Statements,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        let root = syntax.parse.syntax_node();
+        Ok(ast::MacroStmts::cast(root.clone())
+            .or_else(|| root.children().find_map(ast::MacroStmts::cast)))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn expand_call_syntax(
+        &mut self,
+        target: TargetRef,
+        module: ModuleRef,
+        file_id: FileId,
+        span: Span,
+        parse_package: &rg_parse::Package,
+        call: &ast::MacroCall,
+        parse_kind: ExpansionParseKind,
+    ) -> anyhow::Result<Option<ExpansionSyntax>> {
         let Some(path_text) = call.path().map(|path| normalized_syntax_text(&path)) else {
             return Ok(None);
         };
@@ -89,7 +145,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             &path_text,
             &args,
             call_site,
-            ExpansionParseKind::Expr,
+            parse_kind,
         );
 
         let syntax = match prepared_expansion.expansion {
@@ -103,11 +159,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             }
         };
 
-        let Some(syntax) = syntax else {
-            return Ok(None);
-        };
-        let root = syntax.parse.syntax_node();
-        Ok(ast::Expr::cast(root.clone()).or_else(|| root.children().find_map(ast::Expr::cast)))
+        Ok(syntax)
     }
 
     fn resolve_macro_definition<'a>(
