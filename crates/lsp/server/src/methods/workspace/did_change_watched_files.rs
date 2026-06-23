@@ -31,6 +31,14 @@ pub(crate) async fn did_change_watched_files(
 }
 
 fn watched_rust_paths(params: DidChangeWatchedFilesParams) -> Vec<PathBuf> {
+    // We don't watch for deleted files, as file deletion is not really a
+    // valid rust mechanic. If `mod foo;` is already deleted, we don't care
+    // about this file anyway. If it still exists, the project is in an invalid
+    // state as it will miss the module, and keeping analysis for it is not the
+    // worst idea.
+    // There is an edge case where it will be valid (e.g. removing an autodiscovery
+    // target), but this is not worth supporting and will be processed by the next
+    // save anyway.
     params
         .changes
         .into_iter()
