@@ -489,6 +489,46 @@ impl EngineService for Service {
             .map_err(EngineError::from)
     }
 
+    async fn formatting(
+        self,
+        _: context::Context,
+        path: PathBuf,
+    ) -> EngineResult<Option<Vec<ls_types::TextEdit>>> {
+        let text = {
+            let documents = self.engine.documents.lock().await;
+            let freshness = documents.freshness(&path);
+            let text = documents.current_text(&path);
+
+            tracing::trace!(
+                path = %path.display(),
+                tracked = freshness.tracked(),
+                version = ?freshness.version(),
+                dirty = freshness.dirty(),
+                has_text = text.is_some(),
+                "checked document text for formatting"
+            );
+
+            text
+        };
+        let Some(text) = text else {
+            tracing::debug!(
+                path = %path.display(),
+                "formatting skipped because document has no live text"
+            );
+            return Ok(None);
+        };
+
+        self.engine
+            .request(|respond_to| EngineCommand::Formatting {
+                path,
+                text,
+                respond_to,
+            })
+            .await
+            .map(Some)
+            .map_err(EngineError::from)
+    }
+
     async fn document_symbol(
         self,
         _: context::Context,

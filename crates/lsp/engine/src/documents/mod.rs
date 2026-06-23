@@ -124,6 +124,12 @@ impl DocumentStore {
         self.documents.remove(path);
     }
 
+    pub(crate) fn current_text(&self, path: &Path) -> Option<Arc<str>> {
+        self.documents
+            .get(path)
+            .and_then(|document| document.live_text.clone())
+    }
+
     #[cfg(test)]
     pub(crate) fn is_dirty(&self, path: &Path) -> bool {
         self.documents

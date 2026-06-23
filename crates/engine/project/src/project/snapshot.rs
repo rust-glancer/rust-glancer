@@ -9,6 +9,7 @@ use rg_ir_model::TargetRef;
 #[cfg(test)]
 use rg_parse::ParseDb;
 use rg_parse::{FileId, LineIndex, Span};
+use rg_workspace::RustEdition;
 
 use super::{
     FileContext, reference_search::ReferenceSearchPlanner, state::ProjectState,
@@ -82,6 +83,15 @@ impl<'a> ProjectSnapshot<'a> {
             .parse_db()
             .package(package.0)
             .is_some_and(|package| package.is_workspace_member())
+    }
+
+    /// Returns the Rust edition declared for a package in the current workspace metadata.
+    pub fn package_edition(&self, package: PackageSlot) -> Option<RustEdition> {
+        self.state
+            .workspace()
+            .packages()
+            .get(package.0)
+            .map(|package| package.edition)
     }
 
     /// Returns source text for a byte span from the same snapshot that backs this project view.

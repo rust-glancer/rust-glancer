@@ -407,6 +407,17 @@ impl LanguageServer for Backend {
 
     #[tracing::instrument(
         skip_all,
+        fields(rg.method = "formatting", rg.uri = ?params.text_document.uri)
+    )]
+    async fn formatting(&self, params: DocumentFormattingParams) -> Result<Option<Vec<TextEdit>>> {
+        let Some(context) = self.method_context_for(&params.text_document.uri).await? else {
+            return Ok(None);
+        };
+        methods::text_document::formatting::formatting(context, params).await
+    }
+
+    #[tracing::instrument(
+        skip_all,
         fields(rg.method = "documentSymbol", rg.uri = ?params.text_document.uri)
     )]
     async fn document_symbol(
