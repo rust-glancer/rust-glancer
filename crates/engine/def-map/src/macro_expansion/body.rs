@@ -6,7 +6,7 @@
 
 use anyhow::Context as _;
 
-use rg_ir_model::{DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{BodySource, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
 use rg_ir_storage::{
     DefMapQuery, ImportPath, MacroDefinitionData, MacroDefinitionView, PathResolver,
     ScopeResolutionEnv,
@@ -17,10 +17,10 @@ use rg_macro_runtime::{
 };
 use rg_parse::{FileId, Span};
 use rg_std::ExpectedUnique;
-use rg_syntax::{AstNode as _, ast, utils::normalized_syntax_text};
+use rg_syntax::{AstNode, Parse, SyntaxNode, ast, utils::normalized_syntax_text};
 use rg_text::Name;
 use rg_tt::TopSubtree;
-use rg_tt::syntax_bridge::{SpanFactory, syntax_node_to_token_tree_with_span};
+use rg_tt::syntax_bridge::{ExpansionSpanMap, SpanFactory, syntax_node_to_token_tree_with_span};
 use rg_workspace::RustEdition;
 
 use crate::DefMapReadTxn;
@@ -28,25 +28,79 @@ use crate::DefMapReadTxn;
 /// Generated body syntax plus the macro-definition origin needed while lowering it.
 pub struct ExpandedBodyMacro<T> {
     syntax: T,
+    source_map: ExpansionSpanMap,
     dollar_crate_target: TargetRef,
 }
 
 impl<T> ExpandedBodyMacro<T> {
-    fn new(syntax: T, dollar_crate_target: TargetRef) -> Self {
+    fn new(syntax: T, source_map: ExpansionSpanMap, dollar_crate_target: TargetRef) -> Self {
         Self {
             syntax,
+            source_map,
             dollar_crate_target,
         }
     }
 
-    /// Returns the generated syntax selected for the requested body parse position.
-    pub fn into_syntax(self) -> T {
-        self.syntax
+    /// Maps generated syntax back to a macro invocation token when that mapping is precise.
+    pub fn source_for_exact_syntax(
+        &self,
+        call_source: BodySource,
+        syntax: &SyntaxNode,
+    ) -> Option<Span> {
+        let range = syntax.text_range();
+
+        // Only accept exact single-token source mappings from the original call. Compound
+        // generated nodes often contain substituted tokens, but the node as a whole was shaped by
+        // the macro transcriber and should stay anchored to the call site.
+        let token = syntax.first_token()?;
+        if token != syntax.last_token()? || token.text_range() != range {
+            return None;
+        }
+
+        let span = self
+            .source_map
+            .span_for_range_in_file(range, call_source.file_id.0)?;
+        let span = Span::from_text_range(span.range);
+        (call_source.span.contains_span(span) && span.len() == u32::from(range.len()))
+            .then_some(span)
     }
 
     /// Returns the crate that generated `$crate` paths inside this syntax should resolve to.
     pub fn dollar_crate_target(&self) -> TargetRef {
         self.dollar_crate_target
+    }
+}
+
+impl<T: AstNode> ExpandedBodyMacro<T> {
+    /// Splits out typed generated syntax while keeping source context active for descendants.
+    pub fn into_syntax_and_context(self) -> (T, ExpandedBodyMacro<SyntaxNode>) {
+        let Self {
+            syntax,
+            source_map,
+            dollar_crate_target,
+        } = self;
+        let context_syntax = syntax.syntax().clone();
+        (
+            syntax,
+            ExpandedBodyMacro::new(context_syntax, source_map, dollar_crate_target),
+        )
+    }
+}
+
+impl ExpandedBodyMacro<Parse<SyntaxNode>> {
+    fn cast_root_or_child<N: AstNode>(self) -> Option<ExpandedBodyMacro<N>> {
+        let Self {
+            syntax: parse,
+            source_map,
+            dollar_crate_target,
+        } = self;
+        let root = parse.syntax_node();
+        let syntax = N::cast(root.clone()).or_else(|| root.children().find_map(N::cast))?;
+        Some(ExpandedBodyMacro::new(
+            syntax,
+            source_map,
+            dollar_crate_target,
+        ))
     }
 }
 
@@ -87,10 +141,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             return Ok(None);
         };
 
-        let root = expanded.syntax.parse.syntax_node();
-        Ok(ast::Expr::cast(root.clone())
-            .or_else(|| root.children().find_map(ast::Expr::cast))
-            .map(|syntax| ExpandedBodyMacro::new(syntax, expanded.dollar_crate_target)))
+        Ok(expanded.cast_root_or_child::<ast::Expr>())
     }
 
     /// Expands one statement-position macro call to generated statement-list syntax.
@@ -116,10 +167,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             return Ok(None);
         };
 
-        let root = expanded.syntax.parse.syntax_node();
-        Ok(ast::MacroStmts::cast(root.clone())
-            .or_else(|| root.children().find_map(ast::MacroStmts::cast))
-            .map(|syntax| ExpandedBodyMacro::new(syntax, expanded.dollar_crate_target)))
+        Ok(expanded.cast_root_or_child::<ast::MacroStmts>())
     }
 
     /// Expands one pattern-position macro call to generated pattern syntax.
@@ -145,10 +193,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             return Ok(None);
         };
 
-        let root = expanded.syntax.parse.syntax_node();
-        Ok(ast::Pat::cast(root.clone())
-            .or_else(|| root.children().find_map(ast::Pat::cast))
-            .map(|syntax| ExpandedBodyMacro::new(syntax, expanded.dollar_crate_target)))
+        Ok(expanded.cast_root_or_child::<ast::Pat>())
     }
 
     /// Expands one type-position macro call to generated type syntax.
@@ -174,10 +219,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             return Ok(None);
         };
 
-        let root = expanded.syntax.parse.syntax_node();
-        Ok(ast::Type::cast(root.clone())
-            .or_else(|| root.children().find_map(ast::Type::cast))
-            .map(|syntax| ExpandedBodyMacro::new(syntax, expanded.dollar_crate_target)))
+        Ok(expanded.cast_root_or_child::<ast::Type>())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -190,7 +232,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         parse_package: &rg_parse::Package,
         call: &ast::MacroCall,
         parse_kind: ExpansionParseKind,
-    ) -> anyhow::Result<Option<ExpandedBodyMacro<ExpansionSyntax>>> {
+    ) -> anyhow::Result<Option<ExpandedBodyMacro<Parse<SyntaxNode>>>> {
         let Some(invocation) =
             BodyMacroInvocation::from_ast(file_id, span, parse_package.edition(), call)
         else {
@@ -211,12 +253,13 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         };
 
         let request = invocation.expansion_request(resolved.def_ref, resolved.data, parse_kind);
-        let Some(syntax) = self.runtime.expand_now(request) else {
+        let Some(ExpansionSyntax { parse, span_map }) = self.runtime.expand_now(request) else {
             return Ok(None);
         };
 
         Ok(Some(ExpandedBodyMacro::new(
-            syntax,
+            parse,
+            span_map,
             resolved.data.dollar_crate_target,
         )))
     }

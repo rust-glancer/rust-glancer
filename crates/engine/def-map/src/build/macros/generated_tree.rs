@@ -471,8 +471,7 @@ impl<'a> GeneratedSourceLowering<'a> {
 
     fn parse_span_for_range(&self, range: rg_syntax::TextRange) -> Option<Span> {
         self.span_map
-            .span_for_range(range)
-            .filter(|span| span.anchor.file_id.raw_file_id() as usize == self.origin.file_id.0)
+            .span_for_range_in_file(range, self.origin.file_id.0)
             .map(|span| Span::from_text_range(span.range))
     }
 }

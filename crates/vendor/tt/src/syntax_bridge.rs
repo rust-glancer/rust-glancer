@@ -41,6 +41,12 @@ impl ExpansionSpanMap {
         self.span_at(range.start())
     }
 
+    /// Returns the mapped span only when it points into the requested source file.
+    pub fn span_for_range_in_file(&self, range: TextRange, origin_file_id: usize) -> Option<Span> {
+        let span = self.span_for_range(range)?;
+        (span.anchor.file_id.raw_file_id() as usize == origin_file_id).then_some(span)
+    }
+
     fn push(&mut self, end: TextSize, span: Span) {
         self.spans.push((end, span));
     }
@@ -593,5 +599,28 @@ fn push_punct_token(
             span: span_for_range(TextRange::at(offset, len)),
         }));
         offset += len;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rg_syntax::TextSize;
+
+    use super::*;
+
+    #[test]
+    fn span_for_range_in_file_filters_mapped_file() {
+        let span = SpanFactory::new(7, Edition::CURRENT)
+            .span_for(TextRange::new(TextSize::new(3), TextSize::new(8)));
+        let span_map = ExpansionSpanMap {
+            spans: vec![(TextSize::new(5), span)],
+        };
+        let generated_range = TextRange::new(TextSize::new(0), TextSize::new(5));
+
+        assert_eq!(
+            span_map.span_for_range_in_file(generated_range, 7),
+            Some(span),
+        );
+        assert_eq!(span_map.span_for_range_in_file(generated_range, 8), None);
     }
 }

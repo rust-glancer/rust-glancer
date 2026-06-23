@@ -24,18 +24,19 @@ pub(super) struct BodyLowering<'a> {
 }
 
 /// Temporary context for syntax produced by one body macro expansion.
-#[derive(Clone, Copy)]
+///
+/// The macro call source is the stable fallback for generated syntax. When the expansion span map
+/// proves that a small token came from the invocation, the token gets its original argument span
+/// instead. For example, `make_expr!(input)` can expose `input` as the source of a generated path,
+/// while the surrounding binary expression still belongs to the macro call.
 struct GeneratedBodyMacroContext {
     source: BodySource,
-    dollar_crate_target: TargetRef,
+    expanded: ExpandedBodyMacro<rg_syntax::SyntaxNode>,
 }
 
 impl GeneratedBodyMacroContext {
-    fn new(source: BodySource, dollar_crate_target: TargetRef) -> Self {
-        Self {
-            source,
-            dollar_crate_target,
-        }
+    fn new(source: BodySource, expanded: ExpandedBodyMacro<rg_syntax::SyntaxNode>) -> Self {
+        Self { source, expanded }
     }
 }
 
@@ -130,7 +131,18 @@ impl BodyLowering<'_> {
     }
 
     pub(super) fn source(&self, syntax: &rg_syntax::SyntaxNode) -> BodySource {
-        if let Some(context) = self.generated_context {
+        if let Some(context) = &self.generated_context {
+            // Macro expansion provenance is intentionally token-sized. A larger generated node can
+            // contain substituted input while still being structurally created by the transcriber.
+            if let Some(span) = context
+                .expanded
+                .source_for_exact_syntax(context.source, syntax)
+            {
+                return BodySource {
+                    file_id: context.source.file_id,
+                    span,
+                };
+            }
             return context.source;
         }
 
@@ -139,7 +151,8 @@ impl BodyLowering<'_> {
 
     pub(super) fn dollar_crate_target(&self) -> Option<TargetRef> {
         self.generated_context
-            .map(|context| context.dollar_crate_target)
+            .as_ref()
+            .map(|context| context.expanded.dollar_crate_target())
     }
 
     /// Pick the semantic module used to resolve a body macro call.
@@ -157,15 +170,15 @@ impl BodyLowering<'_> {
         }
     }
 
-    /// Lower one expanded macro under the call-site source and macro-definition crate context.
-    pub(super) fn with_expanded_macro<Syntax, Output>(
+    /// Lower one expanded macro under its source-map and macro-definition crate context.
+    pub(super) fn with_expanded_macro<Syntax: rg_syntax::AstNode, Output>(
         &mut self,
         call_source: BodySource,
         expanded: ExpandedBodyMacro<Syntax>,
         f: impl FnOnce(&mut Self, Syntax) -> Output,
     ) -> Output {
-        let context = GeneratedBodyMacroContext::new(call_source, expanded.dollar_crate_target());
-        let syntax = expanded.into_syntax();
+        let (syntax, expanded_context) = expanded.into_syntax_and_context();
+        let context = GeneratedBodyMacroContext::new(call_source, expanded_context);
         let previous = self.generated_context.replace(context);
         let result = f(self, syntax);
         self.generated_context = previous;
@@ -194,8 +207,9 @@ impl BodyLowering<'_> {
             .ok()
             .flatten()?;
 
-        // Generated body syntax carries no fine-grained expansion span map at this boundary, so
-        // every lowered node in the expansion is anchored to the macro call site.
+        // The macro call remains the fallback range for generated syntax. Leaf syntax that the
+        // expansion span map can trace back to invocation input gets a narrower source span during
+        // recursive lowering.
         Some(
             self.with_expanded_macro(call_source, expanded, |this, syntax| {
                 this.lower_expr(syntax, scope)

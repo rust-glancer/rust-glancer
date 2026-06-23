@@ -45,7 +45,7 @@ pub mod inner {
                     lhs
                       expr e0 path input -> local v0 => i32 @ 9:21-9:39
                     rhs
-                      expr e1 path input -> local v0 => i32 @ 9:21-9:39
+                      expr e1 path input -> local v0 => i32 @ 9:33-9:38
               tail
                 expr e3 path value -> local v1 => i32 @ 10:9-10:14
         "#]],
@@ -316,7 +316,7 @@ pub fn use_it(input: (i32, i32)) -> i32 {
             bindings
             - v0 param input `input`: (i32, i32) => (i32, i32) @ 7:15-7:20
             - v1 let left `bind_pair!(left, right)` => i32 @ 8:9-8:32
-            - v2 let right `bind_pair!(left, right)` => i32 @ 8:9-8:32
+            - v2 let right `right` => i32 @ 8:26-8:31
             body
             expr e4 block s1 => i32 @ 7:41-10:2
               stmt s0 let v1, v2 @ 8:5-8:41
@@ -375,7 +375,7 @@ pub fn use_it(input: Maybe) -> i32 {
             - s4 parent s1: <none>
             bindings
             - v0 param input `input`: Maybe => nominal enum body_macro_if_let_pattern_fixture[lib]::crate::Maybe @ 12:15-12:20
-            - v1 let value `some_value!(value)` => i32 @ 13:12-13:30
+            - v1 let value `value` => i32 @ 13:24-13:29
             body
             expr e7 block s1 => i32 @ 12:36-18:2
               tail
@@ -500,7 +500,7 @@ pub fn use_it(input: i32) -> i32 {
                   lhs
                     expr e0 path input -> local v0 => i32 @ 14:5-14:23
                   rhs
-                    expr e1 path input -> local v0 => i32 @ 14:5-14:23
+                    expr e1 path input -> local v0 => i32 @ 14:17-14:22
         "#]],
     );
 }
