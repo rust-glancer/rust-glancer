@@ -121,6 +121,33 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         Ok(ast::Pat::cast(root.clone()).or_else(|| root.children().find_map(ast::Pat::cast)))
     }
 
+    /// Expands one type-position macro call to generated type syntax.
+    pub fn expand_type_call(
+        &mut self,
+        target: TargetRef,
+        module: ModuleRef,
+        file_id: FileId,
+        span: Span,
+        parse_package: &rg_parse::Package,
+        call: &ast::MacroCall,
+    ) -> anyhow::Result<Option<ast::Type>> {
+        let Some(syntax) = self.expand_call_syntax(
+            target,
+            module,
+            file_id,
+            span,
+            parse_package,
+            call,
+            ExpansionParseKind::Type,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        let root = syntax.parse.syntax_node();
+        Ok(ast::Type::cast(root.clone()).or_else(|| root.children().find_map(ast::Type::cast)))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn expand_call_syntax(
         &mut self,

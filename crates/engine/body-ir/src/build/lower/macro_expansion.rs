@@ -59,6 +59,19 @@ pub(crate) trait BodyMacroExpansionContext {
         span: Span,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ast::Pat>>;
+
+    /// Expand a macro call as type syntax, leaving lowering to preserve the fallback type.
+    ///
+    /// Example: `let value: make_ty!() = input;` asks for an `ast::Type`. Type lowering then
+    /// lowers the generated type under the original macro call source span.
+    fn expand_type_call(
+        &mut self,
+        target: TargetRef,
+        module: ModuleRef,
+        file_id: FileId,
+        span: Span,
+        call: &ast::MacroCall,
+    ) -> anyhow::Result<Option<ast::Type>>;
 }
 
 /// RAII guard that keeps recursive macro expansion depth balanced across early returns.
@@ -143,5 +156,17 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
     ) -> anyhow::Result<Option<ast::Pat>> {
         self.expander
             .expand_pat_call(target, module, file_id, span, self.parse_package, call)
+    }
+
+    fn expand_type_call(
+        &mut self,
+        target: TargetRef,
+        module: ModuleRef,
+        file_id: FileId,
+        span: Span,
+        call: &ast::MacroCall,
+    ) -> anyhow::Result<Option<ast::Type>> {
+        self.expander
+            .expand_type_call(target, module, file_id, span, self.parse_package, call)
     }
 }

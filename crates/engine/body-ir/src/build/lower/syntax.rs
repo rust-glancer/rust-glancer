@@ -78,6 +78,37 @@ impl BodyLowering<'_> {
         self.lower_lifetime_label(label.and_then(|label| label.lifetime()))
     }
 
+    pub(super) fn lower_type_ref(&mut self, ty: ast::Type) -> TypeRef {
+        // Body lowering only expands macro calls that occupy the whole type position. Nested type
+        // syntax stays delegated to item-tree's TypeRef lowering so we do not duplicate that
+        // recursive grammar here.
+        if let ast::Type::MacroType(macro_ty) = ty.clone()
+            && let Some(expanded) = self.expand_macro_type(&macro_ty)
+        {
+            return expanded;
+        }
+
+        TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner))
+    }
+
+    fn expand_macro_type(&mut self, ty: &ast::MacroType) -> Option<TypeRef> {
+        let call_source = self.source(ty.syntax());
+        let call = ty.macro_call()?;
+        let _expansion_scope = self.macro_expansion.expansion_scope()?;
+        let module = self.macro_resolution_module();
+        let target = module.origin.origin_target();
+
+        // Type expansion is best-effort like expression and pattern expansion. A failed expansion
+        // keeps the original `MacroType` as an unknown TypeRef so body lowering remains buildable.
+        let expanded = self
+            .macro_expansion
+            .expand_type_call(target, module, call_source.file_id, call_source.span, &call)
+            .ok()
+            .flatten()?;
+
+        Some(self.with_source_override(call_source, |this| this.lower_type_ref(expanded)))
+    }
+
     pub(super) fn lower_lifetime_label(
         &mut self,
         lifetime: Option<ast::Lifetime>,
@@ -149,8 +180,7 @@ impl BodyLowering<'_> {
                 type_ref,
                 trait_ref,
             } => {
-                let ty = type_ref
-                    .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
+                let ty = type_ref.map(|ty| self.lower_type_ref(ty));
                 let trait_ref = trait_ref
                     .and_then(|trait_ref| trait_ref.path())
                     .map(|path| {

@@ -10,7 +10,7 @@ use rg_item_tree::{
     ConstItem, Documentation, EnumItem, ExternCrateItem, FromAst as _, FunctionItem, ImplItem,
     ImplItemContext, InnerDocs, ItemKind, ItemNode, ItemTreeId, MacroUseAttr, MaybeFromAst,
     ModuleItem, ModuleSource, OuterDocs, StaticItem, StructItem, TraitItem, TraitItemContext,
-    TypeAliasItem, TypeRef, UnionItem, UseItem, VisibilityLevel,
+    TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
 use rg_parse::Span;
 use rg_text::Name;
@@ -48,9 +48,7 @@ impl BodyLowering<'_> {
 
     fn lower_self_param(&mut self, param: ast::SelfParam, scope: ScopeId) -> FunctionParamData {
         let source = self.source(param.syntax());
-        let annotation = param
-            .ty()
-            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
+        let annotation = param.ty().map(|ty| self.lower_type_ref(ty));
         let self_kind = if annotation.is_some() {
             BodySelfParamKind::Explicit
         } else if param.amp_token().is_some() {
@@ -82,9 +80,7 @@ impl BodyLowering<'_> {
 
     fn lower_param(&mut self, param: ast::Param, scope: ScopeId) -> FunctionParamData {
         let source = self.source(param.syntax());
-        let annotation = param
-            .ty()
-            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
+        let annotation = param.ty().map(|ty| self.lower_type_ref(ty));
         let (pat, bindings) = match param.pat() {
             Some(pat) => self.lower_pat(pat, scope, BindingKind::Param, annotation.clone()),
             None => (
@@ -166,9 +162,7 @@ impl BodyLowering<'_> {
         {
             return ExprBlockKind::Try {
                 bikeshed: modifier.bikeshed_token().is_some(),
-                result_ty: modifier
-                    .ty()
-                    .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner))),
+                result_ty: modifier.ty().map(|ty| self.lower_type_ref(ty)),
             };
         }
 
@@ -314,9 +308,7 @@ impl BodyLowering<'_> {
             .let_else()
             .and_then(|else_branch| else_branch.block_expr())
             .map(|block| self.lower_block_expr(block, scope));
-        let annotation = statement
-            .ty()
-            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
+        let annotation = statement.ty().map(|ty| self.lower_type_ref(ty));
         let bindings = statement
             .pat()
             .map(|pat| self.lower_pat(pat, scope, BindingKind::Let, annotation.clone()))

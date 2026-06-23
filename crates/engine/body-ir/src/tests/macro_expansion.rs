@@ -395,3 +395,63 @@ pub fn use_it(input: Maybe) -> i32 {
         "#]],
     );
 }
+
+#[test]
+fn macro_type_expands_in_let_annotation_and_cast() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_macro_type_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct User;
+
+macro_rules! user_ty {
+    () => {
+        User
+    };
+}
+
+macro_rules! bool_ty {
+    () => {
+        bool
+    };
+}
+
+pub fn use_it(input: User, flag: u8) -> User {
+    let user: user_ty!() = input;
+    let casted = flag as bool_ty!();
+    user
+}
+"#,
+        expect![[r#"
+            package body_macro_type_fixture
+
+            body_macro_type_fixture [lib]
+            body b0 fn body_macro_type_fixture[lib]::crate::use_it @ 15:1-19:2
+            scopes
+            - s0 parent <none>: v0, v1
+            - s1 parent s0: v2, v3
+            bindings
+            - v0 param input `input`: User => nominal struct body_macro_type_fixture[lib]::crate::User @ 15:15-15:20
+            - v1 param flag `flag`: u8 => u8 @ 15:28-15:32
+            - v2 let user `user`: User => nominal struct body_macro_type_fixture[lib]::crate::User @ 16:9-16:13
+            - v3 let casted `casted` => bool @ 17:9-17:15
+            body
+            expr e4 block s1 => nominal struct body_macro_type_fixture[lib]::crate::User @ 15:46-19:2
+              stmt s0 let v2: User @ 16:5-16:34
+                initializer
+                  expr e0 path input -> local v0 => nominal struct body_macro_type_fixture[lib]::crate::User @ 16:28-16:33
+              stmt s1 let v3 @ 17:5-17:37
+                initializer
+                  expr e2 cast as bool => bool @ 17:18-17:36
+                    inner
+                      expr e1 path flag -> local v1 => u8 @ 17:18-17:22
+              tail
+                expr e3 path user -> local v2 => nominal struct body_macro_type_fixture[lib]::crate::User @ 18:5-18:9
+        "#]],
+    );
+}

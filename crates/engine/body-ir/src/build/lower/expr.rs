@@ -11,7 +11,7 @@ use rg_syntax::{
 
 use rg_ir_model::{
     ExprId, ScopeId,
-    items::{FieldKey, GenericArg, Mutability, TypeRef},
+    items::{FieldKey, GenericArg, Mutability},
 };
 use rg_item_tree::{FromAst as _, MaybeFromAst as _, RecordExprFieldAst};
 use rg_parse::{Span, TextSpan};
@@ -177,9 +177,7 @@ impl BodyLowering<'_> {
 
     fn lower_cast_expr(&mut self, cast: ast::CastExpr, scope: ScopeId) -> ExprId {
         let expr = cast.expr().map(|expr| self.lower_expr(expr, scope));
-        let ty = cast
-            .ty()
-            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
+        let ty = cast.ty().map(|ty| self.lower_type_ref(ty));
 
         self.alloc_expr(cast.syntax(), scope, ExprKind::Cast { expr, ty })
     }
@@ -255,7 +253,7 @@ impl BodyLowering<'_> {
         let ret_ty = closure
             .ret_type()
             .and_then(|ret_ty| ret_ty.ty())
-            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
+            .map(|ty| self.lower_type_ref(ty));
         let body = closure
             .body()
             .map(|body| self.lower_expr(body, closure_scope));
@@ -279,9 +277,7 @@ impl BodyLowering<'_> {
     fn lower_closure_param(&mut self, param: ast::Param, scope: ScopeId) -> ClosureParamData {
         // Closure parameters introduce bindings only inside the closure-owned scope.
         let source = self.source(param.syntax());
-        let annotation = param
-            .ty()
-            .map(|ty| TypeRef::from_ast(&ty, (self.line_index, &mut *self.interner)));
+        let annotation = param.ty().map(|ty| self.lower_type_ref(ty));
         let (pat, bindings) = match param.pat() {
             Some(pat) => self.lower_pat(pat, scope, BindingKind::Param, annotation.clone()),
             None => {
