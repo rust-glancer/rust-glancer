@@ -20,7 +20,7 @@ use rg_item_tree::{
     MacroDefinitionAttrs, MacroDefinitionItem, ModuleItem, ModuleSource, UseImport, UseItem,
     VisibilityLevel,
 };
-use rg_macro_expand::ExpansionSyntax;
+use rg_macro_runtime::ExpansionSyntax;
 use rg_parse::{FileId, Span};
 use rg_text::{Name, NameInterner};
 

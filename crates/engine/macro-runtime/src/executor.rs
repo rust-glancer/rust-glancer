@@ -15,24 +15,32 @@ use rayon::prelude::*;
 use rg_macro_expand::{DeclarativeMacro, ExpansionParseKind, ExpansionSyntax};
 use rg_tt::{Span as TtSpan, TopSubtree};
 
-use crate::build::DefMapPerformancePreference;
-
 use super::cache::MacroExpansionCacheKey;
 
 const LOWER_PEAK_MEMORY_MACRO_EXPANSION_THREAD_LIMIT: usize = 2;
 
+/// Build-time speed/memory preference for macro expansion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MacroExpansionPerformancePreference {
+    /// Use unconstrained macro-expansion behavior.
+    #[default]
+    FasterBuilds,
+    /// Bound bursty macro-expansion parallelism to reduce peak resident memory.
+    LowerPeakMemory,
+}
+
 /// Dedicated pool for declarative macro expansion jobs.
-pub(crate) struct MacroExpansionExecutor {
+pub struct MacroExpansionExecutor {
     thread_pool: rayon::ThreadPool,
 }
 
 impl MacroExpansionExecutor {
-    pub(crate) fn new(preference: DefMapPerformancePreference) -> anyhow::Result<Self> {
+    pub fn new(preference: MacroExpansionPerformancePreference) -> anyhow::Result<Self> {
         // Macro expansion can allocate large parser and token-tree temporaries per worker. Keep
         // this pool optionally narrower than the global CPU pool so a few large expansions do not
         // multiply peak resident memory for the whole index build.
         let mut builder = rayon::ThreadPoolBuilder::new()
-            .thread_name(|index| format!("rg-def-map-macro-expand-{index}"));
+            .thread_name(|index| format!("rg-macro-runtime-expand-{index}"));
         if let Some(thread_limit) = Self::thread_limit(preference) {
             let worker_count = std::thread::available_parallelism()
                 .map(usize::from)
@@ -47,7 +55,7 @@ impl MacroExpansionExecutor {
         Ok(Self { thread_pool })
     }
 
-    pub(crate) fn expand_jobs(&self, jobs: Vec<MacroExpansionJob>) -> Vec<MacroExpansionOutput> {
+    pub fn expand_jobs(&self, jobs: Vec<MacroExpansionJob>) -> Vec<MacroExpansionOutput> {
         self.thread_pool.install(|| {
             jobs.into_par_iter()
                 .map(MacroExpansionJob::expand)
@@ -55,10 +63,10 @@ impl MacroExpansionExecutor {
         })
     }
 
-    fn thread_limit(preference: DefMapPerformancePreference) -> Option<usize> {
+    fn thread_limit(preference: MacroExpansionPerformancePreference) -> Option<usize> {
         match preference {
-            DefMapPerformancePreference::FasterBuilds => None,
-            DefMapPerformancePreference::LowerPeakMemory => {
+            MacroExpansionPerformancePreference::FasterBuilds => None,
+            MacroExpansionPerformancePreference::LowerPeakMemory => {
                 Some(LOWER_PEAK_MEMORY_MACRO_EXPANSION_THREAD_LIMIT)
             }
         }
@@ -66,9 +74,9 @@ impl MacroExpansionExecutor {
 }
 
 /// A self-contained expansion job plus the caller-owned id used to merge the result.
-pub(crate) struct MacroExpansionJob {
-    pub(crate) id: usize,
-    pub(crate) work: MacroExpansionWork,
+pub struct MacroExpansionJob {
+    pub id: usize,
+    pub work: MacroExpansionWork,
 }
 
 impl MacroExpansionJob {
@@ -88,23 +96,23 @@ impl MacroExpansionJob {
 }
 
 /// Result of expanding one macro call.
-pub(crate) struct MacroExpansionOutput {
-    pub(crate) id: usize,
-    pub(crate) key: MacroExpansionCacheKey,
-    pub(crate) macro_name: String,
-    pub(crate) elapsed: Duration,
-    pub(crate) generated_syntax: Option<ExpansionSyntax>,
+pub struct MacroExpansionOutput {
+    pub id: usize,
+    pub key: MacroExpansionCacheKey,
+    pub macro_name: String,
+    pub elapsed: Duration,
+    pub generated_syntax: Option<ExpansionSyntax>,
 }
 
 /// Expanded syntax plus the cache key needed by both worker-pool and synchronous callers.
-pub(crate) struct MacroExpansionSyntax {
-    pub(crate) key: MacroExpansionCacheKey,
-    pub(crate) macro_name: String,
-    pub(crate) generated_syntax: Option<ExpansionSyntax>,
+pub struct MacroExpansionSyntax {
+    pub key: MacroExpansionCacheKey,
+    pub macro_name: String,
+    pub generated_syntax: Option<ExpansionSyntax>,
 }
 
 /// Self-contained macro expansion job produced after resolution and cache lookup.
-pub(crate) struct MacroExpansionWork {
+pub struct MacroExpansionWork {
     pub(super) key: MacroExpansionCacheKey,
     pub(super) macro_name: String,
     pub(super) macro_: Arc<DeclarativeMacro>,
@@ -115,7 +123,7 @@ pub(crate) struct MacroExpansionWork {
 
 impl MacroExpansionWork {
     /// Run the matcher/transcriber step without adding executor ids or timing data.
-    pub(crate) fn expand_syntax(self) -> MacroExpansionSyntax {
+    pub fn expand_syntax(self) -> MacroExpansionSyntax {
         let generated_syntax = self
             .macro_
             .expand_call_tokens(&self.args, self.call_site, self.parse_kind)

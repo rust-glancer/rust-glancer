@@ -14,6 +14,7 @@ members = [
   "crates/engine/item-tree",
   "crates/engine/ir-model",
   "crates/engine/ir-storage",
+  "crates/engine/macro-runtime",
   "crates/engine/ir-view",
   "crates/engine/def-map",
   "crates/engine/semantic-ir",
@@ -118,6 +119,7 @@ rg_parse = { path = "crates/engine/parse" }
 rg_item_tree = { path = "crates/engine/item-tree" }
 rg_ir_model = { path = "crates/engine/ir-model" }
 rg_ir_storage = { path = "crates/engine/ir-storage" }
+rg_macro_runtime = { path = "crates/engine/macro-runtime" }
 rg_ir_view = { path = "crates/engine/ir-view" }
 rg_def_map = { path = "crates/engine/def-map" }
 rg_semantic_ir = { path = "crates/engine/semantic-ir" }

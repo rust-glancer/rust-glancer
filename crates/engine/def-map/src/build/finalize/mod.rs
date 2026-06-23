@@ -18,6 +18,7 @@ use rg_ir_storage::{
     ScopeResolutionEnv, TargetData, TargetResolutionEnv,
 };
 use rg_item_tree::ItemTreeDb;
+use rg_macro_runtime::MacroExpansionPerformancePreference;
 use rg_parse::Package;
 use rg_text::{Name, PackageNameInterners};
 use rg_workspace::WorkspaceMetadata;
@@ -25,7 +26,6 @@ use rg_workspace::WorkspaceMetadata;
 use crate::{DefMapReadTxn, PackageSlot, profile::metric};
 
 use super::{
-    DefMapPerformancePreference,
     collect::TargetState,
     imports::{UnresolvedImports, apply_imports},
     macros::{
@@ -427,7 +427,7 @@ pub(super) fn finalize_target_states(
     item_tree: &ItemTreeDb,
     target_states: &mut FinalizeTargetStates,
     interners: &mut PackageNameInterners,
-    performance_preference: DefMapPerformancePreference,
+    performance_preference: MacroExpansionPerformancePreference,
 ) -> anyhow::Result<()> {
     // Prelude selection needs the directly declared root modules and implicit extern roots, but it
     // must happen before import resolution because prelude imports participate in normal lookup.
@@ -574,7 +574,7 @@ fn finalize_scopes(
     item_tree: &ItemTreeDb,
     states: &mut FinalizeTargetStates,
     interners: &mut PackageNameInterners,
-    performance_preference: DefMapPerformancePreference,
+    performance_preference: MacroExpansionPerformancePreference,
 ) -> anyhow::Result<()> {
     let mut macro_cache = MacroExpansionCache::default();
     let mut macro_expansion_executor = None;

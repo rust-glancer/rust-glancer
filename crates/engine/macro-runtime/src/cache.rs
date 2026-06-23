@@ -19,16 +19,16 @@ use rg_tt::{Span as TtSpan, TopSubtree};
 
 use super::executor::MacroExpansionWork;
 
-/// Per-finalization cache for macro definitions and expanded syntax.
+/// Per-build cache for compiled macro definitions and expanded syntax.
 #[derive(Default)]
-pub(crate) struct MacroExpansionCache {
+pub struct MacroExpansionCache {
     compiled: HashMap<LocalDefRef, Option<Arc<DeclarativeMacro>>>,
     expanded: HashMap<MacroExpansionCacheKey, Option<ExpansionSyntax>>,
 }
 
 impl MacroExpansionCache {
     /// Compiles a macro definition once and remembers failures as well as successes.
-    pub(crate) fn compile(
+    pub fn compile(
         &mut self,
         def_ref: LocalDefRef,
         macro_definition: &MacroDefinitionData,
@@ -76,7 +76,7 @@ impl MacroExpansionCache {
     }
 
     /// Returns a cached expansion result or packages new expansion work for the worker pool.
-    pub(crate) fn prepare_expansion(
+    pub fn prepare_expansion(
         &mut self,
         def_ref: LocalDefRef,
         macro_: Arc<DeclarativeMacro>,
@@ -118,7 +118,7 @@ impl MacroExpansionCache {
         }
     }
 
-    pub(crate) fn insert_expansion(
+    pub fn insert_expansion(
         &mut self,
         key: MacroExpansionCacheKey,
         syntax: Option<ExpansionSyntax>,
@@ -148,34 +148,34 @@ impl MacroExpansionCache {
 }
 
 /// Compiled macro payload together with the accounting event produced while fetching it.
-pub(crate) struct MacroCompileResult {
-    pub(crate) macro_: Option<Arc<DeclarativeMacro>>,
-    pub(crate) record: MacroCompileRecord,
+pub struct MacroCompileResult {
+    pub macro_: Option<Arc<DeclarativeMacro>>,
+    pub record: MacroCompileRecord,
 }
 
 /// Stats event for one macro-definition compile lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MacroCompileRecord {
+pub enum MacroCompileRecord {
     CacheHit { failed: bool },
     Attempt { elapsed: Duration, failed: bool },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct MacroExpansionCacheKey {
-    pub(crate) def_ref: LocalDefRef,
-    pub(crate) args: TopSubtree,
-    pub(crate) call_site: TtSpan,
-    pub(crate) parse_kind: ExpansionParseKind,
+pub struct MacroExpansionCacheKey {
+    pub def_ref: LocalDefRef,
+    pub args: TopSubtree,
+    pub call_site: TtSpan,
+    pub parse_kind: ExpansionParseKind,
 }
 
 /// Expansion payload together with the accounting event produced while preparing it.
-pub(crate) struct PreparedMacroExpansionResult {
-    pub(crate) expansion: PreparedMacroExpansion,
-    pub(crate) record: MacroExpandRecord,
+pub struct PreparedMacroExpansionResult {
+    pub expansion: PreparedMacroExpansion,
+    pub record: MacroExpandRecord,
 }
 
 /// Either already-expanded syntax, a known failed expansion, or work to run in parallel.
-pub(crate) enum PreparedMacroExpansion {
+pub enum PreparedMacroExpansion {
     Syntax(ExpansionSyntax),
     Failed,
     Work(MacroExpansionWork),
@@ -183,7 +183,7 @@ pub(crate) enum PreparedMacroExpansion {
 
 /// Stats event for one macro-call expansion lookup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum MacroExpandRecord {
+pub enum MacroExpandRecord {
     CacheHit { failed: bool },
     Attempt,
 }

@@ -8,8 +8,9 @@ pub mod testonly;
 
 pub use rg_workspace::PackageSlot;
 
+pub use rg_macro_runtime::MacroExpansionPerformancePreference;
+
 pub use self::{
-    build::DefMapPerformancePreference,
     macro_expansion::BodyMacroExpander,
     profile::profile_descriptors,
     query::{DefMapCursorCandidate, DefMapPathCompletionSite, DefMapUnqualifiedCompletionSite},

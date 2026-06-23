@@ -6,13 +6,11 @@
 use anyhow::Context as _;
 
 use rg_item_tree::ItemTreeDb;
+use rg_macro_runtime::MacroExpansionPerformancePreference;
 use rg_text::PackageNameInterners;
 use rg_workspace::WorkspaceMetadata;
 
-use super::super::{
-    DefMapPerformancePreference, collect::collect_target_states,
-    implicit_roots::build_implicit_roots,
-};
+use super::super::{collect::collect_target_states, implicit_roots::build_implicit_roots};
 use super::{FinalizeTargetStates, finalize_target_states, freeze_package};
 use crate::{DefMapDb, PackageSlot};
 
@@ -26,7 +24,7 @@ pub(crate) fn build_db(
     parse: &rg_parse::ParseDb,
     item_tree: &ItemTreeDb,
     interners: &mut PackageNameInterners,
-    performance_preference: DefMapPerformancePreference,
+    performance_preference: MacroExpansionPerformancePreference,
 ) -> anyhow::Result<DefMapDb> {
     // First compute every implicit crate root from the complete package graph. These roots are
     // needed while collecting target states because extern prelude bindings can point across

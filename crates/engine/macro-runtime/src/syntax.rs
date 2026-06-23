@@ -4,7 +4,7 @@ use rg_parse::{FileId, Span};
 use rg_tt::{Edition, Span as TtSpan, syntax_bridge::SpanFactory};
 use rg_workspace::RustEdition;
 
-pub(crate) fn macro_edition(edition: RustEdition) -> Edition {
+pub fn macro_edition(edition: RustEdition) -> Edition {
     match edition {
         RustEdition::Edition2015 => Edition::Edition2015,
         RustEdition::Edition2018 => Edition::Edition2018,
@@ -13,7 +13,7 @@ pub(crate) fn macro_edition(edition: RustEdition) -> Edition {
     }
 }
 
-pub(crate) fn tt_span_for_parse_span(file_id: FileId, span: Span, edition: Edition) -> TtSpan {
+pub fn tt_span_for_parse_span(file_id: FileId, span: Span, edition: Edition) -> TtSpan {
     let text_range = rg_syntax::TextRange::new(span.text.start.into(), span.text.end.into());
     SpanFactory::new(
         u32::try_from(file_id.0).expect("file id should fit macro span storage"),

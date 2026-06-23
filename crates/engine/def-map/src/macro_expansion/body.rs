@@ -10,7 +10,10 @@ use rg_ir_model::{DefMapRef, ModuleId, ModuleRef, TargetRef};
 use rg_ir_storage::{
     DefMapQuery, ImportPath, MacroDefinitionView, PathResolver, ScopeResolutionEnv,
 };
-use rg_macro_expand::{ExpansionParseKind, ExpansionSyntax};
+use rg_macro_runtime::{
+    ExpansionParseKind, ExpansionSyntax, MacroExpansionCache, PreparedMacroExpansion,
+    macro_edition, tt_span_for_parse_span,
+};
 use rg_parse::{FileId, Span};
 use rg_std::ExpectedUnique;
 use rg_syntax::{AstNode as _, ast, utils::normalized_syntax_text};
@@ -18,8 +21,6 @@ use rg_text::Name;
 use rg_tt::syntax_bridge::{SpanFactory, syntax_node_to_token_tree_with_span};
 
 use crate::DefMapReadTxn;
-
-use super::{MacroExpansionCache, PreparedMacroExpansion, macro_edition, tt_span_for_parse_span};
 
 /// Expands declarative macros for Body IR lowering using frozen def-map visibility.
 pub struct BodyMacroExpander<'db, 'txn> {

@@ -16,7 +16,7 @@ use rg_item_tree::{
     MaybeFromAst, ModuleItem, ModuleSource, OuterDocs, StaticItem, StructItem, TraitItem,
     TraitItemContext, TypeAliasItem, UnionItem, UseItem, VisibilityLevel,
 };
-use rg_macro_expand::ExpansionSyntax;
+use rg_macro_runtime::{ExpansionSyntax, macro_edition};
 use rg_parse::{FileId, LineIndex, Span};
 use rg_syntax::{
     AstNode as _,
@@ -27,8 +27,6 @@ use rg_tt::{
     Span as TtSpan,
     syntax_bridge::{ExpansionSpanMap, SpanFactory},
 };
-
-use crate::macro_expansion::macro_edition;
 
 use super::generated::GeneratedOrigin;
 

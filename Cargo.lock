@@ -1453,13 +1453,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "expect-test",
- "rayon",
  "rg_arena",
  "rg_cfg_eval",
  "rg_ir_model",
  "rg_ir_storage",
  "rg_item_tree",
- "rg_macro_expand",
+ "rg_macro_runtime",
  "rg_package_store",
  "rg_parse",
  "rg_profile",
@@ -1609,6 +1608,21 @@ dependencies = [
  "smol_str",
  "stdx",
  "text-size",
+]
+
+[[package]]
+name = "rg_macro_runtime"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rayon",
+ "rg_ir_model",
+ "rg_ir_storage",
+ "rg_macro_expand",
+ "rg_parse",
+ "rg_syntax",
+ "rg_tt",
+ "rg_workspace",
 ]
 
 [[package]]

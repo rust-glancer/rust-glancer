@@ -11,17 +11,17 @@ use anyhow::Context as _;
 use rg_ir_model::{DefMapRef, TargetRef};
 use rg_ir_storage::{ImportPath, MacroDefinitionEnv, ScopeBindingOrigin, TargetResolutionEnv};
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
-use rg_macro_expand::{ExpansionParseKind, ExpansionSyntax};
+use rg_macro_runtime::{
+    ExpansionParseKind, ExpansionSyntax, MacroCompileRecord, MacroExpandRecord,
+    MacroExpansionCache, MacroExpansionWork, PreparedMacroExpansion, macro_edition,
+    tt_span_for_parse_span,
+};
 use rg_parse::FileId;
 use rg_text::PackageNameInterners;
 
 use crate::build::{
     collect::TargetState,
     finalize::{FinalizeTargetStates, ScopeMatrix},
-};
-use crate::macro_expansion::{
-    MacroCompileRecord, MacroExpandRecord, MacroExpansionCache, MacroExpansionWork,
-    PreparedMacroExpansion, macro_edition, tt_span_for_parse_span,
 };
 use crate::profile::metric;
 

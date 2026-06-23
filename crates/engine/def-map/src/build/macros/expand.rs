@@ -4,7 +4,8 @@
 //! self-contained, so it can run through the shared executor before this module updates item macro
 //! attempts and records def-map metrics.
 
-use crate::macro_expansion::{MacroExpansionCache, MacroExpansionExecutor, MacroExpansionJob};
+use rg_macro_runtime::{MacroExpansionCache, MacroExpansionExecutor, MacroExpansionJob};
+
 use crate::profile::metric;
 
 use super::MacroExpansionAttempt;

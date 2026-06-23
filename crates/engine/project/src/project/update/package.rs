@@ -104,7 +104,7 @@ fn try_rebuild_packages(
             plan.source_packages.as_slice(),
             &mut state.names,
         )
-        .performance_preference(state.indexing_preference.def_map_preference())
+        .performance_preference(state.indexing_preference.macro_expansion_preference())
         .build()
         .context("while attempting to rebuild affected def-map packages")?;
     drop(old_def_map_txn);
