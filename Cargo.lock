@@ -1548,6 +1548,7 @@ dependencies = [
  "anyhow",
  "cargo_metadata",
  "derive_more",
+ "dissimilar",
  "expect-test",
  "futures",
  "ls-types",

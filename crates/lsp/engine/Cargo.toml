@@ -13,6 +13,7 @@ description.workspace = true
 anyhow.workspace = true
 cargo_metadata.workspace = true
 derive_more = { workspace = true, features = ["debug", "display"] }
+dissimilar.workspace = true
 futures.workspace = true
 ls_types.workspace = true
 rg_analysis.workspace = true

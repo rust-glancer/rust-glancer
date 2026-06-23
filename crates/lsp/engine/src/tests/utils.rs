@@ -636,7 +636,7 @@ impl LspEngineFixture {
     }
 
     fn render_text(text: &str) -> String {
-        if text.contains('\n') {
+        if text.is_empty() || text.contains('\n') {
             format!("{text:?}")
         } else {
             text.to_string()

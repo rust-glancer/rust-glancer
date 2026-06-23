@@ -26,7 +26,9 @@ async fn formats_open_saved_document() {
             "src/lib.rs",
             expect![[r#"
                 format saved document
-                - /src/lib.rs:0:0-1:0 -> "pub fn demo() {\n    println!(\"hi\");\n}\n"
+                - /src/lib.rs:0:13-0:14 -> ""
+                - /src/lib.rs:0:14-0:14 -> " {\n    "
+                - /src/lib.rs:0:29-0:29 -> "\n"
             "#]],
         )
         .await;
@@ -128,7 +130,10 @@ async fn formatting_uses_dirty_live_text() {
             "src/lib.rs",
             expect![[r#"
                 format dirty document
-                - /src/lib.rs:0:0-0:34 -> "pub fn dirty() {\n    println!(\"dirty\");\n}\n"
+                - /src/lib.rs:0:14-0:15 -> ""
+                - /src/lib.rs:0:15-0:15 -> " {\n    "
+                - /src/lib.rs:0:33-0:34 -> ""
+                - /src/lib.rs:0:34-0:34 -> "\n}\n"
             "#]],
         )
         .await;

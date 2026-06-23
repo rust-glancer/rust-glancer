@@ -64,6 +64,7 @@ bumpalo = "3.17.0"
 clap = "4.6.1"
 cargo_metadata = "0.23.1"
 derive_more = { version = "2.1.1" }
+dissimilar = "1.0.11"
 divan = { package = "codspeed-divan-compat", version = "4.6.0" }
 drop_bomb = "0.1.5"
 either = "1.15.0"
