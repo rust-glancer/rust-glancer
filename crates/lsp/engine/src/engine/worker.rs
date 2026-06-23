@@ -122,18 +122,12 @@ impl EngineWorker {
                     tracing::trace!(root = %root.display(), "engine command started: initialize");
                     let _ = respond_to.send(self.initialize(root, analysis));
                 }
-                EngineCommand::DidSave {
-                    path,
-                    text,
-                    respond_to,
-                } => {
+                EngineCommand::ProjectPathsChanged { paths, respond_to } => {
                     tracing::trace!(
-                        path = %path.display(),
-                        has_text = text.is_some(),
-                        text_len = ?text.as_ref().map(String::len),
-                        "engine command started: did_save"
+                        path_count = paths.len(),
+                        "engine command started: project_paths_changed"
                     );
-                    let _ = respond_to.send(self.did_save(path, text));
+                    let _ = respond_to.send(self.project_paths_changed(paths));
                 }
                 EngineCommand::GotoDefinition {
                     path,
@@ -496,28 +490,41 @@ impl EngineWorker {
         Ok(())
     }
 
-    fn did_save(&mut self, path: PathBuf, text: Option<String>) -> anyhow::Result<()> {
+    fn project_paths_changed(&mut self, paths: Vec<PathBuf>) -> anyhow::Result<()> {
         let started = Instant::now();
-        tracing::info!(
-            path = %path.display(),
-            notification_includes_text = text.is_some(),
-            "processing saved file"
-        );
+        let mut applied_changes = 0usize;
+        let mut changed_files = 0usize;
+        let mut affected_packages = 0usize;
+        let mut changed_targets = 0usize;
 
-        let summary = self.project.mutate_saved(|project| {
-            project
-                .apply_change(SavedFileChange::new(&path))
-                .context("while attempting to apply saved file change")
-        })?;
+        tracing::info!(path_count = paths.len(), "processing project path changes");
+
+        for path in paths {
+            let summary = self.project.mutate_saved(|project| {
+                project
+                    .apply_change(SavedFileChange::new(&path))
+                    .context("while attempting to apply project path change")
+            })?;
+            applied_changes += 1;
+            changed_files += summary.changed_files.len();
+            affected_packages += summary.affected_packages.len();
+            changed_targets += summary.changed_targets.len();
+        }
+
         tracing::info!(
-            path = %path.display(),
-            changed_files = summary.changed_files.len(),
-            affected_packages = summary.affected_packages.len(),
-            changed_targets = summary.changed_targets.len(),
+            applied_changes,
+            changed_files,
+            affected_packages,
+            changed_targets,
             elapsed_ms = started.elapsed().as_millis(),
-            "saved file reindex finished"
+            "project path reindex finished"
         );
-        Self::log_project_snapshot(self.project.saved_snapshot()?, "after save");
+        if applied_changes > 0 {
+            Self::log_project_snapshot(
+                self.project.saved_snapshot()?,
+                "after project path changes",
+            );
+        }
 
         Ok(())
     }

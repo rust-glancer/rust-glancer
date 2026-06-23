@@ -75,6 +75,77 @@ fn save_keeps_document_dirty_when_a_newer_edit_already_landed() {
 }
 
 #[test]
+fn external_saved_change_updates_clean_open_document() {
+    let path = PathBuf::from("/workspace/src/lib.rs");
+    let mut store = DocumentStore::default();
+
+    store.did_open(path.clone(), Some(1), "fn main() {}\n");
+    store.external_saved_change(path.clone(), "fn main() {\n    external();\n}\n");
+
+    let freshness = store.freshness(&path);
+    assert!(!store.is_dirty(&path));
+    assert_eq!(
+        freshness.saved_len(),
+        Some("fn main() {\n    external();\n}\n".len())
+    );
+    assert_eq!(
+        freshness.live_len(),
+        Some("fn main() {\n    external();\n}\n".len())
+    );
+}
+
+#[test]
+fn external_saved_change_keeps_dirty_live_text() {
+    let path = PathBuf::from("/workspace/src/lib.rs");
+    let mut store = DocumentStore::default();
+
+    store.did_open(path.clone(), Some(1), "fn main() {}\n");
+    store.did_change(
+        path.clone(),
+        Some(2),
+        Some("fn main() {\n    unsaved();\n}\n"),
+    );
+    store.external_saved_change(path.clone(), "fn main() {\n    external();\n}\n");
+
+    let DirtyDocumentSnapshotState::Dirty(snapshot) = store.dirty_snapshot(&path) else {
+        panic!("dirty document should keep exposing its live editor snapshot");
+    };
+    assert_eq!(snapshot.text(), "fn main() {\n    unsaved();\n}\n");
+}
+
+#[test]
+fn external_saved_change_cleans_dirty_document_that_matches_disk() {
+    let path = PathBuf::from("/workspace/src/lib.rs");
+    let mut store = DocumentStore::default();
+
+    store.did_open(path.clone(), Some(1), "fn main() {}\n");
+    store.did_change(
+        path.clone(),
+        Some(2),
+        Some("fn main() {\n    external();\n}\n"),
+    );
+    store.external_saved_change(path.clone(), "fn main() {\n    external();\n}\n");
+
+    assert!(!store.is_dirty(&path));
+}
+
+#[test]
+fn external_saved_change_keeps_unknown_dirty_buffer_dirty() {
+    let path = PathBuf::from("/workspace/src/lib.rs");
+    let mut store = DocumentStore::default();
+
+    store.did_open(path.clone(), Some(1), "fn main() {}\n");
+    store.did_change(path.clone(), Some(2), None);
+    store.external_saved_change(path.clone(), "fn main() {\n    external();\n}\n");
+
+    assert!(store.is_dirty(&path));
+    assert!(matches!(
+        store.dirty_snapshot(&path),
+        DirtyDocumentSnapshotState::DirtyWithoutText
+    ));
+}
+
+#[test]
 fn exposes_dirty_snapshot_when_full_live_text_is_available() {
     let path = PathBuf::from("/workspace/src/lib.rs");
     let mut store = DocumentStore::default();

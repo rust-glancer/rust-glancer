@@ -13,6 +13,7 @@ description.workspace = true
 anyhow.workspace = true
 futures.workspace = true
 rg_lsp_proto.workspace = true
+rg_std.workspace = true
 tarpc = { workspace = true, features = ["serde-transport", "serde-transport-json", "tcp", "tokio1"] }
 tokio = { workspace = true, features = ["io-std", "io-util", "macros", "process", "rt-multi-thread", "sync"] }
 tower-lsp-server.workspace = true

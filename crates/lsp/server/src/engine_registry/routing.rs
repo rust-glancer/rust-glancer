@@ -94,6 +94,19 @@ impl EngineRouting {
             .copied()
     }
 
+    /// Returns the engine whose known workspace root contains this path.
+    ///
+    /// Watched-file notifications are filesystem facts, not document opens. Routing them through
+    /// already-known roots avoids surprising engine startups for paths the editor never touched.
+    pub(crate) fn engine_id_for_known_root_path(&self, path: &Path) -> Option<EngineId> {
+        let path = normalize_path(path);
+        self.engine_ids_by_root
+            .iter()
+            .filter(|(root, _)| path.starts_with(root.as_path()))
+            .max_by_key(|(root, _)| root.components().count())
+            .map(|(_, id)| *id)
+    }
+
     pub(crate) fn root_for_id(&self, id: EngineId) -> Option<&Path> {
         self.engine_ids_by_root
             .iter()
@@ -108,7 +121,7 @@ impl EngineRouting {
 }
 
 /// Stable engine identity allocated by routing and used as an index into registry slots.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct EngineId(usize);
 
 impl EngineId {

@@ -1,9 +1,11 @@
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::{Arc, Weak},
 };
 
 use rg_lsp_proto::EngineConfig;
+use rg_std::UniqueVec;
 use tokio::sync::Mutex;
 use tower_lsp_server::{Client as LspClient, ls_types::MessageType};
 
@@ -137,6 +139,62 @@ impl EngineRegistry {
         };
 
         self.engine_for_document_owner(owner).await
+    }
+
+    /// Forwards external project path changes to ready engines whose roots contain them.
+    pub(crate) async fn external_project_paths_changed(&self, paths: Vec<PathBuf>) {
+        // In theory, paths might correspond to different engines.
+        // So, for given list of paths we try to find a ready engine, and record path
+        // as belonging to it.
+        // As a result, we get a mapping of unique paths mapped to ready engines -- rest
+        // is going to be ignored.
+        let paths_by_engine = {
+            let inner = self.inner.lock().await;
+            let mut grouped = BTreeMap::<EngineId, (EngineClient, UniqueVec<PathBuf>)>::new();
+
+            for path in paths {
+                let path = normalize_path(path);
+                let Some(id) = inner.routing.engine_id_for_known_root_path(&path) else {
+                    tracing::trace!(
+                        path = %path.display(),
+                        "external project path skipped without known engine root"
+                    );
+                    continue;
+                };
+                let Some(EngineSlot::Ready(engine)) = inner.engine(id) else {
+                    tracing::trace!(
+                        path = %path.display(),
+                        engine_id = id.index(),
+                        "external project path skipped because engine is not ready"
+                    );
+                    continue;
+                };
+
+                let (_, paths) = grouped
+                    .entry(id)
+                    .or_insert_with(|| (engine.process.engine_client().clone(), UniqueVec::new()));
+                paths.push(path);
+            }
+
+            grouped
+                .into_values()
+                .map(|(engine_client, paths)| (engine_client, paths.into_vec()))
+                .collect::<Vec<_>>()
+        };
+
+        // Now that we have paths for each engine, we can notify each of them.
+        for (engine_client, paths) in paths_by_engine {
+            engine_client
+                .notify(
+                    "external_project_paths_changed",
+                    |engine_client, request_context| async move {
+                        engine_client
+                            .external_project_paths_changed(request_context, paths)
+                            .await
+                    },
+                )
+                .await;
+        }
     }
 
     async fn engine_for_document_owner(
