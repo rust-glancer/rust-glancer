@@ -8,6 +8,7 @@ mod diagnostics;
 mod dirty_state;
 mod documents;
 mod engine;
+mod formatting;
 mod memory;
 mod project_stats;
 mod proto;

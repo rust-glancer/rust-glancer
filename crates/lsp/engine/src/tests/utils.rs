@@ -7,7 +7,7 @@ use std::{
 use expect_test::Expect;
 use ls_types::{
     CompletionItem, CompletionTextEdit, DocumentSymbol, Hover, HoverContents, Location, Position,
-    Range, WorkspaceEdit,
+    Range, TextEdit, WorkspaceEdit,
 };
 use rg_lsp_proto::{
     AnalysisConfig, CompletionClientCapabilities, EngineConfig, EngineService, ServiceNotification,
@@ -291,6 +291,25 @@ impl LspEngineFixture {
         expect.assert_eq(&rendered);
     }
 
+    pub(super) async fn check_formatting(
+        &self,
+        title: &'static str,
+        path: &'static str,
+        expect: Expect,
+    ) {
+        let edits = self
+            .service
+            .clone()
+            .formatting(context::current(), self.fixture.path(path))
+            .await
+            .expect("formatting query should succeed");
+
+        let mut rendered = String::new();
+        writeln!(rendered, "{title}").expect("snapshot should be writable");
+        self.render_formatting_edits(&mut rendered, path, edits.as_deref());
+        expect.assert_eq(&rendered);
+    }
+
     pub(super) async fn shutdown(&self) {
         self.service
             .clone()
@@ -561,6 +580,33 @@ impl LspEngineFixture {
         }
     }
 
+    fn render_formatting_edits(
+        &self,
+        rendered: &mut String,
+        path: &str,
+        edits: Option<&[TextEdit]>,
+    ) {
+        let Some(edits) = edits else {
+            writeln!(rendered, "- no response").expect("snapshot should be writable");
+            return;
+        };
+        if edits.is_empty() {
+            writeln!(rendered, "- no edits").expect("snapshot should be writable");
+            return;
+        }
+
+        for edit in edits {
+            writeln!(
+                rendered,
+                "- {}:{} -> {}",
+                self.render_path(self.fixture.path(path).as_path()),
+                Self::render_range(edit.range),
+                Self::render_text(&edit.new_text),
+            )
+            .expect("snapshot should be writable");
+        }
+    }
+
     fn render_uri_path(&self, uri: &ls_types::Uri) -> String {
         uri.to_file_path()
             .map(|path| self.render_path(path.as_ref()))
@@ -590,7 +636,7 @@ impl LspEngineFixture {
     }
 
     fn render_text(text: &str) -> String {
-        if text.contains('\n') {
+        if text.is_empty() || text.contains('\n') {
             format!("{text:?}")
         } else {
             text.to_string()

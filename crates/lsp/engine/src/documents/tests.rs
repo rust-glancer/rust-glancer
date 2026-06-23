@@ -146,6 +146,36 @@ fn external_saved_change_keeps_unknown_dirty_buffer_dirty() {
 }
 
 #[test]
+fn exposes_current_text_for_clean_and_dirty_full_sync_documents() {
+    let path = PathBuf::from("/workspace/src/lib.rs");
+    let mut store = DocumentStore::default();
+
+    store.did_open(path.clone(), Some(1), "fn main() {}\n");
+    assert_eq!(store.current_text(&path).as_deref(), Some("fn main() {}\n"));
+
+    store.did_change(path.clone(), Some(2), Some("fn main() {\n    live();\n}\n"));
+    assert_eq!(
+        store.current_text(&path).as_deref(),
+        Some("fn main() {\n    live();\n}\n")
+    );
+}
+
+#[test]
+fn current_text_is_absent_for_unknown_dirty_and_closed_documents() {
+    let path = PathBuf::from("/workspace/src/lib.rs");
+    let mut store = DocumentStore::default();
+
+    assert_eq!(store.current_text(&path), None);
+
+    store.did_open(path.clone(), Some(1), "fn main() {}\n");
+    store.did_change(path.clone(), Some(2), None);
+    assert_eq!(store.current_text(&path), None);
+
+    store.did_close(&path);
+    assert_eq!(store.current_text(&path), None);
+}
+
+#[test]
 fn exposes_dirty_snapshot_when_full_live_text_is_available() {
     let path = PathBuf::from("/workspace/src/lib.rs");
     let mut store = DocumentStore::default();

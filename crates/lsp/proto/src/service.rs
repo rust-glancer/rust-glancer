@@ -79,6 +79,8 @@ pub trait EngineService {
         client_capabilities: CompletionClientCapabilities,
     ) -> EngineResult<Vec<ls_types::CompletionItem>>;
 
+    async fn formatting(path: PathBuf) -> EngineResult<Option<Vec<ls_types::TextEdit>>>;
+
     async fn document_symbol(path: PathBuf) -> EngineResult<Vec<ls_types::DocumentSymbol>>;
 
     async fn inlay_hint(

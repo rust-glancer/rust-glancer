@@ -22,7 +22,7 @@ use rg_project::{
     ProjectMemoryHooks, ProjectSnapshot, SavedFileChange,
 };
 use rg_workspace::{
-    CargoMetadataConfig, SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata,
+    CargoMetadataConfig, RustEdition, SysrootSources, WorkspaceLoweringConfig, WorkspaceMetadata,
 };
 
 use crate::{
@@ -35,7 +35,10 @@ use crate::{
     },
     memory::{MemoryControl, MemoryReporter, ProjectMemoryReporter},
     project_stats::{ProjectStats, log_retained_memory},
-    proto::{completion, hover, inlay_hint, navigation, position, references, rename, symbols},
+    proto::{
+        completion, formatting as formatting_proto, hover, inlay_hint, navigation, position,
+        references, rename, symbols,
+    },
 };
 
 #[derive(Debug)]
@@ -298,6 +301,20 @@ impl EngineWorker {
                         QueryContext::document("completion", queue_elapsed, dirty.as_ref());
                     self.respond_to_query(context, respond_to, |worker| {
                         worker.completion(path, position, client_capabilities, dirty)
+                    });
+                }
+                EngineCommand::Formatting {
+                    path,
+                    text,
+                    respond_to,
+                } => {
+                    tracing::trace!(
+                        path = %path.display(),
+                        "engine command started: formatting"
+                    );
+                    let context = QueryContext::new("formatting", queue_elapsed);
+                    self.respond_to_query(context, respond_to, |worker| {
+                        worker.formatting(path, text)
                     });
                 }
                 EngineCommand::DocumentSymbol {
@@ -930,6 +947,37 @@ impl EngineWorker {
         );
 
         Ok(lsp_symbols)
+    }
+
+    fn formatting(
+        &mut self,
+        path: PathBuf,
+        text: Arc<str>,
+    ) -> anyhow::Result<Vec<ls_types::TextEdit>> {
+        let started = Instant::now();
+        let edition = {
+            let snapshot = self.project.saved_snapshot()?;
+            let contexts = Self::file_contexts(snapshot, &path)?;
+
+            // Some routed documents may not map to package metadata. We use an explicit fallback
+            // here so formatting can still run without reading Cargo.toml from disk.
+            contexts
+                .first()
+                .and_then(|context| snapshot.package_edition(context.package))
+                .unwrap_or(RustEdition::Edition2024)
+        };
+        let formatted_text = crate::formatting::rustfmt(text.as_ref(), edition)?;
+        let edits = formatting_proto::document_edits(text.as_ref(), formatted_text)?;
+
+        tracing::debug!(
+            path = %path.display(),
+            edition = %edition,
+            edit_count = edits.len(),
+            elapsed_ms = started.elapsed().as_millis(),
+            "formatting query finished"
+        );
+
+        Ok(edits)
     }
 
     fn inlay_hint(

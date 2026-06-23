@@ -28,6 +28,7 @@ pub(crate) fn server_capabilities() -> ServerCapabilities {
             trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
             ..Default::default()
         }),
+        document_formatting_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         // The VS Code extension sends this request directly, so keep the internal command out of
         // the editor command registry.
@@ -103,6 +104,12 @@ mod tests {
     fn advertises_references_support() {
         let capabilities = server_capabilities();
         assert!(capabilities.references_provider.is_some());
+    }
+
+    #[test]
+    fn advertises_document_formatting_support() {
+        let capabilities = server_capabilities();
+        assert!(capabilities.document_formatting_provider.is_some());
     }
 
     #[test]
