@@ -130,6 +130,10 @@ impl MacroExpansionCache {
         macro_definition: &MacroDefinitionData,
         edition: Edition,
     ) -> anyhow::Result<DeclarativeMacro> {
+        if let Some(kind) = macro_definition.builtin {
+            anyhow::bail!("cannot compile compiler builtin macro {kind:?}");
+        }
+
         match &macro_definition.payload {
             MacroDefinitionPayload::MacroRules { body } => {
                 let body = body

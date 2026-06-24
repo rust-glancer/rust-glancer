@@ -6,7 +6,9 @@ use wincode::{SchemaRead, SchemaWrite};
 
 mod builtin;
 
-pub use self::builtin::{BuiltinMacroItem, CfgSelectArmItem, CfgSelectArmPayload};
+pub use self::builtin::{
+    BuiltinMacroItem, BuiltinMacroKind, CfgSelectArmItem, CfgSelectArmPayload,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub enum MacroDefinitionItem {
@@ -23,12 +25,13 @@ pub enum MacroDefinitionItem {
     },
 }
 
-/// Macro-specific attributes that affect def-map visibility.
+/// Macro-specific attributes retained for visibility and compiler builtin dispatch.
 #[derive(Debug, Clone, Default, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct MacroDefinitionAttrs {
     #[memsize(skip)]
     pub macro_export: bool,
     pub cfg_attr_macro_export: Vec<CfgPredicate>,
+    pub builtin: Option<BuiltinMacroKind>,
 }
 
 /// Legacy `#[macro_use]` import selector.

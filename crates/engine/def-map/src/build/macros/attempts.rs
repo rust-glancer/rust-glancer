@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use anyhow::Context as _;
 
-use rg_ir_model::{DefMapRef, TargetRef};
+use rg_ir_model::{DefMapRef, TargetRef, items::BuiltinMacroKind};
 use rg_ir_storage::{ImportPath, MacroDefinitionEnv, ScopeBindingOrigin, TargetResolutionEnv};
 use rg_item_tree::{BuiltinMacroItem, CfgSelectArmPayload, ItemTreeDb, ItemTreeId};
 use rg_macro_runtime::{
@@ -23,7 +23,6 @@ use crate::build::{
     collect::TargetState,
     finalize::{FinalizeTargetStates, ScopeMatrix},
 };
-use crate::macro_expansion::builtin::BuiltinMacroDisposition;
 use crate::profile::metric;
 
 use super::{
@@ -527,32 +526,14 @@ impl MacroExpansionAttempt {
             ExpectedUnique::Ambiguous => {
                 return Ok(Self::unresolved(state.target, call_id, call, path_text));
             }
-            ExpectedUnique::Empty => match BuiltinMacroDisposition::from_path(&path) {
-                Some(BuiltinMacroDisposition::IgnoredByDefMap) => {
-                    return Ok(Self::ignored_by_def_map(
-                        state.target,
-                        call_id,
-                        call,
-                        path_text,
-                    ));
-                }
-                Some(BuiltinMacroDisposition::CfgSelect) => {
-                    return Ok(Self::cfg_select(
+            ExpectedUnique::Empty => match crate::macro_expansion::builtin::kind_from_path(&path) {
+                Some(kind) => {
+                    return Ok(Self::builtin(
+                        kind,
                         state.target,
                         call_id,
                         call,
                         state,
-                        path_text,
-                    ));
-                }
-                Some(BuiltinMacroDisposition::Include) => {
-                    return Ok(Self::include_file(state.target, call_id, call, path_text));
-                }
-                Some(BuiltinMacroDisposition::Unsupported) => {
-                    return Ok(Self::unsupported_builtin(
-                        state.target,
-                        call_id,
-                        call,
                         path_text,
                     ));
                 }
@@ -573,6 +554,17 @@ impl MacroExpansionAttempt {
                 state.target,
                 call_id,
                 call,
+                path_text,
+            ));
+        }
+
+        if let Some(kind) = resolved.data.builtin {
+            return Ok(Self::builtin(
+                kind,
+                state.target,
+                call_id,
+                call,
+                state,
                 path_text,
             ));
         }
@@ -613,6 +605,28 @@ impl MacroExpansionAttempt {
         );
         attempt.origin.dollar_crate_target = Some(resolved.data.dollar_crate_target);
         Ok(attempt)
+    }
+
+    fn builtin(
+        kind: BuiltinMacroKind,
+        target: TargetRef,
+        call_id: usize,
+        call: &MacroCallSite,
+        state: &TargetState,
+        macro_name: &str,
+    ) -> Self {
+        match kind {
+            BuiltinMacroKind::Expr(_) | BuiltinMacroKind::IgnoredByDefMap => {
+                Self::ignored_by_def_map(target, call_id, call, macro_name)
+            }
+            BuiltinMacroKind::CfgSelect => {
+                Self::cfg_select(target, call_id, call, state, macro_name)
+            }
+            BuiltinMacroKind::Include => Self::include_file(target, call_id, call, macro_name),
+            BuiltinMacroKind::Unsupported => {
+                Self::unsupported_builtin(target, call_id, call, macro_name)
+            }
+        }
     }
 
     pub(crate) fn needs_expansion(&self) -> bool {

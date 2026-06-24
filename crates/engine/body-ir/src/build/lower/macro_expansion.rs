@@ -8,8 +8,8 @@ use std::{cell::Cell, rc::Rc};
 
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{
-    BodyMacroCallOrigin, BodyMacroExpander as DefMapBodyMacroExpander, BodyMacroExprExpansion,
-    DefMapReadTxn, ExpandedBodyMacro,
+    BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander as DefMapBodyMacroExpander,
+    BodyMacroExprExpansion, DefMapReadTxn, ExpandedBodyMacro,
 };
 use rg_ir_model::{ModuleRef, TargetRef};
 use rg_syntax::ast;
@@ -29,8 +29,9 @@ pub(crate) trait BodyMacroExpansionContext {
     /// Expand an expression macro call or classify a known compiler builtin.
     ///
     /// Example: `let value = make_expr!(input);` asks for generated `ast::Expr` syntax, while
-    /// `format_args!("hi")` can lower to a builtin expression after normal macro lookup fails. If
-    /// neither path succeeds, expression lowering falls back to the original macro expression.
+    /// `format_args!("hi")` can lower to a builtin expression when macro lookup identifies a
+    /// compiler builtin. If neither path succeeds, expression lowering falls back to the original
+    /// macro expression.
     fn expand_expr_call(
         &mut self,
         target: TargetRef,
@@ -117,6 +118,16 @@ impl<'ctx, 'db> BodyMacroExpansion<'ctx, 'db> {
             depth: Rc::new(Cell::new(0)),
         }
     }
+
+    fn call_site(
+        &self,
+        target: TargetRef,
+        module: ModuleRef,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
+    ) -> BodyMacroCallSite<'ctx> {
+        BodyMacroCallSite::new(target, module, source, origin, self.parse_package.edition())
+    }
 }
 
 impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
@@ -139,15 +150,10 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<BodyMacroExprExpansion>> {
-        self.expander.expand_expr_call(
-            target,
-            module,
-            source,
-            origin,
-            self.parse_package,
-            self.cfg,
-            call,
-        )
+        let site = self
+            .call_site(target, module, source, origin)
+            .with_cfg(self.cfg);
+        self.expander.expand_expr_call(site, call)
     }
 
     fn expand_stmt_call(
@@ -158,15 +164,10 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::MacroStmts>>> {
-        self.expander.expand_stmt_call(
-            target,
-            module,
-            source,
-            origin,
-            self.parse_package,
-            self.cfg,
-            call,
-        )
+        let site = self
+            .call_site(target, module, source, origin)
+            .with_cfg(self.cfg);
+        self.expander.expand_stmt_call(site, call)
     }
 
     fn expand_pat_call(
@@ -177,8 +178,8 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Pat>>> {
-        self.expander
-            .expand_pat_call(target, module, source, origin, self.parse_package, call)
+        let site = self.call_site(target, module, source, origin);
+        self.expander.expand_pat_call(site, call)
     }
 
     fn expand_type_call(
@@ -189,7 +190,7 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Type>>> {
-        self.expander
-            .expand_type_call(target, module, source, origin, self.parse_package, call)
+        let site = self.call_site(target, module, source, origin);
+        self.expander.expand_type_call(site, call)
     }
 }

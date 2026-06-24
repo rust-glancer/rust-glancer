@@ -1,4 +1,4 @@
-use rg_ir_model::items::{ItemTag, MacroDefinitionItem, VisibilityLevel};
+use rg_ir_model::items::{BuiltinMacroKind, ItemTag, MacroDefinitionItem, VisibilityLevel};
 use rg_ir_model::{LocalDefRef, ModuleId, TargetRef, hir::source::ItemSource};
 use rg_parse::{FileId, Span};
 use rg_std::{MemorySize, Shrink};
@@ -22,12 +22,14 @@ pub struct LocalDefData {
     pub span: Span,
 }
 
-/// Declarative macro definition payload retained for expansion after def-map freezing.
+/// Macro definition facts retained after def-map freezing.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
 pub struct MacroDefinitionData {
     pub edition: RustEdition,
     /// Target that `$crate` inside this macro body should resolve to when expanded.
     pub dollar_crate_target: TargetRef,
+    /// Compiler hook that should run instead of declarative expansion, if any.
+    pub builtin: Option<BuiltinMacroKind>,
     #[shrink(skip)]
     pub payload: MacroDefinitionPayload,
 }
@@ -41,7 +43,43 @@ impl MacroDefinitionData {
         Self {
             edition,
             dollar_crate_target,
+            builtin: Self::builtin_from_item(item),
             payload: MacroDefinitionPayload::from_item(item),
+        }
+    }
+
+    fn builtin_from_item(item: &MacroDefinitionItem) -> Option<BuiltinMacroKind> {
+        match item {
+            MacroDefinitionItem::MacroRules { attrs, .. } => attrs.builtin,
+            MacroDefinitionItem::MacroDef { .. } => None,
+        }
+    }
+}
+
+/// Token-tree payload needed to compile a collected declarative macro.
+#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
+pub enum MacroDefinitionPayload {
+    MacroRules {
+        #[memsize(scope = "body")]
+        #[shrink(skip)]
+        body: Option<TopSubtree>,
+    },
+    MacroDef {
+        #[shrink(skip)]
+        args: Option<TopSubtree>,
+        #[shrink(skip)]
+        body: Option<TopSubtree>,
+    },
+}
+
+impl MacroDefinitionPayload {
+    fn from_item(item: &MacroDefinitionItem) -> Self {
+        match item {
+            MacroDefinitionItem::MacroRules { body, .. } => Self::MacroRules { body: body.clone() },
+            MacroDefinitionItem::MacroDef { args, body } => Self::MacroDef {
+                args: args.clone(),
+                body: body.clone(),
+            },
         }
     }
 }
@@ -58,7 +96,7 @@ pub struct MacroDefinitionView<'a> {
     pub def_ref: LocalDefRef,
     /// The ordinary local definition record that owns visibility, module, and source facts.
     pub local_def: &'a LocalDefData,
-    /// Retained macro body and edition data used by the declarative macro engine.
+    /// Retained macro body, builtin identity, and edition data used by expansion.
     pub data: &'a MacroDefinitionData,
 }
 
@@ -98,34 +136,6 @@ impl PartialEq for MacroDefinitionView<'_> {
 }
 
 impl Eq for MacroDefinitionView<'_> {}
-
-/// Token-tree payload needed to compile a collected declarative macro.
-#[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]
-pub enum MacroDefinitionPayload {
-    MacroRules {
-        #[memsize(scope = "body")]
-        #[shrink(skip)]
-        body: Option<TopSubtree>,
-    },
-    MacroDef {
-        #[shrink(skip)]
-        args: Option<TopSubtree>,
-        #[shrink(skip)]
-        body: Option<TopSubtree>,
-    },
-}
-
-impl MacroDefinitionPayload {
-    fn from_item(item: &MacroDefinitionItem) -> Self {
-        match item {
-            MacroDefinitionItem::MacroRules { body, .. } => Self::MacroRules { body: body.clone() },
-            MacroDefinitionItem::MacroDef { args, body } => Self::MacroDef {
-                args: args.clone(),
-                body: body.clone(),
-            },
-        }
-    }
-}
 
 /// One module-owned impl block collected from source.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, MemorySize, Shrink)]

@@ -7,5 +7,6 @@ mod body;
 pub(crate) mod builtin;
 
 pub use self::body::{
-    BodyMacroCallOrigin, BodyMacroExpander, BodyMacroExprExpansion, ExpandedBodyMacro,
+    BodyMacroCallOrigin, BodyMacroCallSite, BodyMacroExpander, BodyMacroExprExpansion,
+    ExpandedBodyMacro,
 };

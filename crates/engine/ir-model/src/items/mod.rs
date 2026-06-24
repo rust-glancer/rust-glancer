@@ -18,8 +18,8 @@ pub use self::{
     },
     kind::{ItemKind, ItemTag},
     macro_item::{
-        BuiltinMacroItem, CfgAttrMacroUse, CfgSelectArmItem, CfgSelectArmPayload, MacroCallItem,
-        MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
+        BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, CfgSelectArmItem, CfgSelectArmPayload,
+        MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
     },
     module::{ModuleItem, ModuleSource},
     primitive::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy},

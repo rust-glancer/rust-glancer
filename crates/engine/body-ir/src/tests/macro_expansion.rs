@@ -1024,6 +1024,90 @@ pub fn use_it() {
 }
 
 #[test]
+fn resolved_sysroot_builtin_macro_lowers_as_body_expression() {
+    check_project_body_ir_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_resolved_builtin_macro_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    let direct = format_args!("hello");
+    let aliased = my_format_args!("hello");
+    aliased
+}
+
+//- /sysroot/library/core/src/lib.rs
+pub mod fmt {
+    pub struct Arguments;
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+#[rustc_builtin_macro]
+#[macro_export]
+macro_rules! format_args {
+    ($($args:tt)*) => {{ /* compiler built-in */ }};
+}
+
+pub mod macros {
+    pub use crate::format_args as my_format_args;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::format_args;
+        pub use crate::macros::my_format_args;
+    }
+}
+"#,
+        expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
+            package body_resolved_builtin_macro_fixture
+
+            body_resolved_builtin_macro_fixture [lib]
+            body b0 fn body_resolved_builtin_macro_fixture[lib]::crate::use_it @ 1:1-5:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v1
+            bindings
+            - v0 let direct `direct` => nominal struct core[lib]::crate::fmt::Arguments @ 2:9-2:15
+            - v1 let aliased `aliased` => nominal struct core[lib]::crate::fmt::Arguments @ 3:9-3:16
+            body
+            expr e3 block s1 => nominal struct core[lib]::crate::fmt::Arguments @ 1:17-5:2
+              stmt s0 let v0 @ 2:5-2:40
+                initializer
+                  expr e0 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 2:18-2:39
+              stmt s1 let v1 @ 3:5-3:44
+                initializer
+                  expr e1 builtin_macro format_args => nominal struct core[lib]::crate::fmt::Arguments @ 3:19-3:43
+              tail
+                expr e2 path aliased -> local v1 => nominal struct core[lib]::crate::fmt::Arguments @ 4:5-4:12
+
+
+            package core
+
+            core [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
+        "#]],
+    );
+}
+
+#[test]
 fn ambiguous_prelude_macro_blocks_body_builtin_fallback() {
     check_project_body_ir_with_sysroot(
         r#"

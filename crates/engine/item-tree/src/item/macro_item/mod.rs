@@ -1,11 +1,11 @@
 use rg_cfg_eval::CfgPredicate;
 use rg_ir_model::items::{
-    BuiltinMacroItem, CfgAttrMacroUse, MacroCallItem, MacroDefinitionAttrs, MacroDefinitionItem,
-    MacroUseAttr, MacroUseSelector,
+    BuiltinMacroItem, BuiltinMacroKind, CfgAttrMacroUse, MacroCallItem, MacroDefinitionAttrs,
+    MacroDefinitionItem, MacroUseAttr, MacroUseSelector,
 };
 use rg_syntax::{
     AstNode as _, TextRange,
-    ast::{self, HasAttrs as _},
+    ast::{self, HasAttrs as _, HasName as _},
 };
 use rg_text::{Name, NameInterner};
 use rg_tt::{Span, syntax_bridge::syntax_node_to_token_tree_with_span};
@@ -99,26 +99,37 @@ impl FromAst for MacroCallItem {
 
 fn macro_definition_attrs_from_macro_rules(item: &ast::MacroRules) -> MacroDefinitionAttrs {
     let mut attrs = MacroDefinitionAttrs::default();
+    let name = item.name().map(|name| name.text().to_owned());
 
     for attr in item.attrs().filter(|attr| attr.kind().is_outer()) {
         let Some(meta) = attr.meta() else {
             continue;
         };
-        collect_macro_export_meta(&mut attrs, meta, None);
+        collect_macro_definition_meta(&mut attrs, meta, None, name.as_deref());
     }
 
     attrs
 }
 
-fn collect_macro_export_meta(
+fn collect_macro_definition_meta(
     attrs: &mut MacroDefinitionAttrs,
     meta: ast::Meta,
     predicate: Option<CfgPredicate>,
+    macro_name: Option<&str>,
 ) {
     if meta.simple_name().as_deref() == Some("macro_export") {
         match predicate {
             Some(predicate) => attrs.cfg_attr_macro_export.push(predicate),
             None => attrs.macro_export = true,
+        }
+        return;
+    }
+
+    if meta.simple_name().as_deref() == Some("rustc_builtin_macro") {
+        // `#[rustc_builtin_macro]` means the definition is a compiler hook. Its name tells us
+        // which builtin behavior should run after ordinary macro resolution finds this definition.
+        if predicate.is_none() {
+            attrs.builtin = macro_name.map(BuiltinMacroKind::from_rustc_builtin_macro_name);
         }
         return;
     }
@@ -134,12 +145,12 @@ fn collect_macro_export_meta(
                 None => cfg_attr_predicate,
             };
             for nested in cfg_attr.metas() {
-                collect_macro_export_meta(attrs, nested, Some(predicate.clone()));
+                collect_macro_definition_meta(attrs, nested, Some(predicate.clone()), macro_name);
             }
         }
         ast::Meta::UnsafeMeta(meta) => {
             if let Some(meta) = meta.meta() {
-                collect_macro_export_meta(attrs, meta, predicate);
+                collect_macro_definition_meta(attrs, meta, predicate, macro_name);
             }
         }
         ast::Meta::CfgMeta(_)
