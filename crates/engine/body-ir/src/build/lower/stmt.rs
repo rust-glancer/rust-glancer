@@ -118,16 +118,34 @@ impl BodyLowering<'_> {
         let mut tail = None;
 
         if let Some(stmt_list) = block.stmt_list() {
-            for statement in stmt_list.statements() {
-                self.lower_statement(statement, block_scope, &mut statements);
-            }
-            // TODO: Cfg filtering can make the last active expression statement become the block
-            // tail after an inactive written tail disappears. Handle that with a cfg-normalized
-            // block sequence once body cfg support needs that exact shape.
-            if let Some(tail_expr) = stmt_list
+            let mut active_statements = stmt_list
+                .statements()
+                .filter_map(|statement| self.cfg_enabled_statement(statement))
+                .collect::<Vec<_>>();
+            let active_tail = stmt_list
                 .tail_expr()
-                .and_then(|tail_expr| self.cfg.enabled_syntax(tail_expr))
-            {
+                .and_then(|tail_expr| self.cfg.enabled_syntax(tail_expr));
+
+            // Apply cfg before deciding the final block shape. If the written tail is inactive,
+            // a preceding expression statement without a semicolon becomes the semantic tail.
+            let promoted_tail = active_tail.or_else(|| {
+                let statement = active_statements.last()?;
+                let ast::Stmt::ExprStmt(statement) = statement else {
+                    return None;
+                };
+                if statement.semicolon_token().is_some() {
+                    return None;
+                }
+
+                let expr = statement.expr()?;
+                active_statements.pop();
+                Some(expr)
+            });
+
+            for statement in active_statements {
+                self.lower_active_statement(statement, block_scope, &mut statements);
+            }
+            if let Some(tail_expr) = promoted_tail {
                 tail = Some(self.lower_expr(tail_expr, block_scope));
             }
         }
@@ -198,6 +216,17 @@ impl BodyLowering<'_> {
             return;
         };
 
+        self.lower_active_statement(statement, scope, statements);
+    }
+
+    // Block lowering can cfg-normalize a statement list before lowering it. This entry point keeps
+    // that path from re-checking cfg while preserving the ordinary statement lowering behavior.
+    fn lower_active_statement(
+        &mut self,
+        statement: ast::Stmt,
+        scope: ScopeId,
+        statements: &mut Vec<StmtId>,
+    ) {
         match statement {
             ast::Stmt::LetStmt(statement) => {
                 statements.push(self.lower_let_statement(statement, scope));

@@ -1459,3 +1459,72 @@ pub fn use_cfg(
         "#]],
     );
 }
+
+#[test]
+fn promotes_cfg_filtered_expression_statement_to_block_tail() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_cfg_tail_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_cfg_tail(active: u8) -> u8 {
+    let promoted = {
+        #[cfg(not(test))]
+        { active }
+
+        #[cfg(test)]
+        { 0 }
+    };
+
+    let semicolon = {
+        #[cfg(not(test))]
+        { active };
+
+        #[cfg(test)]
+        { 0 }
+    };
+
+    promoted
+}
+"#,
+        expect![[r#"
+            package body_cfg_tail_fixture
+
+            body_cfg_tail_fixture [lib]
+            body b0 fn body_cfg_tail_fixture[lib]::crate::use_cfg_tail @ 1:1-19:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v2
+            - s2 parent s1: <none>
+            - s3 parent s2: <none>
+            - s4 parent s1: <none>
+            - s5 parent s4: <none>
+            bindings
+            - v0 param active `active`: u8 => u8 @ 1:21-1:27
+            - v1 let promoted `promoted` => u8 @ 2:9-2:17
+            - v2 let semicolon `semicolon` => () @ 10:9-10:18
+            body
+            expr e7 block s1 => u8 @ 1:39-19:2
+              stmt s0 let v1 @ 2:5-8:7
+                initializer
+                  expr e2 block s2 => u8 @ 2:20-8:6
+                    tail
+                      expr e1 block s3 => u8 @ 3:9-4:19
+                        tail
+                          expr e0 path active -> local v0 => u8 @ 4:11-4:17
+              stmt s2 let v2 @ 10:5-16:7
+                initializer
+                  expr e5 block s4 => () @ 10:21-16:6
+                    stmt s1 expr; @ 11:9-12:20
+                      expr e4 block s5 => u8 @ 11:9-12:19
+                        tail
+                          expr e3 path active -> local v0 => u8 @ 12:11-12:17
+              tail
+                expr e6 path promoted -> local v1 => u8 @ 18:5-18:13
+        "#]],
+    );
+}
