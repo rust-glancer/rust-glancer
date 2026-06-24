@@ -34,14 +34,17 @@ impl BodyLowering<'_> {
 
         let mut params = Vec::new();
         if let Some(self_param) = param_list.self_param() {
-            params.push(self.lower_self_param(self_param, param_scope));
+            if let Some(self_param) = self.cfg.enabled_syntax(self_param) {
+                params.push(self.lower_self_param(self_param, param_scope));
+            }
         }
 
-        params.extend(
-            param_list
-                .params()
-                .map(|param| self.lower_param(param, param_scope)),
-        );
+        for param in param_list.params() {
+            let Some(param) = self.cfg.enabled_syntax(param) else {
+                continue;
+            };
+            params.push(self.lower_param(param, param_scope));
+        }
 
         params
     }
@@ -118,9 +121,15 @@ impl BodyLowering<'_> {
             for statement in stmt_list.statements() {
                 self.lower_statement(statement, block_scope, &mut statements);
             }
-            tail = stmt_list
+            // TODO: Cfg filtering can make the last active expression statement become the block
+            // tail after an inactive written tail disappears. Handle that with a cfg-normalized
+            // block sequence once body cfg support needs that exact shape.
+            if let Some(tail_expr) = stmt_list
                 .tail_expr()
-                .map(|tail_expr| self.lower_expr(tail_expr, block_scope));
+                .and_then(|tail_expr| self.cfg.enabled_syntax(tail_expr))
+            {
+                tail = Some(self.lower_expr(tail_expr, block_scope));
+            }
         }
 
         let label = self.lower_label(block.label());
@@ -183,6 +192,12 @@ impl BodyLowering<'_> {
         scope: ScopeId,
         statements: &mut Vec<StmtId>,
     ) {
+        // Body syntax bypasses item-tree cfg filtering, so statement-level gates are applied
+        // before the statement can introduce bindings or body-local items.
+        let Some(statement) = self.cfg_enabled_statement(statement) else {
+            return;
+        };
+
         match statement {
             ast::Stmt::LetStmt(statement) => {
                 statements.push(self.lower_let_statement(statement, scope));
@@ -203,6 +218,19 @@ impl BodyLowering<'_> {
                 statements.push(self.lower_item_statement(item, scope));
             }
         }
+    }
+
+    fn cfg_enabled_statement(&self, statement: ast::Stmt) -> Option<ast::Stmt> {
+        let enabled = match &statement {
+            ast::Stmt::LetStmt(statement) => self.cfg.is_syntax_enabled(statement),
+            ast::Stmt::ExprStmt(statement) => match statement.expr() {
+                Some(expr) => self.cfg.is_syntax_enabled(&expr),
+                None => true,
+            },
+            ast::Stmt::Item(item) => self.cfg.is_syntax_enabled(item),
+        };
+
+        enabled.then_some(statement)
     }
 
     /// Try to lower an expression statement as a statement-position macro expansion.
@@ -538,6 +566,9 @@ impl BodyLowering<'_> {
     ) -> Vec<ItemTreeId> {
         let mut item_ids = Vec::new();
         for item in items {
+            let Some(item) = self.cfg.enabled_syntax(item) else {
+                continue;
+            };
             if let Some(node) = self.lower_source_item(&item) {
                 item_ids.push(self.builder.alloc_scopeless_source_item(node));
             }
@@ -555,6 +586,9 @@ impl BodyLowering<'_> {
 
         let mut item_ids = Vec::new();
         for item in item_list.assoc_items() {
+            let Some(item) = self.cfg.enabled_syntax(item) else {
+                continue;
+            };
             if let Some(node) = self.lower_source_assoc_item(item) {
                 item_ids.push(self.builder.alloc_scopeless_source_item(node));
             }

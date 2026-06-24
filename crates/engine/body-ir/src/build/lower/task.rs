@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use anyhow::Context as _;
 use rg_syntax::{AstNode as _, ast};
 
+use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{BodyId, ModuleRef};
 use rg_parse::{FileId, Span};
 use rg_text::NameInterner;
@@ -40,6 +41,7 @@ pub(crate) struct BodyLoweringTask {
 pub(crate) struct BodyTaskLowering<'a> {
     parse_package: &'a rg_parse::Package,
     target_bodies: &'a mut TargetBodies,
+    cfg: CfgEvaluator<'a>,
     interner: &'a mut NameInterner,
 }
 
@@ -47,11 +49,13 @@ impl<'a> BodyTaskLowering<'a> {
     pub(crate) fn new(
         parse_package: &'a rg_parse::Package,
         target_bodies: &'a mut TargetBodies,
+        cfg: CfgEvaluator<'a>,
         interner: &'a mut NameInterner,
     ) -> Self {
         Self {
             parse_package,
             target_bodies,
+            cfg,
             interner,
         }
     }
@@ -137,6 +141,7 @@ impl<'a> BodyTaskLowering<'a> {
                         task.owner_module,
                         task.fallback_module,
                         source,
+                        self.cfg,
                         line_index,
                         self.interner,
                         &mut *macro_expansion,
@@ -159,6 +164,7 @@ impl<'a> BodyTaskLowering<'a> {
                         task.owner_module,
                         task.fallback_module,
                         source,
+                        self.cfg,
                         line_index,
                         self.interner,
                         &mut *macro_expansion,
@@ -181,6 +187,7 @@ impl<'a> BodyTaskLowering<'a> {
                         task.owner_module,
                         task.fallback_module,
                         source,
+                        self.cfg,
                         line_index,
                         self.interner,
                         &mut *macro_expansion,

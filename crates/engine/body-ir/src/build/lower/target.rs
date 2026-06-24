@@ -6,6 +6,7 @@
 
 use anyhow::Context as _;
 
+use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{DefMapReadTxn, PackageSlot};
 use rg_ir_model::{ConstRef, FunctionRef, ImplRef, ItemOwner, ModuleRef, StaticRef, TraitRef};
 use rg_ir_storage::ItemStoreQuery;
@@ -33,6 +34,7 @@ pub(super) struct TargetLowering<'a> {
     pub(super) consts: Vec<ConstLoweringTarget>,
     pub(super) statics: Vec<StaticLoweringTarget>,
     pub(super) target_bodies: TargetBodies,
+    pub(super) cfg: CfgEvaluator<'a>,
     pub(super) interner: &'a mut NameInterner,
 }
 
@@ -40,8 +42,13 @@ impl<'a> TargetLowering<'a> {
     pub(super) fn lower(mut self) -> anyhow::Result<TargetBodies> {
         let tasks = self.selected_body_tasks()?;
         let mut macro_expansion = BodyMacroExpansion::new(self.parse_package, self.def_map);
-        BodyTaskLowering::new(self.parse_package, &mut self.target_bodies, self.interner)
-            .lower_tasks(&tasks, &mut macro_expansion)?;
+        BodyTaskLowering::new(
+            self.parse_package,
+            &mut self.target_bodies,
+            self.cfg,
+            self.interner,
+        )
+        .lower_tasks(&tasks, &mut macro_expansion)?;
         Ok(self.target_bodies)
     }
 

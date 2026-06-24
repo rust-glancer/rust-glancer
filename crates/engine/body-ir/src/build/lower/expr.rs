@@ -114,20 +114,27 @@ impl BodyLowering<'_> {
     }
 
     fn lower_tuple_expr(&mut self, tuple: ast::TupleExpr, scope: ScopeId) -> ExprId {
-        let fields = tuple
-            .fields()
-            .map(|field| self.lower_expr(field, scope))
-            .collect();
+        let mut fields = Vec::new();
+        for field in tuple.fields() {
+            let Some(field) = self.cfg.enabled_syntax(field) else {
+                continue;
+            };
+            fields.push(self.lower_expr(field, scope));
+        }
 
         self.alloc_expr(tuple.syntax(), scope, ExprKind::Tuple { fields })
     }
 
     fn lower_array_expr(&mut self, array: ast::ArrayExpr, scope: ScopeId) -> ExprId {
         match array.kind() {
-            ArrayExprKind::ElementList(elements) => {
-                let elements = elements
-                    .map(|element| self.lower_expr(element, scope))
-                    .collect();
+            ArrayExprKind::ElementList(element_list) => {
+                let mut elements = Vec::new();
+                for element in element_list {
+                    let Some(element) = self.cfg.enabled_syntax(element) else {
+                        continue;
+                    };
+                    elements.push(self.lower_expr(element, scope));
+                }
                 self.alloc_expr(array.syntax(), scope, ExprKind::Array { elements })
             }
             ArrayExprKind::Repeat {
@@ -232,24 +239,30 @@ impl BodyLowering<'_> {
 
     fn lower_call_expr(&mut self, call: ast::CallExpr, scope: ScopeId) -> ExprId {
         let callee = call.expr().map(|callee| self.lower_expr(callee, scope));
-        let args = call
-            .arg_list()
-            .into_iter()
-            .flat_map(|args| args.args())
-            .map(|arg| self.lower_expr(arg, scope))
-            .collect();
+        let mut args = Vec::new();
+        for arg in call.arg_list().into_iter().flat_map(|args| args.args()) {
+            let Some(arg) = self.cfg.enabled_syntax(arg) else {
+                continue;
+            };
+            args.push(self.lower_expr(arg, scope));
+        }
 
         self.alloc_expr(call.syntax(), scope, ExprKind::Call { callee, args })
     }
 
     fn lower_closure_expr(&mut self, closure: ast::ClosureExpr, scope: ScopeId) -> ExprId {
         let closure_scope = self.builder.alloc_scope(Some(scope));
-        let params = closure
+        let mut params = Vec::new();
+        for param in closure
             .param_list()
             .into_iter()
             .flat_map(|param_list| param_list.params())
-            .map(|param| self.lower_closure_param(param, closure_scope))
-            .collect();
+        {
+            let Some(param) = self.cfg.enabled_syntax(param) else {
+                continue;
+            };
+            params.push(self.lower_closure_param(param, closure_scope));
+        }
         let ret_ty = closure
             .ret_type()
             .and_then(|ret_ty| ret_ty.ty())
@@ -469,12 +482,17 @@ impl BodyLowering<'_> {
         let scrutinee = match_expr
             .expr()
             .map(|scrutinee| self.lower_expr(scrutinee, scope));
-        let arms = match_expr
+        let mut arms = Vec::new();
+        for arm in match_expr
             .match_arm_list()
             .into_iter()
             .flat_map(|arm_list| arm_list.arms())
-            .map(|arm| self.lower_match_arm(arm, scope))
-            .collect();
+        {
+            let Some(arm) = self.cfg.enabled_syntax(arm) else {
+                continue;
+            };
+            arms.push(self.lower_match_arm(arm, scope));
+        }
 
         self.alloc_expr(
             match_expr.syntax(),
@@ -530,12 +548,17 @@ impl BodyLowering<'_> {
             .flat_map(|args| args.generic_args())
             .map(|arg| GenericArg::from_ast(&arg, (self.line_index, &mut *self.interner)))
             .collect();
-        let args = method_call
+        let mut args = Vec::new();
+        for arg in method_call
             .arg_list()
             .into_iter()
             .flat_map(|args| args.args())
-            .map(|arg| self.lower_expr(arg, scope))
-            .collect();
+        {
+            let Some(arg) = self.cfg.enabled_syntax(arg) else {
+                continue;
+            };
+            args.push(self.lower_expr(arg, scope));
+        }
 
         self.alloc_expr(
             method_call.syntax(),
@@ -591,11 +614,14 @@ impl BodyLowering<'_> {
             .map(|field_list| self.source(field_list.syntax()).span);
 
         if let Some(field_list) = &field_list {
-            fields.extend(
-                field_list
-                    .fields()
-                    .filter_map(|field| self.lower_record_expr_field(field, scope)),
-            );
+            for field in field_list.fields() {
+                let Some(field) = self.cfg.enabled_syntax(field) else {
+                    continue;
+                };
+                if let Some(field) = self.lower_record_expr_field(field, scope) {
+                    fields.push(field);
+                }
+            }
         }
         let spread = field_list
             .as_ref()
@@ -645,7 +671,9 @@ impl BodyLowering<'_> {
     ) -> Option<RecordExprSpread> {
         let dotdot = field_list.dotdot_token()?;
         let dotdot_range = dotdot.text_range();
-        let spread_expr = field_list.spread();
+        let spread_expr = field_list
+            .spread()
+            .and_then(|spread| self.cfg.enabled_syntax(spread));
         // The AST exposes only the expression after `..`; the token span keeps bare `..`
         // visible to cursor queries too.
         let source_end = spread_expr
@@ -710,11 +738,13 @@ impl BodyLowering<'_> {
         syntax: &rg_syntax::SyntaxNode,
         scope: ScopeId,
     ) -> ExprId {
-        let children = syntax
-            .children()
-            .filter_map(ast::Expr::cast)
-            .map(|child| self.lower_expr(child, scope))
-            .collect();
+        let mut children = Vec::new();
+        for child in syntax.children().filter_map(ast::Expr::cast) {
+            let Some(child) = self.cfg.enabled_syntax(child) else {
+                continue;
+            };
+            children.push(self.lower_expr(child, scope));
+        }
 
         self.alloc_expr(syntax, scope, ExprKind::Unknown { children })
     }

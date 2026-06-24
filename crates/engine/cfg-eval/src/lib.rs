@@ -133,18 +133,18 @@ fn cfg_value_from_rustc(value: &str) -> String {
         .to_string()
 }
 
-/// Item-level cfg gates that later target-specific phases evaluate.
+/// Outer cfg gates that target-specific phases evaluate for attr-bearing syntax.
 #[derive(Debug, Clone, PartialEq, Eq, Default, SchemaRead, SchemaWrite, Shrink)]
 pub struct CfgExpr {
     pub gates: Vec<CfgGate>,
 }
 
 impl CfgExpr {
-    /// Extracts only the cfg attributes that can decide whether an item exists.
-    pub fn from_attrs(item: &impl HasAttrs) -> Self {
+    /// Extracts only the outer cfg attributes that decide whether syntax is active.
+    pub fn from_attrs(syntax: &impl HasAttrs) -> Self {
         let mut expr = Self::default();
 
-        for attr in item.attrs().filter(|attr| attr.kind().is_outer()) {
+        for attr in syntax.attrs().filter(|attr| attr.kind().is_outer()) {
             match attr.meta() {
                 Some(ast::Meta::CfgMeta(meta)) => {
                     let predicate = meta
@@ -159,7 +159,7 @@ impl CfgExpr {
                         .map(CfgPredicate::from_ast)
                         .unwrap_or(CfgPredicate::Invalid);
 
-                    // Only cfg-bearing attributes change whether the item exists. Other attrs
+                    // Only cfg-bearing attributes change whether syntax is active. Other attrs
                     // exposed by cfg_attr are left to later attribute-aware features.
                     for nested in meta.metas() {
                         if let ast::Meta::CfgMeta(nested) = nested {
@@ -182,10 +182,10 @@ impl CfgExpr {
     }
 }
 
-/// One top-level gate that can make an item unavailable.
+/// One top-level gate that can make attr-bearing syntax inactive.
 #[derive(Debug, Clone, PartialEq, Eq, SchemaRead, SchemaWrite, Shrink)]
 pub enum CfgGate {
-    /// A direct `#[cfg(...)]` item attribute.
+    /// A direct outer `#[cfg(...)]` attribute.
     Direct(CfgPredicate),
     /// A `#[cfg_attr(predicate, cfg(...))]` attribute that may activate a nested cfg gate.
     CfgAttr {
@@ -269,6 +269,7 @@ fn string_token_value(token: SyntaxToken) -> Option<String> {
 }
 
 /// Target-specific cfg environment used while collecting real definitions.
+#[derive(Clone, Copy)]
 pub struct CfgEvaluator<'a> {
     options: &'a CfgOptions,
     target_test_enabled: bool,
@@ -286,9 +287,19 @@ impl<'a> CfgEvaluator<'a> {
         }
     }
 
-    /// Returns whether all item-level gates admit the item for this target.
+    /// Returns whether all gates admit the syntax for this target.
     pub fn is_enabled(&self, cfg: &CfgExpr) -> bool {
         cfg.gates.iter().all(|gate| self.evaluate_gate(gate))
+    }
+
+    /// Returns whether outer cfg attributes admit this syntax node for this target.
+    pub fn is_syntax_enabled(&self, syntax: &impl HasAttrs) -> bool {
+        self.is_enabled(&CfgExpr::from_attrs(syntax))
+    }
+
+    /// Keeps an attr-bearing syntax node only when it is active for this target.
+    pub fn enabled_syntax<T: HasAttrs>(&self, syntax: T) -> Option<T> {
+        self.is_syntax_enabled(&syntax).then_some(syntax)
     }
 
     fn evaluate_gate(&self, gate: &CfgGate) -> bool {

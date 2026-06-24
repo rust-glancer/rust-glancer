@@ -1649,3 +1649,55 @@ pub fn use_it(id: GlobalId) {
         "#]],
     );
 }
+
+#[test]
+fn applies_cfg_to_body_statements_and_body_local_items() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_cfg_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct HiddenGlobal;
+
+pub fn use_it() {
+    #[cfg(false)]
+    let hidden = HiddenGlobal;
+
+    #[cfg(true)]
+    struct Active;
+
+    #[cfg_attr(true, cfg(false))]
+    struct Hidden;
+
+    #[cfg_attr(false, cfg(false))]
+    let visible: Active = Active;
+
+    #[cfg(false)]
+    visible;
+}
+"#,
+        expect![[r#"
+            package body_cfg_fixture
+
+            body_cfg_fixture [lib]
+            body b0 fn body_cfg_fixture[lib]::crate::use_it @ 3:1-18:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0; source_items i0
+            source_items
+            - i0 struct Active @ 7:5-8:19
+            bindings
+            - v0 let visible `visible`: Active => nominal struct fn body_cfg_fixture[lib]::crate::use_it::Active @ 7:5-8:19 @ 14:9-14:16
+            body
+            expr e1 block s1 => () @ 3:17-18:2
+              stmt s0 source_item i0 @ 7:5-8:19
+              stmt s1 let v0: Active @ 13:5-14:34
+                initializer
+                  expr e0 path Active -> struct fn body_cfg_fixture[lib]::crate::use_it::Active @ 7:5-8:19 => nominal struct fn body_cfg_fixture[lib]::crate::use_it::Active @ 7:5-8:19 @ 14:27-14:33
+        "#]],
+    );
+}

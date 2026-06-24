@@ -68,10 +68,7 @@ impl TargetState {
     }
 
     pub(super) fn cfg_evaluator(&self) -> CfgEvaluator<'_> {
-        CfgEvaluator::new(
-            &self.cfg_options,
-            matches!(self.target_kind, TargetKind::Test | TargetKind::Bench),
-        )
+        CfgEvaluator::new(&self.cfg_options, self.target_kind.enables_test_cfg())
     }
 }
 
@@ -751,9 +748,6 @@ impl<'db> TargetScopeCollector<'db> {
     }
 
     fn cfg_evaluator(&self) -> CfgEvaluator<'_> {
-        CfgEvaluator::new(
-            self.cfg_options,
-            matches!(self.target_kind, TargetKind::Test | TargetKind::Bench),
-        )
+        CfgEvaluator::new(self.cfg_options, self.target_kind.enables_test_cfg())
     }
 }

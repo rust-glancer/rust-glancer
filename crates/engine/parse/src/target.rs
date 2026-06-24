@@ -41,6 +41,11 @@ pub struct Target {
 }
 
 impl Target {
+    /// Returns whether this target should enable `cfg(test)` during analysis.
+    pub fn enables_test_cfg(&self) -> bool {
+        self.kind.enables_test_cfg()
+    }
+
     pub(crate) fn shrink_to_fit(&mut self) {
         self.name.shrink_to_fit();
     }

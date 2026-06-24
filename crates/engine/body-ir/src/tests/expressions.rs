@@ -1294,3 +1294,168 @@ pub static CURRENT: u32 = LIMIT;
         "#]],
     );
 }
+
+#[test]
+fn applies_cfg_to_expression_and_pattern_list_children() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_cfg_list_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Pair {
+    active: u8,
+    hidden: u8,
+    fallback: u8,
+}
+
+pub fn use_cfg(
+    active: u8,
+    #[cfg(false)] hidden: u8,
+    #[cfg(true)] visible: u8,
+) {
+    let tuple = (
+        active,
+        #[cfg(false)]
+        hidden,
+        #[cfg(true)]
+        visible,
+        #[cfg(not(test))]
+        active,
+    );
+
+    let array = [
+        active,
+        #[cfg(false)]
+        hidden,
+        #[cfg(true)]
+        visible,
+        #[cfg(not(test))]
+        active,
+    ];
+
+    sink(
+        active,
+        #[cfg(false)]
+        hidden,
+        visible,
+    );
+
+    let pair = Pair {
+        active,
+        #[cfg(false)]
+        hidden,
+        #[cfg(not(test))]
+        fallback: visible,
+    };
+
+    pair.take(
+        active,
+        #[cfg(false)]
+        hidden,
+        visible,
+    );
+
+    let Pair {
+        active: kept,
+        #[cfg(false)]
+        hidden,
+        #[cfg(not(test))]
+        fallback,
+    } = pair;
+
+    let closure = |#[cfg(false)] gone: u8, kept: u8| kept;
+
+    let matched = match active {
+        #[cfg(false)]
+        0 => hidden,
+        #[cfg(not(test))]
+        _ => visible,
+    };
+}
+"#,
+        expect![[r#"
+            package body_cfg_list_fixture
+
+            body_cfg_list_fixture [lib]
+            body b0 fn body_cfg_list_fixture[lib]::crate::use_cfg @ 7:1-70:2
+            scopes
+            - s0 parent <none>: v0, v1
+            - s1 parent s0: v2, v3, v4, v5, v6, v8, v9
+            - s2 parent s1: v7
+            - s3 parent s1: <none>
+            bindings
+            - v0 param active `active`: u8 => u8 @ 8:5-8:11
+            - v1 param visible `visible`: u8 => u8 @ 10:18-10:25
+            - v2 let tuple `tuple` => (u8, u8, u8) @ 12:9-12:14
+            - v3 let array `array` => [u8; 3] @ 22:9-22:14
+            - v4 let pair `pair` => nominal struct body_cfg_list_fixture[lib]::crate::Pair @ 39:9-39:13
+            - v5 let kept `kept` => u8 @ 55:17-55:21
+            - v6 let fallback `fallback` => u8 @ 59:9-59:17
+            - v7 param kept `kept`: u8 => u8 @ 62:44-62:48
+            - v8 let closure `closure` => <unknown> @ 62:9-62:16
+            - v9 let matched `matched` => u8 @ 64:9-64:16
+            body
+            expr e25 block s1 => () @ 11:3-70:2
+              stmt s0 let v2 @ 12:5-20:7
+                initializer
+                  expr e3 tuple => (u8, u8, u8) @ 12:17-20:6
+                    field
+                      expr e0 path active -> local v0 => u8 @ 13:9-13:15
+                    field
+                      expr e1 path visible -> local v1 => u8 @ 16:9-17:16
+                    field
+                      expr e2 path active -> local v0 => u8 @ 18:9-19:15
+              stmt s1 let v3 @ 22:5-30:7
+                initializer
+                  expr e7 array => [u8; 3] @ 22:17-30:6
+                    element
+                      expr e4 path active -> local v0 => u8 @ 23:9-23:15
+                    element
+                      expr e5 path visible -> local v1 => u8 @ 26:9-27:16
+                    element
+                      expr e6 path active -> local v0 => u8 @ 28:9-29:15
+              stmt s2 expr; @ 32:5-37:7
+                expr e11 call => <unknown> @ 32:5-37:6
+                  callee
+                    expr e8 path sink => <unknown> @ 32:5-32:9
+                  arg
+                    expr e9 path active -> local v0 => u8 @ 33:9-33:15
+                  arg
+                    expr e10 path visible -> local v1 => u8 @ 36:9-36:16
+              stmt s3 let v4 @ 39:5-45:7
+                initializer
+                  expr e14 record Pair -> item struct body_cfg_list_fixture[lib]::crate::Pair => nominal struct body_cfg_list_fixture[lib]::crate::Pair @ 39:16-45:6
+                    field active
+                      expr e12 path active -> local v0 => u8 @ 40:9-40:15
+                    field fallback
+                      expr e13 path visible -> local v1 => u8 @ 44:19-44:26
+              stmt s4 expr; @ 47:5-52:7
+                expr e18 method_call take => <unknown> @ 47:5-52:6
+                  receiver
+                    expr e15 path pair -> local v4 => nominal struct body_cfg_list_fixture[lib]::crate::Pair @ 47:5-47:9
+                  arg
+                    expr e16 path active -> local v0 => u8 @ 48:9-48:15
+                  arg
+                    expr e17 path visible -> local v1 => u8 @ 51:9-51:16
+              stmt s5 let v5, v6 @ 54:5-60:14
+                initializer
+                  expr e19 path pair -> local v4 => nominal struct body_cfg_list_fixture[lib]::crate::Pair @ 60:9-60:13
+              stmt s6 let v8 @ 62:5-62:59
+                initializer
+                  expr e21 closure s2 (v7: u8) => <unknown> @ 62:19-62:58
+                    body
+                      expr e20 path kept -> local v7 => u8 @ 62:54-62:58
+              stmt s7 let v9 @ 64:5-69:7
+                initializer
+                  expr e24 match => u8 @ 64:19-69:6
+                    scrutinee
+                      expr e22 path active -> local v0 => u8 @ 64:25-64:31
+                    arm s3
+                      expr e23 path visible -> local v1 => u8 @ 68:14-68:21
+        "#]],
+    );
+}

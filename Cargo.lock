@@ -1409,6 +1409,7 @@ dependencies = [
  "expect-test",
  "rayon",
  "rg_arena",
+ "rg_cfg_eval",
  "rg_def_map",
  "rg_ir_model",
  "rg_ir_storage",

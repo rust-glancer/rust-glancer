@@ -2,6 +2,7 @@
 
 use rg_syntax::ast;
 
+use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{BodyMacroExprExpansion, ExpandedBodyMacro};
 use rg_ir_model::{ExprId, ModuleRef, ScopeId, TargetRef};
 use rg_parse::LineIndex;
@@ -16,6 +17,7 @@ pub(super) struct BodyLowering<'a> {
     owner_module: ModuleRef,
     fallback_module: ModuleRef,
     body_source: BodySource,
+    pub(super) cfg: CfgEvaluator<'a>,
     pub(super) line_index: &'a LineIndex,
     pub(super) interner: &'a mut NameInterner,
     pub(super) builder: BodyBuilder,
@@ -41,11 +43,13 @@ impl GeneratedBodyMacroContext {
 }
 
 impl<'a> BodyLowering<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         owner: BodyOwner,
         owner_module: ModuleRef,
         fallback_module: ModuleRef,
         body_source: BodySource,
+        cfg: CfgEvaluator<'a>,
         line_index: &'a LineIndex,
         interner: &'a mut NameInterner,
         macro_expansion: &'a mut dyn BodyMacroExpansionContext,
@@ -55,6 +59,7 @@ impl<'a> BodyLowering<'a> {
             owner_module,
             fallback_module,
             body_source,
+            cfg,
             line_index,
             interner,
             builder: BodyBuilder::default(),

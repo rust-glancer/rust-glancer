@@ -1,5 +1,7 @@
 //! Target-local mutable state used while Body IR resolution is assembled.
 
+use anyhow::Context as _;
+use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::DefMapReadTxn;
 use rg_ir_model::{
     BodyId, BodyRef, ConstRef, DefMapRef, ItemOwner, ModuleRef, Path, StaticRef, TargetRef,
@@ -88,6 +90,19 @@ impl<'target> TargetBodyBuildState<'target> {
         // body has its local DefMap/item store ready. Nested lowering may extend `target_bodies`,
         // so the loop stops only once every appended body has been collected too.
         let mut macro_expansion = BodyMacroExpansion::new(self.parse_package, def_map);
+        let parse_target = self
+            .parse_package
+            .target(self.target.target)
+            .with_context(|| {
+                format!(
+                    "while attempting to fetch parsed target {:?} for nested body lowering",
+                    self.target.target,
+                )
+            })?;
+        let cfg = CfgEvaluator::new(
+            self.parse_package.cfg_options(),
+            parse_target.enables_test_cfg(),
+        );
         while self.body_local_items.len() < self.target_bodies.bodies().len() {
             let body_idx = self.body_local_items.len();
             let body_ref = self.body_ref(body_idx);
@@ -98,7 +113,7 @@ impl<'target> TargetBodyBuildState<'target> {
             self.body_local_items.push(Some(items));
 
             if !nested_tasks.is_empty() {
-                BodyTaskLowering::new(self.parse_package, self.target_bodies, self.interner)
+                BodyTaskLowering::new(self.parse_package, self.target_bodies, cfg, self.interner)
                     .lower_tasks(&nested_tasks, &mut macro_expansion)?;
             }
         }
