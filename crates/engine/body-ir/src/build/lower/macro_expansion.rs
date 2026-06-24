@@ -6,7 +6,10 @@
 
 use std::{cell::Cell, rc::Rc};
 
-use rg_def_map::{BodyMacroExpander as DefMapBodyMacroExpander, DefMapReadTxn, ExpandedBodyMacro};
+use rg_def_map::{
+    BodyMacroExpander as DefMapBodyMacroExpander, BodyMacroExprExpansion, DefMapReadTxn,
+    ExpandedBodyMacro,
+};
 use rg_ir_model::{ModuleRef, TargetRef};
 use rg_parse::{FileId, Span};
 use rg_syntax::ast;
@@ -21,10 +24,11 @@ pub(crate) trait BodyMacroExpansionContext {
     /// and the caller keeps the original macro as an unknown expression or statement.
     fn expansion_scope(&self) -> Option<BodyMacroExpansionScope>;
 
-    /// Expand a macro call as expression syntax, leaving lowering to decide the fallback shape.
+    /// Expand an expression macro call or classify a known compiler builtin.
     ///
-    /// Example: `let value = make_expr!(input);` asks for an `ast::Expr`. If resolution or
-    /// expansion fails, expression lowering falls back to the original macro expression.
+    /// Example: `let value = make_expr!(input);` asks for generated `ast::Expr` syntax, while
+    /// `format_args!("hi")` can lower to a builtin expression after normal macro lookup fails. If
+    /// neither path succeeds, expression lowering falls back to the original macro expression.
     fn expand_expr_call(
         &mut self,
         target: TargetRef,
@@ -32,7 +36,7 @@ pub(crate) trait BodyMacroExpansionContext {
         file_id: FileId,
         span: Span,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Expr>>>;
+    ) -> anyhow::Result<Option<BodyMacroExprExpansion>>;
 
     /// Expand a macro call as statement-list syntax, leaving lowering to splice the result.
     ///
@@ -129,7 +133,7 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         file_id: FileId,
         span: Span,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Expr>>> {
+    ) -> anyhow::Result<Option<BodyMacroExprExpansion>> {
         self.expander
             .expand_expr_call(target, module, file_id, span, self.parse_package, call)
     }

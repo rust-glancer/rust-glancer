@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 
-use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, PathSegment, TargetRef};
+use rg_ir_model::{DefId, DefMapRef, LocalDefRef, ModuleRef, TargetRef};
 use rg_ir_storage::{
     ImportPath, LocalDefData, MacroDefinitionData, MacroDefinitionEnv, PathResolver, ScopeBinding,
     ScopeBindingOrigin, TargetResolutionEnv,
@@ -13,9 +13,8 @@ use rg_ir_storage::{
 use rg_std::ExpectedUnique;
 use rg_text::Name;
 
-use crate::build::{collect::TargetState, finalize::FinalizeTargetStates};
-
 use super::{ItemOrder, MacroCallSite};
+use crate::build::{collect::TargetState, finalize::FinalizeTargetStates};
 
 /// Macro definition resolved through the ordinary macro namespace.
 pub(super) struct ResolvedMacroDefinition<'a> {
@@ -293,52 +292,4 @@ fn macro_definition_is_visible_by_order(
     !(macro_.def_ref.origin == DefMapRef::Target(target)
         && macro_.local_def.module == call.module
         && macro_.order.is_some_and(|order| order > &call.order))
-}
-
-/// Known builtin macro call that should not be resolved as a user macro.
-pub(super) enum BuiltinMacroDisposition {
-    /// The builtin cannot add module-scope definitions, so def-map can safely ignore it.
-    IgnoredByDefMap,
-    /// The builtin selects one item stream from cfg predicates.
-    CfgSelect,
-    /// The builtin splices another source file into the caller's item stream.
-    Include,
-    /// The builtin can affect item collection or requires dedicated compiler-like handling.
-    Unsupported,
-}
-
-impl BuiltinMacroDisposition {
-    /// Classifies builtin macros that are known even when no user macro binding resolves.
-    ///
-    /// We intentionally take a small shortcut here. Unqualified builtins and `std`/`core`-qualified
-    /// builtin-shaped paths cover the realistic call sites, while a fully resolution-aware builtin
-    /// prefix model would add a lot of complexity for rare local `std`/`core` shadowing cases.
-    pub(super) fn from_path(path: &ImportPath) -> Option<Self> {
-        let name = path.relative_single_name().or_else(|| {
-            // Check if we have two segments and the first one is either `std` or `core`.
-            let [PathSegment::Name(root), PathSegment::Name(name)] = path.segments.as_slice()
-            else {
-                return None;
-            };
-            matches!(root.as_str(), "std" | "core").then_some(name)
-        })?;
-
-        match name.as_str() {
-            // Expression, diagnostic, or assembly builtins do not contribute named items to def-map.
-            // Body lowering can later synthesize values/types for the expression-like subset.
-            "asm" | "cfg" | "column" | "compile_error" | "concat" | "env" | "file"
-            | "format_args" | "global_asm" | "include_bytes" | "include_str" | "line"
-            | "llvm_asm" | "module_path" | "option_env" | "stringify" => {
-                Some(Self::IgnoredByDefMap)
-            }
-
-            "cfg_select" => Some(Self::CfgSelect),
-            "include" => Some(Self::Include),
-
-            // `concat_idents!` has token-shaping behavior that is better handled by a dedicated
-            // builtin implementation.
-            "concat_idents" => Some(Self::Unsupported),
-            _ => None,
-        }
-    }
 }

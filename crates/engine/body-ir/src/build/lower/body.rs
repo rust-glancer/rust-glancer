@@ -2,7 +2,7 @@
 
 use rg_syntax::ast;
 
-use rg_def_map::ExpandedBodyMacro;
+use rg_def_map::{BodyMacroExprExpansion, ExpandedBodyMacro};
 use rg_ir_model::{ExprId, ModuleRef, ScopeId, TargetRef};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
@@ -119,11 +119,20 @@ impl BodyLowering<'_> {
         scope: ScopeId,
         kind: ExprKind,
     ) -> ExprId {
+        self.alloc_expr_with_source(self.source(syntax), scope, kind)
+    }
+
+    pub(super) fn alloc_expr_with_source(
+        &mut self,
+        source: BodySource,
+        scope: ScopeId,
+        kind: ExprKind,
+    ) -> ExprId {
         // Name resolution uses this boundary to avoid seeing bindings introduced after the
         // expression, while still allowing earlier bindings in the same lexical scope.
         let visible_bindings = self.builder.bindings.len();
         self.builder.alloc_expr(ExprData {
-            source: self.source(syntax),
+            source,
             scope,
             visible_bindings,
             kind,
@@ -185,10 +194,12 @@ impl BodyLowering<'_> {
         result
     }
 
-    /// Expand and lower an expression-position macro call from its original source location.
+    /// Resolve an expression-position macro call from its original source location.
     ///
-    /// Example: `let value = make_expr!(input);` expands to an expression and is lowered in the
-    /// current lexical scope. If expansion fails, the caller keeps the original macro expression.
+    /// Example: `let value = make_expr!(input);` expands to syntax and is lowered in the current
+    /// lexical scope. `format_args!("hi")` becomes a builtin expression only if no user macro with
+    /// that name resolves first. If both paths fail, the caller keeps the original macro
+    /// expression.
     pub(super) fn lower_macro_call_from_call_site(
         &mut self,
         call_source: BodySource,
@@ -199,21 +210,30 @@ impl BodyLowering<'_> {
         let module = self.macro_resolution_module();
         let target = module.origin.origin_target();
 
-        // Expansion is best-effort during mechanical lowering: an unresolved or failing macro
-        // should leave a normal unknown expression instead of aborting the whole body build.
-        let expanded = self
+        // Expansion is best-effort during mechanical lowering: unresolved, unsupported, or failing
+        // macros should leave normal unknown expressions instead of aborting the whole body build.
+        let expansion = self
             .macro_expansion
             .expand_expr_call(target, module, call_source.file_id, call_source.span, call)
             .ok()
             .flatten()?;
 
-        // The macro call remains the fallback range for generated syntax. Leaf syntax that the
-        // expansion span map can trace back to invocation input gets a narrower source span during
-        // recursive lowering.
-        Some(
-            self.with_expanded_macro(call_source, expanded, |this, syntax| {
-                this.lower_expr(syntax, scope)
-            }),
-        )
+        match expansion {
+            BodyMacroExprExpansion::Expanded(expanded) => {
+                // The macro call remains the fallback range for generated syntax. Leaf syntax that
+                // the expansion span map can trace back to invocation input gets a narrower source
+                // span during recursive lowering.
+                Some(
+                    self.with_expanded_macro(call_source, expanded, |this, syntax| {
+                        this.lower_expr(syntax, scope)
+                    }),
+                )
+            }
+            BodyMacroExprExpansion::Builtin(kind) => Some(self.alloc_expr_with_source(
+                call_source,
+                scope,
+                ExprKind::BuiltinMacro { kind },
+            )),
+        }
     }
 }

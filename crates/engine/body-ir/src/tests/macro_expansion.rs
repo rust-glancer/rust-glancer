@@ -581,3 +581,233 @@ pub fn use_it() -> i32 {
         "#]],
     );
 }
+
+#[test]
+fn format_args_builtin_lowers_as_body_expression() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_format_args_builtin_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod core {
+    pub mod fmt {
+        pub struct Arguments;
+    }
+}
+
+pub fn use_it() {
+    let args = format_args!("hello");
+    let args_nl = format_args_nl!("hello");
+    args_nl
+}
+"#,
+        expect![[r#"
+            package body_format_args_builtin_fixture
+
+            body_format_args_builtin_fixture [lib]
+            body b0 fn body_format_args_builtin_fixture[lib]::crate::use_it @ 7:1-11:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v1
+            bindings
+            - v0 let args `args` => nominal struct body_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 8:9-8:13
+            - v1 let args_nl `args_nl` => nominal struct body_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 9:9-9:16
+            body
+            expr e3 block s1 => nominal struct body_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 7:17-11:2
+              stmt s0 let v0 @ 8:5-8:38
+                initializer
+                  expr e0 builtin_macro format_args => nominal struct body_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 8:16-8:37
+              stmt s1 let v1 @ 9:5-9:44
+                initializer
+                  expr e1 builtin_macro format_args_nl => nominal struct body_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 9:19-9:43
+              tail
+                expr e2 path args_nl -> local v1 => nominal struct body_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 10:5-10:12
+        "#]],
+    );
+}
+
+#[test]
+fn qualified_format_args_builtin_lowers_as_body_expression() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_qualified_format_args_builtin_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod core {
+    pub mod fmt {
+        pub struct Arguments;
+    }
+}
+
+pub fn use_it() {
+    let args = core::format_args!("hello");
+    args
+}
+"#,
+        expect![[r#"
+            package body_qualified_format_args_builtin_fixture
+
+            body_qualified_format_args_builtin_fixture [lib]
+            body b0 fn body_qualified_format_args_builtin_fixture[lib]::crate::use_it @ 7:1-10:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0
+            bindings
+            - v0 let args `args` => nominal struct body_qualified_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 8:9-8:13
+            body
+            expr e2 block s1 => nominal struct body_qualified_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 7:17-10:2
+              stmt s0 let v0 @ 8:5-8:44
+                initializer
+                  expr e0 builtin_macro format_args => nominal struct body_qualified_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 8:16-8:43
+              tail
+                expr e1 path args -> local v0 => nominal struct body_qualified_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 9:5-9:9
+        "#]],
+    );
+}
+
+#[test]
+fn local_format_args_macro_shadows_builtin_in_body() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_format_args_shadow_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! format_args {
+    () => {
+        92
+    };
+}
+
+pub fn use_it() -> i32 {
+    let value = format_args!();
+    value
+}
+"#,
+        expect![[r#"
+            package body_format_args_shadow_fixture
+
+            body_format_args_shadow_fixture [lib]
+            body b0 fn body_format_args_shadow_fixture[lib]::crate::use_it @ 7:1-10:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0
+            bindings
+            - v0 let value `value` => i32 @ 8:9-8:14
+            body
+            expr e2 block s1 => i32 @ 7:24-10:2
+              stmt s0 let v0 @ 8:5-8:32
+                initializer
+                  expr e0 literal int `format_args!()` => i32 @ 8:17-8:31
+              tail
+                expr e1 path value -> local v0 => i32 @ 9:5-9:10
+        "#]],
+    );
+}
+
+#[test]
+fn common_builtin_macros_lower_to_body_expression_types() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_builtin_macro_types_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub mod core {
+    pub mod option {
+        pub enum Option<T> {
+            Some(T),
+            None,
+        }
+    }
+}
+
+pub fn use_it() {
+    let cfg_value = cfg!(target_os = "linux");
+    let stringified = stringify!(a + b);
+    let concatenated = concat!("a", "b");
+    let env_value = env!("HOME");
+    let maybe_env = option_env!("HOME");
+    let included = include_str!("missing.txt");
+    let bytes = include_bytes!("missing.bin");
+    let file_name = file!();
+    let module_name = module_path!();
+    let line_no = line!();
+    let column_no = column!();
+    maybe_env
+}
+"#,
+        expect![[r#"
+            package body_builtin_macro_types_fixture
+
+            body_builtin_macro_types_fixture [lib]
+            body b0 fn body_builtin_macro_types_fixture[lib]::crate::use_it @ 10:1-23:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10
+            bindings
+            - v0 let cfg_value `cfg_value` => bool @ 11:9-11:18
+            - v1 let stringified `stringified` => &str @ 12:9-12:20
+            - v2 let concatenated `concatenated` => &str @ 13:9-13:21
+            - v3 let env_value `env_value` => &str @ 14:9-14:18
+            - v4 let maybe_env `maybe_env` => nominal enum body_builtin_macro_types_fixture[lib]::crate::core::option::Option<&str> @ 15:9-15:18
+            - v5 let included `included` => &str @ 16:9-16:17
+            - v6 let bytes `bytes` => &[u8] @ 17:9-17:14
+            - v7 let file_name `file_name` => &str @ 18:9-18:18
+            - v8 let module_name `module_name` => &str @ 19:9-19:20
+            - v9 let line_no `line_no` => u32 @ 20:9-20:16
+            - v10 let column_no `column_no` => u32 @ 21:9-21:18
+            body
+            expr e12 block s1 => nominal enum body_builtin_macro_types_fixture[lib]::crate::core::option::Option<&str> @ 10:17-23:2
+              stmt s0 let v0 @ 11:5-11:47
+                initializer
+                  expr e0 builtin_macro cfg => bool @ 11:21-11:46
+              stmt s1 let v1 @ 12:5-12:41
+                initializer
+                  expr e1 builtin_macro stringify => &str @ 12:23-12:40
+              stmt s2 let v2 @ 13:5-13:42
+                initializer
+                  expr e2 builtin_macro concat => &str @ 13:24-13:41
+              stmt s3 let v3 @ 14:5-14:34
+                initializer
+                  expr e3 builtin_macro env => &str @ 14:21-14:33
+              stmt s4 let v4 @ 15:5-15:41
+                initializer
+                  expr e4 builtin_macro option_env => nominal enum body_builtin_macro_types_fixture[lib]::crate::core::option::Option<&str> @ 15:21-15:40
+              stmt s5 let v5 @ 16:5-16:48
+                initializer
+                  expr e5 builtin_macro include_str => &str @ 16:20-16:47
+              stmt s6 let v6 @ 17:5-17:47
+                initializer
+                  expr e6 builtin_macro include_bytes => &[u8] @ 17:17-17:46
+              stmt s7 let v7 @ 18:5-18:29
+                initializer
+                  expr e7 builtin_macro file => &str @ 18:21-18:28
+              stmt s8 let v8 @ 19:5-19:38
+                initializer
+                  expr e8 builtin_macro module_path => &str @ 19:23-19:37
+              stmt s9 let v9 @ 20:5-20:27
+                initializer
+                  expr e9 builtin_macro line => u32 @ 20:19-20:26
+              stmt s10 let v10 @ 21:5-21:31
+                initializer
+                  expr e10 builtin_macro column => u32 @ 21:21-21:30
+              tail
+                expr e11 path maybe_env -> local v4 => nominal enum body_builtin_macro_types_fixture[lib]::crate::core::option::Option<&str> @ 22:5-22:14
+        "#]],
+    );
+}

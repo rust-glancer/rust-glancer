@@ -21,9 +21,9 @@ pub use self::{
     binding::{BindingData, BindingKind, BodySelfParamKind},
     data::{BodyData, FunctionParamData},
     expr::{
-        ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind,
-        ExprData, ExprKind, ExprRangeKind, ExprUnaryOp, ExprWrapperKind, MatchArmData,
-        RecordExprField, RecordExprSpread,
+        BuiltinMacroExprKind, ClosureCapture, ClosureKind, ClosureParamData, ExprAssignOp,
+        ExprBinaryOp, ExprBlockKind, ExprData, ExprKind, ExprRangeKind, ExprUnaryOp,
+        ExprWrapperKind, MatchArmData, RecordExprField, RecordExprSpread,
     },
     label::LabelData,
     literal::LiteralKind,

@@ -134,6 +134,7 @@ where
                 | ExprKind::Record { .. }
                 | ExprKind::MethodCall { .. }
                 | ExprKind::Wrapper { .. }
+                | ExprKind::BuiltinMacro { .. }
                 | ExprKind::Literal { .. }
                 | ExprKind::Underscore
                 | ExprKind::Yield { .. }

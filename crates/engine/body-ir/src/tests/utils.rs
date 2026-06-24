@@ -802,6 +802,7 @@ impl TargetBodyIrSnapshot<'_> {
                     self.render_expr(body, *inner, depth + 2, dump);
                 }
             }
+            ExprKind::BuiltinMacro { .. } => {}
             ExprKind::Yield { value } | ExprKind::Yeet { value } | ExprKind::Become { value } => {
                 if let Some(value) = value {
                     writeln!(dump, "{}value", indent(depth + 1))
@@ -960,6 +961,7 @@ impl TargetBodyIrSnapshot<'_> {
                 format!("record {path}")
             }
             ExprKind::Wrapper { kind, .. } => format!("wrapper {kind}"),
+            ExprKind::BuiltinMacro { kind } => format!("builtin_macro {kind}"),
             ExprKind::Literal { kind } => {
                 format!("literal {kind} `{}`", self.render_source_text(data.source))
             }

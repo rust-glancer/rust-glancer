@@ -6,7 +6,9 @@
 
 use anyhow::Context as _;
 
-use rg_ir_model::{BodySource, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef};
+use rg_ir_model::{
+    BodySource, BuiltinMacroExprKind, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef,
+};
 use rg_ir_storage::{
     DefMapQuery, ImportPath, MacroDefinitionData, MacroDefinitionView, PathResolver,
     ScopeResolutionEnv,
@@ -24,6 +26,8 @@ use rg_tt::syntax_bridge::{ExpansionSpanMap, SpanFactory, syntax_node_to_token_t
 use rg_workspace::RustEdition;
 
 use crate::DefMapReadTxn;
+
+use super::builtin;
 
 /// Generated body syntax plus the macro-definition origin needed while lowering it.
 pub struct ExpandedBodyMacro<T> {
@@ -104,7 +108,18 @@ impl ExpandedBodyMacro<Parse<SyntaxNode>> {
     }
 }
 
-/// Expands declarative macros for Body IR lowering using frozen def-map visibility.
+/// Expression-position macro call result after body macro lookup.
+pub enum BodyMacroExprExpansion {
+    /// Declarative macro expansion produced syntax that body lowering should lower recursively.
+    Expanded(ExpandedBodyMacro<ast::Expr>),
+    /// Compiler-provided expression macro that has no declarative transcriber to execute.
+    Builtin(BuiltinMacroExprKind),
+}
+
+/// Expands body macro calls using frozen def-map visibility.
+///
+/// Declarative macros return generated syntax. Expression-position compiler builtins are reported
+/// only after ordinary macro lookup fails so user macros can still shadow builtin names.
 pub struct BodyMacroExpander<'db, 'txn> {
     def_maps: &'txn DefMapReadTxn<'db>,
     runtime: MacroExpansionRuntime,
@@ -118,7 +133,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         }
     }
 
-    /// Expands one expression-position macro call to generated expression syntax.
+    /// Resolves one expression-position macro call to generated syntax or a builtin marker.
     pub fn expand_expr_call(
         &mut self,
         target: TargetRef,
@@ -127,21 +142,32 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         span: Span,
         parse_package: &rg_parse::Package,
         call: &ast::MacroCall,
-    ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Expr>>> {
-        let Some(expanded) = self.expand_call_syntax(
-            target,
-            module,
-            file_id,
-            span,
-            parse_package,
-            call,
-            ExpansionParseKind::Expr,
-        )?
+    ) -> anyhow::Result<Option<BodyMacroExprExpansion>> {
+        let query = DefMapQuery::new(self.def_maps);
+        let Some(resolution) =
+            Self::resolve_call(&query, target, module, file_id, span, parse_package, call)?
         else {
             return Ok(None);
         };
 
-        Ok(expanded.cast_root_or_child::<ast::Expr>())
+        if let Some(resolved) = resolution.resolved {
+            let Some(expanded) = self.expand_resolved_invocation(
+                &resolution.invocation,
+                resolved,
+                ExpansionParseKind::Expr,
+            ) else {
+                return Ok(None);
+            };
+
+            return Ok(expanded
+                .cast_root_or_child::<ast::Expr>()
+                .map(BodyMacroExprExpansion::Expanded));
+        }
+
+        Ok(
+            builtin::body_expr_kind_from_path(&resolution.path)
+                .map(BodyMacroExprExpansion::Builtin),
+        )
     }
 
     /// Expands one statement-position macro call to generated statement-list syntax.
@@ -223,6 +249,8 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    /// Unlike `expand_expr_call`, this only expands declarative macro syntax.
+    /// Builtin expression macros are handled when generated code is lowered recursively.
     fn expand_call_syntax(
         &mut self,
         target: TargetRef,
@@ -233,35 +261,70 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         call: &ast::MacroCall,
         parse_kind: ExpansionParseKind,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<Parse<SyntaxNode>>>> {
-        let Some(invocation) =
-            BodyMacroInvocation::from_ast(file_id, span, parse_package.edition(), call)
+        let query = DefMapQuery::new(self.def_maps);
+        let Some(resolution) =
+            Self::resolve_call(&query, target, module, file_id, span, parse_package, call)?
         else {
             return Ok(None);
         };
+        let Some(resolved) = resolution.resolved else {
+            return Ok(None);
+        };
+
+        Ok(self.expand_resolved_invocation(&resolution.invocation, resolved, parse_kind))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn resolve_call<'a>(
+        query: &'a DefMapQuery<&DefMapReadTxn<'_>>,
+        target: TargetRef,
+        module: ModuleRef,
+        file_id: FileId,
+        span: Span,
+        parse_package: &rg_parse::Package,
+        call: &ast::MacroCall,
+    ) -> anyhow::Result<Option<BodyMacroCallResolution<'a>>> {
+        let invocation =
+            match BodyMacroInvocation::from_ast(file_id, span, parse_package.edition(), call) {
+                Some(invocation) => invocation,
+                None => return Ok(None),
+            };
         // Note: generated body syntax carries its macro-definition crate through
         // `ExpandedBodyMacro`. The invocation path itself does not yet have that context, so a
         // body call written through `$crate::macro_name!()` stays unresolved.
+        // TODO: soft hack, we are not inside of macro resolution context here, so we use this
+        // for the lack of better method; probably we should get rid of `ImportPath` whatsoever
+        // (it exists for historical reasons mostly, and it's equivalent to `Path`) and introduce
+        // appropriate constructors.
         let Some(path) = ImportPath::from_macro_path_text(invocation.path_text(), None) else {
             return Ok(None);
         };
+        let resolved = Self::resolve_macro_definition(query, target, module, &path)
+            .context("while attempting to resolve body macro call")?;
 
-        let query = DefMapQuery::new(self.def_maps);
-        let Some(resolved) = Self::resolve_macro_definition(&query, target, module, &path)
-            .context("while attempting to resolve body macro call")?
-        else {
-            return Ok(None);
-        };
+        Ok(Some(BodyMacroCallResolution {
+            invocation,
+            path,
+            resolved,
+        }))
+    }
 
+    fn expand_resolved_invocation(
+        &mut self,
+        invocation: &BodyMacroInvocation,
+        resolved: MacroDefinitionView<'_>,
+        parse_kind: ExpansionParseKind,
+    ) -> Option<ExpandedBodyMacro<Parse<SyntaxNode>>> {
         let request = invocation.expansion_request(resolved.def_ref, resolved.data, parse_kind);
         let Some(ExpansionSyntax { parse, span_map }) = self.runtime.expand_now(request) else {
-            return Ok(None);
+            return None;
         };
 
-        Ok(Some(ExpandedBodyMacro::new(
+        Some(ExpandedBodyMacro::new(
             parse,
             span_map,
             resolved.data.dollar_crate_target,
-        )))
+        ))
     }
 
     fn resolve_macro_definition<'a>(
@@ -341,6 +404,13 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
 
         Ok(resolved.into_option())
     }
+}
+
+/// Body macro call after parsing and macro lookup.
+struct BodyMacroCallResolution<'a> {
+    invocation: BodyMacroInvocation,
+    path: ImportPath,
+    resolved: Option<MacroDefinitionView<'a>>,
 }
 
 /// Body-specific adapter from parsed macro-call syntax to runtime expansion input.

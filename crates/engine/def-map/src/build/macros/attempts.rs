@@ -22,12 +22,13 @@ use crate::build::{
     collect::TargetState,
     finalize::{FinalizeTargetStates, ScopeMatrix},
 };
+use crate::macro_expansion::builtin::BuiltinMacroDisposition;
 use crate::profile::metric;
 
 use super::{
     MacroCallSite, MacroDirectiveState,
     generated::{GeneratedCollector, GeneratedOrigin},
-    resolve::{BuiltinMacroDisposition, ItemMacroResolver},
+    resolve::ItemMacroResolver,
     source_fragment::{SourceFragmentCollector, SourceFragmentOrigin},
 };
 
