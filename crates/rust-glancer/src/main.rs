@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use rg_project::StartupCacheLoad;
 
 mod analyze;
+mod compare_lsp;
 mod logging;
 mod memory;
 mod start_engine;
@@ -55,6 +56,16 @@ enum Command {
         #[clap(long, value_enum, default_value = "text")]
         format: analyze::OutputFormat,
     },
+    /// Compare rust-glancer LSP query behavior against another LSP server.
+    CompareLsp {
+        fixture: compare_lsp::CliFixture,
+        /// Override the fixture root. Defaults to the selected fixture's configured root.
+        #[clap(long)]
+        path: Option<PathBuf>,
+        /// Render the comparison report for humans or CI tooling.
+        #[clap(long, value_enum, default_value = "text")]
+        format: compare_lsp::OutputFormat,
+    },
     /// Start the language server over stdio.
     Lsp,
     /// Start one analysis engine subprocess.
@@ -97,6 +108,14 @@ fn main() -> anyhow::Result<()> {
                 target,
                 format,
             )
+        }
+        Command::CompareLsp {
+            fixture,
+            path,
+            format,
+        } => {
+            logging::init_plain_tracing();
+            compare_lsp::run(fixture, path, format)
         }
         Command::Lsp => start_server::start_server(),
         Command::LspEngine {
