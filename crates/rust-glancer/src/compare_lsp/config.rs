@@ -1,8 +1,10 @@
+//! CLI config for LSP comparison.
+
 use std::fmt as std_fmt;
 
 use clap::ValueEnum;
 
-/// CLI-facing LSP comparison fixture names.
+/// Golden fixture whose query vector should be compared between servers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum CliFixture {
     #[value(name = "rust_analyzer", alias = "rust-analyzer")]
@@ -23,7 +25,7 @@ impl std_fmt::Display for CliFixture {
     }
 }
 
-/// Output format for the `compare-lsp` command.
+/// Report format for the `compare-lsp` command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub(crate) enum OutputFormat {
     Text,
