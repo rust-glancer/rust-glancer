@@ -6,6 +6,7 @@
 
 use anyhow::Context as _;
 
+use rg_cfg_eval::CfgEvaluator;
 use rg_ir_model::{
     BodySource, BuiltinMacroExprKind, DefMapRef, LocalDefRef, ModuleId, ModuleRef, TargetRef,
 };
@@ -14,7 +15,7 @@ use rg_ir_storage::{
     ScopeResolutionEnv,
 };
 use rg_macro_runtime::{
-    ExpansionParseKind, ExpansionSyntax, MacroExpansionRequest, MacroExpansionRuntime,
+    CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRequest, MacroExpansionRuntime,
     macro_edition,
 };
 use rg_parse::{FileId, Span};
@@ -141,6 +142,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         file_id: FileId,
         span: Span,
         parse_package: &rg_parse::Package,
+        cfg: CfgEvaluator<'_>,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<BodyMacroExprExpansion>> {
         let query = DefMapQuery::new(self.def_maps);
@@ -164,6 +166,17 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
                 .map(BodyMacroExprExpansion::Expanded));
         }
 
+        if Self::is_cfg_select_builtin(&resolution.path) {
+            return Ok(Self::expand_builtin_cfg_select(
+                &resolution.invocation,
+                cfg,
+                target,
+                ExpansionParseKind::Expr,
+            )
+            .and_then(|expanded| expanded.cast_root_or_child::<ast::Expr>())
+            .map(BodyMacroExprExpansion::Expanded));
+        }
+
         Ok(
             builtin::body_expr_kind_from_path(&resolution.path)
                 .map(BodyMacroExprExpansion::Builtin),
@@ -178,6 +191,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         file_id: FileId,
         span: Span,
         parse_package: &rg_parse::Package,
+        cfg: CfgEvaluator<'_>,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::MacroStmts>>> {
         let Some(expanded) = self.expand_call_syntax(
@@ -186,6 +200,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             file_id,
             span,
             parse_package,
+            Some(cfg),
             call,
             ExpansionParseKind::Statements,
         )?
@@ -212,6 +227,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             file_id,
             span,
             parse_package,
+            None,
             call,
             ExpansionParseKind::Pattern,
         )?
@@ -238,6 +254,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             file_id,
             span,
             parse_package,
+            None,
             call,
             ExpansionParseKind::Type,
         )?
@@ -249,8 +266,8 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    /// Unlike `expand_expr_call`, this only expands declarative macro syntax.
-    /// Builtin expression macros are handled when generated code is lowered recursively.
+    /// Unlike `expand_expr_call`, this does not classify expression builtins. It only expands
+    /// declarative macros plus source-selecting `cfg_select!` statement bodies.
     fn expand_call_syntax(
         &mut self,
         target: TargetRef,
@@ -258,6 +275,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         file_id: FileId,
         span: Span,
         parse_package: &rg_parse::Package,
+        cfg: Option<CfgEvaluator<'_>>,
         call: &ast::MacroCall,
         parse_kind: ExpansionParseKind,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<Parse<SyntaxNode>>>> {
@@ -268,10 +286,47 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             return Ok(None);
         };
         let Some(resolved) = resolution.resolved else {
+            if parse_kind == ExpansionParseKind::Statements
+                && Self::is_cfg_select_builtin(&resolution.path)
+            {
+                let Some(cfg) = cfg else {
+                    return Ok(None);
+                };
+                return Ok(Self::expand_builtin_cfg_select(
+                    &resolution.invocation,
+                    cfg,
+                    target,
+                    parse_kind,
+                ));
+            }
             return Ok(None);
         };
 
         Ok(self.expand_resolved_invocation(&resolution.invocation, resolved, parse_kind))
+    }
+
+    fn expand_builtin_cfg_select(
+        invocation: &BodyMacroInvocation,
+        cfg: CfgEvaluator<'_>,
+        target: TargetRef,
+        parse_kind: ExpansionParseKind,
+    ) -> Option<ExpandedBodyMacro<Parse<SyntaxNode>>> {
+        let cfg_select = CfgSelect::parse(&invocation.args)?;
+        let arm = cfg_select
+            .arms()
+            .iter()
+            .find(|arm| cfg.is_predicate_enabled(&arm.predicate))?;
+        let ExpansionSyntax { parse, span_map } =
+            ExpansionSyntax::from_token_tree(arm.payload.clone(), parse_kind);
+
+        Some(ExpandedBodyMacro::new(parse, span_map, target))
+    }
+
+    fn is_cfg_select_builtin(path: &ImportPath) -> bool {
+        matches!(
+            builtin::BuiltinMacroDisposition::from_path(path),
+            Some(builtin::BuiltinMacroDisposition::CfgSelect)
+        )
     }
 
     #[allow(clippy::too_many_arguments)]

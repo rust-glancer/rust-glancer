@@ -6,6 +6,7 @@
 
 use std::{cell::Cell, rc::Rc};
 
+use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{
     BodyMacroExpander as DefMapBodyMacroExpander, BodyMacroExprExpansion, DefMapReadTxn,
     ExpandedBodyMacro,
@@ -98,6 +99,7 @@ impl Drop for BodyMacroExpansionScope {
 pub(crate) struct BodyMacroExpansion<'ctx, 'db> {
     parse_package: &'ctx rg_parse::Package,
     expander: DefMapBodyMacroExpander<'db, 'ctx>,
+    cfg: CfgEvaluator<'ctx>,
     depth: Rc<Cell<usize>>,
 }
 
@@ -105,10 +107,12 @@ impl<'ctx, 'db> BodyMacroExpansion<'ctx, 'db> {
     pub(crate) fn new(
         parse_package: &'ctx rg_parse::Package,
         def_maps: &'ctx DefMapReadTxn<'db>,
+        cfg: CfgEvaluator<'ctx>,
     ) -> Self {
         Self {
             parse_package,
             expander: DefMapBodyMacroExpander::new(def_maps),
+            cfg,
             depth: Rc::new(Cell::new(0)),
         }
     }
@@ -134,8 +138,15 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         span: Span,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<BodyMacroExprExpansion>> {
-        self.expander
-            .expand_expr_call(target, module, file_id, span, self.parse_package, call)
+        self.expander.expand_expr_call(
+            target,
+            module,
+            file_id,
+            span,
+            self.parse_package,
+            self.cfg,
+            call,
+        )
     }
 
     fn expand_stmt_call(
@@ -146,8 +157,15 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         span: Span,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::MacroStmts>>> {
-        self.expander
-            .expand_stmt_call(target, module, file_id, span, self.parse_package, call)
+        self.expander.expand_stmt_call(
+            target,
+            module,
+            file_id,
+            span,
+            self.parse_package,
+            self.cfg,
+            call,
+        )
     }
 
     fn expand_pat_call(

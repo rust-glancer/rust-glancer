@@ -89,7 +89,6 @@ impl<'target> TargetBodyBuildState<'target> {
         // `body_local_items` is the cursor into `target_bodies`: each collected slot means that
         // body has its local DefMap/item store ready. Nested lowering may extend `target_bodies`,
         // so the loop stops only once every appended body has been collected too.
-        let mut macro_expansion = BodyMacroExpansion::new(self.parse_package, def_map);
         let parse_target = self
             .parse_package
             .target(self.target.target)
@@ -103,6 +102,7 @@ impl<'target> TargetBodyBuildState<'target> {
             self.parse_package.cfg_options(),
             parse_target.enables_test_cfg(),
         );
+        let mut macro_expansion = BodyMacroExpansion::new(self.parse_package, def_map, cfg);
         while self.body_local_items.len() < self.target_bodies.bodies().len() {
             let body_idx = self.body_local_items.len();
             let body_ref = self.body_ref(body_idx);

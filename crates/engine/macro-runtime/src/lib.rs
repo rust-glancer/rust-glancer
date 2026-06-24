@@ -10,7 +10,7 @@ mod executor;
 mod runtime;
 mod syntax;
 
-pub use rg_macro_expand::{ExpansionParseKind, ExpansionSyntax};
+pub use rg_macro_expand::{CfgSelect, ExpansionParseKind, ExpansionSyntax};
 
 pub use self::{
     cache::{MacroCompileRecord, MacroExpandRecord},

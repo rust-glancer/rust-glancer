@@ -583,6 +583,168 @@ pub fn use_it() -> i32 {
 }
 
 #[test]
+fn cfg_select_builtin_expands_expression_body() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_cfg_select_expr_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(input: i32) -> i32 {
+    let selected = cfg_select! {
+        false => { unresolved },
+        not(test) => { input + 1 },
+        _ => { 0 },
+    };
+
+    let fallback = cfg_select! {
+        false => { unresolved },
+        _ => { input },
+    };
+
+    selected + fallback
+}
+"#,
+        expect![[r#"
+            package body_cfg_select_expr_fixture
+
+            body_cfg_select_expr_fixture [lib]
+            body b0 fn body_cfg_select_expr_fixture[lib]::crate::use_it @ 1:1-14:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v2
+            bindings
+            - v0 param input `input`: i32 => i32 @ 1:15-1:20
+            - v1 let selected `selected` => i32 @ 2:9-2:17
+            - v2 let fallback `fallback` => i32 @ 8:9-8:17
+            body
+            expr e7 block s1 => i32 @ 1:34-14:2
+              stmt s0 let v1 @ 2:5-6:7
+                initializer
+                  expr e2 binary + => i32 @ 2:20-6:6
+                    lhs
+                      expr e0 path input -> local v0 => i32 @ 2:20-6:6
+                    rhs
+                      expr e1 literal int `1` => i32 @ 4:32-4:33
+              stmt s1 let v2 @ 8:5-11:7
+                initializer
+                  expr e3 path input -> local v0 => i32 @ 10:16-10:21
+              tail
+                expr e6 binary + => i32 @ 13:5-13:24
+                  lhs
+                    expr e4 path selected -> local v1 => i32 @ 13:5-13:13
+                  rhs
+                    expr e5 path fallback -> local v2 => i32 @ 13:16-13:24
+        "#]],
+    );
+}
+
+#[test]
+fn cfg_select_builtin_expands_statement_body() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_cfg_select_stmt_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it(input: i32) -> i32 {
+    cfg_select! {
+        false => {
+            let broken = ;
+        },
+        not(test) => {
+            let doubled = input + input;
+            let tripled = doubled + input;
+        },
+        _ => {
+            let tripled = 0;
+        },
+    };
+
+    tripled
+}
+"#,
+        expect![[r#"
+            package body_cfg_select_stmt_fixture
+
+            body_cfg_select_stmt_fixture [lib]
+            body b0 fn body_cfg_select_stmt_fixture[lib]::crate::use_it @ 1:1-16:2
+            scopes
+            - s0 parent <none>: v0
+            - s1 parent s0: v1, v2
+            bindings
+            - v0 param input `input`: i32 => i32 @ 1:15-1:20
+            - v1 let doubled `cfg_select! { false => { let broken = ; }, not(test) => { let doubled = input + input; let tripled = doubled + input; }, _ => { let tripled = 0; }, }` => i32 @ 2:5-13:6
+            - v2 let tripled `cfg_select! { false => { let broken = ; }, not(test) => { let doubled = input + input; let tripled = doubled + input; }, _ => { let tripled = 0; }, }` => i32 @ 2:5-13:6
+            body
+            expr e7 block s1 => i32 @ 1:34-16:2
+              stmt s0 let v1 @ 2:5-13:6
+                initializer
+                  expr e2 binary + => i32 @ 2:5-13:6
+                    lhs
+                      expr e0 path input -> local v0 => i32 @ 2:5-13:6
+                    rhs
+                      expr e1 path input -> local v0 => i32 @ 2:5-13:6
+              stmt s1 let v2 @ 2:5-13:6
+                initializer
+                  expr e5 binary + => i32 @ 2:5-13:6
+                    lhs
+                      expr e3 path doubled -> local v1 => i32 @ 2:5-13:6
+                    rhs
+                      expr e4 path input -> local v0 => i32 @ 2:5-13:6
+              tail
+                expr e6 path tripled -> local v2 => i32 @ 15:5-15:12
+        "#]],
+    );
+}
+
+#[test]
+fn local_cfg_select_macro_shadows_body_builtin() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_cfg_select_shadow_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+macro_rules! cfg_select {
+    ($($tt:tt)*) => {
+        true
+    };
+}
+
+pub fn use_it() -> bool {
+    cfg_select! {
+        _ => { 0 },
+    }
+}
+"#,
+        expect![[r#"
+            package body_cfg_select_shadow_fixture
+
+            body_cfg_select_shadow_fixture [lib]
+            body b0 fn body_cfg_select_shadow_fixture[lib]::crate::use_it @ 7:1-11:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e1 block s1 => bool @ 7:25-11:2
+              tail
+                expr e0 literal bool `cfg_select! { _ => { 0 }, }` => bool @ 8:5-10:6
+        "#]],
+    );
+}
+
+#[test]
 fn format_args_builtin_lowers_as_body_expression() {
     check_project_body_ir(
         r#"

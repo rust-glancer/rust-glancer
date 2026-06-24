@@ -41,7 +41,8 @@ pub(super) struct TargetLowering<'a> {
 impl<'a> TargetLowering<'a> {
     pub(super) fn lower(mut self) -> anyhow::Result<TargetBodies> {
         let tasks = self.selected_body_tasks()?;
-        let mut macro_expansion = BodyMacroExpansion::new(self.parse_package, self.def_map);
+        let mut macro_expansion =
+            BodyMacroExpansion::new(self.parse_package, self.def_map, self.cfg);
         BodyTaskLowering::new(
             self.parse_package,
             &mut self.target_bodies,
