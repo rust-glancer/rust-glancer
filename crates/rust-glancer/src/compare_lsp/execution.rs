@@ -33,6 +33,10 @@ pub(crate) struct ExecutionSummary {
 }
 
 impl ExecutionSummary {
+    pub(crate) fn results(&self) -> &[QueryExecution] {
+        &self.results
+    }
+
     pub(crate) fn summary_line(&self) -> String {
         format!("{} query cases sent to both servers", self.results.len())
     }
@@ -58,7 +62,7 @@ impl ExecutionSummary {
             }
             raw_results.push(format!(
                 "{}={}",
-                query.kind.label(),
+                query.kind().label(),
                 outcome.value.summary()
             ));
         }
@@ -84,7 +88,7 @@ pub(crate) enum ServerUnderTest {
 }
 
 impl ServerUnderTest {
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Self::RustGlancer => "rust-glancer",
             Self::RustAnalyzer => "rust-analyzer",
@@ -93,14 +97,23 @@ impl ServerUnderTest {
 }
 
 #[derive(Debug)]
-struct QueryExecution {
+pub(crate) struct QueryExecution {
+    label: &'static str,
     kind: QueryKind,
     rust_glancer: RawServerOutcome,
     rust_analyzer: RawServerOutcome,
 }
 
 impl QueryExecution {
-    fn outcome(&self, server: ServerUnderTest) -> &RawServerOutcome {
+    pub(crate) fn label(&self) -> &'static str {
+        self.label
+    }
+
+    pub(crate) fn kind(&self) -> QueryKind {
+        self.kind
+    }
+
+    pub(crate) fn outcome(&self, server: ServerUnderTest) -> &RawServerOutcome {
         match server {
             ServerUnderTest::RustGlancer => &self.rust_glancer,
             ServerUnderTest::RustAnalyzer => &self.rust_analyzer,
@@ -109,13 +122,23 @@ impl QueryExecution {
 }
 
 #[derive(Debug)]
-struct RawServerOutcome {
+pub(crate) struct RawServerOutcome {
     latency: Duration,
     value: RawOutcome,
 }
 
+impl RawServerOutcome {
+    pub(crate) fn latency(&self) -> Duration {
+        self.latency
+    }
+
+    pub(crate) fn value(&self) -> &RawOutcome {
+        &self.value
+    }
+}
+
 #[derive(Debug)]
-enum RawOutcome {
+pub(crate) enum RawOutcome {
     Success {
         /// Full response body retained for the later normalization pass.
         raw: Value,
@@ -160,7 +183,7 @@ impl RawOutcome {
 }
 
 #[derive(Debug)]
-enum RawSuccessShape {
+pub(crate) enum RawSuccessShape {
     Locations { count: Option<usize> },
     Hover { present: bool },
 }
@@ -201,6 +224,7 @@ pub(crate) async fn run(
         let rust_analyzer = execute_rust_analyzer(servers, query_case.kind(), &request).await;
 
         results.push(QueryExecution {
+            label: query_case.label(),
             kind: query_case.kind(),
             rust_glancer,
             rust_analyzer,
@@ -325,18 +349,4 @@ fn compact(message: &str) -> String {
 
 fn format_duration(duration: Duration) -> String {
     format!("{:.1}ms", duration.as_secs_f64() * 1_000.0)
-}
-
-trait QueryKindLabel {
-    fn label(self) -> &'static str;
-}
-
-impl QueryKindLabel for QueryKind {
-    fn label(self) -> &'static str {
-        match self {
-            Self::References { .. } => "references",
-            Self::GotoDefinition => "goto_definition",
-            Self::Hover => "hover",
-        }
-    }
 }

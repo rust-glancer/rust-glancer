@@ -9,6 +9,7 @@ mod config;
 mod execution;
 mod fixture;
 mod lsp_client;
+mod normalization;
 mod query;
 mod server;
 
@@ -36,12 +37,14 @@ pub(crate) async fn run(
     let shutdown = servers.shutdown().await;
     let execution = execution?;
     shutdown?;
+    let normalized = normalization::NormalizedSummary::from_execution(&fixture, &execution)?;
 
     anyhow::bail!(
         "LSP comparison fixture `{}` resolved to {} with {} query cases, \
          methods: {}. Both servers initialized and opened {} source files: {}={}, {}={}. \
          Query execution ran: {}; {}; {}. \
-         Normalization, comparison, and report rendering are not implemented yet \
+         Normalization ran: {}; {}; {}. \
+         Comparison and report rendering are not implemented yet \
          (format: {output_format:?})",
         fixture.kind(),
         fixture.root().display(),
@@ -55,6 +58,9 @@ pub(crate) async fn run(
         execution.summary_line(),
         execution.server_summary_line(execution::ServerUnderTest::RustGlancer),
         execution.server_summary_line(execution::ServerUnderTest::RustAnalyzer),
+        normalized.summary_line(),
+        normalized.server_summary_line(execution::ServerUnderTest::RustGlancer),
+        normalized.server_summary_line(execution::ServerUnderTest::RustAnalyzer),
     );
 }
 

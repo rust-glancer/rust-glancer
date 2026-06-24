@@ -80,6 +80,14 @@ pub(crate) enum QueryKind {
 }
 
 impl QueryKind {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::References { .. } => "references",
+            Self::GotoDefinition => "goto_definition",
+            Self::Hover => "hover",
+        }
+    }
+
     pub(crate) fn is_references(self) -> bool {
         matches!(self, Self::References { .. })
     }
