@@ -1,10 +1,13 @@
 //! Public-LSP comparison command.
 //!
-//! This command  compares editor-facing query behavior by driving `rust-glancer lsp` and 
+//! This command compares editor-facing query behavior by driving `rust-glancer lsp` and
 //! a reference server through the same protocol boundary.
 
 mod config;
 mod fixture;
+// The protocol client is exercised by focused tests before the process lifecycle starts using it.
+#[allow(dead_code)]
+mod lsp_client;
 mod query;
 
 use std::path::PathBuf;
