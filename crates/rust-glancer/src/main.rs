@@ -1,5 +1,6 @@
 use std::{net::SocketAddr, path::PathBuf};
 
+use anyhow::Context as _;
 use clap::{Parser, Subcommand};
 use rg_project::StartupCacheLoad;
 
@@ -115,7 +116,11 @@ fn main() -> anyhow::Result<()> {
             format,
         } => {
             logging::init_plain_tracing();
-            compare_lsp::run(fixture, path, format)
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("while attempting to build LSP comparison Tokio runtime")?;
+            runtime.block_on(compare_lsp::run(fixture, path, format))
         }
         Command::Lsp => start_server::start_server(),
         Command::LspEngine {

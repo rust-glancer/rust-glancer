@@ -1809,7 +1809,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "futures",
  "gungraun",
+ "ls-types",
  "rg_lsp_engine",
  "rg_lsp_server",
  "rg_profile",
@@ -1821,6 +1823,8 @@ dependencies = [
  "tikv-jemalloc-sys",
  "tikv-jemallocator",
  "tokio",
+ "tower",
+ "tower-lsp-server",
  "tracing",
  "tracing-subscriber",
 ]

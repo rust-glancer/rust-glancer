@@ -119,7 +119,7 @@ impl Fixture {
 
             let source = std::fs::read_to_string(&path).with_context(|| {
                 format!(
-                    "while attempting to read LSP comparison query file {}",
+                    "Reading LSP comparison query file {} failed",
                     path.display()
                 )
             })?;

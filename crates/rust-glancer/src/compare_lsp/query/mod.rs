@@ -65,6 +65,10 @@ impl SourcePosition {
     pub(crate) fn character(self) -> u32 {
         self.character
     }
+
+    pub(crate) fn to_lsp(self) -> ls_types::Position {
+        ls_types::Position::new(self.line, self.character)
+    }
 }
 
 /// LSP request family plus method-specific options needed for comparison.

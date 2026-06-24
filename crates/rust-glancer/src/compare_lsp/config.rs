@@ -1,4 +1,7 @@
-//! CLI config for LSP comparison.
+//! CLI-facing selectors for the LSP comparison command.
+//!
+//! These enums stay small and human-readable because they are the contract exposed through clap.
+//! Fixture resolution and server setup happen in later modules after the user choice is parsed.
 
 use std::fmt as std_fmt;
 
