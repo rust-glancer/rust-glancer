@@ -12,7 +12,6 @@ use rg_ir_model::{
 };
 use rg_ir_storage::{
     DefMapQuery, ImportPath, MacroDefinitionData, MacroDefinitionView, PathResolver,
-    ScopeResolutionEnv,
 };
 use rg_macro_runtime::{
     CfgSelect, ExpansionParseKind, ExpansionSyntax, MacroExpansionRequest, MacroExpansionRuntime,
@@ -152,18 +151,22 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             return Ok(None);
         };
 
-        if let Some(resolved) = resolution.resolved {
-            let Some(expanded) = self.expand_resolved_invocation(
-                &resolution.invocation,
-                resolved,
-                ExpansionParseKind::Expr,
-            ) else {
-                return Ok(None);
-            };
+        match resolution.resolved {
+            ExpectedUnique::One(resolved) => {
+                let Some(expanded) = self.expand_resolved_invocation(
+                    &resolution.invocation,
+                    resolved,
+                    ExpansionParseKind::Expr,
+                ) else {
+                    return Ok(None);
+                };
 
-            return Ok(expanded
-                .cast_root_or_child::<ast::Expr>()
-                .map(BodyMacroExprExpansion::Expanded));
+                return Ok(expanded
+                    .cast_root_or_child::<ast::Expr>()
+                    .map(BodyMacroExprExpansion::Expanded));
+            }
+            ExpectedUnique::Ambiguous => return Ok(None),
+            ExpectedUnique::Empty => {}
         }
 
         if Self::is_cfg_select_builtin(&resolution.path) {
@@ -285,21 +288,25 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         else {
             return Ok(None);
         };
-        let Some(resolved) = resolution.resolved else {
-            if parse_kind == ExpansionParseKind::Statements
-                && Self::is_cfg_select_builtin(&resolution.path)
-            {
-                let Some(cfg) = cfg else {
-                    return Ok(None);
-                };
-                return Ok(Self::expand_builtin_cfg_select(
-                    &resolution.invocation,
-                    cfg,
-                    target,
-                    parse_kind,
-                ));
+        let resolved = match resolution.resolved {
+            ExpectedUnique::One(resolved) => resolved,
+            ExpectedUnique::Ambiguous => return Ok(None),
+            ExpectedUnique::Empty => {
+                if parse_kind == ExpansionParseKind::Statements
+                    && Self::is_cfg_select_builtin(&resolution.path)
+                {
+                    let Some(cfg) = cfg else {
+                        return Ok(None);
+                    };
+                    return Ok(Self::expand_builtin_cfg_select(
+                        &resolution.invocation,
+                        cfg,
+                        target,
+                        parse_kind,
+                    ));
+                }
+                return Ok(None);
             }
-            return Ok(None);
         };
 
         Ok(self.expand_resolved_invocation(&resolution.invocation, resolved, parse_kind))
@@ -387,14 +394,14 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         target: TargetRef,
         module: ModuleRef,
         path: &ImportPath,
-    ) -> anyhow::Result<Option<MacroDefinitionView<'a>>> {
+    ) -> anyhow::Result<ExpectedUnique<MacroDefinitionView<'a>>> {
         // Body expansion is target-local. Synthetic body modules resolve through their semantic
         // fallback before reaching this facade.
         let Some(module_target) = module.origin.as_target_ref() else {
-            return Ok(None);
+            return Ok(ExpectedUnique::Empty);
         };
         if module_target != target {
-            return Ok(None);
+            return Ok(ExpectedUnique::Empty);
         }
 
         if let Some(name) = path.relative_single_name() {
@@ -416,7 +423,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             }
         }
 
-        Ok(macros.into_option())
+        Ok(macros)
     }
 
     fn resolve_single_name_macro<'a>(
@@ -424,8 +431,12 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         target: TargetRef,
         module: ModuleId,
         name: &Name,
-    ) -> anyhow::Result<Option<MacroDefinitionView<'a>>> {
-        let mut resolved = ExpectedUnique::new();
+    ) -> anyhow::Result<ExpectedUnique<MacroDefinitionView<'a>>> {
+        let importing_module = ModuleRef {
+            origin: DefMapRef::Target(target),
+            module,
+        };
+        let mut module_scope_modules = Vec::new();
         let mut current = Some(module);
 
         // Note: Body macro expansion intentionally uses the frozen module graph as an approximation
@@ -437,19 +448,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
                 origin: DefMapRef::Target(target),
                 module,
             };
-            if let Some(entry) = query
-                .module_scope_entry(module_ref, name.as_str())
-                .context("while attempting to inspect body macro scope entry")?
-            {
-                for binding in entry.macros() {
-                    if let Some(macro_) = query
-                        .macro_definition_view(binding.def)
-                        .context("while attempting to fetch body macro definition")?
-                    {
-                        resolved.push(macro_);
-                    }
-                }
-            }
+            module_scope_modules.push(module_ref);
 
             current = query
                 .module_data(module_ref)
@@ -457,7 +456,34 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
                 .and_then(|module| module.parent);
         }
 
-        Ok(resolved.into_option())
+        let bindings = PathResolver::new(query)
+            .visible_unqualified_macro_bindings(importing_module, module_scope_modules, name)
+            .context("while attempting to resolve unqualified body macro")?;
+
+        let module_scope = Self::resolve_macro_bindings(query, bindings.module_scope)?;
+        if !module_scope.is_empty() {
+            return Ok(module_scope);
+        }
+
+        Self::resolve_macro_bindings(query, bindings.standard_prelude)
+    }
+
+    fn resolve_macro_bindings<'a>(
+        query: &'a DefMapQuery<&DefMapReadTxn<'_>>,
+        bindings: Vec<rg_ir_storage::ScopeBinding>,
+    ) -> anyhow::Result<ExpectedUnique<MacroDefinitionView<'a>>> {
+        let mut resolved = ExpectedUnique::new();
+
+        for binding in bindings {
+            if let Some(macro_) = query
+                .macro_definition_view(binding.def)
+                .context("while attempting to fetch body macro definition")?
+            {
+                resolved.push(macro_);
+            }
+        }
+
+        Ok(resolved)
     }
 }
 
@@ -465,7 +491,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
 struct BodyMacroCallResolution<'a> {
     invocation: BodyMacroInvocation,
     path: ImportPath,
-    resolved: Option<MacroDefinitionView<'a>>,
+    resolved: ExpectedUnique<MacroDefinitionView<'a>>,
 }
 
 /// Body-specific adapter from parsed macro-call syntax to runtime expansion input.

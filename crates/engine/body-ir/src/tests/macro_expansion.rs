@@ -1,6 +1,6 @@
 use expect_test::expect;
 
-use super::utils::check_project_body_ir;
+use super::utils::{check_project_body_ir, check_project_body_ir_with_sysroot};
 
 #[test]
 fn expands_module_visible_macro_expression_bodies() {
@@ -48,6 +48,77 @@ pub mod inner {
                       expr e1 path input -> local v0 => i32 @ 9:33-9:38
               tail
                 expr e3 path value -> local v1 => i32 @ 10:9-10:14
+        "#]],
+    );
+}
+
+#[test]
+fn expands_standard_prelude_macro_expression_bodies() {
+    check_project_body_ir_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_prelude_macro_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() -> u8 {
+    make_expr!()
+}
+
+//- /sysroot/library/core/src/lib.rs
+pub struct Core;
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod macros {
+    macro_rules! make_expr {
+        () => {
+            12u8
+        };
+    }
+
+    pub use make_expr;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::macros::make_expr;
+    }
+}
+"#,
+        expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
+            package body_prelude_macro_fixture
+
+            body_prelude_macro_fixture [lib]
+            body b0 fn body_prelude_macro_fixture[lib]::crate::use_it @ 1:1-3:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e1 block s1 => u8 @ 1:23-3:2
+              tail
+                expr e0 literal int `make_expr!()` => u8 @ 2:5-2:17
+
+
+            package core
+
+            core [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
         "#]],
     );
 }
@@ -831,6 +902,95 @@ pub fn use_it() {
                   expr e0 builtin_macro format_args => nominal struct body_qualified_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 8:16-8:43
               tail
                 expr e1 path args -> local v0 => nominal struct body_qualified_format_args_builtin_fixture[lib]::crate::core::fmt::Arguments @ 9:5-9:9
+        "#]],
+    );
+}
+
+#[test]
+fn ambiguous_prelude_macro_blocks_body_builtin_fallback() {
+    check_project_body_ir_with_sysroot(
+        r#"
+//- /Cargo.toml
+[package]
+name = "body_ambiguous_prelude_builtin_fixture"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub fn use_it() {
+    let value = format_args!();
+    value
+}
+
+//- /sysroot/library/core/src/lib.rs
+pub mod fmt {
+    pub struct Arguments;
+}
+
+//- /sysroot/library/alloc/src/lib.rs
+pub struct Alloc;
+
+//- /sysroot/library/std/src/lib.rs
+pub mod first {
+    macro_rules! format_args {
+        () => {
+            1u8
+        };
+    }
+
+    pub use format_args;
+}
+
+pub mod second {
+    macro_rules! format_args {
+        () => {
+            2u8
+        };
+    }
+
+    pub use format_args;
+}
+
+pub mod prelude {
+    pub mod rust_2024 {
+        pub use crate::first::format_args;
+        pub use crate::second::format_args;
+    }
+}
+"#,
+        expect![[r#"
+            package alloc
+
+            alloc [lib]
+            skipped
+
+            package body_ambiguous_prelude_builtin_fixture
+
+            body_ambiguous_prelude_builtin_fixture [lib]
+            body b0 fn body_ambiguous_prelude_builtin_fixture[lib]::crate::use_it @ 1:1-4:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: v0
+            bindings
+            - v0 let value `value` => <unknown> @ 2:9-2:14
+            body
+            expr e2 block s1 => <unknown> @ 1:17-4:2
+              stmt s0 let v0 @ 2:5-2:32
+                initializer
+                  expr e0 unknown `format_args!()` => <unknown> @ 2:17-2:31
+              tail
+                expr e1 path value -> local v0 => <unknown> @ 3:5-3:10
+
+
+            package core
+
+            core [lib]
+            skipped
+
+            package std
+
+            std [lib]
+            skipped
         "#]],
     );
 }

@@ -83,13 +83,17 @@ impl<'a> MacroDefinitionView<'a> {
 
 impl PartialEq for MacroDefinitionView<'_> {
     fn eq(&self, other: &Self) -> bool {
+        // Candidate uniqueness is definition identity; local data is the expansion payload.
+        if self.def_ref != other.def_ref {
+            return false;
+        }
+
         // Within one DefMap snapshot, one local-def ref should always point at the same borrowed
         // records. Keep the asserts here so equality can stay focused on candidate identity.
         debug_assert_eq!(self.local_def, other.local_def);
         debug_assert_eq!(self.data, other.data);
 
-        // Candidate uniqueness is definition identity; local data is the expansion payload.
-        self.def_ref == other.def_ref
+        true
     }
 }
 

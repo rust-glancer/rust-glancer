@@ -17,6 +17,12 @@ use super::super::{ImportPath, ModuleOrigin, ModuleScopeBuilder, Namespace, Scop
 
 use super::resolution_env::{ScopeResolutionEnv, TargetResolutionEnv};
 
+/// Privacy-visible macro bindings collected before Rust macro lookup precedence is applied.
+pub struct UnqualifiedMacroBindings {
+    pub module_scope: Vec<ScopeBinding>,
+    pub standard_prelude: Vec<ScopeBinding>,
+}
+
 /// Result of resolving a path against the frozen def-map graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvePathResult {
@@ -324,6 +330,43 @@ impl<E: TargetResolutionEnv + ?Sized> PathResolver<'_, E> {
         }
 
         Ok(bindings)
+    }
+
+    /// Returns unqualified macro binding buckets before applying macro lookup precedence.
+    pub fn visible_unqualified_macro_bindings(
+        &self,
+        importing_module: ModuleRef,
+        module_scope_modules: impl IntoIterator<Item = ModuleRef>,
+        name: &Name,
+    ) -> Result<UnqualifiedMacroBindings, E::Error> {
+        let mut module_bindings = Vec::new();
+        for module_ref in module_scope_modules {
+            module_bindings.extend(self.visible_macro_bindings(
+                importing_module,
+                module_ref,
+                name,
+            )?);
+        }
+
+        Ok(UnqualifiedMacroBindings {
+            module_scope: module_bindings,
+            standard_prelude: self.visible_prelude_macro_bindings(importing_module, name)?,
+        })
+    }
+
+    fn visible_prelude_macro_bindings(
+        &self,
+        importing_module: ModuleRef,
+        name: &Name,
+    ) -> Result<Vec<ScopeBinding>, E::Error> {
+        let Some(prelude_module) = self
+            .env
+            .prelude_module(importing_module.origin.origin_target())?
+        else {
+            return Ok(Vec::new());
+        };
+
+        self.visible_macro_bindings(importing_module, prelude_module, name)
     }
 
     pub fn resolve_path(
