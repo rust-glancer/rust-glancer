@@ -8,12 +8,13 @@ use std::{cell::Cell, rc::Rc};
 
 use rg_cfg_eval::CfgEvaluator;
 use rg_def_map::{
-    BodyMacroExpander as DefMapBodyMacroExpander, BodyMacroExprExpansion, DefMapReadTxn,
-    ExpandedBodyMacro,
+    BodyMacroCallOrigin, BodyMacroExpander as DefMapBodyMacroExpander, BodyMacroExprExpansion,
+    DefMapReadTxn, ExpandedBodyMacro,
 };
 use rg_ir_model::{ModuleRef, TargetRef};
-use rg_parse::{FileId, Span};
 use rg_syntax::ast;
+
+use crate::ir::BodySource;
 
 const BODY_MACRO_EXPANSION_DEPTH_LIMIT: usize = 64;
 
@@ -34,8 +35,8 @@ pub(crate) trait BodyMacroExpansionContext {
         &mut self,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<BodyMacroExprExpansion>>;
 
@@ -47,8 +48,8 @@ pub(crate) trait BodyMacroExpansionContext {
         &mut self,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::MacroStmts>>>;
 
@@ -60,8 +61,8 @@ pub(crate) trait BodyMacroExpansionContext {
         &mut self,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Pat>>>;
 
@@ -73,8 +74,8 @@ pub(crate) trait BodyMacroExpansionContext {
         &mut self,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Type>>>;
 }
@@ -134,15 +135,15 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         &mut self,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<BodyMacroExprExpansion>> {
         self.expander.expand_expr_call(
             target,
             module,
-            file_id,
-            span,
+            source,
+            origin,
             self.parse_package,
             self.cfg,
             call,
@@ -153,15 +154,15 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         &mut self,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::MacroStmts>>> {
         self.expander.expand_stmt_call(
             target,
             module,
-            file_id,
-            span,
+            source,
+            origin,
             self.parse_package,
             self.cfg,
             call,
@@ -172,23 +173,23 @@ impl BodyMacroExpansionContext for BodyMacroExpansion<'_, '_> {
         &mut self,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Pat>>> {
         self.expander
-            .expand_pat_call(target, module, file_id, span, self.parse_package, call)
+            .expand_pat_call(target, module, source, origin, self.parse_package, call)
     }
 
     fn expand_type_call(
         &mut self,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Type>>> {
         self.expander
-            .expand_type_call(target, module, file_id, span, self.parse_package, call)
+            .expand_type_call(target, module, source, origin, self.parse_package, call)
     }
 }

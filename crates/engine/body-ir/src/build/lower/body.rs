@@ -3,7 +3,7 @@
 use rg_syntax::ast;
 
 use rg_cfg_eval::CfgEvaluator;
-use rg_def_map::{BodyMacroExprExpansion, ExpandedBodyMacro};
+use rg_def_map::{BodyMacroCallOrigin, BodyMacroExprExpansion, ExpandedBodyMacro};
 use rg_ir_model::{ExprId, ModuleRef, ScopeId, TargetRef};
 use rg_parse::LineIndex;
 use rg_text::NameInterner;
@@ -169,6 +169,19 @@ impl BodyLowering<'_> {
             .map(|context| context.expanded.dollar_crate_target())
     }
 
+    /// Classify the macro call syntax that is about to be expanded.
+    ///
+    /// User-written calls have no macro-definition crate. Calls found while recursively lowering
+    /// generated syntax keep the generating definition's `$crate` target.
+    pub(super) fn macro_call_origin(&self) -> BodyMacroCallOrigin {
+        match &self.generated_context {
+            Some(context) => BodyMacroCallOrigin::Generated {
+                dollar_crate_target: context.expanded.dollar_crate_target(),
+            },
+            None => BodyMacroCallOrigin::Source,
+        }
+    }
+
     /// Pick the semantic module used to resolve a body macro call.
     ///
     /// Top-level bodies resolve in their owner module. Body-local generated/nested bodies may have
@@ -214,12 +227,13 @@ impl BodyLowering<'_> {
         let _expansion_scope = self.macro_expansion.expansion_scope()?;
         let module = self.macro_resolution_module();
         let target = module.origin.origin_target();
+        let origin = self.macro_call_origin();
 
         // Expansion is best-effort during mechanical lowering: unresolved, unsupported, or failing
         // macros should leave normal unknown expressions instead of aborting the whole body build.
         let expansion = self
             .macro_expansion
-            .expand_expr_call(target, module, call_source.file_id, call_source.span, call)
+            .expand_expr_call(target, module, call_source, origin, call)
             .ok()
             .flatten()?;
 

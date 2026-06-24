@@ -654,6 +654,123 @@ pub fn use_it() -> i32 {
 }
 
 #[test]
+fn generated_body_macro_calls_use_dollar_crate_definition_crate() {
+    check_project_body_ir(
+        r#"
+//- /Cargo.toml
+[workspace]
+members = ["crates/dep", "crates/app"]
+resolver = "3"
+
+//- /crates/dep/Cargo.toml
+[package]
+name = "dep"
+version = "0.1.0"
+edition = "2024"
+
+//- /crates/dep/src/lib.rs
+pub fn dep_value() -> i32 {
+    7
+}
+
+#[macro_export]
+macro_rules! inner_value {
+    () => {
+        $crate::dep_value()
+    };
+}
+
+macro_rules! outer_select_value {
+    () => {
+        cfg_select! {
+            _ => { $crate::inner_value!() },
+        }
+    };
+}
+
+macro_rules! outer_value {
+    () => {
+        $crate::inner_value!()
+    };
+}
+
+pub use outer_select_value;
+pub use outer_value;
+
+//- /crates/app/Cargo.toml
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dep = { path = "../dep" }
+
+//- /crates/app/src/lib.rs
+use dep::{outer_select_value, outer_value};
+
+#[macro_export]
+macro_rules! inner_value {
+    () => {
+        false
+    };
+}
+
+pub fn direct() -> i32 {
+    outer_value!()
+}
+
+pub fn via_cfg_select() -> i32 {
+    outer_select_value!()
+}
+"#,
+        expect![[r#"
+            package app
+
+            app [lib]
+            body b0 fn app[lib]::crate::direct @ 10:1-12:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e2 block s1 => i32 @ 10:24-12:2
+              tail
+                expr e1 call => i32 @ 11:5-11:19
+                  callee
+                    expr e0 path $crate::dep_value -> item fn dep[lib]::crate::dep_value => <unknown> @ 11:5-11:19
+
+
+            body b1 fn app[lib]::crate::via_cfg_select @ 14:1-16:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e2 block s1 => i32 @ 14:32-16:2
+              tail
+                expr e1 call => i32 @ 15:5-15:26
+                  callee
+                    expr e0 path $crate::dep_value -> item fn dep[lib]::crate::dep_value => <unknown> @ 15:5-15:26
+
+
+            package dep
+
+            dep [lib]
+            body b0 fn dep[lib]::crate::dep_value @ 1:1-3:2
+            scopes
+            - s0 parent <none>: <none>
+            - s1 parent s0: <none>
+            bindings
+            body
+            expr e1 block s1 => i32 @ 1:27-3:2
+              tail
+                expr e0 literal int `7` => i32 @ 2:5-2:6
+        "#]],
+    );
+}
+
+#[test]
 fn cfg_select_builtin_expands_expression_body() {
     check_project_body_ir(
         r#"

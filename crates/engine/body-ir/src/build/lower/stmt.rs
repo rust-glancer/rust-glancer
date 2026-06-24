@@ -292,12 +292,13 @@ impl BodyLowering<'_> {
         };
         let module = self.macro_resolution_module();
         let target = module.origin.origin_target();
+        let origin = self.macro_call_origin();
 
         // Statement expansion is best-effort just like expression expansion. A failed expansion
         // falls back to the original macro expression statement so Body IR remains buildable.
         let Some(expanded) = self
             .macro_expansion
-            .expand_stmt_call(target, module, call_source.file_id, call_source.span, &call)
+            .expand_stmt_call(target, module, call_source, origin, &call)
             .ok()
             .flatten()
         else {

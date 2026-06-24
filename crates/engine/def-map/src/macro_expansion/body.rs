@@ -116,6 +116,35 @@ pub enum BodyMacroExprExpansion {
     Builtin(BuiltinMacroExprKind),
 }
 
+/// Tells body macro lookup whether the call came from user-written syntax or generated syntax.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyMacroCallOrigin {
+    /// A macro invocation written in the original source file.
+    Source,
+    /// A macro invocation produced by expanding syntax from a macro definition target.
+    Generated { dollar_crate_target: TargetRef },
+}
+
+impl BodyMacroCallOrigin {
+    fn dollar_crate_target_for_path(self) -> Option<TargetRef> {
+        match self {
+            Self::Source => None,
+            Self::Generated {
+                dollar_crate_target,
+            } => Some(dollar_crate_target),
+        }
+    }
+
+    fn dollar_crate_target_for_expansion(self, caller_target: TargetRef) -> TargetRef {
+        match self {
+            Self::Source => caller_target,
+            Self::Generated {
+                dollar_crate_target,
+            } => dollar_crate_target,
+        }
+    }
+}
+
 /// Expands body macro calls using frozen def-map visibility.
 ///
 /// Declarative macros return generated syntax. Expression-position compiler builtins are reported
@@ -138,15 +167,15 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         &mut self,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         parse_package: &rg_parse::Package,
         cfg: CfgEvaluator<'_>,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<BodyMacroExprExpansion>> {
         let query = DefMapQuery::new(self.def_maps);
         let Some(resolution) =
-            Self::resolve_call(&query, target, module, file_id, span, parse_package, call)?
+            Self::resolve_call(&query, target, module, source, origin, parse_package, call)?
         else {
             return Ok(None);
         };
@@ -173,7 +202,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
             return Ok(Self::expand_builtin_cfg_select(
                 &resolution.invocation,
                 cfg,
-                target,
+                origin.dollar_crate_target_for_expansion(target),
                 ExpansionParseKind::Expr,
             )
             .and_then(|expanded| expanded.cast_root_or_child::<ast::Expr>())
@@ -191,8 +220,8 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         &mut self,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         parse_package: &rg_parse::Package,
         cfg: CfgEvaluator<'_>,
         call: &ast::MacroCall,
@@ -200,8 +229,8 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         let Some(expanded) = self.expand_call_syntax(
             target,
             module,
-            file_id,
-            span,
+            source,
+            origin,
             parse_package,
             Some(cfg),
             call,
@@ -219,16 +248,16 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         &mut self,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         parse_package: &rg_parse::Package,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Pat>>> {
         let Some(expanded) = self.expand_call_syntax(
             target,
             module,
-            file_id,
-            span,
+            source,
+            origin,
             parse_package,
             None,
             call,
@@ -246,16 +275,16 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         &mut self,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         parse_package: &rg_parse::Package,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<ExpandedBodyMacro<ast::Type>>> {
         let Some(expanded) = self.expand_call_syntax(
             target,
             module,
-            file_id,
-            span,
+            source,
+            origin,
             parse_package,
             None,
             call,
@@ -275,8 +304,8 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         &mut self,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         parse_package: &rg_parse::Package,
         cfg: Option<CfgEvaluator<'_>>,
         call: &ast::MacroCall,
@@ -284,7 +313,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
     ) -> anyhow::Result<Option<ExpandedBodyMacro<Parse<SyntaxNode>>>> {
         let query = DefMapQuery::new(self.def_maps);
         let Some(resolution) =
-            Self::resolve_call(&query, target, module, file_id, span, parse_package, call)?
+            Self::resolve_call(&query, target, module, source, origin, parse_package, call)?
         else {
             return Ok(None);
         };
@@ -301,7 +330,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
                     return Ok(Self::expand_builtin_cfg_select(
                         &resolution.invocation,
                         cfg,
-                        target,
+                        origin.dollar_crate_target_for_expansion(target),
                         parse_kind,
                     ));
                 }
@@ -315,7 +344,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
     fn expand_builtin_cfg_select(
         invocation: &BodyMacroInvocation,
         cfg: CfgEvaluator<'_>,
-        target: TargetRef,
+        dollar_crate_target: TargetRef,
         parse_kind: ExpansionParseKind,
     ) -> Option<ExpandedBodyMacro<Parse<SyntaxNode>>> {
         let cfg_select = CfgSelect::parse(&invocation.args)?;
@@ -326,7 +355,7 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         let ExpansionSyntax { parse, span_map } =
             ExpansionSyntax::from_token_tree(arm.payload.clone(), parse_kind);
 
-        Some(ExpandedBodyMacro::new(parse, span_map, target))
+        Some(ExpandedBodyMacro::new(parse, span_map, dollar_crate_target))
     }
 
     fn is_cfg_select_builtin(path: &ImportPath) -> bool {
@@ -341,24 +370,31 @@ impl<'db, 'txn> BodyMacroExpander<'db, 'txn> {
         query: &'a DefMapQuery<&DefMapReadTxn<'_>>,
         target: TargetRef,
         module: ModuleRef,
-        file_id: FileId,
-        span: Span,
+        source: BodySource,
+        origin: BodyMacroCallOrigin,
         parse_package: &rg_parse::Package,
         call: &ast::MacroCall,
     ) -> anyhow::Result<Option<BodyMacroCallResolution<'a>>> {
-        let invocation =
-            match BodyMacroInvocation::from_ast(file_id, span, parse_package.edition(), call) {
-                Some(invocation) => invocation,
-                None => return Ok(None),
-            };
-        // Note: generated body syntax carries its macro-definition crate through
-        // `ExpandedBodyMacro`. The invocation path itself does not yet have that context, so a
-        // body call written through `$crate::macro_name!()` stays unresolved.
+        let invocation = match BodyMacroInvocation::from_ast(
+            source.file_id,
+            source.span,
+            parse_package.edition(),
+            call,
+        ) {
+            Some(invocation) => invocation,
+            None => return Ok(None),
+        };
+        // `$crate` in a generated macro call belongs to the macro definition that produced this
+        // syntax. Source calls do not have such a definition context, so `$crate` remains invalid
+        // for them here.
         // TODO: soft hack, we are not inside of macro resolution context here, so we use this
         // for the lack of better method; probably we should get rid of `ImportPath` whatsoever
         // (it exists for historical reasons mostly, and it's equivalent to `Path`) and introduce
         // appropriate constructors.
-        let Some(path) = ImportPath::from_macro_path_text(invocation.path_text(), None) else {
+        let Some(path) = ImportPath::from_macro_path_text(
+            invocation.path_text(),
+            origin.dollar_crate_target_for_path(),
+        ) else {
             return Ok(None);
         };
         let resolved = Self::resolve_macro_definition(query, target, module, &path)
