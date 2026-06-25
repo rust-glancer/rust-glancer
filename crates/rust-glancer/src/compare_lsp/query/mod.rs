@@ -1,143 +1,64 @@
 //! Typed query vectors for each comparison fixture.
 
-/// One LSP request that should be sent to both compared servers.
-///
-/// The case stores fixture-relative paths because result normalization also compares
-/// fixture-relative locations. Positions are LSP coordinates, not byte offsets.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct QueryCase {
-    label: &'static str,
-    source_path: &'static str,
-    position: SourcePosition,
-    kind: QueryKind,
-}
+mod model;
+mod parser;
 
-impl QueryCase {
-    const fn new(
-        label: &'static str,
-        source_path: &'static str,
-        position: SourcePosition,
-        kind: QueryKind,
-    ) -> Self {
-        Self {
-            label,
-            source_path,
-            position,
-            kind,
-        }
-    }
+use std::sync::LazyLock;
 
-    pub(crate) fn label(&self) -> &'static str {
-        self.label
-    }
+pub(crate) use self::model::{QueryCase, QueryKind, SourcePosition};
 
-    pub(crate) fn source_path(&self) -> &'static str {
-        self.source_path
-    }
-
-    pub(crate) fn position(&self) -> SourcePosition {
-        self.position
-    }
-
-    pub(crate) fn kind(&self) -> QueryKind {
-        self.kind
-    }
-}
-
-/// Zero-based position in the same UTF-16 coordinate space used by LSP.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct SourcePosition {
-    /// Zero-based UTF-16 line used by LSP positions.
-    line: u32,
-    /// Zero-based UTF-16 character offset used by LSP positions.
-    character: u32,
-}
-
-impl SourcePosition {
-    const fn new(line: u32, character: u32) -> Self {
-        Self { line, character }
-    }
-
-    pub(crate) fn line(self) -> u32 {
-        self.line
-    }
-
-    pub(crate) fn character(self) -> u32 {
-        self.character
-    }
-
-    pub(crate) fn to_lsp(self) -> ls_types::Position {
-        ls_types::Position::new(self.line, self.character)
-    }
-}
-
-/// LSP request family plus method-specific options needed for comparison.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum QueryKind {
-    References { include_declaration: bool },
-    GotoDefinition,
-    Hover,
-}
-
-impl QueryKind {
-    pub(crate) fn lsp_method(self) -> &'static str {
-        use ls_types::{request, request::Request as _};
-
-        match self {
-            Self::References { .. } => request::References::METHOD,
-            Self::GotoDefinition => request::GotoDefinition::METHOD,
-            Self::Hover => request::HoverRequest::METHOD,
-        }
-    }
-
-    pub(crate) fn is_references(self) -> bool {
-        matches!(self, Self::References { .. })
-    }
-
-    pub(crate) fn references_include_declaration(self) -> Option<bool> {
-        match self {
-            Self::References {
-                include_declaration,
-            } => Some(include_declaration),
-            Self::GotoDefinition | Self::Hover => None,
-        }
-    }
-
-    pub(crate) fn is_goto_definition(self) -> bool {
-        matches!(self, Self::GotoDefinition)
-    }
-
-    pub(crate) fn is_hover(self) -> bool {
-        matches!(self, Self::Hover)
-    }
-}
+use self::parser::parse_query_cases;
 
 pub(crate) fn rust_analyzer_cases() -> &'static [QueryCase] {
-    RUST_ANALYZER_CASES
+    RUST_ANALYZER_CASES.as_slice()
 }
 
-// Seed vector for the pinned rust-analyzer checkout. These cases are intentionally small: one
-// location-heavy request, one navigation request, and one presence-based hover request are enough
-// to exercise the comparison pipeline without pretending to cover every IDE feature.
-const RUST_ANALYZER_CASES: &[QueryCase] = &[
-    QueryCase::new(
-        "references: ReferenceSearchResult struct",
-        "crates/ide/src/references.rs",
-        SourcePosition::new(46, 11),
-        QueryKind::References {
-            include_declaration: true,
-        },
-    ),
-    QueryCase::new(
-        "goto definition: FindAllRefsConfig re-export",
-        "crates/ide/src/lib.rs",
-        SourcePosition::new(110, 17),
-        QueryKind::GotoDefinition,
-    ),
-    QueryCase::new(
-        "hover: HoverConfig definition",
-        "crates/ide/src/hover.rs",
-        SourcePosition::new(35, 11),
-        QueryKind::Hover,
-    ),
-];
+static RUST_ANALYZER_CASES: LazyLock<Vec<QueryCase>> = LazyLock::new(|| {
+    parse_query_cases(RUST_ANALYZER_CASES_TEXT)
+        .expect("hardcoded rust-analyzer LSP comparison query cases should parse")
+});
+
+// Format:
+//
+// <lsp-method>(<optional-params>) <fixture-relative-path>:<zero-based-line>:<zero-based-character> # <label>
+//
+// Keep cases fixture-root-local so location normalization remains meaningful. The line/character
+// coordinates are LSP coordinates, not byte offsets.
+const RUST_ANALYZER_CASES_TEXT: &str = r#"
+textDocument/references(includeDeclaration=true) crates/ide/src/call_hierarchy.rs:25:11 # references/type: CallHierarchyConfig
+textDocument/references(includeDeclaration=true) crates/ide/src/call_hierarchy.rs:43:14 # references/function: incoming_calls
+textDocument/references(includeDeclaration=true) crates/ide/src/hover.rs:35:11 # references/type: HoverConfig
+textDocument/references(includeDeclaration=false) crates/ide/src/lib.rs:110:17 # references/config-no-decl: FindAllRefsConfig
+textDocument/references(includeDeclaration=true) crates/ide/src/navigation_target.rs:31:11 # references/type: NavigationTarget
+textDocument/references(includeDeclaration=true) crates/ide/src/navigation_target.rs:120:10 # references/trait: TryToNav
+textDocument/references(includeDeclaration=false) crates/ide/src/navigation_target.rs:140:11 # references/method-no-decl: focus_or_full_range
+textDocument/references(includeDeclaration=true) crates/ide/src/references.rs:46:11 # references/type: ReferenceSearchResult
+textDocument/references(includeDeclaration=true) crates/ide/src/references.rs:62:11 # references/type: Declaration
+textDocument/references(includeDeclaration=true) crates/ide/src/references.rs:90:11 # references/config: FindAllRefsConfig
+textDocument/references(includeDeclaration=true) crates/ide/src/references.rs:120:14 # references/function: find_all_refs
+textDocument/references(includeDeclaration=true) crates/ide/src/references.rs:132:16 # references/helper-call: retain_adt_literal_usages
+textDocument/references(includeDeclaration=true) crates/ide/src/references.rs:174:23 # references/helper-call: handle_control_flow_keywords
+textDocument/references(includeDeclaration=true) crates/ide/src/references.rs:209:14 # references/function: find_defs
+textDocument/definition crates/ide/src/call_hierarchy.rs:36:4 # definition/qualified-call: goto_definition
+textDocument/definition crates/ide/src/call_hierarchy.rs:39:9 # definition/config-constructor: GotoDefinitionConfig
+textDocument/definition crates/ide/src/child_modules.rs:30:48 # definition/associated-function: from_module_to_decl
+textDocument/definition crates/ide/src/child_modules.rs:54:68 # definition/method-call: focus_or_full_range
+textDocument/definition crates/ide/src/goto_definition.rs:125:16 # definition/helper-call: try_lookup_include_path
+textDocument/definition crates/ide/src/lib.rs:89:21 # definition/reexport: GotoDefinitionConfig
+textDocument/definition crates/ide/src/lib.rs:93:21 # definition/reexport: HoverConfig
+textDocument/definition crates/ide/src/lib.rs:109:24 # definition/reexport: NavigationTarget
+textDocument/definition crates/ide/src/lib.rs:110:17 # definition/reexport: FindAllRefsConfig
+textDocument/definition crates/ide/src/references.rs:132:16 # definition/helper-call: retain_adt_literal_usages
+textDocument/definition crates/ide/src/references.rs:174:23 # definition/helper-call: handle_control_flow_keywords
+textDocument/definition crates/ide/src/references.rs:204:17 # definition/helper-call: find_defs
+textDocument/hover crates/ide/src/call_hierarchy.rs:19:11 # hover/type: CallItem
+textDocument/hover crates/ide/src/call_hierarchy.rs:98:14 # hover/function: outgoing_calls
+textDocument/hover crates/ide/src/hover.rs:35:11 # hover/config: HoverConfig
+textDocument/hover crates/ide/src/hover.rs:79:9 # hover/enum: HoverAction
+textDocument/hover crates/ide/src/hover.rs:119:11 # hover/type: HoverResult
+textDocument/hover crates/ide/src/hover.rs:130:14 # hover/function: hover
+textDocument/hover crates/ide/src/hover.rs:159:3 # hover/helper: hover_offset
+textDocument/hover crates/ide/src/lib.rs:109:24 # hover/reexport: NavigationTarget
+textDocument/hover crates/ide/src/navigation_target.rs:31:11 # hover/type: NavigationTarget
+textDocument/hover crates/ide/src/navigation_target.rs:120:10 # hover/trait: TryToNav
+"#;
