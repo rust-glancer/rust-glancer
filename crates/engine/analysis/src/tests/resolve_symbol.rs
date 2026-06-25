@@ -40,6 +40,40 @@ pub fn use_it() {
 }
 
 #[test]
+fn resolves_body_macro_call_symbols_to_navigation_targets() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_macro_resolve_symbol"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Text;
+
+pub fn helper(value: u64) -> Text { Text }
+
+macro_rules! make_text {
+    ($value:expr) => { helper($value) };
+}
+
+pub fn use_it(input: u64) {
+    let _text = make_$resolve_macro$text!(input);
+}
+"#,
+        &[AnalysisQuery::resolve(
+            "resolve body macro call",
+            "resolve_macro",
+        )],
+        expect![[r#"
+            resolve body macro call
+            - macro make_text @ 5:14-5:23
+        "#]],
+    );
+}
+
+#[test]
 fn resolves_body_local_struct_symbols_to_navigation_targets() {
     check_analysis_queries(
         r#"

@@ -87,6 +87,37 @@ pub fn make(user: Us$symbol_param$er) -> Us$symbol_ret$er {
 }
 
 #[test]
+fn finds_body_macro_call_symbols_at_offsets() {
+    check_analysis_queries(
+        r#"
+//- /Cargo.toml
+[package]
+name = "analysis_macro_symbol_at"
+version = "0.1.0"
+edition = "2024"
+
+//- /src/lib.rs
+pub struct Text;
+
+pub fn helper(value: u64) -> Text { Text }
+
+macro_rules! make_text {
+    ($value:expr) => { helper($value) };
+}
+
+pub fn use_it(input: u64) {
+    let _text = make_$symbol_macro$text!(input);
+}
+"#,
+        &[AnalysisQuery::symbol("symbol at body macro call", "symbol_macro")],
+        expect![[r#"
+            symbol at body macro call
+            - macro make_text @ 10:17-10:26
+        "#]],
+    );
+}
+
+#[test]
 fn finds_body_local_struct_symbols_at_offsets() {
     check_analysis_queries(
         r#"

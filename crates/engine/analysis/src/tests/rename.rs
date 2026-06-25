@@ -786,17 +786,33 @@ mod us$module_ref$er {
 
 use user::User as Acc$alias_ref$ount;
 
+macro_rules! make_$macro_decl$text {
+    () => { 1 };
+}
+
 pub fn use_it(_account: Account) {}
+
+pub fn use_macro() {
+    let _ = make_$macro_call$text!();
+}
 "#,
         &[
             AnalysisQuery::prepare_rename("reject module rename", "module_ref"),
             AnalysisQuery::prepare_rename("reject alias rename", "alias_ref"),
+            AnalysisQuery::prepare_rename("reject macro declaration rename", "macro_decl"),
+            AnalysisQuery::prepare_rename("reject macro call rename", "macro_call"),
         ],
         expect![[r#"
             reject module rename
             - <none>
 
             reject alias rename
+            - <none>
+
+            reject macro declaration rename
+            - <none>
+
+            reject macro call rename
             - <none>
         "#]],
     );
