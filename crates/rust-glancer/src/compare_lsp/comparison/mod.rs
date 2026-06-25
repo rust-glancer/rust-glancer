@@ -4,6 +4,7 @@
 //! The report needs per-query missing/extra locations and hover agreement, not just totals.
 
 mod hover;
+mod inlay_hint;
 mod location;
 mod metrics;
 mod outcome;
@@ -15,6 +16,7 @@ use std::time::Duration;
 use crate::compare_lsp::{
     comparison::{
         hover::{HoverAggregate, HoverComparison},
+        inlay_hint::{InlayHintAggregate, InlayHintComparison},
         location::{LocationAggregate, LocationComparison},
         outcome::NonComparableComparison,
         range::{RangeAggregate, RangeComparison},
@@ -121,6 +123,19 @@ impl QueryComparison {
                     )),
                 }
             }
+            QueryKind::InlayHint => match (rust_glancer, rust_analyzer) {
+                (
+                    NormalizedOutcome::InlayHints(rust_glancer),
+                    NormalizedOutcome::InlayHints(rust_analyzer),
+                ) => QueryComparisonResult::InlayHints(InlayHintComparison::new(
+                    rust_glancer,
+                    rust_analyzer,
+                )),
+                _ => QueryComparisonResult::NonComparable(NonComparableComparison::new(
+                    rust_glancer,
+                    rust_analyzer,
+                )),
+            },
             QueryKind::Hover => match (rust_glancer, rust_analyzer) {
                 (
                     NormalizedOutcome::Hover {
@@ -175,6 +190,7 @@ pub(crate) enum QueryComparisonResult {
     Locations(LocationComparison),
     Ranges(RangeComparison),
     Symbols(SymbolComparison),
+    InlayHints(InlayHintComparison),
     Hover(HoverComparison),
     NonComparable(NonComparableComparison),
 }
@@ -194,6 +210,7 @@ impl MethodAggregate {
         let mut document_highlight = RangeAggregate::default();
         let mut document_symbol = SymbolAggregate::default();
         let mut workspace_symbol = SymbolAggregate::default();
+        let mut inlay_hint = InlayHintAggregate::default();
         let mut hover = HoverAggregate::default();
 
         for query in queries {
@@ -205,6 +222,7 @@ impl MethodAggregate {
                 QueryMethod::DocumentHighlight => document_highlight.record(query),
                 QueryMethod::DocumentSymbol => document_symbol.record(query),
                 QueryMethod::WorkspaceSymbol => workspace_symbol.record(query),
+                QueryMethod::InlayHint => inlay_hint.record(query),
                 QueryMethod::Hover => hover.record(query),
             }
         }
@@ -252,6 +270,12 @@ impl MethodAggregate {
                 data: MethodAggregateData::Symbols(workspace_symbol),
             });
         }
+        if !inlay_hint.is_empty() {
+            aggregates.push(Self {
+                method: QueryMethod::InlayHint,
+                data: MethodAggregateData::InlayHints(inlay_hint),
+            });
+        }
         if !hover.is_empty() {
             aggregates.push(Self {
                 method: QueryMethod::Hover,
@@ -276,6 +300,7 @@ pub(crate) enum MethodAggregateData {
     Locations(LocationAggregate),
     Ranges(RangeAggregate),
     Symbols(SymbolAggregate),
+    InlayHints(InlayHintAggregate),
     Hover(HoverAggregate),
 }
 
@@ -285,6 +310,7 @@ impl MethodAggregateData {
             Self::Locations(locations) => locations.summary(),
             Self::Ranges(ranges) => ranges.summary(),
             Self::Symbols(symbols) => symbols.summary(),
+            Self::InlayHints(hints) => hints.summary(),
             Self::Hover(hover) => hover.summary(),
         }
     }
@@ -299,6 +325,7 @@ pub(crate) enum QueryMethod {
     DocumentHighlight,
     DocumentSymbol,
     WorkspaceSymbol,
+    InlayHint,
     Hover,
 }
 
@@ -312,6 +339,7 @@ impl QueryMethod {
             QueryKind::DocumentHighlight => Self::DocumentHighlight,
             QueryKind::DocumentSymbol => Self::DocumentSymbol,
             QueryKind::WorkspaceSymbol => Self::WorkspaceSymbol,
+            QueryKind::InlayHint => Self::InlayHint,
             QueryKind::Hover => Self::Hover,
         }
     }
@@ -328,6 +356,7 @@ impl QueryMethod {
             Self::DocumentHighlight => QueryKind::DocumentHighlight.lsp_method(),
             Self::DocumentSymbol => QueryKind::DocumentSymbol.lsp_method(),
             Self::WorkspaceSymbol => QueryKind::WorkspaceSymbol.lsp_method(),
+            Self::InlayHint => QueryKind::InlayHint.lsp_method(),
             Self::Hover => QueryKind::Hover.lsp_method(),
         }
     }

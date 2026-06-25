@@ -98,6 +98,14 @@ HoverConfig # workspace_symbol/type: HoverConfig
 NavigationTarget # workspace_symbol/type: NavigationTarget
 TryToNav # workspace_symbol/trait: TryToNav
 
+[textDocument/inlayHint]
+crates/ide/src/call_hierarchy.rs # inlay_hint/file: call_hierarchy
+crates/ide/src/goto_definition.rs # inlay_hint/file: goto_definition
+crates/ide/src/goto_implementation.rs # inlay_hint/file: goto_implementation
+crates/ide/src/hover.rs # inlay_hint/file: hover
+crates/ide/src/navigation_target.rs # inlay_hint/file: navigation_target
+crates/ide/src/references.rs # inlay_hint/file: references
+
 [textDocument/hover]
 crates/ide/src/call_hierarchy.rs:19:11 # hover/type: CallItem
 crates/ide/src/call_hierarchy.rs:98:14 # hover/function: outgoing_calls

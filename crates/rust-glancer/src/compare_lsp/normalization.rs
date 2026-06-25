@@ -12,8 +12,9 @@ use std::{
 
 use anyhow::Context as _;
 use ls_types::{
-    DocumentHighlight, DocumentSymbol, DocumentSymbolResponse, Location, LocationLink, OneOf,
-    Range, SymbolInformation, SymbolKind, Uri, WorkspaceSymbol, WorkspaceSymbolResponse,
+    DocumentHighlight, DocumentSymbol, DocumentSymbolResponse, InlayHint, InlayHintKind,
+    InlayHintLabel, Location, LocationLink, OneOf, Range, SymbolInformation, SymbolKind, Uri,
+    WorkspaceSymbol, WorkspaceSymbolResponse,
 };
 use serde_json::Value;
 
@@ -152,6 +153,7 @@ pub(crate) enum NormalizedOutcome {
     Locations(NormalizedLocationSet),
     Ranges(NormalizedRangeSet),
     Symbols(NormalizedSymbolSet),
+    InlayHints(NormalizedInlayHintSet),
     Hover { present: bool },
     MalformedSuccess { message: String },
     Error { code: i64, message: String },
@@ -188,6 +190,10 @@ impl NormalizedOutcome {
                         Err(message) => Self::MalformedSuccess { message },
                     }
                 }
+                QueryKind::InlayHint => match NormalizedInlayHintSet::from_json(raw) {
+                    Ok(hints) => Self::InlayHints(hints),
+                    Err(message) => Self::MalformedSuccess { message },
+                },
                 QueryKind::Hover => Self::Hover {
                     present: !raw.is_null(),
                 },
@@ -201,6 +207,34 @@ impl NormalizedOutcome {
                 message: message.clone(),
             },
         }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct NormalizedInlayHintSet {
+    hints: Vec<NormalizedInlayHint>,
+}
+
+impl NormalizedInlayHintSet {
+    fn from_json(raw: &Value) -> Result<Self, String> {
+        if raw.is_null() {
+            return Ok(Self { hints: Vec::new() });
+        }
+
+        let hints = serde_json::from_value::<Vec<InlayHint>>(raw.clone())
+            .map_err(|_| format!("unsupported inlay-hint response shape {}", json_shape(raw)))?;
+        let hints = hints
+            .into_iter()
+            .map(NormalizedInlayHint::from_lsp)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+
+        Ok(Self { hints })
+    }
+
+    pub(crate) fn hints(&self) -> &[NormalizedInlayHint] {
+        &self.hints
     }
 }
 
@@ -477,6 +511,25 @@ impl ProtocolLocation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct NormalizedInlayHint {
+    line: u32,
+    character: u32,
+    kind: Option<i64>,
+    label: String,
+}
+
+impl NormalizedInlayHint {
+    fn from_lsp(hint: InlayHint) -> Self {
+        Self {
+            line: hint.position.line,
+            character: hint.position.character,
+            kind: hint.kind.map(inlay_hint_kind_code),
+            label: inlay_hint_label(hint.label),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct NormalizedLocation {
     path: String,
     range: NormalizedRange,
@@ -703,6 +756,20 @@ fn symbol_kind_code(kind: SymbolKind) -> i64 {
         .expect("SymbolKind should serialize as an integer")
         .as_i64()
         .expect("SymbolKind should serialize as an integer")
+}
+
+fn inlay_hint_kind_code(kind: InlayHintKind) -> i64 {
+    serde_json::to_value(kind)
+        .expect("InlayHintKind should serialize as an integer")
+        .as_i64()
+        .expect("InlayHintKind should serialize as an integer")
+}
+
+fn inlay_hint_label(label: InlayHintLabel) -> String {
+    match label {
+        InlayHintLabel::String(label) => label,
+        InlayHintLabel::LabelParts(parts) => parts.into_iter().map(|part| part.value).collect(),
+    }
 }
 
 fn json_shape(value: &Value) -> String {

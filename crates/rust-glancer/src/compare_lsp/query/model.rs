@@ -126,6 +126,7 @@ pub(crate) enum QueryKind {
     DocumentHighlight,
     DocumentSymbol,
     WorkspaceSymbol,
+    InlayHint,
     Hover,
 }
 
@@ -141,6 +142,7 @@ impl QueryKind {
             Self::DocumentHighlight => request::DocumentHighlightRequest::METHOD,
             Self::DocumentSymbol => request::DocumentSymbolRequest::METHOD,
             Self::WorkspaceSymbol => request::WorkspaceSymbolRequest::METHOD,
+            Self::InlayHint => request::InlayHintRequest::METHOD,
             Self::Hover => request::HoverRequest::METHOD,
         }
     }
@@ -160,6 +162,7 @@ impl QueryKind {
             | Self::DocumentHighlight
             | Self::DocumentSymbol
             | Self::WorkspaceSymbol
+            | Self::InlayHint
             | Self::Hover => None,
         }
     }
@@ -186,6 +189,10 @@ impl QueryKind {
 
     pub(crate) fn is_workspace_symbol(self) -> bool {
         matches!(self, Self::WorkspaceSymbol)
+    }
+
+    pub(crate) fn is_inlay_hint(self) -> bool {
+        matches!(self, Self::InlayHint)
     }
 
     pub(crate) fn is_hover(self) -> bool {

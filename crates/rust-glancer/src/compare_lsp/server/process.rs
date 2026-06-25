@@ -14,9 +14,10 @@ use std::{
 use anyhow::Context as _;
 use ls_types::{
     ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolClientCapabilities,
-    InitializeParams, InitializedParams, TextDocumentClientCapabilities, TextDocumentItem,
-    WindowClientCapabilities, WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceFolder,
-    notification, notification::Notification as _, request, request::Request as _,
+    InitializeParams, InitializedParams, InlayHintClientCapabilities,
+    TextDocumentClientCapabilities, TextDocumentItem, WindowClientCapabilities,
+    WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceFolder, notification,
+    notification::Notification as _, request, request::Request as _,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -207,6 +208,7 @@ impl RunningServer {
                     hierarchical_document_symbol_support: Some(true),
                     ..DocumentSymbolClientCapabilities::default()
                 }),
+                inlay_hint: Some(InlayHintClientCapabilities::default()),
                 ..TextDocumentClientCapabilities::default()
             }),
             experimental: Some(json!({

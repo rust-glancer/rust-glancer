@@ -86,6 +86,11 @@ impl FixtureReport {
                     QueryKind::WorkspaceSymbol.lsp_method(),
                     self.methods.workspace_symbol,
                 )
+                .count_as(
+                    "inlay_hint",
+                    QueryKind::InlayHint.lsp_method(),
+                    self.methods.inlay_hint,
+                )
                 .count_as("hover", QueryKind::Hover.lsp_method(), self.methods.hover);
         });
     }
@@ -101,6 +106,7 @@ struct QueryMethodReport {
     document_highlight: usize,
     document_symbol: usize,
     workspace_symbol: usize,
+    inlay_hint: usize,
     hover: usize,
 }
 
@@ -139,6 +145,10 @@ impl QueryMethodReport {
             workspace_symbol: query_cases
                 .iter()
                 .filter(|query| query.kind().is_workspace_symbol())
+                .count(),
+            inlay_hint: query_cases
+                .iter()
+                .filter(|query| query.kind().is_inlay_hint())
                 .count(),
             hover: query_cases
                 .iter()

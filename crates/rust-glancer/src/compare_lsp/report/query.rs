@@ -163,6 +163,7 @@ enum QueryResultReport {
     Locations(LocationQueryReport),
     Ranges(RangeQueryReport),
     Symbols(SymbolQueryReport),
+    InlayHints(RangeQueryReport),
     Hover(HoverQueryReport),
     NonComparable(NonComparableQueryReport),
 }
@@ -175,6 +176,7 @@ impl QueryResultReport {
             }
             QueryComparisonResult::Ranges(ranges) => Self::Ranges(ranges.metrics().into()),
             QueryComparisonResult::Symbols(symbols) => Self::Symbols(symbols.metrics().into()),
+            QueryComparisonResult::InlayHints(hints) => Self::InlayHints(hints.metrics().into()),
             QueryComparisonResult::Hover(hover) => Self::Hover(hover.metrics().into()),
             QueryComparisonResult::NonComparable(non_comparable) => {
                 Self::NonComparable(non_comparable.metrics().into())
@@ -187,6 +189,7 @@ impl QueryResultReport {
             Self::Locations(_) => "locations",
             Self::Ranges(_) => "ranges",
             Self::Symbols(_) => "symbols",
+            Self::InlayHints(_) => "inlay_hints",
             Self::Hover(_) => "hover",
             Self::NonComparable(_) => "non_comparable",
         }
@@ -197,6 +200,7 @@ impl QueryResultReport {
             Self::Locations(locations) => locations.append_query_cells(row),
             Self::Ranges(ranges) => ranges.append_query_cells(row),
             Self::Symbols(symbols) => symbols.append_query_cells(row),
+            Self::InlayHints(hints) => hints.append_query_cells(row),
             Self::Hover(_) | Self::NonComparable(_) => {}
         }
     }

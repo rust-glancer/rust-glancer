@@ -5,6 +5,7 @@
 //! about the response shapes each server actually returns.
 
 use std::{
+    fs,
     path::Path,
     time::{Duration, Instant},
 };
@@ -12,8 +13,9 @@ use std::{
 use anyhow::Context as _;
 use ls_types::{
     DocumentHighlightParams, DocumentSymbolParams, GotoDefinitionParams, HoverParams,
-    PartialResultParams, ReferenceContext, ReferenceParams, TextDocumentIdentifier,
-    TextDocumentPositionParams, WorkDoneProgressParams, WorkspaceSymbolParams,
+    InlayHintParams, PartialResultParams, Position, Range, ReferenceContext, ReferenceParams,
+    TextDocumentIdentifier, TextDocumentPositionParams, WorkDoneProgressParams,
+    WorkspaceSymbolParams,
     request::{GotoImplementationParams, GotoTypeDefinitionParams},
 };
 use serde_json::Value;
@@ -267,6 +269,21 @@ impl QueryRequest {
                     query: query.to_string(),
                 })
             }
+            (QueryKind::InlayHint, QueryTarget::File { source_path }) => {
+                serde_json::to_value(InlayHintParams {
+                    work_done_progress_params: WorkDoneProgressParams::default(),
+                    text_document: Self::text_document_identifier(
+                        fixture_root,
+                        query_case.label(),
+                        source_path,
+                    )?,
+                    range: Self::full_document_range(
+                        fixture_root,
+                        query_case.label(),
+                        source_path,
+                    )?,
+                })
+            }
             (kind, target) => anyhow::bail!(
                 "LSP comparison query `{}` uses incompatible kind {:?} and target {:?}",
                 query_case.label(),
@@ -307,6 +324,36 @@ impl QueryRequest {
         let uri = server::file_uri(&path)
             .with_context(|| format!("Creating query URI for `{label}` failed"))?;
         Ok(TextDocumentIdentifier::new(uri))
+    }
+
+    fn full_document_range(
+        fixture_root: &Path,
+        label: &str,
+        source_path: &str,
+    ) -> anyhow::Result<Range> {
+        let path = fixture_root.join(source_path);
+        let source = fs::read_to_string(&path).with_context(|| {
+            format!(
+                "Reading fixture source file {} for `{label}` failed",
+                path.display()
+            )
+        })?;
+
+        let mut end_line = 0;
+        let mut end_character = 0;
+        for (line_index, line) in source.lines().enumerate() {
+            end_line = line_index as u32;
+            end_character = line.encode_utf16().count() as u32;
+        }
+        if source.ends_with('\n') {
+            end_line += 1;
+            end_character = 0;
+        }
+
+        Ok(Range {
+            start: Position::new(0, 0),
+            end: Position::new(end_line, end_character),
+        })
     }
 }
 

@@ -103,6 +103,7 @@ enum MethodAggregateDataReport {
     Locations(LocationAggregateReport),
     Ranges(RangeAggregateReport),
     Symbols(SymbolAggregateReport),
+    InlayHints(RangeAggregateReport),
     Hover(HoverAggregateReport),
 }
 
@@ -114,6 +115,7 @@ impl MethodAggregateDataReport {
             }
             MethodAggregateData::Ranges(ranges) => Self::Ranges(ranges.metrics().into()),
             MethodAggregateData::Symbols(symbols) => Self::Symbols(symbols.metrics().into()),
+            MethodAggregateData::InlayHints(hints) => Self::InlayHints(hints.metrics().into()),
             MethodAggregateData::Hover(hover) => Self::Hover(hover.metrics().into()),
         }
     }
@@ -123,6 +125,7 @@ impl MethodAggregateDataReport {
             Self::Locations(locations) => locations.append_row_cells(row),
             Self::Ranges(ranges) => ranges.append_row_cells(row),
             Self::Symbols(symbols) => symbols.append_row_cells(row),
+            Self::InlayHints(hints) => hints.append_row_cells(row),
             Self::Hover(hover) => hover.append_row_cells(row),
         }
     }
