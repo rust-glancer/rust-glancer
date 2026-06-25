@@ -6,8 +6,8 @@ use serde::Serialize;
 
 use crate::{
     compare_lsp::comparison::{
-        HoverComparisonMetrics, MappedSetComparisonMetrics, NonComparableMetrics, QueryComparison,
-        QueryComparisonResult, SetComparisonMetrics,
+        MappedSetComparisonMetrics, NonComparableMetrics, QueryComparison, QueryComparisonResult,
+        SetComparisonMetrics,
     },
     report::{
         ReportAlign, ReportDocumentBuilder, ReportRowBuilder, ReportTableBuilder, ReportUnit,
@@ -92,16 +92,6 @@ impl QueryReport {
                     Self::configure_precision_table(table);
                     for (query, counts) in lowest_precision {
                         query.append_precision_row(table, counts);
-                    }
-                });
-            }
-
-            let hover_gaps = Self::hover_gap_queries(queries);
-            if !hover_gaps.is_empty() {
-                section.table("hover_gaps", |table| {
-                    Self::configure_hover_gap_table(table);
-                    for query in hover_gaps {
-                        query.append_hover_gap_row(table);
                     }
                 });
             }
@@ -204,20 +194,8 @@ impl QueryReport {
         lowest
     }
 
-    fn hover_gap_queries(queries: &[Self]) -> Vec<&Self> {
-        queries
-            .iter()
-            .filter(|query| query.hover().is_some_and(|hover| !hover.agreement))
-            .take(HIGHLIGHT_LIMIT)
-            .collect()
-    }
-
     fn counts(&self) -> Option<QueryCounts> {
         self.result.counts()
-    }
-
-    fn hover(&self) -> Option<&HoverQueryReport> {
-        self.result.hover()
     }
 
     fn configure_slowest_table(table: &mut ReportTableBuilder) {
@@ -320,26 +298,6 @@ impl QueryReport {
             .count_column("extra");
     }
 
-    fn configure_hover_gap_table(table: &mut ReportTableBuilder) {
-        table
-            .text_column("method")
-            .text_column("query")
-            .duration_column_as("rust_glancer_ms", "rust-glancer")
-            .duration_column_as("rust_analyzer_ms", "rust-analyzer")
-            .column_as(
-                "rust_glancer_present",
-                "rust-glancer present",
-                ReportAlign::Center,
-                None,
-            )
-            .column_as(
-                "rust_analyzer_present",
-                "rust-analyzer present",
-                ReportAlign::Center,
-                None,
-            );
-    }
-
     fn append_slowest_row(&self, table: &mut ReportTableBuilder) {
         table.row(|row| {
             row.text("method", &self.method)
@@ -372,27 +330,6 @@ impl QueryReport {
         table.row(|row| {
             row.text("method", &self.method).text("query", &self.label);
             counts.append_precision_cells(row);
-        });
-    }
-
-    fn append_hover_gap_row(&self, table: &mut ReportTableBuilder) {
-        let Some(hover) = self.hover() else {
-            return;
-        };
-
-        table.row(|row| {
-            row.text("method", &self.method)
-                .text("query", &self.label)
-                .duration_ms("rust_glancer_ms", self.rust_glancer_ms)
-                .duration_ms("rust_analyzer_ms", self.rust_analyzer_ms)
-                .value(
-                    "rust_glancer_present",
-                    ReportValue::Bool(hover.rust_glancer_present),
-                )
-                .value(
-                    "rust_analyzer_present",
-                    ReportValue::Bool(hover.rust_analyzer_present),
-                );
         });
     }
 
@@ -507,7 +444,7 @@ enum QueryResultReport {
     Ranges(RangeQueryReport),
     Symbols(SymbolQueryReport),
     InlayHints(RangeQueryReport),
-    Hover(HoverQueryReport),
+    Hover(RangeQueryReport),
     NonComparable(NonComparableQueryReport),
 }
 
@@ -554,7 +491,8 @@ impl QueryResultReport {
             Self::Ranges(ranges) => ranges.append_query_cells(row),
             Self::Symbols(symbols) => symbols.append_query_cells(row),
             Self::InlayHints(hints) => hints.append_query_cells(row),
-            Self::Hover(_) | Self::NonComparable(_) => {}
+            Self::Hover(hover) => hover.append_query_cells(row),
+            Self::NonComparable(_) => {}
         }
     }
 
@@ -566,14 +504,8 @@ impl QueryResultReport {
             Self::Ranges(ranges) => Some(ranges.into()),
             Self::Symbols(symbols) => Some(symbols.into()),
             Self::InlayHints(hints) => Some(hints.into()),
-            Self::Hover(_) | Self::NonComparable(_) => None,
-        }
-    }
-
-    fn hover(&self) -> Option<&HoverQueryReport> {
-        match self {
-            Self::Hover(hover) => Some(hover),
-            _ => None,
+            Self::Hover(hover) => Some(hover.into()),
+            Self::NonComparable(_) => None,
         }
     }
 }
@@ -838,27 +770,6 @@ impl From<MappedSetComparisonMetrics> for SymbolQueryReport {
             recall_percent: metrics.set.recall_percent,
             precision_percent: metrics.set.precision_percent,
             match_score_percent: metrics.set.match_score_percent,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct HoverQueryReport {
-    rust_glancer_present: bool,
-    rust_analyzer_present: bool,
-    agreement: bool,
-    rust_glancer_missing: bool,
-    rust_glancer_extra_present: bool,
-}
-
-impl From<HoverComparisonMetrics> for HoverQueryReport {
-    fn from(metrics: HoverComparisonMetrics) -> Self {
-        Self {
-            rust_glancer_present: metrics.rust_glancer_present,
-            rust_analyzer_present: metrics.rust_analyzer_present,
-            agreement: metrics.agreement,
-            rust_glancer_missing: metrics.rust_glancer_missing,
-            rust_glancer_extra_present: metrics.rust_glancer_extra_present,
         }
     }
 }

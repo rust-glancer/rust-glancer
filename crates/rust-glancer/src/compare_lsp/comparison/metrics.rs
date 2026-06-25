@@ -75,22 +75,6 @@ pub(crate) struct AggregateSummaryMetrics {
     pub(crate) non_comparable_count: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct HoverComparisonMetrics {
-    pub(crate) rust_glancer_present: bool,
-    pub(crate) rust_analyzer_present: bool,
-    pub(crate) agreement: bool,
-    pub(crate) rust_glancer_missing: bool,
-    pub(crate) rust_glancer_extra_present: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct HoverAggregateMetrics {
-    pub(crate) agreement_count: usize,
-    pub(crate) rust_glancer_missing_count: usize,
-    pub(crate) rust_glancer_extra_present_count: usize,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NonComparableMetrics {
     pub(crate) rust_glancer_status: OutcomeStatus,

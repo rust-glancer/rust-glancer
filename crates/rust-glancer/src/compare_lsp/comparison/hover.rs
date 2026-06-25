@@ -1,6 +1,6 @@
 //! Hover-result comparison and aggregation.
 
-use super::metrics::{AggregateSummaryMetrics, HoverAggregateMetrics, HoverComparisonMetrics};
+use super::metrics::{AggregateSummaryMetrics, SetComparisonMetrics};
 use crate::compare_lsp::comparison::{QueryComparison, QueryComparisonResult};
 
 #[derive(Debug)]
@@ -17,14 +17,27 @@ impl HoverComparison {
         }
     }
 
-    pub(crate) fn metrics(&self) -> HoverComparisonMetrics {
-        HoverComparisonMetrics {
-            rust_glancer_present: self.rust_glancer_present,
-            rust_analyzer_present: self.rust_analyzer_present,
-            agreement: self.rust_glancer_present == self.rust_analyzer_present,
-            rust_glancer_missing: !self.rust_glancer_present && self.rust_analyzer_present,
-            rust_glancer_extra_present: self.rust_glancer_present && !self.rust_analyzer_present,
-        }
+    pub(crate) fn metrics(&self) -> SetComparisonMetrics {
+        Self::metrics_for_presence(self.rust_glancer_present, self.rust_analyzer_present)
+    }
+
+    fn metrics_for_presence(
+        rust_glancer_present: bool,
+        rust_analyzer_present: bool,
+    ) -> SetComparisonMetrics {
+        let rust_glancer_count = usize::from(rust_glancer_present);
+        let rust_analyzer_count = usize::from(rust_analyzer_present);
+        let matched_count = usize::from(rust_glancer_present && rust_analyzer_present);
+        let missing_count = usize::from(!rust_glancer_present && rust_analyzer_present);
+        let extra_count = usize::from(rust_glancer_present && !rust_analyzer_present);
+
+        SetComparisonMetrics::new(
+            rust_glancer_count,
+            rust_analyzer_count,
+            matched_count,
+            missing_count,
+            extra_count,
+        )
     }
 }
 
@@ -32,10 +45,12 @@ impl HoverComparison {
 pub(crate) struct HoverAggregate {
     query_count: usize,
     comparable_count: usize,
-    agreement_count: usize,
-    rust_glancer_missing_count: usize,
-    rust_glancer_extra_present_count: usize,
     non_comparable_count: usize,
+    rust_glancer_count: usize,
+    rust_analyzer_count: usize,
+    matched_count: usize,
+    missing_count: usize,
+    extra_count: usize,
 }
 
 impl HoverAggregate {
@@ -45,15 +60,11 @@ impl HoverAggregate {
             QueryComparisonResult::Hover(comparison) => {
                 let metrics = comparison.metrics();
                 self.comparable_count += 1;
-                if metrics.agreement {
-                    self.agreement_count += 1;
-                }
-                if metrics.rust_glancer_missing {
-                    self.rust_glancer_missing_count += 1;
-                }
-                if metrics.rust_glancer_extra_present {
-                    self.rust_glancer_extra_present_count += 1;
-                }
+                self.rust_glancer_count += metrics.rust_glancer_count;
+                self.rust_analyzer_count += metrics.rust_analyzer_count;
+                self.matched_count += metrics.matched_count;
+                self.missing_count += metrics.missing_count;
+                self.extra_count += metrics.extra_count;
             }
             QueryComparisonResult::NonComparable(_) => self.non_comparable_count += 1,
             _ => {}
@@ -72,11 +83,13 @@ impl HoverAggregate {
         }
     }
 
-    pub(crate) fn metrics(&self) -> HoverAggregateMetrics {
-        HoverAggregateMetrics {
-            agreement_count: self.agreement_count,
-            rust_glancer_missing_count: self.rust_glancer_missing_count,
-            rust_glancer_extra_present_count: self.rust_glancer_extra_present_count,
-        }
+    pub(crate) fn metrics(&self) -> SetComparisonMetrics {
+        SetComparisonMetrics::new(
+            self.rust_glancer_count,
+            self.rust_analyzer_count,
+            self.matched_count,
+            self.missing_count,
+            self.extra_count,
+        )
     }
 }

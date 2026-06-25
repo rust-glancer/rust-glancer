@@ -1,7 +1,7 @@
 //! Semantic comparison over normalized LSP query outcomes.
 //!
 //! This layer deliberately models benchmark results as domain data rather than profiler counters.
-//! The report needs per-query missing/extra locations and hover agreement, not just totals.
+//! The report needs per-query missing/extra details and aggregate counts, not just totals.
 
 mod hover;
 mod inlay_hint;
@@ -33,9 +33,8 @@ use crate::compare_lsp::{
 };
 
 pub(crate) use self::metrics::{
-    AggregateSummaryMetrics, HoverAggregateMetrics, HoverComparisonMetrics,
-    MappedSetAggregateMetrics, MappedSetComparisonMetrics, NonComparableMetrics,
-    SetComparisonMetrics,
+    AggregateSummaryMetrics, MappedSetAggregateMetrics, MappedSetComparisonMetrics,
+    NonComparableMetrics, SetComparisonMetrics,
 };
 
 /// Complete comparison result for one normalized benchmark run.
@@ -498,10 +497,10 @@ mod tests {
     }
 
     #[test]
-    fn compares_hover_agreement_and_mismatches() {
+    fn compares_hover_presence_as_set_metrics() {
         let summary = NormalizedSummary::test_from_results(vec![
             NormalizedQueryExecution::test_new(
-                "hover agreement",
+                "hover matched",
                 QueryKind::Hover,
                 NormalizedOutcome::Hover { present: true },
                 NormalizedOutcome::Hover { present: true },
@@ -534,9 +533,11 @@ mod tests {
         let metrics = aggregate.metrics();
         assert_eq!(summary.query_count, 3);
         assert_eq!(summary.comparable_count, 2);
-        assert_eq!(metrics.agreement_count, 1);
-        assert_eq!(metrics.rust_glancer_missing_count, 1);
-        assert_eq!(metrics.rust_glancer_extra_present_count, 0);
+        assert_eq!(metrics.rust_glancer_count, 1);
+        assert_eq!(metrics.rust_analyzer_count, 2);
+        assert_eq!(metrics.matched_count, 1);
+        assert_eq!(metrics.missing_count, 1);
+        assert_eq!(metrics.extra_count, 0);
         assert_eq!(summary.non_comparable_count, 1);
     }
 

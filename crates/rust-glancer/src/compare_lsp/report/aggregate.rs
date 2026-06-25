@@ -4,8 +4,7 @@ use serde::Serialize;
 
 use crate::{
     compare_lsp::comparison::{
-        HoverAggregateMetrics, MappedSetAggregateMetrics, MethodAggregate, MethodAggregateData,
-        SetComparisonMetrics,
+        MappedSetAggregateMetrics, MethodAggregate, MethodAggregateData, SetComparisonMetrics,
     },
     report::{
         ReportAlign, ReportDocumentBuilder, ReportRowBuilder, ReportTableBuilder, ReportUnit,
@@ -81,9 +80,6 @@ impl MethodAggregateReport {
                 ReportAlign::Right,
                 Some(ReportUnit::Percent),
             )
-            .count_column("hover_agreements")
-            .count_column("hover_missing")
-            .count_column("hover_extra_present")
             .count_column("unmapped_rg")
             .count_column("unmapped_ra");
     }
@@ -112,7 +108,7 @@ enum MethodAggregateDataReport {
     Ranges(RangeAggregateReport),
     Symbols(SymbolAggregateReport),
     InlayHints(RangeAggregateReport),
-    Hover(HoverAggregateReport),
+    Hover(RangeAggregateReport),
 }
 
 impl MethodAggregateDataReport {
@@ -309,37 +305,6 @@ impl From<MappedSetAggregateMetrics> for SymbolAggregateReport {
             match_score_percent: metrics.set.match_score_percent,
             recall_percent: metrics.set.recall_percent,
             precision_percent: metrics.set.precision_percent,
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct HoverAggregateReport {
-    agreement_count: usize,
-    rust_glancer_missing_count: usize,
-    rust_glancer_extra_present_count: usize,
-}
-
-impl HoverAggregateReport {
-    fn append_row_cells(&self, row: &mut ReportRowBuilder) {
-        row.value("hover_agreements", ReportValue::count(self.agreement_count))
-            .value(
-                "hover_missing",
-                ReportValue::count(self.rust_glancer_missing_count),
-            )
-            .value(
-                "hover_extra_present",
-                ReportValue::count(self.rust_glancer_extra_present_count),
-            );
-    }
-}
-
-impl From<HoverAggregateMetrics> for HoverAggregateReport {
-    fn from(metrics: HoverAggregateMetrics) -> Self {
-        Self {
-            agreement_count: metrics.agreement_count,
-            rust_glancer_missing_count: metrics.rust_glancer_missing_count,
-            rust_glancer_extra_present_count: metrics.rust_glancer_extra_present_count,
         }
     }
 }
