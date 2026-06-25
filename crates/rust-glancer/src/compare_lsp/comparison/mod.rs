@@ -9,6 +9,7 @@ mod location;
 mod metrics;
 mod outcome;
 mod range;
+mod rename;
 mod symbol;
 
 use std::time::Duration;
@@ -20,6 +21,10 @@ use crate::compare_lsp::{
         location::{LocationAggregate, LocationComparison},
         outcome::NonComparableComparison,
         range::{RangeAggregate, RangeComparison},
+        rename::{
+            PrepareRenameAggregate, PrepareRenameComparison, RenameEditAggregate,
+            RenameEditComparison,
+        },
         symbol::{SymbolAggregate, SymbolComparison},
     },
     execution::ServerUnderTest,
@@ -88,6 +93,32 @@ impl QueryComparison {
                     NormalizedOutcome::Locations(rust_glancer),
                     NormalizedOutcome::Locations(rust_analyzer),
                 ) => QueryComparisonResult::Locations(LocationComparison::new(
+                    rust_glancer,
+                    rust_analyzer,
+                )),
+                _ => QueryComparisonResult::NonComparable(NonComparableComparison::new(
+                    rust_glancer,
+                    rust_analyzer,
+                )),
+            },
+            QueryKind::PrepareRename => match (rust_glancer, rust_analyzer) {
+                (
+                    NormalizedOutcome::PrepareRenames(rust_glancer),
+                    NormalizedOutcome::PrepareRenames(rust_analyzer),
+                ) => QueryComparisonResult::PrepareRenames(PrepareRenameComparison::new(
+                    rust_glancer,
+                    rust_analyzer,
+                )),
+                _ => QueryComparisonResult::NonComparable(NonComparableComparison::new(
+                    rust_glancer,
+                    rust_analyzer,
+                )),
+            },
+            QueryKind::Rename => match (rust_glancer, rust_analyzer) {
+                (
+                    NormalizedOutcome::RenameEdits(rust_glancer),
+                    NormalizedOutcome::RenameEdits(rust_analyzer),
+                ) => QueryComparisonResult::RenameEdits(RenameEditComparison::new(
                     rust_glancer,
                     rust_analyzer,
                 )),
@@ -188,6 +219,8 @@ impl QueryComparison {
 #[derive(Debug)]
 pub(crate) enum QueryComparisonResult {
     Locations(LocationComparison),
+    PrepareRenames(PrepareRenameComparison),
+    RenameEdits(RenameEditComparison),
     Ranges(RangeComparison),
     Symbols(SymbolComparison),
     InlayHints(InlayHintComparison),
@@ -207,6 +240,8 @@ impl MethodAggregate {
         let mut goto_definition = LocationAggregate::default();
         let mut type_definition = LocationAggregate::default();
         let mut implementation = LocationAggregate::default();
+        let mut prepare_rename = PrepareRenameAggregate::default();
+        let mut rename = RenameEditAggregate::default();
         let mut document_highlight = RangeAggregate::default();
         let mut document_symbol = SymbolAggregate::default();
         let mut workspace_symbol = SymbolAggregate::default();
@@ -219,6 +254,8 @@ impl MethodAggregate {
                 QueryMethod::GotoDefinition => goto_definition.record(query),
                 QueryMethod::TypeDefinition => type_definition.record(query),
                 QueryMethod::Implementation => implementation.record(query),
+                QueryMethod::PrepareRename => prepare_rename.record(query),
+                QueryMethod::Rename => rename.record(query),
                 QueryMethod::DocumentHighlight => document_highlight.record(query),
                 QueryMethod::DocumentSymbol => document_symbol.record(query),
                 QueryMethod::WorkspaceSymbol => workspace_symbol.record(query),
@@ -250,6 +287,18 @@ impl MethodAggregate {
             aggregates.push(Self {
                 method: QueryMethod::Implementation,
                 data: MethodAggregateData::Locations(implementation),
+            });
+        }
+        if !prepare_rename.is_empty() {
+            aggregates.push(Self {
+                method: QueryMethod::PrepareRename,
+                data: MethodAggregateData::PrepareRenames(prepare_rename),
+            });
+        }
+        if !rename.is_empty() {
+            aggregates.push(Self {
+                method: QueryMethod::Rename,
+                data: MethodAggregateData::RenameEdits(rename),
             });
         }
         if !document_highlight.is_empty() {
@@ -298,6 +347,8 @@ impl MethodAggregate {
 #[derive(Debug)]
 pub(crate) enum MethodAggregateData {
     Locations(LocationAggregate),
+    PrepareRenames(PrepareRenameAggregate),
+    RenameEdits(RenameEditAggregate),
     Ranges(RangeAggregate),
     Symbols(SymbolAggregate),
     InlayHints(InlayHintAggregate),
@@ -308,6 +359,8 @@ impl MethodAggregateData {
     pub(crate) fn summary(&self) -> AggregateSummaryMetrics {
         match self {
             Self::Locations(locations) => locations.summary(),
+            Self::PrepareRenames(rename) => rename.summary(),
+            Self::RenameEdits(rename) => rename.summary(),
             Self::Ranges(ranges) => ranges.summary(),
             Self::Symbols(symbols) => symbols.summary(),
             Self::InlayHints(hints) => hints.summary(),
@@ -322,6 +375,8 @@ pub(crate) enum QueryMethod {
     GotoDefinition,
     TypeDefinition,
     Implementation,
+    PrepareRename,
+    Rename,
     DocumentHighlight,
     DocumentSymbol,
     WorkspaceSymbol,
@@ -336,6 +391,8 @@ impl QueryMethod {
             QueryKind::GotoDefinition => Self::GotoDefinition,
             QueryKind::TypeDefinition => Self::TypeDefinition,
             QueryKind::Implementation => Self::Implementation,
+            QueryKind::PrepareRename => Self::PrepareRename,
+            QueryKind::Rename => Self::Rename,
             QueryKind::DocumentHighlight => Self::DocumentHighlight,
             QueryKind::DocumentSymbol => Self::DocumentSymbol,
             QueryKind::WorkspaceSymbol => Self::WorkspaceSymbol,
@@ -353,6 +410,8 @@ impl QueryMethod {
             Self::GotoDefinition => QueryKind::GotoDefinition.lsp_method(),
             Self::TypeDefinition => QueryKind::TypeDefinition.lsp_method(),
             Self::Implementation => QueryKind::Implementation.lsp_method(),
+            Self::PrepareRename => QueryKind::PrepareRename.lsp_method(),
+            Self::Rename => QueryKind::Rename.lsp_method(),
             Self::DocumentHighlight => QueryKind::DocumentHighlight.lsp_method(),
             Self::DocumentSymbol => QueryKind::DocumentSymbol.lsp_method(),
             Self::WorkspaceSymbol => QueryKind::WorkspaceSymbol.lsp_method(),

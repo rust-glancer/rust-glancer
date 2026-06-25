@@ -61,10 +61,22 @@ fn parse_query_case(line: &'static str, line_number: usize, kind: QueryKind) -> 
         | QueryKind::GotoDefinition
         | QueryKind::TypeDefinition
         | QueryKind::Implementation
+        | QueryKind::PrepareRename
         | QueryKind::DocumentHighlight
         | QueryKind::Hover => {
             let (source_path, position) = parse_location(input, line_number);
             QueryCase::position(label, kind, source_path, position)
+        }
+        QueryKind::Rename => {
+            let (location, new_name) = input.split_once("->").unwrap_or_else(|| {
+                panic!("rename query must be `path:line:character -> new_name` on line {line_number}: `{line}`")
+            });
+            let new_name = new_name.trim();
+            if new_name.is_empty() {
+                panic!("rename query has empty new name on line {line_number}: `{line}`");
+            }
+            let (source_path, position) = parse_location(location.trim(), line_number);
+            QueryCase::rename(label, kind, source_path, position, new_name)
         }
         QueryKind::DocumentSymbol | QueryKind::InlayHint => QueryCase::file(label, kind, input),
         QueryKind::WorkspaceSymbol => QueryCase::workspace_query(label, kind, input),
@@ -98,6 +110,8 @@ fn parse_query_kind(method: &'static str, line_number: usize) -> QueryKind {
         method if method == QueryKind::GotoDefinition.lsp_method() => QueryKind::GotoDefinition,
         method if method == QueryKind::TypeDefinition.lsp_method() => QueryKind::TypeDefinition,
         method if method == QueryKind::Implementation.lsp_method() => QueryKind::Implementation,
+        method if method == QueryKind::PrepareRename.lsp_method() => QueryKind::PrepareRename,
+        method if method == QueryKind::Rename.lsp_method() => QueryKind::Rename,
         method if method == QueryKind::DocumentHighlight.lsp_method() => {
             QueryKind::DocumentHighlight
         }

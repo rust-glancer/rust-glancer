@@ -101,6 +101,8 @@ impl MethodAggregateReport {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum MethodAggregateDataReport {
     Locations(LocationAggregateReport),
+    PrepareRenames(RangeAggregateReport),
+    RenameEdits(LocationAggregateReport),
     Ranges(RangeAggregateReport),
     Symbols(SymbolAggregateReport),
     InlayHints(RangeAggregateReport),
@@ -113,6 +115,10 @@ impl MethodAggregateDataReport {
             MethodAggregateData::Locations(locations) => {
                 Self::Locations(locations.metrics().into())
             }
+            MethodAggregateData::PrepareRenames(rename) => {
+                Self::PrepareRenames(rename.metrics().into())
+            }
+            MethodAggregateData::RenameEdits(rename) => Self::RenameEdits(rename.metrics().into()),
             MethodAggregateData::Ranges(ranges) => Self::Ranges(ranges.metrics().into()),
             MethodAggregateData::Symbols(symbols) => Self::Symbols(symbols.metrics().into()),
             MethodAggregateData::InlayHints(hints) => Self::InlayHints(hints.metrics().into()),
@@ -123,6 +129,8 @@ impl MethodAggregateDataReport {
     fn append_row_cells(&self, row: &mut ReportRowBuilder) {
         match self {
             Self::Locations(locations) => locations.append_row_cells(row),
+            Self::PrepareRenames(rename) => rename.append_row_cells(row),
+            Self::RenameEdits(rename) => rename.append_row_cells(row),
             Self::Ranges(ranges) => ranges.append_row_cells(row),
             Self::Symbols(symbols) => symbols.append_row_cells(row),
             Self::InlayHints(hints) => hints.append_row_cells(row),

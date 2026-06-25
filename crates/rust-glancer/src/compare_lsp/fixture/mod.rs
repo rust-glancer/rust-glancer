@@ -126,9 +126,13 @@ impl Fixture {
                     path.display()
                 )
             })?;
-            let QueryTarget::Position { position, .. } = query.target() else {
-                continue;
+            let position = match query.target() {
+                QueryTarget::Position { position, .. } | QueryTarget::Rename { position, .. } => {
+                    position
+                }
+                QueryTarget::File { .. } | QueryTarget::Workspace { .. } => continue,
             };
+
             // LSP speaks UTF-16 positions, so validate the same coordinate space the eventual
             // request payload will use.
             let Some(line) = source.lines().nth(position.line() as usize) else {

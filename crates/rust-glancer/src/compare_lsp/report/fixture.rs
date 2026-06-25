@@ -72,6 +72,16 @@ impl FixtureReport {
                     self.methods.implementation,
                 )
                 .count_as(
+                    "prepare_rename",
+                    QueryKind::PrepareRename.lsp_method(),
+                    self.methods.prepare_rename,
+                )
+                .count_as(
+                    "rename",
+                    QueryKind::Rename.lsp_method(),
+                    self.methods.rename,
+                )
+                .count_as(
                     "document_highlight",
                     QueryKind::DocumentHighlight.lsp_method(),
                     self.methods.document_highlight,
@@ -103,6 +113,8 @@ struct QueryMethodReport {
     goto_definition: usize,
     type_definition: usize,
     implementation: usize,
+    prepare_rename: usize,
+    rename: usize,
     document_highlight: usize,
     document_symbol: usize,
     workspace_symbol: usize,
@@ -133,6 +145,14 @@ impl QueryMethodReport {
             implementation: query_cases
                 .iter()
                 .filter(|query| query.kind().is_implementation())
+                .count(),
+            prepare_rename: query_cases
+                .iter()
+                .filter(|query| query.kind().is_prepare_rename())
+                .count(),
+            rename: query_cases
+                .iter()
+                .filter(|query| query.kind().is_rename())
                 .count(),
             document_highlight: query_cases
                 .iter()

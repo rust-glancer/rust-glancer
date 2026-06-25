@@ -52,6 +52,24 @@ impl QueryCase {
         }
     }
 
+    pub(super) const fn rename(
+        label: &'static str,
+        kind: QueryKind,
+        source_path: &'static str,
+        position: SourcePosition,
+        new_name: &'static str,
+    ) -> Self {
+        Self {
+            label,
+            kind,
+            target: QueryTarget::Rename {
+                source_path,
+                position,
+                new_name,
+            },
+        }
+    }
+
     pub(crate) fn label(&self) -> &'static str {
         self.label
     }
@@ -66,9 +84,9 @@ impl QueryCase {
 
     pub(crate) fn source_path(&self) -> Option<&'static str> {
         match self.target {
-            QueryTarget::Position { source_path, .. } | QueryTarget::File { source_path } => {
-                Some(source_path)
-            }
+            QueryTarget::Position { source_path, .. }
+            | QueryTarget::File { source_path }
+            | QueryTarget::Rename { source_path, .. } => Some(source_path),
             QueryTarget::Workspace { .. } => None,
         }
     }
@@ -86,6 +104,11 @@ pub(crate) enum QueryTarget {
     },
     Workspace {
         query: &'static str,
+    },
+    Rename {
+        source_path: &'static str,
+        position: SourcePosition,
+        new_name: &'static str,
     },
 }
 
@@ -123,6 +146,8 @@ pub(crate) enum QueryKind {
     GotoDefinition,
     TypeDefinition,
     Implementation,
+    PrepareRename,
+    Rename,
     DocumentHighlight,
     DocumentSymbol,
     WorkspaceSymbol,
@@ -139,6 +164,8 @@ impl QueryKind {
             Self::GotoDefinition => request::GotoDefinition::METHOD,
             Self::TypeDefinition => request::GotoTypeDefinition::METHOD,
             Self::Implementation => request::GotoImplementation::METHOD,
+            Self::PrepareRename => request::PrepareRenameRequest::METHOD,
+            Self::Rename => request::Rename::METHOD,
             Self::DocumentHighlight => request::DocumentHighlightRequest::METHOD,
             Self::DocumentSymbol => request::DocumentSymbolRequest::METHOD,
             Self::WorkspaceSymbol => request::WorkspaceSymbolRequest::METHOD,
@@ -159,6 +186,8 @@ impl QueryKind {
             Self::GotoDefinition
             | Self::TypeDefinition
             | Self::Implementation
+            | Self::PrepareRename
+            | Self::Rename
             | Self::DocumentHighlight
             | Self::DocumentSymbol
             | Self::WorkspaceSymbol
@@ -177,6 +206,14 @@ impl QueryKind {
 
     pub(crate) fn is_implementation(self) -> bool {
         matches!(self, Self::Implementation)
+    }
+
+    pub(crate) fn is_prepare_rename(self) -> bool {
+        matches!(self, Self::PrepareRename)
+    }
+
+    pub(crate) fn is_rename(self) -> bool {
+        matches!(self, Self::Rename)
     }
 
     pub(crate) fn is_document_highlight(self) -> bool {

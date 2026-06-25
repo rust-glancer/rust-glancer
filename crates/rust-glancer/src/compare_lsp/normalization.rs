@@ -12,9 +12,10 @@ use std::{
 
 use anyhow::Context as _;
 use ls_types::{
-    DocumentHighlight, DocumentSymbol, DocumentSymbolResponse, InlayHint, InlayHintKind,
-    InlayHintLabel, Location, LocationLink, OneOf, Range, SymbolInformation, SymbolKind, Uri,
-    WorkspaceSymbol, WorkspaceSymbolResponse,
+    AnnotatedTextEdit, DocumentChangeOperation, DocumentChanges, DocumentHighlight, DocumentSymbol,
+    DocumentSymbolResponse, InlayHint, InlayHintKind, InlayHintLabel, Location, LocationLink,
+    OneOf, PrepareRenameResponse, Range, ResourceOp, SymbolInformation, SymbolKind, TextEdit, Uri,
+    WorkspaceEdit, WorkspaceSymbol, WorkspaceSymbolResponse,
 };
 use serde_json::Value;
 
@@ -154,6 +155,8 @@ pub(crate) enum NormalizedOutcome {
     Ranges(NormalizedRangeSet),
     Symbols(NormalizedSymbolSet),
     InlayHints(NormalizedInlayHintSet),
+    PrepareRenames(NormalizedPrepareRenameSet),
+    RenameEdits(NormalizedTextEditSet),
     Hover { present: bool },
     MalformedSuccess { message: String },
     Error { code: i64, message: String },
@@ -174,6 +177,14 @@ impl NormalizedOutcome {
                         Err(message) => Self::MalformedSuccess { message },
                     }
                 }
+                QueryKind::PrepareRename => match NormalizedPrepareRenameSet::from_json(raw) {
+                    Ok(targets) => Self::PrepareRenames(targets),
+                    Err(message) => Self::MalformedSuccess { message },
+                },
+                QueryKind::Rename => match NormalizedTextEditSet::from_json(fixture_root, raw) {
+                    Ok(edits) => Self::RenameEdits(edits),
+                    Err(message) => Self::MalformedSuccess { message },
+                },
                 QueryKind::DocumentHighlight => match NormalizedRangeSet::from_json(raw) {
                     Ok(ranges) => Self::Ranges(ranges),
                     Err(message) => Self::MalformedSuccess { message },
@@ -207,6 +218,191 @@ impl NormalizedOutcome {
                 message: message.clone(),
             },
         }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct NormalizedPrepareRenameSet {
+    targets: Vec<NormalizedPrepareRenameTarget>,
+}
+
+impl NormalizedPrepareRenameSet {
+    fn from_json(raw: &Value) -> Result<Self, String> {
+        if raw.is_null() {
+            return Ok(Self {
+                targets: Vec::new(),
+            });
+        }
+
+        let response =
+            serde_json::from_value::<PrepareRenameResponse>(raw.clone()).map_err(|_| {
+                format!(
+                    "unsupported prepare-rename response shape {}",
+                    json_shape(raw)
+                )
+            })?;
+        let target = match response {
+            PrepareRenameResponse::Range(range) => Some(NormalizedPrepareRenameTarget {
+                range: Some(NormalizedRange::from_lsp(range)),
+                default_behavior: false,
+            }),
+            PrepareRenameResponse::RangeWithPlaceholder { range, .. } => {
+                Some(NormalizedPrepareRenameTarget {
+                    range: Some(NormalizedRange::from_lsp(range)),
+                    default_behavior: false,
+                })
+            }
+            PrepareRenameResponse::DefaultBehavior { default_behavior } => default_behavior
+                .then_some(NormalizedPrepareRenameTarget {
+                    range: None,
+                    default_behavior: true,
+                }),
+        };
+
+        Ok(Self {
+            targets: target.into_iter().collect(),
+        })
+    }
+
+    pub(crate) fn targets(&self) -> &[NormalizedPrepareRenameTarget] {
+        &self.targets
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct NormalizedTextEditSet {
+    edits: Vec<NormalizedTextEdit>,
+    unmapped: Vec<UnmappedLocation>,
+}
+
+impl NormalizedTextEditSet {
+    fn from_json(fixture_root: &Path, raw: &Value) -> Result<Self, String> {
+        if raw.is_null() {
+            return Ok(Self {
+                edits: Vec::new(),
+                unmapped: Vec::new(),
+            });
+        }
+
+        let workspace_edit = serde_json::from_value::<WorkspaceEdit>(raw.clone())
+            .map_err(|_| format!("unsupported rename response shape {}", json_shape(raw)))?;
+        let mut edits = BTreeSet::new();
+        let mut unmapped = Vec::new();
+
+        if let Some(document_changes) = workspace_edit.document_changes {
+            Self::push_document_changes(fixture_root, document_changes, &mut edits, &mut unmapped);
+        } else if let Some(changes) = workspace_edit.changes {
+            for (uri, text_edits) in changes {
+                for edit in text_edits {
+                    Self::push_text_edit(fixture_root, &uri, edit, &mut edits, &mut unmapped);
+                }
+            }
+        }
+
+        Ok(Self {
+            edits: edits.into_iter().collect(),
+            unmapped,
+        })
+    }
+
+    fn push_document_changes(
+        fixture_root: &Path,
+        document_changes: DocumentChanges,
+        edits: &mut BTreeSet<NormalizedTextEdit>,
+        unmapped: &mut Vec<UnmappedLocation>,
+    ) {
+        match document_changes {
+            DocumentChanges::Edits(document_edits) => {
+                for document_edit in document_edits {
+                    let uri = document_edit.text_document.uri;
+                    for edit in document_edit.edits {
+                        Self::push_one_of_text_edit(fixture_root, &uri, edit, edits, unmapped);
+                    }
+                }
+            }
+            DocumentChanges::Operations(operations) => {
+                for operation in operations {
+                    match operation {
+                        DocumentChangeOperation::Edit(document_edit) => {
+                            let uri = document_edit.text_document.uri;
+                            for edit in document_edit.edits {
+                                Self::push_one_of_text_edit(
+                                    fixture_root,
+                                    &uri,
+                                    edit,
+                                    edits,
+                                    unmapped,
+                                );
+                            }
+                        }
+                        DocumentChangeOperation::Op(resource_op) => {
+                            unmapped.push(Self::resource_operation_location(resource_op));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn push_one_of_text_edit(
+        fixture_root: &Path,
+        uri: &Uri,
+        edit: OneOf<TextEdit, AnnotatedTextEdit>,
+        edits: &mut BTreeSet<NormalizedTextEdit>,
+        unmapped: &mut Vec<UnmappedLocation>,
+    ) {
+        let edit = match edit {
+            OneOf::Left(edit) => edit,
+            OneOf::Right(edit) => edit.text_edit,
+        };
+        Self::push_text_edit(fixture_root, uri, edit, edits, unmapped);
+    }
+
+    fn push_text_edit(
+        fixture_root: &Path,
+        uri: &Uri,
+        edit: TextEdit,
+        edits: &mut BTreeSet<NormalizedTextEdit>,
+        unmapped: &mut Vec<UnmappedLocation>,
+    ) {
+        match NormalizedTextEdit::from_lsp(fixture_root, uri, edit) {
+            Ok(edit) => {
+                edits.insert(edit);
+            }
+            Err(location) => unmapped.push(location),
+        }
+    }
+
+    fn resource_operation_location(resource_op: ResourceOp) -> UnmappedLocation {
+        match resource_op {
+            ResourceOp::Create(file) => UnmappedLocation {
+                uri: file.uri.as_str().to_string(),
+                reason: "rename returned a create-file operation".to_string(),
+            },
+            ResourceOp::Rename(file) => UnmappedLocation {
+                uri: format!("{} -> {}", file.old_uri.as_str(), file.new_uri.as_str()),
+                reason: "rename returned a rename-file operation".to_string(),
+            },
+            ResourceOp::Delete(file) => UnmappedLocation {
+                uri: file.uri.as_str().to_string(),
+                reason: "rename returned a delete-file operation".to_string(),
+            },
+        }
+    }
+
+    pub(crate) fn edits(&self) -> &[NormalizedTextEdit] {
+        &self.edits
+    }
+
+    pub(crate) fn unmapped_count(&self) -> usize {
+        self.unmapped.len()
+    }
+
+    pub(crate) fn unmapped_summaries(&self) -> Vec<String> {
+        self.unmapped
+            .iter()
+            .map(UnmappedLocation::summary)
+            .collect()
     }
 }
 
@@ -511,6 +707,12 @@ impl ProtocolLocation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct NormalizedPrepareRenameTarget {
+    range: Option<NormalizedRange>,
+    default_behavior: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct NormalizedInlayHint {
     line: u32,
     character: u32,
@@ -526,6 +728,23 @@ impl NormalizedInlayHint {
             kind: hint.kind.map(inlay_hint_kind_code),
             label: inlay_hint_label(hint.label),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct NormalizedTextEdit {
+    path: String,
+    range: NormalizedRange,
+    new_text: String,
+}
+
+impl NormalizedTextEdit {
+    fn from_lsp(fixture_root: &Path, uri: &Uri, edit: TextEdit) -> Result<Self, UnmappedLocation> {
+        Ok(Self {
+            path: fixture_relative_file_uri(fixture_root, uri)?,
+            range: NormalizedRange::from_lsp(edit.range),
+            new_text: edit.new_text,
+        })
     }
 }
 
@@ -749,6 +968,35 @@ fn fixture_relative_path(path: &Path) -> String {
     }
 
     components.join("/")
+}
+
+fn fixture_relative_file_uri(fixture_root: &Path, uri: &Uri) -> Result<String, UnmappedLocation> {
+    let uri_text = uri.as_str().to_string();
+    if !uri.scheme().as_str().eq_ignore_ascii_case("file") {
+        return Err(UnmappedLocation {
+            uri: uri_text,
+            reason: "URI is not a file URI".to_string(),
+        });
+    }
+
+    let Some(path) = uri.to_file_path() else {
+        return Err(UnmappedLocation {
+            uri: uri_text,
+            reason: "file URI has no path".to_string(),
+        });
+    };
+    let path = path.into_owned();
+    let relative = path
+        .strip_prefix(fixture_root)
+        .map_err(|_| UnmappedLocation {
+            uri: uri_text,
+            reason: format!(
+                "file path is outside fixture root {}",
+                fixture_root.display(),
+            ),
+        })?;
+
+    Ok(fixture_relative_path(relative))
 }
 
 fn symbol_kind_code(kind: SymbolKind) -> i64 {

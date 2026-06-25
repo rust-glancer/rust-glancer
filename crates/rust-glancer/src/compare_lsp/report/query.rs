@@ -161,6 +161,8 @@ impl QueryReport {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum QueryResultReport {
     Locations(LocationQueryReport),
+    PrepareRenames(RangeQueryReport),
+    RenameEdits(LocationQueryReport),
     Ranges(RangeQueryReport),
     Symbols(SymbolQueryReport),
     InlayHints(RangeQueryReport),
@@ -173,6 +175,12 @@ impl QueryResultReport {
         match result {
             QueryComparisonResult::Locations(locations) => {
                 Self::Locations(locations.metrics().into())
+            }
+            QueryComparisonResult::PrepareRenames(rename) => {
+                Self::PrepareRenames(rename.metrics().into())
+            }
+            QueryComparisonResult::RenameEdits(rename) => {
+                Self::RenameEdits(rename.metrics().into())
             }
             QueryComparisonResult::Ranges(ranges) => Self::Ranges(ranges.metrics().into()),
             QueryComparisonResult::Symbols(symbols) => Self::Symbols(symbols.metrics().into()),
@@ -187,6 +195,8 @@ impl QueryResultReport {
     fn kind(&self) -> &'static str {
         match self {
             Self::Locations(_) => "locations",
+            Self::PrepareRenames(_) => "prepare_renames",
+            Self::RenameEdits(_) => "rename_edits",
             Self::Ranges(_) => "ranges",
             Self::Symbols(_) => "symbols",
             Self::InlayHints(_) => "inlay_hints",
@@ -198,6 +208,8 @@ impl QueryResultReport {
     fn append_query_cells(&self, row: &mut ReportRowBuilder) {
         match self {
             Self::Locations(locations) => locations.append_query_cells(row),
+            Self::PrepareRenames(rename) => rename.append_query_cells(row),
+            Self::RenameEdits(rename) => rename.append_query_cells(row),
             Self::Ranges(ranges) => ranges.append_query_cells(row),
             Self::Symbols(symbols) => symbols.append_query_cells(row),
             Self::InlayHints(hints) => hints.append_query_cells(row),

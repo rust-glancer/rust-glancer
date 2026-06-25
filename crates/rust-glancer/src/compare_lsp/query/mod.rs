@@ -74,6 +74,22 @@ crates/ide/src/navigation_target.rs:121:7 # implementation/trait-method: try_to_
 crates/ide/src/navigation_target.rs:139:9 # implementation/inherent-impl: NavigationTarget
 crates/ide/src/navigation_target.rs:305:7 # implementation/trait-impl: TryToNav
 
+[textDocument/prepareRename]
+crates/ide/src/call_hierarchy.rs:25:11 # prepare_rename/type: CallHierarchyConfig
+crates/ide/src/call_hierarchy.rs:43:14 # prepare_rename/function: incoming_calls
+crates/ide/src/hover.rs:35:11 # prepare_rename/type: HoverConfig
+crates/ide/src/navigation_target.rs:31:11 # prepare_rename/type: NavigationTarget
+crates/ide/src/navigation_target.rs:120:10 # prepare_rename/trait: TryToNav
+crates/ide/src/references.rs:120:14 # prepare_rename/function: find_all_refs
+
+[textDocument/rename]
+crates/ide/src/call_hierarchy.rs:25:11 -> RenamedCallHierarchyConfig # rename/type: CallHierarchyConfig
+crates/ide/src/call_hierarchy.rs:43:14 -> renamed_incoming_calls # rename/function: incoming_calls
+crates/ide/src/hover.rs:35:11 -> RenamedHoverConfig # rename/type: HoverConfig
+crates/ide/src/navigation_target.rs:31:11 -> RenamedNavigationTarget # rename/type: NavigationTarget
+crates/ide/src/navigation_target.rs:120:10 -> RenamedTryToNav # rename/trait: TryToNav
+crates/ide/src/references.rs:120:14 -> renamed_find_all_refs # rename/function: find_all_refs
+
 [textDocument/documentHighlight]
 crates/ide/src/call_hierarchy.rs:43:14 # document_highlight/function: incoming_calls
 crates/ide/src/hover.rs:130:14 # document_highlight/function: hover

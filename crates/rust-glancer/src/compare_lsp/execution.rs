@@ -14,7 +14,7 @@ use anyhow::Context as _;
 use ls_types::{
     DocumentHighlightParams, DocumentSymbolParams, GotoDefinitionParams, HoverParams,
     InlayHintParams, PartialResultParams, Position, Range, ReferenceContext, ReferenceParams,
-    TextDocumentIdentifier, TextDocumentPositionParams, WorkDoneProgressParams,
+    RenameParams, TextDocumentIdentifier, TextDocumentPositionParams, WorkDoneProgressParams,
     WorkspaceSymbolParams,
     request::{GotoImplementationParams, GotoTypeDefinitionParams},
 };
@@ -219,6 +219,35 @@ impl QueryRequest {
                 )?,
                 work_done_progress_params: WorkDoneProgressParams::default(),
                 partial_result_params: PartialResultParams::default(),
+            }),
+            (
+                QueryKind::PrepareRename,
+                QueryTarget::Position {
+                    source_path,
+                    position,
+                },
+            ) => serde_json::to_value(Self::text_document_position(
+                fixture_root,
+                query_case.label(),
+                source_path,
+                position,
+            )?),
+            (
+                QueryKind::Rename,
+                QueryTarget::Rename {
+                    source_path,
+                    position,
+                    new_name,
+                },
+            ) => serde_json::to_value(RenameParams {
+                text_document_position: Self::text_document_position(
+                    fixture_root,
+                    query_case.label(),
+                    source_path,
+                    position,
+                )?,
+                new_name: new_name.to_string(),
+                work_done_progress_params: WorkDoneProgressParams::default(),
             }),
             (
                 QueryKind::DocumentHighlight,

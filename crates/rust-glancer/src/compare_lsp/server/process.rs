@@ -14,10 +14,10 @@ use std::{
 use anyhow::Context as _;
 use ls_types::{
     ClientCapabilities, DidOpenTextDocumentParams, DocumentSymbolClientCapabilities,
-    InitializeParams, InitializedParams, InlayHintClientCapabilities,
+    InitializeParams, InitializedParams, InlayHintClientCapabilities, RenameClientCapabilities,
     TextDocumentClientCapabilities, TextDocumentItem, WindowClientCapabilities,
-    WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceFolder, notification,
-    notification::Notification as _, request, request::Request as _,
+    WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
+    WorkspaceFolder, notification, notification::Notification as _, request, request::Request as _,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -201,6 +201,10 @@ impl RunningServer {
             workspace: Some(WorkspaceClientCapabilities {
                 configuration: Some(true),
                 workspace_folders: Some(true),
+                workspace_edit: Some(WorkspaceEditClientCapabilities {
+                    document_changes: Some(true),
+                    ..WorkspaceEditClientCapabilities::default()
+                }),
                 ..WorkspaceClientCapabilities::default()
             }),
             text_document: Some(TextDocumentClientCapabilities {
@@ -209,6 +213,10 @@ impl RunningServer {
                     ..DocumentSymbolClientCapabilities::default()
                 }),
                 inlay_hint: Some(InlayHintClientCapabilities::default()),
+                rename: Some(RenameClientCapabilities {
+                    prepare_support: Some(true),
+                    ..RenameClientCapabilities::default()
+                }),
                 ..TextDocumentClientCapabilities::default()
             }),
             experimental: Some(json!({

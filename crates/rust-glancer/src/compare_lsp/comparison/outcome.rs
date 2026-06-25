@@ -35,6 +35,8 @@ impl NonComparableComparison {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum OutcomeStatus {
     Locations,
+    PrepareRenames,
+    RenameEdits,
     Ranges,
     Symbols,
     InlayHints,
@@ -50,6 +52,8 @@ impl OutcomeStatus {
     fn from_outcome(outcome: &NormalizedOutcome) -> Self {
         match outcome {
             NormalizedOutcome::Locations(_) => Self::Locations,
+            NormalizedOutcome::PrepareRenames(_) => Self::PrepareRenames,
+            NormalizedOutcome::RenameEdits(_) => Self::RenameEdits,
             NormalizedOutcome::Ranges(_) => Self::Ranges,
             NormalizedOutcome::Symbols(_) => Self::Symbols,
             NormalizedOutcome::InlayHints(_) => Self::InlayHints,
@@ -65,6 +69,8 @@ impl OutcomeStatus {
     pub(crate) fn label(self) -> &'static str {
         match self {
             Self::Locations => "locations",
+            Self::PrepareRenames => "prepare_renames",
+            Self::RenameEdits => "rename_edits",
             Self::Ranges => "ranges",
             Self::Symbols => "symbols",
             Self::InlayHints => "inlay_hints",
