@@ -121,13 +121,19 @@ impl StartedServers {
 pub(crate) struct ServerReadiness {
     name: &'static str,
     initialize_latency: Duration,
+    ready_latency: Duration,
 }
 
 impl ServerReadiness {
-    pub(super) fn new(name: &'static str, initialize_latency: Duration) -> Self {
+    pub(super) fn new(
+        name: &'static str,
+        initialize_latency: Duration,
+        ready_latency: Duration,
+    ) -> Self {
         Self {
             name,
             initialize_latency,
+            ready_latency,
         }
     }
 
@@ -137,6 +143,10 @@ impl ServerReadiness {
 
     pub(crate) fn initialize_latency(&self) -> Duration {
         self.initialize_latency
+    }
+
+    pub(crate) fn ready_latency(&self) -> Duration {
+        self.ready_latency
     }
 }
 

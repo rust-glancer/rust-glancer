@@ -8,7 +8,7 @@ mod tower_transport;
 
 use serde_json::Value;
 
-pub(crate) use self::tower_transport::TowerLspTransport;
+pub(crate) use self::tower_transport::{ServerNotification, TowerLspTransport};
 
 /// Outcome of one outbound JSON-RPC request.
 ///

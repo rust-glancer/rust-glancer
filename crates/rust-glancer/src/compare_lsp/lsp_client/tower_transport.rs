@@ -24,7 +24,7 @@ use futures::{
 use serde_json::Value;
 use tokio::{
     process,
-    sync::{oneshot, watch},
+    sync::{mpsc, oneshot, watch},
 };
 use tower::Service;
 use tower_lsp_server::{
@@ -44,6 +44,7 @@ type PendingResponses = Arc<Mutex<HashMap<JsonRpcId, oneshot::Sender<JsonRpcResp
 pub(crate) struct TowerLspTransport {
     outbound: UnboundedSender<JsonRpcRequest>,
     pending: PendingResponses,
+    notifications: mpsc::UnboundedReceiver<ServerNotification>,
     transport_finished: watch::Receiver<bool>,
     serve_task: tokio::task::JoinHandle<()>,
     next_request_id: AtomicI64,
@@ -53,6 +54,7 @@ impl TowerLspTransport {
     /// Start the tower message loop on the child process pipes.
     pub(crate) fn spawn(reader: process::ChildStdout, writer: process::ChildStdin) -> Self {
         let (outbound, outbound_rx) = unbounded();
+        let (notification_sender, notifications) = mpsc::unbounded_channel();
         let (finished_sender, transport_finished) = watch::channel(false);
         let pending = PendingResponses::default();
         let loopback = TowerLoopback {
@@ -62,7 +64,7 @@ impl TowerLspTransport {
 
         let serve_task = tokio::spawn(async move {
             Server::new(reader, writer, loopback)
-                .serve(ClientRequestService)
+                .serve(ClientRequestService::new(notification_sender))
                 .await;
             let _ = finished_sender.send(true);
         });
@@ -70,6 +72,7 @@ impl TowerLspTransport {
         Self {
             outbound,
             pending,
+            notifications,
             transport_finished,
             serve_task,
             next_request_id: AtomicI64::new(1),
@@ -196,6 +199,24 @@ impl TowerLspTransport {
             anyhow::anyhow!("failed to enqueue LSP notification `{method}`: {error}")
         })
     }
+
+    pub(crate) async fn next_notification(&mut self) -> anyhow::Result<ServerNotification> {
+        let mut transport_finished = self.transport_finished.clone();
+
+        tokio::select! {
+            notification = self.notifications.recv() => {
+                notification.ok_or_else(|| anyhow::anyhow!("tower LSP notification stream closed"))
+            }
+            changed = transport_finished.changed() => {
+                let message = if changed.is_ok() {
+                    "tower LSP transport task stopped while waiting for notification"
+                } else {
+                    "tower LSP transport finished signal closed while waiting for notification"
+                };
+                Err(anyhow::anyhow!(message))
+            }
+        }
+    }
 }
 
 impl Drop for TowerLspTransport {
@@ -262,8 +283,36 @@ impl Sink<JsonRpcResponse> for TowerResponseSink {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ServerNotification {
+    method: String,
+    params: Option<Value>,
+}
+
+impl ServerNotification {
+    fn new(method: String, params: Option<Value>) -> Self {
+        Self { method, params }
+    }
+
+    pub(crate) fn method(&self) -> &str {
+        &self.method
+    }
+
+    pub(crate) fn params(&self) -> Option<&Value> {
+        self.params.as_ref()
+    }
+}
+
 #[derive(Debug)]
-struct ClientRequestService;
+struct ClientRequestService {
+    notifications: mpsc::UnboundedSender<ServerNotification>,
+}
+
+impl ClientRequestService {
+    fn new(notifications: mpsc::UnboundedSender<ServerNotification>) -> Self {
+        Self { notifications }
+    }
+}
 
 /// Minimal service for requests that the language server sends back to this harness.
 ///
@@ -284,6 +333,9 @@ impl Service<JsonRpcRequest> for ClientRequestService {
         let id = request.id().cloned();
         let params = request.params().cloned();
         let Some(id) = id else {
+            let _ = self
+                .notifications
+                .send(ServerNotification::new(method, params));
             return ready(Ok(None));
         };
 
@@ -324,7 +376,8 @@ mod tests {
 
     #[test]
     fn workspace_configuration_request_returns_one_null_per_item() {
-        let mut service = ClientRequestService;
+        let (notifications, _notification_receiver) = mpsc::unbounded_channel();
+        let mut service = ClientRequestService::new(notifications);
         let request = JsonRpcRequest::build("workspace/configuration")
             .id(1)
             .params(json!({
@@ -349,7 +402,8 @@ mod tests {
 
     #[test]
     fn notifications_do_not_receive_responses() {
-        let mut service = ClientRequestService;
+        let (notifications, mut notification_receiver) = mpsc::unbounded_channel();
+        let mut service = ClientRequestService::new(notifications);
         let notification = JsonRpcRequest::build("window/logMessage")
             .params(json!({"type": 3, "message": "ready"}))
             .finish();
@@ -360,6 +414,14 @@ mod tests {
         assert_eq!(
             response, None,
             "server-to-client notifications must not receive JSON-RPC responses",
+        );
+        let recorded = notification_receiver
+            .try_recv()
+            .expect("server-to-client notification should be recorded");
+        assert_eq!(recorded.method(), "window/logMessage");
+        assert_eq!(
+            recorded.params(),
+            Some(&json!({"type": 3, "message": "ready"}))
         );
     }
 

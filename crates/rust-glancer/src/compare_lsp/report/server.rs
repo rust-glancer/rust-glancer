@@ -13,14 +13,21 @@ pub(crate) struct ServerReport {
     name: String,
     command: String,
     initialize_ms: f64,
+    ready_ms: f64,
 }
 
 impl ServerReport {
-    pub(crate) fn capture(name: &str, command: &str, initialize_latency: Duration) -> Self {
+    pub(crate) fn capture(
+        name: &str,
+        command: &str,
+        initialize_latency: Duration,
+        ready_latency: Duration,
+    ) -> Self {
         Self {
             name: name.to_string(),
             command: command.to_string(),
             initialize_ms: duration_ms(initialize_latency),
+            ready_ms: duration_ms(ready_latency),
         }
     }
 
@@ -43,14 +50,16 @@ impl ServerReport {
         table
             .text_column("server")
             .text_column("command")
-            .duration_column_as("initialize_ms", "Initialize");
+            .duration_column_as("initialize_ms", "Initialize")
+            .duration_column_as("ready_ms", "Ready");
     }
 
     fn append_row(&self, table: &mut ReportTableBuilder) {
         table.row(|row| {
             row.text("server", &self.name)
                 .text("command", &self.command)
-                .duration_ms("initialize_ms", self.initialize_ms);
+                .duration_ms("initialize_ms", self.initialize_ms)
+                .duration_ms("ready_ms", self.ready_ms);
         });
     }
 }

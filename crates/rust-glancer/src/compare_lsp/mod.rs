@@ -33,11 +33,13 @@ pub(crate) async fn run(
         servers.rust_glancer_readiness().name(),
         servers.rust_glancer_command_label(),
         servers.rust_glancer_readiness().initialize_latency(),
+        servers.rust_glancer_readiness().ready_latency(),
     );
     let rust_analyzer = report::ServerReport::capture(
         servers.rust_analyzer_readiness().name(),
         servers.rust_analyzer_command_label(),
         servers.rust_analyzer_readiness().initialize_latency(),
+        servers.rust_analyzer_readiness().ready_latency(),
     );
     let execution = execution::run(&fixture, &mut servers).await;
 

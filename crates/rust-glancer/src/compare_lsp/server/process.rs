@@ -19,16 +19,19 @@ use ls_types::{
     notification::Notification as _, request, request::Request as _,
 };
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::process::{Child, Command};
 
-use crate::compare_lsp::lsp_client::{RequestOutcome, TowerLspTransport};
+use crate::compare_lsp::lsp_client::{RequestOutcome, ServerNotification, TowerLspTransport};
 
 use super::{ServerReadiness, command::ServerKind, stderr::StderrCapture, uri::file_uri};
 
 const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(120);
+const READY_TIMEOUT: Duration = Duration::from_secs(120);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 const PROCESS_EXIT_TIMEOUT: Duration = Duration::from_secs(120);
+const RUST_GLANCER_READY_METHOD: &str = "rust-glancer/activeWorkspaceChanged";
+const RUST_ANALYZER_READY_METHOD: &str = "experimental/serverStatus";
 
 /// One live LSP server with the client-side transport needed to drive it.
 #[derive(Debug)]
@@ -126,10 +129,14 @@ impl RunningServer {
         for source_path in source_paths {
             self.open_source_file(fixture_root, source_path).await?;
         }
+        let ready_started_at = Instant::now();
+        self.wait_until_ready().await?;
+        let ready_latency = ready_started_at.elapsed();
 
         Ok(ServerReadiness::new(
             self.kind.display_name(),
             initialize_latency,
+            ready_latency,
         ))
     }
 
@@ -196,6 +203,9 @@ impl RunningServer {
                 ..WorkspaceClientCapabilities::default()
             }),
             text_document: Some(TextDocumentClientCapabilities::default()),
+            experimental: Some(json!({
+                "serverStatusNotification": true,
+            })),
             ..ClientCapabilities::default()
         };
 
@@ -253,6 +263,36 @@ impl RunningServer {
                     self.kind.display_name()
                 )
             })
+    }
+
+    async fn wait_until_ready(&mut self) -> anyhow::Result<()> {
+        tokio::time::timeout(READY_TIMEOUT, async {
+            loop {
+                let notification = self.client.next_notification().await?;
+                match self.readiness_notification(&notification) {
+                    ReadinessNotification::Ready => return Ok(()),
+                    ReadinessNotification::Failed(message) => anyhow::bail!(
+                        "{} reported readiness failure: {message}",
+                        self.kind.display_name(),
+                    ),
+                    ReadinessNotification::Ignore => {}
+                }
+            }
+        })
+        .await
+        .with_context(|| {
+            format!(
+                "Waiting for {} readiness notification timed out",
+                self.kind.display_name()
+            )
+        })?
+    }
+
+    fn readiness_notification(&self, notification: &ServerNotification) -> ReadinessNotification {
+        match self.kind {
+            ServerKind::RustGlancer => rust_glancer_readiness(notification),
+            ServerKind::RustAnalyzer => rust_analyzer_readiness(notification),
+        }
     }
 
     /// Add protocol context and the captured stderr tail to request failures.
@@ -340,6 +380,57 @@ impl RunningServer {
 
 fn lsp_params(params: impl Serialize, description: &'static str) -> anyhow::Result<Value> {
     serde_json::to_value(params).with_context(|| format!("Serializing {description} failed"))
+}
+
+enum ReadinessNotification {
+    Ready,
+    Failed(String),
+    Ignore,
+}
+
+fn rust_glancer_readiness(notification: &ServerNotification) -> ReadinessNotification {
+    if notification.method() != RUST_GLANCER_READY_METHOD {
+        return ReadinessNotification::Ignore;
+    }
+
+    let Some(params) = notification.params() else {
+        return ReadinessNotification::Ignore;
+    };
+    match params.get("state").and_then(Value::as_str) {
+        Some("ready") => ReadinessNotification::Ready,
+        Some("failed") => ReadinessNotification::Failed(
+            params
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("workspace failed")
+                .to_string(),
+        ),
+        Some(_) | None => ReadinessNotification::Ignore,
+    }
+}
+
+fn rust_analyzer_readiness(notification: &ServerNotification) -> ReadinessNotification {
+    if notification.method() != RUST_ANALYZER_READY_METHOD {
+        return ReadinessNotification::Ignore;
+    }
+
+    let Some(params) = notification.params() else {
+        return ReadinessNotification::Ignore;
+    };
+    if params.get("health").and_then(Value::as_str) == Some("error") {
+        return ReadinessNotification::Failed(
+            params
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("server reported error status")
+                .to_string(),
+        );
+    }
+    if params.get("quiescent").and_then(Value::as_bool) == Some(true) {
+        return ReadinessNotification::Ready;
+    }
+
+    ReadinessNotification::Ignore
 }
 
 impl Drop for RunningServer {
