@@ -1,4 +1,7 @@
-use rg_ir_model::items::{GenericParams, Mutability, ParamItem, TypeRef};
+use rg_ir_model::{
+    Mutability,
+    items::{GenericParams, ParamItem, TypeRef},
+};
 use rg_text::Name;
 
 use crate::{Ty, TypeSubst};

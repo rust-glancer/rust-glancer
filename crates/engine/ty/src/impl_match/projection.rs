@@ -5,8 +5,8 @@
 
 use crate::{GenericArg, NominalTy, Ty, TypeSubst};
 use rg_ir_model::hir::items::ImplData;
-use rg_ir_model::items::{GenericArg as ItemGenericArg, Mutability, TypePath, TypeRef};
-use rg_ir_model::{ImplRef, Path, TraitImplRef, TypePathResolution};
+use rg_ir_model::items::{GenericArg as ItemGenericArg, TypePath, TypeRef};
+use rg_ir_model::{ImplRef, Mutability, Path, TraitImplRef, TypePathResolution};
 use rg_ir_storage::{DefMapSource, ItemStoreSource, TypePathContext};
 use rg_text::Name;
 

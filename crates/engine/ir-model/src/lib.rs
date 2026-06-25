@@ -7,6 +7,7 @@
 pub mod hir;
 mod ids;
 pub mod items;
+mod mutability;
 pub mod path;
 mod resolution;
 
@@ -16,8 +17,8 @@ pub use self::hir::body::{
     BodySource, BodySourceItem, BodySourceItems, BuiltinMacroExprKind, ClosureCapture, ClosureKind,
     ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprKind, ExprRangeKind,
     ExprUnaryOp, ExprWrapperKind, FunctionParamData, LabelData, LiteralKind, MatchArmData,
-    PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordExprField,
-    RecordExprSpread, RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
+    PatBindingMode, PatData, PatKind, PatRangeKind, RecordExprField, RecordExprSpread,
+    RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
 };
 pub use self::ids::{
     TargetId,
@@ -34,6 +35,7 @@ pub use self::ids::{
         TypeDefId, TypeDefRef, UnionId,
     },
 };
+pub use self::mutability::Mutability;
 pub use self::path::{Path, PathSegment, last_segment_name};
 pub use self::resolution::TypePathResolution;
 pub use rg_parse::{FileId, Span, TextSpan};

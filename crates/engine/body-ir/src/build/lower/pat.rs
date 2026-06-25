@@ -6,15 +6,15 @@ use rg_syntax::{
 };
 
 use rg_ir_model::{
-    BindingId, BodyPath, BodyPathSegment, BodyPathSegmentKind, ExprId, PatId, ScopeId,
+    BindingId, BodyPath, BodyPathSegment, BodyPathSegmentKind, ExprId, Mutability, PatId, ScopeId,
     items::{FieldKey, TypeRef},
 };
 use rg_item_tree::{FromAst as _, RecordPatFieldAst};
 use rg_text::Name;
 
 use crate::ir::{
-    BindingData, BindingKind, LiteralKind, PatBindingMode, PatData, PatKind, PatMutability,
-    PatRangeKind, PendingBindingResolution, RecordFieldSyntax, RecordPatField,
+    BindingData, BindingKind, LiteralKind, PatBindingMode, PatData, PatKind, PatRangeKind,
+    PendingBindingResolution, RecordFieldSyntax, RecordPatField,
 };
 
 use super::body::BodyLowering;
@@ -286,7 +286,7 @@ impl BodyLowering<'_> {
                     return self.alloc_unsupported_pat(pat.syntax());
                 };
                 PatKind::Ref {
-                    mutability: PatMutability::from_ast(&pat, ()),
+                    mutability: Mutability::from_mut_token(pat.mut_token().is_some()),
                     pat: self.lower_pat_inner(inner, scope, kind, None, alloc_bindings, bindings),
                 }
             }

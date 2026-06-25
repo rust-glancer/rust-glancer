@@ -8,8 +8,8 @@ pub use rg_ir_model::{
     BodySource, BodySourceItems, BuiltinMacroExprKind, ClosureCapture, ClosureKind,
     ClosureParamData, ExprAssignOp, ExprBinaryOp, ExprBlockKind, ExprData, ExprKind, ExprRangeKind,
     ExprUnaryOp, ExprWrapperKind, FunctionParamData, LabelData, LiteralKind, MatchArmData,
-    PatBindingMode, PatData, PatKind, PatMutability, PatRangeKind, RecordExprField,
-    RecordExprSpread, RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
+    PatBindingMode, PatData, PatKind, PatRangeKind, RecordExprField, RecordExprSpread,
+    RecordFieldSyntax, RecordPatField, ScopeData, StmtData, StmtKind,
 };
 
 pub use self::{

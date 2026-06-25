@@ -2,7 +2,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use rg_parse::Span;
 
-use crate::{BindingId, ExprId, PatId, items::FieldKey};
+use crate::{BindingId, ExprId, Mutability, PatId, items::FieldKey};
 use rg_std::{MemorySize, Shrink};
 
 use super::{BodyPath, BodySource, LiteralKind, RecordFieldSyntax};
@@ -16,30 +16,6 @@ use super::{BodyPath, BodySource, LiteralKind, RecordFieldSyntax};
 pub struct PatBindingMode {
     pub by_ref: bool,
     pub mutable: bool,
-}
-
-/// Mutability written on a reference pattern.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    derive_more::Display,
-    SchemaRead,
-    SchemaWrite,
-    MemorySize,
-    Shrink,
-)]
-#[memsize(leaf)]
-#[shrink(leaf)]
-pub enum PatMutability {
-    /// `&<pat>`.
-    #[display("shared")]
-    Shared,
-    /// `&mut <pat>`.
-    #[display("mut")]
-    Mut,
 }
 
 /// Range operator written in a range pattern.
@@ -102,10 +78,7 @@ pub enum PatKind {
     /// `[<pat>, ...]`.
     Slice { fields: Vec<PatId> },
     /// `&<pat>` or `&mut <pat>`.
-    Ref {
-        mutability: PatMutability,
-        pat: PatId,
-    },
+    Ref { mutability: Mutability, pat: PatId },
     /// `box <pat>`.
     Box { pat: PatId },
     /// `CONST`, `Enum::Variant`, or another path-only pattern.

@@ -4,13 +4,14 @@
 //! stores instead of trying to reconstruct rustc-perfect signatures.
 
 use rg_body_ir::BindingData;
+use rg_ir_model::Mutability;
 use rg_ir_model::hir::items::{
     ConstData, EnumData, FieldData, FunctionData, StaticData, StructData, TraitData, TypeAliasData,
     UnionData,
 };
 use rg_ir_model::items::{
-    EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionQualifiers, GenericParams, Mutability,
-    ParamItem, TypeBound, TypeRef, VisibilityLevel, WherePredicate,
+    EnumVariantItem, FieldItem, FieldKey, FieldList, FunctionQualifiers, GenericParams, ParamItem,
+    TypeBound, TypeRef, VisibilityLevel, WherePredicate,
 };
 use rg_ty::Ty;
 

@@ -5,7 +5,7 @@
 
 use rg_ir_model::{
     ClosureCapture, ClosureKind, ExprAssignOp, ExprBinaryOp, ExprRangeKind, ExprUnaryOp,
-    PatBindingMode, PatMutability, PatRangeKind, RecordFieldSyntax,
+    PatBindingMode, PatRangeKind, RecordFieldSyntax,
 };
 use rg_syntax::ast;
 
@@ -138,19 +138,6 @@ impl FromAst for PatBindingMode {
         Self {
             by_ref: pat.ref_token().is_some(),
             mutable: pat.mut_token().is_some(),
-        }
-    }
-}
-
-impl FromAst for PatMutability {
-    type AstNode = ast::RefPat;
-    type Context<'a> = ();
-
-    fn from_ast(pat: &Self::AstNode, (): Self::Context<'_>) -> Self {
-        if pat.mut_token().is_some() {
-            Self::Mut
-        } else {
-            Self::Shared
         }
     }
 }

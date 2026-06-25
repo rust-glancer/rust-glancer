@@ -15,7 +15,10 @@ mod primitive_expr;
 mod trait_selection;
 mod ty;
 
-pub use rg_ir_model::items::{FloatTy, Mutability, PrimitiveTy, SignedIntTy, UnsignedIntTy};
+pub use rg_ir_model::{
+    Mutability,
+    items::{FloatTy, PrimitiveTy, SignedIntTy, UnsignedIntTy},
+};
 
 pub use self::{
     autoderef::{

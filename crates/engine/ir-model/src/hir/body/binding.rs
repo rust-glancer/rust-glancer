@@ -3,10 +3,7 @@ use wincode::{SchemaRead, SchemaWrite};
 use rg_parse::Span;
 use rg_text::Name;
 
-use crate::{
-    ScopeId,
-    items::{Mutability, TypeRef},
-};
+use crate::{Mutability, ScopeId, items::TypeRef};
 use rg_std::{MemorySize, Shrink};
 
 use super::BodySource;

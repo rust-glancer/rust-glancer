@@ -5,15 +5,15 @@
 //! not infer the scrutinee type by themselves.
 
 use rg_ir_model::{
-    BindingId, BodyPath, ExprId, PatId, Path, PathSegment, ScopeId, StmtId, TypeDefId,
-    items::{FieldKey, Mutability, TypeRef},
+    BindingId, BodyPath, ExprId, Mutability, PatId, Path, PathSegment, ScopeId, StmtId, TypeDefId,
+    items::{FieldKey, TypeRef},
 };
 use rg_ir_storage::{DefMapSource, ItemStoreSource};
 use rg_package_store::PackageStoreError;
 use rg_std::ExpectedUnique;
 use rg_ty::{ReferencePeelingCandidates, Ty};
 
-use crate::ir::{ExprKind, PatKind, PatMutability, RecordPatField, StmtKind};
+use crate::ir::{ExprKind, PatKind, RecordPatField, StmtKind};
 use crate::resolution::{BodyResolutionContext, TypeRefUseSite};
 
 pub(super) struct PatternTypePropagationPass<'query, D, I> {
@@ -270,14 +270,14 @@ where
     fn propagate_ref_pat(
         &self,
         pat: PatId,
-        pat_mutability: PatMutability,
+        pat_mutability: Mutability,
         expected_ty: &Ty,
         updates: &mut Vec<(BindingId, Ty)>,
     ) -> Result<(), PackageStoreError> {
         let Some((inner_ty, mutability)) = expected_ty.reference_inner() else {
             return Ok(());
         };
-        if mutability != Self::ref_mutability(pat_mutability) {
+        if mutability != pat_mutability {
             return Ok(());
         }
 
@@ -432,13 +432,6 @@ where
         }
 
         updates.push((binding, ty));
-    }
-
-    fn ref_mutability(mutability: PatMutability) -> Mutability {
-        match mutability {
-            PatMutability::Shared => Mutability::Shared,
-            PatMutability::Mut => Mutability::Mutable,
-        }
     }
 }
 
